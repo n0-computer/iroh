@@ -55,7 +55,7 @@ fn body_empty() -> BytesBody {
 }
 
 /// Configuration for the full Relay & STUN server.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// Configuration for the DERP server, disabled if `None`.
     pub relay: Option<RelayConfig<EC, EA>>,
@@ -64,35 +64,6 @@ pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// Socket to serve metrics on.
     #[cfg(feature = "metrics")]
     pub metrics_addr: Option<SocketAddr>,
-}
-
-impl<EC: fmt::Debug, EA: fmt::Debug> ServerConfig<EC, EA> {
-    /// Creates a new config.
-    pub fn new() -> Self {
-        Self {
-            relay: None,
-            stun: None,
-            metrics_addr: None,
-        }
-    }
-
-    /// Validates the config for internal consistency.
-    pub fn validate(&self) -> Result<()> {
-        // todo: check all bind addrs are different.  Though if done correctly the server
-        // will just fail to start and show an approriate error, so maybe we shouldn't be
-        // validating at all.
-        if self.relay.is_none() && self.stun.is_none() {
-            bail!("neither DERP nor STUN server configured");
-        }
-        if let Some(derp) = &self.relay {
-            if let Some(tls) = &derp.tls {
-                if derp.http_bind_addr == tls.https_bind_addr {
-                    bail!("derp port conflicts with captive portal port");
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 /// Configuration for the Relay HTTP and HTTPS server.
@@ -205,7 +176,6 @@ impl Server {
         EC: fmt::Debug + 'static,
         EA: fmt::Debug + 'static,
     {
-        config.validate()?;
         let mut tasks = JoinSet::new();
 
         #[cfg(feature = "metrics")]

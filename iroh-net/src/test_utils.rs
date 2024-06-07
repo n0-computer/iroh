@@ -58,7 +58,7 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, crate::relay::iro
     let server = crate::relay::iroh_relay::Server::spawn(config)
         .await
         .unwrap();
-    let url: RelayUrl = format!("https://localhost:{}", server.https_addr().unwrap())
+    let url: RelayUrl = format!("https://localhost:{}", server.https_addr().unwrap().port())
         .parse()
         .unwrap();
     let m = RelayMap::from_nodes([RelayNode {
