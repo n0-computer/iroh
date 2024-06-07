@@ -26,13 +26,17 @@ mod node;
 #[derive(Debug, Clone)]
 pub struct Iroh<C> {
     /// Client for blobs operations.
-    blobs: blobs::Client<C>,
+    #[deprecated(note = "Use `blobs` method instead", since = "0.18.0")]
+    pub blobs: blobs::Client<C>,
     /// Client for docs operations.
-    docs: docs::Client<C>,
+    #[deprecated(note = "Use `docs` method instead", since = "0.18.0")]
+    pub docs: docs::Client<C>,
     /// Client for author operations.
-    authors: authors::Client<C>,
+    #[deprecated(note = "Use `authors` method instead", since = "0.18.0")]
+    pub authors: authors::Client<C>,
     /// Client for tags operations.
-    tags: tags::Client<C>,
+    #[deprecated(note = "Use `tags` method instead", since = "0.18.0")]
+    pub tags: tags::Client<C>,
 
     rpc: RpcClient<RpcService, C>,
 }
@@ -43,6 +47,7 @@ where
 {
     /// Create a new high-level client to a Iroh node from the low-level RPC client.
     pub fn new(rpc: RpcClient<RpcService, C>) -> Self {
+        #[allow(deprecated)]
         Self {
             blobs: blobs::Client { rpc: rpc.clone() },
             docs: docs::Client { rpc: rpc.clone() },
@@ -52,23 +57,27 @@ where
         }
     }
 
-    ///
+    /// Client for blobs operations.
     pub fn blobs(&self) -> &blobs::Client<C> {
+        #[allow(deprecated)]
         &self.blobs
     }
 
-    ///
+    /// Client for docs operations.
     pub fn docs(&self) -> &docs::Client<C> {
+        #[allow(deprecated)]
         &self.docs
     }
 
-    ///
+    /// Client for author operations.
     pub fn authors(&self) -> &authors::Client<C> {
+        #[allow(deprecated)]
         &self.authors
     }
 
-    ///
+    /// Client for tags operations.
     pub fn tags(&self) -> &tags::Client<C> {
+        #[allow(deprecated)]
         &self.tags
     }
 }
