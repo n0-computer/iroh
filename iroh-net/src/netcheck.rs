@@ -785,8 +785,9 @@ mod tests {
     use tokio::time;
     use tracing::info;
 
-    use crate::defaults::{DEFAULT_RELAY_STUN_PORT, EU_RELAY_HOSTNAME};
+    use crate::defaults::{DEFAULT_STUN_PORT, EU_RELAY_HOSTNAME};
     use crate::ping::Pinger;
+    use crate::relay::iroh_relay;
     use crate::relay::RelayNode;
 
     use super::*;
@@ -794,8 +795,14 @@ mod tests {
     #[tokio::test]
     async fn test_basic() -> Result<()> {
         let _guard = iroh_test::logging::setup();
-        let (stun_addr, stun_stats, _cleanup_guard) =
-            stun::test::serve("0.0.0.0".parse().unwrap()).await?;
+        let stun_server = iroh_relay::Server::new(iroh_relay::ServerConfig {
+            relay: None,
+            stun: iroh_relay::StunConfig {
+                bind_addr: (Ipv4Addr::LOCALHOST, DEFAULT_STUN_PORT).into(),
+            },
+            metrics_addr: None,
+        });
+        let stun_addr = stun_server.stun_addr();
 
         let resolver = crate::dns::default_resolver();
         let mut client = Client::new(None, resolver.clone())?;
@@ -842,7 +849,7 @@ mod tests {
         let dm = RelayMap::from_nodes([RelayNode {
             url: url.clone(),
             stun_only: true,
-            stun_port: DEFAULT_RELAY_STUN_PORT,
+            stun_port: DEFAULT_STUN_PORT,
         }])
         .expect("hardcoded");
 

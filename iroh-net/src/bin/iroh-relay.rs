@@ -19,7 +19,10 @@ use http::{response::Builder as ResponseBuilder, HeaderMap};
 use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode};
 use iroh_metrics::inc;
-use iroh_net::defaults::{DEFAULT_RELAY_STUN_PORT, NA_RELAY_HOSTNAME};
+use iroh_net::defaults::{
+    DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT,
+    NA_RELAY_HOSTNAME,
+};
 use iroh_net::key::SecretKey;
 use iroh_net::relay::http::{
     ServerBuilder as RelayServerBuilder, TlsAcceptor, TlsConfig as RelayTlsConfig,
@@ -41,15 +44,6 @@ use metrics::StunMetrics;
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
 type HyperResult<T> = std::result::Result<T, HyperError>;
-
-/// The default port for `http_bind_addr`.
-const DEFAULT_HTTP_PORT: u16 = 80;
-
-/// The default port for `https_bind_addr`.
-const DEFAULT_HTTPS_PORT: u16 = 443;
-
-/// The default port for the metrics server.
-const DEFAULT_METRICS_PORT: u16 = 9090;
 
 /// The default `http_bind_port` when using `--dev`.
 const DEV_MODE_HTTP_PORT: u16 = 3340;
@@ -259,7 +253,7 @@ impl Config {
 
     fn stun_bind_addr(&self) -> SocketAddr {
         self.stun_bind_addr
-            .unwrap_or_else(|| SocketAddr::new(self.http_bind_addr().ip(), DEFAULT_RELAY_STUN_PORT))
+            .unwrap_or_else(|| SocketAddr::new(self.http_bind_addr().ip(), DEFAULT_STUN_PORT))
     }
 
     fn metrics_bind_addr(&self) -> SocketAddr {

@@ -27,7 +27,7 @@ use iroh::{
     },
     docs::{Capability, DocTicket},
     net::{
-        defaults::DEFAULT_RELAY_STUN_PORT,
+        defaults::DEFAULT_STUN_PORT,
         discovery::{
             dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery,
         },
@@ -631,7 +631,7 @@ async fn passive_side(gui: Gui, connection: Connection) -> anyhow::Result<()> {
 }
 
 fn configure_local_relay_map() -> RelayMap {
-    let stun_port = DEFAULT_RELAY_STUN_PORT;
+    let stun_port = DEFAULT_STUN_PORT;
     let url = "http://localhost:3340".parse().unwrap();
     RelayMap::default_from_node(url, stun_port)
 }
