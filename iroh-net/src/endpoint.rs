@@ -185,7 +185,7 @@ impl Builder {
     /// They also perform various functions related to hole punching, see the [crate docs]
     /// for more details.
     ///
-    /// By default the number 0 relay servers are used.
+    /// By default the Number0 relay servers are used.
     ///
     /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
     /// configured relay node.  If an invalid [`RelayMap`] is provided [`bind`]
@@ -619,21 +619,24 @@ impl Endpoint {
         self.msock.watch_home_relay()
     }
 
-    /// Returns the local IP endpoints in use as a stream.
+    /// Returns the direct addresses of this [`Endpoint`].
     ///
-    /// The [`Endpoint`] continuously monitors the local IP endpoints, the IP addresses it
-    /// can be reached on by other nodes, for changes.  Whenever changes are detected this
-    /// stream will yield a new list of endpoints.
+    /// The direct addresses of the [`Endpoint`] are those that could be used by other
+    /// iroh-net nodes to establish direct connectivity, depending on the network
+    /// situation. The yielded lists of direct addresses contain both the locally-bound
+    /// addresses and the [`Endpoint`]'s publicly reachable addresses discovered through
+    /// mechanisms such as [STUN] and [port mapping].  Hence usually only a subset of these
+    /// will be applicable to a certain remote iroh-net node.
     ///
-    /// Upon the first creation, the first local IP endpoint discovery might still be
-    /// underway, in this case the first item of the stream will not be immediately
-    /// available.  Once this first set of local IP endpoints are discovered the stream will
-    /// always return the first set of IP endpoints immediately, which are the most recently
-    /// discovered IP endpoints.
+    /// The [`Endpoint`] continuously monitors the direct addresses for changes as its own
+    /// location in the network might change.  Whenever changes are detected this stream
+    /// will yield a new list of direct addresses.
     ///
-    /// The list of IP endpoints yielded contains both the locally-bound addresses and the
-    /// [`Endpoint`]'s publicly-reachable addresses, if they could be discovered through
-    /// STUN or port mapping.
+    /// When issuing the first call to this method the first direct address discovery might
+    /// still be underway, in this case the first item of the returned stream will not be
+    /// immediately available.  Once this first set of local IP endpoints are discovered the
+    /// stream will always return the first set of IP endpoints immediately, which are the
+    /// most recently discovered IP endpoints.
     ///
     /// # Examples
     ///
