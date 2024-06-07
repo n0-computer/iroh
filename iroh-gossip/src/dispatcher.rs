@@ -119,8 +119,7 @@ enum TopicState {
         /// Set of bootstrap nodes we are using.
         bootstrap: BTreeSet<NodeId>,
         /// The task that is driving the join future.
-        #[allow(dead_code)]
-        join_task: AbortingJoinHandle<()>,
+        _join_task: AbortingJoinHandle<()>,
     },
     /// The topic is currently live.
     /// New subscriptions can be immediately added.
@@ -190,13 +189,13 @@ impl GossipDispatcher {
                         return;
                     }
                     let bootstrap = peers.clone();
-                    let join_task = spawn_owned(self.clone().join_task(topic, bootstrap));
+                    let _join_task = spawn_owned(self.clone().join_task(topic, bootstrap));
                     inner.current_subscriptions.insert(
                         topic,
                         TopicState::Joining {
                             waiting,
                             bootstrap: peers,
-                            join_task,
+                            _join_task,
                         },
                     );
                 }
@@ -322,11 +321,8 @@ impl GossipDispatcher {
     ///
     /// Basically just flattens the two stages of joining into one.
     async fn join(gossip: Gossip, topic: TopicId, bootstrap: Vec<NodeId>) -> anyhow::Result<()> {
-        tracing::error!("Joining gossip topic {:?}", topic);
         let join = gossip.join(topic, bootstrap).await?;
-        tracing::error!("Waiting for joint to gossip topic {:?} to succeed", topic);
         join.await?;
-        tracing::error!("Joined gossip topic {:?}", topic);
         Ok(())
     }
 
@@ -377,12 +373,12 @@ impl GossipDispatcher {
                 // There is no existing subscription, so we need to start a new one.
                 let waiting = vec![(updates, send)];
                 let this = self.clone();
-                let join_task =
+                let _join_task =
                     spawn_owned(this.clone().join_task(topic, options.bootstrap.clone()));
                 entry.insert(TopicState::Joining {
                     waiting,
                     bootstrap: options.bootstrap,
-                    join_task,
+                    _join_task,
                 });
             }
             Entry::Occupied(mut entry) => {
