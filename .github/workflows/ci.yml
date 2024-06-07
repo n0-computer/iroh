@@ -197,6 +197,8 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
     - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.4
 

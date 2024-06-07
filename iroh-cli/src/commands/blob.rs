@@ -467,7 +467,7 @@ impl ListCommands {
                 }
             }
             Self::Collections => {
-                let mut response = iroh.blobs.list_collections().await?;
+                let mut response = iroh.blobs.list_collections()?;
                 while let Some(item) = response.next().await {
                     let CollectionInfo {
                         tag,

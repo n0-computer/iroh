@@ -973,6 +973,44 @@ async fn sync_big() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+#[cfg(feature = "test-utils")]
+async fn test_list_docs_stream() -> Result<()> {
+    let node = Node::memory()
+        .node_discovery(iroh::node::DiscoveryConfig::None)
+        .relay_mode(iroh::net::relay::RelayMode::Disabled)
+        .spawn()
+        .await?;
+    let count = 200;
+
+    // create docs
+    for _i in 0..count {
+        let doc = node.docs.create().await?;
+        doc.close().await?;
+    }
+
+    // create doc stream
+    let mut stream = node.docs.list().await?;
+
+    // process each doc and call into the docs actor.
+    // this makes sure that we don't deadlock the docs actor.
+    let mut i = 0;
+    let fut = async {
+        while let Some((id, _)) = stream.try_next().await.unwrap() {
+            let _doc = node.docs.open(id).await.unwrap().unwrap();
+            i += 1;
+        }
+    };
+
+    tokio::time::timeout(Duration::from_secs(2), fut)
+        .await
+        .expect("not to timeout");
+
+    assert_eq!(i, count);
+
+    Ok(())
+}
+
 /// Get all entries of a document.
 async fn get_all(doc: &MemDoc) -> anyhow::Result<Vec<Entry>> {
     let entries = doc.get_many(Query::all()).await?;

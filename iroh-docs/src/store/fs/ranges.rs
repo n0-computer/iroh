@@ -1,6 +1,6 @@
 //! Ranges and helpers for working with [`redb`] tables
 
-use redb::{Key, Range, ReadableTable, Table, Value};
+use redb::{Key, Range, ReadOnlyTable, ReadableTable, Value};
 
 use crate::{store::SortDirection, SignedEntry};
 
@@ -74,14 +74,9 @@ impl<'a, K: Key + 'static, V: Value + 'static> RangeExt<K, V> for Range<'a, K, V
 #[debug("RecordsRange")]
 pub struct RecordsRange<'a>(Range<'a, RecordsId<'static>, RecordsValue<'static>>);
 
-impl<'a> RecordsRange<'a> {
-    pub(super) fn all(
-        records: &'a impl ReadableTable<RecordsId<'static>, RecordsValue<'static>>,
-    ) -> anyhow::Result<Self> {
-        let range = records.range::<RecordsId<'static>>(..)?;
-        Ok(Self(range))
-    }
+// pub type RecordsRange<'a> = Range<'a, RecordsId<'static>, RecordsValue<'static>>;
 
+impl<'a> RecordsRange<'a> {
     pub(super) fn with_bounds(
         records: &'a impl ReadableTable<RecordsId<'static>, RecordsValue<'static>>,
         bounds: RecordsBounds,
@@ -90,6 +85,7 @@ impl<'a> RecordsRange<'a> {
         Ok(Self(range))
     }
 
+    //
     /// Get the next item in the range.
     ///
     /// Omit items for which the `matcher` function returns false.
@@ -103,6 +99,22 @@ impl<'a> RecordsRange<'a> {
     }
 }
 
+impl RecordsRange<'static> {
+    pub(super) fn all_static(
+        records: &ReadOnlyTable<RecordsId<'static>, RecordsValue<'static>>,
+    ) -> anyhow::Result<Self> {
+        let range = records.range::<RecordsId<'static>>(..)?;
+        Ok(Self(range))
+    }
+    pub(super) fn with_bounds_static(
+        records: &ReadOnlyTable<RecordsId<'static>, RecordsValue<'static>>,
+        bounds: RecordsBounds,
+    ) -> anyhow::Result<Self> {
+        let range = records.range(bounds.as_ref())?;
+        Ok(Self(range))
+    }
+}
+
 impl<'a> Iterator for RecordsRange<'a> {
     type Item = anyhow::Result<SignedEntry>;
     fn next(&mut self) -> Option<Self::Item> {
@@ -112,15 +124,15 @@ impl<'a> Iterator for RecordsRange<'a> {
 
 #[derive(derive_more::Debug)]
 #[debug("RecordsByKeyRange")]
-pub struct RecordsByKeyRange<'a> {
-    records_table: &'a Table<'a, RecordsId<'static>, RecordsValue<'static>>,
-    by_key_range: Range<'a, RecordsByKeyId<'static>, ()>,
+pub struct RecordsByKeyRange {
+    records_table: ReadOnlyTable<RecordsId<'static>, RecordsValue<'static>>,
+    by_key_range: Range<'static, RecordsByKeyId<'static>, ()>,
 }
 
-impl<'a> RecordsByKeyRange<'a> {
+impl RecordsByKeyRange {
     pub fn with_bounds(
-        records_by_key_table: &'a impl ReadableTable<RecordsByKeyId<'static>, ()>,
-        records_table: &'a Table<'a, RecordsId<'static>, RecordsValue<'static>>,
+        records_by_key_table: ReadOnlyTable<RecordsByKeyId<'static>, ()>,
+        records_table: ReadOnlyTable<RecordsId<'static>, RecordsValue<'static>>,
         bounds: ByKeyBounds,
     ) -> anyhow::Result<Self> {
         let by_key_range = records_by_key_table.range(bounds.as_ref())?;

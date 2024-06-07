@@ -543,7 +543,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                     match details
                         .outcome
                         .heads_received
-                        .encode(Some(iroh_gossip::net::MAX_MESSAGE_SIZE))
+                        .encode(Some(self.gossip.max_message_size()))
                     {
                         Err(err) => warn!(?err, "Failed to encode author heads for sync report"),
                         Ok(heads) => {
