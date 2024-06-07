@@ -30,11 +30,10 @@ use iroh::{
             BlobInfo, BlobStatus, CollectionInfo, DownloadMode, DownloadOptions,
             IncompleteBlobInfo, WrapOption,
         },
-        Iroh, RpcService,
+        Iroh,
     },
     net::{key::PublicKey, relay::RelayUrl, NodeAddr},
 };
-use quic_rpc::ServiceConnection;
 use tokio::io::AsyncWriteExt;
 
 #[allow(clippy::large_enum_variant)]
@@ -182,10 +181,7 @@ impl std::str::FromStr for TicketOrHash {
 }
 
 impl BlobCommands {
-    pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
-    where
-        C: ServiceConnection<RpcService>,
-    {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Get {
                 ticket,
@@ -447,10 +443,7 @@ pub enum ListCommands {
 }
 
 impl ListCommands {
-    pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
-    where
-        C: ServiceConnection<RpcService>,
-    {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Blobs => {
                 let mut response = iroh.blobs().list().await?;
@@ -507,10 +500,7 @@ pub enum DeleteCommands {
 }
 
 impl DeleteCommands {
-    pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
-    where
-        C: ServiceConnection<RpcService>,
-    {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Blob { hash } => {
                 let response = iroh.blobs().delete_blob(hash).await;
@@ -540,10 +530,7 @@ fn apply_report_level(text: String, level: ReportLevel) -> console::StyledObject
     }
 }
 
-pub async fn consistency_check<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
-where
-    C: ServiceConnection<RpcService>,
-{
+pub async fn consistency_check(iroh: &Iroh, verbose: u8, repair: bool) -> Result<()> {
     let mut response = iroh.blobs().consistency_check(repair).await?;
     let verbosity = get_report_level(verbose);
     let print = |level: ReportLevel, entry: Option<Hash>, message: String| {
@@ -584,10 +571,7 @@ where
     Ok(())
 }
 
-pub async fn validate<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
-where
-    C: ServiceConnection<RpcService>,
-{
+pub async fn validate(iroh: &Iroh, verbose: u8, repair: bool) -> Result<()> {
     let mut state = ValidateProgressState::new();
     let mut response = iroh.blobs().validate(repair).await?;
     let verbosity = get_report_level(verbose);
@@ -807,8 +791,8 @@ pub enum TicketOption {
     Print,
 }
 
-pub async fn add_with_opts<C: ServiceConnection<RpcService>>(
-    client: &iroh::client::Iroh<C>,
+pub async fn add_with_opts(
+    client: &iroh::client::Iroh,
     source: BlobSource,
     opts: BlobAddOptions,
 ) -> Result<()> {
@@ -840,8 +824,8 @@ pub async fn add_with_opts<C: ServiceConnection<RpcService>>(
 }
 
 /// Add data to iroh, either from a path or, if path is `None`, from STDIN.
-pub async fn add<C: ServiceConnection<RpcService>>(
-    client: &iroh::client::Iroh<C>,
+pub async fn add(
+    client: &iroh::client::Iroh,
     source: BlobSourceIroh,
     tag: SetTagOption,
     ticket: TicketOption,

@@ -3,25 +3,21 @@
 use anyhow::Result;
 use futures_lite::{stream::StreamExt, Stream};
 use iroh_docs::{Author, AuthorId};
-use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorDeleteRequest, AuthorExportRequest, AuthorGetDefaultRequest,
-    AuthorImportRequest, AuthorListRequest, AuthorSetDefaultRequest, RpcService,
+    AuthorImportRequest, AuthorListRequest, AuthorSetDefaultRequest,
 };
 
-use super::flatten;
+use super::{flatten, RpcClient};
 
 /// Iroh authors client.
 #[derive(Debug, Clone)]
-pub struct Client<C> {
-    pub(super) rpc: RpcClient<RpcService, C>,
+pub struct Client {
+    pub(super) rpc: RpcClient,
 }
 
-impl<C> Client<C>
-where
-    C: ServiceConnection<RpcService>,
-{
+impl Client {
     /// Create a new document author.
     ///
     /// You likely want to save the returned [`AuthorId`] somewhere so that you can use this author

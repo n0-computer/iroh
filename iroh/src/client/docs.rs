@@ -21,7 +21,7 @@ use iroh_docs::{
 };
 use iroh_net::NodeAddr;
 use portable_atomic::{AtomicBool, Ordering};
-use quic_rpc::{message::RpcMsg, RpcClient, ServiceConnection};
+use quic_rpc::message::RpcMsg;
 use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::{
@@ -35,20 +35,17 @@ use crate::rpc_protocol::{
 #[doc(inline)]
 pub use iroh_docs::engine::{Origin, SyncEvent, SyncReason};
 
-use super::{blobs, flatten};
+use super::{blobs, flatten, RpcClient};
 
 /// Iroh docs client.
 #[derive(Debug, Clone)]
-pub struct Client<C> {
-    pub(super) rpc: RpcClient<RpcService, C>,
+pub struct Client {
+    pub(super) rpc: RpcClient,
 }
 
-impl<C> Client<C>
-where
-    C: ServiceConnection<RpcService>,
-{
+impl Client {
     /// Create a new document.
-    pub async fn create(&self) -> Result<Doc<C>> {
+    pub async fn create(&self) -> Result<Doc> {
         let res = self.rpc.rpc(DocCreateRequest {}).await??;
         let doc = Doc::new(self.rpc.clone(), res.id);
         Ok(doc)
@@ -67,14 +64,14 @@ where
     /// Import a document from a namespace capability.
     ///
     /// This does not start sync automatically. Use [`Doc::start_sync`] to start sync.
-    pub async fn import_namespace(&self, capability: Capability) -> Result<Doc<C>> {
+    pub async fn import_namespace(&self, capability: Capability) -> Result<Doc> {
         let res = self.rpc.rpc(DocImportRequest { capability }).await??;
         let doc = Doc::new(self.rpc.clone(), res.doc_id);
         Ok(doc)
     }
 
     /// Import a document from a ticket and join all peers in the ticket.
-    pub async fn import(&self, ticket: DocTicket) -> Result<Doc<C>> {
+    pub async fn import(&self, ticket: DocTicket) -> Result<Doc> {
         let DocTicket { capability, nodes } = ticket;
         let doc = self.import_namespace(capability).await?;
         doc.start_sync(nodes).await?;
@@ -90,7 +87,7 @@ where
     pub async fn import_and_subscribe(
         &self,
         ticket: DocTicket,
-    ) -> Result<(Doc<C>, impl Stream<Item = anyhow::Result<LiveEvent>>)> {
+    ) -> Result<(Doc, impl Stream<Item = anyhow::Result<LiveEvent>>)> {
         let DocTicket { capability, nodes } = ticket;
         let res = self.rpc.rpc(DocImportRequest { capability }).await??;
         let doc = Doc::new(self.rpc.clone(), res.doc_id);
@@ -106,7 +103,7 @@ where
     }
 
     /// Get a [`Doc`] client for a single document. Return None if the document cannot be found.
-    pub async fn open(&self, id: NamespaceId) -> Result<Option<Doc<C>>> {
+    pub async fn open(&self, id: NamespaceId) -> Result<Option<Doc>> {
         self.rpc.rpc(DocOpenRequest { doc_id: id }).await??;
         let doc = Doc::new(self.rpc.clone(), id);
         Ok(Some(doc))
@@ -115,28 +112,25 @@ where
 
 /// Document handle
 #[derive(Debug, Clone)]
-pub struct Doc<C: ServiceConnection<RpcService>>(Arc<DocInner<C>>);
+pub struct Doc(Arc<DocInner>);
 
-impl<C: ServiceConnection<RpcService>> PartialEq for Doc<C> {
+impl PartialEq for Doc {
     fn eq(&self, other: &Self) -> bool {
         self.0.id == other.0.id
     }
 }
 
-impl<C: ServiceConnection<RpcService>> Eq for Doc<C> {}
+impl Eq for Doc {}
 
 #[derive(Debug)]
-struct DocInner<C: ServiceConnection<RpcService>> {
+struct DocInner {
     id: NamespaceId,
-    rpc: RpcClient<RpcService, C>,
+    rpc: RpcClient,
     closed: AtomicBool,
     rt: tokio::runtime::Handle,
 }
 
-impl<C> Drop for DocInner<C>
-where
-    C: ServiceConnection<RpcService>,
-{
+impl Drop for DocInner {
     fn drop(&mut self) {
         let doc_id = self.id;
         let rpc = self.rpc.clone();
@@ -146,11 +140,8 @@ where
     }
 }
 
-impl<C> Doc<C>
-where
-    C: ServiceConnection<RpcService>,
-{
-    fn new(rpc: RpcClient<RpcService, C>, id: NamespaceId) -> Self {
+impl Doc {
+    fn new(rpc: RpcClient, id: NamespaceId) -> Self {
         Self(Arc::new(DocInner {
             rpc,
             id,
@@ -415,8 +406,8 @@ where
     }
 }
 
-impl<'a, C: ServiceConnection<RpcService>> From<&'a Doc<C>> for &'a RpcClient<RpcService, C> {
-    fn from(doc: &'a Doc<C>) -> &'a RpcClient<RpcService, C> {
+impl<'a> From<&'a Doc> for &'a RpcClient {
+    fn from(doc: &'a Doc) -> &'a RpcClient {
         &doc.0.rpc
     }
 }
@@ -471,26 +462,14 @@ impl Entry {
     /// Read the content of an [`Entry`] as a streaming [`blobs::Reader`].
     ///
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
-    pub async fn content_reader<C>(
-        &self,
-        client: impl Into<&RpcClient<RpcService, C>>,
-    ) -> Result<blobs::Reader>
-    where
-        C: ServiceConnection<RpcService>,
-    {
+    pub async fn content_reader(&self, client: impl Into<&RpcClient>) -> Result<blobs::Reader> {
         blobs::Reader::from_rpc_read(client.into(), self.content_hash()).await
     }
 
     /// Read all content of an [`Entry`] into a buffer.
     ///
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
-    pub async fn content_bytes<C>(
-        &self,
-        client: impl Into<&RpcClient<RpcService, C>>,
-    ) -> Result<Bytes>
-    where
-        C: ServiceConnection<RpcService>,
-    {
+    pub async fn content_bytes(&self, client: impl Into<&RpcClient>) -> Result<Bytes> {
         blobs::Reader::from_rpc_read(client.into(), self.content_hash())
             .await?
             .read_to_bytes()

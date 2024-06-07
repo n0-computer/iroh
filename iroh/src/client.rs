@@ -1,7 +1,7 @@
 //! Client to an Iroh node.
 
 use futures_lite::{Stream, StreamExt};
-use quic_rpc::{RpcClient, ServiceConnection};
+use quic_rpc::transport::boxed::Connection as BoxedConnection;
 
 #[doc(inline)]
 pub use crate::rpc_protocol::RpcService;
@@ -20,33 +20,32 @@ pub mod blobs;
 pub mod docs;
 pub mod tags;
 
+type RpcClient = quic_rpc::RpcClient<RpcService, BoxedConnection<RpcService>>;
+
 mod node;
 
 /// Iroh client.
 #[derive(Debug, Clone)]
-pub struct Iroh<C> {
+pub struct Iroh {
     /// Client for blobs operations.
     #[deprecated(note = "Use `blobs` method instead", since = "0.18.0")]
-    pub blobs: blobs::Client<C>,
+    pub blobs: blobs::Client,
     /// Client for docs operations.
     #[deprecated(note = "Use `docs` method instead", since = "0.18.0")]
-    pub docs: docs::Client<C>,
+    pub docs: docs::Client,
     /// Client for author operations.
     #[deprecated(note = "Use `authors` method instead", since = "0.18.0")]
-    pub authors: authors::Client<C>,
+    pub authors: authors::Client,
     /// Client for tags operations.
     #[deprecated(note = "Use `tags` method instead", since = "0.18.0")]
-    pub tags: tags::Client<C>,
+    pub tags: tags::Client,
 
-    rpc: RpcClient<RpcService, C>,
+    rpc: RpcClient,
 }
 
-impl<C> Iroh<C>
-where
-    C: ServiceConnection<RpcService>,
-{
+impl Iroh {
     /// Create a new high-level client to a Iroh node from the low-level RPC client.
-    pub fn new(rpc: RpcClient<RpcService, C>) -> Self {
+    pub fn new(rpc: RpcClient) -> Self {
         #[allow(deprecated)]
         Self {
             blobs: blobs::Client { rpc: rpc.clone() },
@@ -58,25 +57,25 @@ where
     }
 
     /// Client for blobs operations.
-    pub fn blobs(&self) -> &blobs::Client<C> {
+    pub fn blobs(&self) -> &blobs::Client {
         #[allow(deprecated)]
         &self.blobs
     }
 
     /// Client for docs operations.
-    pub fn docs(&self) -> &docs::Client<C> {
+    pub fn docs(&self) -> &docs::Client {
         #[allow(deprecated)]
         &self.docs
     }
 
     /// Client for author operations.
-    pub fn authors(&self) -> &authors::Client<C> {
+    pub fn authors(&self) -> &authors::Client {
         #[allow(deprecated)]
         &self.authors
     }
 
     /// Client for tags operations.
-    pub fn tags(&self) -> &tags::Client<C> {
+    pub fn tags(&self) -> &tags::Client {
         #[allow(deprecated)]
         &self.tags
     }

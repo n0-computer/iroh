@@ -478,7 +478,8 @@ where
         } else {
             None
         };
-        let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
+        let (internal_rpc, controller) = quic_rpc::transport::flume::connection::<RpcService>(1);
+        let controller = quic_rpc::transport::boxed::Connection::new(controller);
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
         let inner = Arc::new(NodeInner {

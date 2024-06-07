@@ -16,7 +16,6 @@ use iroh_blobs::store::Store as BaoStore;
 use iroh_docs::engine::Engine;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{endpoint::LocalEndpointsStream, key::SecretKey, Endpoint};
-use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -55,7 +54,7 @@ struct NodeInner<D> {
     endpoint: Endpoint,
     secret_key: SecretKey,
     cancel_token: CancellationToken,
-    controller: FlumeConnection<RpcService>,
+    controller: quic_rpc::transport::boxed::Connection<RpcService>,
     #[allow(dead_code)]
     gc_task: Option<AbortingJoinHandle<()>>,
     #[debug("rt")]

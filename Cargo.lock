@@ -4048,9 +4048,8 @@ dependencies = [
 [[package]]
 name = "quic-rpc"
 version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0d69b05325e19956f123fce85ebc4d99226552a0bb24bba4c886106297e708b"
 dependencies = [
+ "anyhow",
  "bincode",
  "derive_more",
  "educe",
