@@ -193,7 +193,12 @@ pub struct DownloadRequest {
 impl DownloadRequest {
     /// Create a new download request.
     ///
-    /// The blob will be auto-tagged after the download to prevent it from being garbage collected.
+    /// It is the responsibility of the caller to ensure that the data is tagged either with a
+    /// temp tag or with a persistent tag to make sure the data is not garbage collected during
+    /// the download.
+    ///
+    /// If this is not done, there download will proceed as normal, but there is no guarantee
+    /// that the data is still available when the download is complete.
     pub fn new(
         resource: impl Into<DownloadKind>,
         nodes: impl IntoIterator<Item = impl Into<NodeAddr>>,
