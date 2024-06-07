@@ -625,7 +625,7 @@ impl Endpoint {
     /// iroh-net nodes to establish direct connectivity, depending on the network
     /// situation. The yielded lists of direct addresses contain both the locally-bound
     /// addresses and the [`Endpoint`]'s publicly reachable addresses discovered through
-    /// mechanisms such as [STUN] and [port mapping].  Hence usually only a subset of these
+    /// mechanisms such as [STUN] and port mapping.  Hence usually only a subset of these
     /// will be applicable to a certain remote iroh-net node.
     ///
     /// The [`Endpoint`] continuously monitors the direct addresses for changes as its own
@@ -651,6 +651,8 @@ impl Endpoint {
     /// let _endpoints = mep.local_endpoints().next().await;
     /// # });
     /// ```
+    ///
+    /// [STUN]: https://en.wikipedia.org/wiki/STUN
     pub fn local_endpoints(&self) -> LocalEndpointsStream {
         self.msock.local_endpoints()
     }
