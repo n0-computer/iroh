@@ -17,7 +17,6 @@ use iroh_blobs::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, 
 use iroh_blobs::util::progress::ProgressSender;
 use iroh_blobs::BlobFormat;
 use iroh_blobs::{
-    hashseq::parse_hash_seq,
     provider::AddProgress,
     store::{Store as BaoStore, ValidateProgress},
     util::progress::FlumeProgressSender,
@@ -33,16 +32,13 @@ use quic_rpc::{
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 
-use crate::client::blobs::{
-    BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption,
-};
+use crate::client::blobs::{BlobInfo, DownloadMode, IncompleteBlobInfo, WrapOption};
 use crate::client::tags::TagInfo;
 use crate::client::NodeStatus;
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
     BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest,
-    BlobDownloadResponse, BlobExportRequest, BlobExportResponse, BlobGetCollectionRequest,
-    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListIncompleteRequest,
+    BlobDownloadResponse, BlobExportRequest, BlobExportResponse, BlobListIncompleteRequest,
     BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
     CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
     DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocSetHashRequest,
@@ -53,6 +49,8 @@ use crate::rpc_protocol::{
 };
 
 use super::NodeInner;
+
+mod docs;
 
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 /// Chunk size for getting blobs over RPC
@@ -93,12 +91,7 @@ impl<D: BaoStore> Handler<D> {
                     chan.server_streaming(msg, handler, Self::blob_list_incomplete)
                         .await
                 }
-                BlobListCollections(msg) => {
-                    chan.server_streaming(msg, handler, Self::blob_list_collections)
-                        .await
-                }
                 CreateCollection(msg) => chan.rpc(msg, handler, Self::create_collection).await,
-                BlobGetCollection(msg) => chan.rpc(msg, handler, Self::blob_get_collection).await,
                 ListTags(msg) => {
                     chan.server_streaming(msg, handler, Self::blob_list_tags)
                         .await
@@ -346,39 +339,6 @@ impl<D: BaoStore> Handler<D> {
         Ok(())
     }
 
-    async fn blob_list_collections_impl(
-        self,
-        co: &Co<RpcResult<CollectionInfo>>,
-    ) -> anyhow::Result<()> {
-        let db = self.inner.db.clone();
-        let local = self.inner.rt.clone();
-        let tags = db.tags().await.unwrap();
-        for item in tags {
-            let (name, HashAndFormat { hash, format }) = item?;
-            if !format.is_hash_seq() {
-                continue;
-            }
-            let Some(entry) = db.get(&hash).await? else {
-                continue;
-            };
-            let count = local
-                .spawn_pinned(|| async move {
-                    let reader = entry.data_reader().await?;
-                    let (_collection, count) = parse_hash_seq(reader).await?;
-                    anyhow::Ok(count)
-                })
-                .await??;
-            co.yield_(Ok(CollectionInfo {
-                tag: name,
-                hash,
-                total_blobs_count: Some(count),
-                total_blobs_size: None,
-            }))
-            .await;
-        }
-        Ok(())
-    }
-
     fn blob_list(
         self,
         _msg: BlobListRequest,
@@ -401,17 +361,6 @@ impl<D: BaoStore> Handler<D> {
         })
     }
 
-    fn blob_list_collections(
-        self,
-        _msg: BlobListCollectionsRequest,
-    ) -> impl Stream<Item = RpcResult<CollectionInfo>> + Send + 'static {
-        Gen::new(move |co| async move {
-            if let Err(e) = self.blob_list_collections_impl(&co).await {
-                co.yield_(Err(e.into())).await;
-            }
-        })
-    }
-
     async fn blob_delete_tag(self, msg: DeleteTagRequest) -> RpcResult<()> {
         self.inner.db.set_tag(msg.name, None).await?;
         Ok(())
@@ -422,15 +371,16 @@ impl<D: BaoStore> Handler<D> {
         Ok(())
     }
 
-    fn blob_list_tags(self, _msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
+    fn blob_list_tags(self, msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
         tracing::info!("blob_list_tags");
         Gen::new(|co| async move {
             let tags = self.inner.db.tags().await.unwrap();
             #[allow(clippy::manual_flatten)]
             for item in tags {
                 if let Ok((name, HashAndFormat { hash, format })) = item {
-                    tracing::info!("{:?} {} {:?}", name, hash, format);
-                    co.yield_(TagInfo { name, hash, format }).await;
+                    if (format.is_raw() && msg.raw) || (format.is_hash_seq() && msg.hash_seq) {
+                        co.yield_(TagInfo { name, hash, format }).await;
+                    }
                 }
             }
         })
@@ -1041,21 +991,6 @@ impl<D: BaoStore> Handler<D> {
         }
 
         Ok(CreateCollectionResponse { hash, tag })
-    }
-
-    async fn blob_get_collection(
-        self,
-        req: BlobGetCollectionRequest,
-    ) -> RpcResult<BlobGetCollectionResponse> {
-        let hash = req.hash;
-        let db = self.inner.db.clone();
-        let collection = self
-            .rt()
-            .spawn_pinned(move || async move { Collection::load(&db, &hash).await })
-            .await
-            .map_err(|_| anyhow!("join failed"))??;
-
-        Ok(BlobGetCollectionResponse { collection })
     }
 }
 

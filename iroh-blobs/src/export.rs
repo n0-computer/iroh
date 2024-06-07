@@ -46,7 +46,7 @@ pub async fn export_collection<D: BaoStore>(
     progress: impl ProgressSender<Msg = ExportProgress> + IdGenerator,
 ) -> anyhow::Result<()> {
     tokio::fs::create_dir_all(&outpath).await?;
-    let collection = Collection::load(db, &hash).await?;
+    let collection = Collection::load_db(db, &hash).await?;
     for (name, hash) in collection.into_iter() {
         #[allow(clippy::needless_borrow)]
         let path = outpath.join(pathbuf_from_name(&name));
