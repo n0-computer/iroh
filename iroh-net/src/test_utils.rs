@@ -53,6 +53,7 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, crate::relay::iro
         stun: Some(StunConfig {
             bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
         }),
+        #[cfg(feature = "metrics")]
         metrics_addr: None,
     };
     let server = crate::relay::iroh_relay::Server::spawn(config)
