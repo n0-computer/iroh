@@ -55,6 +55,9 @@ fn body_empty() -> BytesBody {
 }
 
 /// Configuration for the full Relay & STUN server.
+///
+/// Be aware the generic parameters are for when using the Let's Encrypt TLS configuration.
+/// If not used dummy ones need to be provided, e.g. `ServerConfig::<(), ()>::default()`.
 #[derive(Debug, Default)]
 pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// Configuration for the DERP server, disabled if `None`.
@@ -180,6 +183,7 @@ impl Server {
 
         #[cfg(feature = "metrics")]
         if let Some(addr) = config.metrics_addr {
+            debug!("Starting metrics server");
             use iroh_metrics::core::Metric;
 
             iroh_metrics::core::Core::init(|reg, metrics| {
@@ -194,22 +198,27 @@ impl Server {
 
         // Start the STUN server.
         let stun_addr = match config.stun {
-            Some(stun) => match UdpSocket::bind(stun.bind_addr).await {
-                Ok(sock) => {
-                    let addr = sock.local_addr()?;
-                    tasks.spawn(
-                        server_stun_listener(sock).instrument(info_span!("stun-server", %addr)),
-                    );
-                    Some(addr)
+            Some(stun) => {
+                debug!("Starting STUN server");
+                match UdpSocket::bind(stun.bind_addr).await {
+                    Ok(sock) => {
+                        let addr = sock.local_addr()?;
+                        info!("STUN server bound on {addr}");
+                        tasks.spawn(
+                            server_stun_listener(sock).instrument(info_span!("stun-server", %addr)),
+                        );
+                        Some(addr)
+                    }
+                    Err(err) => bail!("failed to bind STUN listener: {err:#?}"),
                 }
-                Err(err) => bail!("failed to bind STUN listener: {err:#?}"),
-            },
+            }
             None => None,
         };
 
         // Start the Relay server.
         let (relay_server, http_addr) = match config.relay {
             Some(relay_config) => {
+                debug!("Starting Relay server");
                 let mut headers = HeaderMap::new();
                 for (name, value) in TLS_HEADERS.iter() {
                     headers.insert(*name, value.parse()?);
@@ -370,13 +379,20 @@ async fn relay_supervisor(
     mut tasks: JoinSet<Result<()>>,
     mut relay_http_server: Option<RelayHttpServerGuard>,
 ) -> Result<()> {
-    let res = tokio::select! {
-        biased;
-        Some(ret) = tasks.join_next() => ret,
-        ret = relay_http_server.as_mut().expect("protected by if branch").0.task_handle(),
-            if relay_http_server.is_some()
-            => ret.map(|res| Ok(res)),
-        else => Ok(Err(anyhow!("Empty JoinSet"))),
+    let res = match (relay_http_server.as_mut(), tasks.len()) {
+        (None, _) => tasks
+            .join_next()
+            .await
+            .unwrap_or_else(|| Ok(Err(anyhow!("Nothing to supervise")))),
+        (Some(relay), 0) => relay.0.task_handle().await.and_then(|r| Ok(anyhow::Ok(r))),
+        (Some(relay), _) => {
+            tokio::select! {
+                biased;
+                Some(ret) = tasks.join_next() => ret,
+                ret = relay.0.task_handle() => ret.and_then(|r| Ok(anyhow::Ok(r))),
+                else => Ok(Err(anyhow!("Empty JoinSet (unreachable)"))),
+            }
+        }
     };
     let ret = match res {
         Ok(Ok(())) => {
@@ -406,141 +422,11 @@ async fn relay_supervisor(
     ret
 }
 
-// /// Supervisor for a set of fallible tasks.
-// ///
-// /// As soon as one of the tasks fails, the supervisor will exit with a failure.  Thus
-// /// dropping the [`JoinSet`] and aborting all remaining tasks.
-// async fn supervisor(mut tasks: JoinSet<Result<()>>) -> Result<()> {
-//     while let Some(res) = tasks.join_next().await {
-//         match res {
-//             Ok(_) => continue,
-//             Err(err) => bail!("Task failed: {err:#}"),
-//         }
-//     }
-//     Ok(())
-// }
-
-// /// An actor which supervises other tasks, with no restarting and one-for-all strategy.
-// ///
-// /// The supervisor itself does no restarting of tasks.  It only terminates all other tasks
-// /// when one fails.  It is essentially a one-for-all supervisor strategy with a max-restarts
-// /// count of 0.
-// #[derive(Debug)]
-// struct TaskSupervisor {
-//     addr_tx: mpsc::Sender<SupervisorMessage>,
-//     addr_rx: mpsc::Receiver<SupervisorMessage>,
-//     tasks: FuturesUnordered<JoinHandle<Result<()>>>,
-// }
-
-// impl TaskSupervisor {
-//     fn new() -> Self {
-//         let (addr_tx, addr_rx) = mpsc::channel(16);
-//         Self {
-//             addr_tx,
-//             addr_rx,
-//             tasks: FuturesUnordered::new(),
-//         }
-//     }
-
-//     async fn run(&mut self) {
-//         // Note this can never fail!
-//         loop {
-//             tokio::select! {
-//                 biased;
-//                 res = self.addr_rx.recv() => {
-//                     match res {
-//                         Some(msg) => self.handle_msg(msg),
-//                         None => {
-//                             error!("All senders closed, impossible");
-//                             break;
-//                         }
-//                     }
-//                 }
-//                 item = self.tasks.next() => {
-//                     match item {
-//                         Some(res) => {
-//                             self.handle_task_finished(res);
-//                             if self.tasks.is_terminated() {
-//                                 break;
-//                             }
-//                         }
-//                         None => break,
-//                     }
-//                 }
-//             }
-//         }
-//         debug!("Supervisor finished");
-//     }
-
-//     fn handle_msg(&mut self, msg: SupervisorMessage) {
-//         match msg {
-//             SupervisorMessage::AddTask(task) => {
-//                 self.tasks.push(task);
-//             }
-//             SupervisorMessage::Abort => {
-//                 for task in self.tasks.iter() {
-//                     task.abort();
-//                 }
-//             }
-//         }
-//     }
-
-//     fn handle_task_finished(&mut self, res: Result<Result<()>, JoinError>) {
-//         match res {
-//             Ok(Ok(())) => info!("Supervised task gracefully finished, aborting others"),
-//             Ok(Err(err)) => error!("Supervised task failed, aborting others.  err: {err}"),
-//             Err(err) => {
-//                 if err.is_cancelled() {
-//                     info!("Supervised task cancelled, aborting others");
-//                 }
-//                 if err.is_panic() {
-//                     // TODO: We just swallow the panic.  Unfortunately we can only resume
-//                     // it, which is not (yet?) what we want?  Or maybe it is.
-//                     error!("Supervised task paniced, aborting others");
-//                 }
-//             }
-//         }
-//         for task in self.tasks.iter() {
-//             task.abort();
-//         }
-//     }
-
-//     fn addr(&self) -> SupervisorAddr {
-//         SupervisorAddr {
-//             tx: self.addr_tx.clone(),
-//         }
-//     }
-// }
-
-// #[derive(Debug)]
-// enum SupervisorMessage {
-//     AddTask(JoinHandle<Result<()>>),
-//     Abort,
-// }
-
-// #[derive(Debug)]
-// struct SupervisorAddr {
-//     tx: mpsc::Sender<SupervisorMessage>,
-// }
-
-// impl SupervisorAddr {
-//     fn add_task(
-//         &self,
-//         task: JoinHandle<Result<()>>,
-//     ) -> Result<(), mpsc::error::TrySendError<SupervisorMessage>> {
-//         self.tx.try_send(SupervisorMessage::AddTask(task))
-//     }
-
-//     fn shutdown(&self) -> Result<(), mpsc::error::TrySendError<SupervisorMessage>> {
-//         self.tx.try_send(SupervisorMessage::Abort)
-//     }
-// }
-
 /// Runs a STUN server.
 ///
 /// When the future is dropped, the server stops.
 async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
-    info!("running STUN server");
+    info!(addr = ?sock.local_addr().ok(), "running STUN server");
     // TODO: re-write this as structured-concurrency and returning errors
 
     // let mut buffer = vec![0u8; 64 << 10];
@@ -826,5 +712,217 @@ mod metrics {
         fn name() -> &'static str {
             "stun"
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::Ipv4Addr;
+    use std::time::Duration;
+
+    use bytes::Bytes;
+    use iroh_base::node_addr::RelayUrl;
+
+    use crate::relay::http::ClientBuilder;
+
+    use self::relay::ReceivedMessage;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_no_services() {
+        let _guard = iroh_test::logging::setup();
+        let mut server = Server::spawn(ServerConfig::<(), ()>::default())
+            .await
+            .unwrap();
+        let res = tokio::time::timeout(Duration::from_secs(5), server.task_handle())
+            .await
+            .expect("timeout, server not finished")
+            .expect("server task JoinError");
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_conflicting_bind() {
+        let _guard = iroh_test::logging::setup();
+        let mut server = Server::spawn(ServerConfig::<(), ()> {
+            relay: Some(RelayConfig {
+                secret_key: SecretKey::generate(),
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 1234).into(),
+                tls: None,
+                limits: Default::default(),
+            }),
+            stun: None,
+            metrics_addr: Some((Ipv4Addr::LOCALHOST, 1234).into()),
+        })
+        .await
+        .unwrap();
+        let res = tokio::time::timeout(Duration::from_secs(5), server.task_handle())
+            .await
+            .expect("timeout, server not finished")
+            .expect("server task JoinError");
+        assert!(res.is_err()); // AddrInUse
+    }
+
+    #[tokio::test]
+    async fn test_root_handler() {
+        let _guard = iroh_test::logging::setup();
+        let server = Server::spawn(ServerConfig::<(), ()> {
+            relay: Some(RelayConfig {
+                secret_key: SecretKey::generate(),
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                tls: None,
+                limits: Default::default(),
+            }),
+            stun: None,
+            metrics_addr: None,
+        })
+        .await
+        .unwrap();
+        let url = format!("http://{}", server.http_addr().unwrap());
+
+        let response = reqwest::get(&url).await.unwrap();
+        assert_eq!(response.status(), 200);
+        let body = response.text().await.unwrap();
+        assert!(body.contains("iroh.computer"));
+    }
+
+    #[tokio::test]
+    async fn test_captive_portal_service() {
+        let _guard = iroh_test::logging::setup();
+        let server = Server::spawn(ServerConfig::<(), ()> {
+            relay: Some(RelayConfig {
+                secret_key: SecretKey::generate(),
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                tls: None,
+                limits: Default::default(),
+            }),
+            stun: None,
+            metrics_addr: None,
+        })
+        .await
+        .unwrap();
+        let url = format!("http://{}/generate_204", server.http_addr().unwrap());
+        let challenge = "123az__.";
+
+        let client = reqwest::Client::new();
+        let response = client
+            .get(&url)
+            .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let header = response.headers().get(NO_CONTENT_RESPONSE_HEADER).unwrap();
+        assert_eq!(header.to_str().unwrap(), format!("response {challenge}"));
+        let body = response.text().await.unwrap();
+        assert!(body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_relay_clients() {
+        let _guard = iroh_test::logging::setup();
+        let server = Server::spawn(ServerConfig::<(), ()> {
+            relay: Some(RelayConfig {
+                secret_key: SecretKey::generate(),
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                tls: None,
+                limits: Default::default(),
+            }),
+            stun: None,
+            metrics_addr: None,
+        })
+        .await
+        .unwrap();
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse().unwrap();
+
+        // set up client a
+        let a_secret_key = SecretKey::generate();
+        let a_key = a_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_a, mut client_a_receiver) =
+            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
+        let connect_client = client_a.clone();
+
+        // give the relay server some time to accept connections
+        if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
+            loop {
+                match connect_client.connect().await {
+                    Ok(_) => break,
+                    Err(err) => {
+                        warn!("client unable to connect to relay server: {err:#}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        })
+        .await
+        {
+            panic!("error connecting to relay server: {err:#}");
+        }
+
+        // set up client b
+        let b_secret_key = SecretKey::generate();
+        let b_key = b_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_b, mut client_b_receiver) =
+            ClientBuilder::new(relay_url.clone()).build(b_secret_key, resolver);
+        client_b.connect().await.unwrap();
+
+        // send message from a to b
+        let msg = Bytes::from("hello, b");
+        client_a.send(b_key, msg.clone()).await.unwrap();
+
+        let (res, _) = client_b_receiver.recv().await.unwrap().unwrap();
+        if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(a_key, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_b received unexpected message {res:?}");
+        }
+
+        // send message from b to a
+        let msg = Bytes::from("howdy, a");
+        client_b.send(a_key, msg.clone()).await.unwrap();
+
+        let (res, _) = client_a_receiver.recv().await.unwrap().unwrap();
+        if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(b_key, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_a received unexpected message {res:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stun() {
+        let _guard = iroh_test::logging::setup();
+        let server = Server::spawn(ServerConfig::<(), ()> {
+            relay: None,
+            stun: Some(StunConfig {
+                bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+            }),
+            metrics_addr: None,
+        })
+        .await
+        .unwrap();
+
+        let txid = stun::TransactionId::default();
+        let req = stun::request(txid);
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket
+            .send_to(&req, server.stun_addr().unwrap())
+            .await
+            .unwrap();
+
+        // get response
+        let mut buf = vec![0u8; 64000];
+        let (len, addr) = socket.recv_from(&mut buf).await.unwrap();
+        assert_eq!(addr, server.stun_addr().unwrap());
+        buf.truncate(len);
+        let (txid_back, response_addr) = stun::parse_response(&buf).unwrap();
+        assert_eq!(txid, txid_back);
+        assert_eq!(response_addr, socket.local_addr().unwrap());
     }
 }

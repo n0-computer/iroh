@@ -334,7 +334,7 @@ impl ServerState {
         } = self;
         let listener = TcpListener::bind(&addr)
             .await
-            .context("failed to bind https")?;
+            .context("failed to bind server socket")?;
         // we will use this cancel token to stop the infinite loop in the `listener.accept() task`
         let cancel_server_loop = CancellationToken::new();
         let addr = listener.local_addr()?;

@@ -787,7 +787,6 @@ mod tests {
 
     use crate::defaults::{DEFAULT_STUN_PORT, EU_RELAY_HOSTNAME};
     use crate::ping::Pinger;
-    use crate::relay::iroh_relay;
     use crate::relay::RelayNode;
 
     use super::*;
@@ -795,18 +794,12 @@ mod tests {
     #[tokio::test]
     async fn test_basic() -> Result<()> {
         let _guard = iroh_test::logging::setup();
-        let stun_server = iroh_relay::Server::new(iroh_relay::ServerConfig {
-            relay: None,
-            stun: iroh_relay::StunConfig {
-                bind_addr: (Ipv4Addr::LOCALHOST, DEFAULT_STUN_PORT).into(),
-            },
-            metrics_addr: None,
-        });
-        let stun_addr = stun_server.stun_addr();
+        let (stun_addr, stun_stats, _cleanup_guard) =
+            stun::tests::serve("127.0.0.1".parse().unwrap()).await?;
 
         let resolver = crate::dns::default_resolver();
         let mut client = Client::new(None, resolver.clone())?;
-        let dm = stun::test::relay_map_of([stun_addr].into_iter());
+        let dm = stun::tests::relay_map_of([stun_addr].into_iter());
 
         // Note that the ProbePlan will change with each iteration.
         for i in 0..5 {
@@ -897,7 +890,7 @@ mod tests {
         // the STUN server being blocked will look like from the client's perspective.
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
         let stun_addr = blackhole.local_addr()?;
-        let dm = stun::test::relay_map_of_opts([(stun_addr, false)].into_iter());
+        let dm = stun::tests::relay_map_of_opts([(stun_addr, false)].into_iter());
 
         // Now create a client and generate a report.
         let resolver = crate::dns::default_resolver().clone();
@@ -1134,8 +1127,8 @@ mod tests {
         // can easily use to identify the packet.
 
         // Setup STUN server and create relay_map.
-        let (stun_addr, _stun_stats, _done) = stun::test::serve_v4().await?;
-        let dm = stun::test::relay_map_of([stun_addr].into_iter());
+        let (stun_addr, _stun_stats, _done) = stun::tests::serve_v4().await?;
+        let dm = stun::tests::relay_map_of([stun_addr].into_iter());
         dbg!(&dm);
 
         let resolver = crate::dns::default_resolver().clone();

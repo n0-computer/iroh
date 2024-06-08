@@ -93,7 +93,7 @@ pub enum Commands {
         #[clap(long)]
         stun_host: Option<String>,
         /// The port of the STUN server.
-        #[clap(long, default_value_t = DEFAULT_RELAY_STUN_PORT)]
+        #[clap(long, default_value_t = DEFAULT_STUN_PORT)]
         stun_port: u16,
     },
     /// Wait for incoming requests from iroh doctor connect
