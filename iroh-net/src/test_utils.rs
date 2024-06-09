@@ -45,7 +45,6 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, crate::relay::iro
                     private_key,
                     certs: vec![rustls_cert],
                 },
-                hostname: "localhost".to_string(),
                 https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
             }),
             limits: Default::default(),

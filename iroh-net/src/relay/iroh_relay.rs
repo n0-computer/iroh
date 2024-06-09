@@ -118,9 +118,6 @@ pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     pub https_bind_addr: SocketAddr,
     /// Mode for getting a cert.
     pub cert: CertConfig<EC, EA>,
-    /// Hostname to use for the certificate, must match the certificate.
-    // TODO: do we use this field?
-    pub hostname: String,
 }
 
 /// Rate limits.

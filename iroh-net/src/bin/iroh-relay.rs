@@ -2,7 +2,6 @@
 //!
 //! Based on /tailscale/cmd/derper.
 
-use std::borrow::Cow;
 use std::net::{Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
@@ -10,7 +9,6 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
 use iroh_net::defaults::{
     DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT,
-    NA_RELAY_HOSTNAME,
 };
 use iroh_net::key::SecretKey;
 use iroh_net::relay::iroh_relay;
@@ -46,12 +44,6 @@ struct Cli {
 enum CertMode {
     Manual,
     LetsEncrypt,
-}
-
-fn escape_hostname(hostname: &str) -> Cow<'_, str> {
-    let unsafe_hostname_characters =
-        regex::Regex::new(r"[^a-zA-Z0-9-\.]").expect("regex manually checked");
-    unsafe_hostname_characters.replace_all(hostname, "")
 }
 
 fn load_certs(filename: impl AsRef<Path>) -> Result<Vec<rustls::Certificate>> {
@@ -192,8 +184,6 @@ impl Default for Config {
 /// These are the defaults that serde will fill in.  Other defaults depends on each other
 /// and can not immediately be substituded by serde.
 mod cfg_defaults {
-    use super::*;
-
     pub(crate) fn enable_relay() -> bool {
         true
     }
@@ -207,12 +197,6 @@ mod cfg_defaults {
     }
 
     pub(crate) mod tls_config {
-        use super::*;
-
-        pub(crate) fn hostname() -> String {
-            NA_RELAY_HOSTNAME.to_string()
-        }
-
         pub(crate) fn prod_tls() -> bool {
             true
         }
@@ -225,11 +209,8 @@ struct TlsConfig {
     ///
     /// Defaults to the `http_bind_addr` with the port set to `443`.
     https_bind_addr: Option<SocketAddr>,
-    /// Certificate hostname.
-    ///
-    /// Defaults to [`NA_RELAY_HOSTNAME`].
-    #[serde(default = "cfg_defaults::tls_config::hostname")]
-    hostname: String,
+    /// Certificate hostname when using LetsEncrypt.
+    hostname: Option<String>,
     /// Mode for getting a cert.
     ///
     /// Possible options: 'Manual', 'LetsEncrypt'.
@@ -240,15 +221,13 @@ struct TlsConfig {
     cert_dir: Option<PathBuf>,
     /// Path of where to read the certificate from for the `Manual` `cert_mode`.
     ///
-    /// Defaults to `<cert_dir>/<hostname>.crt`, with `<hostname>` being the escaped
-    /// hostname.
+    /// Defaults to `<cert_dir>/default.crt`.
     ///
     /// Only used when `cert_mode` is `Manual`.
     manual_cert_path: Option<PathBuf>,
     /// Path of where to read the private key from for the `Manual` `cert_mode`.
     ///
-    /// Defaults to `<cert_dir>/<hostname>.key` with `<hostname>` being the escaped
-    /// hostname.
+    /// Defaults to `<cert_dir>/default.key`.
     ///
     /// Only used when `cert_mode` is `Manual`.
     manual_key_path: Option<PathBuf>,
@@ -284,13 +263,15 @@ impl TlsConfig {
     }
 
     fn cert_path(&self) -> PathBuf {
-        let name = escape_hostname(&self.hostname);
-        self.cert_dir().join(format!("{name}.crt"))
+        self.manual_cert_path
+            .clone()
+            .unwrap_or_else(|| self.cert_dir().join("default.crt"))
     }
 
     fn key_path(&self) -> PathBuf {
-        let name = escape_hostname(&self.hostname);
-        self.cert_dir().join(format!("{name}.key"))
+        self.manual_key_path
+            .clone()
+            .unwrap_or_else(|| self.cert_dir().join("default.key"))
     }
 }
 
@@ -402,7 +383,11 @@ async fn build_relay_config(cfg: Config) -> Result<iroh_relay::ServerConfig<std:
                     iroh_relay::CertConfig::Manual { private_key, certs }
                 }
                 CertMode::LetsEncrypt => {
-                    let config = AcmeConfig::new(vec![tls.hostname.clone()])
+                    let hostname = tls
+                        .hostname
+                        .clone()
+                        .context("LetsEncrypt needs a hostname")?;
+                    let config = AcmeConfig::new(vec![hostname.clone()])
                         .contact([format!("mailto:{}", tls.contact)])
                         .cache_option(Some(DirCache::new(tls.cert_dir())))
                         .directory_lets_encrypt(tls.prod_tls);
@@ -411,7 +396,6 @@ async fn build_relay_config(cfg: Config) -> Result<iroh_relay::ServerConfig<std:
             };
             Some(iroh_relay::TlsConfig {
                 https_bind_addr: tls.https_bind_addr(&cfg),
-                hostname: tls.hostname.clone(),
                 cert: cert_config,
             })
         }
@@ -495,18 +479,5 @@ mod metrics {
         fn name() -> &'static str {
             "stun"
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_escape_hostname() {
-        assert_eq!(
-            escape_hostname("hello.host.name_foo-bar%baz"),
-            "hello.host.namefoo-barbaz"
-        );
     }
 }
