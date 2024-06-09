@@ -280,10 +280,7 @@ impl TlsConfig {
     }
 
     fn cert_dir(&self) -> PathBuf {
-        self.cert_dir
-            .as_ref()
-            .map(|d| d.clone())
-            .unwrap_or_else(|| PathBuf::from("."))
+        self.cert_dir.clone().unwrap_or_else(|| PathBuf::from("."))
     }
 
     fn cert_path(&self) -> PathBuf {

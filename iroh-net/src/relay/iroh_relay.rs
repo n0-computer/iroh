@@ -315,7 +315,7 @@ impl Server {
         Ok(Self {
             http_addr: http_addr.or(relay_addr),
             stun_addr,
-            https_addr: http_addr.and_then(|_| relay_addr),
+            https_addr: http_addr.and(relay_addr),
             relay_handle,
             supervisor: AbortingJoinHandle::from(task),
         })
@@ -384,12 +384,12 @@ async fn relay_supervisor(
             .join_next()
             .await
             .unwrap_or_else(|| Ok(Err(anyhow!("Nothing to supervise")))),
-        (Some(relay), 0) => relay.0.task_handle().await.and_then(|r| Ok(anyhow::Ok(r))),
+        (Some(relay), 0) => relay.0.task_handle().await.map(anyhow::Ok),
         (Some(relay), _) => {
             tokio::select! {
                 biased;
                 Some(ret) = tasks.join_next() => ret,
-                ret = relay.0.task_handle() => ret.and_then(|r| Ok(anyhow::Ok(r))),
+                ret = relay.0.task_handle() => ret.map(anyhow::Ok),
                 else => Ok(Err(anyhow!("Empty JoinSet (unreachable)"))),
             }
         }
@@ -415,7 +415,9 @@ async fn relay_supervisor(
 
     // Ensure the HTTP server terminated, there is no harm in calling this after it is
     // already shut down.  The JoinSet is aborted on drop.
-    relay_http_server.map(|server| server.0.shutdown());
+    if let Some(server) = relay_http_server {
+        server.0.shutdown();
+    }
 
     tasks.shutdown().await;
 
