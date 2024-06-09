@@ -127,8 +127,7 @@ struct Config {
     enable_stun: bool,
     /// The socket address to bind the STUN server on.
     ///
-    /// Defaults to using the `http_bind_addr` with the port set to
-    /// [`DEFAULT_RELAY_STUN_PORT`].
+    /// Defaults to using the `http_bind_addr` with the port set to [`DEFAULT_STUN_PORT`].
     stun_bind_addr: Option<SocketAddr>,
     /// Rate limiting configuration.
     ///
