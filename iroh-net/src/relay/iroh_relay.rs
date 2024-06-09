@@ -426,102 +426,79 @@ async fn relay_supervisor(
 /// When the future is dropped, the server stops.
 async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
     info!(addr = ?sock.local_addr().ok(), "running STUN server");
-    // TODO: re-write this as structured-concurrency and returning errors
-
-    // let mut buffer = vec![0u8; 64 << 10];
-    // let mut tasks = JoinSet::new();
-    // loop {
-    //     // TODO: tokio::select!() on tasks.join_next()
-    //     match sock.recv_from(&mut buffer).await {
-    //         Ok((n, src_addr)) => {
-    //             inc!(StunMetrics, requests);
-    //             let pkt = buffer[..n];
-    //             if !stun::is(&pkt) {
-    //                 debug!(%src_addr, "STUN: ignoring non stun packet");
-    //                 inc!(StunMetrics, bad_requests);
-    //                 continue;
-    //             }
-    //             let pkt = pkt.to_vec();
-    //             tasks.spawn(async {
-    //                 // This task handles the entire request-response.
-    //                 let handle = AbortingJoinHandle::from(tokio::spawn_blocking(|| {
-    //                     match stun::parse_binding_request(&pkt) {
-    //                         Ok(txid) => {
-    //                             debug!(%src_addr, %txid, "STUN: received binding request");
-    //                             Some(stun::response(txid, src_addr))
-    //                         }
-    //                         Err(err) => {
-    //                             inc!(StunMetrics, bad_requests);
-    //                             warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
-    //                             None
-    //                         }
-    //                     }
-    //                 }));
-    //                 let response = handle.await?;
-    //                 let t: () = response;
-    //                 Ok(())
-    //             })
-    //         }
-    //     }
-    // }
-
     let sock = Arc::new(sock);
     let mut buffer = vec![0u8; 64 << 10];
     let mut tasks = JoinSet::new();
     loop {
-        match sock.recv_from(&mut buffer).await {
-            Ok((n, src_addr)) => {
-                inc!(StunMetrics, requests);
-                let pkt = buffer[..n].to_vec();
-                let sock = sock.clone();
-                tasks.spawn(async move {
-                    if !stun::is(&pkt) {
-                        debug!(%src_addr, "STUN: ignoring non stun packet");
-                        inc!(StunMetrics, bad_requests);
-                        return;
-                    }
-                    match tokio::task::spawn_blocking(move || stun::parse_binding_request(&pkt))
-                        .await
-                        .unwrap()
-                    {
-                        Ok(txid) => {
-                            debug!(%src_addr, %txid, "STUN: received binding request");
-                            let res =
-                                tokio::task::spawn_blocking(move || stun::response(txid, src_addr))
-                                    .await
-                                    .unwrap();
-                            match sock.send_to(&res, src_addr).await {
-                                Ok(len) => {
-                                    if len != res.len() {
-                                        warn!(%src_addr, %txid, "STUN: failed to write response sent: {}, but expected {}", len, res.len());
-                                    }
-                                    match src_addr {
-                                        SocketAddr::V4(_) => {
-                                            inc!(StunMetrics, ipv4_success);
-                                        }
-                                        SocketAddr::V6(_) => {
-                                            inc!(StunMetrics, ipv6_success);
-                                        }
-                                    }
-                                    trace!(%src_addr, %txid, "STUN: sent {} bytes", len);
-                                }
-                                Err(err) => {
-                                    inc!(StunMetrics, failures);
-                                    warn!(%src_addr, %txid, "STUN: failed to write response: {:#}", err);
-                                }
-                            }
-                        }
-                        Err(err) => {
+        tokio::select! {
+            biased;
+            _ = tasks.join_next() => (),
+            res = sock.recv_from(&mut buffer) => {
+                match res {
+                    Ok((n, src_addr)) => {
+                        inc!(StunMetrics, requests);
+                        let pkt = &buffer[..n];
+                        if !stun::is(pkt) {
+                            debug!(%src_addr, "STUN: ignoring non stun packet");
                             inc!(StunMetrics, bad_requests);
-                            warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
+                            continue;
                         }
+                        let pkt = pkt.to_vec();
+                        tasks.spawn(handle_stun_request(src_addr, pkt, sock.clone()));
                     }
-                });
+                    Err(err) => {
+                        inc!(StunMetrics, failures);
+                        warn!("failed to recv: {err:#}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Handles a single STUN request, doing all logging required.
+async fn handle_stun_request(src_addr: SocketAddr, pkt: Vec<u8>, sock: Arc<UdpSocket>) {
+    let handle = AbortingJoinHandle::from(tokio::task::spawn_blocking(move || {
+        match stun::parse_binding_request(&pkt) {
+            Ok(txid) => {
+                debug!(%src_addr, %txid, "STUN: received binding request");
+                Some((txid, stun::response(txid, src_addr)))
             }
             Err(err) => {
-                inc!(StunMetrics, failures);
-                warn!("STUN: failed to recv: {:?}", err);
+                inc!(StunMetrics, bad_requests);
+                warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
+                None
             }
+        }
+    }));
+    let (txid, response) = match handle.await {
+        Ok(Some(val)) => val,
+        Ok(None) => return,
+        Err(err) => {
+            error!("{err:#}");
+            return;
+        }
+    };
+    match sock.send_to(&response, src_addr).await {
+        Ok(len) => {
+            if len != response.len() {
+                warn!(
+                    %src_addr,
+                    %txid,
+                    "failed to write response, {len}/{} bytes sent",
+                    response.len()
+                );
+            } else {
+                match src_addr {
+                    SocketAddr::V4(_) => inc!(StunMetrics, ipv4_success),
+                    SocketAddr::V6(_) => inc!(StunMetrics, ipv6_success),
+                }
+            }
+            trace!(%src_addr, %txid, "sent {len} bytes");
+        }
+        Err(err) => {
+            inc!(StunMetrics, failures);
+            warn!(%src_addr, %txid, "failed to write response: {err:#}");
         }
     }
 }
