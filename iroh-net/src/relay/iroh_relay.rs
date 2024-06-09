@@ -88,7 +88,7 @@ pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// TLS configuration for the HTTPS servier.
     ///
     /// If *None* all the HTTP services that would be served here are served from
-    /// [`RelayConfig::bind_addr`].
+    /// [`RelayConfig::http_bind_addr`].
     pub tls: Option<TlsConfig<EC, EA>>,
     /// Rate limits.
     pub limits: Limits,
@@ -99,7 +99,7 @@ pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
 pub struct StunConfig {
     /// The socket address on which the STUN server should bind.
     ///
-    /// Normally you'd chose port `3478`, see [`crate::defaults::DEFAULT_DERP_STUN_SERVER`].
+    /// Normally you'd chose port `3478`, see [`crate::defaults::DEFAULT_STUN_PORT`].
     pub bind_addr: SocketAddr,
 }
 
@@ -112,7 +112,7 @@ pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     ///
     /// Since the captive portal probe has to run over plain text HTTP and TLS is used for
     /// the main relay server this has to be on a different port.  When TLS is not enabled
-    /// this is served on the [`RelayConfig::bind_addr`] socket address.
+    /// this is served on the [`RelayConfig::http_bind_addr`] socket address.
     ///
     /// Normally you'd choose port `80`.
     pub https_bind_addr: SocketAddr,
