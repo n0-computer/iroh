@@ -101,33 +101,33 @@ mod tests {
         let node = Node::memory().spawn().await?;
 
         // default author always exists
-        let authors: Vec<_> = node.authors.list().await?.try_collect().await?;
+        let authors: Vec<_> = node.authors().list().await?.try_collect().await?;
         assert_eq!(authors.len(), 1);
-        let default_author = node.authors.default().await?;
+        let default_author = node.authors().default().await?;
         assert_eq!(authors, vec![default_author]);
 
-        let author_id = node.authors.create().await?;
+        let author_id = node.authors().create().await?;
 
-        let authors: Vec<_> = node.authors.list().await?.try_collect().await?;
+        let authors: Vec<_> = node.authors().list().await?.try_collect().await?;
         assert_eq!(authors.len(), 2);
 
         let author = node
-            .authors
+            .authors()
             .export(author_id)
             .await?
             .expect("should have author");
-        node.authors.delete(author_id).await?;
-        let authors: Vec<_> = node.authors.list().await?.try_collect().await?;
+        node.authors().delete(author_id).await?;
+        let authors: Vec<_> = node.authors().list().await?.try_collect().await?;
         assert_eq!(authors.len(), 1);
 
-        node.authors.import(author).await?;
+        node.authors().import(author).await?;
 
-        let authors: Vec<_> = node.authors.list().await?.try_collect().await?;
+        let authors: Vec<_> = node.authors().list().await?.try_collect().await?;
         assert_eq!(authors.len(), 2);
 
-        assert!(node.authors.default().await? != author_id);
-        node.authors.set_default(author_id).await?;
-        assert_eq!(node.authors.default().await?, author_id);
+        assert!(node.authors().default().await? != author_id);
+        node.authors().set_default(author_id).await?;
+        assert_eq!(node.authors().default().await?, author_id);
 
         Ok(())
     }

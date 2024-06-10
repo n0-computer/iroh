@@ -547,12 +547,20 @@ impl MagicSock {
                 }
 
                 if udp_addr.is_none() && relay_url.is_none() {
-                    // Handle no addresses being available
-                    warn!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::NotConnected,
-                        "no UDP or relay address available for node",
-                    )));
+                    // Returning an error here would lock up the entire `Endpoint`.
+                    //
+                    // If we returned `Poll::Pending`, the waker driving the `poll_send` will never get woken up.
+                    //
+                    // Our best bet here is to log an error and return `Poll::Ready(Ok(n))`.
+                    //
+                    // `n` is the number of consecutive transmits in this batch that are meant for the same destination (a destination that we have no addresses for, and so we can never actually send).
+                    //
+                    // When we return `Poll::Ready(Ok(n))`, we are effectively dropping those n messages, by lying to QUIC and saying they were sent.
+                    // (If we returned `Poll::Ready(Ok(0))` instead, QUIC would loop to attempt to re-send those messages, blocking other traffic.)
+                    //
+                    // When `QUIC` gets no `ACK`s for those messages, the connection will eventually timeout.
+                    error!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
+                    return Poll::Ready(Ok(n));
                 }
 
                 if (udp_addr.is_none() || udp_pending) && (relay_url.is_none() || relay_pending) {
@@ -565,14 +573,16 @@ impl MagicSock {
                 }
 
                 if !relay_sent && !udp_sent && !pings_sent {
-                    warn!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
+                    // Returning an error here would lock up the entire `Endpoint`.
+                    // Instead, log an error and return `Poll::Pending`, the connection will timeout.
                     let err = udp_error.unwrap_or_else(|| {
                         io::Error::new(
                             io::ErrorKind::NotConnected,
                             "no UDP or relay address available for node",
                         )
                     });
-                    return Poll::Ready(Err(err));
+                    error!(node = %public_key.fmt_short(), "{err:?}");
+                    return Poll::Pending;
                 }
 
                 trace!(

@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
     // `download` returns a stream of `DownloadProgress` events. You can iterate through these updates to get progress
     // on the state of your download.
     let download_stream = node
-        .blobs
+        .blobs()
         .download_hash_seq(ticket.hash(), ticket.node_addr().clone())
         .await?;
 
@@ -76,7 +76,7 @@ async fn main() -> Result<()> {
     // A `Collection` is a special `HashSeq`, where we preserve the names of any blobs added to the collection. (We do this by designating the first entry in the `Collection` as meta data.)
     // To get the content of the collection, we first get the collection from the database using the `blobs` API
     let collection = node
-        .blobs
+        .blobs()
         .get_collection(ticket.hash())
         .await
         .context("expect hash with `BlobFormat::HashSeq` to be a collection")?;
@@ -85,7 +85,7 @@ async fn main() -> Result<()> {
     for (name, hash) in collection.iter() {
         println!("\nname: {name}, hash: {hash}");
         // Use the hash of the blob to get the content.
-        let content = node.blobs.read_to_bytes(*hash).await?;
+        let content = node.blobs().read_to_bytes(*hash).await?;
         let s = std::str::from_utf8(&content).context("unable to parse blob as as utf-8 string")?;
         println!("{s}");
     }

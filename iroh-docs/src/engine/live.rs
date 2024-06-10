@@ -546,7 +546,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                     match details
                         .outcome
                         .heads_received
-                        .encode(Some(iroh_gossip::net::MAX_MESSAGE_SIZE))
+                        .encode(Some(self.gossip.max_message_size()))
                     {
                         Err(err) => warn!(?err, "Failed to encode author heads for sync report"),
                         Ok(heads) => {
@@ -741,7 +741,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             self.queued_hashes.insert(hash, namespace);
             self.downloader.nodes_have(hash, vec![node]).await;
         } else if !only_if_missing || self.missing_hashes.contains(&hash) {
-            let req = DownloadRequest::untagged(HashAndFormat::raw(hash), vec![node]);
+            let req = DownloadRequest::new(HashAndFormat::raw(hash), vec![node]);
             let handle = self.downloader.queue(req).await;
 
             self.queued_hashes.insert(hash, namespace);

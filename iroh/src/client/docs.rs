@@ -768,7 +768,7 @@ mod tests {
         let node = crate::node::Node::memory().spawn().await?;
 
         let client = node.client();
-        let doc = client.docs.create().await?;
+        let doc = client.docs().create().await?;
 
         let res = std::thread::spawn(move || {
             drop(doc);
@@ -809,8 +809,8 @@ mod tests {
 
         // create doc & author
         let client = node.client();
-        let doc = client.docs.create().await.context("doc create")?;
-        let author = client.authors.create().await.context("author create")?;
+        let doc = client.docs().create().await.context("doc create")?;
+        let author = client.authors().create().await.context("author create")?;
 
         // import file
         let import_outcome = doc

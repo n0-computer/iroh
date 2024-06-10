@@ -11,16 +11,17 @@ use tokio::{
 
 use crate::proto::util::TimerMap;
 
-use super::{ProtoMessage, MAX_MESSAGE_SIZE};
+use super::ProtoMessage;
 
 /// Write a `ProtoMessage` as a length-prefixed, postcard-encoded message.
 pub async fn write_message<W: AsyncWrite + Unpin>(
     writer: &mut W,
     buffer: &mut BytesMut,
     frame: &ProtoMessage,
+    max_message_size: usize,
 ) -> Result<()> {
     let len = postcard::experimental::serialized_size(&frame)?;
-    ensure!(len < MAX_MESSAGE_SIZE);
+    ensure!(len < max_message_size);
     buffer.clear();
     buffer.resize(len, 0u8);
     let slice = postcard::to_slice(&frame, buffer)?;
@@ -33,8 +34,9 @@ pub async fn write_message<W: AsyncWrite + Unpin>(
 pub async fn read_message(
     reader: impl AsyncRead + Unpin,
     buffer: &mut BytesMut,
+    max_message_size: usize,
 ) -> Result<Option<ProtoMessage>> {
-    match read_lp(reader, buffer).await? {
+    match read_lp(reader, buffer, max_message_size).await? {
         None => Ok(None),
         Some(data) => {
             let message = postcard::from_bytes(&data)?;
@@ -52,6 +54,7 @@ pub async fn read_message(
 pub async fn read_lp(
     mut reader: impl AsyncRead + Unpin,
     buffer: &mut BytesMut,
+    max_message_size: usize,
 ) -> Result<Option<Bytes>> {
     let size = match reader.read_u32().await {
         Ok(size) => size,
@@ -60,8 +63,8 @@ pub async fn read_lp(
     };
     let mut reader = reader.take(size as u64);
     let size = usize::try_from(size).context("frame larger than usize")?;
-    if size > MAX_MESSAGE_SIZE {
-        bail!("Incoming message exceeds MAX_MESSAGE_SIZE");
+    if size > max_message_size {
+        bail!("Incoming message exceeds the maximum message size of {max_message_size} bytes");
     }
     buffer.reserve(size);
     loop {

@@ -293,7 +293,7 @@ async fn env_author<C: ServiceConnection<RpcService>>(
     {
         Ok(author)
     } else {
-        iroh.authors.default().await
+        iroh.authors().default().await
     }
 }
 
