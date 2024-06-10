@@ -432,7 +432,7 @@ async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
     loop {
         tokio::select! {
             biased;
-            _ = tasks.join_next() => (),
+            _ = tasks.join_next(), if !tasks.is_empty() => (),
             res = sock.recv_from(&mut buffer) => {
                 match res {
                     Ok((n, src_addr)) => {
