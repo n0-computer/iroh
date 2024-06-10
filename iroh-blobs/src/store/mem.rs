@@ -23,7 +23,7 @@ use crate::{
     },
     util::{
         progress::{BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSender},
-        LivenessTracker,
+        TagCounter, TagDrop,
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
 };
@@ -43,17 +43,19 @@ pub struct Store {
 #[derive(Debug, Default)]
 struct StoreInner(RwLock<StateInner>);
 
-impl LivenessTracker for StoreInner {
-    fn on_clone(&self, inner: &HashAndFormat) {
-        tracing::trace!("temp tagging: {:?}", inner);
-        let mut state = self.0.write().unwrap();
-        state.temp.inc(inner);
-    }
-
+impl TagDrop for StoreInner {
     fn on_drop(&self, inner: &HashAndFormat) {
         tracing::trace!("temp tag drop: {:?}", inner);
         let mut state = self.0.write().unwrap();
         state.temp.dec(inner);
+    }
+}
+
+impl TagCounter for StoreInner {
+    fn on_create(&self, inner: &HashAndFormat) {
+        tracing::trace!("temp tagging: {:?}", inner);
+        let mut state = self.0.write().unwrap();
+        state.temp.inc(inner);
     }
 }
 
@@ -217,7 +219,7 @@ impl super::Store for Store {
     }
 
     fn temp_tag(&self, tag: HashAndFormat) -> TempTag {
-        TempTag::new(tag, Some(self.inner.clone()))
+        self.inner.temp_tag(tag)
     }
 
     async fn gc_start(&self) -> io::Result<()> {

@@ -16,8 +16,8 @@ async fn main() -> anyhow::Result<()> {
     // Could also use `node` directly, as it derefs to the client.
     let client = node.client();
 
-    let doc = client.docs.create().await?;
-    let author = client.authors.default().await?;
+    let doc = client.docs().create().await?;
+    let author = client.authors().default().await?;
 
     doc.set_bytes(author, "hello", "world").await?;
 

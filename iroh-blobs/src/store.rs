@@ -11,6 +11,7 @@ pub mod readonly_mem;
 pub mod fs;
 
 mod traits;
+use tracing::warn;
 pub use traits::*;
 
 /// Create a 16 byte unique ID.
@@ -66,7 +67,10 @@ impl TempCounterMap {
 
     fn dec(&mut self, value: &HashAndFormat) {
         let HashAndFormat { hash, format } = value;
-        let counters = self.0.get_mut(hash).unwrap();
+        let Some(counters) = self.0.get_mut(hash) else {
+            warn!("Decrementing non-existent temp tag");
+            return;
+        };
         counters.dec(*format);
         if counters.is_empty() {
             self.0.remove(hash);

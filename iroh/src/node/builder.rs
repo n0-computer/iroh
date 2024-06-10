@@ -14,6 +14,7 @@ use iroh_blobs::{
     protocol::Closed,
     store::{GcMarkEvent, GcSweepEvent, Map, Store as BaoStore},
 };
+use iroh_docs::engine::{DefaultAuthorStorage, Engine};
 use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
@@ -32,13 +33,11 @@ use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     client::RPC_ALPN,
-    docs_engine::{DefaultAuthorStorage, Engine},
-    node::NodeInner,
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-use super::{rpc, rpc_status::RpcStatus, Node};
+use super::{rpc, rpc_status::RpcStatus, DocsEngine, Node, NodeInner};
 
 pub const PROTOCOLS: [&[u8]; 3] = [iroh_blobs::protocol::ALPN, GOSSIP_ALPN, DOCS_ALPN];
 
@@ -466,6 +465,7 @@ where
         )
         .await?;
         let sync_db = sync.sync.clone();
+        let sync = DocsEngine(sync);
 
         let gc_task = if let GcPolicy::Interval(gc_period) = self.gc_policy {
             tracing::info!("Starting GC task with interval {:?}", gc_period);
@@ -575,7 +575,7 @@ where
                     // clean shutdown of the blobs db to close the write transaction
                     handler.inner.db.shutdown().await;
 
-                    if let Err(err) = handler.inner.sync.start_shutdown().await {
+                    if let Err(err) = handler.inner.sync.shutdown().await {
                         warn!("sync shutdown error: {:?}", err);
                     }
                     break
@@ -737,7 +737,7 @@ async fn handle_connection<D: BaoStore>(
     alpn: String,
     node: Arc<NodeInner<D>>,
     gossip: Gossip,
-    sync: Engine,
+    sync: DocsEngine,
 ) -> Result<()> {
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,

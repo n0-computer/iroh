@@ -85,8 +85,8 @@ async fn sync_simple() -> Result<()> {
 
     // create doc on node0
     let peer0 = nodes[0].node_id();
-    let author0 = clients[0].authors.create().await?;
-    let doc0 = clients[0].docs.create().await?;
+    let author0 = clients[0].authors().create().await?;
+    let doc0 = clients[0].docs().create().await?;
     let hash0 = doc0
         .set_bytes(author0, b"k1".to_vec(), b"v1".to_vec())
         .await?;
@@ -99,7 +99,7 @@ async fn sync_simple() -> Result<()> {
 
     info!("node1: join");
     let peer1 = nodes[1].node_id();
-    let doc1 = clients[1].docs.import(ticket.clone()).await?;
+    let doc1 = clients[1].docs().import(ticket.clone()).await?;
     let mut events1 = doc1.subscribe().await?;
     info!("node1: assert 4 events");
     assert_next_unordered(
@@ -140,9 +140,9 @@ async fn sync_subscribe_no_sync() -> Result<()> {
     setup_logging();
     let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
-    let doc = client.docs.create().await?;
+    let doc = client.docs().create().await?;
     let mut sub = doc.subscribe().await?;
-    let author = client.authors.create().await?;
+    let author = client.authors().create().await?;
     doc.set_bytes(author, b"k".to_vec(), b"v".to_vec()).await?;
     let event = tokio::time::timeout(Duration::from_millis(100), sub.next()).await?;
     assert!(
@@ -165,15 +165,15 @@ async fn sync_gossip_bulk() -> Result<()> {
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     let _peer0 = nodes[0].node_id();
-    let author0 = clients[0].authors.create().await?;
-    let doc0 = clients[0].docs.create().await?;
+    let author0 = clients[0].authors().create().await?;
+    let doc0 = clients[0].docs().create().await?;
     let mut ticket = doc0
         .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
         .await?;
     // unset peers to not yet start sync
     let peers = ticket.nodes.clone();
     ticket.nodes = vec![];
-    let doc1 = clients[1].docs.import(ticket).await?;
+    let doc1 = clients[1].docs().import(ticket).await?;
     let mut events = doc1.subscribe().await?;
 
     // create entries for initial sync.
@@ -255,8 +255,8 @@ async fn sync_full_basic() -> Result<()> {
 
     // peer0: create doc and ticket
     let peer0 = nodes[0].node_id();
-    let author0 = clients[0].authors.create().await?;
-    let doc0 = clients[0].docs.create().await?;
+    let author0 = clients[0].authors().create().await?;
+    let doc0 = clients[0].docs().create().await?;
     let mut events0 = doc0.subscribe().await?;
     let key0 = b"k1";
     let value0 = b"v1";
@@ -277,9 +277,9 @@ async fn sync_full_basic() -> Result<()> {
 
     info!("peer1: spawn");
     let peer1 = nodes[1].node_id();
-    let author1 = clients[1].authors.create().await?;
+    let author1 = clients[1].authors().create().await?;
     info!("peer1: join doc");
-    let doc1 = clients[1].docs.import(ticket.clone()).await?;
+    let doc1 = clients[1].docs().import(ticket.clone()).await?;
 
     info!("peer1: wait for 4 events (for sync and join with peer0)");
     let mut events1 = doc1.subscribe().await?;
@@ -345,7 +345,7 @@ async fn sync_full_basic() -> Result<()> {
     info!("peer2: spawn");
     nodes.push(spawn_node(nodes.len(), &mut rng).await?);
     clients.push(nodes.last().unwrap().client().clone());
-    let doc2 = clients[2].docs.import(ticket).await?;
+    let doc2 = clients[2].docs().import(ticket).await?;
     let peer2 = nodes[2].node_id();
     let mut events2 = doc2.subscribe().await?;
 
@@ -428,11 +428,11 @@ async fn sync_open_close() -> Result<()> {
     let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
 
-    let doc = client.docs.create().await?;
+    let doc = client.docs().create().await?;
     let status = doc.status().await?;
     assert_eq!(status.handles, 1);
 
-    let doc2 = client.docs.open(doc.id()).await?.unwrap();
+    let doc2 = client.docs().open(doc.id()).await?.unwrap();
     let status = doc2.status().await?;
     assert_eq!(status.handles, 2);
 
@@ -452,8 +452,8 @@ async fn sync_subscribe_stop_close() -> Result<()> {
     let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
 
-    let doc = client.docs.create().await?;
-    let author = client.authors.create().await?;
+    let doc = client.docs().create().await?;
+    let author = client.authors().create().await?;
 
     let status = doc.status().await?;
     assert_eq!(status.subscribers, 0);
@@ -504,8 +504,8 @@ async fn test_sync_via_relay() -> Result<()> {
         .spawn()
         .await?;
 
-    let doc1 = node1.docs.create().await?;
-    let author1 = node1.authors.create().await?;
+    let doc1 = node1.docs().create().await?;
+    let author1 = node1.authors().create().await?;
     let inserted_hash = doc1
         .set_bytes(author1, b"foo".to_vec(), b"bar".to_vec())
         .await?;
@@ -517,7 +517,7 @@ async fn test_sync_via_relay() -> Result<()> {
     ticket.nodes[0].info.direct_addresses = Default::default();
 
     // join
-    let doc2 = node2.docs.import(ticket).await?;
+    let doc2 = node2.docs().import(ticket).await?;
     let mut events = doc2.subscribe().await?;
 
     assert_next_unordered_with_optionals(
@@ -598,7 +598,7 @@ async fn sync_restart_node() -> Result<()> {
     let id1 = node1.node_id();
 
     // create doc & ticket on node1
-    let doc1 = node1.docs.create().await?;
+    let doc1 = node1.docs().create().await?;
     let mut events1 = doc1.subscribe().await?;
     let ticket = doc1
         .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
@@ -615,8 +615,8 @@ async fn sync_restart_node() -> Result<()> {
         .spawn()
         .await?;
     let id2 = node2.node_id();
-    let author2 = node2.authors.create().await?;
-    let doc2 = node2.docs.import(ticket.clone()).await?;
+    let author2 = node2.authors().create().await?;
+    let doc2 = node2.docs().import(ticket.clone()).await?;
 
     info!("node2 set a");
     let hash_a = doc2.set_bytes(author2, "n2/a", "a").await?;
@@ -662,7 +662,7 @@ async fn sync_restart_node() -> Result<()> {
         .await?;
     assert_eq!(id1, node1.node_id());
 
-    let doc1 = node1.docs.open(doc1.id()).await?.expect("doc to exist");
+    let doc1 = node1.docs().open(doc1.id()).await?.expect("doc to exist");
     let mut events1 = doc1.subscribe().await?;
     assert_latest(&doc1, b"n2/a", b"a").await;
 
@@ -748,14 +748,14 @@ async fn test_download_policies() -> Result<()> {
     let nodes = spawn_nodes(2, &mut rng).await?;
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
-    let doc_a = clients[0].docs.create().await?;
-    let author_a = clients[0].authors.create().await?;
+    let doc_a = clients[0].docs().create().await?;
+    let author_a = clients[0].authors().create().await?;
     let ticket = doc_a
         .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
         .await?;
 
-    let doc_b = clients[1].docs.import(ticket).await?;
-    let author_b = clients[1].authors.create().await?;
+    let doc_b = clients[1].docs().import(ticket).await?;
+    let author_b = clients[1].authors().create().await?;
 
     doc_a.set_download_policy(policy_a).await?;
     doc_b.set_download_policy(policy_b).await?;
@@ -871,9 +871,9 @@ async fn sync_big() -> Result<()> {
     let nodes = spawn_nodes(n_nodes, &mut rng).await?;
     let node_ids = nodes.iter().map(|node| node.node_id()).collect::<Vec<_>>();
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
-    let authors = collect_futures(clients.iter().map(|c| c.authors.create())).await?;
+    let authors = collect_futures(clients.iter().map(|c| c.authors().create())).await?;
 
-    let doc0 = clients[0].docs.create().await?;
+    let doc0 = clients[0].docs().create().await?;
     let mut ticket = doc0
         .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
         .await?;
@@ -888,7 +888,7 @@ async fn sync_big() -> Result<()> {
             clients
                 .iter()
                 .skip(1)
-                .map(|c| c.docs.import(ticket.clone())),
+                .map(|c| c.docs().import(ticket.clone())),
         )
         .await?,
     );
@@ -969,6 +969,44 @@ async fn sync_big() -> Result<()> {
     for node in nodes {
         node.shutdown().await?;
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[cfg(feature = "test-utils")]
+async fn test_list_docs_stream() -> Result<()> {
+    let node = Node::memory()
+        .node_discovery(iroh::node::DiscoveryConfig::None)
+        .relay_mode(iroh::net::relay::RelayMode::Disabled)
+        .spawn()
+        .await?;
+    let count = 200;
+
+    // create docs
+    for _i in 0..count {
+        let doc = node.docs().create().await?;
+        doc.close().await?;
+    }
+
+    // create doc stream
+    let mut stream = node.docs().list().await?;
+
+    // process each doc and call into the docs actor.
+    // this makes sure that we don't deadlock the docs actor.
+    let mut i = 0;
+    let fut = async {
+        while let Some((id, _)) = stream.try_next().await.unwrap() {
+            let _doc = node.docs().open(id).await.unwrap().unwrap();
+            i += 1;
+        }
+    };
+
+    tokio::time::timeout(Duration::from_secs(2), fut)
+        .await
+        .expect("not to timeout");
+
+    assert_eq!(i, count);
 
     Ok(())
 }
@@ -1113,8 +1151,8 @@ async fn doc_delete() -> Result<()> {
         .spawn()
         .await?;
     let client = node.client();
-    let doc = client.docs.create().await?;
-    let author = client.authors.create().await?;
+    let doc = client.docs().create().await?;
+    let author = client.authors().create().await?;
     let hash = doc
         .set_bytes(author, b"foo".to_vec(), b"hi".to_vec())
         .await?;
@@ -1128,7 +1166,7 @@ async fn doc_delete() -> Result<()> {
     // wait for gc
     // TODO: allow to manually trigger gc
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let bytes = client.blobs.read_to_bytes(hash).await;
+    let bytes = client.blobs().read_to_bytes(hash).await;
     assert!(bytes.is_err());
     node.shutdown().await?;
     Ok(())
@@ -1141,8 +1179,8 @@ async fn sync_drop_doc() -> Result<()> {
     let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
 
-    let doc = client.docs.create().await?;
-    let author = client.authors.create().await?;
+    let doc = client.docs().create().await?;
+    let author = client.authors().create().await?;
 
     let mut sub = doc.subscribe().await?;
     doc.set_bytes(author, b"foo".to_vec(), b"bar".to_vec())
@@ -1150,14 +1188,14 @@ async fn sync_drop_doc() -> Result<()> {
     let ev = sub.next().await;
     assert!(matches!(ev, Some(Ok(LiveEvent::InsertLocal { .. }))));
 
-    client.docs.drop_doc(doc.id()).await?;
+    client.docs().drop_doc(doc.id()).await?;
     let res = doc.get_exact(author, b"foo".to_vec(), true).await;
     assert!(res.is_err());
     let res = doc
         .set_bytes(author, b"foo".to_vec(), b"bar".to_vec())
         .await;
     assert!(res.is_err());
-    let res = client.docs.open(doc.id()).await;
+    let res = client.docs().open(doc.id()).await;
     assert!(res.is_err());
     let ev = sub.next().await;
     assert!(ev.is_none());

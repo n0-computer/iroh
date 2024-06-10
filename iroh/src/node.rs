@@ -13,6 +13,7 @@ use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
+use iroh_docs::engine::Engine;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{endpoint::LocalEndpointsStream, key::SecretKey, Endpoint};
 use quic_rpc::transport::flume::FlumeConnection;
@@ -23,7 +24,6 @@ use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
 use crate::client::RpcService;
-use crate::docs_engine::Engine;
 
 mod builder;
 mod rpc;
@@ -60,7 +60,7 @@ struct NodeInner<D> {
     gc_task: Option<AbortingJoinHandle<()>>,
     #[debug("rt")]
     rt: LocalPoolHandle,
-    pub(crate) sync: Engine,
+    pub(crate) sync: DocsEngine,
     downloader: Downloader,
 }
 
@@ -193,6 +193,17 @@ impl<D> NodeInner<D> {
     }
 }
 
+/// Wrapper around [`Engine`] so that we can implement our RPC methods directly.
+#[derive(Debug, Clone)]
+pub(crate) struct DocsEngine(Engine);
+
+impl std::ops::Deref for DocsEngine {
+    type Target = Engine;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -217,7 +228,7 @@ mod tests {
         let node = Node::memory().spawn().await.unwrap();
         let hash = node
             .client()
-            .blobs
+            .blobs()
             .add_bytes(Bytes::from_static(b"hello"))
             .await
             .unwrap()
@@ -225,7 +236,7 @@ mod tests {
 
         let _drop_guard = node.cancel_token().drop_guard();
         let ticket = node
-            .blobs
+            .blobs()
             .share(hash, BlobFormat::Raw, AddrInfoOptions::RelayAndAddresses)
             .await
             .unwrap();
@@ -244,10 +255,13 @@ mod tests {
         let client = node.client();
         let input = vec![2u8; 1024 * 256]; // 265kb so actually streaming, chunk size is 64kb
         let reader = Cursor::new(input.clone());
-        let progress = client.blobs.add_reader(reader, SetTagOption::Auto).await?;
+        let progress = client
+            .blobs()
+            .add_reader(reader, SetTagOption::Auto)
+            .await?;
         let outcome = progress.finish().await?;
         let hash = outcome.hash;
-        let output = client.blobs.read_to_bytes(hash).await?;
+        let output = client.blobs().read_to_bytes(hash).await?;
         assert_eq!(input, output.to_vec());
         Ok(())
     }
@@ -301,13 +315,13 @@ mod tests {
         let iroh_root = tempfile::TempDir::new()?;
         {
             let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
-            let doc = iroh.docs.create().await?;
+            let doc = iroh.docs().create().await?;
             drop(doc);
             iroh.shutdown().await?;
         }
 
         let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
-        let _doc = iroh.docs.create().await?;
+        let _doc = iroh.docs().create().await?;
 
         Ok(())
     }
@@ -329,14 +343,14 @@ mod tests {
             .insecure_skip_relay_cert_verify(true)
             .spawn()
             .await?;
-        let AddOutcome { hash, .. } = node1.blobs.add_bytes(b"foo".to_vec()).await?;
+        let AddOutcome { hash, .. } = node1.blobs().add_bytes(b"foo".to_vec()).await?;
 
         // create a node addr with only a relay URL, no direct addresses
         let addr = NodeAddr::new(node1.node_id()).with_relay_url(relay_url);
-        node2.blobs.download(hash, addr).await?.await?;
+        node2.blobs().download(hash, addr).await?.await?;
         assert_eq!(
             node2
-                .blobs
+                .blobs()
                 .read_to_bytes(hash)
                 .await
                 .context("get")?
@@ -372,14 +386,14 @@ mod tests {
             .node_discovery(dns_pkarr_server.discovery(secret2).into())
             .spawn()
             .await?;
-        let hash = node1.blobs.add_bytes(b"foo".to_vec()).await?.hash;
+        let hash = node1.blobs().add_bytes(b"foo".to_vec()).await?.hash;
 
         // create a node addr with node id only
         let addr = NodeAddr::new(node1.node_id());
-        node2.blobs.download(hash, addr).await?.await?;
+        node2.blobs().download(hash, addr).await?.await?;
         assert_eq!(
             node2
-                .blobs
+                .blobs()
                 .read_to_bytes(hash)
                 .await
                 .context("get")?
@@ -392,9 +406,9 @@ mod tests {
     #[tokio::test]
     async fn test_default_author_memory() -> Result<()> {
         let iroh = Node::memory().spawn().await?;
-        let author = iroh.authors.default().await?;
-        assert!(iroh.authors.export(author).await?.is_some());
-        assert!(iroh.authors.delete(author).await.is_err());
+        let author = iroh.authors().default().await?;
+        assert!(iroh.authors().export(author).await?.is_some());
+        assert!(iroh.authors().delete(author).await.is_err());
         Ok(())
     }
 
@@ -416,9 +430,9 @@ mod tests {
                 .spawn()
                 .await
                 .unwrap();
-            let author = iroh.authors.default().await.unwrap();
-            assert!(iroh.authors.export(author).await.unwrap().is_some());
-            assert!(iroh.authors.delete(author).await.is_err());
+            let author = iroh.authors().default().await.unwrap();
+            assert!(iroh.authors().export(author).await.unwrap().is_some());
+            assert!(iroh.authors().delete(author).await.is_err());
             iroh.shutdown().await.unwrap();
             author
         };
@@ -431,10 +445,10 @@ mod tests {
                 .spawn()
                 .await
                 .unwrap();
-            let author = iroh.authors.default().await.unwrap();
+            let author = iroh.authors().default().await.unwrap();
             assert_eq!(author, default_author);
-            assert!(iroh.authors.export(author).await.unwrap().is_some());
-            assert!(iroh.authors.delete(author).await.is_err());
+            assert!(iroh.authors().export(author).await.unwrap().is_some());
+            assert!(iroh.authors().delete(author).await.is_err());
             iroh.shutdown().await.unwrap();
         };
 
@@ -450,10 +464,10 @@ mod tests {
                 .spawn()
                 .await
                 .unwrap();
-            let author = iroh.authors.default().await.unwrap();
+            let author = iroh.authors().default().await.unwrap();
             assert!(author != default_author);
-            assert!(iroh.authors.export(author).await.unwrap().is_some());
-            assert!(iroh.authors.delete(author).await.is_err());
+            assert!(iroh.authors().export(author).await.unwrap().is_some());
+            assert!(iroh.authors().delete(author).await.is_err());
             iroh.shutdown().await.unwrap();
             author
         };
@@ -493,9 +507,9 @@ mod tests {
                 .spawn()
                 .await
                 .unwrap();
-            let author = iroh.authors.create().await.unwrap();
-            iroh.authors.set_default(author).await.unwrap();
-            assert_eq!(iroh.authors.default().await.unwrap(), author);
+            let author = iroh.authors().create().await.unwrap();
+            iroh.authors().set_default(author).await.unwrap();
+            assert_eq!(iroh.authors().default().await.unwrap(), author);
             iroh.shutdown().await.unwrap();
             author
         };
@@ -506,7 +520,7 @@ mod tests {
                 .spawn()
                 .await
                 .unwrap();
-            assert_eq!(iroh.authors.default().await.unwrap(), default_author);
+            assert_eq!(iroh.authors().default().await.unwrap(), default_author);
             iroh.shutdown().await.unwrap();
         }
 

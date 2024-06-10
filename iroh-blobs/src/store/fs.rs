@@ -111,7 +111,7 @@ use crate::{
             BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSendError,
             ProgressSender,
         },
-        raw_outboard_size, LivenessTracker, MemOrFile,
+        raw_outboard_size, MemOrFile, TagCounter, TagDrop,
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
 };
@@ -779,13 +779,15 @@ struct StoreInner {
     path_options: Arc<PathOptions>,
 }
 
-impl LivenessTracker for RwLock<TempCounterMap> {
-    fn on_clone(&self, content: &HashAndFormat) {
-        self.write().unwrap().inc(content);
-    }
-
+impl TagDrop for RwLock<TempCounterMap> {
     fn on_drop(&self, content: &HashAndFormat) {
         self.write().unwrap().dec(content);
+    }
+}
+
+impl TagCounter for RwLock<TempCounterMap> {
+    fn on_create(&self, content: &HashAndFormat) {
+        self.write().unwrap().inc(content);
     }
 }
 
@@ -981,7 +983,7 @@ impl StoreInner {
             ))
         })?;
         std::fs::create_dir_all(parent)?;
-        let temp_tag = self.temp_tag(HashAndFormat::raw(hash));
+        let temp_tag = self.temp.temp_tag(HashAndFormat::raw(hash));
         let (tx, rx) = oneshot::channel();
         self.tx
             .send_async(ActorMessage::Export {
@@ -1046,10 +1048,6 @@ impl StoreInner {
         let (tx, rx) = oneshot::channel();
         self.tx.send_async(ActorMessage::Sync { tx }).await?;
         Ok(rx.await?)
-    }
-
-    fn temp_tag(&self, content: HashAndFormat) -> TempTag {
-        TempTag::new(content, Some(self.temp.clone()))
     }
 
     fn import_file_sync(
@@ -1141,7 +1139,7 @@ impl StoreInner {
         };
         progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
         // from here on, everything related to the hash is protected by the temp tag
-        let tag = self.temp_tag(HashAndFormat { hash, format });
+        let tag = self.temp.temp_tag(HashAndFormat { hash, format });
         let hash = *tag.hash();
         // blocking send for the import
         let (tx, rx) = flume::bounded(1);
@@ -1423,7 +1421,7 @@ impl super::Store for Store {
     }
 
     fn temp_tag(&self, value: HashAndFormat) -> TempTag {
-        self.0.temp_tag(value)
+        self.0.temp.temp_tag(value)
     }
 
     async fn shutdown(&self) {
@@ -1717,7 +1715,7 @@ impl ActorState {
         let inline_outboard =
             outboard_size <= self.options.inline.max_outboard_inlined && outboard_size != 0;
         // from here on, everything related to the hash is protected by the temp tag
-        let tag = TempTag::new(content_id, Some(self.temp.clone()));
+        let tag = self.temp.temp_tag(content_id);
         let hash = *tag.hash();
         self.protected.insert(hash);
         // move the data file into place, or create a reference to it

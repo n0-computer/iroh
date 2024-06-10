@@ -23,11 +23,11 @@ async fn main() -> anyhow::Result<()> {
     let node = iroh::node::Node::memory().spawn().await?;
 
     // add some data and remember the hash
-    let res = node.blobs.add_bytes("Hello, world!").await?;
+    let res = node.blobs().add_bytes("Hello, world!").await?;
 
     // create a ticket
     let ticket = node
-        .blobs
+        .blobs()
         .share(res.hash, res.format, Default::default())
         .await?;
 
