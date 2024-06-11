@@ -82,9 +82,8 @@ impl<S: Store + fmt::Debug> ExampleProtocol<S> {
 
     async fn handle_connection(&self, conn: Connection) -> Result<()> {
         let remote_node_id = get_remote_node_id(&conn)?;
-        println!("accepting new connection from {remote_node_id}");
+        println!("accepted connection from {remote_node_id}");
         let mut send_stream = conn.open_uni().await?;
-        println!("stream open!");
         // not that this is something that you wanted to do, but let's create a new blob for each
         // incoming connection. this could be any mechanism, but we want to demonstrate how to use a
         // custom protocol together with built-in iroh functionality
@@ -97,10 +96,12 @@ impl<S: Store + fmt::Debug> ExampleProtocol<S> {
         // send the hash over our custom proto
         send_stream.write_all(hash.hash.as_bytes()).await?;
         send_stream.finish().await?;
+        println!("closing connection from {remote_node_id}");
         Ok(())
     }
 
     pub async fn connect(&self, remote_node_id: NodeId) -> Result<()> {
+        println!("our node id: {}", self.node.node_id());
         println!("connecting to {remote_node_id}");
         let conn = self
             .node
