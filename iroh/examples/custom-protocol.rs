@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
     let args = Cli::parse();
     // create a new node
     let node = iroh::node::Node::memory()
-        .accept(ExampleProto::ALPN, |node| ExampleProto::build(node))
+        .accept(EXAMPLE_ALPN, |node| ExampleProto::build(node))
         .spawn()
         .await?;
 
@@ -54,6 +54,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+const EXAMPLE_ALPN: &'static [u8] = b"example-proto/0";
+
 #[derive(Debug)]
 struct ExampleProto<S> {
     node: Node<S>,
@@ -70,8 +72,6 @@ impl<S: Store + fmt::Debug> Protocol for ExampleProto<S> {
 }
 
 impl<S: Store + fmt::Debug> ExampleProto<S> {
-    const ALPN: &'static [u8] = b"example-proto/0";
-
     fn build(node: Node<S>) -> Arc<Self> {
         Arc::new(Self { node })
     }
@@ -110,7 +110,7 @@ impl<S: Store + fmt::Debug> ExampleProto<S> {
             .await?;
         let mut recv_stream = conn.accept_uni().await?;
         let hash_bytes = recv_stream.read_to_end(32).await?;
-        let hash = iroh::blobs::Hash::from_bytes(*(&hash_bytes.try_into().unwrap()));
+        let hash = iroh::blobs::Hash::from_bytes(hash_bytes.try_into().unwrap());
         println!("received hash: {hash}");
         self.node
             .blobs()
