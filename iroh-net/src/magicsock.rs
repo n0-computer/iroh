@@ -386,6 +386,20 @@ impl MagicSock {
         }
     }
 
+    /// Updates our direct addresses.
+    ///
+    /// On a successful update, our address is published to discovery.
+    pub(super) fn update_endpoints(&self, eps: Vec<config::Endpoint>) {
+        let updated = self.endpoints.update(DiscoveredEndpoints::new(eps)).is_ok();
+        if updated {
+            let eps = self.endpoints.read();
+            eps.log_endpoint_change();
+            self.node_map
+                .on_direct_addr_discovered(eps.iter().map(|ep| ep.addr));
+            self.publish_my_addr();
+        }
+    }
+
     /// Get a reference to the DNS resolver used in this [`MagicSock`].
     pub fn dns_resolver(&self) -> &DnsResolver {
         &self.dns_resolver
@@ -2115,15 +2129,7 @@ impl Actor {
             // The STUN address(es) are always first.
             // Despite this sorting, clients are not relying on this sorting for decisions;
 
-            let updated = msock
-                .endpoints
-                .update(DiscoveredEndpoints::new(eps))
-                .is_ok();
-            if updated {
-                let eps = msock.endpoints.read();
-                eps.log_endpoint_change();
-                msock.publish_my_addr();
-            }
+            msock.update_endpoints(eps);
 
             // Regardless of whether our local endpoints changed, we now want to send any queued
             // call-me-maybe messages.

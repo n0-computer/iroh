@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     path::Path,
@@ -17,7 +17,10 @@ use stun_rs::TransactionId;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, trace, warn};
 
-use self::node_state::{NodeState, Options, PingHandled};
+use self::{
+    best_addr::ClearReason,
+    node_state::{NodeState, Options, PingHandled},
+};
 use super::{
     metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
 };
@@ -307,6 +310,13 @@ impl NodeMap {
     pub(super) fn prune_inactive(&self) {
         self.inner.lock().prune_inactive();
     }
+
+    pub(crate) fn on_direct_addr_discovered(
+        &self,
+        discovered: impl Iterator<Item = impl Into<IpPort>>,
+    ) {
+        self.inner.lock().on_direct_addr_discovered(discovered);
+    }
 }
 
 impl NodeMapInner {
@@ -352,6 +362,34 @@ impl NodeMapInner {
         let id = node_state.id();
         for addr in &info.direct_addresses {
             self.set_node_state_for_ip_port(*addr, id);
+        }
+    }
+
+    /// Prunes nodes that claim to share a address we know points to us,
+    pub(super) fn on_direct_addr_discovered(
+        &mut self,
+        discovered: impl Iterator<Item = impl Into<IpPort>>,
+    ) {
+        for addr in discovered {
+            self.remove_by_ipp(addr.into(), ClearReason::MatchesOurLocalAddr)
+        }
+    }
+
+    /// Removes a node by its IpPort
+    fn remove_by_ipp(&mut self, ipp: IpPort, reason: ClearReason) {
+        if let Some(id) = self.by_ip_port.remove(&ipp) {
+            if let Entry::Occupied(mut entry) = self.by_id.entry(id) {
+                let node = entry.get_mut();
+                node.remove_direct_addr(&ipp, reason);
+                if node.direct_addresses().count() == 0 {
+                    let node_id = node.public_key();
+                    let mapped_addr = node.quic_mapped_addr();
+                    self.by_node_key.remove(node_id);
+                    self.by_quic_mapped_addr.remove(mapped_addr);
+                    debug!(node_id=%node_id.fmt_short(), ?reason, "removing node");
+                    entry.remove();
+                }
+            }
         }
     }
 
