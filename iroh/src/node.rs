@@ -5,8 +5,8 @@
 //! To shut down the node, call [`Node::shutdown`].
 use std::fmt::Debug;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::sync::Arc;
+use std::{any::Any, path::Path};
 
 use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
@@ -23,14 +23,16 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
-use crate::client::RpcService;
+use crate::{client::RpcService, node::builder::ProtocolMap};
 
 mod builder;
+mod protocol;
 mod rpc;
 mod rpc_status;
 
 pub use self::builder::{Builder, DiscoveryConfig, GcPolicy, StorageConfig};
 pub use self::rpc_status::RpcStatus;
+pub use protocol::Protocol;
 
 /// A server which implements the iroh node.
 ///
@@ -47,6 +49,7 @@ pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
     task: Arc<JoinHandle<()>>,
     client: crate::client::MemIroh,
+    protocols: ProtocolMap,
 }
 
 #[derive(derive_more::Debug)]
@@ -148,6 +151,15 @@ impl<D: BaoStore> Node<D> {
     /// Get the relay server we are connected to.
     pub fn my_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
         self.inner.endpoint.my_relay()
+    }
+
+    /// Returns the protocol handler for a alpn.
+    pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<Arc<P>> {
+        let protocols = self.protocols.read().unwrap();
+        let protocol: Arc<dyn Protocol> = protocols.get(alpn)?.clone();
+        let protocol_any: Arc<dyn Any + Send + Sync> = protocol.as_arc_any();
+        let protocol_ref = Arc::downcast(protocol_any).ok()?;
+        Some(protocol_ref)
     }
 
     /// Aborts the node.

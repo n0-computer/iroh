@@ -1,8 +1,8 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     net::{Ipv4Addr, SocketAddrV4},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::Duration,
 };
 
@@ -28,11 +28,13 @@ use quic_rpc::{
     RpcServer, ServiceEndpoint,
 };
 use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
 use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     client::RPC_ALPN,
+    node::Protocol,
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
 };
@@ -53,6 +55,9 @@ const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
+
+pub(super) type ProtocolMap = Arc<RwLock<HashMap<&'static [u8], Arc<dyn Protocol>>>>;
+type ProtocolBuilders<D> = Vec<(&'static [u8], Box<dyn FnOnce(Node<D>) -> Arc<dyn Protocol>>)>;
 
 /// Builder for the [`Node`].
 ///
@@ -84,6 +89,7 @@ where
     dns_resolver: Option<DnsResolver>,
     node_discovery: DiscoveryConfig,
     docs_store: iroh_docs::store::fs::Store,
+    protocols: ProtocolBuilders<D>,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
     /// Callback to register when a gc loop is done
@@ -133,6 +139,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store: iroh_docs::store::Store::memory(),
+            protocols: Default::default(),
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -160,6 +167,7 @@ impl<D: Map> Builder<D> {
             gc_policy: GcPolicy::Disabled,
             docs_store,
             node_discovery: Default::default(),
+            protocols: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
@@ -223,6 +231,7 @@ where
             gc_policy: self.gc_policy,
             docs_store,
             node_discovery: self.node_discovery,
+            protocols: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: self.gc_done_callback,
@@ -244,6 +253,7 @@ where
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
             node_discovery: self.node_discovery,
+            protocols: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             gc_done_callback: self.gc_done_callback,
@@ -270,6 +280,7 @@ where
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
             node_discovery: self.node_discovery,
+            protocols: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             gc_done_callback: self.gc_done_callback,
@@ -340,6 +351,16 @@ where
     #[cfg(any(test, feature = "test-utils"))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
+        self
+    }
+
+    /// Accept a custom protocol.
+    pub fn accept(
+        mut self,
+        alpn: &'static [u8],
+        protocol: impl FnOnce(Node<D>) -> Arc<dyn Protocol> + 'static,
+    ) -> Self {
+        self.protocols.push((alpn, Box::new(protocol)));
         self
     }
 
@@ -481,6 +502,8 @@ where
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
+        let protocols = Arc::new(RwLock::new(HashMap::new()));
+
         let inner = Arc::new(NodeInner {
             db: self.blobs_store,
             endpoint: endpoint.clone(),
@@ -492,7 +515,9 @@ where
             sync,
             downloader,
         });
+        let (ready_tx, ready_rx) = oneshot::channel();
         let task = {
+            let protocols = Arc::clone(&protocols);
             let gossip = gossip.clone();
             let handler = rpc::Handler {
                 inner: inner.clone(),
@@ -501,8 +526,11 @@ where
             let ep = endpoint.clone();
             tokio::task::spawn(
                 async move {
+                    // Wait until the protocol builders have run.
+                    ready_rx.await.expect("cannot fail");
                     Self::run(
                         ep,
+                        protocols,
                         handler,
                         self.rpc_endpoint,
                         internal_rpc,
@@ -518,7 +546,16 @@ where
             inner,
             task: Arc::new(task),
             client,
+            protocols,
         };
+
+        for (alpn, p) in self.protocols {
+            let protocol = p(node.clone());
+            node.protocols.write().unwrap().insert(alpn, protocol);
+        }
+
+        // Notify the run task that the protocols are now built.
+        ready_tx.send(()).expect("cannot fail");
 
         // spawn a task that updates the gossip endpoints.
         // TODO: track task
@@ -545,6 +582,7 @@ where
     #[allow(clippy::too_many_arguments)]
     async fn run(
         server: Endpoint,
+        protocols: ProtocolMap,
         handler: rpc::Handler<D>,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<RpcService>,
@@ -615,8 +653,9 @@ where
                     let gossip = gossip.clone();
                     let inner = handler.inner.clone();
                     let sync = handler.inner.sync.clone();
+                    let protocols = protocols.clone();
                     tokio::task::spawn(async move {
-                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync).await {
+                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync, protocols).await {
                             warn!("Handling incoming connection ended with error: {err}");
                         }
                     });
@@ -738,6 +777,7 @@ async fn handle_connection<D: BaoStore>(
     node: Arc<NodeInner<D>>,
     gossip: Gossip,
     sync: DocsEngine,
+    protocols: ProtocolMap,
 ) -> Result<()> {
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,
@@ -752,7 +792,19 @@ async fn handle_connection<D: BaoStore>(
             )
             .await
         }
-        _ => bail!("ignoring connection: unsupported ALPN protocol"),
+        alpn => {
+            let protocol = {
+                let protocols = protocols.read().unwrap();
+                protocols.get(alpn).cloned()
+            };
+            if let Some(protocol) = protocol {
+                drop(protocols);
+                let connection = connecting.await?;
+                protocol.accept(connection).await?;
+            } else {
+                bail!("ignoring connection: unsupported ALPN protocol");
+            }
+        }
     }
     Ok(())
 }
