@@ -422,10 +422,16 @@ where
             }
         };
 
+        let alpns = PROTOCOLS
+            .iter()
+            .chain(self.protocols.iter().map(|(alpn, _)| alpn))
+            .map(|p| p.to_vec())
+            .collect();
+
         let endpoint = Endpoint::builder()
             .secret_key(self.secret_key.clone())
             .proxy_from_env()
-            .alpns(PROTOCOLS.iter().map(|p| p.to_vec()).collect())
+            .alpns(alpns)
             .keylog(self.keylog)
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
