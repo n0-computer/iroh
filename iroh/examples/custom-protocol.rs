@@ -13,8 +13,6 @@ use iroh::{
 };
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-const EXAMPLE_ALPN: &'static [u8] = b"example-proto/0";
-
 #[derive(Debug, Parser)]
 pub struct Cli {
     #[clap(subcommand)]
@@ -33,7 +31,7 @@ async fn main() -> Result<()> {
     let args = Cli::parse();
     // create a new node
     let node = iroh::node::Node::memory()
-        .accept(EXAMPLE_ALPN, |node| ExampleProtocol::build(node))
+        .accept(ExampleProto::ALPN, |node| ExampleProto::build(node))
         .spawn()
         .await?;
 
@@ -46,7 +44,7 @@ async fn main() -> Result<()> {
             tokio::signal::ctrl_c().await?;
         }
         Command::Connect { node: node_id } => {
-            let proto = ExampleProtocol::from_node(&node, EXAMPLE_ALPN).expect("it is registered");
+            let proto = ExampleProto::get_from_node(&node, EXAMPLE_ALPN).expect("it is registered");
             proto.connect(node_id).await?;
         }
     }
@@ -57,11 +55,11 @@ async fn main() -> Result<()> {
 }
 
 #[derive(Debug)]
-struct ExampleProtocol<S> {
+struct ExampleProto<S> {
     node: Node<S>,
 }
 
-impl<S: Store + fmt::Debug> Protocol for ExampleProtocol<S> {
+impl<S: Store + fmt::Debug> Protocol for ExampleProto<S> {
     fn as_arc_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
@@ -71,13 +69,15 @@ impl<S: Store + fmt::Debug> Protocol for ExampleProtocol<S> {
     }
 }
 
-impl<S: Store + fmt::Debug> ExampleProtocol<S> {
+impl<S: Store + fmt::Debug> ExampleProto<S> {
+    const ALPN: &'static [u8] = b"example-proto/0";
+
     fn build(node: Node<S>) -> Arc<Self> {
         Arc::new(Self { node })
     }
 
-    fn from_node(node: &Node<S>, alpn: &'static [u8]) -> Option<Arc<Self>> {
-        node.get_protocol::<ExampleProtocol<S>>(alpn)
+    fn get_from_node(node: &Node<S>, alpn: &'static [u8]) -> Option<Arc<Self>> {
+        node.get_protocol::<ExampleProto<S>>(alpn)
     }
 
     async fn handle_connection(&self, conn: Connection) -> Result<()> {
@@ -100,7 +100,7 @@ impl<S: Store + fmt::Debug> ExampleProtocol<S> {
         Ok(())
     }
 
-    pub async fn connect(&self, remote_node_id: NodeId) -> Result<()> {
+    async fn connect(&self, remote_node_id: NodeId) -> Result<()> {
         println!("our node id: {}", self.node.node_id());
         println!("connecting to {remote_node_id}");
         let conn = self
