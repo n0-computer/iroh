@@ -1,6 +1,7 @@
 //! A simple relay server for iroh-net.
 //!
-//! Based on /tailscale/cmd/derper.
+//! This handles only the CLI and config file loading, the server implementation lives in
+//! [`iroh_net::relay::iroh_relay`].
 
 use std::net::{Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};

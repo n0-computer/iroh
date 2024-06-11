@@ -1,8 +1,13 @@
 //! A full-fledged iroh-relay server.
 //!
-//! This module provides an API to create a full fledged iroh-relay server.  It is primarily
+//! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
 //! other locations however.
+//!
+//! This code is fully written in a form of structured-concurrency: every spawned task is
+//! always attached to a handle and when the handle is dropped the tasks abort.  So tasks
+//! can not outlive their handle.  It is also always possible to await for completion of a
+//! task.  Some tasks additionally have a method to do graceful shutdown.
 
 use std::fmt;
 use std::future::Future;
