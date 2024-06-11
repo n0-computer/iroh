@@ -57,7 +57,10 @@ const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 
 pub(super) type ProtocolMap = Arc<RwLock<HashMap<&'static [u8], Arc<dyn Protocol>>>>;
-type ProtocolBuilders<D> = Vec<(&'static [u8], Box<dyn FnOnce(Node<D>) -> Arc<dyn Protocol>>)>;
+type ProtocolBuilders<D> = Vec<(
+    &'static [u8],
+    Box<dyn FnOnce(Node<D>) -> Arc<dyn Protocol> + Send + 'static>,
+)>;
 
 /// Builder for the [`Node`].
 ///
@@ -358,7 +361,7 @@ where
     pub fn accept(
         mut self,
         alpn: &'static [u8],
-        protocol: impl FnOnce(Node<D>) -> Arc<dyn Protocol> + 'static,
+        protocol: impl FnOnce(Node<D>) -> Arc<dyn Protocol> + Send + 'static,
     ) -> Self {
         self.protocols.push((alpn, Box::new(protocol)));
         self
