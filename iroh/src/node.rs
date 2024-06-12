@@ -47,9 +47,7 @@ pub use protocol::Protocol;
 #[derive(Debug, Clone)]
 pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
-    task: Arc<OnceCell<JoinHandle<()>>>,
     client: crate::client::MemIroh,
-    protocols: ProtocolMap,
 }
 
 #[derive(derive_more::Debug)]
@@ -62,7 +60,9 @@ struct NodeInner<D> {
     #[debug("rt")]
     rt: LocalPoolHandle,
     downloader: Downloader,
-    tasks: Mutex<Option<JoinSet<()>>>,
+    task: OnceCell<JoinHandle<()>>,
+    protocols: ProtocolMap,
+    tasks: Mutex<JoinSet<()>>,
 }
 
 /// In memory node.
@@ -153,7 +153,7 @@ impl<D: BaoStore> Node<D> {
 
     /// Returns the protocol handler for a alpn.
     pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<Arc<P>> {
-        self.protocols.get::<P>(alpn)
+        self.inner.protocols.get::<P>(alpn)
     }
 
     fn downloader(&self) -> &Downloader {
@@ -171,11 +171,9 @@ impl<D: BaoStore> Node<D> {
     pub async fn shutdown(self) -> Result<()> {
         self.inner.cancel_token.cancel();
 
-        if let Ok(mut task) = Arc::try_unwrap(self.task) {
-            task.take().expect("cannot be empty").await?;
-        }
-        if let Some(mut tasks) = self.inner.tasks.lock().unwrap().take() {
-            tasks.abort_all();
+        if let Ok(mut inner) = Arc::try_unwrap(self.inner) {
+            inner.task.take().expect("cannot be empty").await?;
+            inner.tasks.lock().unwrap().abort_all();
         }
         Ok(())
     }

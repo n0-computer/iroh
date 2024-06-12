@@ -38,6 +38,7 @@ impl<T: Send + Sync + 'static> IntoArcAny for T {
 }
 
 #[derive(Debug, Clone, Default)]
+#[allow(clippy::type_complexity)]
 pub struct ProtocolMap(Arc<RwLock<HashMap<&'static [u8], Arc<dyn Protocol>>>>);
 
 impl ProtocolMap {

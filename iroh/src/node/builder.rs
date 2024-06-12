@@ -28,7 +28,6 @@ use quic_rpc::{
     RpcServer, ServiceEndpoint,
 };
 use serde::{Deserialize, Serialize};
-use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
@@ -541,7 +540,6 @@ where
         debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
 
         let blobs_store = self.blobs_store.clone();
-        let mut tasks = JoinSet::new();
 
         // initialize the downloader
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
@@ -560,13 +558,13 @@ where
             tasks: Default::default(),
             rt: lp.clone(),
             downloader,
+            task: Default::default(),
+            protocols: protocols.clone(),
         });
 
         let node = Node {
             inner: inner.clone(),
-            task: Default::default(),
             client,
-            protocols: protocols.clone(),
         };
 
         for (alpn, p) in self.protocols {
@@ -583,7 +581,7 @@ where
                     .instrument(error_span!("node", %me)),
             )
         };
-        node.task.set(task).expect("was empty");
+        node.inner.task.set(task).expect("was empty");
 
         if let GcPolicy::Interval(gc_period) = self.gc_policy {
             tracing::info!("Starting GC task with interval {:?}", gc_period);
@@ -591,14 +589,19 @@ where
             let gc_done_callback = self.gc_done_callback.take();
             let sync = protocols.get::<DocsEngine>(DOCS_ALPN);
 
-            tasks.spawn_local(Self::gc_loop(db, sync, gc_period, gc_done_callback));
+            node.inner.tasks.lock().unwrap().spawn_local(Self::gc_loop(
+                db,
+                sync,
+                gc_period,
+                gc_done_callback,
+            ));
         }
 
         // spawn a task that updates the gossip endpoints.
         let mut stream = endpoint.local_endpoints();
         let gossip = protocols.get::<Gossip>(GOSSIP_ALPN);
         if let Some(gossip) = gossip {
-            tasks.spawn(async move {
+            node.inner.tasks.lock().unwrap().spawn(async move {
                 while let Some(eps) = stream.next().await {
                     if let Err(err) = gossip.update_endpoints(&eps) {
                         warn!("Failed to update gossip endpoints: {err:?}");
@@ -607,8 +610,6 @@ where
                 warn!("failed to retrieve local endpoints");
             });
         }
-
-        *(node.inner.tasks.lock().unwrap()) = Some(tasks);
 
         // Wait for a single endpoint update, to make sure
         // we found some endpoints
@@ -713,9 +714,7 @@ where
                         }
                     };
                     let protocols = protocols.clone();
-                    let mut tasks_guard = inner.tasks.lock().unwrap();
-                    let tasks = tasks_guard.as_mut().expect("only empty after shutdown");
-                    tasks.spawn(async move {
+                    inner.tasks.lock().unwrap().spawn(async move {
                         if let Err(err) = handle_connection(connecting, alpn, protocols).await {
                             warn!("Handling incoming connection ended with error: {err}");
                         }
