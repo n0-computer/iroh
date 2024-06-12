@@ -799,7 +799,7 @@ async fn handle_connection<D: BaoStore>(
         alpn => {
             let protocol = protocols.get_any(alpn);
             if let Some(protocol) = protocol {
-                protocol.handle_connection(connecting).await?;
+                protocol.accept(connecting).await?;
             } else {
                 bail!("ignoring connection: unsupported ALPN protocol");
             }

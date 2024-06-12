@@ -62,7 +62,7 @@ struct ExampleProto<S> {
 }
 
 impl<S: Store + fmt::Debug> Protocol for ExampleProto<S> {
-    fn handle_connection(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
+    fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move {
             let conn = conn.await?;
             let remote_node_id = get_remote_node_id(&conn)?;

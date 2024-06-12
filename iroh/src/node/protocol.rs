@@ -14,7 +14,7 @@ pub trait Protocol: Send + Sync + IntoArcAny + fmt::Debug + 'static {
     /// Handle an incoming connection.
     ///
     /// This runs on a freshly spawned tokio task so this can be long-running.
-    fn handle_connection(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>>;
+    fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>>;
 }
 
 /// Helper trait to facilite casting from `Arc<dyn T>` to `Arc<dyn Any>`.
