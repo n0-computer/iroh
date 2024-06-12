@@ -1,4 +1,4 @@
-use std::{any::Any, fmt, sync::Arc};
+use std::{fmt, sync::Arc};
 
 use anyhow::Result;
 use clap::Parser;
@@ -6,7 +6,7 @@ use futures_lite::future::Boxed as BoxedFuture;
 use iroh::{
     blobs::store::Store,
     net::{
-        endpoint::{get_remote_node_id, Connecting, Connection},
+        endpoint::{get_remote_node_id, Connecting},
         NodeId,
     },
     node::{Node, Protocol},
@@ -63,7 +63,26 @@ struct ExampleProto<S> {
 
 impl<S: Store + fmt::Debug> Protocol for ExampleProto<S> {
     fn handle_connection(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
-        Box::pin(async move { self.handle_connection(conn.await?).await })
+        Box::pin(async move {
+            let conn = conn.await?;
+            let remote_node_id = get_remote_node_id(&conn)?;
+            println!("accepted connection from {remote_node_id}");
+            let mut send_stream = conn.open_uni().await?;
+            // not that this is something that you wanted to do, but let's create a new blob for each
+            // incoming connection. this could be any mechanism, but we want to demonstrate how to use a
+            // custom protocol together with built-in iroh functionality
+            let content = format!("this blob is created for my beloved peer {remote_node_id} ♥");
+            let hash = self
+                .node
+                .blobs()
+                .add_bytes(content.as_bytes().to_vec())
+                .await?;
+            // send the hash over our custom proto
+            send_stream.write_all(hash.hash.as_bytes()).await?;
+            send_stream.finish().await?;
+            println!("closing connection from {remote_node_id}");
+            Ok(())
+        })
     }
 }
 
@@ -74,26 +93,6 @@ impl<S: Store + fmt::Debug> ExampleProto<S> {
 
     fn get_from_node(node: &Node<S>, alpn: &'static [u8]) -> Option<Arc<Self>> {
         node.get_protocol::<ExampleProto<S>>(alpn)
-    }
-
-    async fn handle_connection(&self, conn: Connection) -> Result<()> {
-        let remote_node_id = get_remote_node_id(&conn)?;
-        println!("accepted connection from {remote_node_id}");
-        let mut send_stream = conn.open_uni().await?;
-        // not that this is something that you wanted to do, but let's create a new blob for each
-        // incoming connection. this could be any mechanism, but we want to demonstrate how to use a
-        // custom protocol together with built-in iroh functionality
-        let content = format!("this blob is created for my beloved peer {remote_node_id} ♥");
-        let hash = self
-            .node
-            .blobs()
-            .add_bytes(content.as_bytes().to_vec())
-            .await?;
-        // send the hash over our custom proto
-        send_stream.write_all(hash.hash.as_bytes()).await?;
-        send_stream.finish().await?;
-        println!("closing connection from {remote_node_id}");
-        Ok(())
     }
 
     async fn connect(&self, remote_node_id: NodeId) -> Result<()> {
