@@ -378,7 +378,11 @@ impl Actor {
                 new_endpoints = self.on_endpoints_rx.recv() => {
                     match new_endpoints {
                         Some(endpoints) => {
-                            let addr = self.endpoint.my_addr_with_endpoints(endpoints)?;
+                            let addr = NodeAddr::from_parts(
+                                self.endpoint.node_id(),
+                                self.endpoint.my_relay(),
+                                endpoints.into_iter().map(|x| x.addr).collect(),
+                            );
                             let peer_data = encode_peer_data(&addr.info)?;
                             self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
                         }

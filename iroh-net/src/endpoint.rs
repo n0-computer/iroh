@@ -28,7 +28,6 @@ use tracing::{debug, info_span, trace, warn};
 use url::Url;
 
 use crate::{
-    config,
     defaults::default_relay_map,
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
@@ -577,16 +576,6 @@ impl Endpoint {
             .ok_or(anyhow!("No IP endpoints found"))?;
         let relay = self.my_relay();
         let addrs = addrs.into_iter().map(|x| x.addr).collect();
-        Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
-    }
-
-    /// Returns the [`NodeAddr`] for this endpoint with the provided endpoints.
-    ///
-    /// Like [`Endpoint::my_addr`] but uses the provided IP endpoints rather than those from
-    /// [`Endpoint::local_endpoints`].
-    pub fn my_addr_with_endpoints(&self, eps: Vec<config::Endpoint>) -> Result<NodeAddr> {
-        let relay = self.my_relay();
-        let addrs = eps.into_iter().map(|x| x.addr).collect();
         Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
     }
 
