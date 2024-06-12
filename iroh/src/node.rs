@@ -14,11 +14,12 @@ use iroh_base::key::PublicKey;
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
 use iroh_docs::engine::Engine;
-use iroh_net::{endpoint::LocalEndpointsStream, key::SecretKey, Endpoint};
-use once_cell::sync::OnceCell;
+use iroh_net::{
+    endpoint::LocalEndpointsStream, key::SecretKey, util::SharedAbortingJoinHandle, Endpoint,
+};
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
@@ -60,7 +61,7 @@ struct NodeInner<D> {
     #[debug("rt")]
     rt: LocalPoolHandle,
     downloader: Downloader,
-    task: OnceCell<JoinHandle<()>>,
+    task: Mutex<Option<SharedAbortingJoinHandle<()>>>,
     protocols: ProtocolMap,
     tasks: Mutex<JoinSet<()>>,
 }
@@ -164,17 +165,19 @@ impl<D: BaoStore> Node<D> {
     ///
     /// This does not gracefully terminate currently: all connections are closed and
     /// anything in-transit is lost.  The task will stop running.
-    /// If this is the last copy of the `Node`, this will finish once the task is
+    /// If this is the first call to this method, this will finish once the task is
     /// fully shutdown.
     ///
     /// The shutdown behaviour will become more graceful in the future.
     pub async fn shutdown(self) -> Result<()> {
         self.inner.cancel_token.cancel();
 
-        if let Ok(mut inner) = Arc::try_unwrap(self.inner) {
-            inner.task.take().expect("cannot be empty").await?;
-            inner.tasks.lock().unwrap().abort_all();
+        let task = self.inner.task.lock().unwrap().take();
+        if let Some(task) = task {
+            task.await.map_err(|err| anyhow!(err))?;
+            self.inner.tasks.lock().unwrap().abort_all();
         }
+
         Ok(())
     }
 

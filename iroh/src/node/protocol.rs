@@ -11,7 +11,7 @@ use iroh_net::endpoint::Connecting;
 
 use crate::node::DocsEngine;
 
-/// Trait for iroh protocol handlers.
+/// Handler for incoming connections.
 pub trait Protocol: Send + Sync + IntoArcAny + fmt::Debug + 'static {
     /// Handle an incoming connection.
     ///

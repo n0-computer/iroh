@@ -377,8 +377,35 @@ where
     /// Use this to register custom protocols onto the iroh node. Whenever a new connection for
     /// `alpn` comes in, it is passed to this protocol handler.
     ///
-    /// `protocol_builder` is a closure that returns a future which must resolve to a
-    /// `Arc<dyn Protocol>`.
+    /// The `protocol_builder` argument is a closure that returns a future which must resolve
+    /// to a protocol handler. The latter is a struct that implements [`Protocol`]. Note that the
+    /// closure must return `Arc<dyn Protocol>`. Sometimes the Rust compiler will not be able to do
+    /// the cast automatically, so usually you will have to cast manually:
+    ///
+    /// ```rust
+    /// # use anyhow::Result;
+    /// # use futures_lite::future::Boxed as BoxedFuture;
+    ///
+    /// const MY_ALPN: &[u8] = "my-protocol/1";
+    ///
+    /// #[derive(Debug)]
+    /// struct MyProtocol;
+    ///
+    /// impl Protocol for MyProtocol {
+    ///     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
+    ///         todo!()
+    ///     }
+    /// }
+    ///
+    /// let node = Node::memory().accept(MY_ALPN |_node| Box::pin(async move {
+    ///     let protocol = MyProtocol;
+    ///     let protocol: Arc<dyn Protocol> = Arc::new(protocol);
+    ///     Ok(protocol)
+    /// }))
+    ///
+    /// ```
+    ///
+    ///
     pub fn accept(
         mut self,
         alpn: &'static [u8],
@@ -587,7 +614,8 @@ where
                     .instrument(error_span!("node", %me)),
             )
         };
-        node.inner.task.set(task).expect("was empty");
+
+        *(node.inner.task.lock().unwrap()) = Some(task.into());
 
         if let GcPolicy::Interval(gc_period) = self.gc_policy {
             tracing::info!("Starting GC task with interval {:?}", gc_period);
