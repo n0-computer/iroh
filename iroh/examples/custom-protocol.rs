@@ -1,4 +1,4 @@
-use std::{fmt, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::Result;
 use clap::Parser;
@@ -63,7 +63,7 @@ struct ExampleProto<S> {
     node: Node<S>,
 }
 
-impl<S: Store + fmt::Debug> Protocol for ExampleProto<S> {
+impl<S: Store> Protocol for ExampleProto<S> {
     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move {
             let conn = conn.await?;
@@ -88,7 +88,7 @@ impl<S: Store + fmt::Debug> Protocol for ExampleProto<S> {
     }
 }
 
-impl<S: Store + fmt::Debug> ExampleProto<S> {
+impl<S: Store> ExampleProto<S> {
     fn build(node: Node<S>) -> Arc<Self> {
         Arc::new(Self { node })
     }

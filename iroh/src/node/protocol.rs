@@ -113,6 +113,6 @@ impl Protocol for iroh_gossip::net::Gossip {
 
 impl Protocol for DocsEngine {
     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
-        Box::pin(async move { self.handle_connection(conn.await?).await })
+        Box::pin(async move { self.handle_connection(conn).await })
     }
 }
