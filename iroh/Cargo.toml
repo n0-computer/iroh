@@ -32,10 +32,10 @@ iroh-io = { version = "0.6.0", features = ["stats"] }
 iroh-metrics = { version = "0.18.0", path = "../iroh-metrics", optional = true }
 iroh-net = { version = "0.18.0", path = "../iroh-net" }
 num_cpus = { version = "1.15.0" }
+once_cell = "1.17.0"
 portable-atomic = "1"
 iroh-docs = { version = "0.18.0", path = "../iroh-docs" }
 iroh-gossip = { version = "0.18.0", path = "../iroh-gossip" }
-once_cell = "1.18.0"
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.10.0", default-features = false, features = ["flume-transport", "quinn-transport"] }

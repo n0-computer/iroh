@@ -31,7 +31,9 @@ async fn main() -> Result<()> {
     let args = Cli::parse();
     // create a new node
     let node = iroh::node::Node::memory()
-        .accept(EXAMPLE_ALPN, |node| ExampleProto::build(node))
+        .accept(EXAMPLE_ALPN, |node| {
+            Box::pin(async move { Ok(ExampleProto::build(node)) })
+        })
         .spawn()
         .await?;
 

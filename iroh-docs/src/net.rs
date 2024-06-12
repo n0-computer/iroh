@@ -106,7 +106,7 @@ pub enum AcceptOutcome {
 /// Handle an iroh-docs connection and sync all shared documents in the replica store.
 pub async fn handle_connection<F, Fut>(
     sync: SyncHandle,
-    connecting: iroh_net::endpoint::Connecting,
+    connection: iroh_net::endpoint::Connection,
     accept_cb: F,
 ) -> Result<SyncFinished, AcceptError>
 where
@@ -114,7 +114,6 @@ where
     Fut: Future<Output = AcceptOutcome>,
 {
     let t_start = Instant::now();
-    let connection = connecting.await.map_err(AcceptError::connect)?;
     let peer = get_remote_node_id(&connection).map_err(AcceptError::connect)?;
     let (mut send_stream, mut recv_stream) = connection
         .accept_bi()

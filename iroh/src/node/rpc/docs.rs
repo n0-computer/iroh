@@ -3,7 +3,9 @@
 use anyhow::anyhow;
 use futures_lite::Stream;
 use iroh_blobs::{store::Store as BaoStore, BlobFormat};
-use iroh_docs::{Author, DocTicket, NamespaceSecret};
+use iroh_docs::{
+    Author, AuthorId, CapabilityKind, DocTicket, NamespaceId, NamespaceSecret, SignedEntry,
+};
 use tokio_stream::StreamExt;
 
 use crate::client::docs::ShareMode;
@@ -11,21 +13,20 @@ use crate::node::DocsEngine;
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorCreateResponse, AuthorDeleteRequest, AuthorDeleteResponse,
     AuthorExportRequest, AuthorExportResponse, AuthorGetDefaultRequest, AuthorGetDefaultResponse,
-    AuthorImportRequest, AuthorImportResponse, AuthorListRequest, AuthorListResponse,
-    AuthorSetDefaultRequest, AuthorSetDefaultResponse, DocCloseRequest, DocCloseResponse,
-    DocCreateRequest, DocCreateResponse, DocDelRequest, DocDelResponse, DocDropRequest,
-    DocDropResponse, DocGetDownloadPolicyRequest, DocGetDownloadPolicyResponse, DocGetExactRequest,
-    DocGetExactResponse, DocGetManyRequest, DocGetManyResponse, DocGetSyncPeersRequest,
-    DocGetSyncPeersResponse, DocImportRequest, DocImportResponse, DocLeaveRequest,
-    DocLeaveResponse, DocListRequest, DocListResponse, DocOpenRequest, DocOpenResponse,
-    DocSetDownloadPolicyRequest, DocSetDownloadPolicyResponse, DocSetHashRequest,
-    DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
-    DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest, DocStatusResponse,
-    DocSubscribeRequest, DocSubscribeResponse, RpcResult,
+    AuthorImportRequest, AuthorImportResponse, AuthorListRequest, AuthorSetDefaultRequest,
+    AuthorSetDefaultResponse, DocCloseRequest, DocCloseResponse, DocCreateRequest,
+    DocCreateResponse, DocDelRequest, DocDelResponse, DocDropRequest, DocDropResponse,
+    DocGetDownloadPolicyRequest, DocGetDownloadPolicyResponse, DocGetExactRequest,
+    DocGetExactResponse, DocGetManyRequest, DocGetSyncPeersRequest, DocGetSyncPeersResponse,
+    DocImportRequest, DocImportResponse, DocLeaveRequest, DocLeaveResponse, DocListRequest,
+    DocOpenRequest, DocOpenResponse, DocSetDownloadPolicyRequest, DocSetDownloadPolicyResponse,
+    DocSetHashRequest, DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest,
+    DocShareResponse, DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest,
+    DocStatusResponse, DocSubscribeRequest, DocSubscribeResponse, RpcResult,
 };
 
 /// Capacity for the flume channels to forward sync store iterators to async RPC streams.
-const ITER_CHANNEL_CAP: usize = 64;
+pub(super) const ITER_CHANNEL_CAP: usize = 64;
 
 #[allow(missing_docs)]
 impl DocsEngine {
@@ -57,8 +58,8 @@ impl DocsEngine {
     pub fn author_list(
         &self,
         _req: AuthorListRequest,
-    ) -> impl Stream<Item = RpcResult<AuthorListResponse>> {
-        let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
+        tx: flume::Sender<anyhow::Result<AuthorId>>,
+    ) {
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
@@ -68,10 +69,6 @@ impl DocsEngine {
                 tx2.send_async(Err(err)).await.ok();
             }
         });
-        rx.into_stream().map(|r| {
-            r.map(|author_id| AuthorListResponse { author_id })
-                .map_err(Into::into)
-        })
     }
 
     pub async fn author_import(&self, req: AuthorImportRequest) -> RpcResult<AuthorImportResponse> {
@@ -108,8 +105,12 @@ impl DocsEngine {
         Ok(DocDropResponse {})
     }
 
-    pub fn doc_list(&self, _req: DocListRequest) -> impl Stream<Item = RpcResult<DocListResponse>> {
-        let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
+    pub fn doc_list(
+        &self,
+        _req: DocListRequest,
+        tx: flume::Sender<anyhow::Result<(NamespaceId, CapabilityKind)>>,
+    ) {
+        // let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
@@ -119,10 +120,6 @@ impl DocsEngine {
                 tx2.send_async(Err(err)).await.ok();
             }
         });
-        rx.into_stream().map(|r| {
-            r.map(|(id, capability)| DocListResponse { id, capability })
-                .map_err(Into::into)
-        })
     }
 
     pub async fn doc_open(&self, req: DocOpenRequest) -> RpcResult<DocOpenResponse> {
@@ -249,9 +246,9 @@ impl DocsEngine {
     pub fn doc_get_many(
         &self,
         req: DocGetManyRequest,
-    ) -> impl Stream<Item = RpcResult<DocGetManyResponse>> {
+        tx: flume::Sender<anyhow::Result<SignedEntry>>,
+    ) {
         let DocGetManyRequest { doc_id, query } = req;
-        let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
@@ -261,10 +258,6 @@ impl DocsEngine {
                 tx2.send_async(Err(err)).await.ok();
             }
         });
-        rx.into_stream().map(|r| {
-            r.map(|entry| DocGetManyResponse { entry })
-                .map_err(Into::into)
-        })
     }
 
     pub async fn doc_get_exact(&self, req: DocGetExactRequest) -> RpcResult<DocGetExactResponse> {

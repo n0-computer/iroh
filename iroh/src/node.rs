@@ -6,7 +6,7 @@
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
@@ -14,12 +14,11 @@ use iroh_base::key::PublicKey;
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
 use iroh_docs::engine::Engine;
-use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{endpoint::LocalEndpointsStream, key::SecretKey, Endpoint};
 use once_cell::sync::OnceCell;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
@@ -31,7 +30,7 @@ mod protocol;
 mod rpc;
 mod rpc_status;
 
-pub use self::builder::{Builder, DiscoveryConfig, GcPolicy, StorageConfig};
+pub use self::builder::{Builder, DiscoveryConfig, DocsStorage, GcPolicy, StorageConfig};
 pub use self::rpc_status::RpcStatus;
 pub use protocol::Protocol;
 
@@ -60,12 +59,10 @@ struct NodeInner<D> {
     secret_key: SecretKey,
     cancel_token: CancellationToken,
     controller: FlumeConnection<RpcService>,
-    #[allow(dead_code)]
-    gc_task: Option<AbortingJoinHandle<()>>,
     #[debug("rt")]
     rt: LocalPoolHandle,
-    pub(crate) sync: DocsEngine,
     downloader: Downloader,
+    tasks: Mutex<Option<JoinSet<()>>>,
 }
 
 /// In memory node.
@@ -156,7 +153,11 @@ impl<D: BaoStore> Node<D> {
 
     /// Returns the protocol handler for a alpn.
     pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<Arc<P>> {
-        self.protocols.get(alpn)
+        self.protocols.get::<P>(alpn)
+    }
+
+    fn downloader(&self) -> &Downloader {
+        &self.inner.downloader
     }
 
     /// Aborts the node.
@@ -171,8 +172,10 @@ impl<D: BaoStore> Node<D> {
         self.inner.cancel_token.cancel();
 
         if let Ok(mut task) = Arc::try_unwrap(self.task) {
-            let task = task.take().expect("cannot be empty");
-            task.await?;
+            task.take().expect("cannot be empty").await?;
+        }
+        if let Some(mut tasks) = self.inner.tasks.lock().unwrap().take() {
+            tasks.abort_all();
         }
         Ok(())
     }
