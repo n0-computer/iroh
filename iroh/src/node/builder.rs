@@ -807,9 +807,7 @@ async fn handle_connection<D: BaoStore>(
                 protocols.get(alpn).cloned()
             };
             if let Some(protocol) = protocol {
-                drop(protocols);
-                let connection = connecting.await?;
-                protocol.accept(connection).await?;
+                protocol.handle_connection(connecting).await?;
             } else {
                 bail!("ignoring connection: unsupported ALPN protocol");
             }

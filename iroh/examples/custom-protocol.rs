@@ -2,11 +2,11 @@ use std::{any::Any, fmt, sync::Arc};
 
 use anyhow::Result;
 use clap::Parser;
-use futures_lite::future::Boxed;
+use futures_lite::future::Boxed as BoxedFuture;
 use iroh::{
     blobs::store::Store,
     net::{
-        endpoint::{get_remote_node_id, Connection},
+        endpoint::{get_remote_node_id, Connecting, Connection},
         NodeId,
     },
     node::{Node, Protocol},
@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-const EXAMPLE_ALPN: &'static [u8] = b"example-proto/0";
+const EXAMPLE_ALPN: &[u8] = b"example-proto/0";
 
 #[derive(Debug)]
 struct ExampleProto<S> {
@@ -66,8 +66,8 @@ impl<S: Store + fmt::Debug> Protocol for ExampleProto<S> {
         self
     }
 
-    fn accept(self: Arc<Self>, conn: quinn::Connection) -> Boxed<Result<()>> {
-        Box::pin(async move { self.handle_connection(conn).await })
+    fn handle_connection(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
+        Box::pin(async move { self.handle_connection(conn.await?).await })
     }
 }
 
