@@ -11,6 +11,7 @@ use axum_server::{
     tls_rustls::{RustlsAcceptor, RustlsConfig},
 };
 use futures_lite::{future::Boxed as BoxFuture, FutureExt};
+use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls_acme::{axum::AxumAcceptor, caches::DirCache, AcmeConfig};
@@ -75,11 +76,9 @@ impl<I: AsyncRead + AsyncWrite + Unpin + Send + 'static, S: Send + 'static> Acce
 impl TlsAcceptor {
     async fn self_signed(domains: Vec<String>) -> Result<Self> {
         let tls_cert = rcgen::generate_simple_self_signed(domains)?;
-        let config = RustlsConfig::from_der(
-            vec![tls_cert.serialize_der()?],
-            tls_cert.serialize_private_key_der(),
-        )
-        .await?;
+        let key: PrivateKeyDer =
+            PrivatePkcs8KeyDer::from(tls_cert.serialize_private_key_der()).into();
+        let config = RustlsConfig::from_der(vec![tls_cert.serialize_der()?], key).await?;
         let acceptor = RustlsAcceptor::new(config);
         Ok(Self::Manual(acceptor))
     }
@@ -112,9 +111,7 @@ impl TlsAcceptor {
         is_production: bool,
         dir: PathBuf,
     ) -> Result<Self> {
-        let config = rustls::ServerConfig::builder()
-            .with_safe_defaults()
-            .with_no_client_auth();
+        let config = rustls::ServerConfig::builder().with_no_client_auth();
         let mut state = AcmeConfig::new(domains)
             .contact([format!("mailto:{contact}")])
             .cache_option(Some(DirCache::new(dir)))
@@ -147,10 +144,8 @@ fn load_certs(
     let certfile = std::fs::File::open(filename).context("cannot open certificate file")?;
     let mut reader = std::io::BufReader::new(certfile);
 
-    let certs = rustls_pemfile::certs(&mut reader)?
-        .iter()
-        .map(|v| rustls::pki_types::CertificateDer::from(v.clone()))
-        .collect();
+    let certs: Result<Vec<_>, std::io::Error> = rustls_pemfile::certs(&mut reader).collect();
+    let certs = certs?;
 
     Ok(certs)
 }
@@ -163,14 +158,14 @@ fn load_secret_key(
 
     loop {
         match rustls_pemfile::read_one(&mut reader).context("cannot parse secret key .pem file")? {
-            Some(rustls_pemfile::Item::RSAKey(key)) => {
-                return Ok(rustls::pki_types::PrivateKeyDer::try_from(key)?)
+            Some(rustls_pemfile::Item::Pkcs1Key(key)) => {
+                return Ok(rustls::pki_types::PrivateKeyDer::Pkcs1(key));
             }
-            Some(rustls_pemfile::Item::PKCS8Key(key)) => {
-                return Ok(rustls::pki_types::PrivateKeyDer::try_from(key)?)
+            Some(rustls_pemfile::Item::Pkcs8Key(key)) => {
+                return Ok(rustls::pki_types::PrivateKeyDer::Pkcs8(key));
             }
-            Some(rustls_pemfile::Item::ECKey(key)) => {
-                return Ok(rustls::pki_types::PrivateKeyDer::try_from(key)?)
+            Some(rustls_pemfile::Item::Sec1Key(key)) => {
+                return Ok(rustls::pki_types::PrivateKeyDer::Sec1(key));
             }
             None => break,
             _ => {}

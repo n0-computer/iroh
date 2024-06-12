@@ -114,7 +114,11 @@ pub async fn send_data_on_stream(stream: &mut quinn::SendStream, stream_size: u6
             .context("failed sending data")?;
     }
 
-    stream.finish().await.context("failed finishing stream")?;
+    stream.finish().context("failed finishing stream")?;
+    stream
+        .stopped()
+        .await
+        .context("not all stream data acknowledged")?;
 
     Ok(())
 }

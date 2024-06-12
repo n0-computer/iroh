@@ -34,4 +34,5 @@ missing_debug_implementations = "warn"
 unused-async = "warn"
 
 [patch.crates-io]
-axum-server = { git = "https://github.com/grafbase/axum-server", branch = "rustls-0.23" }
+axum-server = { git = "https://github.com/n0-computer/axum-server", branch = "rustls-0.23" }
+tokio-rustls-acme = { git = "https://github.com/n0-computer/tokio-rustls-acme", branch = "rustls-23" }
