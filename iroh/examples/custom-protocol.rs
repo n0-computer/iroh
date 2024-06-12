@@ -89,7 +89,7 @@ impl<S: Store> Protocol for ExampleProto<S> {
 }
 
 impl<S: Store> ExampleProto<S> {
-    fn build(node: Node<S>) -> Arc<Self> {
+    fn build(node: Node<S>) -> Arc<dyn Protocol> {
         Arc::new(Self { node })
     }
 

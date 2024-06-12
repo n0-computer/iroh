@@ -373,12 +373,18 @@ where
     }
 
     /// Accept a custom protocol.
+    ///
+    /// Use this to register custom protocols onto the iroh node. Whenever a new connection for
+    /// `alpn` comes in, it is passed to this protocol handler.
+    ///
+    /// `protocol_builder` is a closure that returns a future which must resolve to a
+    /// `Arc<dyn Protocol>`.
     pub fn accept(
         mut self,
         alpn: &'static [u8],
-        protocol: impl FnOnce(Node<D>) -> Boxed<Result<Arc<dyn Protocol>>> + Send + 'static,
+        protocol_builder: impl FnOnce(Node<D>) -> Boxed<Result<Arc<dyn Protocol>>> + Send + 'static,
     ) -> Self {
-        self.protocols.push((alpn, Box::new(protocol)));
+        self.protocols.push((alpn, Box::new(protocol_builder)));
         self
     }
 
