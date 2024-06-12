@@ -5,8 +5,8 @@
 //! To shut down the node, call [`Node::shutdown`].
 use std::fmt::Debug;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
-use std::{any::Any, path::Path};
 
 use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
@@ -16,6 +16,7 @@ use iroh_blobs::store::Store as BaoStore;
 use iroh_docs::engine::Engine;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{endpoint::LocalEndpointsStream, key::SecretKey, Endpoint};
+use once_cell::sync::OnceCell;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
 use tokio::task::JoinHandle;
@@ -23,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
-use crate::{client::RpcService, node::builder::ProtocolMap};
+use crate::{client::RpcService, node::protocol::ProtocolMap};
 
 mod builder;
 mod protocol;
@@ -47,7 +48,7 @@ pub use protocol::Protocol;
 #[derive(Debug, Clone)]
 pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
-    task: Arc<JoinHandle<()>>,
+    task: Arc<OnceCell<JoinHandle<()>>>,
     client: crate::client::MemIroh,
     protocols: ProtocolMap,
 }
@@ -155,11 +156,7 @@ impl<D: BaoStore> Node<D> {
 
     /// Returns the protocol handler for a alpn.
     pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<Arc<P>> {
-        let protocols = self.protocols.read().unwrap();
-        let protocol: Arc<dyn Protocol> = protocols.get(alpn)?.clone();
-        let protocol_any: Arc<dyn Any + Send + Sync> = protocol.as_arc_any();
-        let protocol_ref = Arc::downcast(protocol_any).ok()?;
-        Some(protocol_ref)
+        self.protocols.get(alpn)
     }
 
     /// Aborts the node.
@@ -173,7 +170,8 @@ impl<D: BaoStore> Node<D> {
     pub async fn shutdown(self) -> Result<()> {
         self.inner.cancel_token.cancel();
 
-        if let Ok(task) = Arc::try_unwrap(self.task) {
+        if let Ok(mut task) = Arc::try_unwrap(self.task) {
+            let task = task.take().expect("cannot be empty");
             task.await?;
         }
         Ok(())

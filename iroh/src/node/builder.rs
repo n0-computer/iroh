@@ -1,8 +1,8 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
     net::{Ipv4Addr, SocketAddrV4},
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::Duration,
 };
 
@@ -28,13 +28,12 @@ use quic_rpc::{
     RpcServer, ServiceEndpoint,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::oneshot;
 use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     client::RPC_ALPN,
-    node::Protocol,
+    node::{protocol::ProtocolMap, Protocol},
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
 };
@@ -56,7 +55,6 @@ const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 
-pub(super) type ProtocolMap = Arc<RwLock<HashMap<&'static [u8], Arc<dyn Protocol>>>>;
 type ProtocolBuilders<D> = Vec<(
     &'static [u8],
     Box<dyn FnOnce(Node<D>) -> Arc<dyn Protocol> + Send + 'static>,
@@ -511,7 +509,7 @@ where
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
-        let protocols = Arc::new(RwLock::new(HashMap::new()));
+        let protocols = ProtocolMap::default();
 
         let inner = Arc::new(NodeInner {
             db: self.blobs_store,
@@ -524,9 +522,21 @@ where
             sync,
             downloader,
         });
-        let (ready_tx, ready_rx) = oneshot::channel();
+
+        let node = Node {
+            inner: inner.clone(),
+            task: Default::default(),
+            client,
+            protocols: protocols.clone(),
+        };
+
+        for (alpn, p) in self.protocols {
+            let protocol = p(node.clone());
+            protocols.insert(alpn, protocol);
+        }
+
         let task = {
-            let protocols = Arc::clone(&protocols);
+            let protocols = protocols.clone();
             let gossip = gossip.clone();
             let handler = rpc::Handler {
                 inner: inner.clone(),
@@ -535,8 +545,6 @@ where
             let ep = endpoint.clone();
             tokio::task::spawn(
                 async move {
-                    // Wait until the protocol builders have run.
-                    ready_rx.await.expect("cannot fail");
                     Self::run(
                         ep,
                         protocols,
@@ -551,20 +559,7 @@ where
             )
         };
 
-        let node = Node {
-            inner,
-            task: Arc::new(task),
-            client,
-            protocols,
-        };
-
-        for (alpn, p) in self.protocols {
-            let protocol = p(node.clone());
-            node.protocols.write().unwrap().insert(alpn, protocol);
-        }
-
-        // Notify the run task that the protocols are now built.
-        ready_tx.send(()).expect("cannot fail");
+        node.task.set(task).expect("was empty");
 
         // spawn a task that updates the gossip endpoints.
         // TODO: track task
@@ -802,10 +797,7 @@ async fn handle_connection<D: BaoStore>(
             .await
         }
         alpn => {
-            let protocol = {
-                let protocols = protocols.read().unwrap();
-                protocols.get(alpn).cloned()
-            };
+            let protocol = protocols.get_any(alpn);
             if let Some(protocol) = protocol {
                 protocol.handle_connection(connecting).await?;
             } else {

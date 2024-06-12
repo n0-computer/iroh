@@ -62,10 +62,6 @@ struct ExampleProto<S> {
 }
 
 impl<S: Store + fmt::Debug> Protocol for ExampleProto<S> {
-    fn as_arc_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
-        self
-    }
-
     fn handle_connection(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move { self.handle_connection(conn.await?).await })
     }
