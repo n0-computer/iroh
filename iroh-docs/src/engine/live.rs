@@ -67,7 +67,9 @@ pub enum ToLiveActor {
         #[debug("onsehot::Sender")]
         reply: sync::oneshot::Sender<anyhow::Result<()>>,
     },
-    Shutdown,
+    Shutdown {
+        reply: sync::oneshot::Sender<()>,
+    },
     Subscribe {
         namespace: NamespaceId,
         #[debug("sender")]
@@ -224,10 +226,18 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             error!(?err, "Error during shutdown");
         }
         gossip_handle.await?;
-        res
+        match res {
+            Ok(reply) => {
+                // If the shutdown is triggered from call to the shutdown method,
+                // trigger the reply to signal completion of the shutdown.
+                reply.send(()).ok();
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
     }
 
-    async fn run_inner(&mut self) -> Result<()> {
+    async fn run_inner(&mut self) -> Result<oneshot::Sender<()>> {
         let mut i = 0;
         loop {
             i += 1;
@@ -237,8 +247,15 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 msg = self.inbox.recv() => {
                     let msg = msg.context("to_actor closed")?;
                     trace!(?i, %msg, "tick: to_actor");
-                    if !self.on_actor_message(msg).await.context("on_actor_message")? {
-                        break;
+                    match msg {
+                        ToLiveActor::Shutdown { reply } => {
+                            // Return the oneshot reply to the upper-level run to send after
+                            // shutdown is complete.
+                            break Ok(reply);
+                        }
+                        msg => {
+                            self.on_actor_message(msg).await.context("on_actor_message")?;
+                        }
                     }
                 }
                 event = self.replica_events_rx.recv_async() => {
@@ -267,14 +284,13 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 }
             }
         }
-        debug!("close (shutdown)");
-        Ok(())
     }
 
     async fn on_actor_message(&mut self, msg: ToLiveActor) -> anyhow::Result<bool> {
         match msg {
-            ToLiveActor::Shutdown => {
-                return Ok(false);
+            ToLiveActor::Shutdown { .. } => {
+                unreachable!("handled in run");
+                // return Ok(false);
             }
             ToLiveActor::IncomingSyncReport { from, report } => {
                 self.on_sync_report(from, report).await

@@ -205,7 +205,9 @@ where
         tokio::fs::create_dir_all(&blob_dir).await?;
         let blobs_store = iroh_blobs::store::fs::Store::load(&blob_dir)
             .await
-            .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
+            .with_context(|| {
+                format!("Failed to load blobs database from {}", blob_dir.display())
+            })?;
         let docs_store = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
 
         let v0 = blobs_store
@@ -497,21 +499,6 @@ where
             });
         }
 
-        // We clone the blob store to shut it down in case the node fails to spawn.
-        let blobs_store = self.blobs_store.clone();
-        match self.spawn_inner(lp).await {
-            Ok(node) => Ok(node),
-            Err(err) => {
-                debug!("failed to spawn node, shutting down");
-                blobs_store.shutdown().await;
-                Err(err)
-            }
-        }
-    }
-
-    async fn spawn_inner(mut self, lp: LocalPoolHandle) -> Result<Node<D>> {
-        trace!("spawning node");
-
         let mut transport_config = quinn::TransportConfig::default();
         transport_config
             .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
@@ -600,14 +587,22 @@ where
             client,
         };
 
+        // Build the protocol handlers for the registered protocols.
         for (alpn, p) in self.protocols {
-            let protocol = p(node.clone()).await?;
-            protocols.insert(alpn, protocol);
+            let protocol = p(node.clone()).await;
+            match protocol {
+                Ok(protocol) => protocols.insert(alpn, protocol),
+                Err(err) => {
+                    // Shutdown the protocols that were already built before returning the error.
+                    protocols.shutdown().await;
+                    return Err(err);
+                }
+            }
         }
 
         let mut join_set = JoinSet::new();
 
-        // spawn a task that for the garbage collection.
+        // Spawn a task that for the garbage collection.
         if let GcPolicy::Interval(gc_period) = self.gc_policy {
             tracing::info!("Starting GC task with interval {:?}", gc_period);
             let db = blobs_store.clone();
@@ -615,7 +610,7 @@ where
             let sync = protocols.get::<DocsEngine>(DOCS_ALPN);
             let handle =
                 lp.spawn_pinned(move || Self::gc_loop(db, sync, gc_period, gc_done_callback));
-            // we cannot spawn tasks that run on the local pool directly into the join set,
+            // We cannot spawn tasks that run on the local pool directly into the join set,
             // so instead we create a new task that supervises the local task.
             join_set.spawn(async move {
                 if let Err(err) = handle.await {
@@ -625,7 +620,7 @@ where
             });
         }
 
-        // spawn a task that updates the gossip endpoints.
+        // Spawn a task that updates the gossip endpoints.
         let gossip = protocols.get::<Gossip>(GOSSIP_ALPN);
         if let Some(gossip) = gossip {
             let mut stream = endpoint.local_endpoints();
@@ -667,7 +662,8 @@ where
         internal_rpc: impl ServiceEndpoint<RpcService>,
         mut join_set: JoinSet<Result<()>>,
     ) {
-        let server = inner.endpoint.clone();
+        let endpoint = inner.endpoint.clone();
+
         let docs = inner.protocols.get::<DocsEngine>(DOCS_ALPN);
         let handler = rpc::Handler {
             inner: inner.clone(),
@@ -675,7 +671,7 @@ where
         };
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
-        let (ipv4, ipv6) = server.local_addr();
+        let (ipv4, ipv6) = endpoint.local_addr();
         debug!(
             "listening at: {}{}",
             ipv4,
@@ -688,8 +684,8 @@ where
             // forward our initial endpoints to the gossip protocol
             // it may happen the the first endpoint update callback is missed because the gossip cell
             // is only initialized once the endpoint is fully bound
-            if let Some(local_endpoints) = server.local_endpoints().next().await {
-                debug!(me = ?server.node_id(), "gossip initial update: {local_endpoints:?}");
+            if let Some(local_endpoints) = endpoint.local_endpoints().next().await {
+                debug!(me = ?endpoint.node_id(), "gossip initial update: {local_endpoints:?}");
                 gossip.update_endpoints(&local_endpoints).ok();
             }
         }
@@ -724,7 +720,7 @@ where
                     }
                 },
                 // handle incoming p2p connections
-                Some(mut connecting) = server.accept() => {
+                Some(mut connecting) = endpoint.accept() => {
                     let alpn = match connecting.alpn().await {
                         Ok(alpn) => alpn,
                         Err(err) => {
@@ -750,38 +746,21 @@ where
             }
         }
 
-        // clean shutdown of the blobs db to close the write transaction
-        inner.db.shutdown().await;
-
-        // We cannot hold the RwLockReadGuard over an await point,
-        // so we have to manually loop, clone each protocol, and drop the read guard
-        // before awaiting shutdown.
-        let mut i = 0;
-        loop {
-            let protocol = {
-                let protocols = inner.protocols.read();
-                if let Some(protocol) = protocols.values().nth(i) {
-                    protocol.clone()
-                } else {
-                    break;
-                }
-            };
-            protocol.shutdown().await;
-            i += 1;
-        }
-
-        // force shutdown remaining tasks.
-        join_set.shutdown().await;
-
         // Closing the Endpoint is the equivalent of calling Connection::close on all
         // connections: Operations will immediately fail with
         // ConnectionError::LocallyClosed.  All streams are interrupted, this is not
         // graceful.
         let error_code = Closed::ProviderTerminating;
-        server
+        endpoint
             .close(error_code.into(), error_code.reason())
             .await
             .ok();
+
+        // Abort remaining tasks.
+        join_set.shutdown().await;
+
+        // Shutdown of the DocsEngine and blobs store is handled in Node::shutdown through
+        // ProtocolMap::shutdown.
     }
 
     async fn gc_loop(

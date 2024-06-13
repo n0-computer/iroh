@@ -2,12 +2,14 @@ use std::{
     any::Any,
     collections::HashMap,
     fmt,
+    ops::Deref,
     sync::{Arc, RwLock},
 };
 
 use anyhow::Result;
 use futures_lite::future::Boxed as BoxedFuture;
 use iroh_net::endpoint::Connecting;
+use tracing::warn;
 
 use crate::node::DocsEngine;
 
@@ -67,6 +69,26 @@ impl ProtocolMap {
     ) -> std::sync::RwLockReadGuard<HashMap<&'static [u8], Arc<dyn Protocol>>> {
         self.0.read().unwrap()
     }
+
+    /// Shutdown the protocol handlers.
+    pub(super) async fn shutdown(&self) {
+        // We cannot hold the RwLockReadGuard over an await point,
+        // so we have to manually loop, clone each protocol, and drop the read guard
+        // before awaiting shutdown.
+        let mut i = 0;
+        loop {
+            let protocol = {
+                let protocols = self.read();
+                if let Some(protocol) = protocols.values().nth(i) {
+                    protocol.clone()
+                } else {
+                    break;
+                }
+            };
+            protocol.shutdown().await;
+            i += 1;
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -94,6 +116,12 @@ impl<S: iroh_blobs::store::Store> Protocol for BlobsProtocol<S> {
             Ok(())
         })
     }
+
+    fn shutdown(self: Arc<Self>) -> BoxedFuture<()> {
+        Box::pin(async move {
+            self.store.shutdown().await;
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -114,5 +142,12 @@ impl Protocol for iroh_gossip::net::Gossip {
 impl Protocol for DocsEngine {
     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move { self.handle_connection(conn).await })
+    }
+    fn shutdown(self: Arc<Self>) -> BoxedFuture<()> {
+        Box::pin(async move {
+            if let Err(err) = self.deref().shutdown().await {
+                warn!("Error while shutting down docs engine: {err:?}");
+            }
+        })
     }
 }

@@ -168,12 +168,17 @@ impl<D: BaoStore> Node<D> {
     ///
     /// The shutdown behaviour will become more graceful in the future.
     pub async fn shutdown(self) -> Result<()> {
+        // Trigger shutdown of the main run task by activating the cancel token.
         self.inner.cancel_token.cancel();
 
+        // Wait for the main run task to terminate.
         let task = self.inner.task.lock().unwrap().take();
         if let Some(task) = task {
             task.await.map_err(|err| anyhow!(err))?;
         }
+
+        // Give protocol handlers a chance to shutdown.
+        self.inner.protocols.shutdown().await;
 
         Ok(())
     }

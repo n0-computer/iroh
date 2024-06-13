@@ -1486,6 +1486,8 @@ impl Actor {
         let mut msgs = PeekableFlumeReceiver::new(self.state.msgs.clone());
         while let Some(msg) = msgs.recv() {
             if let ActorMessage::Shutdown { tx } = msg {
+                // Make sure the database is dropped before we send the reply.
+                drop(self);
                 if let Some(tx) = tx {
                     tx.send(()).ok();
                 }
