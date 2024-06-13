@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use futures_lite::{future::Boxed as BoxedFuture, StreamExt};
 use iroh_base::key::SecretKey;
 use iroh_blobs::{
@@ -720,19 +720,10 @@ where
                     }
                 },
                 // handle incoming p2p connections.
-                Some(mut connecting) = endpoint.accept() => {
-                    let alpn = match connecting.alpn().await {
-                        Ok(alpn) => alpn,
-                        Err(err) => {
-                            error!("invalid handshake: {:?}", err);
-                            continue;
-                        }
-                    };
+                Some(connecting) = endpoint.accept() => {
                     let protocols = inner.protocols.clone();
                     join_set.spawn(async move {
-                        if let Err(err) = handle_connection(connecting, alpn, protocols).await {
-                            warn!("Handling incoming connection ended with error: {err}");
-                        }
+                        handle_connection(connecting, protocols).await;
                         Ok(())
                     });
                 },
@@ -860,18 +851,21 @@ impl Default for GcPolicy {
     }
 }
 
-async fn handle_connection(
-    connecting: iroh_net::endpoint::Connecting,
-    alpn: String,
-    protocols: ProtocolMap,
-) -> Result<()> {
-    let protocol = protocols.get_any(alpn.as_bytes()).clone();
-    if let Some(protocol) = protocol {
-        protocol.accept(connecting).await?;
-    } else {
-        bail!("ignoring connection: unsupported ALPN protocol");
+async fn handle_connection(mut connecting: iroh_net::endpoint::Connecting, protocols: ProtocolMap) {
+    let alpn = match connecting.alpn().await {
+        Ok(alpn) => alpn,
+        Err(err) => {
+            warn!("Ignoring connection: invalid handshake: {:?}", err);
+            return;
+        }
+    };
+    let Some(handler) = protocols.get_any(alpn.as_bytes()) else {
+        warn!("Ignoring connection: unsupported ALPN protocol");
+        return;
+    };
+    if let Err(err) = handler.accept(connecting).await {
+        warn!("Handling incoming connection ended with error: {err}");
     }
-    Ok(())
 }
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
