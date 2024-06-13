@@ -698,26 +698,6 @@ where
             tokio::select! {
                 biased;
                 _ = cancel_token.cancelled() => {
-                    // clean shutdown of the blobs db to close the write transaction
-                    inner.db.shutdown().await;
-
-                    // We cannot hold the RwLockReadGuard over an await point,
-                    // so we have to manually loop, clone each protocol, and drop the read guard
-                    // before awaiting shutdown.
-                    let mut i = 0;
-                    loop {
-                        let protocol = {
-                            let protocols = inner.protocols.read();
-                            if let Some(protocol) = protocols.values().nth(i) {
-                                protocol.clone()
-                            } else {
-                                break;
-                            }
-                        };
-                        protocol.shutdown().await;
-                        i += 1;
-                    }
-
                     break
                 },
                 // handle rpc requests. This will do nothing if rpc is not configured, since
@@ -770,6 +750,27 @@ where
             }
         }
 
+        // clean shutdown of the blobs db to close the write transaction
+        inner.db.shutdown().await;
+
+        // We cannot hold the RwLockReadGuard over an await point,
+        // so we have to manually loop, clone each protocol, and drop the read guard
+        // before awaiting shutdown.
+        let mut i = 0;
+        loop {
+            let protocol = {
+                let protocols = inner.protocols.read();
+                if let Some(protocol) = protocols.values().nth(i) {
+                    protocol.clone()
+                } else {
+                    break;
+                }
+            };
+            protocol.shutdown().await;
+            i += 1;
+        }
+
+        // force shutdown remaining tasks.
         join_set.shutdown().await;
 
         // Closing the Endpoint is the equivalent of calling Connection::close on all
