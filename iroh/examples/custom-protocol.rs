@@ -64,40 +64,40 @@ struct ExampleProto<S> {
 }
 
 impl<S: Store> Protocol for ExampleProto<S> {
-    fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
+    fn accept(self: Arc<Self>, connecting: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move {
-            let conn = conn.await?;
-            let remote_node_id = get_remote_node_id(&conn)?;
-            println!("accepted connection from {remote_node_id}");
-            let mut send_stream = conn.open_uni().await?;
-            // not that this is something that you wanted to do, but let's create a new blob for each
-            // incoming connection. this could be any mechanism, but we want to demonstrate how to use a
-            // custom protocol together with built-in iroh functionality
-            let content = format!("this blob is created for my beloved peer {remote_node_id} ♥");
+            let connection = connecting.await?;
+            let peer = get_remote_node_id(&connection)?;
+            println!("accepted connection from {peer}");
+            let mut send_stream = connection.open_uni().await?;
+            // Let's create a new blob for each incoming connection.
+            // This functions as an example of using existing iroh functionality within a protocol
+            // (you likely don't want to create a new blob for each connection for real)
+            let content = format!("this blob is created for my beloved peer {peer} ♥");
             let hash = self
                 .node
                 .blobs()
                 .add_bytes(content.as_bytes().to_vec())
                 .await?;
-            // send the hash over our custom proto
+            // Send the hash over our custom protocol.
             send_stream.write_all(hash.hash.as_bytes()).await?;
             send_stream.finish().await?;
-            println!("closing connection from {remote_node_id}");
+            println!("closing connection from {peer}");
             Ok(())
         })
     }
 }
 
 impl<S: Store> ExampleProto<S> {
-    fn build(node: Node<S>) -> Arc<dyn Protocol> {
+    pub fn build(node: Node<S>) -> Arc<dyn Protocol> {
         Arc::new(Self { node })
     }
 
-    fn get_from_node(node: &Node<S>, alpn: &'static [u8]) -> Option<Arc<Self>> {
+    pub fn get_from_node(node: &Node<S>, alpn: &'static [u8]) -> Option<Arc<Self>> {
         node.get_protocol::<ExampleProto<S>>(alpn)
     }
 
-    async fn connect(&self, remote_node_id: NodeId) -> Result<()> {
+    pub async fn connect(&self, remote_node_id: NodeId) -> Result<()> {
         println!("our node id: {}", self.node.node_id());
         println!("connecting to {remote_node_id}");
         let conn = self
@@ -122,8 +122,8 @@ impl<S: Store> ExampleProto<S> {
     }
 }
 
-// set the RUST_LOG env var to one of {debug,info,warn} to see logging info
-pub fn setup_logging() {
+/// Set the RUST_LOG env var to one of {debug,info,warn} to see logging.
+fn setup_logging() {
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(EnvFilter::from_default_env())

@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use futures_lite::{future::Boxed, StreamExt};
+use futures_lite::{future::Boxed as BoxedFuture, StreamExt};
 use iroh_base::key::SecretKey;
 use iroh_blobs::{
     downloader::Downloader,
@@ -61,7 +61,7 @@ const MAX_STREAMS: u64 = 10;
 
 type ProtocolBuilders<D> = Vec<(
     &'static [u8],
-    Box<dyn FnOnce(Node<D>) -> Boxed<Result<Arc<dyn Protocol>>> + Send + 'static>,
+    Box<dyn FnOnce(Node<D>) -> BoxedFuture<Result<Arc<dyn Protocol>>> + Send + 'static>,
 )>;
 
 /// Storage backend for documents.
@@ -386,33 +386,47 @@ where
     /// the cast automatically, so usually you will have to cast manually:
     ///
     /// ```rust
+    /// # use std::sync::Arc;
     /// # use anyhow::Result;
     /// # use futures_lite::future::Boxed as BoxedFuture;
+    /// # use iroh::{node::{Node, Protocol}, net::endpoint::Connecting};
+    /// #
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<()> {
     ///
-    /// const MY_ALPN: &[u8] = "my-protocol/1";
+    /// const MY_ALPN: &[u8] = b"my-protocol/1";
     ///
     /// #[derive(Debug)]
     /// struct MyProtocol;
     ///
     /// impl Protocol for MyProtocol {
     ///     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
-    ///         todo!()
+    ///         todo!();
     ///     }
     /// }
     ///
-    /// let node = Node::memory().accept(MY_ALPN |_node| Box::pin(async move {
-    ///     let protocol = MyProtocol;
-    ///     let protocol: Arc<dyn Protocol> = Arc::new(protocol);
-    ///     Ok(protocol)
-    /// }))
-    ///
+    /// let node = Node::memory()
+    ///     .accept(MY_ALPN, |_node| {
+    ///         Box::pin(async move {
+    ///             let protocol = MyProtocol;
+    ///             let protocol: Arc<dyn Protocol> = Arc::new(protocol);
+    ///             Ok(protocol)
+    ///         })
+    ///     })
+    ///     .spawn()
+    ///     .await?;
+    /// # node.shutdown().await?;
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     ///
     pub fn accept(
         mut self,
         alpn: &'static [u8],
-        protocol_builder: impl FnOnce(Node<D>) -> Boxed<Result<Arc<dyn Protocol>>> + Send + 'static,
+        protocol_builder: impl FnOnce(Node<D>) -> BoxedFuture<Result<Arc<dyn Protocol>>>
+            + Send
+            + 'static,
     ) -> Self {
         self.protocols.push((alpn, Box::new(protocol_builder)));
         self
