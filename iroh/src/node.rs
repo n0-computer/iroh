@@ -19,7 +19,6 @@ use iroh_net::{
 };
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
-use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
@@ -63,7 +62,6 @@ struct NodeInner<D> {
     downloader: Downloader,
     task: Mutex<Option<SharedAbortingJoinHandle<()>>>,
     protocols: ProtocolMap,
-    tasks: Mutex<JoinSet<()>>,
 }
 
 /// In memory node.
@@ -175,7 +173,6 @@ impl<D: BaoStore> Node<D> {
         let task = self.inner.task.lock().unwrap().take();
         if let Some(task) = task {
             task.await.map_err(|err| anyhow!(err))?;
-            self.inner.tasks.lock().unwrap().abort_all();
         }
 
         Ok(())

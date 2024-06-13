@@ -28,6 +28,7 @@ use quic_rpc::{
     RpcServer, ServiceEndpoint,
 };
 use serde::{Deserialize, Serialize};
+use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
@@ -588,7 +589,6 @@ where
             secret_key: self.secret_key,
             controller,
             cancel_token,
-            tasks: Default::default(),
             rt: lp.clone(),
             downloader,
             task: Default::default(),
@@ -605,45 +605,51 @@ where
             protocols.insert(alpn, protocol);
         }
 
-        let task = {
-            let protocols = protocols.clone();
-            let me = endpoint.node_id().fmt_short();
-            let inner = inner.clone();
-            tokio::task::spawn(
-                async move { Self::run(inner, protocols, self.rpc_endpoint, internal_rpc).await }
-                    .instrument(error_span!("node", %me)),
-            )
-        };
+        let mut join_set = JoinSet::new();
 
-        *(node.inner.task.lock().unwrap()) = Some(task.into());
-
+        // spawn a task that for the garbage collection.
         if let GcPolicy::Interval(gc_period) = self.gc_policy {
             tracing::info!("Starting GC task with interval {:?}", gc_period);
             let db = blobs_store.clone();
             let gc_done_callback = self.gc_done_callback.take();
             let sync = protocols.get::<DocsEngine>(DOCS_ALPN);
-
-            node.inner.tasks.lock().unwrap().spawn_local(Self::gc_loop(
-                db,
-                sync,
-                gc_period,
-                gc_done_callback,
-            ));
+            let handle =
+                lp.spawn_pinned(move || Self::gc_loop(db, sync, gc_period, gc_done_callback));
+            // we cannot spawn tasks that run on the local pool directly into the join set,
+            // so instead we create a new task that supervises the local task.
+            join_set.spawn(async move {
+                if let Err(err) = handle.await {
+                    return Err(anyhow::Error::from(err));
+                }
+                Ok(())
+            });
         }
 
         // spawn a task that updates the gossip endpoints.
-        let mut stream = endpoint.local_endpoints();
         let gossip = protocols.get::<Gossip>(GOSSIP_ALPN);
         if let Some(gossip) = gossip {
-            node.inner.tasks.lock().unwrap().spawn(async move {
+            let mut stream = endpoint.local_endpoints();
+            join_set.spawn(async move {
                 while let Some(eps) = stream.next().await {
                     if let Err(err) = gossip.update_endpoints(&eps) {
                         warn!("Failed to update gossip endpoints: {err:?}");
                     }
                 }
                 warn!("failed to retrieve local endpoints");
+                Ok(())
             });
         }
+
+        let task = {
+            let me = endpoint.node_id().fmt_short();
+            let inner = inner.clone();
+            tokio::task::spawn(
+                async move { Self::run(inner, self.rpc_endpoint, internal_rpc, join_set).await }
+                    .instrument(error_span!("node", %me)),
+            )
+        };
+
+        *(node.inner.task.lock().unwrap()) = Some(task.into());
 
         // Wait for a single endpoint update, to make sure
         // we found some endpoints
@@ -655,15 +661,14 @@ where
         Ok(node)
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn run(
         inner: Arc<NodeInner<D>>,
-        protocols: ProtocolMap,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<RpcService>,
+        mut join_set: JoinSet<Result<()>>,
     ) {
         let server = inner.endpoint.clone();
-        let docs = protocols.get::<DocsEngine>(DOCS_ALPN);
+        let docs = inner.protocols.get::<DocsEngine>(DOCS_ALPN);
         let handler = rpc::Handler {
             inner: inner.clone(),
             docs,
@@ -679,7 +684,7 @@ where
 
         let cancel_token = handler.inner.cancel_token.clone();
 
-        if let Some(gossip) = protocols.get::<Gossip>(GOSSIP_ALPN) {
+        if let Some(gossip) = inner.protocols.get::<Gossip>(GOSSIP_ALPN) {
             // forward our initial endpoints to the gossip protocol
             // it may happen the the first endpoint update callback is missed because the gossip cell
             // is only initialized once the endpoint is fully bound
@@ -694,7 +699,7 @@ where
                 biased;
                 _ = cancel_token.cancelled() => {
                     // clean shutdown of the blobs db to close the write transaction
-                    handler.inner.db.shutdown().await;
+                    inner.db.shutdown().await;
 
                     // We cannot hold the RwLockReadGuard over an await point,
                     // so we have to manually loop, clone each protocol, and drop the read guard
@@ -702,7 +707,7 @@ where
                     let mut i = 0;
                     loop {
                         let protocol = {
-                            let protocols = protocols.read();
+                            let protocols = inner.protocols.read();
                             if let Some(protocol) = protocols.values().nth(i) {
                                 protocol.clone()
                             } else {
@@ -747,16 +752,25 @@ where
                             continue;
                         }
                     };
-                    let protocols = protocols.clone();
-                    inner.tasks.lock().unwrap().spawn(async move {
+                    let protocols = inner.protocols.clone();
+                    join_set.spawn(async move {
                         if let Err(err) = handle_connection(connecting, alpn, protocols).await {
                             warn!("Handling incoming connection ended with error: {err}");
                         }
+                        Ok(())
                     });
+                },
+                res = join_set.join_next(), if !join_set.is_empty() => {
+                    if let Some(Err(err)) = res {
+                        error!("Task failed: {err:?}");
+                        break;
+                    }
                 },
                 else => break,
             }
         }
+
+        join_set.shutdown().await;
 
         // Closing the Endpoint is the equivalent of calling Connection::close on all
         // connections: Operations will immediately fail with
