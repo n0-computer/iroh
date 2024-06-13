@@ -160,14 +160,14 @@ impl<D: BaoStore> Node<D> {
         &self.inner.downloader
     }
 
-    /// Aborts the node.
+    /// Shutdown the node.
     ///
     /// This does not gracefully terminate currently: all connections are closed and
-    /// anything in-transit is lost.  The task will stop running.
-    /// If this is the first call to this method, this will finish once the task is
-    /// fully shutdown.
+    /// anything in-transit is lost. The shutdown behaviour will become more graceful
+    /// in the future.
     ///
-    /// The shutdown behaviour will become more graceful in the future.
+    /// Returns a future that completes once all tasks terminated and all resources are closed.
+    /// The future resolves to an error if the main task panicked.
     pub async fn shutdown(self) -> Result<()> {
         // Trigger shutdown of the main run task by activating the cancel token.
         self.inner.cancel_token.cancel();
