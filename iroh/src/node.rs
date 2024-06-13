@@ -6,7 +6,7 @@
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
@@ -17,6 +17,7 @@ use iroh_docs::engine::Engine;
 use iroh_net::{
     endpoint::LocalEndpointsStream, key::SecretKey, util::SharedAbortingJoinHandle, Endpoint,
 };
+use once_cell::sync::OnceCell;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
 use tokio_util::sync::CancellationToken;
@@ -60,7 +61,7 @@ struct NodeInner<D> {
     #[debug("rt")]
     rt: LocalPoolHandle,
     downloader: Downloader,
-    task: Mutex<Option<SharedAbortingJoinHandle<()>>>,
+    task: OnceCell<SharedAbortingJoinHandle<()>>,
     protocols: ProtocolMap,
 }
 
@@ -171,14 +172,14 @@ impl<D: BaoStore> Node<D> {
         // Trigger shutdown of the main run task by activating the cancel token.
         self.inner.cancel_token.cancel();
 
-        // Wait for the main run task to terminate.
-        let task = self.inner.task.lock().unwrap().take();
-        if let Some(task) = task {
-            task.await.map_err(|err| anyhow!(err))?;
-        }
-
-        // Give protocol handlers a chance to shutdown.
-        self.inner.protocols.shutdown().await;
+        // Wait for the main task to terminate.
+        self.inner
+            .task
+            .get()
+            .expect("is always set")
+            .clone()
+            .await
+            .map_err(|err| anyhow!(err))?;
 
         Ok(())
     }

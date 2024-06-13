@@ -644,7 +644,7 @@ where
             )
             .instrument(error_span!("node", me=%endpoint.node_id().fmt_short())),
         );
-        *node.inner.task.lock().unwrap() = Some(task.into());
+        node.inner.task.set(task.into()).expect("was empty");
 
         // Wait for a single endpoint update, to make sure
         // we found some endpoints
