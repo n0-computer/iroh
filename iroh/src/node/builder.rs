@@ -574,18 +574,15 @@ where
 
         debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
 
-        let blobs_store = self.blobs_store.clone();
-
-        // initialize the downloader
+        // Initialize the downloader
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
 
+        // Initialize the internal RPC connection.
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
-        let protocols = ProtocolMap::default();
-
         let inner = Arc::new(NodeInner {
-            db: self.blobs_store,
+            db: self.blobs_store.clone(),
             endpoint: endpoint.clone(),
             secret_key: self.secret_key,
             controller,
@@ -593,37 +590,26 @@ where
             rt: lp.clone(),
             downloader,
             task: Default::default(),
-            protocols: protocols.clone(),
+            protocols: ProtocolMap::default(),
         });
 
-        let node = Node {
-            inner: inner.clone(),
-            client,
-        };
+        let node = Node { inner, client };
 
         // Build the protocol handlers for the registered protocols.
-        for (alpn, p) in self.protocols {
-            let protocol = p(node.clone()).await;
-            match protocol {
-                Ok(protocol) => protocols.insert(alpn, protocol),
-                Err(err) => {
-                    // Shutdown the protocols that were already built before returning the error.
-                    protocols.shutdown().await;
-                    return Err(err);
-                }
-            }
-        }
+        node.inner
+            .protocols
+            .build(node.clone(), self.protocols)
+            .await?;
 
         let mut join_set = JoinSet::new();
 
         // Spawn a task that for the garbage collection.
         if let GcPolicy::Interval(gc_period) = self.gc_policy {
             tracing::info!("Starting GC task with interval {:?}", gc_period);
-            let db = blobs_store.clone();
-            let gc_done_callback = self.gc_done_callback.take();
-            let sync = protocols.get::<DocsEngine>(DOCS_ALPN);
-            let handle =
-                lp.spawn_pinned(move || Self::gc_loop(db, sync, gc_period, gc_done_callback));
+            let docs = node.get_protocol::<DocsEngine>(DOCS_ALPN);
+            let handle = lp.spawn_pinned(move || {
+                Self::gc_loop(self.blobs_store, docs, gc_period, self.gc_done_callback)
+            });
             // We cannot spawn tasks that run on the local pool directly into the join set,
             // so instead we create a new task that supervises the local task.
             join_set.spawn(async move {
@@ -635,8 +621,7 @@ where
         }
 
         // Spawn a task that updates the gossip endpoints.
-        let gossip = protocols.get::<Gossip>(GOSSIP_ALPN);
-        if let Some(gossip) = gossip {
+        if let Some(gossip) = node.get_protocol::<Gossip>(GOSSIP_ALPN) {
             let mut stream = endpoint.local_endpoints();
             join_set.spawn(async move {
                 while let Some(eps) = stream.next().await {
@@ -649,16 +634,17 @@ where
             });
         }
 
-        let task = {
-            let me = endpoint.node_id().fmt_short();
-            let inner = inner.clone();
-            tokio::task::spawn(
-                async move { Self::run(inner, self.rpc_endpoint, internal_rpc, join_set).await }
-                    .instrument(error_span!("node", %me)),
+        // Spawn the main task and store it in the node for structured termination in shutdown.
+        let task = tokio::task::spawn(
+            Self::run(
+                node.inner.clone(),
+                self.rpc_endpoint,
+                internal_rpc,
+                join_set,
             )
-        };
-
-        *(node.inner.task.lock().unwrap()) = Some(task.into());
+            .instrument(error_span!("node", me=%endpoint.node_id().fmt_short())),
+        );
+        *node.inner.task.lock().unwrap() = Some(task.into());
 
         // Wait for a single endpoint update, to make sure
         // we found some endpoints
@@ -708,7 +694,7 @@ where
             tokio::select! {
                 biased;
                 _ = cancel_token.cancelled() => {
-                    break
+                    break;
                 },
                 // handle rpc requests. This will do nothing if rpc is not configured, since
                 // accept is just a pending future.
@@ -733,7 +719,7 @@ where
                         }
                     }
                 },
-                // handle incoming p2p connections
+                // handle incoming p2p connections.
                 Some(mut connecting) = endpoint.accept() => {
                     let alpn = match connecting.alpn().await {
                         Ok(alpn) => alpn,
@@ -750,6 +736,7 @@ where
                         Ok(())
                     });
                 },
+                // handle task terminations and quit on panics.
                 res = join_set.join_next(), if !join_set.is_empty() => {
                     if let Some(Err(err)) = res {
                         error!("Task failed: {err:?}");
@@ -770,16 +757,16 @@ where
             .await
             .ok();
 
+        // Shutdown protocol handlers..
+        inner.protocols.shutdown().await;
+
         // Abort remaining tasks.
         join_set.shutdown().await;
-
-        // Shutdown of the DocsEngine and blobs store is handled in Node::shutdown through
-        // ProtocolMap::shutdown.
     }
 
     async fn gc_loop(
         db: D,
-        ds: Option<Arc<DocsEngine>>,
+        docs: Option<Arc<DocsEngine>>,
         gc_period: Duration,
         done_cb: Option<Box<dyn Fn() + Send>>,
     ) {
@@ -796,8 +783,8 @@ where
             tokio::time::sleep(gc_period).await;
             tracing::debug!("Starting GC");
             live.clear();
-            if let Some(ds) = &ds {
-                let doc_hashes = match ds.sync.content_hashes().await {
+            if let Some(docs) = &docs {
+                let doc_hashes = match docs.sync.content_hashes().await {
                     Ok(hashes) => hashes,
                     Err(err) => {
                         tracing::warn!("Error getting doc hashes: {}", err);

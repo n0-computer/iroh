@@ -11,7 +11,7 @@ use futures_lite::future::Boxed as BoxedFuture;
 use iroh_net::endpoint::Connecting;
 use tracing::warn;
 
-use crate::node::DocsEngine;
+use crate::node::{DocsEngine, Node};
 
 /// Handler for incoming connections.
 pub trait Protocol: Send + Sync + IntoArcAny + fmt::Debug + 'static {
@@ -43,6 +43,11 @@ impl<T: Send + Sync + 'static> IntoArcAny for T {
 #[allow(clippy::type_complexity)]
 pub struct ProtocolMap(Arc<RwLock<HashMap<&'static [u8], Arc<dyn Protocol>>>>);
 
+pub type ProtocolBuilders<D> = Vec<(
+    &'static [u8],
+    Box<dyn FnOnce(Node<D>) -> BoxedFuture<Result<Arc<dyn Protocol>>> + Send + 'static>,
+)>;
+
 impl ProtocolMap {
     /// Returns the registered protocol handler for an ALPN as a concrete type.
     pub fn get<P: Protocol>(&self, alpn: &[u8]) -> Option<Arc<P>> {
@@ -68,6 +73,26 @@ impl ProtocolMap {
         &self,
     ) -> std::sync::RwLockReadGuard<HashMap<&'static [u8], Arc<dyn Protocol>>> {
         self.0.read().unwrap()
+    }
+
+    /// Build the protocols from a list of builders.
+    pub(super) async fn build<S: iroh_blobs::store::Store>(
+        &self,
+        node: Node<S>,
+        builders: ProtocolBuilders<S>,
+    ) -> Result<()> {
+        for (alpn, builder) in builders {
+            let protocol = builder(node.clone()).await;
+            match protocol {
+                Ok(protocol) => self.insert(alpn, protocol),
+                Err(err) => {
+                    // Shutdown the protocols that were already built before returning the error.
+                    self.shutdown().await;
+                    return Err(err);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Shutdown the protocol handlers.

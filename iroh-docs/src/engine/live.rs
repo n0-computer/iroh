@@ -290,7 +290,6 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         match msg {
             ToLiveActor::Shutdown { .. } => {
                 unreachable!("handled in run");
-                // return Ok(false);
             }
             ToLiveActor::IncomingSyncReport { from, report } => {
                 self.on_sync_report(from, report).await
