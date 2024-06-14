@@ -8,14 +8,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, trace, warn, Instrument};
 
 use crate::{
-    net::InitialTransmission,
     proto::{
         grouping::ThreeDRange,
         keys::NamespaceId,
         meadowcap,
         willow::{AuthorisedEntry, Entry, WriteCapability},
     },
-    session::{Channels, Error, Role, Session, SessionId, SessionInit},
+    session::{Channels, Error, InitialTransmission, Role, Session, SessionId, SessionInit},
     store::{
         traits::{EntryReader, SecretStorage, Storage},
         Origin, Store,
@@ -144,7 +143,7 @@ impl Drop for ActorHandle {
         // this means we're dropping the last reference
         if let Some(handle) = Arc::get_mut(&mut self.join_handle) {
             self.tx.send(ToActor::Shutdown { reply: None }).ok();
-            let handle = handle.take().expect("this can only run once");
+            let handle = handle.take().expect("may only run once");
             if let Err(err) = handle.join() {
                 warn!(?err, "Failed to join sync actor");
             }
@@ -155,7 +154,7 @@ impl Drop for ActorHandle {
 #[derive(Debug)]
 pub struct SessionHandle {
     on_finish: future::Shared<BoxFuture<Result<(), Arc<Error>>>>,
-    finish: CancellationToken,
+    cancel_token: CancellationToken,
 }
 
 impl SessionHandle {
@@ -171,8 +170,8 @@ impl SessionHandle {
     /// After calling this, no further protocol messages will be sent from this node.
     /// Previously queued messages will still be sent out. The session will only be closed
     /// once the other peer closes their senders as well.
-    pub fn finish(&self) {
-        self.finish.cancel();
+    pub fn close(&self) {
+        self.cancel_token.cancel();
     }
 }
 
@@ -185,7 +184,6 @@ pub enum ToActor {
         #[debug(skip)]
         channels: Channels,
         init: SessionInit,
-        // on_finish: oneshot::Sender<Result<(), Error>>,
         reply: oneshot::Sender<anyhow::Result<SessionHandle>>,
     },
     GetEntries {
@@ -290,10 +288,10 @@ impl<S: Storage> Actor<S> {
                 let session = Session::new(id, init.mode, our_role, send, initial_transmission);
 
                 let store = self.store.clone();
-                let finish = CancellationToken::new();
+                let cancel_token = CancellationToken::new();
 
                 let future = session
-                    .run(store, recv, init, finish.clone())
+                    .run(store, recv, init, cancel_token.clone())
                     .instrument(error_span!("session", peer = %peer.fmt_short()));
                 let task_key = self.session_tasks.spawn_local(id, future);
 
@@ -313,7 +311,10 @@ impl<S: Storage> Actor<S> {
                     })
                     .boxed()
                     .shared();
-                let handle = SessionHandle { on_finish, finish };
+                let handle = SessionHandle {
+                    on_finish,
+                    cancel_token,
+                };
                 send_reply(reply, Ok(handle))
             }
             ToActor::GetEntries {

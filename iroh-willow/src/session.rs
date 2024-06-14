@@ -66,6 +66,13 @@ impl SessionMode {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+pub enum Interests {
+    #[default]
+    All,
+    Some(HashSet<AreaOfInterest>),
+}
+
 /// Options to initialize a session with.
 #[derive(Debug)]
 pub struct SessionInit {

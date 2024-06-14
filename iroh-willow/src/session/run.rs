@@ -25,7 +25,7 @@ impl Session {
         store: Store<S>,
         recv: ChannelReceivers,
         init: SessionInit,
-        finish: CancellationToken,
+        cancel_token: CancellationToken,
     ) -> Result<(), Error> {
         let ChannelReceivers {
             control_recv,
@@ -83,24 +83,24 @@ impl Session {
 
         // Spawn a task to handle reconciliation messages
         self.spawn(error_span!("rec"), {
-            let finish = finish.clone();
+            let cancel_token = cancel_token.clone();
             let store = store.clone();
             move |session| async move {
                 let res = Reconciler::new(session, store, reconciliation_recv)?
                     .run()
                     .await;
-                finish.cancel();
+                cancel_token.cancel();
                 res
             }
         });
 
         // Spawn a task to handle control messages
         self.spawn(error_span!("ctl"), {
-            let finish = finish.clone();
+            let cancel_token = cancel_token.clone();
             let store = store.clone();
             move |session| async move {
                 let res = control_loop(session, store, control_recv, init).await;
-                finish.cancel();
+                cancel_token.cancel();
                 res
             }
         });
@@ -110,7 +110,7 @@ impl Session {
             // Wait until the session is cancelled:
             // * either because SessionMode is ReconcileOnce and reconciliation finished
             // * or because the session was cancelled from the outside session handle
-            finish.cancelled().await;
+            cancel_token.cancelled().await;
             // Then close all senders. This will make all other tasks terminate once the remote
             // closed their senders as well.
             session.close_senders();

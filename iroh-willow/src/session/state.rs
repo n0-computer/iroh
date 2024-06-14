@@ -11,7 +11,6 @@ use futures_lite::Stream;
 use tracing::{Instrument, Span};
 
 use crate::{
-    net::InitialTransmission,
     proto::{
         challenge::ChallengeState,
         grouping::ThreeDRange,
@@ -24,6 +23,7 @@ use crate::{
         },
         willow::{AuthorisedEntry, Entry},
     },
+    session::InitialTransmission,
     store::traits::SecretStorage,
     util::{channel::WriteError, queue::Queue, task::JoinMap},
 };
