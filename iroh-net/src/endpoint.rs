@@ -501,7 +501,7 @@ impl Endpoint {
 
         let rtt_msg = RttMessage::NewConnection {
             connection: connection.weak_handle(),
-            conn_type_changes: self.conn_type_stream(node_id)?,
+            conn_type_changes: self.conn_type_stream(*node_id)?,
             node_id: *node_id,
         };
         if let Err(err) = self.rtt_actor.msg_tx.send(rtt_msg).await {
@@ -700,7 +700,7 @@ impl Endpoint {
     /// # Errors
     ///
     /// Will error if we do not have any address information for the given `node_id`.
-    pub fn conn_type_stream(&self, node_id: &NodeId) -> Result<ConnectionTypeStream> {
+    pub fn conn_type_stream(&self, node_id: NodeId) -> Result<ConnectionTypeStream> {
         self.msock.conn_type_stream(node_id)
     }
 
@@ -794,7 +794,7 @@ impl Endpoint {
         // Only return a mapped addr if we have some way of dialing this node, in other
         // words, we have either a relay URL or at least one direct address.
         let addr = if self.msock.has_send_address(node_id) {
-            self.msock.get_mapping_addr(&node_id)
+            self.msock.get_mapping_addr(node_id)
         } else {
             None
         };
@@ -822,7 +822,7 @@ impl Endpoint {
                 let mut discovery = DiscoveryTask::start(self.clone(), node_id)?;
                 discovery.first_arrived().await?;
                 if self.msock.has_send_address(node_id) {
-                    let addr = self.msock.get_mapping_addr(&node_id).expect("checked");
+                    let addr = self.msock.get_mapping_addr(node_id).expect("checked");
                     Ok((addr, Some(discovery)))
                 } else {
                     bail!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}");
@@ -967,7 +967,7 @@ fn try_send_rtt_msg(conn: &quinn::Connection, magic_ep: &Endpoint) {
         warn!(?conn, "failed to get remote node id");
         return;
     };
-    let Ok(conn_type_changes) = magic_ep.conn_type_stream(&peer_id) else {
+    let Ok(conn_type_changes) = magic_ep.conn_type_stream(peer_id) else {
         warn!(?conn, "failed to create conn_type_stream");
         return;
     };
@@ -1411,7 +1411,7 @@ mod tests {
         async fn handle_direct_conn(ep: Endpoint, node_id: PublicKey) -> Result<()> {
             let node_addr = NodeAddr::new(node_id);
             ep.add_node_addr(node_addr)?;
-            let stream = ep.conn_type_stream(&node_id)?;
+            let stream = ep.conn_type_stream(node_id)?;
             async fn get_direct_event(
                 src: &PublicKey,
                 dst: &PublicKey,
