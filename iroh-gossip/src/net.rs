@@ -380,7 +380,7 @@ impl Actor {
                         Some(endpoints) => {
                             let addr = NodeAddr::from_parts(
                                 self.endpoint.node_id(),
-                                self.endpoint.my_relay(),
+                                self.endpoint.home_relay(),
                                 endpoints.into_iter().map(|x| x.addr).collect(),
                             );
                             let peer_data = encode_peer_data(&addr.info)?;

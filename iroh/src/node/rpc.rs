@@ -763,7 +763,7 @@ impl<D: BaoStore> Handler<D> {
 
     #[allow(clippy::unused_async)]
     async fn node_relay(self, _: NodeRelayRequest) -> RpcResult<Option<RelayUrl>> {
-        Ok(self.inner.endpoint.my_relay())
+        Ok(self.inner.endpoint.home_relay())
     }
 
     #[allow(clippy::unused_async)]
