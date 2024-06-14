@@ -12,7 +12,7 @@ use tracing::{debug, error_span, field::Empty, instrument, trace, warn, Instrume
 use crate::{
     actor::{self, ActorHandle},
     proto::sync::{
-        AccessChallenge, ChallengeHash, Channel, LogicalChannel, Message, CHALLENGE_HASH_LENGTH,
+        AccessChallenge, Channel, LogicalChannel, Message, CHALLENGE_HASH_LENGTH,
         MAX_PAYLOAD_SIZE_POWER,
     },
     session::{
@@ -20,7 +20,7 @@ use crate::{
             ChannelReceivers, ChannelSenders, Channels, LogicalChannelReceivers,
             LogicalChannelSenders,
         },
-        Role, SessionInit,
+        InitialTransmission, Role, SessionInit,
     },
     util::channel::{
         inbound_channel, outbound_channel, Guarantees, Reader, Receiver, Sender, Writer,
@@ -90,13 +90,13 @@ pub struct SessionHandle {
 }
 
 impl SessionHandle {
-    /// Finish the session gracefully.
+    /// Close the session gracefully.
     ///
     /// After calling this, no further protocol messages will be sent from this node.
     /// Previously queued messages will still be sent out. The session will only be closed
     /// once the other peer closes their senders as well.
-    pub fn finish(&self) {
-        self.handle.finish()
+    pub fn close(&self) {
+        self.handle.close()
     }
 
     /// Wait for the session to finish.
@@ -269,13 +269,6 @@ async fn exchange_commitments(
         received_commitment,
         their_max_payload_size,
     })
-}
-
-#[derive(Debug)]
-pub struct InitialTransmission {
-    pub our_nonce: AccessChallenge,
-    pub received_commitment: ChallengeHash,
-    pub their_max_payload_size: u64,
 }
 
 async fn join_all(join_set: &mut JoinSet<anyhow::Result<()>>) -> anyhow::Result<()> {
@@ -513,7 +506,7 @@ mod tests {
 
         let live_entries = done_rx.await?;
         expected_entries.extend(live_entries);
-        session_alfie.finish();
+        session_alfie.close();
 
         let (res_alfie, res_betty) = tokio::join!(session_alfie.join(), session_betty.join());
         info!(time=?start.elapsed(), "reconciliation finished");
