@@ -962,7 +962,7 @@ impl NodeState {
             .reconfirm_if_used(addr.into(), Source::Udp, now);
     }
 
-    pub(super) fn receive_relay(&mut self, url: &RelayUrl, _src: &PublicKey, now: Instant) {
+    pub(super) fn receive_relay(&mut self, url: &RelayUrl, _src: NodeId, now: Instant) {
         match self.relay_url.as_mut() {
             Some((current_home, state)) if current_home == url => {
                 // We received on the expected url. update state.

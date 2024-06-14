@@ -74,11 +74,11 @@ pub(super) struct NodeMapInner {
 /// You can look up entries in [`NodeMap`] with various keys, depending on the context you
 /// have for the node.  These are all the keys the [`NodeMap`] can use.
 #[derive(Clone)]
-enum NodeStateKey<'a> {
-    Idx(&'a usize),
-    NodeId(&'a NodeId),
-    QuicMappedAddr(&'a QuicMappedAddr),
-    IpPort(&'a IpPort),
+enum NodeStateKey {
+    Idx(usize),
+    NodeId(NodeId),
+    QuicMappedAddr(QuicMappedAddr),
+    IpPort(IpPort),
 }
 
 impl NodeMap {
@@ -112,8 +112,8 @@ impl NodeMap {
         self.inner.lock().receive_udp(udp_addr)
     }
 
-    pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: PublicKey) -> QuicMappedAddr {
-        self.inner.lock().receive_relay(relay_url, &src)
+    pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> QuicMappedAddr {
+        self.inner.lock().receive_relay(relay_url, src)
     }
 
     pub(super) fn notify_ping_sent(
@@ -124,20 +124,20 @@ impl NodeMap {
         purpose: DiscoPingPurpose,
         msg_sender: tokio::sync::mpsc::Sender<ActorMessage>,
     ) {
-        if let Some(ep) = self.inner.lock().get_mut(NodeStateKey::Idx(&id)) {
+        if let Some(ep) = self.inner.lock().get_mut(NodeStateKey::Idx(id)) {
             ep.ping_sent(dst, tx_id, purpose, msg_sender);
         }
     }
 
     pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: stun::TransactionId) {
-        if let Some(ep) = self.inner.lock().get_mut(NodeStateKey::Idx(&id)) {
+        if let Some(ep) = self.inner.lock().get_mut(NodeStateKey::Idx(id)) {
             ep.ping_timeout(tx_id);
         }
     }
 
     pub(super) fn get_quic_mapped_addr_for_node_key(
         &self,
-        node_key: &PublicKey,
+        node_key: NodeId,
     ) -> Option<QuicMappedAddr> {
         self.inner
             .lock()
@@ -172,7 +172,7 @@ impl NodeMap {
     #[allow(clippy::type_complexity)]
     pub(super) fn get_send_addrs(
         &self,
-        addr: &QuicMappedAddr,
+        addr: QuicMappedAddr,
         have_ipv6: bool,
     ) -> Option<(
         PublicKey,
@@ -223,16 +223,13 @@ impl NodeMap {
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    pub(super) fn conn_type_stream(
-        &self,
-        public_key: &PublicKey,
-    ) -> anyhow::Result<ConnectionTypeStream> {
-        self.inner.lock().conn_type_stream(public_key)
+    pub(super) fn conn_type_stream(&self, node_id: NodeId) -> anyhow::Result<ConnectionTypeStream> {
+        self.inner.lock().conn_type_stream(node_id)
     }
 
     /// Get the [`NodeInfo`]s for each endpoint
-    pub(super) fn node_info(&self, public_key: &PublicKey) -> Option<NodeInfo> {
-        self.inner.lock().node_info(public_key)
+    pub(super) fn node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
+        self.inner.lock().node_info(node_id)
     }
 
     /// Saves the known node info to the given path, returning the number of nodes persisted.
@@ -323,7 +320,7 @@ impl NodeMapInner {
     fn add_node_addr(&mut self, node_addr: NodeAddr) {
         let NodeAddr { node_id, info } = node_addr;
 
-        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(&node_id), || Options {
+        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
             node_id,
             relay_url: info.relay_url.clone(),
             active: false,
@@ -338,10 +335,10 @@ impl NodeMapInner {
 
     fn get_id(&self, id: NodeStateKey) -> Option<usize> {
         match id {
-            NodeStateKey::Idx(id) => Some(*id),
-            NodeStateKey::NodeId(node_key) => self.by_node_key.get(node_key).copied(),
-            NodeStateKey::QuicMappedAddr(addr) => self.by_quic_mapped_addr.get(addr).copied(),
-            NodeStateKey::IpPort(ipp) => self.by_ip_port.get(ipp).copied(),
+            NodeStateKey::Idx(id) => Some(id),
+            NodeStateKey::NodeId(node_key) => self.by_node_key.get(&node_key).copied(),
+            NodeStateKey::QuicMappedAddr(addr) => self.by_quic_mapped_addr.get(&addr).copied(),
+            NodeStateKey::IpPort(ipp) => self.by_ip_port.get(&ipp).copied(),
         }
     }
 
@@ -373,7 +370,7 @@ impl NodeMapInner {
     /// Marks the node we believe to be at `ipp` as recently used.
     fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(NodeId, QuicMappedAddr)> {
         let ip_port: IpPort = udp_addr.into();
-        let Some(node_state) = self.get_mut(NodeStateKey::IpPort(&ip_port)) else {
+        let Some(node_state) = self.get_mut(NodeStateKey::IpPort(ip_port)) else {
             info!(src=%udp_addr, "receive_udp: no node_state found for addr, ignore");
             return None;
         };
@@ -382,11 +379,11 @@ impl NodeMapInner {
     }
 
     #[instrument(skip_all, fields(src = %src.fmt_short()))]
-    fn receive_relay(&mut self, relay_url: &RelayUrl, src: &PublicKey) -> QuicMappedAddr {
+    fn receive_relay(&mut self, relay_url: &RelayUrl, src: NodeId) -> QuicMappedAddr {
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(src), || {
             trace!("packets from unknown node, insert into node map");
             Options {
-                node_id: *src,
+                node_id: src,
                 relay_url: Some(relay_url.clone()),
                 active: true,
             }
@@ -409,8 +406,8 @@ impl NodeMapInner {
     }
 
     /// Get the [`NodeInfo`]s for each endpoint
-    fn node_info(&self, public_key: &PublicKey) -> Option<NodeInfo> {
-        self.get(NodeStateKey::NodeId(public_key))
+    fn node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
+        self.get(NodeStateKey::NodeId(node_id))
             .map(|ep| ep.info(Instant::now()))
     }
 
@@ -423,18 +420,18 @@ impl NodeMapInner {
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    fn conn_type_stream(&self, public_key: &PublicKey) -> anyhow::Result<ConnectionTypeStream> {
-        match self.get(NodeStateKey::NodeId(public_key)) {
+    fn conn_type_stream(&self, node_id: NodeId) -> anyhow::Result<ConnectionTypeStream> {
+        match self.get(NodeStateKey::NodeId(node_id)) {
             Some(ep) => Ok(ConnectionTypeStream {
                 initial: Some(ep.conn_type()),
                 inner: ep.conn_type_stream(),
             }),
-            None => anyhow::bail!("No endpoint for {public_key:?} found"),
+            None => anyhow::bail!("No endpoint for {node_id:?} found"),
         }
     }
 
-    fn handle_pong(&mut self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
-        if let Some(ns) = self.get_mut(NodeStateKey::NodeId(&sender)).as_mut() {
+    fn handle_pong(&mut self, sender: NodeId, src: &DiscoMessageSource, pong: Pong) {
+        if let Some(ns) = self.get_mut(NodeStateKey::NodeId(sender)).as_mut() {
             let insert = ns.handle_pong(&pong, src.into());
             if let Some((src, key)) = insert {
                 self.set_node_key_for_ip_port(src, &key);
@@ -446,8 +443,8 @@ impl NodeMapInner {
     }
 
     #[must_use = "actions must be handled"]
-    fn handle_call_me_maybe(&mut self, sender: PublicKey, cm: CallMeMaybe) -> Vec<PingAction> {
-        let ns_id = NodeStateKey::NodeId(&sender);
+    fn handle_call_me_maybe(&mut self, sender: NodeId, cm: CallMeMaybe) -> Vec<PingAction> {
+        let ns_id = NodeStateKey::NodeId(sender);
         if let Some(id) = self.get_id(ns_id.clone()) {
             for number in &cm.my_numbers {
                 // ensure the new addrs are known
@@ -468,13 +465,8 @@ impl NodeMapInner {
         }
     }
 
-    fn handle_ping(
-        &mut self,
-        sender: PublicKey,
-        src: SendAddr,
-        tx_id: TransactionId,
-    ) -> PingHandled {
-        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(&sender), || {
+    fn handle_ping(&mut self, sender: NodeId, src: SendAddr, tx_id: TransactionId) -> PingHandled {
+        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(sender), || {
             debug!("received ping: node unknown, add to node map");
             Options {
                 node_id: sender,
@@ -815,7 +807,7 @@ mod tests {
         node_map
             .inner
             .lock()
-            .get(NodeStateKey::NodeId(&active_node))
+            .get(NodeStateKey::NodeId(active_node))
             .expect("should not be pruned");
     }
 }
