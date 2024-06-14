@@ -742,7 +742,7 @@ async fn accept(
         secret_key.public(),
         remote_addrs,
     );
-    if let Some(relay_url) = endpoint.my_relay() {
+    if let Some(relay_url) = endpoint.home_relay() {
         println!(
             "\tUsing just the relay url:\niroh doctor connect {} --relay-url {}\n",
             secret_key.public(),

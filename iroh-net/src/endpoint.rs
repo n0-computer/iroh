@@ -566,7 +566,7 @@ impl Endpoint {
     /// Returns the current [`NodeAddr`] for this endpoint.
     ///
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and local IP endpoints
-    /// as they would be returned by [`Endpoint::my_relay`] and
+    /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::local_endpoints`].
     pub async fn my_addr(&self) -> Result<NodeAddr> {
         let addrs = self
@@ -574,7 +574,7 @@ impl Endpoint {
             .next()
             .await
             .ok_or(anyhow!("No IP endpoints found"))?;
-        let relay = self.my_relay();
+        let relay = self.home_relay();
         let addrs = addrs.into_iter().map(|x| x.addr).collect();
         Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
     }
@@ -591,7 +591,7 @@ impl Endpoint {
     /// Note that this will be `None` right after the [`Endpoint`] is created since it takes
     /// some time to connect to find and connect to the home relay server.  Use
     /// [`Endpoint::watch_home_relay`] to wait until the home relay server is available.
-    pub fn my_relay(&self) -> Option<RelayUrl> {
+    pub fn home_relay(&self) -> Option<RelayUrl> {
         self.msock.my_relay()
     }
 
