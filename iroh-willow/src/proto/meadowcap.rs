@@ -334,3 +334,59 @@ impl OwnedCapability {
         signable
     }
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash, derive_more::From)]
+/// A capability that certifies read access to arbitrary SubspaceIds at some unspecified Path.
+pub struct McSubspaceCapability {
+    /// The namespace for which this grants access.
+    pub namespace_key: NamespacePublicKey,
+
+    /// The user to whom this grants access.
+    pub user_key: UserPublicKey,
+
+    /// Authorisation of the user_key by the namespace_key.
+    pub initial_authorisation: NamespaceSignature,
+
+    /// Successive authorisations of new UserPublicKeys.
+    pub delegations: Vec<(UserPublicKey, UserSignature)>,
+}
+
+impl McSubspaceCapability {
+    pub fn receiver(&self) -> &UserPublicKey {
+        &self.user_key
+    }
+
+    pub fn granted_namespace(&self) -> &NamespacePublicKey {
+        &self.namespace_key
+    }
+
+    pub fn validate(&self) -> Result<(), InvalidCapability> {
+        match self.is_valid() {
+            true => Ok(()),
+            false => Err(InvalidCapability),
+        }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        if self.delegations.is_empty() {
+            let signable = Self::signable(&self.user_key);
+            self.namespace_key
+                .verify(&signable, &self.initial_authorisation)
+                .is_ok()
+        } else {
+            // TODO: support delegations
+            false
+        }
+    }
+
+    fn signable(user_key: &UserPublicKey) -> [u8; PUBLIC_KEY_LENGTH + 1] {
+        let mut signable = [0u8; PUBLIC_KEY_LENGTH + 1];
+        // A McSubspaceCapability with zero delegations is valid if initial_authorisation
+        // is a NamespaceSignature issued by the namespace_key over the byte 0x02,
+        // followed by the user_key (encoded via encode_user_pk).
+        // via https://willowprotocol.org/specs/pai/index.html#subspace_cap_valid
+        signable[0] = 0x02;
+        signable[1..].copy_from_slice(user_key.as_bytes());
+        signable
+    }
+}
