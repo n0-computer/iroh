@@ -317,8 +317,8 @@ impl MagicSock {
     ///
     /// To get the current direct addresses, drop the stream after the first item was
     /// received.
-    pub fn direct_addresses(&self) -> DirectAdressesStream {
-        DirectAdressesStream {
+    pub fn direct_addresses(&self) -> DirectAddrsStream {
+        DirectAddrsStream {
             initial: Some(self.endpoints.get()),
             inner: self.endpoints.watch().into_stream(),
         }
@@ -1493,12 +1493,12 @@ impl Handle {
 
 /// Stream returning local endpoints as they change.
 #[derive(Debug)]
-pub struct DirectAdressesStream {
+pub struct DirectAddrsStream {
     initial: Option<DiscoveredEndpoints>,
     inner: watchable::WatcherStream<DiscoveredEndpoints>,
 }
 
-impl Stream for DirectAdressesStream {
+impl Stream for DirectAddrsStream {
     type Item = Vec<DirectAddr>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

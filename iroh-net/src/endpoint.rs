@@ -48,7 +48,7 @@ pub use quinn::{
 
 pub use super::magicsock::{
     ConnectionInfo, ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo,
-    DirectAddrType, DirectAdressesStream,
+    DirectAddrType, DirectAddrsStream,
 };
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
@@ -642,7 +642,7 @@ impl Endpoint {
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    pub fn direct_addresses(&self) -> DirectAdressesStream {
+    pub fn direct_addresses(&self) -> DirectAddrsStream {
         self.msock.direct_addresses()
     }
 
