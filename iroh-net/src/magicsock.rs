@@ -33,6 +33,7 @@ use std::{
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use futures_lite::{FutureExt, Stream, StreamExt};
+use iroh_base::key::NodeId;
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -299,8 +300,8 @@ impl MagicSock {
     }
 
     /// Retrieve connection information about a node in the network.
-    pub fn connection_info(&self, node_key: PublicKey) -> Option<ConnectionInfo> {
-        self.node_map.node_info(&node_key)
+    pub fn connection_info(&self, node_id: NodeId) -> Option<ConnectionInfo> {
+        self.node_map.node_info(node_id)
     }
 
     /// Returns the local endpoints as a stream.
@@ -350,7 +351,7 @@ impl MagicSock {
     ///
     /// Will return an error if there is no address information known about the
     /// given `node_id`.
-    pub fn conn_type_stream(&self, node_id: &PublicKey) -> Result<ConnectionTypeStream> {
+    pub fn conn_type_stream(&self, node_id: NodeId) -> Result<ConnectionTypeStream> {
         self.node_map.conn_type_stream(node_id)
     }
 
@@ -358,9 +359,9 @@ impl MagicSock {
     ///
     /// Note this is a user-facing API and does not wrap the [`SocketAddr`] in a
     /// [`QuicMappedAddr`] as we do internally.
-    pub fn get_mapping_addr(&self, node_key: &PublicKey) -> Option<SocketAddr> {
+    pub fn get_mapping_addr(&self, node_id: NodeId) -> Option<SocketAddr> {
         self.node_map
-            .get_quic_mapped_addr_for_node_key(node_key)
+            .get_quic_mapped_addr_for_node_key(node_id)
             .map(|a| a.0)
     }
 
@@ -468,7 +469,7 @@ impl MagicSock {
         let mut transmits_sent = 0;
         match self
             .node_map
-            .get_send_addrs(&dest, self.ipv6_reported.load(Ordering::Relaxed))
+            .get_send_addrs(dest, self.ipv6_reported.load(Ordering::Relaxed))
         {
             Some((public_key, udp_addr, relay_url, mut msgs)) => {
                 let mut pings_sent = false;
@@ -531,12 +532,20 @@ impl MagicSock {
                 }
 
                 if udp_addr.is_none() && relay_url.is_none() {
-                    // Handle no addresses being available
-                    warn!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::NotConnected,
-                        "no UDP or relay address available for node",
-                    )));
+                    // Returning an error here would lock up the entire `Endpoint`.
+                    //
+                    // If we returned `Poll::Pending`, the waker driving the `poll_send` will never get woken up.
+                    //
+                    // Our best bet here is to log an error and return `Poll::Ready(Ok(n))`.
+                    //
+                    // `n` is the number of consecutive transmits in this batch that are meant for the same destination (a destination that we have no addresses for, and so we can never actually send).
+                    //
+                    // When we return `Poll::Ready(Ok(n))`, we are effectively dropping those n messages, by lying to QUIC and saying they were sent.
+                    // (If we returned `Poll::Ready(Ok(0))` instead, QUIC would loop to attempt to re-send those messages, blocking other traffic.)
+                    //
+                    // When `QUIC` gets no `ACK`s for those messages, the connection will eventually timeout.
+                    error!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
+                    return Poll::Ready(Ok(n));
                 }
 
                 if (udp_addr.is_none() || udp_pending) && (relay_url.is_none() || relay_pending) {
@@ -549,14 +558,16 @@ impl MagicSock {
                 }
 
                 if !relay_sent && !udp_sent && !pings_sent {
-                    warn!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
+                    // Returning an error here would lock up the entire `Endpoint`.
+                    // Instead, log an error and return `Poll::Pending`, the connection will timeout.
                     let err = udp_error.unwrap_or_else(|| {
                         io::Error::new(
                             io::ErrorKind::NotConnected,
                             "no UDP or relay address available for node",
                         )
                     });
-                    return Poll::Ready(Err(err));
+                    error!(node = %public_key.fmt_short(), "{err:?}");
+                    return Poll::Pending;
                 }
 
                 trace!(

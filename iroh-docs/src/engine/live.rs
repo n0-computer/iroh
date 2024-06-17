@@ -738,7 +738,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             self.queued_hashes.insert(hash, namespace);
             self.downloader.nodes_have(hash, vec![node]).await;
         } else if !only_if_missing || self.missing_hashes.contains(&hash) {
-            let req = DownloadRequest::untagged(HashAndFormat::raw(hash), vec![node]);
+            let req = DownloadRequest::new(HashAndFormat::raw(hash), vec![node]);
             let handle = self.downloader.queue(req).await;
 
             self.queued_hashes.insert(hash, namespace);

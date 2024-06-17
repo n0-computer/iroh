@@ -108,13 +108,13 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     println!("> our node id: {}", endpoint.node_id());
 
-    let my_addr = endpoint.my_addr().await?;
+    let my_addr = endpoint.node_addr().await?;
     // create the gossip protocol
     let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &my_addr.info);
 
     // print a ticket that includes our own node id and endpoint addresses
     let ticket = {
-        let me = endpoint.my_addr().await?;
+        let me = endpoint.node_addr().await?;
         let peers = peers.iter().cloned().chain([me]).collect();
         Ticket { topic, peers }
     };
