@@ -567,7 +567,7 @@ impl Endpoint {
     ///
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and local IP endpoints
     /// as they would be returned by [`Endpoint::home_relay`] and
-    /// [`Endpoint::local_endpoints`].
+    /// [`Endpoint::direct_addresses`].
     pub async fn node_addr(&self) -> Result<NodeAddr> {
         let addrs = self
             .direct_addresses()

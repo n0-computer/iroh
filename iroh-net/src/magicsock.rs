@@ -2590,7 +2590,7 @@ fn disco_message_sent(msg: &disco::Message) {
 ///
 /// Direct addresses are UDP socket addresses on which an iroh-net node could potentially be
 /// contacted.  These can come from various sources depending on the network topology of the
-/// iroh-net node, see [`DirectAddressType`] for the several kinds of sources.
+/// iroh-net node, see [`DirectAddrType`] for the several kinds of sources.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DirectAddr {
     /// The address.
@@ -2602,7 +2602,7 @@ pub struct DirectAddr {
 /// The type of direct address.
 ///
 /// These are the various sources or origins from which an iroh-net node might have found a
-/// possible [`DirectAddress`].
+/// possible [`DirectAddr`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DirectAddrType {
     /// Not yet determined..
