@@ -2773,7 +2773,11 @@ pub(crate) mod tests {
     #[instrument(skip_all)]
     async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<CallOnDrop> {
         /// Registers endpoint addresses of a node to all other nodes.
-        fn update_eps(stacks: &[MagicStack], my_idx: usize, new_eps: Vec<DirectAddress>) {
+        fn update_direct_addrs(
+            stacks: &[MagicStack],
+            my_idx: usize,
+            new_addrs: Vec<DirectAddress>,
+        ) {
             let me = &stacks[my_idx];
             for (i, m) in stacks.iter().enumerate() {
                 if i == my_idx {
@@ -2784,7 +2788,7 @@ pub(crate) mod tests {
                     node_id: me.public(),
                     info: crate::AddrInfo {
                         relay_url: None,
-                        direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
+                        direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
                     },
                 };
                 m.endpoint.magic_sock().add_node_addr(addr);
@@ -2802,7 +2806,7 @@ pub(crate) mod tests {
                 let mut stream = m.endpoint.direct_addresses();
                 while let Some(new_eps) = stream.next().await {
                     info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, new_eps);
-                    update_eps(&stacks, my_idx, new_eps);
+                    update_direct_addrs(&stacks, my_idx, new_eps);
                 }
             });
         }
