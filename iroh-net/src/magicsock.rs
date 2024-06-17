@@ -16,7 +16,7 @@
 //! however, read any packets that come off the UDP sockets.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt::Display,
     io,
     net::{IpAddr, Ipv6Addr, SocketAddr},
@@ -51,7 +51,6 @@ use url::Url;
 use watchable::Watchable;
 
 use crate::{
-    config,
     disco::{self, SendAddr},
     discovery::Discovery,
     dns::DnsResolver,
@@ -1500,7 +1499,7 @@ pub struct DirectAdressesStream {
 }
 
 impl Stream for DirectAdressesStream {
-    type Item = Vec<config::DirectAddress>;
+    type Item = Vec<DirectAddress>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = &mut *self;
@@ -1583,7 +1582,7 @@ enum DiscoBoxError {
 type RelayRecvResult = Result<(PublicKey, quinn_udp::RecvMeta, Bytes), io::Error>;
 
 /// Reports whether x and y represent the same set of endpoints. The order doesn't matter.
-fn endpoint_sets_equal(xs: &[config::DirectAddress], ys: &[config::DirectAddress]) -> bool {
+fn endpoint_sets_equal(xs: &[DirectAddress], ys: &[DirectAddress]) -> bool {
     if xs.is_empty() && ys.is_empty() {
         return true;
     }
@@ -1599,7 +1598,7 @@ fn endpoint_sets_equal(xs: &[config::DirectAddress], ys: &[config::DirectAddress
             return true;
         }
     }
-    let mut m: HashMap<&config::DirectAddress, usize> = HashMap::new();
+    let mut m: HashMap<&DirectAddress, usize> = HashMap::new();
     for x in xs {
         *m.entry(x).or_default() |= 1;
     }
@@ -1668,7 +1667,7 @@ struct Actor {
     /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
-    net_info_last: Option<config::NetInfo>,
+    net_info_last: Option<NetInfo>,
     /// Path where connection info from [`MagicSock::node_map`] is persisted.
     nodes_path: Option<PathBuf>,
 
@@ -1963,7 +1962,7 @@ impl Actor {
                 #[allow(clippy::map_entry)]
                 if !$already.contains_key(&$ipp) {
                     $already.insert($ipp, $et);
-                    $eps.push(config::DirectAddress {
+                    $eps.push(DirectAddress {
                         addr: $ipp,
                         typ: $et,
                     });
@@ -1974,23 +1973,13 @@ impl Actor {
         let maybe_port_mapped = *portmap_watcher.borrow();
 
         if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
-            add_addr!(
-                already,
-                eps,
-                portmap_ext,
-                config::DirectAddressType::Portmapped
-            );
+            add_addr!(already, eps, portmap_ext, DirectAddressType::Portmapped);
             self.set_net_info_have_port_map().await;
         }
 
         if let Some(nr) = nr {
             if let Some(global_v4) = nr.global_v4 {
-                add_addr!(
-                    already,
-                    eps,
-                    global_v4.into(),
-                    config::DirectAddressType::Stun
-                );
+                add_addr!(already, eps, global_v4.into(), DirectAddressType::Stun);
 
                 // If they're behind a hard NAT and are using a fixed
                 // port locally, assume they might've added a static
@@ -2000,21 +1989,11 @@ impl Actor {
                 if nr.mapping_varies_by_dest_ip.unwrap_or_default() && port != 0 {
                     let mut addr = global_v4;
                     addr.set_port(port);
-                    add_addr!(
-                        already,
-                        eps,
-                        addr.into(),
-                        config::DirectAddressType::Stun4LocalPort
-                    );
+                    add_addr!(already, eps, addr.into(), DirectAddressType::Stun4LocalPort);
                 }
             }
             if let Some(global_v6) = nr.global_v6 {
-                add_addr!(
-                    already,
-                    eps,
-                    global_v6.into(),
-                    config::DirectAddressType::Stun
-                );
+                add_addr!(already, eps, global_v6.into(), DirectAddressType::Stun);
             }
         }
         let local_addr_v4 = self.pconn4.local_addr().ok();
@@ -2072,7 +2051,7 @@ impl Actor {
                                     already,
                                     eps,
                                     SocketAddr::new(ip, port),
-                                    config::DirectAddressType::Local
+                                    DirectAddressType::Local
                                 );
                             }
                         }
@@ -2082,7 +2061,7 @@ impl Actor {
                                     already,
                                     eps,
                                     SocketAddr::new(ip, port),
-                                    config::DirectAddressType::Local
+                                    DirectAddressType::Local
                                 );
                             }
                         }
@@ -2094,7 +2073,7 @@ impl Actor {
                 if let Some(addr) = local_addr_v4 {
                     // Our local endpoint is bound to a particular address.
                     // Do not offer addresses on other local interfaces.
-                    add_addr!(already, eps, addr, config::DirectAddressType::Local);
+                    add_addr!(already, eps, addr, DirectAddressType::Local);
                 }
             }
 
@@ -2102,7 +2081,7 @@ impl Actor {
                 if let Some(addr) = local_addr_v6 {
                     // Our local endpoint is bound to a particular address.
                     // Do not offer addresses on other local interfaces.
-                    add_addr!(already, eps, addr, config::DirectAddressType::Local);
+                    add_addr!(already, eps, addr, DirectAddressType::Local);
                 }
             }
 
@@ -2161,7 +2140,7 @@ impl Actor {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn call_net_info_callback(&mut self, ni: config::NetInfo) {
+    async fn call_net_info_callback(&mut self, ni: NetInfo) {
         if let Some(ref net_info_last) = self.net_info_last {
             if ni.basically_equal(net_info_last) {
                 return;
@@ -2236,7 +2215,7 @@ impl Actor {
             self.no_v4_send = !r.ipv4_can_send;
 
             let have_port_map = self.port_mapper.watch_external_address().borrow().is_some();
-            let mut ni = config::NetInfo {
+            let mut ni = NetInfo {
                 relay_latency: Default::default(),
                 mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
                 hair_pinning: r.hair_pinning,
@@ -2248,7 +2227,6 @@ impl Actor {
                 working_icmp_v4: r.icmpv4,
                 working_icmp_v6: r.icmpv6,
                 preferred_relay: r.preferred_relay.clone(),
-                link_type: None,
             };
             for (rid, d) in r.relay_v4_latency.iter() {
                 ni.relay_latency
@@ -2424,7 +2402,7 @@ fn bind(port: u16) -> Result<(UdpConn, Option<UdpConn>)> {
 struct DiscoveredEndpoints {
     /// Records the endpoints found during the previous
     /// endpoint discovery. It's used to avoid duplicate endpoint change notifications.
-    last_endpoints: Vec<config::DirectAddress>,
+    last_endpoints: Vec<DirectAddress>,
 
     /// The last time the endpoints were updated, even if there was no change.
     last_endpoints_time: Option<Instant>,
@@ -2437,18 +2415,18 @@ impl PartialEq for DiscoveredEndpoints {
 }
 
 impl DiscoveredEndpoints {
-    fn new(endpoints: Vec<config::DirectAddress>) -> Self {
+    fn new(endpoints: Vec<DirectAddress>) -> Self {
         Self {
             last_endpoints: endpoints,
             last_endpoints_time: Some(Instant::now()),
         }
     }
 
-    fn into_iter(self) -> impl Iterator<Item = config::DirectAddress> {
+    fn into_iter(self) -> impl Iterator<Item = DirectAddress> {
         self.last_endpoints.into_iter()
     }
 
-    fn iter(&self) -> impl Iterator<Item = &config::DirectAddress> + '_ {
+    fn iter(&self) -> impl Iterator<Item = &DirectAddress> + '_ {
         self.last_endpoints.iter()
     }
 
@@ -2608,6 +2586,127 @@ fn disco_message_sent(msg: &disco::Message) {
     }
 }
 
+/// A *direct address* on which an iroh-node might be contactable.
+///
+/// Direct addresses are UDP socket addresses on which an iroh-net node could potentially be
+/// contacted.  These can come from various sources depending on the network topology of the
+/// iroh-net node, see [`DirectAddressType`] for the several kinds of sources.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct DirectAddress {
+    /// The address.
+    pub addr: SocketAddr,
+    /// The origin of this direct address.
+    pub typ: DirectAddressType,
+}
+
+/// The type of direct address.
+///
+/// These are the various sources or origins from which an iroh-net node might have found a
+/// possible [`DirectAddress`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum DirectAddressType {
+    /// Not yet determined..
+    Unknown,
+    /// A locally bound socket address.
+    Local,
+    /// Public internet address discovered via STUN.
+    ///
+    /// When possible an iroh-net node will perform STUN to discover which is the address
+    /// from which it sends data on the public internet.  This can be different from locally
+    /// bound addresses when the node is on a local network wich performs NAT or similar.
+    Stun,
+    /// An address assigned by the router using port mapping.
+    ///
+    /// When possible an iroh-net node will request a port mapping from the local router to
+    /// get a publicly routable direct address.
+    Portmapped,
+    /// Hard NAT: STUN'ed IPv4 address + local fixed port.
+    ///
+    /// It is possible to configure iroh-net to bound to a specific port and independently
+    /// configure the router to forward this port to the iroh-net node.  This indicates a
+    /// situation like this, which still uses STUN to discover the public address.
+    Stun4LocalPort,
+}
+
+impl Display for DirectAddressType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DirectAddressType::Unknown => write!(f, "?"),
+            DirectAddressType::Local => write!(f, "local"),
+            DirectAddressType::Stun => write!(f, "stun"),
+            DirectAddressType::Portmapped => write!(f, "portmap"),
+            DirectAddressType::Stun4LocalPort => write!(f, "stun4localport"),
+        }
+    }
+}
+
+/// Contains information about the host's network state.
+#[derive(Debug, Clone, PartialEq)]
+struct NetInfo {
+    /// Says whether the host's NAT mappings vary based on the destination IP.
+    mapping_varies_by_dest_ip: Option<bool>,
+
+    /// If their router does hairpinning. It reports true even if there's no NAT involved.
+    hair_pinning: Option<bool>,
+
+    /// Whether the host has IPv6 internet connectivity.
+    working_ipv6: Option<bool>,
+
+    /// Whether the OS supports IPv6 at all, regardless of whether IPv6 internet connectivity is available.
+    os_has_ipv6: Option<bool>,
+
+    /// Whether the host has UDP internet connectivity.
+    working_udp: Option<bool>,
+
+    /// Whether ICMPv4 works, `None` means not checked.
+    working_icmp_v4: Option<bool>,
+
+    /// Whether ICMPv6 works, `None` means not checked.
+    working_icmp_v6: Option<bool>,
+
+    /// Whether we have an existing portmap open (UPnP, PMP, or PCP).
+    have_port_map: bool,
+
+    /// Probe indicating the presence of port mapping protocols on the LAN.
+    portmap_probe: Option<portmapper::ProbeOutput>,
+
+    /// This node's preferred relay server for incoming traffic. The node might be be temporarily
+    /// connected to multiple relay servers (to send to other nodes)
+    /// but PreferredRelay is the instance number that the node
+    /// subscribes to traffic at. Zero means disconnected or unknown.
+    preferred_relay: Option<RelayUrl>,
+
+    /// The fastest recent time to reach various relay STUN servers, in seconds.
+    ///
+    /// This should only be updated rarely, or when there's a
+    /// material change, as any change here also gets uploaded to the control plane.
+    relay_latency: BTreeMap<String, f64>,
+}
+
+impl NetInfo {
+    /// reports whether `self` and `other` are basically equal, ignoring changes in relay ServerLatency & RelayLatency.
+    pub fn basically_equal(&self, other: &Self) -> bool {
+        let eq_icmp_v4 = match (self.working_icmp_v4, other.working_icmp_v4) {
+            (Some(slf), Some(other)) => slf == other,
+            _ => true, // ignore for comparison if only one report had this info
+        };
+        let eq_icmp_v6 = match (self.working_icmp_v6, other.working_icmp_v6) {
+            (Some(slf), Some(other)) => slf == other,
+            _ => true, // ignore for comparison if only one report had this info
+        };
+        self.mapping_varies_by_dest_ip == other.mapping_varies_by_dest_ip
+            && self.hair_pinning == other.hair_pinning
+            && self.working_ipv6 == other.working_ipv6
+            && self.os_has_ipv6 == other.os_has_ipv6
+            && self.working_udp == other.working_udp
+            && eq_icmp_v4
+            && eq_icmp_v6
+            && self.have_port_map == other.have_port_map
+            && self.portmap_probe == other.portmap_probe
+            && self.preferred_relay == other.preferred_relay
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use anyhow::Context;
@@ -2674,7 +2773,7 @@ pub(crate) mod tests {
     #[instrument(skip_all)]
     async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<CallOnDrop> {
         /// Registers endpoint addresses of a node to all other nodes.
-        fn update_eps(stacks: &[MagicStack], my_idx: usize, new_eps: Vec<config::DirectAddress>) {
+        fn update_eps(stacks: &[MagicStack], my_idx: usize, new_eps: Vec<DirectAddress>) {
             let me = &stacks[my_idx];
             for (i, m) in stacks.iter().enumerate() {
                 if i == my_idx {

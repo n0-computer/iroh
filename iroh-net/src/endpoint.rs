@@ -48,7 +48,7 @@ pub use quinn::{
 
 pub use super::magicsock::{
     ConnectionInfo, ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo,
-    DirectAdressesStream,
+    DirectAddress, DirectAddressType, DirectAdressesStream,
 };
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
