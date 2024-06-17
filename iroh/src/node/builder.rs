@@ -373,9 +373,11 @@ where
         let unspawned = self.build().await?;
         let gossip = unspawned.gossip.clone();
         let blobs = BlobsProtocol::new(unspawned.inner.db.clone(), unspawned.inner.rt.clone());
+        let docs = unspawned.inner.sync.clone();
         unspawned
             .add_handler(GOSSIP_ALPN, Box::new(gossip))
             .add_handler(iroh_blobs::protocol::ALPN, Box::new(blobs))
+            .add_handler(DOCS_ALPN, Box::new(docs))
             .spawn()
             .await
     }
@@ -588,10 +590,9 @@ where
                             continue;
                         }
                     };
-                    let sync = handler.inner.sync.clone();
                     let handlers = handlers.clone();
                     tokio::task::spawn(async move {
-                        if let Err(err) = handle_connection(connecting, alpn, sync, &handlers).await {
+                        if let Err(err) = handle_connection(connecting, alpn, &handlers).await {
                             warn!("Handling incoming connection ended with error: {err}");
                         }
                     });
@@ -693,39 +694,33 @@ where
 /// Unspawned node
 #[derive(Debug)]
 pub struct UnspawnedNode<D, E> {
-    ///
     inner: NodeInner<D>,
-    ///
     client: crate::client::MemIroh,
-    ///
     internal_rpc: FlumeServerEndpoint<RpcService>,
-    ///
     gossip: Gossip,
-    ///
     rpc_endpoint: E,
-    ///
     handlers: BTreeMap<&'static [u8], Box<dyn Protocol>>,
 }
 
 impl<D: BaoStore, E: ServiceEndpoint<RpcService>> UnspawnedNode<D, E> {
-    ///
+    /// The endpoint
     pub fn endpoint(&self) -> &Endpoint {
         &self.inner.endpoint
     }
 
-    ///
+    /// The client, not useable as of now, but you can store it for later
     pub fn client(&self) -> &crate::client::MemIroh {
         &self.client
     }
 
-    ///
+    /// Add a handler
     pub fn add_handler(self, alpn: &'static [u8], handler: Box<dyn Protocol>) -> Self {
         let mut this = self;
         this.handlers.insert(alpn, handler);
         this
     }
 
-    ///
+    /// Spawn an active node with an accept loop.
     pub async fn spawn(self) -> Result<Node<D>> {
         let blobs_store = self.inner.db.clone();
         match self.spawn_inner().await {
@@ -810,24 +805,15 @@ impl Default for GcPolicy {
     }
 }
 
-// TODO: Restructure this code to not take all these arguments.
-#[allow(clippy::too_many_arguments)]
 async fn handle_connection(
     connecting: iroh_net::endpoint::Connecting,
     alpn: String,
-    sync: DocsEngine,
     handlers: &BTreeMap<&'static [u8], Box<dyn Protocol>>,
 ) -> Result<()> {
-    match alpn.as_bytes() {
-        DOCS_ALPN => sync.handle_connection(connecting).await?,
-        alpn => {
-            let Some(handler) = handlers.get(alpn) else {
-                bail!("ignoring connection: unsupported ALPN protocol");
-            };
-            handler.accept(connecting).await?;
-        }
-    }
-    Ok(())
+    let Some(handler) = handlers.get(alpn.as_bytes()) else {
+        bail!("ignoring connection: unsupported ALPN protocol");
+    };
+    handler.accept(connecting).await
 }
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;

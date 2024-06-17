@@ -52,7 +52,7 @@ pub struct Node<D> {
     client: crate::client::MemIroh,
 }
 
-///
+/// A protocol
 pub trait Protocol: Send + Sync + Debug + 'static {
     /// Accept a connection
     fn accept(&self, conn: Connecting) -> Boxed<Result<()>>;
