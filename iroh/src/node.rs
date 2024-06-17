@@ -15,7 +15,7 @@ use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
 use iroh_docs::engine::Engine;
 use iroh_net::util::AbortingJoinHandle;
-use iroh_net::{endpoint::LocalEndpointsStream, key::SecretKey, Endpoint};
+use iroh_net::{endpoint::DirectAdressesStream, key::SecretKey, Endpoint};
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
 use tokio::task::JoinHandle;
@@ -116,8 +116,8 @@ impl<D: BaoStore> Node<D> {
     }
 
     /// Lists the local endpoint of this node.
-    pub fn local_endpoints(&self) -> LocalEndpointsStream {
-        self.inner.endpoint.local_endpoints()
+    pub fn local_endpoints(&self) -> DirectAdressesStream {
+        self.inner.endpoint.direct_addresses()
     }
 
     /// Convenience method to get just the addr part of [`Node::local_endpoints`].
@@ -185,7 +185,7 @@ impl<D> NodeInner<D> {
     async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
         let endpoints = self
             .endpoint
-            .local_endpoints()
+            .direct_addresses()
             .next()
             .await
             .ok_or(anyhow!("no endpoints found"))?;

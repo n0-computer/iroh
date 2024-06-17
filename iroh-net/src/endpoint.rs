@@ -48,7 +48,7 @@ pub use quinn::{
 
 pub use super::magicsock::{
     ConnectionInfo, ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo,
-    LocalEndpointsStream,
+    DirectAdressesStream,
 };
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
@@ -570,7 +570,7 @@ impl Endpoint {
     /// [`Endpoint::local_endpoints`].
     pub async fn node_addr(&self) -> Result<NodeAddr> {
         let addrs = self
-            .local_endpoints()
+            .direct_addresses()
             .next()
             .await
             .ok_or(anyhow!("No IP endpoints found"))?;
@@ -637,13 +637,13 @@ impl Endpoint {
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
     /// let mep =  Endpoint::builder().bind(0).await.unwrap();
-    /// let _endpoints = mep.local_endpoints().next().await;
+    /// let _addrs = mep.direct_addresses().next().await;
     /// # });
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    pub fn local_endpoints(&self) -> LocalEndpointsStream {
-        self.msock.local_endpoints()
+    pub fn direct_addresses(&self) -> DirectAdressesStream {
+        self.msock.direct_addresses()
     }
 
     /// Returns the local socket addresses on which the underlying sockets are bound.

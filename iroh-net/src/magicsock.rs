@@ -304,21 +304,22 @@ impl MagicSock {
         self.node_map.node_info(node_id)
     }
 
-    /// Returns the local endpoints as a stream.
+    /// Returns the direct addresses as a stream.
     ///
-    /// The [`MagicSock`] continuously monitors the local endpoints, the network addresses
-    /// it can listen on, for changes.  Whenever changes are detected this stream will yield
-    /// a new list of endpoints.
+    /// The [`MagicSock`] continuously monitors the direct addresses, the network addresses
+    /// it might be able to be contacted on, for changes.  Whenever changes are detected
+    /// this stream will yield a new list of addresses.
     ///
     /// Upon the first creation on the [`MagicSock`] it may not yet have completed a first
-    /// local endpoint discovery, in this case the first item of the stream will not be
-    /// immediately available.  Once this first set of local endpoints are discovered the
-    /// stream will always return the first set of endpoints immediately, which are the most
-    /// recently discovered endpoints.
+    /// direct addresses discovery, in this case the first item of the stream will not be
+    /// immediately available.  Once this first set of direct addresses are discovered the
+    /// stream will always return the first set of addresses immediately, which are the most
+    /// recently discovered addresses.
     ///
-    /// To get the current endpoints, drop the stream after the first item was received.
-    pub fn local_endpoints(&self) -> LocalEndpointsStream {
-        LocalEndpointsStream {
+    /// To get the current direct addresses, drop the stream after the first item was
+    /// received.
+    pub fn direct_addresses(&self) -> DirectAdressesStream {
+        DirectAdressesStream {
             initial: Some(self.endpoints.get()),
             inner: self.endpoints.watch().into_stream(),
         }
@@ -1493,12 +1494,12 @@ impl Handle {
 
 /// Stream returning local endpoints as they change.
 #[derive(Debug)]
-pub struct LocalEndpointsStream {
+pub struct DirectAdressesStream {
     initial: Option<DiscoveredEndpoints>,
     inner: watchable::WatcherStream<DiscoveredEndpoints>,
 }
 
-impl Stream for LocalEndpointsStream {
+impl Stream for DirectAdressesStream {
     type Item = Vec<config::Endpoint>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -2684,7 +2685,7 @@ pub(crate) mod tests {
             let stacks = stacks.clone();
             tasks.spawn(async move {
                 let me = m.endpoint.node_id().fmt_short();
-                let mut stream = m.endpoint.local_endpoints();
+                let mut stream = m.endpoint.direct_addresses();
                 while let Some(new_eps) = stream.next().await {
                     info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, new_eps);
                     update_eps(&stacks, my_idx, new_eps);
@@ -3353,13 +3354,13 @@ pub(crate) mod tests {
         let ms = Handle::new(Default::default()).await.unwrap();
 
         // See if we can get endpoints.
-        let mut eps0 = ms.local_endpoints().next().await.unwrap();
+        let mut eps0 = ms.direct_addresses().next().await.unwrap();
         eps0.sort();
         println!("{eps0:?}");
         assert!(!eps0.is_empty());
 
         // Getting the endpoints again immediately should give the same results.
-        let mut eps1 = ms.local_endpoints().next().await.unwrap();
+        let mut eps1 = ms.direct_addresses().next().await.unwrap();
         eps1.sort();
         println!("{eps1:?}");
         assert_eq!(eps0, eps1);
