@@ -173,7 +173,7 @@ impl AddrInfo {
     }
 }
 
-/// Options to configure what is included in a `NodeAddr`.
+/// Options to configure what is included in a [`NodeAddr`] and [`AddrInfo`].
 #[derive(
     Copy,
     Clone,
@@ -192,11 +192,11 @@ pub enum AddrInfoOptions {
     /// This usually means that iroh-dns discovery is used to find address information.
     #[default]
     Id,
-    /// Include both the relay URL and the direct addresses.
+    /// Includes both the relay URL and the direct addresses.
     RelayAndAddresses,
-    /// Only include the relay URL.
+    /// Only includes the relay URL.
     Relay,
-    /// Only include the direct addresses.
+    /// Only includes the direct addresses.
     Addresses,
 }
 
