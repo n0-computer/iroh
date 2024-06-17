@@ -1500,7 +1500,7 @@ pub struct DirectAdressesStream {
 }
 
 impl Stream for DirectAdressesStream {
-    type Item = Vec<config::Endpoint>;
+    type Item = Vec<config::DirectAddress>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = &mut *self;
@@ -1583,7 +1583,7 @@ enum DiscoBoxError {
 type RelayRecvResult = Result<(PublicKey, quinn_udp::RecvMeta, Bytes), io::Error>;
 
 /// Reports whether x and y represent the same set of endpoints. The order doesn't matter.
-fn endpoint_sets_equal(xs: &[config::Endpoint], ys: &[config::Endpoint]) -> bool {
+fn endpoint_sets_equal(xs: &[config::DirectAddress], ys: &[config::DirectAddress]) -> bool {
     if xs.is_empty() && ys.is_empty() {
         return true;
     }
@@ -1599,7 +1599,7 @@ fn endpoint_sets_equal(xs: &[config::Endpoint], ys: &[config::Endpoint]) -> bool
             return true;
         }
     }
-    let mut m: HashMap<&config::Endpoint, usize> = HashMap::new();
+    let mut m: HashMap<&config::DirectAddress, usize> = HashMap::new();
     for x in xs {
         *m.entry(x).or_default() |= 1;
     }
@@ -1963,7 +1963,7 @@ impl Actor {
                 #[allow(clippy::map_entry)]
                 if !$already.contains_key(&$ipp) {
                     $already.insert($ipp, $et);
-                    $eps.push(config::Endpoint {
+                    $eps.push(config::DirectAddress {
                         addr: $ipp,
                         typ: $et,
                     });
@@ -1974,13 +1974,23 @@ impl Actor {
         let maybe_port_mapped = *portmap_watcher.borrow();
 
         if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
-            add_addr!(already, eps, portmap_ext, config::EndpointType::Portmapped);
+            add_addr!(
+                already,
+                eps,
+                portmap_ext,
+                config::DirectAddressType::Portmapped
+            );
             self.set_net_info_have_port_map().await;
         }
 
         if let Some(nr) = nr {
             if let Some(global_v4) = nr.global_v4 {
-                add_addr!(already, eps, global_v4.into(), config::EndpointType::Stun);
+                add_addr!(
+                    already,
+                    eps,
+                    global_v4.into(),
+                    config::DirectAddressType::Stun
+                );
 
                 // If they're behind a hard NAT and are using a fixed
                 // port locally, assume they might've added a static
@@ -1994,12 +2004,17 @@ impl Actor {
                         already,
                         eps,
                         addr.into(),
-                        config::EndpointType::Stun4LocalPort
+                        config::DirectAddressType::Stun4LocalPort
                     );
                 }
             }
             if let Some(global_v6) = nr.global_v6 {
-                add_addr!(already, eps, global_v6.into(), config::EndpointType::Stun);
+                add_addr!(
+                    already,
+                    eps,
+                    global_v6.into(),
+                    config::DirectAddressType::Stun
+                );
             }
         }
         let local_addr_v4 = self.pconn4.local_addr().ok();
@@ -2057,7 +2072,7 @@ impl Actor {
                                     already,
                                     eps,
                                     SocketAddr::new(ip, port),
-                                    config::EndpointType::Local
+                                    config::DirectAddressType::Local
                                 );
                             }
                         }
@@ -2067,7 +2082,7 @@ impl Actor {
                                     already,
                                     eps,
                                     SocketAddr::new(ip, port),
-                                    config::EndpointType::Local
+                                    config::DirectAddressType::Local
                                 );
                             }
                         }
@@ -2079,7 +2094,7 @@ impl Actor {
                 if let Some(addr) = local_addr_v4 {
                     // Our local endpoint is bound to a particular address.
                     // Do not offer addresses on other local interfaces.
-                    add_addr!(already, eps, addr, config::EndpointType::Local);
+                    add_addr!(already, eps, addr, config::DirectAddressType::Local);
                 }
             }
 
@@ -2087,7 +2102,7 @@ impl Actor {
                 if let Some(addr) = local_addr_v6 {
                     // Our local endpoint is bound to a particular address.
                     // Do not offer addresses on other local interfaces.
-                    add_addr!(already, eps, addr, config::EndpointType::Local);
+                    add_addr!(already, eps, addr, config::DirectAddressType::Local);
                 }
             }
 
@@ -2409,7 +2424,7 @@ fn bind(port: u16) -> Result<(UdpConn, Option<UdpConn>)> {
 struct DiscoveredEndpoints {
     /// Records the endpoints found during the previous
     /// endpoint discovery. It's used to avoid duplicate endpoint change notifications.
-    last_endpoints: Vec<config::Endpoint>,
+    last_endpoints: Vec<config::DirectAddress>,
 
     /// The last time the endpoints were updated, even if there was no change.
     last_endpoints_time: Option<Instant>,
@@ -2422,18 +2437,18 @@ impl PartialEq for DiscoveredEndpoints {
 }
 
 impl DiscoveredEndpoints {
-    fn new(endpoints: Vec<config::Endpoint>) -> Self {
+    fn new(endpoints: Vec<config::DirectAddress>) -> Self {
         Self {
             last_endpoints: endpoints,
             last_endpoints_time: Some(Instant::now()),
         }
     }
 
-    fn into_iter(self) -> impl Iterator<Item = config::Endpoint> {
+    fn into_iter(self) -> impl Iterator<Item = config::DirectAddress> {
         self.last_endpoints.into_iter()
     }
 
-    fn iter(&self) -> impl Iterator<Item = &config::Endpoint> + '_ {
+    fn iter(&self) -> impl Iterator<Item = &config::DirectAddress> + '_ {
         self.last_endpoints.iter()
     }
 
@@ -2659,7 +2674,7 @@ pub(crate) mod tests {
     #[instrument(skip_all)]
     async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<CallOnDrop> {
         /// Registers endpoint addresses of a node to all other nodes.
-        fn update_eps(stacks: &[MagicStack], my_idx: usize, new_eps: Vec<config::Endpoint>) {
+        fn update_eps(stacks: &[MagicStack], my_idx: usize, new_eps: Vec<config::DirectAddress>) {
             let me = &stacks[my_idx];
             for (i, m) in stacks.iter().enumerate() {
                 if i == my_idx {

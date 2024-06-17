@@ -6,41 +6,56 @@ use crate::relay::RelayUrl;
 
 use super::portmapper;
 
-// TODO: This re-uses "Endpoint" again, a term that already means "a quic endpoint" and "a
-// magicsock endpoint". this time it means "an IP address on which our local magicsock
-// endpoint is listening".  Name this better.
-/// An endpoint IPPort and an associated type.
+/// A *direct address* on which an iroh-node might be contactable.
+///
+/// Direct addresses are UDP socket addresses on which an iroh-net node could potentially be
+/// contacted.  These can come from various sources depending on the network topology of the
+/// iroh-net node, see [`DirectAddressType`] for the several kinds of sources.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Endpoint {
-    /// The address of the endpoint.
+pub struct DirectAddress {
+    /// The address.
     pub addr: SocketAddr,
-    /// The kind of endpoint.
-    pub typ: EndpointType,
+    /// The origin of this direct address.
+    pub typ: DirectAddressType,
 }
 
-/// Type of endpoint.
+/// The type of direct address.
+///
+/// These are the various sources or origins from which an iroh-net node might have found a
+/// possible [`DirectAddress`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum EndpointType {
-    /// Endpoint kind has not been determined yet.
+pub enum DirectAddressType {
+    /// Not yet determined..
     Unknown,
-    /// Endpoint is bound to a local address.
+    /// A locally bound socket address.
     Local,
-    /// Endpoint has a publicly reachable address found via STUN.
+    /// Public internet address discovered via STUN.
+    ///
+    /// When possible an iroh-net node will perform STUN to discover which is the address
+    /// from which it sends data on the public internet.  This can be different from locally
+    /// bound addresses when the node is on a local network wich performs NAT or similar.
     Stun,
-    /// Endpoint uses a port mapping in the router.
+    /// An address assigned by the router using port mapping.
+    ///
+    /// When possible an iroh-net node will request a port mapping from the local router to
+    /// get a publicly routable direct address.
     Portmapped,
     /// Hard NAT: STUN'ed IPv4 address + local fixed port.
+    ///
+    /// It is possible to configure iroh-net to bound to a specific port and independently
+    /// configure the router to forward this port to the iroh-net node.  This indicates a
+    /// situation like this, which still uses STUN to discover the public address.
     Stun4LocalPort,
 }
 
-impl Display for EndpointType {
+impl Display for DirectAddressType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EndpointType::Unknown => write!(f, "?"),
-            EndpointType::Local => write!(f, "local"),
-            EndpointType::Stun => write!(f, "stun"),
-            EndpointType::Portmapped => write!(f, "portmap"),
-            EndpointType::Stun4LocalPort => write!(f, "stun4localport"),
+            DirectAddressType::Unknown => write!(f, "?"),
+            DirectAddressType::Local => write!(f, "local"),
+            DirectAddressType::Stun => write!(f, "stun"),
+            DirectAddressType::Portmapped => write!(f, "portmap"),
+            DirectAddressType::Stun4LocalPort => write!(f, "stun4localport"),
         }
     }
 }
