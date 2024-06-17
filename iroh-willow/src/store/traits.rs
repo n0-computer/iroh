@@ -17,10 +17,17 @@ pub trait Storage: Clone + 'static {
     fn payloads(&self) -> &Self::Payloads;
 }
 
-pub trait SecretStorage: std::fmt::Debug + 'static {
+pub trait SecretStorage: std::fmt::Debug + Clone + 'static {
     fn insert(&self, secret: meadowcap::SecretKey) -> Result<(), SecretStoreError>;
     fn get_user(&self, id: &UserId) -> Option<UserSecretKey>;
     fn get_namespace(&self, id: &NamespaceId) -> Option<NamespaceSecretKey>;
+
+    fn insert_user(&self, secret: UserSecretKey) -> Result<(), SecretStoreError> {
+        self.insert(meadowcap::SecretKey::User(secret))
+    }
+    fn insert_namespace(&self, secret: NamespaceSecretKey) -> Result<(), SecretStoreError> {
+        self.insert(meadowcap::SecretKey::Namespace(secret))
+    }
 
     fn sign_user(&self, id: &UserId, message: &[u8]) -> Result<UserSignature, SecretStoreError> {
         Ok(self

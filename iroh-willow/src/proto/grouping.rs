@@ -1,7 +1,12 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, io};
 
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
+
+use crate::{
+    proto::willow::encodings::RelativePath,
+    util::codec::{compact_width, CompactWidth, Encoder},
+};
 
 use super::{
     keys::NamespaceId,
@@ -179,6 +184,27 @@ pub enum RangeEnd<T> {
     Open,
 }
 
+impl<T> RangeEnd<T> {
+    /// Returns `true` if this range is closed.
+    pub fn is_closed(&self) -> bool {
+        matches!(self, RangeEnd::Closed(_))
+    }
+
+    /// Returns `true` if this range is open.
+    pub fn is_open(&self) -> bool {
+        matches!(self, RangeEnd::Open)
+    }
+}
+
+impl<T: Copy> RangeEnd<T> {
+    pub fn or_max(self, max: T) -> T {
+        match self {
+            Self::Closed(value) => value,
+            Self::Open => max,
+        }
+    }
+}
+
 impl<T: Ord + PartialOrd> PartialOrd for RangeEnd<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self, other) {
@@ -259,9 +285,18 @@ impl Area {
     }
 
     pub fn includes_entry(&self, entry: &Entry) -> bool {
-        self.subspace.includes_subspace(&entry.subspace_id)
-            && self.path.is_prefix_of(&entry.path)
-            && self.times.includes(&entry.timestamp)
+        self.includes_point(&entry.subspace_id, &entry.path, &entry.timestamp)
+    }
+
+    pub fn includes_point(
+        &self,
+        subspace_id: &SubspaceId,
+        path: &Path,
+        timestamp: &Timestamp,
+    ) -> bool {
+        self.subspace.includes_subspace(subspace_id)
+            && self.path.is_prefix_of(path)
+            && self.times.includes(timestamp)
     }
 
     pub fn includes_area(&self, other: &Area) -> bool {
@@ -343,7 +378,7 @@ pub fn path_range_end(path: &Path) -> RangeEnd<Path> {
             RangeEnd::Open
         } else {
             out.reverse();
-            RangeEnd::Closed(Path::from_bytes_unchecked(out))
+            RangeEnd::Closed(Path::new_unchecked(out))
         }
     }
 }
@@ -413,5 +448,118 @@ impl SubspaceArea {
             (Self::Id(a), Self::Id(b)) if a == b => Some(Self::Id(*a)),
             (Self::Id(_a), Self::Id(_b)) => None,
         }
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+#[error("area is not included in outer area")]
+pub struct NotIncluded;
+
+#[derive(Debug, Clone)]
+pub struct AreaInArea<'a> {
+    a: &'a Area,
+    out: &'a Area,
+}
+
+impl<'a> AreaInArea<'a> {
+    pub fn new(inner: &'a Area, outer: &'a Area) -> Result<Self, NotIncluded> {
+        if outer.includes_area(inner) {
+            Ok(Self {
+                a: inner,
+                out: outer,
+            })
+        } else {
+            Err(NotIncluded)
+        }
+    }
+    fn start_diff(&self) -> u64 {
+        let a = self.a.times;
+        let out = self.out.times;
+        Ord::min(
+            a.start.saturating_sub(out.start),
+            out.end.or_max(Timestamp::MAX) - a.start,
+        )
+    }
+
+    fn end_diff(&self) -> u64 {
+        let a = self.a.times;
+        let out = self.out.times;
+        Ord::min(
+            a.end.or_max(Timestamp::MAX).saturating_sub(out.start),
+            out.end
+                .or_max(Timestamp::MAX)
+                .saturating_sub(a.end.or_max(Timestamp::MAX)),
+        )
+    }
+}
+
+impl<'a> Encoder for AreaInArea<'a> {
+    fn encoded_len(&self) -> usize {
+        let subspace_is_same = self.a.subspace == self.out.subspace;
+        let mut len = 1;
+        if !subspace_is_same {
+            len += SubspaceId::LENGTH;
+        }
+        let relative_path = RelativePath::new(&self.a.path, &self.out.path);
+        len += relative_path.encoded_len();
+        len += CompactWidth(self.start_diff()).encoded_len();
+        if self.a.times.end.is_closed() {
+            len += CompactWidth(self.end_diff()).encoded_len();
+        }
+        len
+    }
+
+    fn encode_into<W: io::Write>(&self, out: &mut W) -> anyhow::Result<()> {
+        let mut bits = 0u8;
+        let subspace_is_same = self.a.subspace == self.out.subspace;
+        if !subspace_is_same {
+            bits |= 0b0000_0001;
+        }
+        if self.a.times.is_open() {
+            bits |= 0b0000_0010;
+        }
+        let start_diff = self.start_diff();
+        let end_diff = self.start_diff();
+        if start_diff == self.a.times.start.saturating_sub(self.out.times.start) {
+            bits |= 0b0000_0100;
+        }
+        if end_diff
+            == self
+                .a
+                .times
+                .end
+                .or_max(Timestamp::MAX)
+                .saturating_sub(self.a.times.start)
+        {
+            bits |= 0b0000_1000;
+        }
+        if let 4 | 8 = compact_width(start_diff) {
+            bits |= 0b0001_0000;
+        }
+        if let 2 | 8 = compact_width(start_diff) {
+            bits |= 0b0010_0000;
+        }
+        if let 4 | 8 = compact_width(end_diff) {
+            bits |= 0b0100_0000;
+        }
+        if let 2 | 8 = compact_width(end_diff) {
+            bits |= 0b1000_0000;
+        }
+        out.write_all(&[bits])?;
+        match self.a.subspace {
+            SubspaceArea::Any => {
+                debug_assert!(subspace_is_same, "outers subspace must be any");
+            }
+            SubspaceArea::Id(subspace_id) => {
+                out.write_all(subspace_id.as_bytes())?;
+            }
+        }
+        let relative_path = RelativePath::new(&self.a.path, &self.out.path);
+        relative_path.encode_into(out)?;
+        CompactWidth(start_diff).encode_into(out)?;
+        if self.a.times.end.is_closed() {
+            CompactWidth(end_diff).encode_into(out)?;
+        }
+        Ok(())
     }
 }

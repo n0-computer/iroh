@@ -65,6 +65,11 @@ pub enum InvalidPath {
     TooManyComponents,
 }
 
+/// A [`Path`] is a sequence of at most [`MAX_COMPONENT_COUNT`] many bytestrings,
+/// each of at most [`MAX_COMPONENT_LENGTH`] bytes, and whose total number of bytes
+/// is at most [`MAX_PATH_LENGTH`].
+///
+/// The bytestrings that make up a [`Path`] are called its [`Component`]s.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub struct Path(Arc<[Component]>);
 
@@ -80,10 +85,10 @@ impl Path {
             .iter()
             .map(|c| Bytes::copy_from_slice(c))
             .collect();
-        Ok(Self::from_bytes_unchecked(components))
+        Ok(Self::new_unchecked(components))
     }
 
-    pub fn from_bytes_unchecked(components: Vec<Bytes>) -> Self {
+    pub fn new_unchecked(components: Vec<Bytes>) -> Self {
         let path: Arc<[Component]> = components.into();
         Path(path)
     }
@@ -124,6 +129,22 @@ impl Path {
         } else {
             None
         }
+    }
+
+    pub fn common_prefix(&self, other: &Path) -> &[Component] {
+        &self[..self.common_prefix_len(other)]
+    }
+
+    pub fn common_prefix_len(&self, other: &Path) -> usize {
+        self.iter()
+            .zip(other.iter())
+            .take_while(|(a, b)| a == b)
+            .count()
+    }
+
+    pub fn remove_prefix(&self, count: usize) -> Path {
+        let start = count.min(self.len());
+        Self::new_unchecked(self[start..].to_vec())
     }
 }
 
@@ -224,7 +245,7 @@ impl Entry {
 
     pub fn attach_authorisation(
         self,
-        capability: McCapability,
+        capability: WriteCapability,
         secret_key: &UserSecretKey,
     ) -> Result<AuthorisedEntry, InvalidParams> {
         attach_authorisation(self, capability, secret_key)
@@ -347,7 +368,10 @@ pub mod encodings {
 
     use bytes::Bytes;
 
-    use crate::{proto::keys::PUBLIC_KEY_LENGTH, util::codec::Encoder};
+    use crate::{
+        proto::willow::{NamespaceId, SubspaceId},
+        util::codec::Encoder,
+    };
 
     use super::{Entry, Path, DIGEST_LENGTH};
 
@@ -356,10 +380,10 @@ pub mod encodings {
     /// UPathLengthPower denotes the type of numbers between zero (inclusive) and 256path_length_power (exclusive).
     ///
     /// The value `2` means that we can encode paths up to 64KiB long.
-    const PATH_LENGTH_POWER: usize = 2;
-    const PATH_COUNT_POWER: usize = PATH_LENGTH_POWER;
-    type UPathLengthPower = u16;
-    type UPathCountPower = u16;
+    pub const PATH_LENGTH_POWER: usize = 2;
+    pub const PATH_COUNT_POWER: usize = PATH_LENGTH_POWER;
+    pub type UPathLengthPower = u16;
+    pub type UPathCountPower = u16;
 
     impl Encoder for Path {
         fn encoded_len(&self) -> usize {
@@ -394,7 +418,34 @@ pub mod encodings {
 
         fn encoded_len(&self) -> usize {
             let path_len = self.path.encoded_len();
-            PUBLIC_KEY_LENGTH + PUBLIC_KEY_LENGTH + path_len + 8 + 8 + DIGEST_LENGTH
+            NamespaceId::LENGTH + SubspaceId::LENGTH + path_len + 8 + 8 + DIGEST_LENGTH
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct RelativePath<'a> {
+        pub path: &'a Path,
+        pub reference: &'a Path,
+    }
+    impl<'a> RelativePath<'a> {
+        pub fn new(path: &'a Path, reference: &'a Path) -> Self {
+            Self { path, reference }
+        }
+    }
+
+    impl<'a> Encoder for RelativePath<'a> {
+        fn encoded_len(&self) -> usize {
+            let common_prefix_len = self.path.common_prefix_len(self.reference) as UPathCountPower;
+            let remaining_path = self.path.remove_prefix(common_prefix_len as usize);
+            PATH_COUNT_POWER + remaining_path.encoded_len()
+        }
+
+        fn encode_into<W: Write>(&self, out: &mut W) -> anyhow::Result<()> {
+            let common_prefix_len = self.path.common_prefix_len(self.reference) as UPathCountPower;
+            out.write_all(&common_prefix_len.to_be_bytes())?;
+            let remaining_path = self.path.remove_prefix(common_prefix_len as usize);
+            remaining_path.encode_into(out)?;
+            Ok(())
         }
     }
 }

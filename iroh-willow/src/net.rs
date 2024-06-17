@@ -560,7 +560,7 @@ mod tests {
 
     #[allow(clippy::too_many_arguments)]
     async fn insert<P: PayloadStore>(
-        store: &ActorHandle,
+        actor: &ActorHandle,
         payload_store: &P,
         namespace_id: NamespaceId,
         write_cap: WriteCapability,
@@ -585,7 +585,8 @@ mod tests {
                 payload_len,
             );
             track_entries.extend([entry.clone()]);
-            store.insert_entry(entry, write_cap.clone()).await?;
+            actor.insert_entry(entry, write_cap.clone()).await?;
+            drop(temp_tag);
         }
         Ok(())
     }
@@ -625,7 +626,6 @@ mod tests {
 
     async fn setup_capabilities(
         rng: &mut impl CryptoRngCore,
-
         store: &ActorHandle,
         namespace_secret: &NamespaceSecretKey,
     ) -> anyhow::Result<(ReadCapability, WriteCapability)> {

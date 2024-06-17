@@ -37,3 +37,41 @@ pub enum DecodeOutcome<T> {
         consumed: usize,
     },
 }
+
+pub fn compact_width(value: u64) -> u8 {
+    if value < 256 {
+        1
+    } else if value < 256u64.pow(2) {
+        2
+    } else if value < 256u64.pow(4) {
+        4
+    } else {
+        8
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CompactWidth(pub u64);
+
+impl CompactWidth {
+    fn len(self) -> u8 {
+        compact_width(self.0)
+    }
+}
+
+impl Encoder for CompactWidth {
+    fn encoded_len(&self) -> usize {
+        self.len() as usize
+    }
+
+    fn encode_into<W: io::Write>(&self, out: &mut W) -> anyhow::Result<()> {
+        match self.len() {
+            1 => out.write_all(&(self.0 as u8).to_be_bytes())?,
+            2 => out.write_all(&(self.0 as u16).to_be_bytes())?,
+            4 => out.write_all(&(self.0 as u32).to_be_bytes())?,
+            8 => out.write_all(&self.0.to_be_bytes())?,
+            _ => unreachable!("len is always one of the above"),
+        };
+        Ok(())
+    }
+}

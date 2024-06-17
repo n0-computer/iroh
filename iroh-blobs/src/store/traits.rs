@@ -295,7 +295,7 @@ pub trait ReadableStore: Map {
 }
 
 /// The mutable part of a Bao store.
-pub trait Store: ReadableStore + MapMut {
+pub trait Store: ReadableStore + MapMut + std::fmt::Debug {
     /// This trait method imports a file from a local path.
     ///
     /// `data` is the path to the file.
