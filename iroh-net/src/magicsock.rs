@@ -77,7 +77,7 @@ mod udp_conn;
 
 pub use self::metrics::Metrics;
 pub use self::node_map::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo as ConnectionInfo,
+    ConnectionType, ConnectionTypeStream, DirectAddrInfo, NodeInfo as ConnectionInfo,
 };
 pub(super) use self::timer::Timer;
 
@@ -95,37 +95,37 @@ const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
-pub(super) struct Options {
+pub(crate) struct Options {
     /// The port to listen on.
     /// Zero means to pick one automatically.
-    pub port: u16,
+    pub(crate) port: u16,
 
     /// Secret key for this node.
-    pub secret_key: SecretKey,
+    pub(crate) secret_key: SecretKey,
 
     /// The [`RelayMap`] to use, leave empty to not use a relay server.
-    pub relay_map: RelayMap,
+    pub(crate) relay_map: RelayMap,
 
     /// Path to store known nodes.
-    pub nodes_path: Option<std::path::PathBuf>,
+    pub(crate) nodes_path: Option<std::path::PathBuf>,
 
     /// Optional node discovery mechanism.
-    pub discovery: Option<Box<dyn Discovery>>,
+    pub(crate) discovery: Option<Box<dyn Discovery>>,
 
     /// A DNS resolver to use for resolving relay URLs.
     ///
     /// You can use [`crate::dns::default_resolver`] for a resolver that uses the system's DNS
     /// configuration.
-    pub dns_resolver: DnsResolver,
+    pub(crate) dns_resolver: DnsResolver,
 
     /// Proxy configuration.
-    pub proxy_url: Option<Url>,
+    pub(crate) proxy_url: Option<Url>,
 
     /// Skip verification of SSL certificates from relay servers
     ///
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
-    pub insecure_skip_relay_cert_verify: bool,
+    pub(crate) insecure_skip_relay_cert_verify: bool,
 }
 
 impl Default for Options {
@@ -146,13 +146,13 @@ impl Default for Options {
 
 /// Contents of a relay message. Use a SmallVec to avoid allocations for the very
 /// common case of a single packet.
-pub(super) type RelayContents = SmallVec<[Bytes; 1]>;
+type RelayContents = SmallVec<[Bytes; 1]>;
 
 /// Handle for [`MagicSock`].
 ///
 /// Dereferences to [`MagicSock`], and handles closing.
 #[derive(Clone, Debug, derive_more::Deref)]
-pub(super) struct Handle {
+pub(crate) struct Handle {
     #[deref(forward)]
     msock: Arc<MagicSock>,
     // Empty when closed
@@ -170,7 +170,7 @@ pub(super) struct Handle {
 /// means any QUIC endpoints on top will be sharing as much information about nodes as
 /// possible.
 #[derive(derive_more::Debug)]
-pub(super) struct MagicSock {
+pub(crate) struct MagicSock {
     actor_sender: mpsc::Sender<ActorMessage>,
     relay_actor_sender: mpsc::Sender<RelayActorMessage>,
     /// String representation of the node_id of this node.
@@ -246,19 +246,19 @@ pub(super) struct MagicSock {
 
 impl MagicSock {
     /// Creates a magic [`MagicSock`] listening on [`Options::port`].
-    pub async fn spawn(opts: Options) -> Result<Handle> {
+    pub(crate) async fn spawn(opts: Options) -> Result<Handle> {
         Handle::new(opts).await
     }
 
     /// Returns the relay node we are connected to, that has the best latency.
     ///
     /// If `None`, then we are not connected to any relay nodes.
-    pub fn my_relay(&self) -> Option<RelayUrl> {
+    pub(crate) fn my_relay(&self) -> Option<RelayUrl> {
         self.my_relay.get()
     }
 
     /// Get the current proxy configuration.
-    pub fn proxy_url(&self) -> Option<&Url> {
+    pub(crate) fn proxy_url(&self) -> Option<&Url> {
         self.proxy_url.as_ref()
     }
 
@@ -282,24 +282,24 @@ impl MagicSock {
     }
 
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
-    pub fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
+    pub(crate) fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
         *self.local_addrs.read().expect("not poisoned")
     }
 
     /// Returns `true` if we have at least one candidate address where we can send packets to.
-    pub fn has_send_address(&self, node_key: PublicKey) -> bool {
+    pub(crate) fn has_send_address(&self, node_key: PublicKey) -> bool {
         self.connection_info(node_key)
             .map(|info| info.has_send_address())
             .unwrap_or(false)
     }
 
     /// Retrieve connection information about nodes in the network.
-    pub fn connection_infos(&self) -> Vec<ConnectionInfo> {
+    pub(crate) fn connection_infos(&self) -> Vec<ConnectionInfo> {
         self.node_map.node_infos(Instant::now())
     }
 
     /// Retrieve connection information about a node in the network.
-    pub fn connection_info(&self, node_id: NodeId) -> Option<ConnectionInfo> {
+    pub(crate) fn connection_info(&self, node_id: NodeId) -> Option<ConnectionInfo> {
         self.node_map.node_info(node_id)
     }
 
@@ -317,7 +317,7 @@ impl MagicSock {
     ///
     /// To get the current direct addresses, drop the stream after the first item was
     /// received.
-    pub fn direct_addresses(&self) -> DirectAddrsStream {
+    pub(crate) fn direct_addresses(&self) -> DirectAddrsStream {
         DirectAddrsStream {
             initial: Some(self.endpoints.get()),
             inner: self.endpoints.watch().into_stream(),
@@ -328,7 +328,7 @@ impl MagicSock {
     ///
     /// Note that this can be used to wait for the initial home relay to be known. If the home
     /// relay is known at this point, it will be the first item in the stream.
-    pub fn watch_home_relay(&self) -> impl Stream<Item = RelayUrl> {
+    pub(crate) fn watch_home_relay(&self) -> impl Stream<Item = RelayUrl> {
         let current = futures_lite::stream::iter(self.my_relay());
         let changes = self
             .my_relay
@@ -351,7 +351,7 @@ impl MagicSock {
     ///
     /// Will return an error if there is no address information known about the
     /// given `node_id`.
-    pub fn conn_type_stream(&self, node_id: NodeId) -> Result<ConnectionTypeStream> {
+    pub(crate) fn conn_type_stream(&self, node_id: NodeId) -> Result<ConnectionTypeStream> {
         self.node_map.conn_type_stream(node_id)
     }
 
@@ -359,7 +359,7 @@ impl MagicSock {
     ///
     /// Note this is a user-facing API and does not wrap the [`SocketAddr`] in a
     /// [`QuicMappedAddr`] as we do internally.
-    pub fn get_mapping_addr(&self, node_id: NodeId) -> Option<SocketAddr> {
+    pub(crate) fn get_mapping_addr(&self, node_id: NodeId) -> Option<SocketAddr> {
         self.node_map
             .get_quic_mapped_addr_for_node_key(node_id)
             .map(|a| a.0)
@@ -367,22 +367,22 @@ impl MagicSock {
 
     /// Add addresses for a node to the magic socket's addresbook.
     #[instrument(skip_all, fields(me = %self.me))]
-    pub fn add_node_addr(&self, addr: NodeAddr) {
+    pub(crate) fn add_node_addr(&self, addr: NodeAddr) {
         self.node_map.add_node_addr(addr);
     }
 
     /// Get a reference to the DNS resolver used in this [`MagicSock`].
-    pub fn dns_resolver(&self) -> &DnsResolver {
+    pub(crate) fn dns_resolver(&self) -> &DnsResolver {
         &self.dns_resolver
     }
 
     /// Reference to optional discovery service
-    pub fn discovery(&self) -> Option<&dyn Discovery> {
+    pub(crate) fn discovery(&self) -> Option<&dyn Discovery> {
         self.discovery.as_ref().map(Box::as_ref)
     }
 
     /// Call to notify the system of potential network changes.
-    pub async fn network_change(&self) {
+    pub(crate) async fn network_change(&self) {
         self.actor_sender
             .send(ActorMessage::NetworkChange)
             .await
@@ -1458,7 +1458,7 @@ impl Handle {
     /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
     /// indefinitely after this call.
     #[instrument(skip_all, fields(me = %self.msock.me))]
-    pub async fn close(&self) -> Result<()> {
+    pub(crate) async fn close(&self) -> Result<()> {
         if self.msock.is_closed() {
             return Ok(());
         }
@@ -2482,7 +2482,7 @@ fn split_packets(transmits: &[quinn_udp::Transmit]) -> RelayContents {
 
 /// Splits a packet into its component items.
 #[derive(Debug)]
-pub(super) struct PacketSplitIter {
+struct PacketSplitIter {
     bytes: Bytes,
 }
 
@@ -2490,7 +2490,7 @@ impl PacketSplitIter {
     /// Create a new PacketSplitIter from a packet.
     ///
     /// Returns an error if the packet is too big.
-    pub fn new(bytes: Bytes) -> Self {
+    fn new(bytes: Bytes) -> Self {
         Self { bytes }
     }
 
@@ -2685,7 +2685,7 @@ struct NetInfo {
 
 impl NetInfo {
     /// reports whether `self` and `other` are basically equal, ignoring changes in relay ServerLatency & RelayLatency.
-    pub fn basically_equal(&self, other: &Self) -> bool {
+    fn basically_equal(&self, other: &Self) -> bool {
         let eq_icmp_v4 = match (self.working_icmp_v4, other.working_icmp_v4) {
             (Some(slf), Some(other)) => slf == other,
             _ => true, // ignore for comparison if only one report had this info
@@ -2708,7 +2708,7 @@ impl NetInfo {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use anyhow::Context;
     use futures_lite::StreamExt;
     use iroh_test::CallOnDrop;
