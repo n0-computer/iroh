@@ -525,7 +525,7 @@ where
         let mut stream = endpoint.direct_addresses();
         tokio::task::spawn(async move {
             while let Some(eps) = stream.next().await {
-                if let Err(err) = gossip.update_endpoints(&eps) {
+                if let Err(err) = gossip.update_direct_addresses(&eps) {
                     warn!("Failed to update gossip endpoints: {err:?}");
                 }
             }
@@ -566,7 +566,7 @@ where
         // is only initialized once the endpoint is fully bound
         if let Some(local_endpoints) = server.direct_addresses().next().await {
             debug!(me = ?server.node_id(), "gossip initial update: {local_endpoints:?}");
-            gossip.update_endpoints(&local_endpoints).ok();
+            gossip.update_direct_addresses(&local_endpoints).ok();
         }
         loop {
             tokio::select! {
