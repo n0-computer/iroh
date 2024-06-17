@@ -87,7 +87,7 @@ fn get_or_create_crypto_keys<T>(
 /// The cache item will be refreshed every time a crypto operation is performed,
 /// or when a key is deserialised or created from a byte array.
 ///
-/// serialisation or creation from a byte array is cheap if the key is already
+/// Serialisation or creation from a byte array is cheap if the key is already
 /// in the cache, but expensive if it is not.
 #[derive(Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
 pub struct PublicKey([u8; 32]);
