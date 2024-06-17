@@ -9,11 +9,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use futures_lite::future::Boxed;
 use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
 use iroh_docs::engine::Engine;
+use iroh_net::endpoint::Connecting;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{endpoint::LocalEndpointsStream, key::SecretKey, Endpoint};
 use quic_rpc::transport::flume::FlumeConnection;
@@ -47,6 +49,17 @@ pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
     task: Arc<JoinHandle<()>>,
     client: crate::client::MemIroh,
+}
+
+///
+pub trait Protocol: Send + Sync + Debug + 'static {
+    /// Accept a connection
+    fn accept(&self, conn: Connecting) -> Boxed<Result<()>>;
+
+    /// Shutdown
+    fn shutdown(&self) -> Boxed<()> {
+        Box::pin(async move {})
+    }
 }
 
 #[derive(derive_more::Debug)]
