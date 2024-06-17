@@ -11,6 +11,11 @@ use tracing::{debug, error_span, warn, Instrument};
 use crate::{AddrInfo, Endpoint, NodeId};
 
 pub mod dns;
+
+/// enable local node discovery
+// TODO(ramfox): rename
+#[cfg(feature = "mdns")]
+pub mod mdns;
 pub mod pkarr_publish;
 
 /// Name used for logging when new node addresses are added from discovery.
@@ -60,7 +65,7 @@ pub struct DiscoveryItem {
     ///
     /// Must be microseconds since the unix epoch.
     pub last_updated: Option<u64>,
-    /// The adress info for the node being resolved.
+    /// The address info for the node being resolved.
     pub addr_info: AddrInfo,
 }
 
