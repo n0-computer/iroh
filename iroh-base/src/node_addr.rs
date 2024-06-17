@@ -85,9 +85,9 @@ impl NodeAddr {
         }
     }
 
-    /// Apply the options to `self`.
+    /// Applies the options to `self`.
     ///
-    /// This is use to more tightly control the information stored in a [`NodeAddr`]
+    /// This is used to more tightly control the information stored in a [`NodeAddr`]
     /// received from another API.  E.g. to ensure a [discovery] service is used the
     /// `AddrInfoOptions::Id`] option could be used to remove all other addressing details.
     ///
@@ -149,7 +149,7 @@ impl AddrInfo {
 
     /// Applies the options to `self`.
     ///
-    /// This is use to more tightly control the information stored in ab [`AddrInfo`]
+    /// This is used to more tightly control the information stored in ab [`AddrInfo`]
     /// received from another API.  E.g. to ensure a [discovery] service is used the
     /// `AddrInfoOptions::Id`] option could be used to remove all other addressing details.
     ///
