@@ -57,7 +57,6 @@ impl Protocol for DocsEngine {
         let this = self.clone();
         Box::pin(async move { this.handle_connection(conn).await })
     }
-
     fn shutdown(&self) -> future::Boxed<()> {
         let this = self.clone();
         Box::pin(async move {
