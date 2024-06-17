@@ -1499,7 +1499,7 @@ pub struct DirectAdressesStream {
 }
 
 impl Stream for DirectAdressesStream {
-    type Item = Vec<DirectAddress>;
+    type Item = Vec<DirectAddr>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = &mut *self;
@@ -1582,7 +1582,7 @@ enum DiscoBoxError {
 type RelayRecvResult = Result<(PublicKey, quinn_udp::RecvMeta, Bytes), io::Error>;
 
 /// Reports whether x and y represent the same set of endpoints. The order doesn't matter.
-fn endpoint_sets_equal(xs: &[DirectAddress], ys: &[DirectAddress]) -> bool {
+fn endpoint_sets_equal(xs: &[DirectAddr], ys: &[DirectAddr]) -> bool {
     if xs.is_empty() && ys.is_empty() {
         return true;
     }
@@ -1598,7 +1598,7 @@ fn endpoint_sets_equal(xs: &[DirectAddress], ys: &[DirectAddress]) -> bool {
             return true;
         }
     }
-    let mut m: HashMap<&DirectAddress, usize> = HashMap::new();
+    let mut m: HashMap<&DirectAddr, usize> = HashMap::new();
     for x in xs {
         *m.entry(x).or_default() |= 1;
     }
@@ -1962,7 +1962,7 @@ impl Actor {
                 #[allow(clippy::map_entry)]
                 if !$already.contains_key(&$ipp) {
                     $already.insert($ipp, $et);
-                    $eps.push(DirectAddress {
+                    $eps.push(DirectAddr {
                         addr: $ipp,
                         typ: $et,
                     });
@@ -1973,13 +1973,13 @@ impl Actor {
         let maybe_port_mapped = *portmap_watcher.borrow();
 
         if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
-            add_addr!(already, eps, portmap_ext, DirectAddressType::Portmapped);
+            add_addr!(already, eps, portmap_ext, DirectAddrType::Portmapped);
             self.set_net_info_have_port_map().await;
         }
 
         if let Some(nr) = nr {
             if let Some(global_v4) = nr.global_v4 {
-                add_addr!(already, eps, global_v4.into(), DirectAddressType::Stun);
+                add_addr!(already, eps, global_v4.into(), DirectAddrType::Stun);
 
                 // If they're behind a hard NAT and are using a fixed
                 // port locally, assume they might've added a static
@@ -1989,11 +1989,11 @@ impl Actor {
                 if nr.mapping_varies_by_dest_ip.unwrap_or_default() && port != 0 {
                     let mut addr = global_v4;
                     addr.set_port(port);
-                    add_addr!(already, eps, addr.into(), DirectAddressType::Stun4LocalPort);
+                    add_addr!(already, eps, addr.into(), DirectAddrType::Stun4LocalPort);
                 }
             }
             if let Some(global_v6) = nr.global_v6 {
-                add_addr!(already, eps, global_v6.into(), DirectAddressType::Stun);
+                add_addr!(already, eps, global_v6.into(), DirectAddrType::Stun);
             }
         }
         let local_addr_v4 = self.pconn4.local_addr().ok();
@@ -2051,7 +2051,7 @@ impl Actor {
                                     already,
                                     eps,
                                     SocketAddr::new(ip, port),
-                                    DirectAddressType::Local
+                                    DirectAddrType::Local
                                 );
                             }
                         }
@@ -2061,7 +2061,7 @@ impl Actor {
                                     already,
                                     eps,
                                     SocketAddr::new(ip, port),
-                                    DirectAddressType::Local
+                                    DirectAddrType::Local
                                 );
                             }
                         }
@@ -2073,7 +2073,7 @@ impl Actor {
                 if let Some(addr) = local_addr_v4 {
                     // Our local endpoint is bound to a particular address.
                     // Do not offer addresses on other local interfaces.
-                    add_addr!(already, eps, addr, DirectAddressType::Local);
+                    add_addr!(already, eps, addr, DirectAddrType::Local);
                 }
             }
 
@@ -2081,7 +2081,7 @@ impl Actor {
                 if let Some(addr) = local_addr_v6 {
                     // Our local endpoint is bound to a particular address.
                     // Do not offer addresses on other local interfaces.
-                    add_addr!(already, eps, addr, DirectAddressType::Local);
+                    add_addr!(already, eps, addr, DirectAddrType::Local);
                 }
             }
 
@@ -2402,7 +2402,7 @@ fn bind(port: u16) -> Result<(UdpConn, Option<UdpConn>)> {
 struct DiscoveredEndpoints {
     /// Records the endpoints found during the previous
     /// endpoint discovery. It's used to avoid duplicate endpoint change notifications.
-    last_endpoints: Vec<DirectAddress>,
+    last_endpoints: Vec<DirectAddr>,
 
     /// The last time the endpoints were updated, even if there was no change.
     last_endpoints_time: Option<Instant>,
@@ -2415,18 +2415,18 @@ impl PartialEq for DiscoveredEndpoints {
 }
 
 impl DiscoveredEndpoints {
-    fn new(endpoints: Vec<DirectAddress>) -> Self {
+    fn new(endpoints: Vec<DirectAddr>) -> Self {
         Self {
             last_endpoints: endpoints,
             last_endpoints_time: Some(Instant::now()),
         }
     }
 
-    fn into_iter(self) -> impl Iterator<Item = DirectAddress> {
+    fn into_iter(self) -> impl Iterator<Item = DirectAddr> {
         self.last_endpoints.into_iter()
     }
 
-    fn iter(&self) -> impl Iterator<Item = &DirectAddress> + '_ {
+    fn iter(&self) -> impl Iterator<Item = &DirectAddr> + '_ {
         self.last_endpoints.iter()
     }
 
@@ -2592,11 +2592,11 @@ fn disco_message_sent(msg: &disco::Message) {
 /// contacted.  These can come from various sources depending on the network topology of the
 /// iroh-net node, see [`DirectAddressType`] for the several kinds of sources.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct DirectAddress {
+pub struct DirectAddr {
     /// The address.
     pub addr: SocketAddr,
     /// The origin of this direct address.
-    pub typ: DirectAddressType,
+    pub typ: DirectAddrType,
 }
 
 /// The type of direct address.
@@ -2604,7 +2604,7 @@ pub struct DirectAddress {
 /// These are the various sources or origins from which an iroh-net node might have found a
 /// possible [`DirectAddress`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum DirectAddressType {
+pub enum DirectAddrType {
     /// Not yet determined..
     Unknown,
     /// A locally bound socket address.
@@ -2628,14 +2628,14 @@ pub enum DirectAddressType {
     Stun4LocalPort,
 }
 
-impl Display for DirectAddressType {
+impl Display for DirectAddrType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DirectAddressType::Unknown => write!(f, "?"),
-            DirectAddressType::Local => write!(f, "local"),
-            DirectAddressType::Stun => write!(f, "stun"),
-            DirectAddressType::Portmapped => write!(f, "portmap"),
-            DirectAddressType::Stun4LocalPort => write!(f, "stun4localport"),
+            DirectAddrType::Unknown => write!(f, "?"),
+            DirectAddrType::Local => write!(f, "local"),
+            DirectAddrType::Stun => write!(f, "stun"),
+            DirectAddrType::Portmapped => write!(f, "portmap"),
+            DirectAddrType::Stun4LocalPort => write!(f, "stun4localport"),
         }
     }
 }
@@ -2773,11 +2773,7 @@ pub(crate) mod tests {
     #[instrument(skip_all)]
     async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<CallOnDrop> {
         /// Registers endpoint addresses of a node to all other nodes.
-        fn update_direct_addrs(
-            stacks: &[MagicStack],
-            my_idx: usize,
-            new_addrs: Vec<DirectAddress>,
-        ) {
+        fn update_direct_addrs(stacks: &[MagicStack], my_idx: usize, new_addrs: Vec<DirectAddr>) {
             let me = &stacks[my_idx];
             for (i, m) in stacks.iter().enumerate() {
                 if i == my_idx {

@@ -70,7 +70,7 @@ type ProtoMessage = proto::Message<PublicKey>;
 #[derive(Debug, Clone)]
 pub struct Gossip {
     to_actor_tx: mpsc::Sender<ToActor>,
-    on_direct_addrs_tx: mpsc::Sender<Vec<iroh_net::endpoint::DirectAddress>>,
+    on_direct_addrs_tx: mpsc::Sender<Vec<iroh_net::endpoint::DirectAddr>>,
     _actor_handle: Arc<JoinHandle<anyhow::Result<()>>>,
     max_message_size: usize,
 }
@@ -249,7 +249,7 @@ impl Gossip {
     /// This is only best effort, and will drop new events if backed up.
     pub fn update_direct_addresses(
         &self,
-        addrs: &[iroh_net::endpoint::DirectAddress],
+        addrs: &[iroh_net::endpoint::DirectAddr],
     ) -> anyhow::Result<()> {
         let addrs = addrs.to_vec();
         self.on_direct_addrs_tx
@@ -345,7 +345,7 @@ struct Actor {
     /// Input events to the state (emitted from the connection loops)
     in_event_rx: mpsc::Receiver<InEvent>,
     /// Updates of discovered endpoint addresses
-    on_direct_addr_rx: mpsc::Receiver<Vec<iroh_net::endpoint::DirectAddress>>,
+    on_direct_addr_rx: mpsc::Receiver<Vec<iroh_net::endpoint::DirectAddr>>,
     /// Queued timers
     timers: Timers<Timer>,
     /// Currently opened quinn connections to peers
