@@ -552,7 +552,7 @@ where
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
-        let (ipv4, ipv6) = server.local_addr();
+        let (ipv4, ipv6) = server.bound_sockets();
         debug!(
             "listening at: {}{}",
             ipv4,

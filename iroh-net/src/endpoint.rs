@@ -650,7 +650,7 @@ impl Endpoint {
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
-    pub fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
+    pub fn bound_sockets(&self) -> (SocketAddr, Option<SocketAddr>) {
         self.msock.local_addr()
     }
 
@@ -1246,7 +1246,7 @@ mod tests {
                         .bind(0)
                         .await
                         .unwrap();
-                    let eps = ep.local_addr();
+                    let eps = ep.bound_sockets();
                     info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server bound");
                     for i in 0..n_clients {
                         let now = Instant::now();
@@ -1291,7 +1291,7 @@ mod tests {
                     .bind(0)
                     .await
                     .unwrap();
-                let eps = ep.local_addr();
+                let eps = ep.bound_sockets();
                 info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "client bound");
                 let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
                 info!(to = ?node_addr, "client connecting");
