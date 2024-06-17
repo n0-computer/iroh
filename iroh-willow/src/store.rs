@@ -1,154 +1,160 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
-use tokio::sync::broadcast;
+use anyhow::{anyhow, Result};
+use rand_core::CryptoRngCore;
 
 use crate::{
+    form::{AuthForm, EntryOrForm},
     proto::{
         grouping::Area,
-        willow::{AuthorisedEntry, NamespaceId},
+        keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserId},
+        meadowcap::AccessMode,
     },
-    session::SessionId,
+    session::Error,
+    store::{
+        auth::{AuthError, CapSelector, CapabilityPack},
+        traits::SecretStorage,
+    },
 };
 
-use self::traits::{EntryStorage, Storage};
+use self::{auth::AuthStore, traits::Storage};
 
+pub use self::entry::{Origin, WatchableEntryStore};
+
+pub mod auth;
+pub mod entry;
 pub mod memory;
 pub mod traits;
 
-const BROADCAST_CAP: usize = 1024;
-
-#[derive(Debug, Clone, Copy)]
-pub enum Origin {
-    Local,
-    Remote(SessionId),
-}
-
 #[derive(Debug, Clone)]
 pub struct Store<S: Storage> {
-    storage: S,
-    entries: EntryStore<S::Entries>,
-}
-
-#[derive(Debug, Clone)]
-pub struct EntryStore<ES> {
-    storage: ES,
-    broadcast: Arc<Mutex<BroadcastInner>>,
+    entries: WatchableEntryStore<S::Entries>,
+    secrets: S::Secrets,
+    payloads: S::Payloads,
+    auth: AuthStore,
 }
 
 impl<S: Storage> Store<S> {
-    pub fn entries(&self) -> &EntryStore<S::Entries> {
+    pub fn new(storage: S) -> Self {
+        Self {
+            entries: WatchableEntryStore::new(storage.entries().clone()),
+            secrets: storage.secrets().clone(),
+            payloads: storage.payloads().clone(),
+            auth: Default::default(),
+        }
+    }
+
+    pub fn entries(&self) -> &WatchableEntryStore<S::Entries> {
         &self.entries
     }
 
     pub fn secrets(&self) -> &S::Secrets {
-        self.storage.secrets()
+        &self.secrets
     }
 
     pub fn payloads(&self) -> &S::Payloads {
-        self.storage.payloads()
-    }
-}
-
-impl<ES: EntryStorage> EntryStore<ES> {
-    pub fn reader(&self) -> ES::Reader {
-        self.storage.reader()
+        &self.payloads
     }
 
-    pub fn snapshot(&self) -> anyhow::Result<ES::Snapshot> {
-        self.storage.snapshot()
+    pub fn auth(&self) -> &AuthStore {
+        &self.auth
     }
 
-    pub fn ingest(&self, entry: &AuthorisedEntry, origin: Origin) -> anyhow::Result<bool> {
-        if self.storage.ingest_entry(entry)? {
-            self.broadcast.lock().unwrap().broadcast(entry, origin);
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
-    pub fn subscribe(&self, session_id: SessionId) -> broadcast::Receiver<AuthorisedEntry> {
-        self.broadcast.lock().unwrap().subscribe(session_id)
-    }
-
-    pub fn unsubscribe(&self, session_id: &SessionId) {
-        self.broadcast.lock().unwrap().unsubscribe(session_id)
-    }
-
-    pub fn watch_area(&self, session: SessionId, namespace: NamespaceId, area: Area) {
-        self.broadcast
-            .lock()
-            .unwrap()
-            .watch_area(session, namespace, area);
-    }
-}
-
-impl<S: Storage> Store<S> {
-    pub fn new(store: S) -> Self {
-        Self {
-            entries: EntryStore {
-                storage: store.entries().clone(),
-                broadcast: Default::default(),
-            },
-            storage: store,
-        }
-    }
-
-    pub fn entry_broadcast(&self) -> &EntryStore<S::Entries> {
-        &self.entries
-    }
-}
-
-#[derive(Debug, Default)]
-struct BroadcastInner {
-    senders: HashMap<SessionId, broadcast::Sender<AuthorisedEntry>>,
-    areas: HashMap<NamespaceId, HashMap<SessionId, Vec<Area>>>,
-}
-
-impl BroadcastInner {
-    fn subscribe(&mut self, session: SessionId) -> broadcast::Receiver<AuthorisedEntry> {
-        self.senders
-            .entry(session)
-            .or_insert_with(|| broadcast::Sender::new(BROADCAST_CAP))
-            .subscribe()
-    }
-
-    fn unsubscribe(&mut self, session: &SessionId) {
-        self.senders.remove(session);
-        self.areas.retain(|_namespace, sessions| {
-            sessions.remove(session);
-            !sessions.is_empty()
-        });
-    }
-
-    fn watch_area(&mut self, session: SessionId, namespace: NamespaceId, area: Area) {
-        self.areas
-            .entry(namespace)
-            .or_default()
-            .entry(session)
-            .or_default()
-            .push(area)
-    }
-
-    fn broadcast(&mut self, entry: &AuthorisedEntry, origin: Origin) {
-        let Some(sessions) = self.areas.get_mut(&entry.namespace_id()) else {
-            return;
+    pub async fn insert_entry(&self, entry: EntryOrForm, auth: AuthForm) -> Result<bool> {
+        let user_id = auth.user_id();
+        let entry = match entry {
+            EntryOrForm::Entry(entry) => Ok(entry),
+            EntryOrForm::Form(form) => form.into_entry(self, user_id).await,
+        }?;
+        let capability = match auth {
+            AuthForm::Exact(cap) => cap,
+            AuthForm::Find(user_id) => {
+                let selector = CapSelector::for_entry(&entry, user_id);
+                self.auth()
+                    .get_write(selector)?
+                    .ok_or_else(|| anyhow!("no write capability available"))?
+            }
         };
-        for (session_id, areas) in sessions {
-            if let Origin::Remote(origin) = origin {
-                if origin == *session_id {
-                    continue;
-                }
+        let secret_key = self
+            .secrets()
+            .get_user(&user_id)
+            .ok_or(Error::MissingUserKey(user_id))?;
+        let authorised_entry = entry.attach_authorisation(capability, &secret_key)?;
+        self.entries().ingest(&authorised_entry, Origin::Local)
+    }
+
+    pub fn mint_namespace(
+        &self,
+        rng: &mut impl CryptoRngCore,
+        kind: NamespaceKind,
+        owner: UserId,
+    ) -> Result<NamespaceId, AuthError> {
+        let namespace_secret = NamespaceSecretKey::generate(rng, kind);
+        let namespace_id = namespace_secret.id();
+        self.secrets().insert_namespace(namespace_secret)?;
+        self.mint_capabilities(namespace_id, owner)?;
+        Ok(namespace_id)
+    }
+
+    pub fn delegate_capability(
+        &self,
+        namespace_id: NamespaceId,
+        prev_user: UserId,
+        access_mode: AccessMode,
+        new_user: UserId,
+        new_area: Area,
+    ) -> anyhow::Result<Vec<CapabilityPack>> {
+        match access_mode {
+            AccessMode::Write => {
+                let write_cap = self.auth.delegate(
+                    &self.secrets,
+                    namespace_id,
+                    prev_user,
+                    AccessMode::Write,
+                    new_user,
+                    new_area,
+                )?;
+                Ok(vec![write_cap])
             }
-            if areas.iter().any(|area| area.includes_entry(entry.entry())) {
-                self.senders
-                    .get(session_id)
-                    .expect("session sender to exist")
-                    .send(entry.clone())
-                    .ok();
+            AccessMode::Read => {
+                let write_cap = self.auth.delegate(
+                    &self.secrets,
+                    namespace_id,
+                    prev_user,
+                    AccessMode::Write,
+                    new_user,
+                    new_area.clone(),
+                )?;
+                let read_cap = self.auth.delegate(
+                    &self.secrets,
+                    namespace_id,
+                    prev_user,
+                    AccessMode::Read,
+                    new_user,
+                    new_area,
+                )?;
+                Ok(vec![write_cap, read_cap])
             }
         }
     }
+
+    fn mint_capabilities(
+        &self,
+        namespace_id: NamespaceId,
+        user_id: UserId,
+    ) -> Result<(), AuthError> {
+        self.auth
+            .mint(&self.secrets, namespace_id, user_id, AccessMode::Read)?;
+        self.auth
+            .mint(&self.secrets, namespace_id, user_id, AccessMode::Write)?;
+        Ok(())
+    }
+
+    // pub fn delegate(
+    //     &self,
+    //     namespace_id: NamespaceId,
+    //     access_mode: AccessMode,
+    //     from: UserId,
+    //     area: Area,
+    //     store: bool,
+    // ) -> Option<CapabilityPack> {
+    // }
 }

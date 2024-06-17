@@ -8,7 +8,7 @@ use std::{
 };
 
 use futures_concurrency::future::{future_group, FutureGroup};
-use futures_lite::Stream;
+use futures_lite::{Stream, StreamExt};
 use tokio::task::AbortHandle;
 use tokio::task::JoinError;
 
@@ -41,7 +41,7 @@ impl<K, T> Default for JoinMap<K, T> {
     }
 }
 
-impl<K, T: 'static> JoinMap<K, T> {
+impl<K: Unpin, T: 'static> JoinMap<K, T> {
     /// Create a new [`TaskMap`].
     pub fn new() -> Self {
         Self::default()
@@ -94,6 +94,11 @@ impl<K, T: 'static> JoinMap<K, T> {
         for (_, handle) in self.abort_handles.drain() {
             handle.abort();
         }
+    }
+
+    pub async fn shutdown(&mut self) {
+        self.abort_all();
+        while self.next().await.is_some() {}
     }
 }
 

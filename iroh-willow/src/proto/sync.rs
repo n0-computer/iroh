@@ -42,13 +42,35 @@ pub type DynamicToken = meadowcap::UserSignature;
 /// We describe the details in a capability-system-agnostic way here.
 /// To use Meadowcap for this approach, simply choose the type of valid McCapabilities with access mode read as the read capabilities.
 pub type ReadCapability = meadowcap::McCapability;
+
+/// Whenever a peer is granted a complete read capability of non-empty path,
+/// it should also be granted a corresponding subspace capability.
+/// Each subspace capability must have a single receiver (a public key of some signature scheme),
+/// and a single granted namespace (a NamespaceId).
+/// The receiver can authenticate itself by signing a collaboratively selected nonce.
 pub type SubspaceCapability = meadowcap::McSubspaceCapability;
+
 pub type SyncSignature = meadowcap::UserSignature;
+
 pub type Receiver = meadowcap::UserPublicKey;
 
 /// Represents an authorisation to read an area of data in a Namespace.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReadAuthorisation(ReadCapability, Option<SubspaceCapability>);
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+pub struct ReadAuthorisation(pub ReadCapability, pub Option<SubspaceCapability>);
+
+impl ReadAuthorisation {
+    pub fn new(read_cap: ReadCapability, subspace_cap: Option<SubspaceCapability>) -> Self {
+        Self(read_cap, subspace_cap)
+    }
+
+    pub fn read_cap(&self) -> &ReadCapability {
+        &self.0
+    }
+
+    pub fn subspace_cap(&self) -> Option<&SubspaceCapability> {
+        self.1.as_ref()
+    }
+}
 
 /// The different resource handles employed by the WGPS.
 #[derive(Debug, Serialize, Deserialize, strum::Display)]

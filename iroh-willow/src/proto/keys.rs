@@ -21,6 +21,9 @@ pub const SIGNATURE_LENGTH: usize = ed25519_dalek::SIGNATURE_LENGTH;
 macro_rules! bytestring {
     ($ty:ty, $n:ident) => {
         impl $ty {
+            /// Length of the byte encoding of [`Self`].
+            pub const LENGTH: usize = $n;
+
             /// Convert to a base32 string limited to the first 10 bytes for a friendly string
             /// representation of the key.
             pub fn fmt_short(&self) -> String {
@@ -74,7 +77,7 @@ impl NamespaceSecretKey {
         loop {
             let signing_key = SigningKey::generate(rng);
             let secret_key = NamespaceSecretKey(signing_key);
-            if secret_key.public_key().namespace_type() == typ {
+            if secret_key.public_key().kind() == typ {
                 break secret_key;
             }
         }
@@ -123,7 +126,7 @@ impl NamespacePublicKey {
         is_communal(self.as_bytes())
     }
 
-    pub fn namespace_type(&self) -> NamespaceKind {
+    pub fn kind(&self) -> NamespaceKind {
         if self.is_communal() {
             NamespaceKind::Communal
         } else {
