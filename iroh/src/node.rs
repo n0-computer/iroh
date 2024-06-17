@@ -28,6 +28,7 @@ use tracing::debug;
 use crate::client::RpcService;
 
 mod builder;
+mod protocol;
 mod rpc;
 mod rpc_status;
 

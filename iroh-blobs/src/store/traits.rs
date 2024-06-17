@@ -6,6 +6,7 @@ use bao_tree::{
     BaoTree, ChunkRanges,
 };
 use bytes::Bytes;
+use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
@@ -295,7 +296,7 @@ pub trait ReadableStore: Map {
 }
 
 /// The mutable part of a Bao store.
-pub trait Store: ReadableStore + MapMut {
+pub trait Store: ReadableStore + MapMut + Debug {
     /// This trait method imports a file from a local path.
     ///
     /// `data` is the path to the file.

@@ -39,7 +39,9 @@ use crate::{
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-use super::{rpc, rpc_status::RpcStatus, DocsEngine, Node, NodeInner, Protocol};
+use super::{
+    protocol::BlobsProtocol, rpc, rpc_status::RpcStatus, DocsEngine, Node, NodeInner, Protocol,
+};
 
 pub const PROTOCOLS: [&[u8]; 3] = [iroh_blobs::protocol::ALPN, GOSSIP_ALPN, DOCS_ALPN];
 
@@ -368,7 +370,14 @@ where
     /// connections.  The returned [`Node`] can be used to control the task as well as
     /// get information about it.
     pub async fn spawn(self) -> Result<Node<D>> {
-        self.build().await?.spawn().await
+        let unspawned = self.build().await?;
+        let gossip = unspawned.gossip.clone();
+        let blobs = BlobsProtocol::new(unspawned.inner.db.clone(), unspawned.inner.rt.clone());
+        unspawned
+            .add_handler(GOSSIP_ALPN, Box::new(gossip))
+            .add_handler(iroh_blobs::protocol::ALPN, Box::new(blobs))
+            .spawn()
+            .await
     }
 
     /// Build a node without spawning it.
@@ -544,10 +553,7 @@ where
                 _ = cancel_token.cancelled() => {
                     // clean shutdown of the blobs db to close the write transaction
                     handler.inner.db.shutdown().await;
-
-                    if let Err(err) = handler.inner.sync.shutdown().await {
-                        warn!("sync shutdown error: {:?}", err);
-                    }
+                    handler.inner.sync.shutdown().await;
                     break
                 },
                 // handle rpc requests. This will do nothing if rpc is not configured, since
@@ -582,12 +588,10 @@ where
                             continue;
                         }
                     };
-                    let gossip = gossip.clone();
-                    let inner = handler.inner.clone();
                     let sync = handler.inner.sync.clone();
                     let handlers = handlers.clone();
                     tokio::task::spawn(async move {
-                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync, &handlers).await {
+                        if let Err(err) = handle_connection(connecting, alpn, sync, &handlers).await {
                             warn!("Handling incoming connection ended with error: {err}");
                         }
                     });
@@ -808,27 +812,14 @@ impl Default for GcPolicy {
 
 // TODO: Restructure this code to not take all these arguments.
 #[allow(clippy::too_many_arguments)]
-async fn handle_connection<D: BaoStore>(
+async fn handle_connection(
     connecting: iroh_net::endpoint::Connecting,
     alpn: String,
-    node: Arc<NodeInner<D>>,
-    gossip: Gossip,
     sync: DocsEngine,
     handlers: &BTreeMap<&'static [u8], Box<dyn Protocol>>,
 ) -> Result<()> {
     match alpn.as_bytes() {
-        GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,
         DOCS_ALPN => sync.handle_connection(connecting).await?,
-        iroh_blobs::protocol::ALPN => {
-            let connection = connecting.await?;
-            iroh_blobs::provider::handle_connection(
-                connection,
-                node.db.clone(),
-                MockEventSender,
-                node.rt.clone(),
-            )
-            .await
-        }
         alpn => {
             let Some(handler) = handlers.get(alpn) else {
                 bail!("ignoring connection: unsupported ALPN protocol");
@@ -885,13 +876,4 @@ fn make_rpc_endpoint(
     let rpc_endpoint = QuinnServerEndpoint::<RpcService>::new(rpc_quinn_endpoint)?;
 
     Ok((rpc_endpoint, actual_rpc_port))
-}
-
-#[derive(Debug, Clone)]
-struct MockEventSender;
-
-impl iroh_blobs::provider::EventSender for MockEventSender {
-    fn send(&self, _event: iroh_blobs::provider::Event) -> futures_lite::future::Boxed<()> {
-        Box::pin(std::future::ready(()))
-    }
 }
