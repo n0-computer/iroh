@@ -87,12 +87,16 @@ fn get_or_create_crypto_keys<T>(
 /// The cache item will be refreshed every time a crypto operation is performed,
 /// or when a key is deserialised or created from a byte array.
 ///
-/// Serialisation or creation from a byte array is cheap if the key is already
+/// serialisation or creation from a byte array is cheap if the key is already
 /// in the cache, but expensive if it is not.
 #[derive(Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
 pub struct PublicKey([u8; 32]);
 
 /// The identifier for a node in the (iroh) network.
+///
+/// Each node in iroh has a unique identifier created as a cryptographic key.  This can be
+/// used to globally identify a node.  Since it is also a cryptographic key it is also the
+/// mechanism by which all traffic is always encrypted for a specific node only.
 ///
 /// This is equivalent to [`PublicKey`].  By convention we will (or should) use `PublicKey`
 /// as type name when performing cryptographic operations, but use `NodeId` when referencing
