@@ -47,7 +47,7 @@ pub use quinn::{
 };
 
 pub use super::magicsock::{
-    ConnectionInfo, ConnectionType, ConnectionTypeStream, DirectAddr, DirectAddrInfo,
+    ConnectionInfo, ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo,
     DirectAddrType, DirectAddrsStream,
 };
 

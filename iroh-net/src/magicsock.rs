@@ -77,7 +77,7 @@ mod udp_conn;
 
 pub use self::metrics::Metrics;
 pub use self::node_map::{
-    ConnectionType, ConnectionTypeStream, DirectAddrInfo, NodeInfo as ConnectionInfo,
+    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo as ConnectionInfo,
 };
 pub(super) use self::timer::Timer;
 
