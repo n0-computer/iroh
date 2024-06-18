@@ -734,12 +734,12 @@ impl Default for GcPolicy {
 #[allow(clippy::too_many_arguments)]
 async fn handle_connection<D: BaoStore>(
     connecting: iroh_net::endpoint::Connecting,
-    alpn: String,
+    alpn: Vec<u8>,
     node: Arc<NodeInner<D>>,
     gossip: Gossip,
     sync: DocsEngine,
 ) -> Result<()> {
-    match alpn.as_bytes() {
+    match alpn.as_ref() {
         GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,
         DOCS_ALPN => sync.handle_connection(connecting).await?,
         alpn if alpn == iroh_blobs::protocol::ALPN => {
