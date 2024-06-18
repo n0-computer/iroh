@@ -70,7 +70,7 @@ type ProtoMessage = proto::Message<PublicKey>;
 #[derive(Debug, Clone)]
 pub struct Gossip {
     to_actor_tx: mpsc::Sender<ToActor>,
-    on_endpoints_tx: mpsc::Sender<Vec<iroh_net::config::Endpoint>>,
+    on_direct_addrs_tx: mpsc::Sender<Vec<iroh_net::endpoint::DirectAddr>>,
     _actor_handle: Arc<JoinHandle<anyhow::Result<()>>>,
     max_message_size: usize,
 }
@@ -99,7 +99,7 @@ impl Gossip {
             to_actor_rx,
             in_event_rx,
             in_event_tx,
-            on_endpoints_rx,
+            on_direct_addr_rx: on_endpoints_rx,
             conns: Default::default(),
             conn_send_tx: Default::default(),
             pending_sends: Default::default(),
@@ -121,7 +121,7 @@ impl Gossip {
         );
         Self {
             to_actor_tx,
-            on_endpoints_tx,
+            on_direct_addrs_tx: on_endpoints_tx,
             _actor_handle: Arc::new(actor_handle),
             max_message_size,
         }
@@ -241,16 +241,19 @@ impl Gossip {
         Ok(())
     }
 
-    /// Set info on our local endpoints.
+    /// Set info on our direct addresses.
     ///
     /// This will be sent to peers on Neighbor and Join requests so that they can connect directly
     /// to us.
     ///
     /// This is only best effort, and will drop new events if backed up.
-    pub fn update_endpoints(&self, endpoints: &[iroh_net::config::Endpoint]) -> anyhow::Result<()> {
-        let endpoints = endpoints.to_vec();
-        self.on_endpoints_tx
-            .try_send(endpoints)
+    pub fn update_direct_addresses(
+        &self,
+        addrs: &[iroh_net::endpoint::DirectAddr],
+    ) -> anyhow::Result<()> {
+        let addrs = addrs.to_vec();
+        self.on_direct_addrs_tx
+            .try_send(addrs)
             .map_err(|_| anyhow!("endpoints channel dropped"))?;
         Ok(())
     }
@@ -342,7 +345,7 @@ struct Actor {
     /// Input events to the state (emitted from the connection loops)
     in_event_rx: mpsc::Receiver<InEvent>,
     /// Updates of discovered endpoint addresses
-    on_endpoints_rx: mpsc::Receiver<Vec<iroh_net::config::Endpoint>>,
+    on_direct_addr_rx: mpsc::Receiver<Vec<iroh_net::endpoint::DirectAddr>>,
     /// Queued timers
     timers: Timers<Timer>,
     /// Currently opened quinn connections to peers
@@ -375,7 +378,7 @@ impl Actor {
                         }
                     }
                 },
-                new_endpoints = self.on_endpoints_rx.recv() => {
+                new_endpoints = self.on_direct_addr_rx.recv() => {
                     match new_endpoints {
                         Some(endpoints) => {
                             let addr = NodeAddr::from_parts(

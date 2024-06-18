@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
     println!("node listening addresses:");
 
     let local_addrs = endpoint
-        .local_endpoints()
+        .direct_addresses()
         .next()
         .await
         .context("no endpoints")?

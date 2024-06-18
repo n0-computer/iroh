@@ -669,7 +669,7 @@ async fn make_endpoint(
     };
     let endpoint = endpoint.bind(0).await?;
 
-    tokio::time::timeout(Duration::from_secs(10), endpoint.local_endpoints().next())
+    tokio::time::timeout(Duration::from_secs(10), endpoint.direct_addresses().next())
         .await
         .context("wait for relay connection")?
         .context("no endpoints")?;
@@ -727,7 +727,7 @@ async fn accept(
 ) -> anyhow::Result<()> {
     let endpoint = make_endpoint(secret_key.clone(), relay_map, discovery).await?;
     let endpoints = endpoint
-        .local_endpoints()
+        .direct_addresses()
         .next()
         .await
         .context("no endpoints")?;

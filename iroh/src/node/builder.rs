@@ -522,10 +522,10 @@ where
 
         // spawn a task that updates the gossip endpoints.
         // TODO: track task
-        let mut stream = endpoint.local_endpoints();
+        let mut stream = endpoint.direct_addresses();
         tokio::task::spawn(async move {
             while let Some(eps) = stream.next().await {
-                if let Err(err) = gossip.update_endpoints(&eps) {
+                if let Err(err) = gossip.update_direct_addresses(&eps) {
                     warn!("Failed to update gossip endpoints: {err:?}");
                 }
             }
@@ -534,7 +534,7 @@ where
 
         // Wait for a single endpoint update, to make sure
         // we found some endpoints
-        tokio::time::timeout(ENDPOINT_WAIT, endpoint.local_endpoints().next())
+        tokio::time::timeout(ENDPOINT_WAIT, endpoint.direct_addresses().next())
             .await
             .context("waiting for endpoint")?
             .context("no endpoints")?;
@@ -564,9 +564,9 @@ where
         // forward our initial endpoints to the gossip protocol
         // it may happen the the first endpoint update callback is missed because the gossip cell
         // is only initialized once the endpoint is fully bound
-        if let Some(local_endpoints) = server.local_endpoints().next().await {
+        if let Some(local_endpoints) = server.direct_addresses().next().await {
             debug!(me = ?server.node_id(), "gossip initial update: {local_endpoints:?}");
-            gossip.update_endpoints(&local_endpoints).ok();
+            gossip.update_direct_addresses(&local_endpoints).ok();
         }
         loop {
             tokio::select! {
