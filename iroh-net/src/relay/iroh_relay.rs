@@ -90,7 +90,7 @@ pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// If [`RelayConfig::tls`] is `None` then this serves all the HTTP services without
     /// TLS.
     pub http_bind_addr: SocketAddr,
-    /// TLS configuration for the HTTPS servier.
+    /// TLS configuration for the HTTPS server.
     ///
     /// If *None* all the HTTP services that would be served here are served from
     /// [`RelayConfig::http_bind_addr`].
@@ -293,8 +293,8 @@ impl Server {
                         Some(http_addr)
                     }
                     None => {
-                        // If running DERP without TLS add the plain HTTP server directly to
-                        // the DERP server.
+                        // If running Relay without TLS add the plain HTTP server directly
+                        // to the Relay server.
                         builder = builder.request_handler(
                             Method::GET,
                             "/generate_204",
