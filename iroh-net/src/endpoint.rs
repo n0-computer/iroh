@@ -908,11 +908,11 @@ impl Connecting {
     /// Extracts the ALPN protocol from the peer's handshake data.
     // Note, we could totally provide this method to be on a Connection as well.  But we'd
     // need to wrap Connection too.
-    pub async fn alpn(&mut self) -> Result<String> {
+    pub async fn alpn(&mut self) -> Result<Vec<u8>> {
         let data = self.handshake_data().await?;
         match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
             Ok(data) => match data.protocol {
-                Some(protocol) => std::string::String::from_utf8(protocol).map_err(Into::into),
+                Some(protocol) => Ok(protocol),
                 None => bail!("no ALPN protocol available"),
             },
             Err(_) => bail!("unknown handshake type"),
@@ -1365,7 +1365,7 @@ mod tests {
             let conn = incoming.await.unwrap();
             let node_id = get_remote_node_id(&conn).unwrap();
             assert_eq!(node_id, src);
-            assert_eq!(alpn.as_bytes(), TEST_ALPN);
+            assert_eq!(alpn, TEST_ALPN);
             let (mut send, mut recv) = conn.accept_bi().await.unwrap();
             let m = recv.read_to_end(100).await.unwrap();
             assert_eq!(m, b"hello");

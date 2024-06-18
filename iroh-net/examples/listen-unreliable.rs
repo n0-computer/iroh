@@ -67,7 +67,8 @@ async fn main() -> anyhow::Result<()> {
         let conn = conn.await?;
         let node_id = iroh_net::endpoint::get_remote_node_id(&conn)?;
         info!(
-            "new (unreliable) connection from {node_id} with ALPN {alpn} (coming from {})",
+            "new (unreliable) connection from {node_id} with ALPN {} (coming from {})",
+            String::from_utf8_lossy(&alpn),
             conn.remote_address()
         );
         // spawn a task to handle reading and writing off of the connection
