@@ -419,7 +419,6 @@ where
         let endpoint = Endpoint::builder()
             .secret_key(self.secret_key.clone())
             .proxy_from_env()
-            .alpns(vec![])
             .keylog(self.keylog)
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
