@@ -55,6 +55,7 @@ walkdir = "2"
 clap = { version = "4", features = ["derive"], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 ref-cast = "1.0.23"
+iroh-progress = {version = "0.18.0", path = "../iroh-progress", optional = true }
 
 [features]
 default = ["metrics", "fs-store"]
@@ -62,6 +63,7 @@ metrics = ["iroh-metrics", "iroh-blobs/metrics"]
 fs-store = ["iroh-blobs/fs-store"]
 test = []
 examples = ["dep:clap", "dep:indicatif"]
+local_node_discovery = ["iroh-net/mdns", "examples", "dep:iroh-progress"]
 test-utils = ["iroh-net/test-utils"]
 
 [dev-dependencies]
@@ -108,3 +110,7 @@ required-features = ["examples"]
 [[example]]
 name = "custom-protocol"
 required-features = ["examples"]
+
+[[example]]
+name = "local_node_discovery"
+required-features = ["local_node_discovery"]

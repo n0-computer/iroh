@@ -50,9 +50,15 @@ impl LocalNodeDiscovery {
     ///
     /// This starts a `Discoverer` that broadcasts your addresses and receives addresses from other nodes in your local network.
     pub fn new(node_id: NodeId, info: Option<(u16, Vec<IpAddr>)>) -> Self {
+        tracing::debug!("Creating new LocalNodeDiscovery service");
         let (send, recv) = flume::bounded(64);
         let callback_send = send.clone();
         let callback = move |node_id: &str, peer: &Peer| {
+            tracing::debug!(
+                node_id,
+                ?peer,
+                "Received peer information from LocalNodeDiscovery"
+            );
             callback_send
                 .send(Message::Discovery((node_id.to_string(), peer.clone())))
                 .ok();
@@ -66,33 +72,48 @@ impl LocalNodeDiscovery {
             }
 
             let mut _guard = discoverer.spawn(&tokio::runtime::Handle::current());
+            tracing::debug!("Created LocalNodeDiscovery Service");
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
             loop {
                 let msg = match recv.recv() {
                     Err(err) => {
                         tracing::error!("LocalNodeDiscovery service error: {err:?}");
-                        tracing::error!("closing MdnsDiscovery");
+                        tracing::error!("closing LocalNodeDiscovery");
                         return;
                     }
                     Ok(msg) => msg,
                 };
                 match msg {
-                    Message::Discovery((node_id, peer_info)) => {
-                        let node_id = match PublicKey::from_str(&node_id) {
+                    Message::Discovery((discovered_node_id, peer_info)) => {
+                        let discovered_node_id = match PublicKey::from_str(&discovered_node_id) {
                             Ok(node_id) => node_id,
                             Err(e) => {
                                 tracing::warn!(
-                                    node_id,
+                                    discovered_node_id,
                                     "couldn't parse node_id from mdns discovery service: {e:?}"
                                 );
                                 continue;
                             }
                         };
-                        // TODO(ramfox): if it's our node_id, skip it
-                        if peer_info.addrs.is_empty() {
-                            node_addrs.remove(&node_id);
+
+                        if discovered_node_id == node_id {
                             continue;
                         }
+
+                        if peer_info.addrs.is_empty() {
+                            tracing::debug!(
+                                ?discovered_node_id,
+                                "removing node from LocalNodeDiscovery address book"
+                            );
+                            node_addrs.remove(&discovered_node_id);
+                            continue;
+                        }
+
+                        tracing::debug!(
+                            ?discovered_node_id,
+                            ?peer_info,
+                            "adding node to LocalNodeDiscovery address book"
+                        );
                         node_addrs.insert(node_id, peer_info);
                     }
                     Message::SendAddrs((node_id, sender)) => {
@@ -111,6 +132,7 @@ impl LocalNodeDiscovery {
                                     direct_addresses,
                                 },
                             };
+                            tracing::debug!(?item, "sending DiscoveryItem");
                             sender.send(Ok(item)).ok();
                         }
                     }
@@ -134,11 +156,21 @@ impl LocalNodeDiscovery {
                         } else {
                             let port = addrs[0].port();
                             let addrs = addrs.into_iter().map(|addr| addr.ip()).collect();
+                            tracing::debug!(
+                                ?port,
+                                ?addrs,
+                                "LocalNodeDiscovery: publishing this node's address information"
+                            );
                             Some((port, addrs))
                         };
 
                         let callback_send = task_sender.clone();
                         let callback = move |node_id: &str, peer: &Peer| {
+                            tracing::debug!(
+                                node_id,
+                                ?peer,
+                                "Received peer information from LocalNodeDiscovery"
+                            );
                             callback_send
                                 .send(Message::Discovery((node_id.to_string(), peer.clone())))
                                 .ok();

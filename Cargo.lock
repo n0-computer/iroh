@@ -3,6 +3,20 @@
 version = 3
 
 [[package]]
+name = "acto"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13f9a80c177eba54ec3ae155ab4f22eebbe05736ab54290f163386a18b5ced50"
+dependencies = [
+ "parking_lot",
+ "pin-project-lite",
+ "rustc_version",
+ "smol_str",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2450,6 +2464,7 @@ dependencies = [
  "iroh-io",
  "iroh-metrics",
  "iroh-net",
+ "iroh-progress",
  "iroh-quinn",
  "iroh-test",
  "nested_enum_utils",
@@ -2849,6 +2864,7 @@ dependencies = [
  "strum 0.26.3",
  "stun-rs",
  "surge-ping",
+ "swarm-discovery",
  "testdir",
  "thiserror",
  "time",
@@ -2887,6 +2903,17 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "iroh-progress"
+version = "0.18.0"
+dependencies = [
+ "anyhow",
+ "console",
+ "futures-lite 2.3.0",
+ "indicatif",
+ "iroh-blobs",
 ]
 
 [[package]]
@@ -5244,6 +5271,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "smol_str"
+version = "0.1.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fad6c857cbab2627dcf01ec85a623ca4e7dcb5691cbaa3d7fb7653671f0d09c9"
+
+[[package]]
 name = "socket2"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5501,6 +5534,22 @@ dependencies = [
  "rand",
  "socket2",
  "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "swarm-discovery"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a672c05480f6b400131576cae040bc0bfca68e5e4a3ffe89fcddcf19011f31cc"
+dependencies = [
+ "acto",
+ "anyhow",
+ "hickory-proto",
+ "rand",
+ "serde",
+ "socket2",
  "tokio",
  "tracing",
 ]
