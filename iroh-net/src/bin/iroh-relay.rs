@@ -303,7 +303,7 @@ impl Config {
 
     async fn read_from_file(path: impl AsRef<Path>) -> Result<Self> {
         if !path.as_ref().is_file() {
-            bail!("config-path must be a valid file");
+            bail!("config-path must be a file");
         }
         let config_ser = tokio::fs::read_to_string(&path)
             .await
