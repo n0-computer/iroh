@@ -4,6 +4,7 @@ use anyhow::Result;
 use futures_lite::{stream::StreamExt, Stream};
 use iroh_docs::{Author, AuthorId};
 use quic_rpc::{RpcClient, ServiceConnection};
+use ref_cast::RefCast;
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorDeleteRequest, AuthorExportRequest, AuthorGetDefaultRequest,
@@ -13,7 +14,8 @@ use crate::rpc_protocol::{
 use super::flatten;
 
 /// Iroh authors client.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
 pub struct Client<C> {
     pub(super) rpc: RpcClient<RpcService, C>,
 }

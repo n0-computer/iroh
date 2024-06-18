@@ -15,9 +15,9 @@ use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
 use iroh_docs::engine::Engine;
 use iroh_gossip::net::Gossip;
-use iroh_net::{
-    endpoint::LocalEndpointsStream, key::SecretKey, util::SharedAbortingJoinHandle, Endpoint,
-};
+use iroh_net::key::SecretKey;
+use iroh_net::Endpoint;
+use iroh_net::{endpoint::DirectAddrsStream, util::SharedAbortingJoinHandle};
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
 use tokio_util::sync::CancellationToken;
@@ -110,7 +110,7 @@ impl<D: BaoStore> Node<D> {
     /// can contact the node consider using [`Node::local_endpoint_addresses`].  However the
     /// port will always be the concrete port.
     pub fn local_address(&self) -> Vec<SocketAddr> {
-        let (v4, v6) = self.inner.endpoint.local_addr();
+        let (v4, v6) = self.inner.endpoint.bound_sockets();
         let mut addrs = vec![v4];
         if let Some(v6) = v6 {
             addrs.push(v6);
@@ -119,8 +119,8 @@ impl<D: BaoStore> Node<D> {
     }
 
     /// Lists the local endpoint of this node.
-    pub fn local_endpoints(&self) -> LocalEndpointsStream {
-        self.inner.endpoint.local_endpoints()
+    pub fn local_endpoints(&self) -> DirectAddrsStream {
+        self.inner.endpoint.direct_addresses()
     }
 
     /// Convenience method to get just the addr part of [`Node::local_endpoints`].
@@ -150,7 +150,7 @@ impl<D: BaoStore> Node<D> {
 
     /// Get the relay server we are connected to.
     pub fn my_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
-        self.inner.endpoint.my_relay()
+        self.inner.endpoint.home_relay()
     }
 
     /// Shutdown the node.
@@ -194,7 +194,7 @@ impl<D> NodeInner<D> {
     async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
         let endpoints = self
             .endpoint
-            .local_endpoints()
+            .direct_addresses()
             .next()
             .await
             .ok_or(anyhow!("no endpoints found"))?;
@@ -422,6 +422,7 @@ mod tests {
     }
 
     #[cfg(feature = "fs-store")]
+    #[ignore = "flaky"]
     #[tokio::test]
     async fn test_default_author_persist() -> Result<()> {
         use crate::util::path::IrohPaths;

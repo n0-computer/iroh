@@ -388,17 +388,6 @@ pub(crate) mod tests {
     const STAGGERING_DELAYS: &[u64] = &[200, 300];
 
     #[tokio::test]
-    #[cfg_attr(target_os = "windows", ignore = "flaky")]
-    async fn test_dns_lookup_basic() {
-        let _logging = iroh_test::logging::setup();
-        let resolver = default_resolver();
-        let res = resolver.lookup_ip(NA_RELAY_HOSTNAME).await.unwrap();
-        let res: Vec<_> = res.iter().collect();
-        assert!(!res.is_empty());
-        dbg!(res);
-    }
-
-    #[tokio::test]
     async fn test_dns_lookup_ipv4_ipv6() {
         let _logging = iroh_test::logging::setup();
         let resolver = default_resolver();

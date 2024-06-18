@@ -449,7 +449,7 @@ where
 
         let cancel_token = CancellationToken::new();
 
-        let addr = endpoint.my_addr().await?;
+        let addr = endpoint.node_addr().await?;
 
         // initialize the gossip protocol
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
@@ -524,7 +524,7 @@ where
         };
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
-        let (ipv4, ipv6) = endpoint.local_addr();
+        let (ipv4, ipv6) = endpoint.bound_sockets();
         debug!(
             "listening at: {}{}",
             ipv4,
@@ -536,9 +536,9 @@ where
         // forward the initial endpoints to the gossip protocol.
         // it may happen the the first endpoint update callback is missed because the gossip cell
         // is only initialized once the endpoint is fully bound
-        if let Some(local_endpoints) = endpoint.local_endpoints().next().await {
-            debug!(me = ?endpoint.node_id(), "gossip initial update: {local_endpoints:?}");
-            inner.gossip.update_endpoints(&local_endpoints).ok();
+        if let Some(direct_addresses) = endpoint.direct_addresses().next().await {
+            debug!(me = ?endpoint.node_id(), "gossip initial update: {direct_addresses:?}");
+            inner.gossip.update_direct_addresses(&direct_addresses).ok();
         }
 
         loop {
@@ -849,12 +849,12 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> UnspawnedNode<
             }
 
             // Spawn a task that updates the gossip endpoints.
-            let mut stream = inner.endpoint.local_endpoints();
+            let mut stream = inner.endpoint.direct_addresses();
             let gossip = inner.gossip.clone();
             join_set.spawn(async move {
                 while let Some(eps) = stream.next().await {
-                    if let Err(err) = gossip.update_endpoints(&eps) {
-                        warn!("Failed to update gossip endpoints: {err:?}");
+                    if let Err(err) = gossip.update_direct_addresses(&eps) {
+                        warn!("Failed to update direct addresses for gossip: {err:?}");
                     }
                 }
                 warn!("failed to retrieve local endpoints");
@@ -889,7 +889,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> UnspawnedNode<
 
             // Wait for a single endpoint update, to make sure
             // we found some endpoints
-            tokio::time::timeout(ENDPOINT_WAIT, node.endpoint().local_endpoints().next())
+            tokio::time::timeout(ENDPOINT_WAIT, node.endpoint().direct_addresses().next())
                 .await
                 .context("waiting for endpoint")?
                 .context("no endpoints")?;
@@ -934,7 +934,7 @@ async fn handle_connection(
             return;
         }
     };
-    let Some(handler) = protocols.get(alpn.as_bytes()) else {
+    let Some(handler) = protocols.get(&alpn) else {
         warn!("Ignoring connection: unsupported ALPN protocol");
         return;
     };
