@@ -2,6 +2,7 @@ use std::{any::Any, collections::BTreeMap, fmt, sync::Arc};
 
 use anyhow::Result;
 use futures_lite::future::Boxed as BoxedFuture;
+use futures_util::future::join_all;
 use iroh_net::endpoint::Connecting;
 
 use crate::node::DocsEngine;
@@ -44,23 +45,27 @@ impl ProtocolMap {
         Some(protocol_ref)
     }
 
+    /// Returns the registered protocol handler for an ALPN as a [`Arc<dyn Protocol>`].
     pub fn get(&self, alpn: &[u8]) -> Option<Arc<dyn Protocol>> {
         self.0.get(alpn).cloned()
     }
 
+    /// Insert a protocol handler.
     pub fn insert(&mut self, alpn: &'static [u8], handler: Arc<dyn Protocol>) {
         self.0.insert(alpn, handler);
     }
 
+    /// Returns an iterator of all registered ALPN protocol identifiers.
     pub fn alpns(&self) -> impl Iterator<Item = &&[u8]> {
         self.0.keys()
     }
 
-    /// Shutdown the protocol handlers.
+    /// Shutdown all protocol handlers.
+    ///
+    /// Calls and awaits [`Protocol::shutdown`] for all registered handlers concurrently.
     pub async fn shutdown(&self) {
-        for handler in self.0.values() {
-            handler.clone().shutdown().await;
-        }
+        let handlers = self.0.values().cloned().map(Protocol::shutdown);
+        join_all(handlers).await;
     }
 }
 

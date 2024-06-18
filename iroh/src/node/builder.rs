@@ -534,7 +534,7 @@ where
 
         let cancel_token = handler.inner.cancel_token.clone();
 
-        // forward our initial endpoints to the gossip protocol
+        // forward the initial endpoints to the gossip protocol.
         // it may happen the the first endpoint update callback is missed because the gossip cell
         // is only initialized once the endpoint is fully bound
         if let Some(local_endpoints) = endpoint.local_endpoints().next().await {
@@ -590,22 +590,22 @@ where
             }
         }
 
-        // Closing the Endpoint is the equivalent of calling Connection::close on all
-        // connections: Operations will immediately fail with
-        // ConnectionError::LocallyClosed.  All streams are interrupted, this is not
-        // graceful.
+        // Shutdown the different parts of the node concurrently.
         let error_code = Closed::ProviderTerminating;
-        endpoint
-            .close(error_code.into(), error_code.reason())
-            .await
-            .ok();
-
-        // Shutdown sync and blobs.
-        inner.sync.shutdown().await.ok();
-        inner.db.shutdown().await;
-
-        // Shutdown protocol handlers.
-        protocols.shutdown().await;
+        // We ignore all errors during shutdown.
+        let _ = tokio::join!(
+            // Close the endpoint.
+            // Closing the Endpoint is the equivalent of calling Connection::close on all
+            // connections: Operations will immediately fail with ConnectionError::LocallyClosed.
+            // All streams are interrupted, this is not graceful.
+            endpoint.close(error_code.into(), error_code.reason()),
+            // Shutdown sync engine.
+            inner.sync.shutdown(),
+            // Shutdown blobs store engine.
+            inner.db.shutdown(),
+            // Shutdown protocol handlers.
+            protocols.shutdown(),
+        );
 
         // Abort remaining tasks.
         join_set.shutdown().await;
