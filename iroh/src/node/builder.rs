@@ -733,7 +733,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> UnspawnedNode<
     ///
     /// #[derive(Debug)]
     /// struct MyProtocol {
-    ///     iroh: MemIroh
+    ///     client: MemIroh
     /// }
     ///
     /// impl Protocol for MyProtocol {
@@ -742,10 +742,15 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> UnspawnedNode<
     ///     }
     /// }
     ///
-    /// let node = Node::memory()
+    /// let unspawned_node = Node::memory()
     ///     .build()
-    ///     .await?
-    ///     .accept(MY_ALPN, |_node| Arc::new(MyProtocol::build(node.client())))
+    ///     .await?;
+    ///
+    /// let client = unspawned_node.client().clone();
+    /// let handler = MyProtocol { client };
+    ///
+    /// let node = unspawned_node
+    ///     .accept(MY_ALPN, Arc::new(handler))
     ///     .spawn()
     ///     .await?;
     /// # node.shutdown().await?;
