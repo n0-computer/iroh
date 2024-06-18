@@ -228,8 +228,6 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         gossip_handle.await?;
         match res {
             Ok(reply) => {
-                // If the shutdown is triggered from call to the shutdown method,
-                // trigger the reply to signal completion of the shutdown.
                 reply.send(()).ok();
                 Ok(())
             }

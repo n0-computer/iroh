@@ -9,7 +9,7 @@ use iroh_docs::{
 use tokio_stream::StreamExt;
 
 use crate::client::docs::ShareMode;
-use crate::node::DocsEngine;
+use crate::node::docs::DocsEngine;
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorCreateResponse, AuthorDeleteRequest, AuthorDeleteResponse,
     AuthorExportRequest, AuthorExportResponse, AuthorGetDefaultRequest, AuthorGetDefaultResponse,

@@ -13,20 +13,23 @@ use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
-use iroh_docs::engine::Engine;
+use iroh_gossip::net::Gossip;
 use iroh_net::{
     endpoint::LocalEndpointsStream, key::SecretKey, util::SharedAbortingJoinHandle, Endpoint,
 };
-use once_cell::sync::OnceCell;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
-use crate::{client::RpcService, node::protocol::ProtocolMap};
+use crate::{
+    client::RpcService,
+    node::{docs::DocsEngine, protocol::ProtocolMap},
+};
 
 mod builder;
+mod docs;
 mod protocol;
 mod rpc;
 mod rpc_status;
@@ -49,20 +52,22 @@ pub use protocol::Protocol;
 pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
     client: crate::client::MemIroh,
+    task: SharedAbortingJoinHandle<()>,
+    protocols: Arc<ProtocolMap>,
 }
 
 #[derive(derive_more::Debug)]
 struct NodeInner<D> {
     db: D,
+    docs: Option<DocsEngine>,
     endpoint: Endpoint,
+    gossip: Gossip,
     secret_key: SecretKey,
     cancel_token: CancellationToken,
     controller: FlumeConnection<RpcService>,
     #[debug("rt")]
     rt: LocalPoolHandle,
     downloader: Downloader,
-    task: OnceCell<SharedAbortingJoinHandle<()>>,
-    protocols: ProtocolMap,
 }
 
 /// In memory node.
@@ -151,15 +156,6 @@ impl<D: BaoStore> Node<D> {
         self.inner.endpoint.my_relay()
     }
 
-    /// Returns the protocol handler for a alpn.
-    pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<Arc<P>> {
-        self.inner.protocols.get::<P>(alpn)
-    }
-
-    fn downloader(&self) -> &Downloader {
-        &self.inner.downloader
-    }
-
     /// Shutdown the node.
     ///
     /// This does not gracefully terminate currently: all connections are closed and
@@ -173,13 +169,7 @@ impl<D: BaoStore> Node<D> {
         self.inner.cancel_token.cancel();
 
         // Wait for the main task to terminate.
-        self.inner
-            .task
-            .get()
-            .expect("is always set")
-            .clone()
-            .await
-            .map_err(|err| anyhow!(err))?;
+        self.task.await.map_err(|err| anyhow!(err))?;
 
         Ok(())
     }
@@ -187,6 +177,11 @@ impl<D: BaoStore> Node<D> {
     /// Returns a token that can be used to cancel the node.
     pub fn cancel_token(&self) -> CancellationToken {
         self.inner.cancel_token.clone()
+    }
+
+    /// Get a protocol handler.
+    pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<Arc<P>> {
+        self.protocols.get_typed(alpn)
     }
 }
 
@@ -207,17 +202,6 @@ impl<D> NodeInner<D> {
             .await
             .ok_or(anyhow!("no endpoints found"))?;
         Ok(endpoints.into_iter().map(|x| x.addr).collect())
-    }
-}
-
-/// Wrapper around [`Engine`] so that we can implement our RPC methods directly.
-#[derive(Debug, Clone)]
-pub(crate) struct DocsEngine(Engine);
-
-impl std::ops::Deref for DocsEngine {
-    type Target = Engine;
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }
 

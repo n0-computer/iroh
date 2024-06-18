@@ -4,12 +4,12 @@ use anyhow::Result;
 use clap::Parser;
 use futures_lite::future::Boxed as BoxedFuture;
 use iroh::{
-    blobs::store::Store,
+    client::MemIroh,
     net::{
         endpoint::{get_remote_node_id, Connecting},
-        NodeId,
+        Endpoint, NodeId,
     },
-    node::{Node, Protocol},
+    node::Protocol,
 };
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -30,10 +30,10 @@ async fn main() -> Result<()> {
     setup_logging();
     let args = Cli::parse();
     // create a new node
-    let node = iroh::node::Node::memory()
-        .accept(EXAMPLE_ALPN, |node| {
-            Box::pin(async move { Ok(ExampleProto::build(node)) })
-        })
+    let builder = iroh::node::Node::memory().build().await?;
+    let proto = ExampleProto::new(builder.client().clone(), builder.endpoint().clone());
+    let node = builder
+        .accept(EXAMPLE_ALPN, Arc::new(proto.clone()))
         .spawn()
         .await?;
 
@@ -46,7 +46,6 @@ async fn main() -> Result<()> {
             tokio::signal::ctrl_c().await?;
         }
         Command::Connect { node: node_id } => {
-            let proto = ExampleProto::get_from_node(&node, EXAMPLE_ALPN).expect("it is registered");
             proto.connect(node_id).await?;
         }
     }
@@ -58,12 +57,13 @@ async fn main() -> Result<()> {
 
 const EXAMPLE_ALPN: &[u8] = b"example-proto/0";
 
-#[derive(Debug)]
-struct ExampleProto<S> {
-    node: Node<S>,
+#[derive(Debug, Clone)]
+struct ExampleProto {
+    client: MemIroh,
+    endpoint: Endpoint,
 }
 
-impl<S: Store> Protocol for ExampleProto<S> {
+impl Protocol for ExampleProto {
     fn accept(self: Arc<Self>, connecting: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move {
             let connection = connecting.await?;
@@ -75,7 +75,7 @@ impl<S: Store> Protocol for ExampleProto<S> {
             // (you likely don't want to create a new blob for each connection for real)
             let content = format!("this blob is created for my beloved peer {peer} ♥");
             let hash = self
-                .node
+                .client
                 .blobs()
                 .add_bytes(content.as_bytes().to_vec())
                 .await?;
@@ -88,34 +88,29 @@ impl<S: Store> Protocol for ExampleProto<S> {
     }
 }
 
-impl<S: Store> ExampleProto<S> {
-    pub fn build(node: Node<S>) -> Arc<dyn Protocol> {
-        Arc::new(Self { node })
-    }
-
-    pub fn get_from_node(node: &Node<S>, alpn: &'static [u8]) -> Option<Arc<Self>> {
-        node.get_protocol::<ExampleProto<S>>(alpn)
+impl ExampleProto {
+    pub fn new(client: MemIroh, endpoint: Endpoint) -> Self {
+        Self { client, endpoint }
     }
 
     pub async fn connect(&self, remote_node_id: NodeId) -> Result<()> {
-        println!("our node id: {}", self.node.node_id());
+        println!("our node id: {}", self.endpoint.node_id());
         println!("connecting to {remote_node_id}");
         let conn = self
-            .node
-            .endpoint()
+            .endpoint
             .connect_by_node_id(&remote_node_id, EXAMPLE_ALPN)
             .await?;
         let mut recv_stream = conn.accept_uni().await?;
         let hash_bytes = recv_stream.read_to_end(32).await?;
         let hash = iroh::blobs::Hash::from_bytes(hash_bytes.try_into().unwrap());
         println!("received hash: {hash}");
-        self.node
+        self.client
             .blobs()
             .download(hash, remote_node_id.into())
             .await?
             .await?;
         println!("blob downloaded");
-        let content = self.node.blobs().read_to_bytes(hash).await?;
+        let content = self.client.blobs().read_to_bytes(hash).await?;
         let message = String::from_utf8(content.to_vec())?;
         println!("blob content: {message}");
         Ok(())
