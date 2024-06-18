@@ -80,6 +80,7 @@ pub use self::node_map::{
     ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo as ConnectionInfo,
 };
 pub(super) use self::timer::Timer;
+pub(crate) use node_map::Source;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
@@ -367,8 +368,39 @@ impl MagicSock {
 
     /// Add addresses for a node to the magic socket's addresbook.
     #[instrument(skip_all, fields(me = %self.me))]
-    pub(crate) fn add_node_addr(&self, addr: NodeAddr) {
-        self.node_map.add_node_addr(addr);
+    pub fn add_node_addr(&self, mut addr: NodeAddr, source: node_map::Source) -> Result<()> {
+        let my_addresses = self.endpoints.get().last_endpoints;
+        let mut pruned = 0;
+        for my_addr in my_addresses.into_iter().map(|ep| ep.addr) {
+            if addr.info.direct_addresses.remove(&my_addr) {
+                warn!(node_id=addr.node_id.fmt_short(), %my_addr, %source, "not adding our addr for node");
+                pruned += 1;
+            }
+        }
+        if !addr.info.is_empty() {
+            self.node_map.add_node_addr(addr, source);
+            Ok(())
+        } else if pruned != 0 {
+            Err(anyhow::anyhow!(
+                "empty addressing info, {pruned} direct addresses have been pruned"
+            ))
+        } else {
+            Err(anyhow::anyhow!("empty addressing info"))
+        }
+    }
+
+    /// Updates our direct addresses.
+    ///
+    /// On a successful update, our address is published to discovery.
+    pub(super) fn update_direct_addresses(&self, eps: Vec<DirectAddr>) {
+        let updated = self.endpoints.update(DiscoveredEndpoints::new(eps)).is_ok();
+        if updated {
+            let eps = self.endpoints.read();
+            eps.log_endpoint_change();
+            self.node_map
+                .on_direct_addr_discovered(eps.iter().map(|ep| ep.addr));
+            self.publish_my_addr();
+        }
     }
 
     /// Get a reference to the DNS resolver used in this [`MagicSock`].
@@ -2095,15 +2127,7 @@ impl Actor {
             // The STUN address(es) are always first.
             // Despite this sorting, clients are not relying on this sorting for decisions;
 
-            let updated = msock
-                .endpoints
-                .update(DiscoveredEndpoints::new(eps))
-                .is_ok();
-            if updated {
-                let eps = msock.endpoints.read();
-                eps.log_endpoint_change();
-                msock.publish_my_addr();
-            }
+            msock.update_direct_addresses(eps);
 
             // Regardless of whether our local endpoints changed, we now want to send any queued
             // call-me-maybe messages.
@@ -2722,6 +2746,14 @@ mod tests {
 
     use super::*;
 
+    impl MagicSock {
+        #[track_caller]
+        pub fn add_test_addr(&self, node_addr: NodeAddr) {
+            self.add_node_addr(node_addr, Source::NamedApp { name: "test" })
+                .unwrap()
+        }
+    }
+
     /// Magicsock plus wrappers for sending packets
     #[derive(Clone)]
     struct MagicStack {
@@ -2791,7 +2823,7 @@ mod tests {
                         direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
                     },
                 };
-                m.endpoint.magic_sock().add_node_addr(addr);
+                m.endpoint.magic_sock().add_test_addr(addr);
             }
         }
 

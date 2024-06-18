@@ -13,6 +13,9 @@ use crate::{AddrInfo, Endpoint, NodeId};
 pub mod dns;
 pub mod pkarr_publish;
 
+/// Name used for logging when new node addresses are added from discovery.
+const SOURCE_NAME: &str = "discovery";
+
 /// Node discovery for [`super::Endpoint`].
 ///
 /// The purpose of this trait is to hook up a node discovery mechanism that
@@ -252,7 +255,7 @@ impl DiscoveryTask {
                         info: r.addr_info,
                         node_id,
                     };
-                    ep.add_node_addr(addr).ok();
+                    ep.add_node_addr_with_source(addr, SOURCE_NAME).ok();
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
@@ -668,11 +671,6 @@ mod test_dns_pkarr {
 
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server.on_node(&ep1.node_id(), timeout).await?;
-
-        let node_addr = NodeAddr::new(ep1.node_id());
-
-        // add empty node address. We *should* launch discovery before attempting to dial.
-        ep2.add_node_addr(node_addr)?;
 
         // we connect only by node id!
         let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;

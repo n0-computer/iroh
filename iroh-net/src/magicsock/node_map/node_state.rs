@@ -140,12 +140,14 @@ pub(super) struct NodeState {
     conn_type: Watchable<ConnectionType>,
 }
 
+/// Options for creating a new [`NodeState`].
 #[derive(Debug)]
 pub(super) struct Options {
     pub(super) node_id: NodeId,
     pub(super) relay_url: Option<RelayUrl>,
     /// Is this endpoint currently active (sending data)?
     pub(super) active: bool,
+    pub(super) source: super::Source,
 }
 
 impl NodeState {
@@ -309,7 +311,24 @@ impl NodeState {
         (best_addr, relay_url)
     }
 
-    /// Fixup best_addr from candidates.
+    /// Removes a direct address for this node.
+    ///
+    /// If this is also the best address, it will be cleared as well.
+    pub(super) fn remove_direct_addr(&mut self, ip_port: &IpPort, reason: ClearReason) {
+        let Some(state) = self.direct_addr_state.remove(ip_port) else {
+            return;
+        };
+
+        match state.last_alive().map(|instant| instant.elapsed()) {
+            Some(last_alive) => debug!(%ip_port, ?last_alive, ?reason, "pruning address"),
+            None => debug!(%ip_port, last_seen=%"never", ?reason, "pruning address"),
+        }
+
+        self.best_addr
+            .clear_if_equals((*ip_port).into(), reason, self.relay_url.is_some());
+    }
+
+    /// Fixup best_adrr from candidates.
     ///
     /// If somehow we end up in a state where we failed to set a best_addr, while we do have
     /// valid candidates, this will chose a candidate and set best_addr again.  Most likely
@@ -760,19 +779,8 @@ impl NodeState {
         // used ones) last
         prune_candidates.sort_unstable_by_key(|(_ip_port, last_alive)| *last_alive);
         prune_candidates.truncate(prune_count);
-        for (ip_port, last_alive) in prune_candidates.into_iter() {
-            self.direct_addr_state.remove(&ip_port);
-
-            match last_alive.map(|instant| instant.elapsed()) {
-                Some(last_alive) => debug!(%ip_port, ?last_alive, "pruning address"),
-                None => debug!(%ip_port, last_seen=%"never", "pruning address"),
-            }
-
-            self.best_addr.clear_if_equals(
-                ip_port.into(),
-                ClearReason::Inactive,
-                self.relay_url.is_some(),
-            );
+        for (ip_port, _last_alive) in prune_candidates.into_iter() {
+            self.remove_direct_addr(&ip_port, ClearReason::Inactive)
         }
         debug!(
             paths = %summarize_node_paths(&self.direct_addr_state),
@@ -1719,6 +1727,7 @@ mod tests {
             node_id: key.public(),
             relay_url: None,
             active: true,
+            source: crate::magicsock::Source::NamedApp { name: "test" },
         };
         let mut ep = NodeState::new(0, opts);
 

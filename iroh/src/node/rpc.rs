@@ -57,6 +57,8 @@ const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 const RPC_BLOB_GET_CHUNK_SIZE: usize = 1024 * 64;
 /// Channel cap for getting blobs over RPC
 const RPC_BLOB_GET_CHANNEL_CAP: usize = 2;
+/// Name used for logging when new node addresses are added from gossip.
+const BLOB_DOWNLOAD_SOURCE_NAME: &str = "blob_download";
 
 #[derive(Debug, Clone)]
 pub(crate) struct Handler<D> {
@@ -1052,10 +1054,16 @@ async fn download_queued(
     progress: FlumeProgressSender<DownloadProgress>,
 ) -> Result<Stats> {
     let mut node_ids = Vec::with_capacity(nodes.len());
+    let mut any_added = false;
     for node in nodes {
         node_ids.push(node.node_id);
-        endpoint.add_node_addr(node)?;
+        if !node.info.is_empty() {
+            endpoint.add_node_addr_with_source(node, BLOB_DOWNLOAD_SOURCE_NAME)?;
+            any_added = true;
+        }
     }
+    let can_download = !node_ids.is_empty() && (any_added || endpoint.discovery().is_some());
+    anyhow::ensure!(can_download, "no way to reach a node for download");
     let req = DownloadRequest::new(hash_and_format, node_ids).progress_sender(progress);
     let handle = downloader.queue(req).await;
     let stats = handle.await?;

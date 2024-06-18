@@ -38,6 +38,8 @@ const TO_ACTOR_CAP: usize = 64;
 const IN_EVENT_CAP: usize = 1024;
 /// Channel capacity for endpoint change message queue (single)
 const ON_ENDPOINTS_CAP: usize = 64;
+/// Name used for logging when new node addresses are added from gossip.
+const SOURCE_NAME: &str = "gossip";
 
 /// Events emitted from the gossip protocol
 pub type Event = proto::Event<PublicKey>;
@@ -578,7 +580,10 @@ impl Actor {
                     Ok(info) => {
                         debug!(peer = ?node_id, "add known addrs: {info:?}");
                         let node_addr = NodeAddr { node_id, info };
-                        if let Err(err) = self.endpoint.add_node_addr(node_addr) {
+                        if let Err(err) = self
+                            .endpoint
+                            .add_node_addr_with_source(node_addr, SOURCE_NAME)
+                        {
                             debug!(peer = ?node_id, "add known failed: {err:?}");
                         }
                     }
