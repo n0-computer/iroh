@@ -743,7 +743,7 @@ impl<D: BaoStore> Handler<D> {
 
     async fn node_status(self, _: NodeStatusRequest) -> RpcResult<NodeStatus> {
         Ok(NodeStatus {
-            addr: self.inner.endpoint.my_addr().await?,
+            addr: self.inner.endpoint.node_addr().await?,
             listen_addrs: self
                 .inner
                 .local_endpoint_addresses()
@@ -759,13 +759,13 @@ impl<D: BaoStore> Handler<D> {
     }
 
     async fn node_addr(self, _: NodeAddrRequest) -> RpcResult<NodeAddr> {
-        let addr = self.inner.endpoint.my_addr().await?;
+        let addr = self.inner.endpoint.node_addr().await?;
         Ok(addr)
     }
 
     #[allow(clippy::unused_async)]
     async fn node_relay(self, _: NodeRelayRequest) -> RpcResult<Option<RelayUrl>> {
-        Ok(self.inner.endpoint.my_relay())
+        Ok(self.inner.endpoint.home_relay())
     }
 
     #[allow(clippy::unused_async)]

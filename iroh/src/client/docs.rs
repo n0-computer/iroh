@@ -22,6 +22,7 @@ use iroh_docs::{
 use iroh_net::NodeAddr;
 use portable_atomic::{AtomicBool, Ordering};
 use quic_rpc::{message::RpcMsg, RpcClient, ServiceConnection};
+use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::{
@@ -38,7 +39,8 @@ pub use iroh_docs::engine::{Origin, SyncEvent, SyncReason};
 use super::{blobs, flatten};
 
 /// Iroh docs client.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
 pub struct Client<C> {
     pub(super) rpc: RpcClient<RpcService, C>,
 }

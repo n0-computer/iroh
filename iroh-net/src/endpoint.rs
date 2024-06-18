@@ -28,7 +28,6 @@ use tracing::{debug, info_span, trace, warn};
 use url::Url;
 
 use crate::{
-    config,
     defaults::default_relay_map,
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
@@ -502,7 +501,7 @@ impl Endpoint {
 
         let rtt_msg = RttMessage::NewConnection {
             connection: connection.weak_handle(),
-            conn_type_changes: self.conn_type_stream(node_id)?,
+            conn_type_changes: self.conn_type_stream(*node_id)?,
             node_id: *node_id,
         };
         if let Err(err) = self.rtt_actor.msg_tx.send(rtt_msg).await {
@@ -590,26 +589,16 @@ impl Endpoint {
     /// Returns the current [`NodeAddr`] for this endpoint.
     ///
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and local IP endpoints
-    /// as they would be returned by [`Endpoint::my_relay`] and
+    /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::local_endpoints`].
-    pub async fn my_addr(&self) -> Result<NodeAddr> {
+    pub async fn node_addr(&self) -> Result<NodeAddr> {
         let addrs = self
             .local_endpoints()
             .next()
             .await
             .ok_or(anyhow!("No IP endpoints found"))?;
-        let relay = self.my_relay();
+        let relay = self.home_relay();
         let addrs = addrs.into_iter().map(|x| x.addr).collect();
-        Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
-    }
-
-    /// Returns the [`NodeAddr`] for this endpoint with the provided endpoints.
-    ///
-    /// Like [`Endpoint::my_addr`] but uses the provided IP endpoints rather than those from
-    /// [`Endpoint::local_endpoints`].
-    pub fn my_addr_with_endpoints(&self, eps: Vec<config::Endpoint>) -> Result<NodeAddr> {
-        let relay = self.my_relay();
-        let addrs = eps.into_iter().map(|x| x.addr).collect();
         Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
     }
 
@@ -625,7 +614,7 @@ impl Endpoint {
     /// Note that this will be `None` right after the [`Endpoint`] is created since it takes
     /// some time to connect to find and connect to the home relay server.  Use
     /// [`Endpoint::watch_home_relay`] to wait until the home relay server is available.
-    pub fn my_relay(&self) -> Option<RelayUrl> {
+    pub fn home_relay(&self) -> Option<RelayUrl> {
         self.msock.my_relay()
     }
 
@@ -684,7 +673,7 @@ impl Endpoint {
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
-    pub fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
+    pub fn bound_sockets(&self) -> (SocketAddr, Option<SocketAddr>) {
         self.msock.local_addr()
     }
 
@@ -734,7 +723,7 @@ impl Endpoint {
     /// # Errors
     ///
     /// Will error if we do not have any address information for the given `node_id`.
-    pub fn conn_type_stream(&self, node_id: &NodeId) -> Result<ConnectionTypeStream> {
+    pub fn conn_type_stream(&self, node_id: NodeId) -> Result<ConnectionTypeStream> {
         self.msock.conn_type_stream(node_id)
     }
 
@@ -828,7 +817,7 @@ impl Endpoint {
         // Only return a mapped addr if we have some way of dialing this node, in other
         // words, we have either a relay URL or at least one direct address.
         let addr = if self.msock.has_send_address(node_id) {
-            self.msock.get_mapping_addr(&node_id)
+            self.msock.get_mapping_addr(node_id)
         } else {
             None
         };
@@ -856,7 +845,7 @@ impl Endpoint {
                 let mut discovery = DiscoveryTask::start(self.clone(), node_id)?;
                 discovery.first_arrived().await?;
                 if self.msock.has_send_address(node_id) {
-                    let addr = self.msock.get_mapping_addr(&node_id).expect("checked");
+                    let addr = self.msock.get_mapping_addr(node_id).expect("checked");
                     Ok((addr, Some(discovery)))
                 } else {
                     bail!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}");
@@ -1001,7 +990,7 @@ fn try_send_rtt_msg(conn: &quinn::Connection, magic_ep: &Endpoint) {
         warn!(?conn, "failed to get remote node id");
         return;
     };
-    let Ok(conn_type_changes) = magic_ep.conn_type_stream(&peer_id) else {
+    let Ok(conn_type_changes) = magic_ep.conn_type_stream(peer_id) else {
         warn!(?conn, "failed to create conn_type_stream");
         return;
     };
@@ -1101,7 +1090,7 @@ mod tests {
             .bind(0)
             .await
             .unwrap();
-        let my_addr = ep.my_addr().await.unwrap();
+        let my_addr = ep.node_addr().await.unwrap();
         let res = ep.connect(my_addr.clone(), TEST_ALPN).await;
         assert!(res.is_err());
         let err = res.err().unwrap();
@@ -1280,7 +1269,7 @@ mod tests {
                         .bind(0)
                         .await
                         .unwrap();
-                    let eps = ep.local_addr();
+                    let eps = ep.bound_sockets();
                     info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server bound");
                     for i in 0..n_clients {
                         let now = Instant::now();
@@ -1325,7 +1314,7 @@ mod tests {
                     .bind(0)
                     .await
                     .unwrap();
-                let eps = ep.local_addr();
+                let eps = ep.bound_sockets();
                 info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "client bound");
                 let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
                 info!(to = ?node_addr, "client connecting");
@@ -1375,8 +1364,8 @@ mod tests {
             .bind(0)
             .await
             .unwrap();
-        let ep1_nodeaddr = ep1.my_addr().await.unwrap();
-        let ep2_nodeaddr = ep2.my_addr().await.unwrap();
+        let ep1_nodeaddr = ep1.node_addr().await.unwrap();
+        let ep2_nodeaddr = ep2.node_addr().await.unwrap();
         ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
         ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
         let ep1_nodeid = ep1.node_id();
@@ -1444,7 +1433,7 @@ mod tests {
             .unwrap();
 
         async fn handle_direct_conn(ep: &Endpoint, node_id: PublicKey) -> Result<()> {
-            let mut stream = ep.conn_type_stream(&node_id)?;
+            let mut stream = ep.conn_type_stream(node_id)?;
             let src = ep.node_id().fmt_short();
             let dst = node_id.fmt_short();
             while let Some(conn_type) = stream.next().await {
@@ -1467,7 +1456,7 @@ mod tests {
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
 
-        let ep1_nodeaddr = ep1.my_addr().await.unwrap();
+        let ep1_nodeaddr = ep1.node_addr().await.unwrap();
         tracing::info!(
             "node id 1 {ep1_nodeid}, relay URL {:?}",
             ep1_nodeaddr.relay_url()

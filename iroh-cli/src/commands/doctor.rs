@@ -692,7 +692,7 @@ async fn connect(
     let conn = endpoint.connect(node_addr, &DR_RELAY_ALPN).await;
     match conn {
         Ok(connection) => {
-            let maybe_stream = endpoint.conn_type_stream(&node_id);
+            let maybe_stream = endpoint.conn_type_stream(node_id);
             let gui = Gui::new(endpoint, node_id);
             if let Ok(stream) = maybe_stream {
                 log_connection_changes(gui.mp.clone(), node_id, stream);
@@ -742,7 +742,7 @@ async fn accept(
         secret_key.public(),
         remote_addrs,
     );
-    if let Some(relay_url) = endpoint.my_relay() {
+    if let Some(relay_url) = endpoint.home_relay() {
         println!(
             "\tUsing just the relay url:\niroh doctor connect {} --relay-url {}\n",
             secret_key.public(),
@@ -770,7 +770,7 @@ async fn accept(
                         println!("Accepted connection from {}", remote_peer_id);
                         let t0 = Instant::now();
                         let gui = Gui::new(endpoint.clone(), remote_peer_id);
-                        if let Ok(stream) = endpoint.conn_type_stream(&remote_peer_id) {
+                        if let Ok(stream) = endpoint.conn_type_stream(remote_peer_id) {
                             log_connection_changes(gui.mp.clone(), remote_peer_id, stream);
                         }
                         let res = active_side(connection, &config, Some(&gui)).await;

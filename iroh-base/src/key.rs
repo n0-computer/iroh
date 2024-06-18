@@ -94,6 +94,10 @@ pub struct PublicKey([u8; 32]);
 
 /// The identifier for a node in the (iroh) network.
 ///
+/// Each node in iroh has a unique identifier created as a cryptographic key.  This can be
+/// used to globally identify a node.  Since it is also a cryptographic key it is also the
+/// mechanism by which all traffic is always encrypted for a specific node only.
+///
 /// This is equivalent to [`PublicKey`].  By convention we will (or should) use `PublicKey`
 /// as type name when performing cryptographic operations, but use `NodeId` when referencing
 /// a node.  E.g.:

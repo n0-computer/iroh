@@ -4,12 +4,14 @@ use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
 use iroh_blobs::{BlobFormat, Hash, Tag};
 use quic_rpc::{RpcClient, ServiceConnection};
+use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::{DeleteTagRequest, ListTagsRequest, RpcService};
 
 /// Iroh tags client.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
 pub struct Client<C> {
     pub(super) rpc: RpcClient<RpcService, C>,
 }

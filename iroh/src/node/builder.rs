@@ -437,7 +437,7 @@ where
 
         debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
 
-        let addr = endpoint.my_addr().await?;
+        let addr = endpoint.node_addr().await?;
 
         // initialize the gossip protocol
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
@@ -552,7 +552,7 @@ where
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
-        let (ipv4, ipv6) = server.local_addr();
+        let (ipv4, ipv6) = server.bound_sockets();
         debug!(
             "listening at: {}{}",
             ipv4,

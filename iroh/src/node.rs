@@ -107,7 +107,7 @@ impl<D: BaoStore> Node<D> {
     /// can contact the node consider using [`Node::local_endpoint_addresses`].  However the
     /// port will always be the concrete port.
     pub fn local_address(&self) -> Vec<SocketAddr> {
-        let (v4, v6) = self.inner.endpoint.local_addr();
+        let (v4, v6) = self.inner.endpoint.bound_sockets();
         let mut addrs = vec![v4];
         if let Some(v6) = v6 {
             addrs.push(v6);
@@ -147,7 +147,7 @@ impl<D: BaoStore> Node<D> {
 
     /// Get the relay server we are connected to.
     pub fn my_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
-        self.inner.endpoint.my_relay()
+        self.inner.endpoint.home_relay()
     }
 
     /// Aborts the node.
