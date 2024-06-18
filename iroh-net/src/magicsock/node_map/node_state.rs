@@ -313,7 +313,7 @@ impl NodeState {
 
     /// Removes a direct address for this node.
     ///
-    /// If this is also de best address, it will be cleared as well.
+    /// If this is also the best address, it will be cleared as well.
     pub(super) fn remove_direct_addr(&mut self, ip_port: &IpPort, reason: ClearReason) {
         let Some(state) = self.direct_addr_state.remove(ip_port) else {
             return;

@@ -531,7 +531,10 @@ impl Endpoint {
     /// This updates the local state for the remote node.  If the provided [`NodeAddr`]
     /// contains a [`RelayUrl`] this will be used as the new relay server for this node.  If
     /// it contains any new IP endpoints they will also be stored and tried when next
-    /// connecting to this node.
+    /// connecting to this node. Any address that matches this node's direct addresses will be
+    /// silently ignored.
+    ///
+    /// See also [`Endpoint::add_node_addr_with_source`].
     ///
     /// # Errors
     ///
@@ -545,8 +548,9 @@ impl Endpoint {
     ///
     /// This updates the local state for the remote node.  If the provided [`NodeAddr`] contains a
     /// [`RelayUrl`] this will be used as the new relay server for this node.  If it contains any
-    /// new IP endpoints they will also be stored and tried when next connecting to this node. The
-    /// source is used for logging exclusively and will not be stored.
+    /// new IP endpoints they will also be stored and tried when next connecting to this node. Any
+    /// address that matches this node's direct addresses will be silently ignored. The *source* is
+    /// used for logging exclusively and will not be stored.
     ///
     /// # Errors
     ///

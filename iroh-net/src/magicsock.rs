@@ -80,7 +80,7 @@ pub use self::node_map::{
     ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo as ConnectionInfo,
 };
 pub(super) use self::timer::Timer;
-pub(super) use node_map::Source;
+pub(crate) use node_map::Source;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
@@ -381,16 +381,18 @@ impl MagicSock {
             self.node_map.add_node_addr(addr, source);
             Ok(())
         } else if pruned != 0 {
-            anyhow::bail!("empty addressing info, {pruned} direct addresses have been pruned")
+            Err(anyhow::anyhow!(
+                "empty addressing info, {pruned} direct addresses have been pruned"
+            ))
         } else {
-            anyhow::bail!("empty addressing info")
+            Err(anyhow::anyhow!("empty addressing info"))
         }
     }
 
     /// Updates our direct addresses.
     ///
     /// On a successful update, our address is published to discovery.
-    pub(super) fn update_endpoints(&self, eps: Vec<DirectAddr>) {
+    pub(super) fn update_direct_addresses(&self, eps: Vec<DirectAddr>) {
         let updated = self.endpoints.update(DiscoveredEndpoints::new(eps)).is_ok();
         if updated {
             let eps = self.endpoints.read();
@@ -2125,7 +2127,7 @@ impl Actor {
             // The STUN address(es) are always first.
             // Despite this sorting, clients are not relying on this sorting for decisions;
 
-            msock.update_endpoints(eps);
+            msock.update_direct_addresses(eps);
 
             // Regardless of whether our local endpoints changed, we now want to send any queued
             // call-me-maybe messages.

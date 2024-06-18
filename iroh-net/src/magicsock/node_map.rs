@@ -362,7 +362,7 @@ impl NodeMapInner {
         }
     }
 
-    /// Prunes nodes that claim to share a address we know points to us,
+    /// Prunes direct addresses from nodes that claim to share an address we know points to us.
     pub(super) fn on_direct_addr_discovered(
         &mut self,
         discovered: impl Iterator<Item = impl Into<IpPort>>,
@@ -372,7 +372,7 @@ impl NodeMapInner {
         }
     }
 
-    /// Removes a node by its IpPort
+    /// Removes a direct address from a node.
     fn remove_by_ipp(&mut self, ipp: IpPort, reason: ClearReason) {
         if let Some(id) = self.by_ip_port.remove(&ipp) {
             if let Entry::Occupied(mut entry) = self.by_id.entry(id) {
