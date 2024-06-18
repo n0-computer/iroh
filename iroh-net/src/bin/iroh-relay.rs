@@ -249,7 +249,7 @@ struct TlsConfig {
     /// The contact email for the tls certificate.
     ///
     /// Used when `cert_mode` is `LetsEncrypt`.
-    contact: String,
+    contact: Option<String>,
 }
 
 impl TlsConfig {
@@ -387,8 +387,12 @@ async fn build_relay_config(cfg: Config) -> Result<iroh_relay::ServerConfig<std:
                         .hostname
                         .clone()
                         .context("LetsEncrypt needs a hostname")?;
+                    let contact = tls
+                        .contact
+                        .clone()
+                        .context("LetsEncrypt needs a contact email")?;
                     let config = AcmeConfig::new(vec![hostname.clone()])
-                        .contact([format!("mailto:{}", tls.contact)])
+                        .contact([format!("mailto:{}", contact)])
                         .cache_option(Some(DirCache::new(tls.cert_dir())))
                         .directory_lets_encrypt(tls.prod_tls);
                     iroh_relay::CertConfig::LetsEncrypt { config }
