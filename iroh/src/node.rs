@@ -13,6 +13,7 @@ use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
+use iroh_docs::engine::Engine;
 use iroh_gossip::net::Gossip;
 use iroh_net::{
     endpoint::LocalEndpointsStream, key::SecretKey, util::SharedAbortingJoinHandle, Endpoint,
@@ -23,18 +24,14 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
-use crate::{
-    client::RpcService,
-    node::{docs::DocsEngine, protocol::ProtocolMap},
-};
+use crate::{client::RpcService, node::protocol::ProtocolMap};
 
 mod builder;
-mod docs;
 mod protocol;
 mod rpc;
 mod rpc_status;
 
-pub use self::builder::{Builder, DiscoveryConfig, DocsStorage, GcPolicy, StorageConfig};
+pub use self::builder::{Builder, DiscoveryConfig, GcPolicy, StorageConfig};
 pub use self::rpc_status::RpcStatus;
 pub use protocol::Protocol;
 
@@ -59,7 +56,7 @@ pub struct Node<D> {
 #[derive(derive_more::Debug)]
 struct NodeInner<D> {
     db: D,
-    docs: Option<DocsEngine>,
+    sync: DocsEngine,
     endpoint: Endpoint,
     gossip: Gossip,
     secret_key: SecretKey,
@@ -202,6 +199,17 @@ impl<D> NodeInner<D> {
             .await
             .ok_or(anyhow!("no endpoints found"))?;
         Ok(endpoints.into_iter().map(|x| x.addr).collect())
+    }
+}
+
+/// Wrapper around [`Engine`] so that we can implement our RPC methods directly.
+#[derive(Debug, Clone)]
+pub(crate) struct DocsEngine(Engine);
+
+impl std::ops::Deref for DocsEngine {
+    type Target = Engine;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 

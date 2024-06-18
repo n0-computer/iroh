@@ -2437,7 +2437,6 @@ dependencies = [
  "iroh-quinn",
  "iroh-test",
  "num_cpus",
- "once_cell",
  "parking_lot",
  "portable-atomic",
  "postcard",

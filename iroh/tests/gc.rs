@@ -6,7 +6,7 @@ use std::{
 use anyhow::Result;
 use bao_tree::{blake3, io::sync::Outboard, ChunkRanges};
 use bytes::Bytes;
-use iroh::node::{self, DocsStorage, Node};
+use iroh::node::{self, Node};
 use rand::RngCore;
 
 use iroh_blobs::{
@@ -41,19 +41,17 @@ async fn wrap_in_node<S>(bao_store: S, gc_period: Duration) -> (Node<S>, flume::
 where
     S: iroh_blobs::store::Store,
 {
+    let doc_store = iroh_docs::store::Store::memory();
     let (gc_send, gc_recv) = flume::unbounded();
-    let node = node::Builder::with_db_and_store(
-        bao_store,
-        DocsStorage::Memory,
-        iroh::node::StorageConfig::Mem,
-    )
-    .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
-    .register_gc_done_cb(Box::new(move || {
-        gc_send.send(()).ok();
-    }))
-    .spawn()
-    .await
-    .unwrap();
+    let node =
+        node::Builder::with_db_and_store(bao_store, doc_store, iroh::node::StorageConfig::Mem)
+            .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
+            .register_gc_done_cb(Box::new(move || {
+                gc_send.send(()).ok();
+            }))
+            .spawn()
+            .await
+            .unwrap();
     (node, gc_recv)
 }
 

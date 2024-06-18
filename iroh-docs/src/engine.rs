@@ -207,11 +207,7 @@ impl Engine {
 
     /// Shutdown the engine.
     pub async fn shutdown(&self) -> Result<()> {
-        let (reply, reply_rx) = oneshot::channel();
-        self.to_live_actor
-            .send(ToLiveActor::Shutdown { reply })
-            .await?;
-        reply_rx.await?;
+        self.to_live_actor.send(ToLiveActor::Shutdown).await?;
         Ok(())
     }
 }

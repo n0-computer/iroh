@@ -4,6 +4,8 @@ use anyhow::Result;
 use futures_lite::future::Boxed as BoxedFuture;
 use iroh_net::endpoint::Connecting;
 
+use crate::node::DocsEngine;
+
 /// Handler for incoming connections.
 pub trait Protocol: Send + Sync + IntoArcAny + fmt::Debug + 'static {
     /// Handle an incoming connection.
@@ -87,12 +89,6 @@ impl<S: iroh_blobs::store::Store> Protocol for BlobsProtocol<S> {
             Ok(())
         })
     }
-
-    fn shutdown(self: Arc<Self>) -> BoxedFuture<()> {
-        Box::pin(async move {
-            self.store.shutdown().await;
-        })
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -107,5 +103,11 @@ impl iroh_blobs::provider::EventSender for MockEventSender {
 impl Protocol for iroh_gossip::net::Gossip {
     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move { self.handle_connection(conn.await?).await })
+    }
+}
+
+impl Protocol for DocsEngine {
+    fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
+        Box::pin(async move { self.handle_connection(conn).await })
     }
 }
