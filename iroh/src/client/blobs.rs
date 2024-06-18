@@ -25,6 +25,7 @@ use iroh_blobs::{
 use iroh_net::NodeAddr;
 use portable_atomic::{AtomicU64, Ordering};
 use quic_rpc::{client::BoxStreamSync, RpcClient, ServiceConnection};
+use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
@@ -40,7 +41,8 @@ use crate::rpc_protocol::{
 use super::{flatten, tags, Iroh};
 
 /// Iroh blobs client.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
 pub struct Client<C> {
     pub(super) rpc: RpcClient<RpcService, C>,
 }

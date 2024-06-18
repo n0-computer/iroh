@@ -206,11 +206,11 @@ async fn handle_connection(
     let alpn = conn.alpn().await?;
     let conn = conn.await?;
     let peer_id = iroh_net::endpoint::get_remote_node_id(&conn)?;
-    match alpn.as_bytes() {
-        GOSSIP_ALPN => gossip
-            .handle_connection(conn)
-            .await
-            .context(format!("connection to {peer_id} with ALPN {alpn} failed"))?,
+    match alpn.as_ref() {
+        GOSSIP_ALPN => gossip.handle_connection(conn).await.context(format!(
+            "connection to {peer_id} with ALPN {} failed",
+            String::from_utf8_lossy(&alpn)
+        ))?,
         _ => println!("> ignoring connection from {peer_id}: unsupported ALPN protocol"),
     }
     Ok(())
