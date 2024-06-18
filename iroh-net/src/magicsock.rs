@@ -16,7 +16,7 @@
 //! however, read any packets that come off the UDP sockets.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt::Display,
     io,
     net::{IpAddr, Ipv6Addr, SocketAddr},
@@ -51,7 +51,6 @@ use url::Url;
 use watchable::Watchable;
 
 use crate::{
-    config,
     disco::{self, SendAddr},
     discovery::Discovery,
     dns::DnsResolver,
@@ -97,37 +96,37 @@ const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
-pub(super) struct Options {
+pub(crate) struct Options {
     /// The port to listen on.
     /// Zero means to pick one automatically.
-    pub port: u16,
+    pub(crate) port: u16,
 
     /// Secret key for this node.
-    pub secret_key: SecretKey,
+    pub(crate) secret_key: SecretKey,
 
     /// The [`RelayMap`] to use, leave empty to not use a relay server.
-    pub relay_map: RelayMap,
+    pub(crate) relay_map: RelayMap,
 
     /// Path to store known nodes.
-    pub nodes_path: Option<std::path::PathBuf>,
+    pub(crate) nodes_path: Option<std::path::PathBuf>,
 
     /// Optional node discovery mechanism.
-    pub discovery: Option<Box<dyn Discovery>>,
+    pub(crate) discovery: Option<Box<dyn Discovery>>,
 
     /// A DNS resolver to use for resolving relay URLs.
     ///
     /// You can use [`crate::dns::default_resolver`] for a resolver that uses the system's DNS
     /// configuration.
-    pub dns_resolver: DnsResolver,
+    pub(crate) dns_resolver: DnsResolver,
 
     /// Proxy configuration.
-    pub proxy_url: Option<Url>,
+    pub(crate) proxy_url: Option<Url>,
 
     /// Skip verification of SSL certificates from relay servers
     ///
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
-    pub insecure_skip_relay_cert_verify: bool,
+    pub(crate) insecure_skip_relay_cert_verify: bool,
 }
 
 impl Default for Options {
@@ -148,13 +147,13 @@ impl Default for Options {
 
 /// Contents of a relay message. Use a SmallVec to avoid allocations for the very
 /// common case of a single packet.
-pub(super) type RelayContents = SmallVec<[Bytes; 1]>;
+type RelayContents = SmallVec<[Bytes; 1]>;
 
 /// Handle for [`MagicSock`].
 ///
 /// Dereferences to [`MagicSock`], and handles closing.
 #[derive(Clone, Debug, derive_more::Deref)]
-pub(super) struct Handle {
+pub(crate) struct Handle {
     #[deref(forward)]
     msock: Arc<MagicSock>,
     // Empty when closed
@@ -172,7 +171,7 @@ pub(super) struct Handle {
 /// means any QUIC endpoints on top will be sharing as much information about nodes as
 /// possible.
 #[derive(derive_more::Debug)]
-pub(super) struct MagicSock {
+pub(crate) struct MagicSock {
     actor_sender: mpsc::Sender<ActorMessage>,
     relay_actor_sender: mpsc::Sender<RelayActorMessage>,
     /// String representation of the node_id of this node.
@@ -248,19 +247,19 @@ pub(super) struct MagicSock {
 
 impl MagicSock {
     /// Creates a magic [`MagicSock`] listening on [`Options::port`].
-    pub async fn spawn(opts: Options) -> Result<Handle> {
+    pub(crate) async fn spawn(opts: Options) -> Result<Handle> {
         Handle::new(opts).await
     }
 
     /// Returns the relay node we are connected to, that has the best latency.
     ///
     /// If `None`, then we are not connected to any relay nodes.
-    pub fn my_relay(&self) -> Option<RelayUrl> {
+    pub(crate) fn my_relay(&self) -> Option<RelayUrl> {
         self.my_relay.get()
     }
 
     /// Get the current proxy configuration.
-    pub fn proxy_url(&self) -> Option<&Url> {
+    pub(crate) fn proxy_url(&self) -> Option<&Url> {
         self.proxy_url.as_ref()
     }
 
@@ -284,42 +283,43 @@ impl MagicSock {
     }
 
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
-    pub fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
+    pub(crate) fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
         *self.local_addrs.read().expect("not poisoned")
     }
 
     /// Returns `true` if we have at least one candidate address where we can send packets to.
-    pub fn has_send_address(&self, node_key: PublicKey) -> bool {
+    pub(crate) fn has_send_address(&self, node_key: PublicKey) -> bool {
         self.connection_info(node_key)
             .map(|info| info.has_send_address())
             .unwrap_or(false)
     }
 
     /// Retrieve connection information about nodes in the network.
-    pub fn connection_infos(&self) -> Vec<ConnectionInfo> {
+    pub(crate) fn connection_infos(&self) -> Vec<ConnectionInfo> {
         self.node_map.node_infos(Instant::now())
     }
 
     /// Retrieve connection information about a node in the network.
-    pub fn connection_info(&self, node_id: NodeId) -> Option<ConnectionInfo> {
+    pub(crate) fn connection_info(&self, node_id: NodeId) -> Option<ConnectionInfo> {
         self.node_map.node_info(node_id)
     }
 
-    /// Returns the local endpoints as a stream.
+    /// Returns the direct addresses as a stream.
     ///
-    /// The [`MagicSock`] continuously monitors the local endpoints, the network addresses
-    /// it can listen on, for changes.  Whenever changes are detected this stream will yield
-    /// a new list of endpoints.
+    /// The [`MagicSock`] continuously monitors the direct addresses, the network addresses
+    /// it might be able to be contacted on, for changes.  Whenever changes are detected
+    /// this stream will yield a new list of addresses.
     ///
     /// Upon the first creation on the [`MagicSock`] it may not yet have completed a first
-    /// local endpoint discovery, in this case the first item of the stream will not be
-    /// immediately available.  Once this first set of local endpoints are discovered the
-    /// stream will always return the first set of endpoints immediately, which are the most
-    /// recently discovered endpoints.
+    /// direct addresses discovery, in this case the first item of the stream will not be
+    /// immediately available.  Once this first set of direct addresses are discovered the
+    /// stream will always return the first set of addresses immediately, which are the most
+    /// recently discovered addresses.
     ///
-    /// To get the current endpoints, drop the stream after the first item was received.
-    pub fn local_endpoints(&self) -> LocalEndpointsStream {
-        LocalEndpointsStream {
+    /// To get the current direct addresses, drop the stream after the first item was
+    /// received.
+    pub(crate) fn direct_addresses(&self) -> DirectAddrsStream {
+        DirectAddrsStream {
             initial: Some(self.endpoints.get()),
             inner: self.endpoints.watch().into_stream(),
         }
@@ -329,7 +329,7 @@ impl MagicSock {
     ///
     /// Note that this can be used to wait for the initial home relay to be known. If the home
     /// relay is known at this point, it will be the first item in the stream.
-    pub fn watch_home_relay(&self) -> impl Stream<Item = RelayUrl> {
+    pub(crate) fn watch_home_relay(&self) -> impl Stream<Item = RelayUrl> {
         let current = futures_lite::stream::iter(self.my_relay());
         let changes = self
             .my_relay
@@ -352,7 +352,7 @@ impl MagicSock {
     ///
     /// Will return an error if there is no address information known about the
     /// given `node_id`.
-    pub fn conn_type_stream(&self, node_id: NodeId) -> Result<ConnectionTypeStream> {
+    pub(crate) fn conn_type_stream(&self, node_id: NodeId) -> Result<ConnectionTypeStream> {
         self.node_map.conn_type_stream(node_id)
     }
 
@@ -360,7 +360,7 @@ impl MagicSock {
     ///
     /// Note this is a user-facing API and does not wrap the [`SocketAddr`] in a
     /// [`QuicMappedAddr`] as we do internally.
-    pub fn get_mapping_addr(&self, node_id: NodeId) -> Option<SocketAddr> {
+    pub(crate) fn get_mapping_addr(&self, node_id: NodeId) -> Option<SocketAddr> {
         self.node_map
             .get_quic_mapped_addr_for_node_key(node_id)
             .map(|a| a.0)
@@ -390,7 +390,7 @@ impl MagicSock {
     /// Updates our direct addresses.
     ///
     /// On a successful update, our address is published to discovery.
-    pub(super) fn update_endpoints(&self, eps: Vec<config::Endpoint>) {
+    pub(super) fn update_endpoints(&self, eps: Vec<DirectAddr>) {
         let updated = self.endpoints.update(DiscoveredEndpoints::new(eps)).is_ok();
         if updated {
             let eps = self.endpoints.read();
@@ -402,17 +402,17 @@ impl MagicSock {
     }
 
     /// Get a reference to the DNS resolver used in this [`MagicSock`].
-    pub fn dns_resolver(&self) -> &DnsResolver {
+    pub(crate) fn dns_resolver(&self) -> &DnsResolver {
         &self.dns_resolver
     }
 
     /// Reference to optional discovery service
-    pub fn discovery(&self) -> Option<&dyn Discovery> {
+    pub(crate) fn discovery(&self) -> Option<&dyn Discovery> {
         self.discovery.as_ref().map(Box::as_ref)
     }
 
     /// Call to notify the system of potential network changes.
-    pub async fn network_change(&self) {
+    pub(crate) async fn network_change(&self) {
         self.actor_sender
             .send(ActorMessage::NetworkChange)
             .await
@@ -1488,7 +1488,7 @@ impl Handle {
     /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
     /// indefinitely after this call.
     #[instrument(skip_all, fields(me = %self.msock.me))]
-    pub async fn close(&self) -> Result<()> {
+    pub(crate) async fn close(&self) -> Result<()> {
         if self.msock.is_closed() {
             return Ok(());
         }
@@ -1523,13 +1523,13 @@ impl Handle {
 
 /// Stream returning local endpoints as they change.
 #[derive(Debug)]
-pub struct LocalEndpointsStream {
+pub struct DirectAddrsStream {
     initial: Option<DiscoveredEndpoints>,
     inner: watchable::WatcherStream<DiscoveredEndpoints>,
 }
 
-impl Stream for LocalEndpointsStream {
-    type Item = Vec<config::Endpoint>;
+impl Stream for DirectAddrsStream {
+    type Item = Vec<DirectAddr>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = &mut *self;
@@ -1612,7 +1612,7 @@ enum DiscoBoxError {
 type RelayRecvResult = Result<(PublicKey, quinn_udp::RecvMeta, Bytes), io::Error>;
 
 /// Reports whether x and y represent the same set of endpoints. The order doesn't matter.
-fn endpoint_sets_equal(xs: &[config::Endpoint], ys: &[config::Endpoint]) -> bool {
+fn endpoint_sets_equal(xs: &[DirectAddr], ys: &[DirectAddr]) -> bool {
     if xs.is_empty() && ys.is_empty() {
         return true;
     }
@@ -1628,7 +1628,7 @@ fn endpoint_sets_equal(xs: &[config::Endpoint], ys: &[config::Endpoint]) -> bool
             return true;
         }
     }
-    let mut m: HashMap<&config::Endpoint, usize> = HashMap::new();
+    let mut m: HashMap<&DirectAddr, usize> = HashMap::new();
     for x in xs {
         *m.entry(x).or_default() |= 1;
     }
@@ -1697,7 +1697,7 @@ struct Actor {
     /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
-    net_info_last: Option<config::NetInfo>,
+    net_info_last: Option<NetInfo>,
     /// Path where connection info from [`MagicSock::node_map`] is persisted.
     nodes_path: Option<PathBuf>,
 
@@ -1992,7 +1992,7 @@ impl Actor {
                 #[allow(clippy::map_entry)]
                 if !$already.contains_key(&$ipp) {
                     $already.insert($ipp, $et);
-                    $eps.push(config::Endpoint {
+                    $eps.push(DirectAddr {
                         addr: $ipp,
                         typ: $et,
                     });
@@ -2003,13 +2003,13 @@ impl Actor {
         let maybe_port_mapped = *portmap_watcher.borrow();
 
         if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
-            add_addr!(already, eps, portmap_ext, config::EndpointType::Portmapped);
+            add_addr!(already, eps, portmap_ext, DirectAddrType::Portmapped);
             self.set_net_info_have_port_map().await;
         }
 
         if let Some(nr) = nr {
             if let Some(global_v4) = nr.global_v4 {
-                add_addr!(already, eps, global_v4.into(), config::EndpointType::Stun);
+                add_addr!(already, eps, global_v4.into(), DirectAddrType::Stun);
 
                 // If they're behind a hard NAT and are using a fixed
                 // port locally, assume they might've added a static
@@ -2019,16 +2019,11 @@ impl Actor {
                 if nr.mapping_varies_by_dest_ip.unwrap_or_default() && port != 0 {
                     let mut addr = global_v4;
                     addr.set_port(port);
-                    add_addr!(
-                        already,
-                        eps,
-                        addr.into(),
-                        config::EndpointType::Stun4LocalPort
-                    );
+                    add_addr!(already, eps, addr.into(), DirectAddrType::Stun4LocalPort);
                 }
             }
             if let Some(global_v6) = nr.global_v6 {
-                add_addr!(already, eps, global_v6.into(), config::EndpointType::Stun);
+                add_addr!(already, eps, global_v6.into(), DirectAddrType::Stun);
             }
         }
         let local_addr_v4 = self.pconn4.local_addr().ok();
@@ -2086,7 +2081,7 @@ impl Actor {
                                     already,
                                     eps,
                                     SocketAddr::new(ip, port),
-                                    config::EndpointType::Local
+                                    DirectAddrType::Local
                                 );
                             }
                         }
@@ -2096,7 +2091,7 @@ impl Actor {
                                     already,
                                     eps,
                                     SocketAddr::new(ip, port),
-                                    config::EndpointType::Local
+                                    DirectAddrType::Local
                                 );
                             }
                         }
@@ -2108,7 +2103,7 @@ impl Actor {
                 if let Some(addr) = local_addr_v4 {
                     // Our local endpoint is bound to a particular address.
                     // Do not offer addresses on other local interfaces.
-                    add_addr!(already, eps, addr, config::EndpointType::Local);
+                    add_addr!(already, eps, addr, DirectAddrType::Local);
                 }
             }
 
@@ -2116,7 +2111,7 @@ impl Actor {
                 if let Some(addr) = local_addr_v6 {
                     // Our local endpoint is bound to a particular address.
                     // Do not offer addresses on other local interfaces.
-                    add_addr!(already, eps, addr, config::EndpointType::Local);
+                    add_addr!(already, eps, addr, DirectAddrType::Local);
                 }
             }
 
@@ -2167,7 +2162,7 @@ impl Actor {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn call_net_info_callback(&mut self, ni: config::NetInfo) {
+    async fn call_net_info_callback(&mut self, ni: NetInfo) {
         if let Some(ref net_info_last) = self.net_info_last {
             if ni.basically_equal(net_info_last) {
                 return;
@@ -2242,7 +2237,7 @@ impl Actor {
             self.no_v4_send = !r.ipv4_can_send;
 
             let have_port_map = self.port_mapper.watch_external_address().borrow().is_some();
-            let mut ni = config::NetInfo {
+            let mut ni = NetInfo {
                 relay_latency: Default::default(),
                 mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
                 hair_pinning: r.hair_pinning,
@@ -2254,7 +2249,6 @@ impl Actor {
                 working_icmp_v4: r.icmpv4,
                 working_icmp_v6: r.icmpv6,
                 preferred_relay: r.preferred_relay.clone(),
-                link_type: None,
             };
             for (rid, d) in r.relay_v4_latency.iter() {
                 ni.relay_latency
@@ -2430,7 +2424,7 @@ fn bind(port: u16) -> Result<(UdpConn, Option<UdpConn>)> {
 struct DiscoveredEndpoints {
     /// Records the endpoints found during the previous
     /// endpoint discovery. It's used to avoid duplicate endpoint change notifications.
-    last_endpoints: Vec<config::Endpoint>,
+    last_endpoints: Vec<DirectAddr>,
 
     /// The last time the endpoints were updated, even if there was no change.
     last_endpoints_time: Option<Instant>,
@@ -2443,18 +2437,18 @@ impl PartialEq for DiscoveredEndpoints {
 }
 
 impl DiscoveredEndpoints {
-    fn new(endpoints: Vec<config::Endpoint>) -> Self {
+    fn new(endpoints: Vec<DirectAddr>) -> Self {
         Self {
             last_endpoints: endpoints,
             last_endpoints_time: Some(Instant::now()),
         }
     }
 
-    fn into_iter(self) -> impl Iterator<Item = config::Endpoint> {
+    fn into_iter(self) -> impl Iterator<Item = DirectAddr> {
         self.last_endpoints.into_iter()
     }
 
-    fn iter(&self) -> impl Iterator<Item = &config::Endpoint> + '_ {
+    fn iter(&self) -> impl Iterator<Item = &DirectAddr> + '_ {
         self.last_endpoints.iter()
     }
 
@@ -2510,7 +2504,7 @@ fn split_packets(transmits: &[quinn_udp::Transmit]) -> RelayContents {
 
 /// Splits a packet into its component items.
 #[derive(Debug)]
-pub(super) struct PacketSplitIter {
+struct PacketSplitIter {
     bytes: Bytes,
 }
 
@@ -2518,7 +2512,7 @@ impl PacketSplitIter {
     /// Create a new PacketSplitIter from a packet.
     ///
     /// Returns an error if the packet is too big.
-    pub fn new(bytes: Bytes) -> Self {
+    fn new(bytes: Bytes) -> Self {
         Self { bytes }
     }
 
@@ -2614,8 +2608,133 @@ fn disco_message_sent(msg: &disco::Message) {
     }
 }
 
+/// A *direct address* on which an iroh-node might be contactable.
+///
+/// Direct addresses are UDP socket addresses on which an iroh-net node could potentially be
+/// contacted.  These can come from various sources depending on the network topology of the
+/// iroh-net node, see [`DirectAddrType`] for the several kinds of sources.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct DirectAddr {
+    /// The address.
+    pub addr: SocketAddr,
+    /// The origin of this direct address.
+    pub typ: DirectAddrType,
+}
+
+/// The type of direct address.
+///
+/// These are the various sources or origins from which an iroh-net node might have found a
+/// possible [`DirectAddr`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum DirectAddrType {
+    /// Not yet determined..
+    Unknown,
+    /// A locally bound socket address.
+    Local,
+    /// Public internet address discovered via STUN.
+    ///
+    /// When possible an iroh-net node will perform STUN to discover which is the address
+    /// from which it sends data on the public internet.  This can be different from locally
+    /// bound addresses when the node is on a local network wich performs NAT or similar.
+    Stun,
+    /// An address assigned by the router using port mapping.
+    ///
+    /// When possible an iroh-net node will request a port mapping from the local router to
+    /// get a publicly routable direct address.
+    Portmapped,
+    /// Hard NAT: STUN'ed IPv4 address + local fixed port.
+    ///
+    /// It is possible to configure iroh-net to bound to a specific port and independently
+    /// configure the router to forward this port to the iroh-net node.  This indicates a
+    /// situation like this, which still uses STUN to discover the public address.
+    Stun4LocalPort,
+}
+
+impl Display for DirectAddrType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DirectAddrType::Unknown => write!(f, "?"),
+            DirectAddrType::Local => write!(f, "local"),
+            DirectAddrType::Stun => write!(f, "stun"),
+            DirectAddrType::Portmapped => write!(f, "portmap"),
+            DirectAddrType::Stun4LocalPort => write!(f, "stun4localport"),
+        }
+    }
+}
+
+/// Contains information about the host's network state.
+#[derive(Debug, Clone, PartialEq)]
+struct NetInfo {
+    /// Says whether the host's NAT mappings vary based on the destination IP.
+    mapping_varies_by_dest_ip: Option<bool>,
+
+    /// If their router does hairpinning. It reports true even if there's no NAT involved.
+    hair_pinning: Option<bool>,
+
+    /// Whether the host has IPv6 internet connectivity.
+    working_ipv6: Option<bool>,
+
+    /// Whether the OS supports IPv6 at all, regardless of whether IPv6 internet connectivity is available.
+    os_has_ipv6: Option<bool>,
+
+    /// Whether the host has UDP internet connectivity.
+    working_udp: Option<bool>,
+
+    /// Whether ICMPv4 works, `None` means not checked.
+    working_icmp_v4: Option<bool>,
+
+    /// Whether ICMPv6 works, `None` means not checked.
+    working_icmp_v6: Option<bool>,
+
+    /// Whether we have an existing portmap open (UPnP, PMP, or PCP).
+    have_port_map: bool,
+
+    /// Probe indicating the presence of port mapping protocols on the LAN.
+    portmap_probe: Option<portmapper::ProbeOutput>,
+
+    /// This node's preferred relay server for incoming traffic.
+    ///
+    /// The node might be be temporarily connected to multiple relay servers (to send to
+    /// other nodes) but this is the relay on which you can always contact this node.  Also
+    /// known as home relay.
+    preferred_relay: Option<RelayUrl>,
+
+    /// The fastest recent time to reach various relay STUN servers, in seconds.
+    ///
+    /// This should only be updated rarely, or when there's a
+    /// material change, as any change here also gets uploaded to the control plane.
+    relay_latency: BTreeMap<String, f64>,
+}
+
+impl NetInfo {
+    /// Checks if this is probably still the same network as *other*.
+    ///
+    /// This tries to compare the network situation, without taking into account things
+    /// expected to change a little like e.g. latency to the relay server.
+    fn basically_equal(&self, other: &Self) -> bool {
+        let eq_icmp_v4 = match (self.working_icmp_v4, other.working_icmp_v4) {
+            (Some(slf), Some(other)) => slf == other,
+            _ => true, // ignore for comparison if only one report had this info
+        };
+        let eq_icmp_v6 = match (self.working_icmp_v6, other.working_icmp_v6) {
+            (Some(slf), Some(other)) => slf == other,
+            _ => true, // ignore for comparison if only one report had this info
+        };
+        self.mapping_varies_by_dest_ip == other.mapping_varies_by_dest_ip
+            && self.hair_pinning == other.hair_pinning
+            && self.working_ipv6 == other.working_ipv6
+            && self.os_has_ipv6 == other.os_has_ipv6
+            && self.working_udp == other.working_udp
+            && eq_icmp_v4
+            && eq_icmp_v6
+            && self.have_port_map == other.have_port_map
+            && self.portmap_probe == other.portmap_probe
+            && self.preferred_relay == other.preferred_relay
+    }
+}
+
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use anyhow::Context;
     use futures_lite::StreamExt;
     use iroh_test::CallOnDrop;
@@ -2688,7 +2807,7 @@ pub(crate) mod tests {
     #[instrument(skip_all)]
     async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<CallOnDrop> {
         /// Registers endpoint addresses of a node to all other nodes.
-        fn update_eps(stacks: &[MagicStack], my_idx: usize, new_eps: Vec<config::Endpoint>) {
+        fn update_direct_addrs(stacks: &[MagicStack], my_idx: usize, new_addrs: Vec<DirectAddr>) {
             let me = &stacks[my_idx];
             for (i, m) in stacks.iter().enumerate() {
                 if i == my_idx {
@@ -2699,7 +2818,7 @@ pub(crate) mod tests {
                     node_id: me.public(),
                     info: crate::AddrInfo {
                         relay_url: None,
-                        direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
+                        direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
                     },
                 };
                 m.endpoint.magic_sock().add_test_addr(addr);
@@ -2714,10 +2833,10 @@ pub(crate) mod tests {
             let stacks = stacks.clone();
             tasks.spawn(async move {
                 let me = m.endpoint.node_id().fmt_short();
-                let mut stream = m.endpoint.local_endpoints();
+                let mut stream = m.endpoint.direct_addresses();
                 while let Some(new_eps) = stream.next().await {
                     info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, new_eps);
-                    update_eps(&stacks, my_idx, new_eps);
+                    update_direct_addrs(&stacks, my_idx, new_eps);
                 }
             });
         }
@@ -3383,13 +3502,13 @@ pub(crate) mod tests {
         let ms = Handle::new(Default::default()).await.unwrap();
 
         // See if we can get endpoints.
-        let mut eps0 = ms.local_endpoints().next().await.unwrap();
+        let mut eps0 = ms.direct_addresses().next().await.unwrap();
         eps0.sort();
         println!("{eps0:?}");
         assert!(!eps0.is_empty());
 
         // Getting the endpoints again immediately should give the same results.
-        let mut eps1 = ms.local_endpoints().next().await.unwrap();
+        let mut eps1 = ms.direct_addresses().next().await.unwrap();
         eps1.sort();
         println!("{eps1:?}");
         assert_eq!(eps0, eps1);

@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
     println!("node listening addresses:");
 
     let local_addrs = endpoint
-        .local_endpoints()
+        .direct_addresses()
         .next()
         .await
         .context("no endpoints")?
@@ -66,7 +66,8 @@ async fn main() -> anyhow::Result<()> {
         let conn = conn.await?;
         let node_id = iroh_net::endpoint::get_remote_node_id(&conn)?;
         info!(
-            "new connection from {node_id} with ALPN {alpn} (coming from {})",
+            "new connection from {node_id} with ALPN {} (coming from {})",
+            String::from_utf8_lossy(&alpn),
             conn.remote_address()
         );
 

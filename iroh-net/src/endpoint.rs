@@ -47,8 +47,8 @@ pub use quinn::{
 };
 
 pub use super::magicsock::{
-    ConnectionInfo, ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo,
-    LocalEndpointsStream,
+    ConnectionInfo, ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo,
+    DirectAddrType, DirectAddrsStream,
 };
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
@@ -590,10 +590,10 @@ impl Endpoint {
     ///
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and local IP endpoints
     /// as they would be returned by [`Endpoint::home_relay`] and
-    /// [`Endpoint::local_endpoints`].
+    /// [`Endpoint::direct_addresses`].
     pub async fn node_addr(&self) -> Result<NodeAddr> {
         let addrs = self
-            .local_endpoints()
+            .direct_addresses()
             .next()
             .await
             .ok_or(anyhow!("No IP endpoints found"))?;
@@ -660,13 +660,13 @@ impl Endpoint {
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
     /// let mep =  Endpoint::builder().bind(0).await.unwrap();
-    /// let _endpoints = mep.local_endpoints().next().await;
+    /// let _addrs = mep.direct_addresses().next().await;
     /// # });
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    pub fn local_endpoints(&self) -> LocalEndpointsStream {
-        self.msock.local_endpoints()
+    pub fn direct_addresses(&self) -> DirectAddrsStream {
+        self.msock.direct_addresses()
     }
 
     /// Returns the local socket addresses on which the underlying sockets are bound.
@@ -931,11 +931,11 @@ impl Connecting {
     /// Extracts the ALPN protocol from the peer's handshake data.
     // Note, we could totally provide this method to be on a Connection as well.  But we'd
     // need to wrap Connection too.
-    pub async fn alpn(&mut self) -> Result<String> {
+    pub async fn alpn(&mut self) -> Result<Vec<u8>> {
         let data = self.handshake_data().await?;
         match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
             Ok(data) => match data.protocol {
-                Some(protocol) => std::string::String::from_utf8(protocol).map_err(Into::into),
+                Some(protocol) => Ok(protocol),
                 None => bail!("no ALPN protocol available"),
             },
             Err(_) => bail!("unknown handshake type"),
@@ -1388,7 +1388,7 @@ mod tests {
             let conn = incoming.await.unwrap();
             let node_id = get_remote_node_id(&conn).unwrap();
             assert_eq!(node_id, src);
-            assert_eq!(alpn.as_bytes(), TEST_ALPN);
+            assert_eq!(alpn, TEST_ALPN);
             let (mut send, mut recv) = conn.accept_bi().await.unwrap();
             let m = recv.read_to_end(100).await.unwrap();
             assert_eq!(m, b"hello");
