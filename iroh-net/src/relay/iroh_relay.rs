@@ -37,7 +37,7 @@ use metrics::StunMetrics;
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
 const NO_CONTENT_RESPONSE_HEADER: &str = "X-Tailscale-Response";
 const NOTFOUND: &[u8] = b"Not Found";
-const RELAY_DISABLED: &[u8] = b"derp server disabled";
+const RELAY_DISABLED: &[u8] = b"relay server disabled";
 const ROBOTS_TXT: &[u8] = b"User-agent: *\nDisallow: /\n";
 const INDEX: &[u8] = br#"<html><body>
 <h1>Iroh Relay</h1>
