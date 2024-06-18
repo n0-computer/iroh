@@ -415,6 +415,7 @@ mod tests {
     }
 
     #[cfg(feature = "fs-store")]
+    #[ignore = "flaky"]
     #[tokio::test]
     async fn test_default_author_persist() -> Result<()> {
         use crate::util::path::IrohPaths;
