@@ -65,7 +65,7 @@ fn body_empty() -> BytesBody {
 /// If not used dummy ones need to be provided, e.g. `ServerConfig::<(), ()>::default()`.
 #[derive(Debug, Default)]
 pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
-    /// Configuration for the DERP server, disabled if `None`.
+    /// Configuration for the Relay server, disabled if `None`.
     pub relay: Option<RelayConfig<EC, EA>>,
     /// Configuration for the STUN server, disabled if `None`.
     pub stun: Option<StunConfig>,
