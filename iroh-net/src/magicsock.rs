@@ -2670,10 +2670,11 @@ struct NetInfo {
     /// Probe indicating the presence of port mapping protocols on the LAN.
     portmap_probe: Option<portmapper::ProbeOutput>,
 
-    /// This node's preferred relay server for incoming traffic. The node might be be temporarily
-    /// connected to multiple relay servers (to send to other nodes)
-    /// but PreferredRelay is the instance number that the node
-    /// subscribes to traffic at. Zero means disconnected or unknown.
+    /// This node's preferred relay server for incoming traffic.
+    ///
+    /// The node might be be temporarily connected to multiple relay servers (to send to
+    /// other nodes) but this is the relay on which you can always contact this node.  Also
+    /// known as home relay.
     preferred_relay: Option<RelayUrl>,
 
     /// The fastest recent time to reach various relay STUN servers, in seconds.
@@ -2684,7 +2685,10 @@ struct NetInfo {
 }
 
 impl NetInfo {
-    /// reports whether `self` and `other` are basically equal, ignoring changes in relay ServerLatency & RelayLatency.
+    /// Checks if this is probably still the same network as *other*.
+    ///
+    /// This tries to compare the network situation, without taking into account things
+    /// expected to change a little like e.g. latency to the relay server.
     pub fn basically_equal(&self, other: &Self) -> bool {
         let eq_icmp_v4 = match (self.working_icmp_v4, other.working_icmp_v4) {
             (Some(slf), Some(other)) => slf == other,
