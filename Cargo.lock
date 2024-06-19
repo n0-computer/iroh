@@ -1507,6 +1507,7 @@ checksum = "9fc0510504f03c51ada170672ac806f1f105a88aa97a5281117e1ddc3368e51a"
 [[package]]
 name = "fastwebsockets"
 version = "0.7.2"
+source = "git+https://github.com/denoland/fastwebsockets#efc0788ec512a2634253bf5d5d41005fa76413cd"
 dependencies = [
  "base64 0.21.7",
  "bytes",
