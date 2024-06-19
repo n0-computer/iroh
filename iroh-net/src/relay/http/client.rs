@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
+use fastwebsockets::WebSocket;
 use futures_lite::future::Boxed as BoxFuture;
 use http_body_util::Empty;
 use hyper::body::Incoming;
@@ -27,6 +28,7 @@ use url::Url;
 use crate::dns::{DnsResolver, ResolverExt};
 use crate::key::{PublicKey, SecretKey};
 use crate::relay::http::streams::{downcast_upgrade, MaybeTlsStream};
+use crate::relay::http::WEBSOCKET_UPGRADE_PROTOCOL;
 use crate::relay::RelayUrl;
 use crate::relay::{
     client::Client as RelayClient, client::ClientBuilder as RelayClientBuilder,
@@ -625,6 +627,9 @@ impl Actor {
         let (reader, writer) =
             downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
 
+        let (reader, writer) =
+            fastwebsockets::after_handshake_split(reader, writer, fastwebsockets::Role::Client);
+
         let (relay_client, receiver) =
             RelayClientBuilder::new(self.secret_key.clone(), local_addr, reader, writer)
                 .build()
@@ -663,7 +668,12 @@ impl Actor {
         debug!("Sending upgrade request");
         let req = Request::builder()
             .uri("/derp")
-            .header(UPGRADE, super::HTTP_UPGRADE_PROTOCOL)
+            .header(UPGRADE, WEBSOCKET_UPGRADE_PROTOCOL)
+            .header(
+                "Sec-WebSocket-Key",
+                fastwebsockets::handshake::generate_key(),
+            )
+            .header("Sec-WebSocket-Version", "13")
             .body(http_body_util::Empty::<hyper::body::Bytes>::new())?;
         request_sender.send_request(req).await.map_err(From::from)
     }

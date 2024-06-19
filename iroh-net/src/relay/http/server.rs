@@ -18,12 +18,15 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, info_span, Instrument};
+use tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
+use tungstenite::handshake::derive_accept_key;
 
 use crate::key::SecretKey;
 use crate::relay::http::HTTP_UPGRADE_PROTOCOL;
 use crate::relay::server::{ClientConnHandler, MaybeTlsStream};
 use crate::relay::MaybeTlsStreamServer;
+
+use super::WEBSOCKET_UPGRADE_PROTOCOL;
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -54,20 +57,47 @@ fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes)> {
     }
 }
 
-/// The server HTTP handler to do HTTP upgrades
-async fn relay_connection_handler(
-    conn_handler: &ClientConnHandler,
-    upgraded: Upgraded,
-) -> Result<()> {
-    debug!("relay_connection upgraded");
-    let (io, read_buf) = downcast_upgrade(upgraded)?;
-    ensure!(
-        read_buf.is_empty(),
-        "can not deal with buffered data yet: {:?}",
-        read_buf
-    );
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Protocol {
+    Relay,
+    Websocket,
+}
 
-    conn_handler.accept(io).await
+impl Protocol {
+    pub const fn upgrade_header(&self) -> &'static str {
+        match self {
+            Protocol::Relay => HTTP_UPGRADE_PROTOCOL,
+            Protocol::Websocket => WEBSOCKET_UPGRADE_PROTOCOL,
+        }
+    }
+
+    pub fn parse_header(header: &HeaderValue) -> Option<Self> {
+        let header_bytes = header.as_bytes();
+        if header_bytes == Protocol::Relay.upgrade_header().as_bytes() {
+            Some(Protocol::Relay)
+        } else if header_bytes == Protocol::Websocket.upgrade_header().as_bytes() {
+            Some(Protocol::Websocket)
+        } else {
+            None
+        }
+    }
+
+    /// The server HTTP handler to do HTTP upgrades
+    async fn relay_connection_handler(
+        &self,
+        conn_handler: &ClientConnHandler,
+        upgraded: Upgraded,
+    ) -> Result<()> {
+        debug!(protocol = ?self, "relay_connection upgraded");
+        let (io, read_buf) = downcast_upgrade(upgraded)?;
+        ensure!(
+            read_buf.is_empty(),
+            "can not deal with buffered data yet: {:?}",
+            read_buf
+        );
+
+        conn_handler.accept(*self, io).await
+    }
 }
 
 /// The Relay HTTP server.
@@ -410,13 +440,48 @@ impl Service<Request<Incoming>> for ClientConnHandler {
 
         async move {
             {
-                let mut res = builder.body(body_empty()).expect("valid body");
-
                 // Send a 400 to any request that doesn't have an `Upgrade` header.
-                if !req.headers().contains_key(UPGRADE) {
-                    *res.status_mut() = StatusCode::BAD_REQUEST;
-                    return Ok(res);
-                }
+                let Some(protocol) = req.headers().get(UPGRADE).and_then(Protocol::parse_header)
+                else {
+                    return Ok(builder
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(body_empty())
+                        .expect("valid body"));
+                };
+
+                let websocket_headers = if protocol == Protocol::Websocket {
+                    let Some(key) = req.headers().get("Sec-WebSocket-Key").cloned() else {
+                        warn!("missing header Sec-WebSocket-Key for websocket relay protocol");
+                        return Ok(builder
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(body_empty())
+                            .expect("valid body"));
+                    };
+
+                    let Some(version) = req.headers().get("Sec-WebSocket-Version").cloned() else {
+                        warn!("missing header Sec-WebSocket-Version for websocket relay protocol");
+                        return Ok(builder
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(body_empty())
+                            .expect("valid body"));
+                    };
+
+                    if version.as_bytes() != b"13" {
+                        warn!("invalid header Sec-WebSocket-Version: {:?}", version);
+                        return Ok(builder
+                            .status(StatusCode::BAD_REQUEST)
+                            // It's convention to send back the version(s) we *do* support
+                            .header("Sec-WebSocket-Version", "13")
+                            .body(body_empty())
+                            .expect("valid body"));
+                    }
+
+                    Some((key, version))
+                } else {
+                    None
+                };
+
+                debug!("upgrading protocol: {:?}", protocol);
 
                 // Setup a future that will eventually receive the upgraded
                 // connection and talk a new protocol, and spawn the future
@@ -429,31 +494,38 @@ impl Service<Request<Incoming>> for ClientConnHandler {
                     async move {
                         match hyper::upgrade::on(&mut req).await {
                             Ok(upgraded) => {
-                                if let Err(e) =
-                                    relay_connection_handler(&closure_conn_handler, upgraded).await
+                                if let Err(e) = protocol
+                                    .relay_connection_handler(&closure_conn_handler, upgraded)
+                                    .await
                                 {
-                                    tracing::warn!(
+                                    warn!(
                                         "upgrade to \"{HTTP_UPGRADE_PROTOCOL}\": io error: {:?}",
                                         e
                                     );
                                 } else {
-                                    tracing::debug!(
-                                        "upgrade to \"{HTTP_UPGRADE_PROTOCOL}\" success"
-                                    );
+                                    debug!("upgrade to \"{HTTP_UPGRADE_PROTOCOL}\" success");
                                 };
                             }
-                            Err(e) => tracing::warn!("upgrade error: {:?}", e),
+                            Err(e) => warn!("upgrade error: {:?}", e),
                         }
                     }
-                    .instrument(tracing::debug_span!("handler")),
+                    .instrument(debug_span!("handler")),
                 );
 
                 // Now return a 101 Response saying we agree to the upgrade to the
                 // HTTP_UPGRADE_PROTOCOL
-                *res.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
-                res.headers_mut()
-                    .insert(UPGRADE, HeaderValue::from_static(HTTP_UPGRADE_PROTOCOL));
-                Ok(res)
+                builder = builder
+                    .status(StatusCode::SWITCHING_PROTOCOLS)
+                    .header(UPGRADE, HeaderValue::from_static(protocol.upgrade_header()));
+
+                if let Some((key, _version)) = websocket_headers {
+                    Ok(builder
+                        .header("Sec-WebSocket-Accept", &derive_accept_key(key.as_bytes()))
+                        .body(body_full("switching to websocket protocol"))
+                        .expect("valid body"))
+                } else {
+                    Ok(builder.body(body_empty()).expect("valid body"))
+                }
             }
         }
         .boxed()

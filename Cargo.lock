@@ -1505,6 +1505,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9fc0510504f03c51ada170672ac806f1f105a88aa97a5281117e1ddc3368e51a"
 
 [[package]]
+name = "fastwebsockets"
+version = "0.7.2"
+dependencies = [
+ "base64 0.21.7",
+ "bytes",
+ "http-body-util",
+ "hyper 1.3.1",
+ "hyper-util",
+ "pin-project",
+ "rand",
+ "sha1",
+ "simdutf8",
+ "thiserror",
+ "tokio",
+ "utf-8",
+]
+
+[[package]]
 name = "fd-lock"
 version = "3.0.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2426,13 +2444,13 @@ dependencies = [
  "hex",
  "indicatif",
  "iroh",
- "iroh-base",
+ "iroh-base 0.18.0",
  "iroh-blobs",
  "iroh-docs",
  "iroh-gossip",
  "iroh-io",
- "iroh-metrics",
- "iroh-net",
+ "iroh-metrics 0.18.0",
+ "iroh-net 0.18.0",
  "iroh-quinn",
  "iroh-test",
  "num_cpus",
@@ -2491,6 +2509,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-base"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c13afc5b57e7204f74df49d1ce73c67d0e9d2a1b588a2985247af52c047ca964"
+dependencies = [
+ "aead",
+ "anyhow",
+ "crypto_box",
+ "data-encoding",
+ "derive_more",
+ "ed25519-dalek",
+ "getrandom",
+ "hex",
+ "iroh-blake3",
+ "once_cell",
+ "postcard",
+ "rand",
+ "rand_core",
+ "serde",
+ "serde-error",
+ "ssh-key",
+ "thiserror",
+ "ttl_cache",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "iroh-blake3"
 version = "1.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2520,11 +2566,11 @@ dependencies = [
  "hashlink",
  "hex",
  "http-body 0.4.6",
- "iroh-base",
+ "iroh-base 0.18.0",
  "iroh-blobs",
  "iroh-io",
- "iroh-metrics",
- "iroh-net",
+ "iroh-metrics 0.18.0",
+ "iroh-net 0.18.0",
  "iroh-quinn",
  "iroh-test",
  "num_cpus",
@@ -2575,7 +2621,7 @@ dependencies = [
  "human-time",
  "indicatif",
  "iroh",
- "iroh-metrics",
+ "iroh-metrics 0.18.0",
  "nix 0.27.1",
  "parking_lot",
  "pkarr",
@@ -2623,8 +2669,8 @@ dependencies = [
  "hickory-resolver",
  "hickory-server",
  "http 1.1.0",
- "iroh-metrics",
- "iroh-net",
+ "iroh-metrics 0.18.0",
+ "iroh-net 0.18.0",
  "iroh-test",
  "lru",
  "mainline",
@@ -2666,12 +2712,12 @@ dependencies = [
  "futures-lite 2.3.0",
  "futures-util",
  "hex",
- "iroh-base",
+ "iroh-base 0.18.0",
  "iroh-blake3",
  "iroh-blobs",
  "iroh-gossip",
- "iroh-metrics",
- "iroh-net",
+ "iroh-metrics 0.18.0",
+ "iroh-net 0.18.0",
  "iroh-test",
  "lru",
  "num_enum",
@@ -2706,10 +2752,10 @@ dependencies = [
  "futures-lite 2.3.0",
  "genawaiter",
  "indexmap 2.2.6",
- "iroh-base",
+ "iroh-base 0.18.0",
  "iroh-blake3",
- "iroh-metrics",
- "iroh-net",
+ "iroh-metrics 0.18.0",
+ "iroh-net 0.18.0",
  "iroh-test",
  "postcard",
  "rand",
@@ -2756,6 +2802,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-metrics"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e767734a4d6b92e0ad0c74afd38240b82a37bdfeb0bb3141245c2a707efa4097"
+dependencies = [
+ "anyhow",
+ "erased_set",
+ "http-body-util",
+ "hyper 1.3.1",
+ "hyper-util",
+ "once_cell",
+ "prometheus-client",
+ "reqwest 0.12.4",
+ "serde",
+ "struct_iterable",
+ "time",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "iroh-net"
 version = "0.18.0"
 dependencies = [
@@ -2771,6 +2838,7 @@ dependencies = [
  "der",
  "derive_more",
  "duct",
+ "fastwebsockets",
  "flume",
  "futures-buffered",
  "futures-concurrency",
@@ -2787,8 +2855,9 @@ dependencies = [
  "hyper 1.3.1",
  "hyper-util",
  "igd-next",
- "iroh-base",
- "iroh-metrics",
+ "iroh-base 0.18.0",
+ "iroh-metrics 0.18.0",
+ "iroh-net 0.18.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "iroh-quinn",
  "iroh-quinn-proto",
  "iroh-quinn-udp",
@@ -2832,10 +2901,88 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.24.1",
  "tokio-rustls-acme",
+ "tokio-tungstenite",
  "tokio-util",
  "toml",
  "tracing",
  "tracing-subscriber",
+ "tungstenite",
+ "url",
+ "watchable",
+ "webpki-roots 0.25.4",
+ "windows 0.51.1",
+ "wmi",
+ "x509-parser 0.15.1",
+ "z32",
+]
+
+[[package]]
+name = "iroh-net"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76677befbb2d205510c9c18f5509157cb8d84cb345420e595f6612c9a1a6f88c"
+dependencies = [
+ "aead",
+ "anyhow",
+ "backoff",
+ "base64 0.22.1",
+ "bytes",
+ "der",
+ "derive_more",
+ "duct",
+ "flume",
+ "futures-buffered",
+ "futures-concurrency",
+ "futures-lite 2.3.0",
+ "futures-sink",
+ "futures-util",
+ "governor",
+ "hex",
+ "hickory-proto",
+ "hickory-resolver",
+ "hostname",
+ "http 1.1.0",
+ "http-body-util",
+ "hyper 1.3.1",
+ "hyper-util",
+ "igd-next",
+ "iroh-base 0.18.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "iroh-metrics 0.18.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "iroh-quinn",
+ "iroh-quinn-proto",
+ "iroh-quinn-udp",
+ "libc",
+ "netdev",
+ "netlink-packet-core",
+ "netlink-packet-route",
+ "netlink-sys",
+ "num_enum",
+ "once_cell",
+ "parking_lot",
+ "pin-project",
+ "pkarr",
+ "postcard",
+ "rand",
+ "rand_core",
+ "rcgen 0.12.1",
+ "reqwest 0.12.4",
+ "ring 0.17.8",
+ "rtnetlink",
+ "rustls 0.21.12",
+ "rustls-webpki 0.101.7",
+ "serde",
+ "smallvec",
+ "socket2",
+ "strum 0.26.2",
+ "stun-rs",
+ "surge-ping",
+ "thiserror",
+ "time",
+ "tokio",
+ "tokio-rustls 0.24.1",
+ "tokio-rustls-acme",
+ "tokio-util",
+ "tracing",
  "url",
  "watchable",
  "webpki-roots 0.25.4",
@@ -2853,7 +3000,7 @@ dependencies = [
  "bytes",
  "clap",
  "hdrhistogram",
- "iroh-net",
+ "iroh-net 0.18.0",
  "quinn",
  "rcgen 0.11.3",
  "rustls 0.21.12",
@@ -5086,6 +5233,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "simdutf8"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f27f6278552951f1f2b8cf9da965d10969b2efdea95a6ec47987ab46edfe263a"
+
+[[package]]
 name = "simple-dns"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5738,6 +5891,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-tungstenite"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6989540ced10490aaf14e6bad2e3d33728a2813310a0c71d1574304c49631cd"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5961,6 +6126,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "tungstenite"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e2e2ce1e47ed2994fd43b04c8f618008d4cabdd5ee34027cf14f9d918edd9c8"
+dependencies = [
+ "byteorder",
+ "bytes",
+ "data-encoding",
+ "http 1.1.0",
+ "httparse",
+ "log",
+ "rand",
+ "sha1",
+ "thiserror",
+ "utf-8",
+]
+
+[[package]]
 name = "typenum"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6069,6 +6252,12 @@ dependencies = [
  "percent-encoding",
  "serde",
 ]
+
+[[package]]
+name = "utf-8"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
 
 [[package]]
 name = "utf8parse"

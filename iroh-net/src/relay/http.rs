@@ -2,13 +2,14 @@
 //! upgrades.
 //!
 mod client;
-mod server;
+pub(crate) mod server;
 pub(crate) mod streams;
 
 pub use self::client::{Client, ClientBuilder, ClientError, ClientReceiver};
 pub use self::server::{Server, ServerBuilder, ServerHandle, TlsAcceptor, TlsConfig};
 
 pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
+pub(crate) const WEBSOCKET_UPGRADE_PROTOCOL: &str = "websocket";
 
 #[cfg(test)]
 mod tests {

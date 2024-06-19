@@ -4,13 +4,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, ensure, Result};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
+use fastwebsockets::{WebSocketError, WebSocketRead, WebSocketWrite};
 use futures_lite::StreamExt;
 use futures_sink::Sink;
 use futures_util::sink::SinkExt;
+use futures_util::TryFutureExt;
 use tokio::io::AsyncWrite;
 use tokio::sync::mpsc;
-use tokio_util::codec::{FramedRead, FramedWrite};
+use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
 use tracing::{debug, info_span, trace, Instrument};
 
 use super::codec::PER_CLIENT_READ_QUEUE_DEPTH;
@@ -24,6 +26,7 @@ use super::{
 };
 
 use crate::key::{PublicKey, SecretKey};
+use crate::relay::codec::write_frame_ws;
 use crate::util::AbortingJoinHandle;
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
@@ -190,7 +193,7 @@ fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
 }
 
 /// The kinds of messages we can send to the [`super::server::Server`]
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 enum ClientWriterMessage {
     /// Send a packet (addressed to the [`PublicKey`]) to the server
     Packet((PublicKey, Bytes)),
@@ -202,6 +205,8 @@ enum ClientWriterMessage {
     NotePreferred(bool),
     /// Shutdown the writer
     Shutdown,
+    /// Send arbitrary websocket frames
+    SendWsFrame(#[debug("fastwebsockets::Frame")] fastwebsockets::Frame<'static>),
 }
 
 /// Call [`ClientWriter::run`] to listen for messages to send to the client.
@@ -211,7 +216,7 @@ enum ClientWriterMessage {
 /// the server.
 struct ClientWriter<W: AsyncWrite + Unpin + Send + 'static> {
     recv_msgs: mpsc::Receiver<ClientWriterMessage>,
-    writer: FramedWrite<W, DerpCodec>,
+    writer: WebSocketWrite<W>,
     rate_limiter: Option<RateLimiter>,
 }
 
@@ -220,22 +225,23 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
         while let Some(msg) = self.recv_msgs.recv().await {
             match msg {
                 ClientWriterMessage::Packet((key, bytes)) => {
-                    send_packet(&mut self.writer, &self.rate_limiter, key, bytes).await?;
+                    send_packet_ws(&mut self.writer, &self.rate_limiter, key, bytes).await?;
                 }
                 ClientWriterMessage::Pong(data) => {
-                    write_frame(&mut self.writer, Frame::Pong { data }, None).await?;
-                    self.writer.flush().await?;
+                    write_frame_ws(&mut self.writer, Frame::Pong { data }, None).await?;
                 }
                 ClientWriterMessage::Ping(data) => {
-                    write_frame(&mut self.writer, Frame::Ping { data }, None).await?;
-                    self.writer.flush().await?;
+                    write_frame_ws(&mut self.writer, Frame::Ping { data }, None).await?;
                 }
                 ClientWriterMessage::NotePreferred(preferred) => {
-                    write_frame(&mut self.writer, Frame::NotePreferred { preferred }, None).await?;
-                    self.writer.flush().await?;
+                    write_frame_ws(&mut self.writer, Frame::NotePreferred { preferred }, None)
+                        .await?;
                 }
                 ClientWriterMessage::Shutdown => {
                     return Ok(());
+                }
+                ClientWriterMessage::SendWsFrame(frame) => {
+                    self.writer.write_frame(frame).await?;
                 }
             }
         }
@@ -247,8 +253,8 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
 /// The Builder returns a [`Client`] starts a [`ClientWriter`] run task.
 pub struct ClientBuilder {
     secret_key: SecretKey,
-    reader: RelayReader,
-    writer: FramedWrite<MaybeTlsStreamWriter, DerpCodec>,
+    reader: WebSocketRead<MaybeTlsStreamReader>,
+    writer: WebSocketWrite<MaybeTlsStreamWriter>,
     local_addr: SocketAddr,
 }
 
@@ -256,13 +262,13 @@ impl ClientBuilder {
     pub fn new(
         secret_key: SecretKey,
         local_addr: SocketAddr,
-        reader: MaybeTlsStreamReader,
-        writer: MaybeTlsStreamWriter,
+        reader: WebSocketRead<MaybeTlsStreamReader>,
+        writer: WebSocketWrite<MaybeTlsStreamWriter>,
     ) -> Self {
         Self {
             secret_key,
-            reader: FramedRead::new(reader, DerpCodec),
-            writer: FramedWrite::new(writer, DerpCodec),
+            reader,
+            writer,
             local_addr,
         }
     }
@@ -273,7 +279,7 @@ impl ClientBuilder {
             version: PROTOCOL_VERSION,
         };
         debug!("server_handshake: sending client_key: {:?}", &client_info);
-        crate::relay::codec::send_client_key(&mut self.writer, &self.secret_key, &client_info)
+        crate::relay::codec::send_client_key_ws(&mut self.writer, &self.secret_key, &client_info)
             .await?;
 
         // TODO: add some actual configuration
@@ -305,17 +311,45 @@ impl ClientBuilder {
         let (reader_sender, reader_recv) = mpsc::channel(PER_CLIENT_READ_QUEUE_DEPTH);
         let writer_sender2 = writer_sender.clone();
         let reader_task = tokio::task::spawn(async move {
+            let mut send_fn = |mut frame: fastwebsockets::Frame<'_>| {
+                frame.unmask();
+                let frame: fastwebsockets::Frame<'static> = fastwebsockets::Frame::new(
+                    frame.fin,
+                    frame.opcode,
+                    None,
+                    fastwebsockets::Payload::Owned(frame.payload.to_vec()),
+                );
+                writer_sender2
+                    .send(ClientWriterMessage::SendWsFrame(frame))
+                    .map_err(|e| WebSocketError::SendError(e.into()))
+            };
             loop {
-                let frame = tokio::time::timeout(CLIENT_RECV_TIMEOUT, self.reader.next()).await;
+                let frame =
+                    tokio::time::timeout(CLIENT_RECV_TIMEOUT, self.reader.read_frame(&mut send_fn))
+                        .await;
                 let res = match frame {
-                    Ok(Some(Ok(frame))) => process_incoming_frame(frame),
-                    Ok(Some(Err(err))) => {
-                        // Error processing incoming messages
-                        Err(err)
+                    Ok(Ok(frame)) => {
+                        // TODO(matheus23): Handle partial frames :S
+                        if frame.opcode != fastwebsockets::OpCode::Binary {
+                            tracing::warn!(?frame.opcode, "Ignoring frame with opcode != Binary");
+                            continue;
+                        } else {
+                            let mut bytes = BytesMut::new();
+                            bytes.extend_from_slice(frame.payload.as_ref()); // TODO(matheus23): Slow for now
+                            if let Ok(Some(frame)) = DerpCodec.decode(&mut bytes) {
+                                process_incoming_frame(frame)
+                            } else {
+                                Err(anyhow::anyhow!("Failed to read frame"))
+                            }
+                        }
                     }
-                    Ok(None) => {
+                    Ok(Err(WebSocketError::ConnectionClosed)) => {
                         // EOF
                         Err(anyhow::anyhow!("EOF: reader stream ended"))
+                    }
+                    Ok(Err(err)) => {
+                        // Error processing incoming messages
+                        Err(err.into())
                     }
                     Err(err) => {
                         // Timeout
@@ -415,6 +449,35 @@ pub enum ReceivedMessage {
         /// than a few seconds.
         try_for: Duration,
     },
+}
+
+pub(crate) async fn send_packet_ws<S: AsyncWrite + Unpin>(
+    writer: &mut WebSocketWrite<S>,
+    rate_limiter: &Option<RateLimiter>,
+    dst_key: PublicKey,
+    packet: Bytes,
+) -> Result<()> {
+    ensure!(
+        packet.len() <= MAX_PACKET_SIZE,
+        "packet too big: {}",
+        packet.len()
+    );
+
+    let frame = Frame::SendPacket { dst_key, packet };
+    if let Some(rate_limiter) = rate_limiter {
+        if rate_limiter.check_n(frame.len()).is_err() {
+            tracing::warn!("dropping send: rate limit reached");
+            return Ok(());
+        }
+    }
+
+    let mut bytes = BytesMut::new();
+    DerpCodec.encode(frame, &mut bytes)?;
+
+    let ws_frame = fastwebsockets::Frame::binary(fastwebsockets::Payload::Bytes(bytes));
+    writer.write_frame(ws_frame).await?;
+
+    Ok(())
 }
 
 pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(

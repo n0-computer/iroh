@@ -702,6 +702,7 @@ mod tests {
     use std::time::Duration;
 
     use bytes::Bytes;
+    use iroh_base::key::PublicKey;
     use iroh_base::node_addr::RelayUrl;
 
     use crate::relay::http::ClientBuilder;
@@ -869,6 +870,175 @@ mod tests {
 
         let (res, _) = client_a_receiver.recv().await.unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(b_key, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_a received unexpected message {res:?}");
+        }
+    }
+
+    /// Tests whether an old client can still talk to a new relay & another peer that's a new client.
+    ///
+    /// New relay means a relay that supports both the old "iroh derp http" protocol upgrade as well
+    /// as the "new" "websocket" protocol upgrade.
+    /// New client means a client that always upgrades using the "websocket" protocol upgrade.
+    ///
+    /// Old client means a client that always upgrades using the "iroh derp http" protocol.
+    #[tokio::test]
+    async fn test_new_relay_websocket_backwards_compat_old_new() {
+        let _guard = iroh_test::logging::setup();
+        let server = Server::spawn(ServerConfig::<(), ()> {
+            relay: Some(RelayConfig {
+                secret_key: SecretKey::generate(),
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                tls: None,
+                limits: Default::default(),
+            }),
+            stun: None,
+            metrics_addr: None,
+        })
+        .await
+        .unwrap();
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+
+        // set up client a
+        let a_secret_key = iroh_net_old::key::SecretKey::generate();
+        let a_key = a_secret_key.public();
+        let a_key_new = PublicKey::from_bytes(a_key.as_bytes()).unwrap();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_a, mut client_a_receiver) = iroh_net_old::relay::http::ClientBuilder::new(
+            relay_url.parse::<iroh_net_old::relay::RelayUrl>().unwrap(),
+        )
+        .build(a_secret_key, resolver);
+        let connect_client = client_a.clone();
+
+        // give the relay server some time to accept connections
+        if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
+            loop {
+                match connect_client.connect().await {
+                    Ok(_) => break,
+                    Err(err) => {
+                        warn!("client unable to connect to relay server: {err:#}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        })
+        .await
+        {
+            panic!("error connecting to relay server: {err:#}");
+        }
+
+        // set up client b
+        let b_secret_key = SecretKey::generate();
+        let b_key = b_secret_key.public();
+        let b_key_old = iroh_net_old::key::PublicKey::from_bytes(b_key.as_bytes()).unwrap();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_b, mut client_b_receiver) =
+            ClientBuilder::new(relay_url.parse::<RelayUrl>().unwrap())
+                .build(b_secret_key, resolver);
+        client_b.connect().await.unwrap();
+
+        // send message from a to b
+        let msg = Bytes::from("hello, b");
+        client_a.send(b_key_old, msg.clone()).await.unwrap();
+
+        let (res, _) = client_b_receiver.recv().await.unwrap().unwrap();
+        if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(a_key_new, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_b received unexpected message {res:?}");
+        }
+
+        // send message from b to a
+        let msg = Bytes::from("howdy, a");
+        client_b.send(a_key_new, msg.clone()).await.unwrap();
+
+        let (res, _) = client_a_receiver.recv().await.unwrap().unwrap();
+        if let iroh_net_old::relay::ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(b_key_old, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_a received unexpected message {res:?}");
+        }
+    }
+
+    /// Tests whether an old client can connect to another old client via a new relay.
+    ///
+    /// An old client is one that uses the "iroh derp http" http protocol upgrade.
+    /// A new relay is one that supports both this protocol and the "websocket" protocol upgrade.
+    #[tokio::test]
+    async fn test_new_relay_websocket_backwards_compat_old_old() {
+        let _guard = iroh_test::logging::setup();
+        let server = Server::spawn(ServerConfig::<(), ()> {
+            relay: Some(RelayConfig {
+                secret_key: SecretKey::generate(),
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                tls: None,
+                limits: Default::default(),
+            }),
+            stun: None,
+            metrics_addr: None,
+        })
+        .await
+        .unwrap();
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: iroh_net_old::relay::RelayUrl = relay_url.parse().unwrap();
+
+        // set up client a
+        let a_secret_key = iroh_net_old::key::SecretKey::generate();
+        let a_key = a_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_a, mut client_a_receiver) =
+            iroh_net_old::relay::http::ClientBuilder::new(relay_url.clone())
+                .build(a_secret_key, resolver);
+        let connect_client = client_a.clone();
+
+        // give the relay server some time to accept connections
+        if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
+            loop {
+                match connect_client.connect().await {
+                    Ok(_) => break,
+                    Err(err) => {
+                        warn!("client unable to connect to relay server: {err:#}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        })
+        .await
+        {
+            panic!("error connecting to relay server: {err:#}");
+        }
+
+        // set up client b
+        let b_secret_key = iroh_net_old::key::SecretKey::generate();
+        let b_key = b_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_b, mut client_b_receiver) =
+            iroh_net_old::relay::http::ClientBuilder::new(relay_url.clone())
+                .build(b_secret_key, resolver);
+        client_b.connect().await.unwrap();
+
+        // send message from a to b
+        let msg = Bytes::from("hello, b");
+        client_a.send(b_key, msg.clone()).await.unwrap();
+
+        let (res, _) = client_b_receiver.recv().await.unwrap().unwrap();
+        if let iroh_net_old::relay::ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(a_key, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_b received unexpected message {res:?}");
+        }
+
+        // send message from b to a
+        let msg = Bytes::from("howdy, a");
+        client_b.send(a_key, msg.clone()).await.unwrap();
+
+        let (res, _) = client_a_receiver.recv().await.unwrap().unwrap();
+        if let iroh_net_old::relay::ReceivedMessage::ReceivedPacket { source, data } = res {
             assert_eq!(b_key, source);
             assert_eq!(msg, data);
         } else {

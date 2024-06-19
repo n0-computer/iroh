@@ -88,6 +88,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 # metrics
 iroh-metrics = { version = "0.18.0", path = "../iroh-metrics", default-features = false }
 strum = { version = "0.26.2", features = ["derive"] }
+tungstenite = "0.23.0"
+fastwebsockets = { path = "../../fastwebsockets", version = "0.7.2", features = ["upgrade", "unstable-split"] }
+tokio-tungstenite = "0.23.1"
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
@@ -113,6 +116,7 @@ tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macr
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 iroh-test = { path = "../iroh-test" }
 serde_json = "1.0.107"
+iroh-net-old = { package = "iroh-net", version = "=0.18.0" }
 
 [[bench]]
 name = "key"
