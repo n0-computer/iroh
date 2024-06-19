@@ -377,9 +377,9 @@ where
         unspawned_node.spawn().await
     }
 
-    /// Build a node without spawning it.
+    /// Builds a node without spawning it.
     ///
-    /// Returns an `ProtocolBuilder`, on which custom protocols can be registered with
+    /// Returns an [`ProtocolBuilder`], on which custom protocols can be registered with
     /// [`ProtocolBuilder::accept`]. To spawn the node, call [`ProtocolBuilder::spawn`].
     pub async fn build(self) -> Result<ProtocolBuilder<D, E>> {
         // Clone the blob store to shutdown in case of error.
@@ -711,7 +711,7 @@ pub struct ProtocolBuilder<D, E> {
 }
 
 impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilder<D, E> {
-    /// Register a protocol handler for incoming connections.
+    /// Registers a protocol handler for incoming connections.
     ///
     /// Use this to register custom protocols onto the iroh node. Whenever a new connection for
     /// `alpn` comes in, it is passed to this protocol handler.
@@ -764,7 +764,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
         self
     }
 
-    /// Return a client to control this node over an in-memory channel.
+    /// Returns a client to control this node over an in-memory channel.
     ///
     /// Note that RPC calls performed with the client will not complete until the node is
     /// spawned.
@@ -805,7 +805,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
         self.protocols.get_typed(alpn)
     }
 
-    /// Register the core iroh protocols (blobs, gossip, docs).
+    /// Registers the core iroh protocols (blobs, gossip, docs).
     fn register_iroh_protocols(mut self) -> Self {
         // Register blobs.
         let blobs_proto =
@@ -823,7 +823,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
         self
     }
 
-    /// Spawn the node and start accepting connections.
+    /// Spawns the node and starts accepting connections.
     pub async fn spawn(self) -> Result<Node<D>> {
         let Self {
             inner,
