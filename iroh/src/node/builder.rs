@@ -379,9 +379,9 @@ where
 
     /// Build a node without spawning it.
     ///
-    /// Returns an `UnspawnedNode`, on which custom protocols can be registered with
-    /// [`UnspawnedNode::accept`]. To spawn the node, call [`UnspawnedNode::spawn`].
-    pub async fn build(self) -> Result<UnspawnedNode<D, E>> {
+    /// Returns an `ProtocolBuilder`, on which custom protocols can be registered with
+    /// [`ProtocolBuilder::accept`]. To spawn the node, call [`ProtocolBuilder::spawn`].
+    pub async fn build(self) -> Result<ProtocolBuilder<D, E>> {
         // Clone the blob store to shutdown in case of error.
         let blobs_store = self.blobs_store.clone();
         match self.build_inner().await {
@@ -393,7 +393,7 @@ where
         }
     }
 
-    async fn build_inner(self) -> Result<UnspawnedNode<D, E>> {
+    async fn build_inner(self) -> Result<ProtocolBuilder<D, E>> {
         trace!("building node");
         let lp = LocalPoolHandle::new(num_cpus::get());
 
@@ -495,7 +495,7 @@ where
             gossip,
         });
 
-        let node = UnspawnedNode {
+        let node = ProtocolBuilder {
             inner,
             client,
             protocols: Default::default(),
@@ -699,7 +699,7 @@ where
 /// Note that RPC calls performed with client returned from [`Self::client`] will not complete
 /// until the node is spawned.
 #[derive(derive_more::Debug)]
-pub struct UnspawnedNode<D, E> {
+pub struct ProtocolBuilder<D, E> {
     inner: Arc<NodeInner<D>>,
     client: crate::client::MemIroh,
     internal_rpc: FlumeServerEndpoint<RpcService>,
@@ -710,7 +710,7 @@ pub struct UnspawnedNode<D, E> {
     gc_policy: GcPolicy,
 }
 
-impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> UnspawnedNode<D, E> {
+impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilder<D, E> {
     /// Register a protocol handler for incoming connections.
     ///
     /// Use this to register custom protocols onto the iroh node. Whenever a new connection for
