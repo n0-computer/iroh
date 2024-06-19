@@ -415,7 +415,7 @@ impl Endpoint {
         })
     }
 
-    /// Set the list of accepted ALPN protocols.
+    /// Sets the list of accepted ALPN protocols.
     ///
     /// This will only affect new incoming connections.
     /// Note that this *overrides* the current list of ALPNs.
