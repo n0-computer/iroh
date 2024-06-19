@@ -102,3 +102,7 @@ required-features = ["examples"]
 [[example]]
 name = "client"
 required-features = ["examples"]
+
+[[example]]
+name = "custom-protocol"
+required-features = ["examples"]

@@ -14,25 +14,26 @@ use iroh_base::key::PublicKey;
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
 use iroh_docs::engine::Engine;
-use iroh_net::endpoint::DirectAddrsStream;
+use iroh_gossip::net::Gossip;
 use iroh_net::key::SecretKey;
-use iroh_net::util::AbortingJoinHandle;
 use iroh_net::Endpoint;
+use iroh_net::{endpoint::DirectAddrsStream, util::SharedAbortingJoinHandle};
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
-use crate::client::RpcService;
+use crate::{client::RpcService, node::protocol::ProtocolMap};
 
 mod builder;
+mod protocol;
 mod rpc;
 mod rpc_status;
 
 pub use self::builder::{Builder, DiscoveryConfig, GcPolicy, StorageConfig};
 pub use self::rpc_status::RpcStatus;
+pub use protocol::ProtocolHandler;
 
 /// A server which implements the iroh node.
 ///
@@ -47,22 +48,22 @@ pub use self::rpc_status::RpcStatus;
 #[derive(Debug, Clone)]
 pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
-    task: Arc<JoinHandle<()>>,
     client: crate::client::MemIroh,
+    task: SharedAbortingJoinHandle<()>,
+    protocols: Arc<ProtocolMap>,
 }
 
 #[derive(derive_more::Debug)]
 struct NodeInner<D> {
     db: D,
+    sync: DocsEngine,
     endpoint: Endpoint,
+    gossip: Gossip,
     secret_key: SecretKey,
     cancel_token: CancellationToken,
     controller: FlumeConnection<RpcService>,
-    #[allow(dead_code)]
-    gc_task: Option<AbortingJoinHandle<()>>,
     #[debug("rt")]
     rt: LocalPoolHandle,
-    pub(crate) sync: DocsEngine,
     downloader: Downloader,
 }
 
@@ -152,26 +153,35 @@ impl<D: BaoStore> Node<D> {
         self.inner.endpoint.home_relay()
     }
 
-    /// Aborts the node.
+    /// Shutdown the node.
     ///
     /// This does not gracefully terminate currently: all connections are closed and
-    /// anything in-transit is lost.  The task will stop running.
-    /// If this is the last copy of the `Node`, this will finish once the task is
-    /// fully shutdown.
+    /// anything in-transit is lost. The shutdown behaviour will become more graceful
+    /// in the future.
     ///
-    /// The shutdown behaviour will become more graceful in the future.
+    /// Returns a future that completes once all tasks terminated and all resources are closed.
+    /// The future resolves to an error if the main task panicked.
     pub async fn shutdown(self) -> Result<()> {
+        // Trigger shutdown of the main run task by activating the cancel token.
         self.inner.cancel_token.cancel();
 
-        if let Ok(task) = Arc::try_unwrap(self.task) {
-            task.await?;
-        }
+        // Wait for the main task to terminate.
+        self.task.await.map_err(|err| anyhow!(err))?;
+
         Ok(())
     }
 
     /// Returns a token that can be used to cancel the node.
     pub fn cancel_token(&self) -> CancellationToken {
         self.inner.cancel_token.clone()
+    }
+
+    /// Returns a protocol handler for an ALPN.
+    ///
+    /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
+    /// does not match the passed type.
+    pub fn get_protocol<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
+        self.protocols.get_typed(alpn)
     }
 }
 

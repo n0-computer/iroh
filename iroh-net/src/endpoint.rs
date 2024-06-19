@@ -125,15 +125,12 @@ impl Builder {
             }
         };
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
-        let mut server_config = make_server_config(
-            &secret_key,
-            self.alpn_protocols,
-            self.transport_config,
-            self.keylog,
-        )?;
-        if let Some(c) = self.concurrent_connections {
-            server_config.concurrent_connections(c);
-        }
+        let static_config = StaticConfig {
+            transport_config: Arc::new(self.transport_config.unwrap_or_default()),
+            keylog: self.keylog,
+            concurrent_connections: self.concurrent_connections,
+            secret_key: secret_key.clone(),
+        };
         let dns_resolver = self
             .dns_resolver
             .unwrap_or_else(|| default_resolver().clone());
@@ -149,7 +146,7 @@ impl Builder {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         };
-        Endpoint::bind(Some(server_config), msock_opts, self.keylog).await
+        Endpoint::bind(static_config, msock_opts, self.alpn_protocols).await
     }
 
     // # The very common methods everyone basically needs.
@@ -296,17 +293,41 @@ impl Builder {
     }
 }
 
+/// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
+#[derive(Debug)]
+struct StaticConfig {
+    secret_key: SecretKey,
+    transport_config: Arc<quinn::TransportConfig>,
+    keylog: bool,
+    concurrent_connections: Option<u32>,
+}
+
+impl StaticConfig {
+    /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
+    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> Result<quinn::ServerConfig> {
+        let mut server_config = make_server_config(
+            &self.secret_key,
+            alpn_protocols,
+            self.transport_config.clone(),
+            self.keylog,
+        )?;
+        if let Some(c) = self.concurrent_connections {
+            server_config.concurrent_connections(c);
+        }
+        Ok(server_config)
+    }
+}
+
 /// Creates a [`quinn::ServerConfig`] with the given secret key and limits.
 pub fn make_server_config(
     secret_key: &SecretKey,
     alpn_protocols: Vec<Vec<u8>>,
-    transport_config: Option<quinn::TransportConfig>,
+    transport_config: Arc<quinn::TransportConfig>,
     keylog: bool,
 ) -> Result<quinn::ServerConfig> {
     let tls_server_config = tls::make_server_config(secret_key, alpn_protocols, keylog)?;
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
-    server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
-
+    server_config.transport_config(transport_config);
     Ok(server_config)
 }
 
@@ -334,12 +355,11 @@ pub fn make_server_config(
 /// [QUIC]: https://quicwg.org
 #[derive(Clone, Debug)]
 pub struct Endpoint {
-    secret_key: Arc<SecretKey>,
     msock: Handle,
     endpoint: quinn::Endpoint,
     rtt_actor: Arc<rtt_actor::RttHandle>,
-    keylog: bool,
     cancel_token: CancellationToken,
+    static_config: Arc<StaticConfig>,
 }
 
 impl Endpoint {
@@ -359,15 +379,16 @@ impl Endpoint {
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
     async fn bind(
-        server_config: Option<quinn::ServerConfig>,
+        static_config: StaticConfig,
         msock_opts: magicsock::Options,
-        keylog: bool,
+        initial_alpns: Vec<Vec<u8>>,
     ) -> Result<Self> {
-        let secret_key = msock_opts.secret_key.clone();
-        let span = info_span!("magic_ep", me = %secret_key.public().fmt_short());
+        let span = info_span!("magic_ep", me = %static_config.secret_key.public().fmt_short());
         let _guard = span.enter();
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
+
+        let server_config = static_config.create_server_config(initial_alpns)?;
 
         let mut endpoint_config = quinn::EndpointConfig::default();
         // Setting this to false means that quinn will ignore packets that have the QUIC fixed bit
@@ -379,20 +400,29 @@ impl Endpoint {
 
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
-            server_config,
+            Some(server_config),
             msock.clone(),
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");
 
         Ok(Self {
-            secret_key: Arc::new(secret_key),
             msock,
             endpoint,
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
-            keylog,
             cancel_token: CancellationToken::new(),
+            static_config: Arc::new(static_config),
         })
+    }
+
+    /// Set the list of accepted ALPN protocols.
+    ///
+    /// This will only affect new incoming connections.
+    /// Note that this *overrides* the current list of ALPNs.
+    pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) -> Result<()> {
+        let server_config = self.static_config.create_server_config(alpns)?;
+        self.endpoint.set_server_config(Some(server_config));
+        Ok(())
     }
 
     // # Methods for establishing connectivity.
@@ -480,10 +510,10 @@ impl Endpoint {
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
             let tls_client_config = tls::make_client_config(
-                &self.secret_key,
+                &self.static_config.secret_key,
                 Some(*node_id),
                 alpn_protocols,
-                self.keylog,
+                self.static_config.keylog,
             )?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
             let mut transport_config = quinn::TransportConfig::default();
@@ -579,7 +609,7 @@ impl Endpoint {
 
     /// Returns the secret_key of this endpoint.
     pub fn secret_key(&self) -> &SecretKey {
-        &self.secret_key
+        &self.static_config.secret_key
     }
 
     /// Returns the node id of this endpoint.
@@ -587,7 +617,7 @@ impl Endpoint {
     /// This ID is the unique addressing information of this node and other peers must know
     /// it to be able to connect to this node.
     pub fn node_id(&self) -> NodeId {
-        self.secret_key.public()
+        self.static_config.secret_key.public()
     }
 
     /// Returns the current [`NodeAddr`] for this endpoint.
