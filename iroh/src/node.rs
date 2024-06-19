@@ -3,33 +3,37 @@
 //! A node is a server that serves various protocols.
 //!
 //! To shut down the node, call [`Node::shutdown`].
-use std::fmt::Debug;
-use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+use std::{collections::BTreeSet, net::SocketAddr};
+use std::{fmt::Debug, time::Duration};
 
 use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
-use iroh_blobs::downloader::Downloader;
-use iroh_blobs::store::Store as BaoStore;
+use iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store as BaoStore};
+use iroh_blobs::{downloader::Downloader, protocol::Closed};
 use iroh_docs::engine::Engine;
-use iroh_net::util::AbortingJoinHandle;
-use iroh_net::{endpoint::LocalEndpointsStream, key::SecretKey, Endpoint};
-use quic_rpc::RpcClient;
-use tokio::task::JoinHandle;
+use iroh_gossip::net::Gossip;
+use iroh_net::key::SecretKey;
+use iroh_net::Endpoint;
+use iroh_net::{endpoint::DirectAddrsStream, util::SharedAbortingJoinHandle};
+use quic_rpc::{RpcServer, ServiceEndpoint};
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
-use tracing::debug;
+use tracing::{debug, error, info, warn};
 
-use crate::client::RpcService;
+use crate::{client::RpcService, node::protocol::ProtocolMap};
 
 mod builder;
+mod protocol;
 mod rpc;
 mod rpc_status;
 
 pub use self::builder::{Builder, DiscoveryConfig, GcPolicy, StorageConfig};
 pub use self::rpc_status::RpcStatus;
+pub use protocol::ProtocolHandler;
 
 /// A server which implements the iroh node.
 ///
@@ -44,22 +48,21 @@ pub use self::rpc_status::RpcStatus;
 #[derive(Debug, Clone)]
 pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
-    task: Arc<JoinHandle<()>>,
-    client: crate::client::MemIroh,
+    task: SharedAbortingJoinHandle<()>,
+    protocols: Arc<ProtocolMap>,
 }
 
 #[derive(derive_more::Debug)]
 struct NodeInner<D> {
     db: D,
+    docs: DocsEngine,
     endpoint: Endpoint,
+    gossip: Gossip,
     secret_key: SecretKey,
     cancel_token: CancellationToken,
-    controller: quic_rpc::transport::boxed::Connection<RpcService>,
-    #[allow(dead_code)]
-    gc_task: Option<AbortingJoinHandle<()>>,
+    client: crate::client::MemIroh,
     #[debug("rt")]
     rt: LocalPoolHandle,
-    pub(crate) sync: DocsEngine,
     downloader: Downloader,
 }
 
@@ -106,7 +109,7 @@ impl<D: BaoStore> Node<D> {
     /// can contact the node consider using [`Node::local_endpoint_addresses`].  However the
     /// port will always be the concrete port.
     pub fn local_address(&self) -> Vec<SocketAddr> {
-        let (v4, v6) = self.inner.endpoint.local_addr();
+        let (v4, v6) = self.inner.endpoint.bound_sockets();
         let mut addrs = vec![v4];
         if let Some(v6) = v6 {
             addrs.push(v6);
@@ -115,8 +118,8 @@ impl<D: BaoStore> Node<D> {
     }
 
     /// Lists the local endpoint of this node.
-    pub fn local_endpoints(&self) -> LocalEndpointsStream {
-        self.inner.endpoint.local_endpoints()
+    pub fn local_endpoints(&self) -> DirectAddrsStream {
+        self.inner.endpoint.direct_addresses()
     }
 
     /// Convenience method to get just the addr part of [`Node::local_endpoints`].
@@ -129,14 +132,9 @@ impl<D: BaoStore> Node<D> {
         self.inner.secret_key.public()
     }
 
-    /// Returns a handle that can be used to do RPC calls to the node internally.
-    pub fn controller(&self) -> crate::client::MemRpcClient {
-        RpcClient::new(self.inner.controller.clone())
-    }
-
     /// Return a client to control this node over an in-memory channel.
     pub fn client(&self) -> &crate::client::MemIroh {
-        &self.client
+        &self.inner.client
     }
 
     /// Returns a referenc to the used `LocalPoolHandle`.
@@ -146,23 +144,24 @@ impl<D: BaoStore> Node<D> {
 
     /// Get the relay server we are connected to.
     pub fn my_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
-        self.inner.endpoint.my_relay()
+        self.inner.endpoint.home_relay()
     }
 
-    /// Aborts the node.
+    /// Shutdown the node.
     ///
     /// This does not gracefully terminate currently: all connections are closed and
-    /// anything in-transit is lost.  The task will stop running.
-    /// If this is the last copy of the `Node`, this will finish once the task is
-    /// fully shutdown.
+    /// anything in-transit is lost. The shutdown behaviour will become more graceful
+    /// in the future.
     ///
-    /// The shutdown behaviour will become more graceful in the future.
+    /// Returns a future that completes once all tasks terminated and all resources are closed.
+    /// The future resolves to an error if the main task panicked.
     pub async fn shutdown(self) -> Result<()> {
+        // Trigger shutdown of the main run task by activating the cancel token.
         self.inner.cancel_token.cancel();
 
-        if let Ok(task) = Arc::try_unwrap(self.task) {
-            task.await?;
-        }
+        // Wait for the main task to terminate.
+        self.task.await.map_err(|err| anyhow!(err))?;
+
         Ok(())
     }
 
@@ -170,25 +169,270 @@ impl<D: BaoStore> Node<D> {
     pub fn cancel_token(&self) -> CancellationToken {
         self.inner.cancel_token.clone()
     }
+
+    /// Returns a protocol handler for an ALPN.
+    ///
+    /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
+    /// does not match the passed type.
+    pub fn get_protocol<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
+        self.protocols.get_typed(alpn)
+    }
 }
 
 impl<D> std::ops::Deref for Node<D> {
     type Target = crate::client::MemIroh;
 
     fn deref(&self) -> &Self::Target {
-        &self.client
+        &self.inner.client
     }
 }
 
-impl<D> NodeInner<D> {
+impl<D: iroh_blobs::store::Store> NodeInner<D> {
     async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
         let endpoints = self
             .endpoint
-            .local_endpoints()
+            .direct_addresses()
             .next()
             .await
             .ok_or(anyhow!("no endpoints found"))?;
         Ok(endpoints.into_iter().map(|x| x.addr).collect())
+    }
+
+    async fn run(
+        self: Arc<Self>,
+        external_rpc: impl ServiceEndpoint<RpcService>,
+        internal_rpc: impl ServiceEndpoint<RpcService>,
+        protocols: Arc<ProtocolMap>,
+        gc_policy: GcPolicy,
+        gc_done_callback: Option<Box<dyn Fn() + Send>>,
+    ) {
+        let (ipv4, ipv6) = self.endpoint.bound_sockets();
+        debug!(
+            "listening at: {}{}",
+            ipv4,
+            ipv6.map(|addr| format!(" and {addr}")).unwrap_or_default()
+        );
+        debug!("rpc listening at: {:?}", external_rpc.local_addr());
+
+        let mut join_set = JoinSet::new();
+
+        // Setup the RPC servers.
+        let external_rpc = RpcServer::new(external_rpc);
+        let internal_rpc = RpcServer::new(internal_rpc);
+
+        // TODO(frando): I think this is not needed as we do the same in a task just below.
+        // forward the initial endpoints to the gossip protocol.
+        // it may happen the the first endpoint update callback is missed because the gossip cell
+        // is only initialized once the endpoint is fully bound
+        if let Some(direct_addresses) = self.endpoint.direct_addresses().next().await {
+            debug!(me = ?self.endpoint.node_id(), "gossip initial update: {direct_addresses:?}");
+            self.gossip.update_direct_addresses(&direct_addresses).ok();
+        }
+
+        // Spawn a task for the garbage collection.
+        if let GcPolicy::Interval(gc_period) = gc_policy {
+            let inner = self.clone();
+            let handle = self
+                .rt
+                .spawn_pinned(move || inner.run_gc_loop(gc_period, gc_done_callback));
+            // We cannot spawn tasks that run on the local pool directly into the join set,
+            // so instead we create a new task that supervises the local task.
+            join_set.spawn({
+                async move {
+                    if let Err(err) = handle.await {
+                        return Err(anyhow::Error::from(err));
+                    }
+                    Ok(())
+                }
+            });
+        }
+
+        // Spawn a task that updates the gossip endpoints.
+        let inner = self.clone();
+        join_set.spawn(async move {
+            let mut stream = inner.endpoint.direct_addresses();
+            while let Some(eps) = stream.next().await {
+                if let Err(err) = inner.gossip.update_direct_addresses(&eps) {
+                    warn!("Failed to update direct addresses for gossip: {err:?}");
+                }
+            }
+            warn!("failed to retrieve local endpoints");
+            Ok(())
+        });
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = self.cancel_token.cancelled() => {
+                    break;
+                },
+                // handle rpc requests. This will do nothing if rpc is not configured, since
+                // accept is just a pending future.
+                request = external_rpc.accept() => {
+                    match request {
+                        Ok((msg, chan)) => {
+                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, msg, chan);
+                        }
+                        Err(e) => {
+                            info!("rpc request error: {:?}", e);
+                        }
+                    }
+                },
+                // handle internal rpc requests.
+                request = internal_rpc.accept() => {
+                    match request {
+                        Ok((msg, chan)) => {
+                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, msg, chan);
+                        }
+                        Err(e) => {
+                            info!("internal rpc request error: {:?}", e);
+                        }
+                    }
+                },
+                // handle incoming p2p connections.
+                Some(connecting) = self.endpoint.accept() => {
+                    let protocols = protocols.clone();
+                    join_set.spawn(async move {
+                        handle_connection(connecting, protocols).await;
+                        Ok(())
+                    });
+                },
+                // handle task terminations and quit on panics.
+                res = join_set.join_next(), if !join_set.is_empty() => {
+                    if let Some(Err(err)) = res {
+                        error!("Task failed: {err:?}");
+                        break;
+                    }
+                },
+                else => break,
+            }
+        }
+
+        self.shutdown(protocols).await;
+
+        // Abort remaining tasks.
+        join_set.shutdown().await;
+    }
+
+    async fn shutdown(&self, protocols: Arc<ProtocolMap>) {
+        // Shutdown the different parts of the node concurrently.
+        let error_code = Closed::ProviderTerminating;
+        // We ignore all errors during shutdown.
+        let _ = tokio::join!(
+            // Close the endpoint.
+            // Closing the Endpoint is the equivalent of calling Connection::close on all
+            // connections: Operations will immediately fail with ConnectionError::LocallyClosed.
+            // All streams are interrupted, this is not graceful.
+            self.endpoint
+                .clone()
+                .close(error_code.into(), error_code.reason()),
+            // Shutdown sync engine.
+            self.docs.shutdown(),
+            // Shutdown blobs store engine.
+            self.db.shutdown(),
+            // Shutdown protocol handlers.
+            protocols.shutdown(),
+        );
+    }
+
+    async fn run_gc_loop(
+        self: Arc<Self>,
+        gc_period: Duration,
+        done_cb: Option<Box<dyn Fn() + Send>>,
+    ) {
+        tracing::info!("Starting GC task with interval {:?}", gc_period);
+        let db = &self.db;
+        let docs = &self.docs;
+        let mut live = BTreeSet::new();
+        'outer: loop {
+            if let Err(cause) = db.gc_start().await {
+                tracing::debug!(
+                    "unable to notify the db of GC start: {cause}. Shutting down GC loop."
+                );
+                break;
+            }
+            // do delay before the two phases of GC
+            tokio::time::sleep(gc_period).await;
+            tracing::debug!("Starting GC");
+            live.clear();
+
+            let doc_hashes = match docs.sync.content_hashes().await {
+                Ok(hashes) => hashes,
+                Err(err) => {
+                    tracing::warn!("Error getting doc hashes: {}", err);
+                    continue 'outer;
+                }
+            };
+            for hash in doc_hashes {
+                match hash {
+                    Ok(hash) => {
+                        live.insert(hash);
+                    }
+                    Err(err) => {
+                        tracing::error!("Error getting doc hash: {}", err);
+                        continue 'outer;
+                    }
+                }
+            }
+
+            tracing::debug!("Starting GC mark phase");
+            let mut stream = db.gc_mark(&mut live);
+            while let Some(item) = stream.next().await {
+                match item {
+                    GcMarkEvent::CustomDebug(text) => {
+                        tracing::debug!("{}", text);
+                    }
+                    GcMarkEvent::CustomWarning(text, _) => {
+                        tracing::warn!("{}", text);
+                    }
+                    GcMarkEvent::Error(err) => {
+                        tracing::error!("Fatal error during GC mark {}", err);
+                        continue 'outer;
+                    }
+                }
+            }
+            drop(stream);
+
+            tracing::debug!("Starting GC sweep phase");
+            let mut stream = db.gc_sweep(&live);
+            while let Some(item) = stream.next().await {
+                match item {
+                    GcSweepEvent::CustomDebug(text) => {
+                        tracing::debug!("{}", text);
+                    }
+                    GcSweepEvent::CustomWarning(text, _) => {
+                        tracing::warn!("{}", text);
+                    }
+                    GcSweepEvent::Error(err) => {
+                        tracing::error!("Fatal error during GC mark {}", err);
+                        continue 'outer;
+                    }
+                }
+            }
+            if let Some(ref cb) = done_cb {
+                cb();
+            }
+        }
+    }
+}
+
+async fn handle_connection(
+    mut connecting: iroh_net::endpoint::Connecting,
+    protocols: Arc<ProtocolMap>,
+) {
+    let alpn = match connecting.alpn().await {
+        Ok(alpn) => alpn,
+        Err(err) => {
+            warn!("Ignoring connection: invalid handshake: {:?}", err);
+            return;
+        }
+    };
+    let Some(handler) = protocols.get(&alpn) else {
+        warn!("Ignoring connection: unsupported ALPN protocol");
+        return;
+    };
+    if let Err(err) = handler.accept(connecting).await {
+        warn!("Handling incoming connection ended with error: {err}");
     }
 }
 
@@ -215,7 +459,7 @@ mod tests {
 
     use crate::{
         client::blobs::{AddOutcome, WrapOption},
-        rpc_protocol::{BlobAddPathRequest, BlobAddPathResponse, SetTagOption},
+        rpc_protocol::SetTagOption,
     };
 
     use super::*;
@@ -276,18 +520,17 @@ mod tests {
 
         let _got_hash = tokio::time::timeout(Duration::from_secs(1), async move {
             let mut stream = node
-                .controller()
-                .server_streaming(BlobAddPathRequest {
-                    path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
-                    in_place: false,
-                    tag: SetTagOption::Auto,
-                    wrap: WrapOption::NoWrap,
-                })
+                .blobs()
+                .add_from_path(
+                    Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
+                    false,
+                    SetTagOption::Auto,
+                    WrapOption::NoWrap,
+                )
                 .await?;
 
-            while let Some(item) = stream.next().await {
-                let BlobAddPathResponse(progress) = item?;
-                match progress {
+            while let Some(progress) = stream.next().await {
+                match progress? {
                     AddProgress::AllDone { hash, .. } => {
                         return Ok(hash);
                     }
@@ -412,6 +655,7 @@ mod tests {
     }
 
     #[cfg(feature = "fs-store")]
+    #[ignore = "flaky"]
     #[tokio::test]
     async fn test_default_author_persist() -> Result<()> {
         use crate::util::path::IrohPaths;

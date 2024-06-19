@@ -2,7 +2,6 @@
 
 use anyhow::Result;
 use tokio::sync::oneshot;
-use tracing::{error_span, info_span, Instrument};
 
 use crate::{
     key::SecretKey,
@@ -24,48 +23,51 @@ pub struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 
 /// Runs a relay server with STUN enabled suitable for tests.
 ///
-/// The returned `Url` is the url of the relay server in the returned [`RelayMap`], it
-/// is always `Some` as that is how the [`Endpoint::connect`] API expects it.
+/// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
+/// When dropped, the returned [`Server`] does will stop running.
 ///
-/// [`Endpoint::connect`]: crate::endpoint::Endpoint
-pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, CleanupDropGuard)> {
-    let server_key = SecretKey::generate();
-    let me = server_key.public().fmt_short();
-    let tls_config = crate::relay::http::make_tls_config();
-    let server = crate::relay::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
-        .secret_key(Some(server_key))
-        .tls_config(Some(tls_config))
-        .spawn()
-        .instrument(error_span!("relay server", %me))
-        .await?;
+/// [`Server`]: crate::relay::iroh_relay::Server
+pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, crate::relay::iroh_relay::Server)> {
+    use crate::relay::iroh_relay::{CertConfig, RelayConfig, ServerConfig, StunConfig, TlsConfig};
+    use std::net::Ipv4Addr;
 
-    let https_addr = server.addr();
-    println!("relay listening on {:?}", https_addr);
+    let secret_key = SecretKey::generate();
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+    let rustls_cert = rustls::Certificate(cert.serialize_der().unwrap());
+    let private_key = rustls::PrivateKey(cert.get_key_pair().serialize_der());
 
-    let (stun_addr, _, stun_drop_guard) = crate::stun::test::serve(server.addr().ip()).await?;
-    let url: RelayUrl = format!("https://localhost:{}", https_addr.port())
+    let config = ServerConfig {
+        relay: Some(RelayConfig {
+            http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+            secret_key,
+            tls: Some(TlsConfig {
+                cert: CertConfig::<(), ()>::Manual {
+                    private_key,
+                    certs: vec![rustls_cert],
+                },
+                https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+            }),
+            limits: Default::default(),
+        }),
+        stun: Some(StunConfig {
+            bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+        }),
+        #[cfg(feature = "metrics")]
+        metrics_addr: None,
+    };
+    let server = crate::relay::iroh_relay::Server::spawn(config)
+        .await
+        .unwrap();
+    let url: RelayUrl = format!("https://localhost:{}", server.https_addr().unwrap().port())
         .parse()
         .unwrap();
     let m = RelayMap::from_nodes([RelayNode {
         url: url.clone(),
         stun_only: false,
-        stun_port: stun_addr.port(),
+        stun_port: server.stun_addr().unwrap().port(),
     }])
-    .expect("hardcoded");
-
-    let (tx, rx) = oneshot::channel();
-    tokio::spawn(
-        async move {
-            let _stun_cleanup = stun_drop_guard; // move into this closure
-
-            // Wait until we're dropped or receive a message.
-            rx.await.ok();
-            server.shutdown().await;
-        }
-        .instrument(info_span!("relay-stun-cleanup")),
-    );
-
-    Ok((m, url, CleanupDropGuard(tx)))
+    .unwrap();
+    Ok((m, url, server))
 }
 
 pub(crate) mod dns_and_pkarr_servers {

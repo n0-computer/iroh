@@ -25,6 +25,7 @@ use iroh_blobs::{
 use iroh_net::NodeAddr;
 use portable_atomic::{AtomicU64, Ordering};
 use quic_rpc::client::BoxStreamSync;
+use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
@@ -37,16 +38,17 @@ use crate::rpc_protocol::{
     CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, SetTagOption,
 };
 
-use super::{flatten, tags, Iroh, RpcClient};
+use super::{flatten, tags, Iroh, IrohRpcClient};
 
 /// Iroh blobs client.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
 pub struct Client {
-    pub(super) rpc: RpcClient,
+    pub(super) rpc: IrohRpcClient,
 }
 
-impl<'a> From<&'a Iroh> for &'a RpcClient {
-    fn from(client: &'a Iroh) -> &'a RpcClient {
+impl<'a> From<&'a Iroh> for &'a IrohRpcClient {
+    fn from(client: &'a Iroh) -> &'a IrohRpcClient {
         &client.blobs().rpc
     }
 }
@@ -778,12 +780,12 @@ impl Reader {
         }
     }
 
-    pub(crate) async fn from_rpc_read(rpc: &RpcClient, hash: Hash) -> anyhow::Result<Self> {
+    pub(crate) async fn from_rpc_read(rpc: &IrohRpcClient, hash: Hash) -> anyhow::Result<Self> {
         Self::from_rpc_read_at(rpc, hash, 0, None).await
     }
 
     async fn from_rpc_read_at(
-        rpc: &RpcClient,
+        rpc: &IrohRpcClient,
         hash: Hash,
         offset: u64,
         len: Option<usize>,

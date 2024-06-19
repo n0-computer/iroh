@@ -60,11 +60,12 @@ pub(super) enum State<'a> {
     Empty,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ClearReason {
     Reset,
     Inactive,
     PongTimeout,
+    MatchesOurLocalAddr,
 }
 
 impl BestAddr {

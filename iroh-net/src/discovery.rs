@@ -13,6 +13,9 @@ use crate::{AddrInfo, Endpoint, NodeId};
 pub mod dns;
 pub mod pkarr_publish;
 
+/// Name used for logging when new node addresses are added from discovery.
+const SOURCE_NAME: &str = "discovery";
+
 /// Node discovery for [`super::Endpoint`].
 ///
 /// The purpose of this trait is to hook up a node discovery mechanism that
@@ -252,7 +255,7 @@ impl DiscoveryTask {
                         info: r.addr_info,
                         node_id,
                     };
-                    ep.add_node_addr(addr).ok();
+                    ep.add_node_addr_with_source(addr, SOURCE_NAME).ok();
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
@@ -416,7 +419,7 @@ mod tests {
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for out address to be updated and thus published at least once
-        ep1.my_addr().await?;
+        ep1.node_addr().await?;
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
@@ -442,7 +445,7 @@ mod tests {
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for out address to be updated and thus published at least once
-        ep1.my_addr().await?;
+        ep1.node_addr().await?;
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
@@ -472,7 +475,7 @@ mod tests {
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for out address to be updated and thus published at least once
-        ep1.my_addr().await?;
+        ep1.node_addr().await?;
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
@@ -495,7 +498,7 @@ mod tests {
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for out address to be updated and thus published at least once
-        ep1.my_addr().await?;
+        ep1.node_addr().await?;
         let res = ep2.connect(ep1_addr, TEST_ALPN).await;
         assert!(res.is_err());
         Ok(())
@@ -518,7 +521,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
         // wait for out address to be updated and thus published at least once
-        ep1.my_addr().await?;
+        ep1.node_addr().await?;
         let ep1_wrong_addr = NodeAddr {
             node_id: ep1.node_id(),
             info: AddrInfo {
@@ -668,11 +671,6 @@ mod test_dns_pkarr {
 
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server.on_node(&ep1.node_id(), timeout).await?;
-
-        let node_addr = NodeAddr::new(ep1.node_id());
-
-        // add empty node address. We *should* launch discovery before attempting to dial.
-        ep2.add_node_addr(node_addr)?;
 
         // we connect only by node id!
         let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
