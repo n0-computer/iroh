@@ -8,6 +8,15 @@ use iroh_net::endpoint::Connecting;
 use crate::node::DocsEngine;
 
 /// Handler for incoming connections.
+///
+/// An iroh node can accept connections for arbitrary ALPN protocols. By default, the iroh node
+/// only accepts connections for the ALPNs of the core iroh protocols (blobs, gossip, docs).
+///
+/// With this trait, you can handle incoming connections for custom protocols.
+///
+/// Implement this trait on a struct that should handle incoming connections.
+/// The protocol handler must then be registered on the node for an ALPN protocol with
+/// [`crate::node::builder::ProtocolBuilder::accept`].
 pub trait Protocol: Send + Sync + IntoArcAny + fmt::Debug + 'static {
     /// Handle an incoming connection.
     ///
