@@ -176,7 +176,10 @@ impl<D: BaoStore> Node<D> {
         self.inner.cancel_token.clone()
     }
 
-    /// Get a protocol handler.
+    /// Returns a protocol handler for an ALPN.
+    ///
+    /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
+    /// does not match the passed type.
     pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<Arc<P>> {
         self.protocols.get_typed(alpn)
     }

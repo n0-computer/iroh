@@ -303,8 +303,8 @@ struct StaticConfig {
 }
 
 impl StaticConfig {
-    /// Build a [`quinn::ServerConfig`] with the specified ALPN protocols.
-    fn build(&self, alpn_protocols: Vec<Vec<u8>>) -> Result<quinn::ServerConfig> {
+    /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
+    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> Result<quinn::ServerConfig> {
         let mut server_config = make_server_config(
             &self.secret_key,
             alpn_protocols,
@@ -388,7 +388,7 @@ impl Endpoint {
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
 
-        let server_config = static_config.build(initial_alpns)?;
+        let server_config = static_config.create_server_config(initial_alpns)?;
 
         let mut endpoint_config = quinn::EndpointConfig::default();
         // Setting this to false means that quinn will ignore packets that have the QUIC fixed bit
@@ -420,7 +420,7 @@ impl Endpoint {
     /// This will only affect new incoming connections.
     /// Note that this *overrides* the current list of ALPNs.
     pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) -> Result<()> {
-        let server_config = self.static_config.build(alpns)?;
+        let server_config = self.static_config.create_server_config(alpns)?;
         self.endpoint.set_server_config(Some(server_config));
         Ok(())
     }

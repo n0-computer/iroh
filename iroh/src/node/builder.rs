@@ -696,8 +696,8 @@ where
 /// [`Self::accept`]. It provides access to the services which are already started, the node's
 /// endpoint and a client to the node.
 ///
-/// Note that the client returned from [`Self::client`] can only be used after spawning the node,
-/// until then all RPC calls will time out.
+/// Note that RPC calls performed with client returned from [`Self::client`] will not complete
+/// until the node is spawned.
 #[derive(derive_more::Debug)]
 pub struct UnspawnedNode<D, E> {
     inner: Arc<NodeInner<D>>,
@@ -766,8 +766,8 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> UnspawnedNode<
 
     /// Return a client to control this node over an in-memory channel.
     ///
-    /// Note that the client can only be used after spawning the node,
-    /// until then all RPC calls will time out.
+    /// Note that RPC calls performed with the client will not complete until the node is
+    /// spawned.
     pub fn client(&self) -> &crate::client::MemIroh {
         &self.client
     }
@@ -795,6 +795,14 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> UnspawnedNode<
     /// Returns a reference to the [`Gossip`] handle used by the node.
     pub fn gossip(&self) -> &Gossip {
         &self.inner.gossip
+    }
+
+    /// Returns a protocol handler for an ALPN.
+    ///
+    /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
+    /// does not match the passed type.
+    pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<Arc<P>> {
+        self.protocols.get_typed(alpn)
     }
 
     /// Register the core iroh protocols (blobs, gossip, docs).
