@@ -459,7 +459,7 @@ mod tests {
 
     use crate::{
         client::blobs::{AddOutcome, WrapOption},
-        rpc_protocol::{BlobAddPathRequest, BlobAddPathResponse, SetTagOption},
+        rpc_protocol::SetTagOption,
     };
 
     use super::*;
@@ -520,18 +520,17 @@ mod tests {
 
         let _got_hash = tokio::time::timeout(Duration::from_secs(1), async move {
             let mut stream = node
-                .controller()
-                .server_streaming(BlobAddPathRequest {
-                    path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
-                    in_place: false,
-                    tag: SetTagOption::Auto,
-                    wrap: WrapOption::NoWrap,
-                })
+                .blobs()
+                .add_from_path(
+                    Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
+                    false,
+                    SetTagOption::Auto,
+                    WrapOption::NoWrap,
+                )
                 .await?;
 
-            while let Some(item) = stream.next().await {
-                let BlobAddPathResponse(progress) = item?;
-                match progress {
+            while let Some(progress) = stream.next().await {
+                match progress? {
                     AddProgress::AllDone { hash, .. } => {
                         return Ok(hash);
                     }
