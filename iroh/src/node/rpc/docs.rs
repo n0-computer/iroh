@@ -146,7 +146,7 @@ impl DocsEngine {
             mode,
             addr_options,
         } = req;
-        let mut me = self.endpoint.my_addr().await?;
+        let mut me = self.endpoint.node_addr().await?;
         me.apply_options(addr_options);
 
         let capability = match mode {

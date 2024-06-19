@@ -7,13 +7,15 @@ use futures_util::{Sink, SinkExt};
 use iroh_gossip::proto::TopicId;
 use iroh_net::NodeId;
 use quic_rpc::{RpcClient, ServiceConnection};
+use ref_cast::RefCast;
 
 use crate::rpc_protocol::{GossipSubscribeRequest, GossipSubscribeResponse, GossipSubscribeUpdate};
 
 use super::RpcService;
 
 /// Iroh gossip client.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
 pub struct Client<C> {
     pub(super) rpc: RpcClient<RpcService, C>,
 }

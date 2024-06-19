@@ -26,7 +26,7 @@ impl TagCommands {
     {
         match self {
             Self::List => {
-                let mut response = iroh.tags.list().await?;
+                let mut response = iroh.tags().list().await?;
                 while let Some(res) = response.next().await {
                     let res = res?;
                     println!("{}: {} ({:?})", res.name, res.hash, res.format);
@@ -38,7 +38,7 @@ impl TagCommands {
                 } else {
                     Tag::from(tag)
                 };
-                iroh.tags.delete(tag).await?;
+                iroh.tags().delete(tag).await?;
             }
         }
         Ok(())

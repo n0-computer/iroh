@@ -31,7 +31,7 @@ use tokio::time::{self, Instant};
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 
 use super::NetcheckMetrics;
-use crate::defaults::DEFAULT_RELAY_STUN_PORT;
+use crate::defaults::DEFAULT_STUN_PORT;
 use crate::dns::{DnsResolver, ResolverExt};
 use crate::net::interfaces;
 use crate::net::ip;
@@ -935,7 +935,7 @@ async fn get_relay_addr(
     proto: ProbeProto,
 ) -> Result<SocketAddr> {
     let port = if relay_node.stun_port == 0 {
-        DEFAULT_RELAY_STUN_PORT
+        DEFAULT_STUN_PORT
     } else {
         relay_node.stun_port
     };

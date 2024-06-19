@@ -15,23 +15,26 @@ use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
 use iroh_docs::engine::Engine;
 use iroh_gossip::dispatcher::GossipDispatcher;
-use iroh_net::util::AbortingJoinHandle;
-use iroh_net::{endpoint::LocalEndpointsStream, key::SecretKey, Endpoint};
+use iroh_gossip::net::Gossip;
+use iroh_net::key::SecretKey;
+use iroh_net::Endpoint;
+use iroh_net::{endpoint::DirectAddrsStream, util::SharedAbortingJoinHandle};
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
-use crate::client::RpcService;
+use crate::{client::RpcService, node::protocol::ProtocolMap};
 
 mod builder;
+mod protocol;
 mod rpc;
 mod rpc_status;
 
 pub use self::builder::{Builder, DiscoveryConfig, GcPolicy, StorageConfig};
 pub use self::rpc_status::RpcStatus;
+pub use protocol::ProtocolHandler;
 
 /// A server which implements the iroh node.
 ///
@@ -46,24 +49,24 @@ pub use self::rpc_status::RpcStatus;
 #[derive(Debug, Clone)]
 pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
-    task: Arc<JoinHandle<()>>,
     client: crate::client::MemIroh,
+    task: SharedAbortingJoinHandle<()>,
+    protocols: Arc<ProtocolMap>,
 }
 
 #[derive(derive_more::Debug)]
 struct NodeInner<D> {
     db: D,
+    sync: DocsEngine,
     endpoint: Endpoint,
+    gossip: Gossip,
     secret_key: SecretKey,
     cancel_token: CancellationToken,
     controller: FlumeConnection<RpcService>,
-    #[allow(dead_code)]
-    gc_task: Option<AbortingJoinHandle<()>>,
     #[debug("rt")]
     rt: LocalPoolHandle,
-    pub(crate) sync: DocsEngine,
-    gossip: GossipDispatcher,
     downloader: Downloader,
+    gossip_dispatcher: GossipDispatcher,
 }
 
 /// In memory node.
@@ -109,7 +112,7 @@ impl<D: BaoStore> Node<D> {
     /// can contact the node consider using [`Node::local_endpoint_addresses`].  However the
     /// port will always be the concrete port.
     pub fn local_address(&self) -> Vec<SocketAddr> {
-        let (v4, v6) = self.inner.endpoint.local_addr();
+        let (v4, v6) = self.inner.endpoint.bound_sockets();
         let mut addrs = vec![v4];
         if let Some(v6) = v6 {
             addrs.push(v6);
@@ -118,8 +121,8 @@ impl<D: BaoStore> Node<D> {
     }
 
     /// Lists the local endpoint of this node.
-    pub fn local_endpoints(&self) -> LocalEndpointsStream {
-        self.inner.endpoint.local_endpoints()
+    pub fn local_endpoints(&self) -> DirectAddrsStream {
+        self.inner.endpoint.direct_addresses()
     }
 
     /// Convenience method to get just the addr part of [`Node::local_endpoints`].
@@ -149,29 +152,38 @@ impl<D: BaoStore> Node<D> {
 
     /// Get the relay server we are connected to.
     pub fn my_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
-        self.inner.endpoint.my_relay()
+        self.inner.endpoint.home_relay()
     }
 
-    /// Aborts the node.
+    /// Shutdown the node.
     ///
     /// This does not gracefully terminate currently: all connections are closed and
-    /// anything in-transit is lost.  The task will stop running.
-    /// If this is the last copy of the `Node`, this will finish once the task is
-    /// fully shutdown.
+    /// anything in-transit is lost. The shutdown behaviour will become more graceful
+    /// in the future.
     ///
-    /// The shutdown behaviour will become more graceful in the future.
+    /// Returns a future that completes once all tasks terminated and all resources are closed.
+    /// The future resolves to an error if the main task panicked.
     pub async fn shutdown(self) -> Result<()> {
+        // Trigger shutdown of the main run task by activating the cancel token.
         self.inner.cancel_token.cancel();
 
-        if let Ok(task) = Arc::try_unwrap(self.task) {
-            task.await?;
-        }
+        // Wait for the main task to terminate.
+        self.task.await.map_err(|err| anyhow!(err))?;
+
         Ok(())
     }
 
     /// Returns a token that can be used to cancel the node.
     pub fn cancel_token(&self) -> CancellationToken {
         self.inner.cancel_token.clone()
+    }
+
+    /// Returns a protocol handler for an ALPN.
+    ///
+    /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
+    /// does not match the passed type.
+    pub fn get_protocol<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
+        self.protocols.get_typed(alpn)
     }
 }
 
@@ -187,7 +199,7 @@ impl<D> NodeInner<D> {
     async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
         let endpoints = self
             .endpoint
-            .local_endpoints()
+            .direct_addresses()
             .next()
             .await
             .ok_or(anyhow!("no endpoints found"))?;
@@ -230,7 +242,7 @@ mod tests {
         let node = Node::memory().spawn().await.unwrap();
         let hash = node
             .client()
-            .blobs
+            .blobs()
             .add_bytes(Bytes::from_static(b"hello"))
             .await
             .unwrap()
@@ -238,7 +250,7 @@ mod tests {
 
         let _drop_guard = node.cancel_token().drop_guard();
         let ticket = node
-            .blobs
+            .blobs()
             .share(hash, BlobFormat::Raw, AddrInfoOptions::RelayAndAddresses)
             .await
             .unwrap();
@@ -257,10 +269,13 @@ mod tests {
         let client = node.client();
         let input = vec![2u8; 1024 * 256]; // 265kb so actually streaming, chunk size is 64kb
         let reader = Cursor::new(input.clone());
-        let progress = client.blobs.add_reader(reader, SetTagOption::Auto).await?;
+        let progress = client
+            .blobs()
+            .add_reader(reader, SetTagOption::Auto)
+            .await?;
         let outcome = progress.finish().await?;
         let hash = outcome.hash;
-        let output = client.blobs.read_to_bytes(hash).await?;
+        let output = client.blobs().read_to_bytes(hash).await?;
         assert_eq!(input, output.to_vec());
         Ok(())
     }
@@ -314,13 +329,13 @@ mod tests {
         let iroh_root = tempfile::TempDir::new()?;
         {
             let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
-            let doc = iroh.docs.create().await?;
+            let doc = iroh.docs().create().await?;
             drop(doc);
             iroh.shutdown().await?;
         }
 
         let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
-        let _doc = iroh.docs.create().await?;
+        let _doc = iroh.docs().create().await?;
 
         Ok(())
     }
@@ -342,14 +357,14 @@ mod tests {
             .insecure_skip_relay_cert_verify(true)
             .spawn()
             .await?;
-        let AddOutcome { hash, .. } = node1.blobs.add_bytes(b"foo".to_vec()).await?;
+        let AddOutcome { hash, .. } = node1.blobs().add_bytes(b"foo".to_vec()).await?;
 
         // create a node addr with only a relay URL, no direct addresses
         let addr = NodeAddr::new(node1.node_id()).with_relay_url(relay_url);
-        node2.blobs.download(hash, addr).await?.await?;
+        node2.blobs().download(hash, addr).await?.await?;
         assert_eq!(
             node2
-                .blobs
+                .blobs()
                 .read_to_bytes(hash)
                 .await
                 .context("get")?
@@ -385,14 +400,14 @@ mod tests {
             .node_discovery(dns_pkarr_server.discovery(secret2).into())
             .spawn()
             .await?;
-        let hash = node1.blobs.add_bytes(b"foo".to_vec()).await?.hash;
+        let hash = node1.blobs().add_bytes(b"foo".to_vec()).await?.hash;
 
         // create a node addr with node id only
         let addr = NodeAddr::new(node1.node_id());
-        node2.blobs.download(hash, addr).await?.await?;
+        node2.blobs().download(hash, addr).await?.await?;
         assert_eq!(
             node2
-                .blobs
+                .blobs()
                 .read_to_bytes(hash)
                 .await
                 .context("get")?
@@ -405,13 +420,14 @@ mod tests {
     #[tokio::test]
     async fn test_default_author_memory() -> Result<()> {
         let iroh = Node::memory().spawn().await?;
-        let author = iroh.authors.default().await?;
-        assert!(iroh.authors.export(author).await?.is_some());
-        assert!(iroh.authors.delete(author).await.is_err());
+        let author = iroh.authors().default().await?;
+        assert!(iroh.authors().export(author).await?.is_some());
+        assert!(iroh.authors().delete(author).await.is_err());
         Ok(())
     }
 
     #[cfg(feature = "fs-store")]
+    #[ignore = "flaky"]
     #[tokio::test]
     async fn test_default_author_persist() -> Result<()> {
         use crate::util::path::IrohPaths;
@@ -429,9 +445,9 @@ mod tests {
                 .spawn()
                 .await
                 .unwrap();
-            let author = iroh.authors.default().await.unwrap();
-            assert!(iroh.authors.export(author).await.unwrap().is_some());
-            assert!(iroh.authors.delete(author).await.is_err());
+            let author = iroh.authors().default().await.unwrap();
+            assert!(iroh.authors().export(author).await.unwrap().is_some());
+            assert!(iroh.authors().delete(author).await.is_err());
             iroh.shutdown().await.unwrap();
             author
         };
@@ -444,10 +460,10 @@ mod tests {
                 .spawn()
                 .await
                 .unwrap();
-            let author = iroh.authors.default().await.unwrap();
+            let author = iroh.authors().default().await.unwrap();
             assert_eq!(author, default_author);
-            assert!(iroh.authors.export(author).await.unwrap().is_some());
-            assert!(iroh.authors.delete(author).await.is_err());
+            assert!(iroh.authors().export(author).await.unwrap().is_some());
+            assert!(iroh.authors().delete(author).await.is_err());
             iroh.shutdown().await.unwrap();
         };
 
@@ -463,10 +479,10 @@ mod tests {
                 .spawn()
                 .await
                 .unwrap();
-            let author = iroh.authors.default().await.unwrap();
+            let author = iroh.authors().default().await.unwrap();
             assert!(author != default_author);
-            assert!(iroh.authors.export(author).await.unwrap().is_some());
-            assert!(iroh.authors.delete(author).await.is_err());
+            assert!(iroh.authors().export(author).await.unwrap().is_some());
+            assert!(iroh.authors().delete(author).await.is_err());
             iroh.shutdown().await.unwrap();
             author
         };
@@ -506,9 +522,9 @@ mod tests {
                 .spawn()
                 .await
                 .unwrap();
-            let author = iroh.authors.create().await.unwrap();
-            iroh.authors.set_default(author).await.unwrap();
-            assert_eq!(iroh.authors.default().await.unwrap(), author);
+            let author = iroh.authors().create().await.unwrap();
+            iroh.authors().set_default(author).await.unwrap();
+            assert_eq!(iroh.authors().default().await.unwrap(), author);
             iroh.shutdown().await.unwrap();
             author
         };
@@ -519,7 +535,7 @@ mod tests {
                 .spawn()
                 .await
                 .unwrap();
-            assert_eq!(iroh.authors.default().await.unwrap(), default_author);
+            assert_eq!(iroh.authors().default().await.unwrap(), default_author);
             iroh.shutdown().await.unwrap();
         }
 

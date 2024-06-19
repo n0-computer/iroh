@@ -62,7 +62,7 @@ impl GossipCommands {
                     subscription_capacity: 1024,
                 };
 
-                let (mut sink, mut stream) = iroh.gossip.subscribe_with_opts(topic, opts).await?;
+                let (mut sink, mut stream) = iroh.gossip().subscribe_with_opts(topic, opts).await?;
                 let mut input_lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
                 loop {
                     tokio::select! {

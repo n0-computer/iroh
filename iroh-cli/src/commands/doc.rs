@@ -317,7 +317,7 @@ impl DocCommands {
                     bail!("The --switch flag is only supported within the Iroh console.");
                 }
 
-                let doc = iroh.docs.create().await?;
+                let doc = iroh.docs().create().await?;
                 println!("{}", doc.id());
 
                 if switch {
@@ -330,7 +330,7 @@ impl DocCommands {
                     bail!("The --switch flag is only supported within the Iroh console.");
                 }
 
-                let doc = iroh.docs.import(ticket).await?;
+                let doc = iroh.docs().import(ticket).await?;
                 println!("{}", doc.id());
 
                 if switch {
@@ -339,7 +339,7 @@ impl DocCommands {
                 }
             }
             Self::List => {
-                let mut stream = iroh.docs.list().await?;
+                let mut stream = iroh.docs().list().await?;
                 while let Some((id, kind)) = stream.try_next().await? {
                     println!("{id} {kind}")
                 }
@@ -483,7 +483,7 @@ impl DocCommands {
                 }
 
                 let stream = iroh
-                    .blobs
+                    .blobs()
                     .add_from_path(
                         root.clone(),
                         in_place,
@@ -627,7 +627,7 @@ impl DocCommands {
                     .interact()
                     .unwrap_or(false)
                 {
-                    iroh.docs.drop_doc(doc.id()).await?;
+                    iroh.docs().drop_doc(doc.id()).await?;
                     println!("Doc {} has been deleted.", fmt_short(doc.id()));
                 } else {
                     println!("Aborted.")
@@ -681,7 +681,7 @@ async fn get_doc<C>(
 where
     C: ServiceConnection<RpcService>,
 {
-    iroh.docs
+    iroh.docs()
         .open(env.doc(id)?)
         .await?
         .context("Document not found")
@@ -975,8 +975,8 @@ mod tests {
 
         let node = crate::commands::start::start_node(data_dir.path(), None).await?;
         let client = node.client();
-        let doc = client.docs.create().await.context("doc create")?;
-        let author = client.authors.create().await.context("author create")?;
+        let doc = client.docs().create().await.context("doc create")?;
+        let author = client.authors().create().await.context("author create")?;
 
         // set up command, getting iroh node
         let cli = ConsoleEnv::for_console(data_dir.path().to_owned(), &node)

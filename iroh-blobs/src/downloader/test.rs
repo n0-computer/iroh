@@ -39,14 +39,12 @@ impl Downloader {
         retry_config: RetryConfig,
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(super::SERVICE_CHANNEL_CAPACITY);
-        let db = crate::store::mem::Store::default();
 
         LocalPoolHandle::new(1).spawn_pinned(move || async move {
             // we want to see the logs of the service
             let _guard = iroh_test::logging::setup();
 
-            let service =
-                Service::new(db, getter, dialer, concurrency_limits, retry_config, msg_rx);
+            let service = Service::new(getter, dialer, concurrency_limits, retry_config, msg_rx);
             service.run().await
         });
 
