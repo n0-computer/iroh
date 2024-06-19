@@ -38,7 +38,7 @@ use crate::{
     client::RPC_ALPN,
     node::{
         protocol::{BlobsProtocol, ProtocolMap},
-        Protocol,
+        ProtocolHandler,
     },
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
@@ -716,7 +716,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
     /// Use this to register custom protocols onto the iroh node. Whenever a new connection for
     /// `alpn` comes in, it is passed to this protocol handler.
     ///
-    /// See the [`Protocol`] trait for details.
+    /// See the [`ProtocolHandler`] trait for details.
     ///
     /// Example usage:
     ///
@@ -724,7 +724,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
     /// # use std::sync::Arc;
     /// # use anyhow::Result;
     /// # use futures_lite::future::Boxed as BoxedFuture;
-    /// # use iroh::{node::{Node, Protocol}, net::endpoint::Connecting, client::MemIroh};
+    /// # use iroh::{node::{Node, ProtocolHandler}, net::endpoint::Connecting, client::MemIroh};
     /// #
     /// # #[tokio::main]
     /// # async fn main() -> Result<()> {
@@ -736,7 +736,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
     ///     client: MemIroh
     /// }
     ///
-    /// impl Protocol for MyProtocol {
+    /// impl ProtocolHandler for MyProtocol {
     ///     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
     ///         todo!();
     ///     }
@@ -759,7 +759,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
     /// ```
     ///
     ///
-    pub fn accept(mut self, alpn: &'static [u8], handler: Arc<dyn Protocol>) -> Self {
+    pub fn accept(mut self, alpn: &'static [u8], handler: Arc<dyn ProtocolHandler>) -> Self {
         self.protocols.insert(alpn, handler);
         self
     }
@@ -801,7 +801,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
     ///
     /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
     /// does not match the passed type.
-    pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<Arc<P>> {
+    pub fn get_protocol<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
         self.protocols.get_typed(alpn)
     }
 

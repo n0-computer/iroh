@@ -9,7 +9,7 @@ use iroh::{
         endpoint::{get_remote_node_id, Connecting},
         Endpoint, NodeId,
     },
-    node::Protocol,
+    node::ProtocolHandler,
 };
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -63,7 +63,7 @@ struct ExampleProto {
     endpoint: Endpoint,
 }
 
-impl Protocol for ExampleProto {
+impl ProtocolHandler for ExampleProto {
     fn accept(self: Arc<Self>, connecting: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move {
             let connection = connecting.await?;

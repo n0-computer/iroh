@@ -33,7 +33,7 @@ mod rpc_status;
 
 pub use self::builder::{Builder, DiscoveryConfig, GcPolicy, StorageConfig};
 pub use self::rpc_status::RpcStatus;
-pub use protocol::Protocol;
+pub use protocol::ProtocolHandler;
 
 /// A server which implements the iroh node.
 ///
@@ -180,7 +180,7 @@ impl<D: BaoStore> Node<D> {
     ///
     /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
     /// does not match the passed type.
-    pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<Arc<P>> {
+    pub fn get_protocol<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
         self.protocols.get_typed(alpn)
     }
 }

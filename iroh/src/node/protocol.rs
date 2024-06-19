@@ -17,7 +17,7 @@ use crate::node::DocsEngine;
 /// Implement this trait on a struct that should handle incoming connections.
 /// The protocol handler must then be registered on the node for an ALPN protocol with
 /// [`crate::node::builder::ProtocolBuilder::accept`].
-pub trait Protocol: Send + Sync + IntoArcAny + fmt::Debug + 'static {
+pub trait ProtocolHandler: Send + Sync + IntoArcAny + fmt::Debug + 'static {
     /// Handle an incoming connection.
     ///
     /// This runs on a freshly spawned tokio task so this can be long-running.
@@ -43,24 +43,24 @@ impl<T: Send + Sync + 'static> IntoArcAny for T {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(super) struct ProtocolMap(BTreeMap<&'static [u8], Arc<dyn Protocol>>);
+pub(super) struct ProtocolMap(BTreeMap<&'static [u8], Arc<dyn ProtocolHandler>>);
 
 impl ProtocolMap {
     /// Returns the registered protocol handler for an ALPN as a concrete type.
-    pub fn get_typed<P: Protocol>(&self, alpn: &[u8]) -> Option<Arc<P>> {
-        let protocol: Arc<dyn Protocol> = self.0.get(alpn)?.clone();
+    pub fn get_typed<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
+        let protocol: Arc<dyn ProtocolHandler> = self.0.get(alpn)?.clone();
         let protocol_any: Arc<dyn Any + Send + Sync> = protocol.into_arc_any();
         let protocol_ref = Arc::downcast(protocol_any).ok()?;
         Some(protocol_ref)
     }
 
-    /// Returns the registered protocol handler for an ALPN as a [`Arc<dyn Protocol>`].
-    pub fn get(&self, alpn: &[u8]) -> Option<Arc<dyn Protocol>> {
+    /// Returns the registered protocol handler for an ALPN as a [`Arc<dyn ProtocolHandler>`].
+    pub fn get(&self, alpn: &[u8]) -> Option<Arc<dyn ProtocolHandler>> {
         self.0.get(alpn).cloned()
     }
 
     /// Insert a protocol handler.
-    pub fn insert(&mut self, alpn: &'static [u8], handler: Arc<dyn Protocol>) {
+    pub fn insert(&mut self, alpn: &'static [u8], handler: Arc<dyn ProtocolHandler>) {
         self.0.insert(alpn, handler);
     }
 
@@ -71,9 +71,9 @@ impl ProtocolMap {
 
     /// Shutdown all protocol handlers.
     ///
-    /// Calls and awaits [`Protocol::shutdown`] for all registered handlers concurrently.
+    /// Calls and awaits [`ProtocolHandler::shutdown`] for all registered handlers concurrently.
     pub async fn shutdown(&self) {
-        let handlers = self.0.values().cloned().map(Protocol::shutdown);
+        let handlers = self.0.values().cloned().map(ProtocolHandler::shutdown);
         join_all(handlers).await;
     }
 }
@@ -90,7 +90,7 @@ impl<S: iroh_blobs::store::Store> BlobsProtocol<S> {
     }
 }
 
-impl<S: iroh_blobs::store::Store> Protocol for BlobsProtocol<S> {
+impl<S: iroh_blobs::store::Store> ProtocolHandler for BlobsProtocol<S> {
     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move {
             iroh_blobs::provider::handle_connection(
@@ -114,13 +114,13 @@ impl iroh_blobs::provider::EventSender for MockEventSender {
     }
 }
 
-impl Protocol for iroh_gossip::net::Gossip {
+impl ProtocolHandler for iroh_gossip::net::Gossip {
     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move { self.handle_connection(conn.await?).await })
     }
 }
 
-impl Protocol for DocsEngine {
+impl ProtocolHandler for DocsEngine {
     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move { self.handle_connection(conn).await })
     }
