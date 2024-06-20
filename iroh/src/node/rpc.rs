@@ -30,7 +30,7 @@ use quic_rpc::{
     ServiceEndpoint,
 };
 use tokio::task::JoinSet;
-use tokio_util::task::LocalPoolHandle;
+use tokio_util::{either::Either, task::LocalPoolHandle};
 use tracing::{debug, info, warn};
 
 use crate::client::{
@@ -38,19 +38,18 @@ use crate::client::{
     tags::TagInfo,
     NodeStatus,
 };
-use crate::node::{docs::DocsEngine, rpc::docs::ITER_CHANNEL_CAP, NodeInner};
+use crate::node::{docs::DocsEngine, NodeInner};
 use crate::rpc_protocol::{
-    AuthorListResponse, BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest,
-    BlobAddStreamResponse, BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest,
-    BlobDownloadRequest, BlobDownloadResponse, BlobExportRequest, BlobExportResponse,
-    BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest, BlobReadAtResponse,
-    BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest,
-    DocExportFileRequest, DocExportFileResponse, DocGetManyResponse, DocImportFileRequest,
-    DocImportFileResponse, DocListResponse, DocSetHashRequest, ListTagsRequest, NodeAddrRequest,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeConnectionsResponse, NodeIdRequest, NodeRelayRequest, NodeShutdownRequest,
-    NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest, NodeWatchResponse,
-    Request, RpcService, SetTagOption,
+    BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
+    BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest,
+    BlobDownloadResponse, BlobExportRequest, BlobExportResponse, BlobListIncompleteRequest,
+    BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
+    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
+    DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocSetHashRequest,
+    ListTagsRequest, NodeAddrRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest, NodeRelayRequest,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest,
+    NodeWatchResponse, Request, RpcService, SetTagOption,
 };
 
 mod docs;
@@ -90,6 +89,20 @@ impl<D: BaoStore> Handler<D> {
             f(docs).await
         } else {
             Err(docs_disabled())
+        }
+    }
+
+    fn with_docs_stream<T, F, S>(self, f: F) -> impl Stream<Item = RpcResult<T>>
+    where
+        T: Send + 'static,
+        F: FnOnce(DocsEngine) -> S,
+        S: Stream<Item = RpcResult<T>>,
+    {
+        if let Some(docs) = self.docs() {
+            let docs = docs.clone();
+            Either::Left(f(docs))
+        } else {
+            Either::Right(futures_lite::stream::once(Err(docs_disabled())))
         }
     }
 
@@ -154,17 +167,7 @@ impl<D: BaoStore> Handler<D> {
 
             AuthorList(msg) => {
                 chan.server_streaming(msg, self, |handler, req| {
-                    let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
-                    if let Some(docs) = handler.docs() {
-                        docs.author_list(req, tx);
-                    } else {
-                        tx.send(Err(anyhow!("docs are disabled")))
-                            .expect("has capacity");
-                    }
-                    rx.into_stream().map(|r| {
-                        r.map(|author_id| AuthorListResponse { author_id })
-                            .map_err(Into::into)
-                    })
+                    handler.with_docs_stream(|docs| docs.author_list(req))
                 })
                 .await
             }
@@ -224,17 +227,7 @@ impl<D: BaoStore> Handler<D> {
             }
             DocList(msg) => {
                 chan.server_streaming(msg, self, |handler, req| {
-                    let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
-                    if let Some(docs) = handler.docs() {
-                        docs.doc_list(req, tx);
-                    } else {
-                        tx.send(Err(anyhow!("docs are disabled")))
-                            .expect("has capacity");
-                    }
-                    rx.into_stream().map(|r| {
-                        r.map(|(id, capability)| DocListResponse { id, capability })
-                            .map_err(Into::into)
-                    })
+                    handler.with_docs_stream(|docs| docs.doc_list(req))
                 })
                 .await
             }
@@ -285,17 +278,7 @@ impl<D: BaoStore> Handler<D> {
             }
             DocGet(msg) => {
                 chan.server_streaming(msg, self, |handler, req| {
-                    let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
-                    if let Some(docs) = handler.docs() {
-                        docs.doc_get_many(req, tx);
-                    } else {
-                        tx.send(Err(anyhow!("docs are disabled")))
-                            .expect("has capacity");
-                    }
-                    rx.into_stream().map(|r| {
-                        r.map(|entry| DocGetManyResponse { entry })
-                            .map_err(Into::into)
-                    })
+                    handler.with_docs_stream(|docs| docs.doc_get_many(req))
                 })
                 .await
             }
@@ -325,11 +308,9 @@ impl<D: BaoStore> Handler<D> {
             }
             DocSubscribe(msg) => {
                 chan.try_server_streaming(msg, self, |handler, req| async move {
-                    if let Some(docs) = handler.docs() {
-                        docs.doc_subscribe(req).await
-                    } else {
-                        Err(docs_disabled())
-                    }
+                    handler
+                        .with_docs(|docs| async move { docs.doc_subscribe(req).await })
+                        .await
                 })
                 .await
             }
