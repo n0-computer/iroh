@@ -94,7 +94,7 @@ where
     gc_policy: GcPolicy,
     dns_resolver: Option<DnsResolver>,
     node_discovery: DiscoveryConfig,
-    docs_store: Option<DocsStorage>,
+    docs_storage: Option<DocsStorage>,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
     /// Callback to register when a gc loop is done
@@ -155,7 +155,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             dns_resolver: None,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
-            docs_store: Some(DocsStorage::Memory),
+            docs_storage: Some(DocsStorage::Memory),
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -168,7 +168,7 @@ impl<D: Map> Builder<D> {
     /// Creates a new builder for [`Node`] using the given databases.
     pub fn with_db_and_store(
         blobs_store: D,
-        docs_store: DocsStorage,
+        docs_storage: DocsStorage,
         storage: StorageConfig,
     ) -> Self {
         Self {
@@ -181,7 +181,7 @@ impl<D: Map> Builder<D> {
             dns_resolver: None,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
-            docs_store: Some(docs_store),
+            docs_storage: Some(docs_storage),
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -209,7 +209,7 @@ where
             .with_context(|| {
                 format!("Failed to load blobs database from {}", blob_dir.display())
             })?;
-        let docs_store = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
+        let docs_storage = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
 
         let v0 = blobs_store
             .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
@@ -245,7 +245,7 @@ where
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
-            docs_store: Some(docs_store),
+            docs_storage: Some(docs_storage),
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -266,7 +266,7 @@ where
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
-            docs_store: self.docs_store,
+            docs_storage: self.docs_storage,
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
@@ -292,7 +292,7 @@ where
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
-            docs_store: self.docs_store,
+            docs_storage: self.docs_storage,
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
@@ -310,7 +310,7 @@ where
 
     /// Disables documents support on this node completely.
     pub fn disable_docs(mut self) -> Self {
-        self.docs_store = None;
+        self.docs_storage = None;
         self
     }
 
@@ -480,7 +480,7 @@ where
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
 
         // Spawn the docs engine, if enabled.
-        let docs = if let Some(docs_storage) = &self.docs_store {
+        let docs = if let Some(docs_storage) = &self.docs_storage {
             let docs = DocsEngine::spawn(
                 docs_storage,
                 self.blobs_store.clone(),
