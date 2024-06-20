@@ -24,7 +24,7 @@ use iroh_blobs::{
 };
 use iroh_net::NodeAddr;
 use portable_atomic::{AtomicU64, Ordering};
-use quic_rpc::{client::BoxStreamSync, RpcClient, ServiceConnection};
+use quic_rpc::client::BoxStreamSync;
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
@@ -35,28 +35,25 @@ use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
     BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobListIncompleteRequest,
     BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, RpcService, SetTagOption,
+    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, SetTagOption,
 };
 
-use super::{flatten, tags, Iroh};
+use super::{flatten, tags, Iroh, RpcClient};
 
 /// Iroh blobs client.
 #[derive(Debug, Clone, RefCast)]
 #[repr(transparent)]
-pub struct Client<C> {
-    pub(super) rpc: RpcClient<RpcService, C>,
+pub struct Client {
+    pub(super) rpc: RpcClient,
 }
 
-impl<'a, C: ServiceConnection<RpcService>> From<&'a Iroh<C>> for &'a RpcClient<RpcService, C> {
-    fn from(client: &'a Iroh<C>) -> &'a RpcClient<RpcService, C> {
+impl<'a> From<&'a Iroh> for &'a RpcClient {
+    fn from(client: &'a Iroh) -> &'a RpcClient {
         &client.blobs().rpc
     }
 }
 
-impl<C> Client<C>
-where
-    C: ServiceConnection<RpcService>,
-{
+impl Client {
     /// Stream the contents of a a single blob.
     ///
     /// Returns a [`Reader`], which can report the size of the blob before reading it.
@@ -386,17 +383,14 @@ where
         }
     }
 
-    fn tags_client(&self) -> tags::Client<C> {
+    fn tags_client(&self) -> tags::Client {
         tags::Client {
             rpc: self.rpc.clone(),
         }
     }
 }
 
-impl<C> SimpleStore for Client<C>
-where
-    C: ServiceConnection<RpcService>,
-{
+impl SimpleStore for Client {
     async fn load(&self, hash: Hash) -> anyhow::Result<Bytes> {
         self.read_to_bytes(hash).await
     }
@@ -786,15 +780,12 @@ impl Reader {
         }
     }
 
-    pub(crate) async fn from_rpc_read<C: ServiceConnection<RpcService>>(
-        rpc: &RpcClient<RpcService, C>,
-        hash: Hash,
-    ) -> anyhow::Result<Self> {
+    pub(crate) async fn from_rpc_read(rpc: &RpcClient, hash: Hash) -> anyhow::Result<Self> {
         Self::from_rpc_read_at(rpc, hash, 0, None).await
     }
 
-    async fn from_rpc_read_at<C: ServiceConnection<RpcService>>(
-        rpc: &RpcClient<RpcService, C>,
+    async fn from_rpc_read_at(
+        rpc: &RpcClient,
         hash: Hash,
         offset: u64,
         len: Option<usize>,
