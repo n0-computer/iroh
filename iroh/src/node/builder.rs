@@ -59,6 +59,8 @@ const MAX_STREAMS: u64 = 10;
 /// Storage backend for documents.
 #[derive(Debug, Clone)]
 pub enum DocsStorage {
+    /// Disable docs completely.
+    Disabled,
     /// In-memory storage.
     Memory,
     /// File-based persistent storage.
@@ -94,7 +96,7 @@ where
     gc_policy: GcPolicy,
     dns_resolver: Option<DnsResolver>,
     node_discovery: DiscoveryConfig,
-    docs_storage: Option<DocsStorage>,
+    docs_storage: DocsStorage,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
     /// Callback to register when a gc loop is done
@@ -155,7 +157,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             dns_resolver: None,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
-            docs_storage: Some(DocsStorage::Memory),
+            docs_storage: DocsStorage::Memory,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -181,7 +183,7 @@ impl<D: Map> Builder<D> {
             dns_resolver: None,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
-            docs_storage: Some(docs_storage),
+            docs_storage,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -245,7 +247,7 @@ where
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
-            docs_storage: Some(docs_storage),
+            docs_storage,
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -310,7 +312,7 @@ where
 
     /// Disables documents support on this node completely.
     pub fn disable_docs(mut self) -> Self {
-        self.docs_storage = None;
+        self.docs_storage = DocsStorage::Disabled;
         self
     }
 
@@ -480,20 +482,16 @@ where
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
 
         // Spawn the docs engine, if enabled.
-        let docs = if let Some(docs_storage) = &self.docs_storage {
-            let docs = DocsEngine::spawn(
-                docs_storage,
-                self.blobs_store.clone(),
-                self.storage.default_author_storage(),
-                endpoint.clone(),
-                gossip.clone(),
-                downloader.clone(),
-            )
-            .await?;
-            Some(docs)
-        } else {
-            None
-        };
+        // This returns None for DocsStorage::Disabled, otherwise Some(DocsEngine).
+        let docs = DocsEngine::spawn(
+            self.docs_storage,
+            self.blobs_store.clone(),
+            self.storage.default_author_storage(),
+            endpoint.clone(),
+            gossip.clone(),
+            downloader.clone(),
+        )
+        .await?;
 
         // Initialize the internal RPC connection.
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);

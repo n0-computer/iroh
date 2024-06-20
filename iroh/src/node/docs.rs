@@ -16,14 +16,15 @@ pub(crate) struct DocsEngine(Engine);
 
 impl DocsEngine {
     pub async fn spawn<S: iroh_blobs::store::Store>(
-        storage: &DocsStorage,
+        storage: DocsStorage,
         blobs_store: S,
         default_author_storage: DefaultAuthorStorage,
         endpoint: Endpoint,
         gossip: Gossip,
         downloader: Downloader,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<Option<Self>> {
         let docs_store = match storage {
+            DocsStorage::Disabled => return Ok(None),
             DocsStorage::Memory => iroh_docs::store::fs::Store::memory(),
             DocsStorage::Persistent(path) => iroh_docs::store::fs::Store::persistent(path)?,
         };
@@ -36,7 +37,7 @@ impl DocsEngine {
             default_author_storage,
         )
         .await?;
-        Ok(DocsEngine(engine))
+        Ok(Some(DocsEngine(engine)))
     }
 }
 
