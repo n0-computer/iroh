@@ -4041,10 +4041,11 @@ dependencies = [
 
 [[package]]
 name = "quic-rpc"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0d69b05325e19956f123fce85ebc4d99226552a0bb24bba4c886106297e708b"
+checksum = "5e56dc58272a3f9c151b1c3a6df0e3caca083fd843b337e60f706fae2d974b6b"
 dependencies = [
+ "anyhow",
  "bincode",
  "derive_more",
  "educe",
