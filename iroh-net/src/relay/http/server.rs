@@ -8,6 +8,7 @@ use anyhow::{bail, ensure, Context as _, Result};
 use bytes::Bytes;
 use derive_more::Debug;
 use futures_lite::FutureExt;
+use http::header::CONNECTION;
 use http::response::Builder as ResponseBuilder;
 use hyper::body::Incoming;
 use hyper::header::{HeaderValue, UPGRADE};
@@ -380,7 +381,7 @@ impl ServerState {
         // we will use this cancel token to stop the infinite loop in the `listener.accept() task`
         let cancel_server_loop = CancellationToken::new();
         let addr = listener.local_addr()?;
-        let http_str = tls_config.as_ref().map_or("HTTP", |_| "HTTPS");
+        let http_str = tls_config.as_ref().map_or("HTTP/WS", |_| "HTTPS/WSS");
         info!("[{http_str}] relay: serving on {addr}");
         let cancel = cancel_server_loop.clone();
         let task = tokio::task::spawn(async move {
@@ -511,11 +512,12 @@ impl Service<Request<Incoming>> for ClientConnHandler {
                                     .await
                                 {
                                     warn!(
-                                        "upgrade to \"{HTTP_UPGRADE_PROTOCOL}\": io error: {:?}",
-                                        e
+                                        "upgrade to \"{}\": io error: {:?}",
+                                        e,
+                                        protocol.upgrade_header()
                                     );
                                 } else {
-                                    debug!("upgrade to \"{HTTP_UPGRADE_PROTOCOL}\" success");
+                                    debug!("upgrade to \"{}\" success", protocol.upgrade_header());
                                 };
                             }
                             Err(e) => warn!("upgrade error: {:?}", e),
@@ -533,6 +535,7 @@ impl Service<Request<Incoming>> for ClientConnHandler {
                 if let Some((key, _version)) = websocket_headers {
                     Ok(builder
                         .header("Sec-WebSocket-Accept", &derive_accept_key(key.as_bytes()))
+                        .header(CONNECTION, "upgrade")
                         .body(body_full("switching to websocket protocol"))
                         .expect("valid body"))
                 } else {

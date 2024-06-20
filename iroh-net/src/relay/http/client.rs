@@ -126,7 +126,7 @@ pub enum ClientError {
     #[error("actor gone")]
     ActorGone,
     /// There was an error related to websockets
-    #[error("websocket error")]
+    #[error("websocket error: {0}")]
     WebsocketError(#[from] tokio_tungstenite_wasm::Error),
 }
 
@@ -592,9 +592,12 @@ impl Actor {
 
         let (reader, writer, local_addr) = match &protocol {
             Protocol::Websocket => {
-                let (writer, reader) = tokio_tungstenite_wasm::connect(self.url.as_str())
-                    .await?
-                    .split();
+                let mut dial_url = (*self.url).clone();
+                dial_url.set_path("/derp");
+
+                debug!(%dial_url, "Dialing relay by websocket");
+
+                let (writer, reader) = tokio_tungstenite_wasm::connect(dial_url).await?.split();
 
                 let reader = RelayConnReader::Ws(reader);
                 let writer = RelayConnWriter::Ws(writer);
@@ -829,10 +832,11 @@ impl Actor {
 
     fn use_https(&self) -> bool {
         // only disable https if we are explicitly dialing a http url
-        if self.url.scheme() == "http" {
-            return false;
+        match self.url.scheme() {
+            "http" => false,
+            "ws" => false,
+            _ => true,
         }
-        true
     }
 
     async fn dial_url(&self) -> Result<ProxyStream, ClientError> {
