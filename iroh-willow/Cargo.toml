@@ -39,6 +39,7 @@ tokio = { version = "1", features = ["sync"] }
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
 tracing = "0.1"
 zerocopy = { version = "0.8.0-alpha.9", features = ["derive"] }
+hex = "0.4.3"
 
 [dev-dependencies]
 iroh-test = { path = "../iroh-test" }

@@ -305,16 +305,23 @@ mod tests {
 
     use crate::{
         actor::ActorHandle,
+        form::{AuthForm, EntryForm, PayloadForm, SubspaceForm, TimestampForm},
         net::run,
         proto::{
             grouping::{AreaOfInterest, ThreeDRange},
-            keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserPublicKey, UserSecretKey},
+            keys::{
+                NamespaceId, NamespaceKind, NamespaceSecretKey, UserId, UserPublicKey,
+                UserSecretKey,
+            },
             meadowcap::{AccessMode, McCapability, OwnedCapability},
             sync::ReadCapability,
             willow::{Entry, InvalidPath, Path, WriteCapability},
         },
-        session::{Role, SessionInit, SessionMode},
-        store::memory,
+        session::{Interests, Role, SessionInit, SessionMode},
+        store::{
+            auth::{CapSelector, DelegateTo},
+            memory,
+        },
     };
 
     const ALPN: &[u8] = b"iroh-willow/0";
@@ -329,37 +336,60 @@ mod tests {
         let (ep_alfie, node_id_alfie, _) = create_endpoint(&mut rng).await?;
         let (ep_betty, node_id_betty, addr_betty) = create_endpoint(&mut rng).await?;
 
-        let namespace_secret = NamespaceSecretKey::generate(&mut rng, NamespaceKind::Owned);
-        let namespace_id = namespace_secret.id();
-
         let start = Instant::now();
         let mut expected_entries = BTreeSet::new();
 
-        let (handle_alfie, payloads_alfie) = create_willow(node_id_alfie);
-        let (handle_betty, payloads_betty) = create_willow(node_id_betty);
+        let handle_alfie = ActorHandle::spawn_memory(Default::default(), node_id_alfie);
+        let handle_betty = ActorHandle::spawn_memory(Default::default(), node_id_betty);
 
-        let (init_alfie, _) = setup_and_insert(
-            SessionMode::ReconcileOnce,
-            &mut rng,
+        let user_alfie = handle_alfie.create_user().await?;
+        let user_betty = handle_betty.create_user().await?;
+
+        let namespace_id = handle_alfie
+            .create_namespace(NamespaceKind::Owned, user_alfie)
+            .await?;
+
+        let cap_for_betty = handle_alfie
+            .delegate_caps(
+                CapSelector::widest(namespace_id),
+                AccessMode::Write,
+                DelegateTo::new(user_betty, None),
+            )
+            .await?;
+
+        handle_betty.import_caps(cap_for_betty).await?;
+
+        insert2(
             &handle_alfie,
-            &payloads_alfie,
-            &namespace_secret,
+            namespace_id,
+            user_alfie,
             n_alfie,
-            &mut expected_entries,
             |n| Path::new(&[b"alfie", n.to_string().as_bytes()]),
-        )
-        .await?;
-        let (init_betty, _) = setup_and_insert(
-            SessionMode::ReconcileOnce,
-            &mut rng,
-            &handle_betty,
-            &payloads_betty,
-            &namespace_secret,
-            n_betty,
+            |n| format!("alfie{n}"),
             &mut expected_entries,
-            |n| Path::new(&[b"betty", n.to_string().as_bytes()]),
         )
         .await?;
+
+        insert2(
+            &handle_betty,
+            namespace_id,
+            user_betty,
+            n_betty,
+            |n| Path::new(&[b"betty", n.to_string().as_bytes()]),
+            |n| format!("betty{n}"),
+            &mut expected_entries,
+        )
+        .await?;
+
+        let init_alfie = SessionInit {
+            interests: Interests::All,
+            mode: SessionMode::ReconcileOnce,
+        };
+        let init_betty = SessionInit {
+            interests: Interests::All,
+            mode: SessionMode::ReconcileOnce,
+        };
+
         info!("init took {:?}", start.elapsed());
 
         let start = Instant::now();
@@ -558,6 +588,32 @@ mod tests {
         entries
     }
 
+    async fn insert2(
+        handle: &ActorHandle,
+        namespace_id: NamespaceId,
+        user_id: UserId,
+        count: usize,
+        path_fn: impl Fn(usize) -> Result<Path, InvalidPath>,
+        content_fn: impl Fn(usize) -> String,
+        track_entries: &mut impl Extend<Entry>,
+    ) -> anyhow::Result<()> {
+        for i in 0..count {
+            let payload = content_fn(i).as_bytes().to_vec();
+            let path = path_fn(i).expect("invalid path");
+            let entry = EntryForm {
+                namespace_id,
+                subspace_id: SubspaceForm::User,
+                path,
+                timestamp: TimestampForm::Now,
+                payload: PayloadForm::Bytes(payload.into()),
+            };
+            let (entry, inserted) = handle.insert_form(entry, AuthForm::Any(user_id)).await?;
+            assert!(inserted);
+            track_entries.extend([entry]);
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn insert<P: PayloadStore>(
         actor: &ActorHandle,
@@ -620,7 +676,8 @@ mod tests {
             track_entries,
         )
         .await?;
-        let init = SessionInit::with_interest(mode, read_cap, AreaOfInterest::full());
+        let init =
+            SessionInit::with_explicit_interest(mode, read_cap.into(), AreaOfInterest::full());
         Ok((init, write_cap))
     }
 

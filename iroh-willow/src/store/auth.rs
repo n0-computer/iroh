@@ -1,100 +1,121 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     sync::{Arc, RwLock},
 };
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 use crate::{
     proto::{
-        grouping::Area,
-        keys::{NamespaceId, NamespaceKind, UserId, UserPublicKey},
+        grouping::{Area, AreaOfInterest, Point},
+        keys::{NamespaceId, NamespaceKind, NamespacePublicKey, UserId, UserPublicKey},
         meadowcap::{AccessMode, McCapability},
         sync::ReadAuthorisation,
-        willow::{Entry, Path, SubspaceId, Timestamp, WriteCapability},
+        willow::{Entry, WriteCapability},
     },
+    session::Interests,
     store::traits::{SecretStorage, SecretStoreError},
 };
 
-#[derive(Debug)]
-pub struct CapSelector {
-    user_id: UserId,
-    namespace_id: NamespaceId,
-    granted_area: AreaSelector,
+#[derive(Debug, Clone)]
+pub struct DelegateTo {
+    pub user: UserId,
+    pub restrict_area: Option<Area>,
 }
 
-#[derive(Debug)]
+impl DelegateTo {
+    pub fn new(user: UserId, restrict_area: Option<Area>) -> Self {
+        Self {
+            user,
+            restrict_area,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CapSelector {
+    pub namespace_id: NamespaceId,
+    pub user: UserSelector,
+    pub area: AreaSelector,
+}
+
+impl CapSelector {
+    pub fn matches(&self, cap: &McCapability) -> bool {
+        self.namespace_id == cap.granted_namespace().id()
+            && self.user.includes(&cap.receiver().id())
+            && self.area.is_included_in(&cap.granted_area())
+    }
+
+    pub fn widest(namespace_id: NamespaceId) -> Self {
+        Self {
+            namespace_id,
+            user: UserSelector::Any,
+            area: AreaSelector::Widest,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq, derive_more::From, Serialize, Deserialize)]
+pub enum UserSelector {
+    #[default]
+    Any,
+    Exact(UserId),
+}
+
+impl UserSelector {
+    fn includes(&self, user: &UserId) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Exact(u) => u == user,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub enum AreaSelector {
+    #[default]
+    Widest,
     Area(Area),
-    Point {
-        subspace_id: SubspaceId,
-        path: Path,
-        timestamp: Timestamp,
-    },
+    Point(Point),
 }
 
 impl AreaSelector {
-    pub fn included_in(&self, other: &Area) -> bool {
+    pub fn is_included_in(&self, other: &Area) -> bool {
         match self {
+            AreaSelector::Widest => true,
             AreaSelector::Area(area) => other.includes_area(area),
-            AreaSelector::Point {
-                subspace_id,
-                path,
-                timestamp,
-            } => other.includes_point(subspace_id, path, timestamp),
+            AreaSelector::Point(point) => other.includes_point(point),
         }
     }
 }
 
 impl CapSelector {
-    pub fn for_entry(entry: &Entry, user_id: UserId) -> Self {
-        let granted_area = AreaSelector::Point {
-            path: entry.path.clone(),
-            timestamp: entry.timestamp,
-            subspace_id: entry.subspace_id,
-        };
+    pub fn for_entry(entry: &Entry, user_id: UserSelector) -> Self {
+        let granted_area = AreaSelector::Point(Point::from_entry(entry));
         Self {
             namespace_id: entry.namespace_id,
-            user_id,
-            granted_area,
+            user: user_id,
+            area: granted_area,
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum CapabilityPack {
     Read(ReadAuthorisation),
     Write(WriteCapability),
 }
 
-// #[derive(Debug)]
-// pub enum CapabilityRoot {
-//     Owned(NamespaceSecretKey),
-//     Communal(NamespacePublicKey),
-// }
-//
-// impl CapabilityRoot {
-//     pub fn kind(&self) -> NamespaceKind {
-//         match self {
-//             CapabilityRoot::Owned(_) => NamespaceKind::Owned,
-//             CapabilityRoot::Communal(_) => NamespaceKind::Communal,
-//         }
-//     }
-//     fn for_namespace<S: SecretStorage>(
-//         namespace: NamespacePublicKey,
-//         secrets: S,
-//     ) -> Result<Self, AuthError> {
-//         match namespace.kind() {
-//             NamespaceKind::Communal => Ok(CapabilityRoot::Communal(namespace)),
-//             NamespaceKind::Owned => {
-//                 let secret = secrets
-//                     .get_namespace(&namespace.id())
-//                     .ok_or(AuthError::MissingNamespaceSecret)?;
-//                 Ok(CapabilityRoot::Owned(secret))
-//             }
-//         }
-//     }
-// }
+impl CapabilityPack {
+    pub fn receiver(&self) -> UserId {
+        match self {
+            CapabilityPack::Read(auth) => auth.read_cap().receiver().id(),
+            CapabilityPack::Write(cap) => cap.receiver().id(),
+        }
+    }
+}
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy, Hash)]
 pub struct CapabilityHash(iroh_base::hash::Hash);
@@ -104,94 +125,208 @@ pub struct AuthStore {
     inner: Arc<RwLock<Inner>>,
 }
 impl AuthStore {
-    pub fn get_write(&self, selector: CapSelector) -> Result<Option<WriteCapability>, AuthError> {
-        Ok(self.inner.read().unwrap().get_write_authorisation(selector))
+    pub fn get_write_cap(
+        &self,
+        selector: &CapSelector,
+    ) -> Result<Option<WriteCapability>, AuthError> {
+        Ok(self.inner.read().unwrap().get_write_cap(selector))
     }
 
-    pub fn get_read(&self, selector: CapSelector) -> Result<Option<ReadAuthorisation>, AuthError> {
-        Ok(self.inner.read().unwrap().get_read_authorisation(selector))
+    pub fn get_read_cap(
+        &self,
+        selector: &CapSelector,
+    ) -> Result<Option<ReadAuthorisation>, AuthError> {
+        let cap = self.inner.read().unwrap().get_read_cap(selector);
+        debug!(?selector, ?cap, "get read cap");
+        Ok(cap)
     }
 
-    pub fn insert(&self, cap: CapabilityPack) {
-        self.inner.write().unwrap().insert_capability(cap);
+    pub fn list_read_caps(&self) -> impl Iterator<Item = ReadAuthorisation> {
+        self.inner
+            .read()
+            .unwrap()
+            .read_caps
+            .values()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
-    pub fn mint<S: SecretStorage>(
+    pub fn insert_caps(&self, caps: impl IntoIterator<Item = CapabilityPack>) {
+        let mut inner = self.inner.write().unwrap();
+        for cap in caps.into_iter() {
+            debug!(?cap, "insert cap");
+            inner.insert_caps(cap);
+        }
+    }
+
+    pub fn resolve_interests(
+        &self,
+        interests: Interests,
+    ) -> Result<HashMap<ReadAuthorisation, BTreeSet<AreaOfInterest>>, AuthError> {
+        match interests {
+            Interests::All => {
+                let out = self
+                    .list_read_caps()
+                    .map(|auth| {
+                        let area = auth.read_cap().granted_area();
+                        let aoi = AreaOfInterest::new(area);
+                        (auth, BTreeSet::from_iter([aoi]))
+                    })
+                    .collect::<HashMap<_, _>>();
+                Ok(out)
+            }
+            Interests::Explicit(interests) => Ok(interests),
+            Interests::Some(interests) => {
+                let mut out: HashMap<ReadAuthorisation, BTreeSet<AreaOfInterest>> = HashMap::new();
+                for (namespace_id, aois) in interests {
+                    for aoi in aois {
+                        let selector = CapSelector {
+                            namespace_id,
+                            user: UserSelector::Any,
+                            area: AreaSelector::Area(aoi.area.clone()),
+                        };
+                        let cap = self.get_read_cap(&selector)?;
+                        if let Some(cap) = cap {
+                            let set = out.entry(cap).or_default();
+                            set.insert(aoi);
+                        }
+                    }
+                }
+                Ok(out)
+            }
+        }
+    }
+
+    pub fn create_full_caps<S: SecretStorage>(
         &self,
         secrets: &S,
         namespace_id: NamespaceId,
         user_id: UserId,
-        access_mode: AccessMode,
-    ) -> Result<(), AuthError> {
+    ) -> Result<[CapabilityPack; 2], AuthError> {
         let namespace_key = namespace_id
             .into_public_key()
-            .map_err(|_| AuthError::InvalidNamespaceId)?;
+            .map_err(|_| AuthError::InvalidNamespaceId(namespace_id))?;
         let user_key: UserPublicKey = user_id
             .into_public_key()
-            .map_err(|_| AuthError::InvalidUserId)?;
+            .map_err(|_| AuthError::InvalidUserId(user_id))?;
+        let read_cap = self.create_read_cap(secrets, namespace_key, user_key)?;
+        let write_cap = self.create_write_cap(secrets, namespace_key, user_key)?;
+        let pack = [read_cap, write_cap];
+        self.insert_caps(pack.clone());
+        Ok(pack)
+    }
+
+    pub fn create_read_cap<S: SecretStorage>(
+        &self,
+        secrets: &S,
+        namespace_key: NamespacePublicKey,
+        user_key: UserPublicKey,
+    ) -> Result<CapabilityPack, AuthError> {
+        let namespace_id = namespace_key.id();
         let cap = match namespace_key.kind() {
             NamespaceKind::Owned => {
                 let namespace_secret = secrets
                     .get_namespace(&namespace_id)
-                    .ok_or(AuthError::MissingNamespaceSecret)?;
-                McCapability::new_owned(namespace_secret, user_key, access_mode)
+                    .ok_or(AuthError::MissingNamespaceSecret(namespace_id))?;
+                McCapability::new_owned(namespace_secret, user_key, AccessMode::Read)
             }
             NamespaceKind::Communal => {
-                McCapability::new_communal(namespace_key, user_key, access_mode)
+                McCapability::new_communal(namespace_key, user_key, AccessMode::Read)
             }
         };
-        let pack = match access_mode {
-            AccessMode::Read => CapabilityPack::Read(ReadAuthorisation::new(cap, None)),
-            AccessMode::Write => CapabilityPack::Write(cap),
-        };
-        self.insert(pack);
-        Ok(())
-    }
-
-    pub fn delegate<S: SecretStorage>(
-        &self,
-        secrets: &S,
-        namespace_id: NamespaceId,
-        prev_user: UserId,
-        access_mode: AccessMode,
-        new_user: UserId,
-        new_area: Area,
-    ) -> Result<CapabilityPack, AuthError> {
-        let new_user_key = new_user
-            .into_public_key()
-            .map_err(|_| AuthError::InvalidUserId)?;
-        let selector = CapSelector {
-            user_id: prev_user,
-            namespace_id,
-            granted_area: AreaSelector::Area(new_area.clone()),
-        };
-        let pack = match access_mode {
-            AccessMode::Write => {
-                let cap = self
-                    .get_write(selector)?
-                    .ok_or(AuthError::NoCapabilityFound)?;
-                let user_secret = secrets
-                    .get_user(&cap.receiver().id())
-                    .ok_or(AuthError::MissingUserSecret)?;
-                let new_cap = cap.delegate(&user_secret, new_user_key, new_area)?;
-                CapabilityPack::Write(new_cap)
-            }
-            AccessMode::Read => {
-                let auth = self
-                    .get_read(selector)?
-                    .ok_or(AuthError::NoCapabilityFound)?;
-                let ReadAuthorisation(read_cap, _subspace_cap) = auth;
-                let user_secret = secrets
-                    .get_user(&read_cap.receiver().id())
-                    .ok_or(AuthError::MissingUserSecret)?;
-                let new_read_cap = read_cap.delegate(&user_secret, new_user_key, new_area)?;
-                // TODO: Subspace capability
-                CapabilityPack::Read(ReadAuthorisation::new(new_read_cap, None))
-            }
-        };
+        // TODO: Subspace capability.
+        let pack = CapabilityPack::Read(ReadAuthorisation::new(cap, None));
         Ok(pack)
     }
+
+    pub fn create_write_cap<S: SecretStorage>(
+        &self,
+        secrets: &S,
+        namespace_key: NamespacePublicKey,
+        user_key: UserPublicKey,
+    ) -> Result<CapabilityPack, AuthError> {
+        let namespace_id = namespace_key.id();
+        let cap = match namespace_key.kind() {
+            NamespaceKind::Owned => {
+                let namespace_secret = secrets
+                    .get_namespace(&namespace_id)
+                    .ok_or(AuthError::MissingNamespaceSecret(namespace_id))?;
+                McCapability::new_owned(namespace_secret, user_key, AccessMode::Write)
+            }
+            NamespaceKind::Communal => {
+                McCapability::new_communal(namespace_key, user_key, AccessMode::Write)
+            }
+        };
+        let pack = CapabilityPack::Write(cap);
+        Ok(pack)
+    }
+
+    pub fn delegate_full_caps<S: SecretStorage>(
+        &self,
+        secrets: &S,
+        from: CapSelector,
+        access_mode: AccessMode,
+        to: DelegateTo,
+        store: bool,
+    ) -> Result<Vec<CapabilityPack>, AuthError> {
+        let mut out = Vec::with_capacity(2);
+        let user_key: UserPublicKey = to
+            .user
+            .into_public_key()
+            .map_err(|_| AuthError::InvalidUserId(to.user))?;
+        let restrict_area = to.restrict_area;
+        let read_cap = self.delegate_read_cap(secrets, &from, user_key, restrict_area.clone())?;
+        out.push(read_cap);
+        if access_mode == AccessMode::Write {
+            let write_cap = self.delegate_write_cap(secrets, &from, user_key, restrict_area)?;
+            out.push(write_cap);
+        }
+        if store {
+            self.insert_caps(out.clone());
+        }
+        Ok(out)
+    }
+
+    pub fn delegate_read_cap<S: SecretStorage>(
+        &self,
+        secrets: &S,
+        from: &CapSelector,
+        to: UserPublicKey,
+        restrict_area: Option<Area>,
+    ) -> Result<CapabilityPack, AuthError> {
+        let auth = self.get_read_cap(from)?.ok_or(AuthError::NoCapability)?;
+        let ReadAuthorisation(read_cap, _subspace_cap) = auth;
+        let user_id = read_cap.receiver().id();
+        let user_secret = secrets
+            .get_user(&user_id)
+            .ok_or(AuthError::MissingUserSecret(user_id))?;
+        let area = restrict_area.unwrap_or(read_cap.granted_area());
+        let new_read_cap = read_cap.delegate(&user_secret, to, area)?;
+        // TODO: Subspace capability
+        let new_subspace_cap = None;
+        let pack = CapabilityPack::Read(ReadAuthorisation::new(new_read_cap, new_subspace_cap));
+        Ok(pack)
+    }
+
+    pub fn delegate_write_cap<S: SecretStorage>(
+        &self,
+        secrets: &S,
+        from: &CapSelector,
+        to: UserPublicKey,
+        restrict_area: Option<Area>,
+    ) -> Result<CapabilityPack, AuthError> {
+        let cap = self.get_write_cap(from)?.ok_or(AuthError::NoCapability)?;
+        let user_secret = secrets
+            .get_user(&cap.receiver().id())
+            .ok_or(AuthError::MissingUserSecret(cap.receiver().id()))?;
+        let area = restrict_area.unwrap_or(cap.granted_area());
+        let new_cap = cap.delegate(&user_secret, to, area)?;
+        Ok(CapabilityPack::Write(new_cap))
+    }
 }
+
 #[derive(Debug, Default)]
 pub struct Inner {
     write_caps: HashMap<NamespaceId, Vec<WriteCapability>>,
@@ -199,91 +334,83 @@ pub struct Inner {
 }
 
 impl Inner {
-    fn get_write_authorisation(&self, selector: CapSelector) -> Option<WriteCapability> {
+    fn get_write_cap(&self, selector: &CapSelector) -> Option<WriteCapability> {
         let candidates = self
             .write_caps
             .get(&selector.namespace_id)
             .into_iter()
             .flatten()
-            .filter(|cap| {
-                cap.receiver().id() == selector.user_id
-                    && selector.granted_area.included_in(&cap.granted_area())
-            });
+            .filter(|cap| selector.matches(cap));
 
         // Select the best candidate, by sorting for
-        // * smallest number of delegations
-        // * widest area
-        let best = candidates.reduce(|prev, next| match next.is_wider_than(prev) {
-            true => next,
-            false => prev,
-        });
+        // * first: widest area
+        // * then: smallest number of delegations
+        let best = candidates.reduce(
+            |prev, next| {
+                if next.is_wider_than(prev) {
+                    next
+                } else {
+                    prev
+                }
+            },
+        );
         best.cloned()
     }
 
-    fn get_read_authorisation(&self, selector: CapSelector) -> Option<ReadAuthorisation> {
+    fn get_read_cap(&self, selector: &CapSelector) -> Option<ReadAuthorisation> {
         let candidates = self
             .read_caps
             .get(&selector.namespace_id)
             .into_iter()
             .flatten()
-            .filter(|auth| {
-                let cap = &auth.0;
-                cap.receiver().id() == selector.user_id
-                    && selector.granted_area.included_in(&cap.granted_area())
-            });
+            .filter(|auth| selector.matches(auth.read_cap()));
 
         // Select the best candidate, by sorting for
         // * smallest number of delegations
         // * widest area
-        let best = candidates.reduce(|prev, next| match next.0.is_wider_than(&prev.0) {
-            true => next,
-            false => prev,
+        let best = candidates.reduce(|prev, next| {
+            if next.read_cap().is_wider_than(prev.read_cap()) {
+                next
+            } else {
+                prev
+            }
         });
         best.cloned()
     }
 
-    fn insert_capability(&mut self, cap: CapabilityPack) {
+    fn insert_caps(&mut self, cap: CapabilityPack) {
         match cap {
-            CapabilityPack::Read(_) => todo!(),
-            CapabilityPack::Write(_) => todo!(),
+            CapabilityPack::Read(cap) => {
+                self.read_caps
+                    .entry(cap.read_cap().granted_namespace().id())
+                    .or_default()
+                    .push(cap);
+            }
+            CapabilityPack::Write(cap) => {
+                self.write_caps
+                    .entry(cap.granted_namespace().id())
+                    .or_default()
+                    .push(cap);
+            }
         }
     }
 }
 
-// fn mint_capability(
-//     namespace_secret: &NamespaceSecretKey,
-//     user_public_key: UserPublicKey,
-// ) -> (ReadCapability, WriteCapability) {
-//     let read_capability = McCapability::Owned(OwnedCapability::new(
-//         namespace_secret,
-//         user_public_key,
-//         AccessMode::Read,
-//     ));
-//     let write_capability = McCapability::Owned(OwnedCapability::new(
-//         namespace_secret,
-//         user_public_key,
-//         AccessMode::Write,
-//     ));
-//     (read_capability, write_capability)
-// }
-
 #[derive(thiserror::Error, Debug)]
 pub enum AuthError {
-    #[error("invalid user id")]
-    InvalidUserId,
-    #[error("invalid namespace id")]
-    InvalidNamespaceId,
-    #[error("missing user secret")]
-    MissingUserSecret,
-    #[error("missing namespace secret")]
-    MissingNamespaceSecret,
-    #[error("wrong root token for namespace kind")]
-    WrongRootToken,
+    #[error("invalid user id: {}", .0.fmt_short())]
+    InvalidUserId(UserId),
+    #[error("invalid namespace id: {}", .0.fmt_short())]
+    InvalidNamespaceId(NamespaceId),
+    #[error("missing user secret: {}", .0.fmt_short())]
+    MissingUserSecret(UserId),
+    #[error("missing namespace secret: {}", .0.fmt_short())]
+    MissingNamespaceSecret(NamespaceId),
     #[error("secret store error: {0}")]
     SecretStore(#[from] SecretStoreError),
     #[error("no capability found")]
-    NoCapabilityFound,
+    NoCapability,
     // TODO: remove
-    #[error("other: {0}")]
+    #[error("{0}")]
     Other(#[from] anyhow::Error),
 }

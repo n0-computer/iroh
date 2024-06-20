@@ -82,6 +82,16 @@ impl ThreeDRange {
     }
 }
 
+// pub trait Successor: Sized {
+//     fn successor(&self) -> Option<Self>;
+// }
+//
+// impl Successor for Timestamp {
+//     fn successor(&self) -> Option<Self> {
+//         self.checked_add(1)
+//     }
+// }
+
 /// Ranges are simple, one-dimensional ways of grouping Entries.
 ///
 /// They can express groupings such as “last week’s Entries”. A range is either a closed range or an open range.
@@ -95,6 +105,22 @@ pub struct Range<T> {
     /// If [`RangeEnd::Open`], this is an open range. Otherwise, a value must be strictly less than
     /// the `end` value to be included in the range.
     pub end: RangeEnd<T>,
+}
+
+impl<T: Ord + PartialOrd> Ord for Range<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.start.cmp(&other.start) {
+            Ordering::Less => Ordering::Less,
+            Ordering::Equal => Ordering::Greater,
+            Ordering::Greater => self.end.cmp(&other.end),
+        }
+    }
+}
+
+impl<T: Ord + PartialOrd> PartialOrd for Range<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl<T> From<(T, RangeEnd<T>)> for Range<T> {
@@ -207,11 +233,17 @@ impl<T: Copy> RangeEnd<T> {
 
 impl<T: Ord + PartialOrd> PartialOrd for RangeEnd<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: Ord + PartialOrd> Ord for RangeEnd<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
-            (RangeEnd::Open, RangeEnd::Closed(_)) => Some(Ordering::Greater),
-            (RangeEnd::Closed(_), RangeEnd::Open) => Some(Ordering::Less),
-            (RangeEnd::Closed(a), RangeEnd::Closed(b)) => a.partial_cmp(b),
-            (RangeEnd::Open, RangeEnd::Open) => Some(Ordering::Equal),
+            (RangeEnd::Open, RangeEnd::Closed(_)) => Ordering::Greater,
+            (RangeEnd::Closed(_), RangeEnd::Open) => Ordering::Less,
+            (RangeEnd::Closed(a), RangeEnd::Closed(b)) => a.cmp(b),
+            (RangeEnd::Open, RangeEnd::Open) => Ordering::Equal,
         }
     }
 }
@@ -227,7 +259,7 @@ impl<T: Ord + PartialOrd> RangeEnd<T> {
 }
 
 /// A grouping of Entries that are among the newest in some store.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Hash, Ord, PartialOrd)]
 pub struct AreaOfInterest {
     /// To be included in this AreaOfInterest, an Entry must be included in the area.
     pub area: Area,
@@ -238,6 +270,13 @@ pub struct AreaOfInterest {
 }
 
 impl AreaOfInterest {
+    pub fn new(area: Area) -> Self {
+        Self {
+            area,
+            max_count: 0,
+            max_size: 0,
+        }
+    }
     /// Create a new [`AreaOfInterest`] that covers everything.
     pub fn full() -> Self {
         Self {
@@ -249,7 +288,7 @@ impl AreaOfInterest {
 }
 
 /// A grouping of Entries.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct Area {
     /// To be included in this Area, an Entry’s subspace_id must be equal to the subspace_id, unless it is any.
     pub subspace: SubspaceArea,
@@ -285,18 +324,17 @@ impl Area {
     }
 
     pub fn includes_entry(&self, entry: &Entry) -> bool {
-        self.includes_point(&entry.subspace_id, &entry.path, &entry.timestamp)
+        self.includes(&entry.subspace_id, &entry.path, &entry.timestamp)
     }
 
-    pub fn includes_point(
-        &self,
-        subspace_id: &SubspaceId,
-        path: &Path,
-        timestamp: &Timestamp,
-    ) -> bool {
+    pub fn includes(&self, subspace_id: &SubspaceId, path: &Path, timestamp: &Timestamp) -> bool {
         self.subspace.includes_subspace(subspace_id)
             && self.path.is_prefix_of(path)
             && self.times.includes(timestamp)
+    }
+
+    pub fn includes_point(&self, point: &Point) -> bool {
+        self.includes(&point.subspace_id, &point.path, &point.timestamp)
     }
 
     pub fn includes_area(&self, other: &Area) -> bool {
@@ -419,7 +457,7 @@ impl Range<Timestamp> {
     };
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum SubspaceArea {
     Any,
     Id(SubspaceId),
@@ -449,6 +487,36 @@ impl SubspaceArea {
             (Self::Id(_a), Self::Id(_b)) => None,
         }
     }
+}
+
+/// A single point in the 3D range space.
+///
+/// I.e. an entry.
+#[derive(Debug, Clone)]
+pub struct Point {
+    pub path: Path,
+    pub timestamp: Timestamp,
+    pub subspace_id: SubspaceId,
+}
+
+impl Point {
+    pub fn new(subspace_id: SubspaceId, path: Path, timestamp: Timestamp) -> Self {
+        Self {
+            subspace_id,
+            path,
+            timestamp,
+        }
+    }
+    pub fn from_entry(entry: &Entry) -> Self {
+        Self {
+            path: entry.path.clone(),
+            timestamp: entry.timestamp,
+            subspace_id: entry.subspace_id,
+        }
+    }
+
+    // pub fn into_area(&self) -> Area {
+    // }
 }
 
 #[derive(thiserror::Error, Debug)]

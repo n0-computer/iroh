@@ -2930,6 +2930,7 @@ dependencies = [
  "futures-lite 2.3.0",
  "futures-util",
  "genawaiter",
+ "hex",
  "iroh-base",
  "iroh-blobs",
  "iroh-metrics",

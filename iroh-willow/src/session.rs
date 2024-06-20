@@ -1,9 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::proto::grouping::Area;
 use crate::proto::keys::NamespaceId;
-use crate::proto::sync::{AccessChallenge, AreaOfInterestHandle, ChallengeHash};
-use crate::proto::{grouping::AreaOfInterest, sync::ReadCapability};
+use crate::proto::sync::{AccessChallenge, AreaOfInterestHandle, ChallengeHash, ReadAuthorisation};
+use crate::{
+    proto::grouping::{Area, AreaOfInterest},
+    store::auth::CapSelector,
+};
 
 pub mod channels;
 mod data;
@@ -56,12 +58,14 @@ impl Role {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SessionMode {
+    /// Run a single, full reconciliation, and then quit.
     ReconcileOnce,
+    /// Run reconciliations and data mode, until intentionally closed.
     Live,
 }
 
 impl SessionMode {
-    fn is_live(&self) -> bool {
+    pub fn is_live(&self) -> bool {
         *self == Self::Live
     }
 }
@@ -70,14 +74,29 @@ impl SessionMode {
 pub enum Interests {
     #[default]
     All,
-    Some(HashSet<AreaOfInterest>),
+    Some(BTreeMap<NamespaceId, BTreeSet<AreaOfInterest>>),
+    Explicit(HashMap<ReadAuthorisation, BTreeSet<AreaOfInterest>>),
+}
+
+#[derive(Debug, Default, Clone)]
+pub enum Interests2 {
+    #[default]
+    All,
+    Some(Vec<(CapSelector, AreaOfInterestSelector)>),
+}
+
+#[derive(Debug, Default, Clone)]
+pub enum AreaOfInterestSelector {
+    #[default]
+    Widest,
+    Exact(BTreeSet<AreaOfInterest>),
 }
 
 /// Options to initialize a session with.
 #[derive(Debug)]
 pub struct SessionInit {
     /// List of interests we wish to synchronize, together with our capabilities to read them.
-    pub interests: HashMap<ReadCapability, HashSet<AreaOfInterest>>,
+    pub interests: Interests,
     pub mode: SessionMode,
 }
 
@@ -85,12 +104,29 @@ impl SessionInit {
     /// Returns a [`SessionInit`] with a single interest.
     pub fn with_interest(
         mode: SessionMode,
-        capability: ReadCapability,
+        namespace: NamespaceId,
         area_of_interest: AreaOfInterest,
     ) -> Self {
         Self {
             mode,
-            interests: HashMap::from_iter([(capability, HashSet::from_iter([area_of_interest]))]),
+            interests: Interests::Some(BTreeMap::from_iter([(
+                namespace,
+                BTreeSet::from_iter([area_of_interest]),
+            )])),
+        }
+    }
+
+    pub fn with_explicit_interest(
+        mode: SessionMode,
+        authorisation: ReadAuthorisation,
+        area_of_interest: AreaOfInterest,
+    ) -> Self {
+        Self {
+            mode,
+            interests: Interests::Explicit(HashMap::from_iter([(
+                authorisation,
+                BTreeSet::from_iter([area_of_interest]),
+            )])),
         }
     }
 }

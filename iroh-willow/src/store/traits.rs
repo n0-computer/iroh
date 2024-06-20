@@ -22,11 +22,26 @@ pub trait SecretStorage: std::fmt::Debug + Clone + 'static {
     fn get_user(&self, id: &UserId) -> Option<UserSecretKey>;
     fn get_namespace(&self, id: &NamespaceId) -> Option<NamespaceSecretKey>;
 
-    fn insert_user(&self, secret: UserSecretKey) -> Result<(), SecretStoreError> {
-        self.insert(meadowcap::SecretKey::User(secret))
+    fn has_user(&self, id: &UserId) -> bool {
+        self.get_user(id).is_some()
     }
-    fn insert_namespace(&self, secret: NamespaceSecretKey) -> Result<(), SecretStoreError> {
-        self.insert(meadowcap::SecretKey::Namespace(secret))
+
+    fn has_namespace(&self, id: &UserId) -> bool {
+        self.get_user(id).is_some()
+    }
+
+    fn insert_user(&self, secret: UserSecretKey) -> Result<UserId, SecretStoreError> {
+        let id = secret.id();
+        self.insert(meadowcap::SecretKey::User(secret))?;
+        Ok(id)
+    }
+    fn insert_namespace(
+        &self,
+        secret: NamespaceSecretKey,
+    ) -> Result<NamespaceId, SecretStoreError> {
+        let id = secret.id();
+        self.insert(meadowcap::SecretKey::Namespace(secret))?;
+        Ok(id)
     }
 
     fn sign_user(&self, id: &UserId, message: &[u8]) -> Result<UserSignature, SecretStoreError> {

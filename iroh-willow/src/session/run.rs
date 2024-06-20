@@ -74,11 +74,13 @@ impl Session {
         });
 
         // Spawn a task to handle incoming areas of interest.
-        self.spawn(error_span!("aoi"), move |session| async move {
-            while let Some(message) = aoi_recv.try_next().await? {
-                session.on_bind_area_of_interest(message).await?;
+        self.spawn(error_span!("aoi"), {
+            move |session| async move {
+                while let Some(message) = aoi_recv.try_next().await? {
+                    session.on_bind_area_of_interest(message).await?;
+                }
+                Ok(())
             }
-            Ok(())
         });
 
         // Spawn a task to handle reconciliation messages
@@ -106,17 +108,21 @@ impl Session {
         });
 
         // Spawn a task to handle session termination.
-        self.spawn(error_span!("fin"), move |session| async move {
-            // Wait until the session is cancelled:
-            // * either because SessionMode is ReconcileOnce and reconciliation finished
-            // * or because the session was cancelled from the outside session handle
-            cancel_token.cancelled().await;
-            // Then close all senders. This will make all other tasks terminate once the remote
-            // closed their senders as well.
-            session.close_senders();
-            // Unsubscribe from the store.  This stops the data send task.
-            store.entries().unsubscribe(session.id());
-            Ok(())
+        self.spawn(error_span!("fin"), {
+            let cancel_token = cancel_token.clone();
+            move |session| async move {
+                // Wait until the session is cancelled:
+                // * either because SessionMode is ReconcileOnce and reconciliation finished
+                // * or because the session was cancelled from the outside session handle
+                cancel_token.cancelled().await;
+                debug!("closing session");
+                // Then close all senders. This will make all other tasks terminate once the remote
+                // closed their senders as well.
+                session.close_senders();
+                // Unsubscribe from the store.  This stops the data send task.
+                store.entries().unsubscribe(session.id());
+                Ok(())
+            }
         });
 
         // Wait for all tasks to complete.
@@ -125,9 +131,12 @@ impl Session {
         let mut final_result = Ok(());
         while let Some((span, result)) = self.join_next_task().await {
             let _guard = span.enter();
-            trace!(?result, remaining = self.remaining_tasks(), "task complete");
+            // trace!(?result, remaining = self.remaining_tasks(), "task complete");
+            debug!(?result, remaining = self.remaining_tasks(), "task complete");
             if let Err(err) = result {
                 tracing::warn!(?err, "task failed: {err}");
+                cancel_token.cancel();
+                // self.abort_all_tasks();
                 if final_result.is_ok() {
                     final_result = Err(err);
                 }
@@ -188,14 +197,18 @@ async fn setup<S: Storage>(
     session: Session,
     init: SessionInit,
 ) -> Result<(), Error> {
-    debug!(interests = init.interests.len(), "start setup");
-    for (capability, aois) in init.interests.into_iter() {
+    // debug!(interests = init.interests.len(), "start setup");
+    debug!(?init, "start setup");
+    let interests = store.auth().resolve_interests(init.interests)?;
+    debug!(?interests, "found interests");
+    for (authorisation, aois) in interests {
         // TODO: implement private area intersection
         let intersection_handle = 0.into();
+        let read_cap = authorisation.read_cap();
         let (our_capability_handle, message) = session.bind_and_sign_capability(
             store.secrets(),
             intersection_handle,
-            capability.clone(),
+            read_cap.clone(),
         )?;
         if let Some(message) = message {
             session.send(message).await?;
@@ -207,7 +220,7 @@ async fn setup<S: Storage>(
                 authorisation: our_capability_handle,
             };
             // TODO: We could skip the clone if we re-enabled sending by reference.
-            session.bind_area_of_interest(Scope::Ours, msg.clone(), &capability)?;
+            session.bind_area_of_interest(Scope::Ours, msg.clone(), read_cap)?;
             session.send(msg).await?;
         }
     }

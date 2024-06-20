@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::io::Write;
 
 use serde::{Deserialize, Serialize};
@@ -23,18 +22,6 @@ pub enum SecretKey {
     User(UserSecretKey),
     Namespace(NamespaceSecretKey),
 }
-
-// #[derive(Debug, derive_more::From)]
-// pub enum PublicKey {
-//     User(UserPublicKey),
-//     Namespace(NamespacePublicKey),
-// }
-//
-// #[derive(Debug, derive_more::From)]
-// pub enum PublicKeyId {
-//     User(UserId),
-//     Namespace(NamespaceId),
-// }
 
 pub fn is_authorised_write(entry: &Entry, token: &MeadowcapAuthorisationToken) -> bool {
     let (capability, signature) = token.as_parts();
@@ -218,10 +205,11 @@ impl McCapability {
             Self::Owned(cap) => cap.is_valid(),
         }
     }
-    pub fn validate(&self) -> Result<(), InvalidCapability> {
-        match self.is_valid() {
-            true => Ok(()),
-            false => Err(InvalidCapability),
+    // pub fn validate(&self) -> Result<(), InvalidCapability> {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        match self {
+            Self::Communal(cap) => cap.validate(),
+            Self::Owned(cap) => cap.validate(),
         }
     }
 
@@ -232,13 +220,18 @@ impl McCapability {
         }
     }
 
-    /// Returns `true` if `self` has less delegations or covers a larger area than `other`.
+    /// Returns `true` if `self` covers a larger area than `other`,
+    /// or if covers the same area and has less delegations.
     pub fn is_wider_than(&self, other: &Self) -> bool {
-        match self.delegations().len().cmp(&other.delegations().len()) {
-            Ordering::Less => true,
-            Ordering::Greater => false,
-            Ordering::Equal => self.granted_area().includes_area(&other.granted_area()),
-        }
+        (self.granted_area().includes_area(&other.granted_area()))
+            || (self.granted_area() == other.granted_area()
+                && self.delegations().len() < other.delegations().len())
+
+        // match self.delegations().len().cmp(&other.delegations().len()) {
+        //     Ordering::Less => true,
+        //     Ordering::Greater => false,
+        //     Ordering::Equal => self.granted_area().includes_area(&other.granted_area()),
+        // }
     }
 
     pub fn delegate(
@@ -330,7 +323,7 @@ impl CommunalCapability {
             Ok(())
         } else {
             let mut prev = None;
-            let mut prev_receiver = self.receiver();
+            let mut prev_receiver = &self.user_key;
             for delegation in self.delegations.iter() {
                 let (new_area, new_user, new_signature) = &delegation;
                 let signable = self.handover(prev, new_area, new_user)?;
@@ -371,10 +364,13 @@ impl CommunalCapability {
     ) -> anyhow::Result<Vec<u8>> {
         match prev {
             None => self.initial_handover(new_area, new_user),
-            Some((prev_area, prev_signature)) => {
-                let handover = Handover::new(prev_area, prev_signature, new_area, new_user)?;
-                handover.encode()
-            }
+            Some((prev_area, prev_signature)) => Handover::new(
+                prev_area,
+                PrevSignature::User(prev_signature),
+                new_area,
+                new_user,
+            )?
+            .encode(),
         }
     }
 
@@ -383,7 +379,7 @@ impl CommunalCapability {
         new_area: &Area,
         new_user: &UserPublicKey,
     ) -> anyhow::Result<Vec<u8>> {
-        let prev_area = self.granted_area();
+        let prev_area = Area::subspace(self.user_key.into());
         let area_in_area = AreaInArea::new(new_area, &prev_area)?;
         let len =
             1 + NamespacePublicKey::LENGTH + area_in_area.encoded_len() + UserPublicKey::LENGTH;
@@ -396,7 +392,7 @@ impl CommunalCapability {
         out.write_all(&self.namespace_key.to_bytes())?;
         area_in_area.encode_into(&mut out)?;
         out.write_all(&new_user.to_bytes())?;
-        todo!()
+        Ok(out.into_inner())
     }
 }
 
@@ -424,8 +420,8 @@ impl OwnedCapability {
         access_mode: AccessMode,
     ) -> Self {
         let namespace_key = namespace_secret_key.public_key();
-        let signable = Self::signable(access_mode, &user_key);
-        let initial_authorisation = namespace_secret_key.sign(&signable);
+        let handover = Self::initial_handover(access_mode, &user_key);
+        let initial_authorisation = namespace_secret_key.sign(&handover);
         Self {
             access_mode,
             namespace_key,
@@ -459,31 +455,36 @@ impl OwnedCapability {
 
     pub fn validate(&self) -> anyhow::Result<()> {
         // verify root authorisation
-        let signable = Self::signable(self.access_mode, &self.user_key);
+        let handover = Self::initial_handover(self.access_mode, &self.user_key);
         self.namespace_key
-            .verify(&signable, &self.initial_authorisation)?;
+            .verify(&handover, &self.initial_authorisation)?;
 
         // no delegations: done
         if self.delegations.is_empty() {
             return Ok(());
         }
 
+        let initial_area = Area::full();
         let mut prev = (
-            &self.granted_area(),
-            self.receiver(),
+            &initial_area,
+            &self.user_key,
             PrevSignature::Namespace(&self.initial_authorisation),
         );
         for delegation in self.delegations.iter() {
+            let (prev_area, prev_user, prev_signature) = prev;
             let (new_area, new_user, new_signature) = delegation;
-            let handover = Handover::new(prev.0, prev.2, new_area, new_user)?;
-            let signable = handover.encode()?;
-            prev.1.verify(&signable, new_signature)?;
-            prev = (new_area, new_user, new_signature.into());
+            let handover =
+                Handover::new(prev_area, prev_signature, new_area, new_user)?.encode()?;
+            prev_user.verify(&handover, new_signature)?;
+            prev = (new_area, new_user, PrevSignature::User(new_signature));
         }
         Ok(())
     }
 
-    fn signable(access_mode: AccessMode, user_key: &UserPublicKey) -> [u8; PUBLIC_KEY_LENGTH + 1] {
+    fn initial_handover(
+        access_mode: AccessMode,
+        user_key: &UserPublicKey,
+    ) -> [u8; PUBLIC_KEY_LENGTH + 1] {
         let mut signable = [0u8; PUBLIC_KEY_LENGTH + 1];
         // https://willowprotocol.org/specs/meadowcap/index.html#owned_cap_valid
         // An OwnedCapability with zero delegations is valid if initial_authorisation
@@ -523,7 +524,7 @@ impl OwnedCapability {
     }
 }
 
-#[derive(Debug, derive_more::From)]
+#[derive(Debug)]
 enum PrevSignature<'a> {
     User(&'a UserSignature),
     Namespace(&'a NamespaceSignature),
@@ -540,8 +541,6 @@ impl<'a> PrevSignature<'a> {
 
 #[derive(Debug)]
 struct Handover<'a> {
-    // prev_area: &'a Area,
-    // new_area: &'a Area,
     prev_signature: PrevSignature<'a>,
     new_user: &'a UserPublicKey,
     area_in_area: AreaInArea<'a>,
@@ -550,14 +549,14 @@ struct Handover<'a> {
 impl<'a> Handover<'a> {
     fn new(
         prev_area: &'a Area,
-        prev_signature: impl Into<PrevSignature<'a>>,
+        prev_signature: PrevSignature<'a>,
         new_area: &'a Area,
         new_user: &'a UserPublicKey,
     ) -> Result<Self, NotIncluded> {
         let area_in_area = AreaInArea::new(new_area, prev_area)?;
         Ok(Self {
             area_in_area,
-            prev_signature: prev_signature.into(),
+            prev_signature,
             new_user,
         })
     }
@@ -600,26 +599,64 @@ impl McSubspaceCapability {
         &self.namespace_key
     }
 
-    pub fn validate(&self) -> Result<(), InvalidCapability> {
-        match self.is_valid() {
-            true => Ok(()),
-            false => Err(InvalidCapability),
+    pub fn validate(&self) -> anyhow::Result<()> {
+        let signable = Self::initial_handover(&self.user_key);
+        self.namespace_key
+            .verify(&signable, &self.initial_authorisation)?;
+
+        if self.delegations.is_empty() {
+            return Ok(());
         }
+
+        let mut prev = (
+            &self.user_key,
+            PrevSignature::Namespace(&self.initial_authorisation),
+        );
+        for delegation in &self.delegations {
+            let (prev_user, prev_signature) = prev;
+            let (new_user, new_signature) = delegation;
+            let handover = Self::handover(prev_signature, new_user);
+            prev_user.verify(&handover, new_signature)?;
+            prev = (new_user, PrevSignature::User(new_signature));
+        }
+        Ok(())
     }
 
     pub fn is_valid(&self) -> bool {
-        if self.delegations.is_empty() {
-            let signable = Self::signable(&self.user_key);
-            self.namespace_key
-                .verify(&signable, &self.initial_authorisation)
-                .is_ok()
-        } else {
-            // TODO: support delegations
-            false
-        }
+        self.validate().is_ok()
     }
 
-    fn signable(user_key: &UserPublicKey) -> [u8; PUBLIC_KEY_LENGTH + 1] {
+    pub fn delegate(
+        &self,
+        secret_key: &UserSecretKey,
+        new_user: UserPublicKey,
+    ) -> anyhow::Result<Self> {
+        if secret_key.public_key() != *self.receiver() {
+            anyhow::bail!("Secret key does not match receiver of current capability");
+        }
+        let prev_signature = match self.delegations.last() {
+            None => PrevSignature::Namespace(&self.initial_authorisation),
+            Some((_, prev_signature)) => PrevSignature::User(prev_signature),
+        };
+        let handover = Self::handover(prev_signature, &new_user);
+        let signature = secret_key.sign(&handover);
+        let delegation = (new_user, signature);
+        let mut cap = self.clone();
+        cap.delegations.push(delegation);
+        Ok(cap)
+    }
+
+    fn handover(
+        prev_signature: PrevSignature,
+        new_user: &UserPublicKey,
+    ) -> [u8; PUBLIC_KEY_LENGTH + SIGNATURE_LENGTH] {
+        let mut out = [0u8; PUBLIC_KEY_LENGTH + SIGNATURE_LENGTH];
+        out[..SIGNATURE_LENGTH].copy_from_slice(&prev_signature.to_bytes());
+        out[SIGNATURE_LENGTH..].copy_from_slice(new_user.as_bytes());
+        out
+    }
+
+    fn initial_handover(user_key: &UserPublicKey) -> [u8; PUBLIC_KEY_LENGTH + 1] {
         let mut signable = [0u8; PUBLIC_KEY_LENGTH + 1];
         // A McSubspaceCapability with zero delegations is valid if initial_authorisation
         // is a NamespaceSignature issued by the namespace_key over the byte 0x02,
@@ -628,5 +665,45 @@ impl McSubspaceCapability {
         signable[0] = 0x02;
         signable[1..].copy_from_slice(user_key.as_bytes());
         signable
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rand_core::SeedableRng;
+
+    use crate::proto::{
+        grouping::Area,
+        keys::{NamespaceKind, NamespaceSecretKey, UserSecretKey},
+    };
+
+    use super::{AccessMode, McCapability};
+
+    #[test]
+    fn delegate_owned() {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let namespace_secret = NamespaceSecretKey::generate(&mut rng, NamespaceKind::Owned);
+        let alfie_secret = UserSecretKey::generate(&mut rng);
+        let betty_secret = UserSecretKey::generate(&mut rng);
+        let alfie_public = alfie_secret.public_key();
+        let betty_public = betty_secret.public_key();
+        let cap = McCapability::new_owned(namespace_secret, alfie_public, AccessMode::Write);
+        cap.validate().expect("cap to be valid");
+        let cap_betty = cap
+            .delegate(&alfie_secret, betty_public, Area::full())
+            .expect("not to fail");
+        cap_betty.validate().expect("cap to be valid");
+        let conny_secret = UserSecretKey::generate(&mut rng);
+        let conny_public = conny_secret.public_key();
+        let cap_conny = cap_betty
+            .delegate(
+                &betty_secret,
+                conny_public,
+                Area::subspace(conny_public.id()),
+            )
+            .expect("not to fail");
+        cap_conny.validate().expect("cap to be valid");
+        assert_eq!(cap_conny.granted_area(), Area::subspace(conny_public.id()));
+        assert_eq!(cap_conny.receiver(), &conny_public);
     }
 }

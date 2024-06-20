@@ -55,8 +55,14 @@ pub type SyncSignature = meadowcap::UserSignature;
 pub type Receiver = meadowcap::UserPublicKey;
 
 /// Represents an authorisation to read an area of data in a Namespace.
-#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
 pub struct ReadAuthorisation(pub ReadCapability, pub Option<SubspaceCapability>);
+
+impl From<ReadCapability> for ReadAuthorisation {
+    fn from(value: ReadCapability) -> Self {
+        Self(value, None)
+    }
+}
 
 impl ReadAuthorisation {
     pub fn new(read_cap: ReadCapability, subspace_cap: Option<SubspaceCapability>) -> Self {

@@ -14,6 +14,8 @@ use crate::{
 pub enum Error {
     #[error("local store failed: {0}")]
     Store(#[from] anyhow::Error),
+    #[error("authentication error: {0}")]
+    Auth(#[from] crate::store::auth::AuthError),
     #[error("payload store failed: {0}")]
     PayloadStore(std::io::Error),
     #[error("payload digest does not match expected digest")]
