@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_lite::FutureExt;
-use iroh::node::Builder;
+use iroh::node::{Builder, DocsStorage};
 use iroh_base::node_addr::AddrInfoOptions;
 use iroh_net::{defaults::default_relay_map, key::SecretKey, NodeAddr, NodeId};
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -40,8 +40,8 @@ async fn dial(secret_key: SecretKey, peer: NodeAddr) -> anyhow::Result<quinn::Co
 }
 
 fn test_node<D: Store>(db: D) -> Builder<D, DummyServerEndpoint> {
-    let store = iroh_docs::store::Store::memory();
-    iroh::node::Builder::with_db_and_store(db, store, iroh::node::StorageConfig::Mem).bind_port(0)
+    iroh::node::Builder::with_db_and_store(db, DocsStorage::Memory, iroh::node::StorageConfig::Mem)
+        .bind_port(0)
 }
 
 #[tokio::test]
@@ -391,7 +391,7 @@ async fn test_run_ticket() {
     let _drop_guard = node.cancel_token().drop_guard();
 
     let ticket = node
-        .blobs
+        .blobs()
         .share(
             hash,
             BlobFormat::HashSeq,

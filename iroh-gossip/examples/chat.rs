@@ -108,13 +108,13 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     println!("> our node id: {}", endpoint.node_id());
 
-    let my_addr = endpoint.my_addr().await?;
+    let my_addr = endpoint.node_addr().await?;
     // create the gossip protocol
     let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &my_addr.info);
 
     // print a ticket that includes our own node id and endpoint addresses
     let ticket = {
-        let me = endpoint.my_addr().await?;
+        let me = endpoint.node_addr().await?;
         let peers = peers.iter().cloned().chain([me]).collect();
         Ticket { topic, peers }
     };
@@ -206,11 +206,11 @@ async fn handle_connection(
     let alpn = conn.alpn().await?;
     let conn = conn.await?;
     let peer_id = iroh_net::endpoint::get_remote_node_id(&conn)?;
-    match alpn.as_bytes() {
-        GOSSIP_ALPN => gossip
-            .handle_connection(conn)
-            .await
-            .context(format!("connection to {peer_id} with ALPN {alpn} failed"))?,
+    match alpn.as_ref() {
+        GOSSIP_ALPN => gossip.handle_connection(conn).await.context(format!(
+            "connection to {peer_id} with ALPN {} failed",
+            String::from_utf8_lossy(&alpn)
+        ))?,
         _ => println!("> ignoring connection from {peer_id}: unsupported ALPN protocol"),
     }
     Ok(())

@@ -113,6 +113,13 @@ impl Server {
         }
     }
 
+    /// Aborts the server.
+    ///
+    /// You should prefer to use [`Server::close`] for a graceful shutdown.
+    pub fn abort(&self) {
+        self.cancel.cancel();
+    }
+
     /// Whether or not the relay [Server] is closed.
     pub fn is_closed(&self) -> bool {
         self.closed

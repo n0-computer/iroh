@@ -13,7 +13,6 @@ use dialoguer::Confirm;
 use futures_buffered::BufferedStreamExt;
 use futures_lite::{Stream, StreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
-use quic_rpc::ServiceConnection;
 use tokio::io::AsyncReadExt;
 
 use iroh::{
@@ -22,7 +21,7 @@ use iroh::{
     client::{
         blobs::WrapOption,
         docs::{Doc, Entry, LiveEvent, Origin, ShareMode},
-        Iroh, RpcService,
+        Iroh,
     },
     docs::{
         store::{DownloadPolicy, FilterKind, Query, SortDirection},
@@ -303,10 +302,7 @@ impl From<Sorting> for iroh::docs::store::SortBy {
 }
 
 impl DocCommands {
-    pub async fn run<C>(self, iroh: &Iroh<C>, env: &ConsoleEnv) -> Result<()>
-    where
-        C: ServiceConnection<RpcService>,
-    {
+    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
             Self::Switch { id: doc } => {
                 env.set_doc(doc)?;
@@ -317,7 +313,7 @@ impl DocCommands {
                     bail!("The --switch flag is only supported within the Iroh console.");
                 }
 
-                let doc = iroh.docs.create().await?;
+                let doc = iroh.docs().create().await?;
                 println!("{}", doc.id());
 
                 if switch {
@@ -330,7 +326,7 @@ impl DocCommands {
                     bail!("The --switch flag is only supported within the Iroh console.");
                 }
 
-                let doc = iroh.docs.import(ticket).await?;
+                let doc = iroh.docs().import(ticket).await?;
                 println!("{}", doc.id());
 
                 if switch {
@@ -339,7 +335,7 @@ impl DocCommands {
                 }
             }
             Self::List => {
-                let mut stream = iroh.docs.list().await?;
+                let mut stream = iroh.docs().list().await?;
                 while let Some((id, kind)) = stream.try_next().await? {
                     println!("{id} {kind}")
                 }
@@ -483,7 +479,7 @@ impl DocCommands {
                 }
 
                 let stream = iroh
-                    .blobs
+                    .blobs()
                     .add_from_path(
                         root.clone(),
                         in_place,
@@ -627,7 +623,7 @@ impl DocCommands {
                     .interact()
                     .unwrap_or(false)
                 {
-                    iroh.docs.drop_doc(doc.id()).await?;
+                    iroh.docs().drop_doc(doc.id()).await?;
                     println!("Doc {} has been deleted.", fmt_short(doc.id()));
                 } else {
                     println!("Aborted.")
@@ -673,29 +669,15 @@ impl DocCommands {
     }
 }
 
-async fn get_doc<C>(
-    iroh: &Iroh<C>,
-    env: &ConsoleEnv,
-    id: Option<NamespaceId>,
-) -> anyhow::Result<Doc<C>>
-where
-    C: ServiceConnection<RpcService>,
-{
-    iroh.docs
+async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyhow::Result<Doc> {
+    iroh.docs()
         .open(env.doc(id)?)
         .await?
         .context("Document not found")
 }
 
 /// Format the content. If an error occurs it's returned in a formatted, friendly way.
-async fn fmt_content<C>(
-    doc: &Doc<C>,
-    entry: &Entry,
-    mode: DisplayContentMode,
-) -> Result<String, String>
-where
-    C: ServiceConnection<RpcService>,
-{
+async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Result<String, String> {
     let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
     let encode_hex = |err: std::string::FromUtf8Error| format!("0x{}", hex::encode(err.as_bytes()));
     let as_utf8 = |buf: Vec<u8>| String::from_utf8(buf).map(|repr| format!("\"{repr}\""));
@@ -743,10 +725,7 @@ fn human_len(entry: &Entry) -> HumanBytes {
 }
 
 #[must_use = "this won't be printed, you need to print it yourself"]
-async fn fmt_entry<C>(doc: &Doc<C>, entry: &Entry, mode: DisplayContentMode) -> String
-where
-    C: ServiceConnection<RpcService>,
-{
+async fn fmt_entry(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> String {
     let key = std::str::from_utf8(entry.key())
         .unwrap_or("<bad key>")
         .bold();
@@ -776,18 +755,15 @@ fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
 /// document via the hash of the blob.
 /// It also creates and powers the `ImportProgressBar`.
 #[tracing::instrument(skip_all)]
-async fn import_coordinator<C>(
-    doc: Doc<C>,
+async fn import_coordinator(
+    doc: Doc,
     author_id: AuthorId,
     root: PathBuf,
     prefix: String,
     blob_add_progress: impl Stream<Item = Result<AddProgress>> + Send + Unpin + 'static,
     expected_size: u64,
     expected_entries: u64,
-) -> Result<()>
-where
-    C: ServiceConnection<RpcService>,
-{
+) -> Result<()> {
     let imp = ImportProgressBar::new(
         &root.display().to_string(),
         doc.id(),
@@ -975,14 +951,14 @@ mod tests {
 
         let node = crate::commands::start::start_node(data_dir.path(), None).await?;
         let client = node.client();
-        let doc = client.docs.create().await.context("doc create")?;
-        let author = client.authors.create().await.context("author create")?;
+        let doc = client.docs().create().await.context("doc create")?;
+        let author = client.authors().create().await.context("author create")?;
 
         // set up command, getting iroh node
         let cli = ConsoleEnv::for_console(data_dir.path().to_owned(), &node)
             .await
             .context("ConsoleEnv")?;
-        let iroh = iroh::client::QuicIroh::connect(data_dir.path())
+        let iroh = iroh::client::Iroh::connect(data_dir.path())
             .await
             .context("rpc connect")?;
 

@@ -9,14 +9,6 @@ use iroh_blobs::downloader::{DownloadError, DownloadRequest, Downloader};
 use iroh_blobs::get::Stats;
 use iroh_blobs::HashAndFormat;
 use iroh_blobs::{store::EntryStatus, Hash};
-use iroh_docs::{
-    actor::{OpenOpts, SyncHandle},
-    net::{
-        connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
-        SyncFinished,
-    },
-    AuthorHeads, ContentStatus, NamespaceId, SignedEntry,
-};
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use iroh_net::NodeId;
 use iroh_net::{key::PublicKey, Endpoint, NodeAddr};
@@ -27,8 +19,20 @@ use tokio::{
 };
 use tracing::{debug, error, error_span, info, instrument, trace, warn, Instrument, Span};
 
+use crate::{
+    actor::{OpenOpts, SyncHandle},
+    net::{
+        connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
+        SyncFinished,
+    },
+    AuthorHeads, ContentStatus, NamespaceId, SignedEntry,
+};
+
 use super::gossip::{GossipActor, ToGossipActor};
 use super::state::{NamespaceStates, Origin, SyncReason};
+
+/// Name used for logging when new node addresses are added from the docs engine.
+const SOURCE_NAME: &str = "docs_engine";
 
 /// An iroh-docs operation
 ///
@@ -66,7 +70,9 @@ pub enum ToLiveActor {
         #[debug("onsehot::Sender")]
         reply: sync::oneshot::Sender<anyhow::Result<()>>,
     },
-    Shutdown,
+    Shutdown {
+        reply: sync::oneshot::Sender<()>,
+    },
     Subscribe {
         namespace: NamespaceId,
         #[debug("sender")]
@@ -145,8 +151,8 @@ pub struct LiveActor<B: iroh_blobs::store::Store> {
     gossip: Gossip,
     bao_store: B,
     downloader: Downloader,
-    replica_events_tx: flume::Sender<iroh_docs::Event>,
-    replica_events_rx: flume::Receiver<iroh_docs::Event>,
+    replica_events_tx: flume::Sender<crate::Event>,
+    replica_events_rx: flume::Receiver<crate::Event>,
 
     /// Send messages to self.
     /// Note: Must not be used in methods called from `Self::run` directly to prevent deadlocks.
@@ -207,7 +213,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
     }
 
     /// Run the actor loop.
-    pub async fn run(&mut self, mut gossip_actor: GossipActor) -> Result<()> {
+    pub async fn run(mut self, mut gossip_actor: GossipActor) -> Result<()> {
         let me = self.endpoint.node_id().fmt_short();
         let gossip_handle = tokio::task::spawn(
             async move {
@@ -218,15 +224,22 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             .instrument(error_span!("sync", %me)),
         );
 
-        let res = self.run_inner().await;
+        let shutdown_reply = self.run_inner().await;
         if let Err(err) = self.shutdown().await {
             error!(?err, "Error during shutdown");
         }
         gossip_handle.await?;
-        res
+        drop(self);
+        match shutdown_reply {
+            Ok(reply) => {
+                reply.send(()).ok();
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
     }
 
-    async fn run_inner(&mut self) -> Result<()> {
+    async fn run_inner(&mut self) -> Result<oneshot::Sender<()>> {
         let mut i = 0;
         loop {
             i += 1;
@@ -236,8 +249,13 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 msg = self.inbox.recv() => {
                     let msg = msg.context("to_actor closed")?;
                     trace!(?i, %msg, "tick: to_actor");
-                    if !self.on_actor_message(msg).await.context("on_actor_message")? {
-                        break;
+                    match msg {
+                        ToLiveActor::Shutdown { reply } => {
+                            break Ok(reply);
+                        }
+                        msg => {
+                            self.on_actor_message(msg).await.context("on_actor_message")?;
+                        }
                     }
                 }
                 event = self.replica_events_rx.recv_async() => {
@@ -266,14 +284,12 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 }
             }
         }
-        debug!("close (shutdown)");
-        Ok(())
     }
 
     async fn on_actor_message(&mut self, msg: ToLiveActor) -> anyhow::Result<bool> {
         match msg {
-            ToLiveActor::Shutdown => {
-                return Ok(false);
+            ToLiveActor::Shutdown { .. } => {
+                unreachable!("handled in run");
             }
             ToLiveActor::IncomingSyncReport { from, report } => {
                 self.on_sync_report(from, report).await
@@ -361,7 +377,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             .await
             .ok();
         // shutdown sync thread
-        let _ = self.sync.shutdown().await;
+        let _store = self.sync.shutdown().await;
         Ok(())
     }
 
@@ -436,7 +452,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         // add addresses of peers to our endpoint address book
         for peer in peers.into_iter() {
             let peer_id = peer.node_id;
-            if let Err(err) = self.endpoint.add_node_addr(peer) {
+            if let Err(err) = self.endpoint.add_node_addr_with_source(peer, SOURCE_NAME) {
                 warn!(peer = %peer_id.fmt_short(), "failed to add known addrs: {err:?}");
             }
         }
@@ -542,7 +558,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                     match details
                         .outcome
                         .heads_received
-                        .encode(Some(iroh_gossip::net::MAX_MESSAGE_SIZE))
+                        .encode(Some(self.gossip.max_message_size()))
                     {
                         Err(err) => warn!(?err, "Failed to encode author heads for sync report"),
                         Ok(heads) => {
@@ -684,9 +700,9 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         }
     }
 
-    async fn on_replica_event(&mut self, event: iroh_docs::Event) -> Result<()> {
+    async fn on_replica_event(&mut self, event: crate::Event) -> Result<()> {
         match event {
-            iroh_docs::Event::LocalInsert { namespace, entry } => {
+            crate::Event::LocalInsert { namespace, entry } => {
                 debug!(namespace=%namespace.fmt_short(), "replica event: LocalInsert");
                 let topic = TopicId::from_bytes(*namespace.as_bytes());
                 // A new entry was inserted locally. Broadcast a gossip message.
@@ -696,7 +712,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                     self.gossip.broadcast(topic, message).await?;
                 }
             }
-            iroh_docs::Event::RemoteInsert {
+            crate::Event::RemoteInsert {
                 namespace,
                 entry,
                 from,
@@ -737,7 +753,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             self.queued_hashes.insert(hash, namespace);
             self.downloader.nodes_have(hash, vec![node]).await;
         } else if !only_if_missing || self.missing_hashes.contains(&hash) {
-            let req = DownloadRequest::untagged(HashAndFormat::raw(hash), vec![node]);
+            let req = DownloadRequest::new(HashAndFormat::raw(hash), vec![node]);
             let handle = self.downloader.queue(req).await;
 
             self.queued_hashes.insert(hash, namespace);

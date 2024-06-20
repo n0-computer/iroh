@@ -6,7 +6,7 @@ use std::{
 use anyhow::Result;
 use bao_tree::{blake3, io::sync::Outboard, ChunkRanges};
 use bytes::Bytes;
-use iroh::node::{self, Node};
+use iroh::node::{self, DocsStorage, Node};
 use rand::RngCore;
 
 use iroh_blobs::{
@@ -41,17 +41,19 @@ async fn wrap_in_node<S>(bao_store: S, gc_period: Duration) -> (Node<S>, flume::
 where
     S: iroh_blobs::store::Store,
 {
-    let doc_store = iroh_docs::store::Store::memory();
     let (gc_send, gc_recv) = flume::unbounded();
-    let node =
-        node::Builder::with_db_and_store(bao_store, doc_store, iroh::node::StorageConfig::Mem)
-            .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
-            .register_gc_done_cb(Box::new(move || {
-                gc_send.send(()).ok();
-            }))
-            .spawn()
-            .await
-            .unwrap();
+    let node = node::Builder::with_db_and_store(
+        bao_store,
+        DocsStorage::Memory,
+        iroh::node::StorageConfig::Mem,
+    )
+    .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
+    .register_gc_done_cb(Box::new(move || {
+        gc_send.send(()).ok();
+    }))
+    .spawn()
+    .await
+    .unwrap();
     (node, gc_recv)
 }
 
@@ -232,8 +234,8 @@ mod file {
         let bao_store = iroh_blobs::store::fs::Store::load(dir.join("store")).await?;
         let (node, _) = wrap_in_node(bao_store.clone(), Duration::from_secs(10)).await;
         let client = node.client();
-        let doc = client.docs.create().await?;
-        let author = client.authors.create().await?;
+        let doc = client.docs().create().await?;
+        let author = client.authors().create().await?;
         let temp_path = dir.join("temp");
         tokio::fs::create_dir_all(&temp_path).await?;
         let mut to_import = Vec::new();

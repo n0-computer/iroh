@@ -41,15 +41,13 @@ use serde::{Deserialize, Serialize};
 pub use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_blobs::store::{ExportFormat, ExportMode};
 pub use iroh_blobs::{provider::AddProgress, store::ValidateProgress};
+use iroh_docs::engine::LiveEvent;
 
-use crate::{
-    client::{
-        blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
-        docs::{ImportProgress, ShareMode},
-        tags::TagInfo,
-        NodeStatus,
-    },
-    docs_engine::LiveEvent,
+use crate::client::{
+    blobs::{BlobInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
+    docs::{ImportProgress, ShareMode},
+    tags::TagInfo,
+    NodeStatus,
 };
 pub use iroh_blobs::util::SetTagOption;
 
@@ -207,21 +205,38 @@ impl ServerStreamingMsg<RpcService> for BlobListIncompleteRequest {
 ///
 /// Lists all collections that have been explicitly added to the database.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlobListCollectionsRequest;
-
-impl Msg<RpcService> for BlobListCollectionsRequest {
-    type Pattern = ServerStreaming;
+pub struct ListTagsRequest {
+    /// List raw tags
+    pub raw: bool,
+    /// List hash seq tags
+    pub hash_seq: bool,
 }
 
-impl ServerStreamingMsg<RpcService> for BlobListCollectionsRequest {
-    type Response = RpcResult<CollectionInfo>;
-}
+impl ListTagsRequest {
+    /// List all tags
+    pub fn all() -> Self {
+        Self {
+            raw: true,
+            hash_seq: true,
+        }
+    }
 
-/// List all collections
-///
-/// Lists all collections that have been explicitly added to the database.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ListTagsRequest;
+    /// List raw tags
+    pub fn raw() -> Self {
+        Self {
+            raw: true,
+            hash_seq: false,
+        }
+    }
+
+    /// List hash seq tags
+    pub fn hash_seq() -> Self {
+        Self {
+            raw: false,
+            hash_seq: true,
+        }
+    }
+}
 
 impl Msg<RpcService> for ListTagsRequest {
     type Pattern = ServerStreaming;
@@ -252,25 +267,6 @@ pub struct DeleteTagRequest {
 impl RpcMsg<RpcService> for DeleteTagRequest {
     type Response = RpcResult<()>;
 }
-
-/// Get a collection
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BlobGetCollectionRequest {
-    /// Hash of the collection
-    pub hash: Hash,
-}
-
-impl RpcMsg<RpcService> for BlobGetCollectionRequest {
-    type Response = RpcResult<BlobGetCollectionResponse>;
-}
-
-/// The response for a `BlobGetCollectionRequest`.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BlobGetCollectionResponse {
-    /// The collection.
-    pub collection: Collection,
-}
-
 /// Create a collection.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateCollectionRequest {
@@ -443,7 +439,7 @@ pub struct AuthorCreateResponse {
 pub struct AuthorGetDefaultRequest;
 
 impl RpcMsg<RpcService> for AuthorGetDefaultRequest {
-    type Response = AuthorGetDefaultResponse;
+    type Response = RpcResult<AuthorGetDefaultResponse>;
 }
 
 /// Response for [`AuthorGetDefaultRequest`]
@@ -1065,12 +1061,10 @@ pub enum Request {
     BlobExport(BlobExportRequest),
     BlobList(BlobListRequest),
     BlobListIncomplete(BlobListIncompleteRequest),
-    BlobListCollections(BlobListCollectionsRequest),
     BlobDeleteBlob(BlobDeleteBlobRequest),
     BlobValidate(BlobValidateRequest),
     BlobFsck(BlobConsistencyCheckRequest),
     CreateCollection(CreateCollectionRequest),
-    BlobGetCollection(BlobGetCollectionRequest),
 
     DeleteTag(DeleteTagRequest),
     ListTags(ListTagsRequest),
@@ -1125,13 +1119,11 @@ pub enum Response {
     BlobAddPath(BlobAddPathResponse),
     BlobList(RpcResult<BlobInfo>),
     BlobListIncomplete(RpcResult<IncompleteBlobInfo>),
-    BlobListCollections(RpcResult<CollectionInfo>),
     BlobDownload(BlobDownloadResponse),
     BlobFsck(ConsistencyCheckProgress),
     BlobExport(BlobExportResponse),
     BlobValidate(ValidateProgress),
     CreateCollection(RpcResult<CreateCollectionResponse>),
-    BlobGetCollection(RpcResult<BlobGetCollectionResponse>),
 
     ListTags(TagInfo),
     DeleteTag(RpcResult<()>),
@@ -1161,7 +1153,7 @@ pub enum Response {
 
     AuthorList(RpcResult<AuthorListResponse>),
     AuthorCreate(RpcResult<AuthorCreateResponse>),
-    AuthorGetDefault(AuthorGetDefaultResponse),
+    AuthorGetDefault(RpcResult<AuthorGetDefaultResponse>),
     AuthorSetDefault(RpcResult<AuthorSetDefaultResponse>),
     AuthorImport(RpcResult<AuthorImportResponse>),
     AuthorExport(RpcResult<AuthorExportResponse>),

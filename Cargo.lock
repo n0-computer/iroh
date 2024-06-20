@@ -1011,16 +1011,15 @@ dependencies = [
 
 [[package]]
 name = "curve25519-dalek"
-version = "4.1.2"
+version = "4.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a677b8922c94e01bdbb12126b0bc852f00447528dee1782229af9c720c3f348"
+checksum = "97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be"
 dependencies = [
  "cfg-if",
  "cpufeatures",
  "curve25519-dalek-derive",
  "digest",
  "fiat-crypto",
- "platforms",
  "rustc_version",
  "subtle",
  "zeroize",
@@ -2412,7 +2411,7 @@ checksum = "8f518f335dce6725a761382244631d86cf0ccb2863413590b31338feb467f9c3"
 
 [[package]]
 name = "iroh"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2444,6 +2443,7 @@ dependencies = [
  "quic-rpc",
  "rand",
  "rand_chacha",
+ "ref-cast",
  "regex",
  "serde",
  "serde_json",
@@ -2461,7 +2461,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2505,7 +2505,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-blobs"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2554,7 +2554,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-cli"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2606,7 +2606,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2655,17 +2655,21 @@ dependencies = [
 
 [[package]]
 name = "iroh-docs"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "bytes",
  "derive_more",
  "ed25519-dalek",
  "flume",
+ "futures-buffered",
+ "futures-lite 2.3.0",
  "futures-util",
  "hex",
  "iroh-base",
  "iroh-blake3",
+ "iroh-blobs",
+ "iroh-gossip",
  "iroh-metrics",
  "iroh-net",
  "iroh-test",
@@ -2692,7 +2696,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-gossip"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2734,7 +2738,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "erased_set",
@@ -2753,7 +2757,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2843,7 +2847,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-bench"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2909,7 +2913,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-test"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "tokio",
@@ -2919,7 +2923,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-willow"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3778,12 +3782,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "platforms"
-version = "3.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db23d408679286588f4d4644f965003d056e3dd5abcaaa938116871d7ce2fee7"
-
-[[package]]
 name = "plotters"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4080,10 +4078,11 @@ dependencies = [
 
 [[package]]
 name = "quic-rpc"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0d69b05325e19956f123fce85ebc4d99226552a0bb24bba4c886106297e708b"
+checksum = "5e56dc58272a3f9c151b1c3a6df0e3caca083fd843b337e60f706fae2d974b6b"
 dependencies = [
+ "anyhow",
  "bincode",
  "derive_more",
  "educe",

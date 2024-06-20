@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::defaults::DEFAULT_RELAY_STUN_PORT;
+use crate::defaults::DEFAULT_STUN_PORT;
 
 use super::RelayUrl;
 
@@ -91,7 +91,7 @@ impl RelayMap {
     /// This will use the default STUN port and IP addresses resolved from the URL's host name via DNS.
     /// relay nodes are specified at <../../../docs/relay_nodes.md>
     pub fn from_url(url: RelayUrl) -> Self {
-        Self::default_from_node(url, DEFAULT_RELAY_STUN_PORT)
+        Self::default_from_node(url, DEFAULT_STUN_PORT)
     }
 
     /// Constructs the [`RelayMap] from an iterator of [`RelayNode`]s.

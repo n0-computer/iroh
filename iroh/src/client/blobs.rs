@@ -13,17 +13,19 @@ use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use futures_util::SinkExt;
+use genawaiter::sync::{Co, Gen};
 use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
 use iroh_blobs::{
     export::ExportProgress as BytesExportProgress,
-    format::collection::Collection,
+    format::collection::{Collection, SimpleStore},
     get::db::DownloadProgress as BytesDownloadProgress,
     store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
     BlobFormat, Hash, Tag,
 };
 use iroh_net::NodeAddr;
 use portable_atomic::{AtomicU64, Ordering};
-use quic_rpc::{client::BoxStreamSync, RpcClient, ServiceConnection};
+use quic_rpc::client::BoxStreamSync;
+use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
@@ -31,30 +33,27 @@ use tracing::warn;
 
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
-    BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobGetCollectionRequest,
-    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListIncompleteRequest,
+    BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobListIncompleteRequest,
     BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, RpcService, SetTagOption,
+    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, SetTagOption,
 };
 
-use super::{flatten, Iroh};
+use super::{flatten, tags, Iroh, RpcClient};
 
 /// Iroh blobs client.
-#[derive(Debug, Clone)]
-pub struct Client<C> {
-    pub(super) rpc: RpcClient<RpcService, C>,
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
+pub struct Client {
+    pub(super) rpc: RpcClient,
 }
 
-impl<'a, C: ServiceConnection<RpcService>> From<&'a Iroh<C>> for &'a RpcClient<RpcService, C> {
-    fn from(client: &'a Iroh<C>) -> &'a RpcClient<RpcService, C> {
-        &client.blobs.rpc
+impl<'a> From<&'a Iroh> for &'a RpcClient {
+    fn from(client: &'a Iroh) -> &'a RpcClient {
+        &client.blobs().rpc
     }
 }
 
-impl<C> Client<C>
-where
-    C: ServiceConnection<RpcService>,
-{
+impl Client {
     /// Stream the contents of a a single blob.
     ///
     /// Returns a [`Reader`], which can report the size of the blob before reading it.
@@ -322,18 +321,35 @@ where
 
     /// Read the content of a collection.
     pub async fn get_collection(&self, hash: Hash) -> Result<Collection> {
-        let BlobGetCollectionResponse { collection } =
-            self.rpc.rpc(BlobGetCollectionRequest { hash }).await??;
-        Ok(collection)
+        Collection::load(hash, self).await
     }
 
     /// List all collections.
-    pub async fn list_collections(&self) -> Result<impl Stream<Item = Result<CollectionInfo>>> {
-        let stream = self
-            .rpc
-            .server_streaming(BlobListCollectionsRequest)
-            .await?;
-        Ok(flatten(stream))
+    pub fn list_collections(&self) -> Result<impl Stream<Item = Result<CollectionInfo>>> {
+        let this = self.clone();
+        Ok(Gen::new(|co| async move {
+            if let Err(cause) = this.list_collections_impl(&co).await {
+                co.yield_(Err(cause)).await;
+            }
+        }))
+    }
+
+    async fn list_collections_impl(&self, co: &Co<Result<CollectionInfo>>) -> Result<()> {
+        let tags = self.tags_client();
+        let mut tags = tags.list_hash_seq().await?;
+        while let Some(tag) = tags.next().await {
+            let tag = tag?;
+            if let Ok(collection) = self.get_collection(tag.hash).await {
+                let info = CollectionInfo {
+                    tag: tag.name,
+                    hash: tag.hash,
+                    total_blobs_count: Some(collection.len() as u64 + 1),
+                    total_blobs_size: Some(0),
+                };
+                co.yield_(Ok(info)).await;
+            }
+        }
+        Ok(())
     }
 
     /// Delete a blob.
@@ -365,6 +381,18 @@ where
         } else {
             Ok(BlobStatus::Partial { size: reader.size })
         }
+    }
+
+    fn tags_client(&self) -> tags::Client {
+        tags::Client {
+            rpc: self.rpc.clone(),
+        }
+    }
+}
+
+impl SimpleStore for Client {
+    async fn load(&self, hash: Hash) -> anyhow::Result<Bytes> {
+        self.read_to_bytes(hash).await
     }
 }
 
@@ -752,15 +780,12 @@ impl Reader {
         }
     }
 
-    pub(crate) async fn from_rpc_read<C: ServiceConnection<RpcService>>(
-        rpc: &RpcClient<RpcService, C>,
-        hash: Hash,
-    ) -> anyhow::Result<Self> {
+    pub(crate) async fn from_rpc_read(rpc: &RpcClient, hash: Hash) -> anyhow::Result<Self> {
         Self::from_rpc_read_at(rpc, hash, 0, None).await
     }
 
-    async fn from_rpc_read_at<C: ServiceConnection<RpcService>>(
-        rpc: &RpcClient<RpcService, C>,
+    async fn from_rpc_read_at(
+        rpc: &RpcClient,
         hash: Hash,
         offset: u64,
         len: Option<usize>,
@@ -904,7 +929,7 @@ mod tests {
         // import files
         for path in &paths {
             let import_outcome = client
-                .blobs
+                .blobs()
                 .add_from_path(
                     path.to_path_buf(),
                     false,
@@ -925,11 +950,11 @@ mod tests {
         }
 
         let (hash, tag) = client
-            .blobs
+            .blobs()
             .create_collection(collection, SetTagOption::Auto, tags)
             .await?;
 
-        let collections: Vec<_> = client.blobs.list_collections().await?.try_collect().await?;
+        let collections: Vec<_> = client.blobs().list_collections()?.try_collect().await?;
 
         assert_eq!(collections.len(), 1);
         {
@@ -946,7 +971,7 @@ mod tests {
         }
 
         // check that "temp" tags have been deleted
-        let tags: Vec<_> = client.tags.list().await?.try_collect().await?;
+        let tags: Vec<_> = client.tags().list().await?.try_collect().await?;
         assert_eq!(tags.len(), 1);
         assert_eq!(tags[0].hash, hash);
         assert_eq!(tags[0].name, tag);
@@ -981,7 +1006,7 @@ mod tests {
         let client = node.client();
 
         let import_outcome = client
-            .blobs
+            .blobs()
             .add_from_path(
                 path.to_path_buf(),
                 false,
@@ -997,28 +1022,28 @@ mod tests {
         let hash = import_outcome.hash;
 
         // Read everything
-        let res = client.blobs.read_to_bytes(hash).await?;
+        let res = client.blobs().read_to_bytes(hash).await?;
         assert_eq!(&res, &buf[..]);
 
         // Read at smaller than blob_get_chunk_size
-        let res = client.blobs.read_at_to_bytes(hash, 0, Some(100)).await?;
+        let res = client.blobs().read_at_to_bytes(hash, 0, Some(100)).await?;
         assert_eq!(res.len(), 100);
         assert_eq!(&res[..], &buf[0..100]);
 
-        let res = client.blobs.read_at_to_bytes(hash, 20, Some(120)).await?;
+        let res = client.blobs().read_at_to_bytes(hash, 20, Some(120)).await?;
         assert_eq!(res.len(), 120);
         assert_eq!(&res[..], &buf[20..140]);
 
         // Read at equal to blob_get_chunk_size
         let res = client
-            .blobs
+            .blobs()
             .read_at_to_bytes(hash, 0, Some(1024 * 64))
             .await?;
         assert_eq!(res.len(), 1024 * 64);
         assert_eq!(&res[..], &buf[0..1024 * 64]);
 
         let res = client
-            .blobs
+            .blobs()
             .read_at_to_bytes(hash, 20, Some(1024 * 64))
             .await?;
         assert_eq!(res.len(), 1024 * 64);
@@ -1026,26 +1051,26 @@ mod tests {
 
         // Read at larger than blob_get_chunk_size
         let res = client
-            .blobs
+            .blobs()
             .read_at_to_bytes(hash, 0, Some(10 + 1024 * 64))
             .await?;
         assert_eq!(res.len(), 10 + 1024 * 64);
         assert_eq!(&res[..], &buf[0..(10 + 1024 * 64)]);
 
         let res = client
-            .blobs
+            .blobs()
             .read_at_to_bytes(hash, 20, Some(10 + 1024 * 64))
             .await?;
         assert_eq!(res.len(), 10 + 1024 * 64);
         assert_eq!(&res[..], &buf[20..(20 + 10 + 1024 * 64)]);
 
         // full length
-        let res = client.blobs.read_at_to_bytes(hash, 20, None).await?;
+        let res = client.blobs().read_at_to_bytes(hash, 20, None).await?;
         assert_eq!(res.len(), 1024 * 128 - 20);
         assert_eq!(&res[..], &buf[20..]);
 
         // size should be total
-        let reader = client.blobs.read_at(hash, 0, Some(20)).await?;
+        let reader = client.blobs().read_at(hash, 0, Some(20)).await?;
         assert_eq!(reader.size(), 1024 * 128);
         assert_eq!(reader.response_size, 20);
 
@@ -1087,7 +1112,7 @@ mod tests {
         // import files
         for path in &paths {
             let import_outcome = client
-                .blobs
+                .blobs()
                 .add_from_path(
                     path.to_path_buf(),
                     false,
@@ -1108,11 +1133,11 @@ mod tests {
         }
 
         let (hash, _tag) = client
-            .blobs
+            .blobs()
             .create_collection(collection, SetTagOption::Auto, tags)
             .await?;
 
-        let collection = client.blobs.get_collection(hash).await?;
+        let collection = client.blobs().get_collection(hash).await?;
 
         // 5 blobs
         assert_eq!(collection.len(), 5);
@@ -1146,7 +1171,7 @@ mod tests {
         let client = node.client();
 
         let import_outcome = client
-            .blobs
+            .blobs()
             .add_from_path(
                 path.to_path_buf(),
                 false,
@@ -1160,12 +1185,12 @@ mod tests {
             .context("import finish")?;
 
         let ticket = client
-            .blobs
+            .blobs()
             .share(import_outcome.hash, BlobFormat::Raw, Default::default())
             .await?;
         assert_eq!(ticket.hash(), import_outcome.hash);
 
-        let status = client.blobs.status(import_outcome.hash).await?;
+        let status = client.blobs().status(import_outcome.hash).await?;
         assert_eq!(status, BlobStatus::Complete { size });
 
         Ok(())

@@ -26,10 +26,6 @@ pub mod util;
 
 /// ALPN protocol name
 pub const GOSSIP_ALPN: &[u8] = b"/iroh-gossip/0";
-/// Maximum message size is limited currently. The limit is more-or-less arbitrary.
-// TODO: Make the limit configurable.
-pub const MAX_MESSAGE_SIZE: usize = 4096;
-
 /// Channel capacity for all subscription broadcast channels (single)
 const SUBSCRIBE_ALL_CAP: usize = 2048;
 /// Channel capacity for topic subscription broadcast channels (one per topic)
@@ -42,6 +38,8 @@ const TO_ACTOR_CAP: usize = 64;
 const IN_EVENT_CAP: usize = 1024;
 /// Channel capacity for endpoint change message queue (single)
 const ON_ENDPOINTS_CAP: usize = 64;
+/// Name used for logging when new node addresses are added from gossip.
+const SOURCE_NAME: &str = "gossip";
 
 /// Events emitted from the gossip protocol
 pub type Event = proto::Event<PublicKey>;
@@ -74,8 +72,9 @@ type ProtoMessage = proto::Message<PublicKey>;
 #[derive(Debug, Clone)]
 pub struct Gossip {
     to_actor_tx: mpsc::Sender<ToActor>,
-    on_endpoints_tx: mpsc::Sender<Vec<iroh_net::config::Endpoint>>,
+    on_direct_addrs_tx: mpsc::Sender<Vec<iroh_net::endpoint::DirectAddr>>,
     _actor_handle: Arc<JoinHandle<anyhow::Result<()>>>,
+    max_message_size: usize,
 }
 
 impl Gossip {
@@ -94,6 +93,7 @@ impl Gossip {
         let (on_endpoints_tx, on_endpoints_rx) = mpsc::channel(ON_ENDPOINTS_CAP);
 
         let me = endpoint.node_id().fmt_short();
+        let max_message_size = state.max_message_size();
         let actor = Actor {
             endpoint,
             state,
@@ -101,7 +101,7 @@ impl Gossip {
             to_actor_rx,
             in_event_rx,
             in_event_tx,
-            on_endpoints_rx,
+            on_direct_addr_rx: on_endpoints_rx,
             conns: Default::default(),
             conn_send_tx: Default::default(),
             pending_sends: Default::default(),
@@ -123,9 +123,15 @@ impl Gossip {
         );
         Self {
             to_actor_tx,
-            on_endpoints_tx,
+            on_direct_addrs_tx: on_endpoints_tx,
             _actor_handle: Arc::new(actor_handle),
+            max_message_size,
         }
+    }
+
+    /// Get the maximum message size configured for this gossip actor.
+    pub fn max_message_size(&self) -> usize {
+        self.max_message_size
     }
 
     /// Join a topic and connect to peers.
@@ -237,16 +243,19 @@ impl Gossip {
         Ok(())
     }
 
-    /// Set info on our local endpoints.
+    /// Set info on our direct addresses.
     ///
     /// This will be sent to peers on Neighbor and Join requests so that they can connect directly
     /// to us.
     ///
     /// This is only best effort, and will drop new events if backed up.
-    pub fn update_endpoints(&self, endpoints: &[iroh_net::config::Endpoint]) -> anyhow::Result<()> {
-        let endpoints = endpoints.to_vec();
-        self.on_endpoints_tx
-            .try_send(endpoints)
+    pub fn update_direct_addresses(
+        &self,
+        addrs: &[iroh_net::endpoint::DirectAddr],
+    ) -> anyhow::Result<()> {
+        let addrs = addrs.to_vec();
+        self.on_direct_addrs_tx
+            .try_send(addrs)
             .map_err(|_| anyhow!("endpoints channel dropped"))?;
         Ok(())
     }
@@ -338,7 +347,7 @@ struct Actor {
     /// Input events to the state (emitted from the connection loops)
     in_event_rx: mpsc::Receiver<InEvent>,
     /// Updates of discovered endpoint addresses
-    on_endpoints_rx: mpsc::Receiver<Vec<iroh_net::config::Endpoint>>,
+    on_direct_addr_rx: mpsc::Receiver<Vec<iroh_net::endpoint::DirectAddr>>,
     /// Queued timers
     timers: Timers<Timer>,
     /// Currently opened quinn connections to peers
@@ -371,10 +380,14 @@ impl Actor {
                         }
                     }
                 },
-                new_endpoints = self.on_endpoints_rx.recv() => {
+                new_endpoints = self.on_direct_addr_rx.recv() => {
                     match new_endpoints {
                         Some(endpoints) => {
-                            let addr = self.endpoint.my_addr_with_endpoints(endpoints)?;
+                            let addr = NodeAddr::from_parts(
+                                self.endpoint.node_id(),
+                                self.endpoint.home_relay(),
+                                endpoints.into_iter().map(|x| x.addr).collect(),
+                            );
                             let peer_data = encode_peer_data(&addr.info)?;
                             self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
                         }
@@ -427,12 +440,23 @@ impl Actor {
                 let (send_tx, send_rx) = mpsc::channel(SEND_QUEUE_CAP);
                 self.conn_send_tx.insert(peer_id, send_tx.clone());
 
+                let max_message_size = self.state.max_message_size();
+
                 // Spawn a task for this connection
                 let in_event_tx = self.in_event_tx.clone();
                 tokio::spawn(
                     async move {
                         debug!("connection established");
-                        match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
+                        match connection_loop(
+                            peer_id,
+                            conn,
+                            origin,
+                            send_rx,
+                            &in_event_tx,
+                            max_message_size,
+                        )
+                        .await
+                        {
                             Ok(()) => {
                                 debug!("connection closed without error")
                             }
@@ -556,7 +580,10 @@ impl Actor {
                     Ok(info) => {
                         debug!(peer = ?node_id, "add known addrs: {info:?}");
                         let node_addr = NodeAddr { node_id, info };
-                        if let Err(err) = self.endpoint.add_node_addr(node_addr) {
+                        if let Err(err) = self
+                            .endpoint
+                            .add_node_addr_with_source(node_addr, SOURCE_NAME)
+                        {
                             debug!(peer = ?node_id, "add known failed: {err:?}");
                         }
                     }
@@ -605,6 +632,7 @@ async fn connection_loop(
     origin: ConnOrigin,
     mut send_rx: mpsc::Receiver<ProtoMessage>,
     in_event_tx: &mpsc::Sender<InEvent>,
+    max_message_size: usize,
 ) -> anyhow::Result<()> {
     let (mut send, mut recv) = match origin {
         ConnOrigin::Accept => conn.accept_bi().await?,
@@ -621,10 +649,10 @@ async fn connection_loop(
             // but the other side may still want to use it to
             // send data to us.
             Some(msg) = send_rx.recv(), if !send_rx.is_closed() => {
-                write_message(&mut send, &mut send_buf, &msg).await?
+                write_message(&mut send, &mut send_buf, &msg, max_message_size).await?
             }
 
-            msg = read_message(&mut recv, &mut recv_buf) => {
+            msg = read_message(&mut recv, &mut recv_buf, max_message_size) => {
                 let msg = msg?;
                 match msg {
                     None => break,
