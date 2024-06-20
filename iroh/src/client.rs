@@ -7,12 +7,18 @@ use ref_cast::RefCast;
 #[doc(inline)]
 pub use crate::rpc_protocol::RpcService;
 
-mod mem;
 mod quic;
 
-pub use self::mem::{Doc as MemDoc, Iroh as MemIroh, RpcClient as MemRpcClient};
+#[deprecated]
+pub use self::docs::Doc as MemDoc;
+#[deprecated]
+pub use self::docs::Doc as QuicDoc;
+pub use self::docs::Doc;
 pub use self::node::NodeStatus;
-pub use self::quic::{Doc as QuicDoc, Iroh as QuicIroh, RpcClient as QuicRpcClient};
+#[deprecated]
+pub use self::Iroh as MemIroh;
+#[deprecated]
+pub use self::Iroh as QuicIroh;
 
 pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
 

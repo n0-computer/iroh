@@ -60,7 +60,7 @@ struct NodeInner<D> {
     gossip: Gossip,
     secret_key: SecretKey,
     cancel_token: CancellationToken,
-    client: crate::client::MemIroh,
+    client: crate::client::Iroh,
     #[debug("rt")]
     rt: LocalPoolHandle,
     downloader: Downloader,
@@ -133,7 +133,7 @@ impl<D: BaoStore> Node<D> {
     }
 
     /// Return a client to control this node over an in-memory channel.
-    pub fn client(&self) -> &crate::client::MemIroh {
+    pub fn client(&self) -> &crate::client::Iroh {
         &self.inner.client
     }
 
@@ -180,7 +180,7 @@ impl<D: BaoStore> Node<D> {
 }
 
 impl<D> std::ops::Deref for Node<D> {
-    type Target = crate::client::MemIroh;
+    type Target = crate::client::Iroh;
 
     fn deref(&self) -> &Self::Target {
         &self.inner.client

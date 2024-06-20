@@ -546,7 +546,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
     /// # use std::sync::Arc;
     /// # use anyhow::Result;
     /// # use futures_lite::future::Boxed as BoxedFuture;
-    /// # use iroh::{node::{Node, ProtocolHandler}, net::endpoint::Connecting, client::MemIroh};
+    /// # use iroh::{node::{Node, ProtocolHandler}, net::endpoint::Connecting, client::Iroh};
     /// #
     /// # #[tokio::main]
     /// # async fn main() -> Result<()> {
@@ -555,7 +555,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
     ///
     /// #[derive(Debug)]
     /// struct MyProtocol {
-    ///     client: MemIroh
+    ///     client: Iroh
     /// }
     ///
     /// impl ProtocolHandler for MyProtocol {
@@ -590,7 +590,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
     ///
     /// Note that RPC calls performed with the client will not complete until the node is
     /// spawned.
-    pub fn client(&self) -> &crate::client::MemIroh {
+    pub fn client(&self) -> &crate::client::Iroh {
         &self.inner.client
     }
 

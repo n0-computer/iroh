@@ -33,7 +33,7 @@ pub async fn run_with_command<F, T>(
     command: F,
 ) -> Result<()>
 where
-    F: FnOnce(iroh::client::MemIroh) -> T + Send + 'static,
+    F: FnOnce(iroh::client::Iroh) -> T + Send + 'static,
     T: Future<Output = Result<()>> + 'static,
 {
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, iroh_data_root)?;
@@ -68,7 +68,7 @@ async fn run_with_command_inner<F, T>(
     command: F,
 ) -> Result<()>
 where
-    F: FnOnce(iroh::client::MemIroh) -> T + Send + 'static,
+    F: FnOnce(iroh::client::Iroh) -> T + Send + 'static,
     T: Future<Output = Result<()>> + 'static,
 {
     let relay_map = config.relay_map()?;
