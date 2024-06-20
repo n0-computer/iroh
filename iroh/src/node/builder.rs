@@ -12,7 +12,7 @@ use iroh_blobs::{
     downloader::Downloader,
     store::{Map, Store as BaoStore},
 };
-use iroh_docs::engine::{DefaultAuthorStorage, Engine};
+use iroh_docs::engine::DefaultAuthorStorage;
 use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
@@ -41,7 +41,7 @@ use crate::{
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-use super::{rpc_status::RpcStatus, DocsEngine, Node, NodeInner};
+use super::{docs::DocsEngine, rpc_status::RpcStatus, Node, NodeInner};
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
@@ -55,6 +55,17 @@ const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
+
+/// Storage backend for documents.
+#[derive(Debug, Clone)]
+pub enum DocsStorage {
+    /// Disable docs completely.
+    Disabled,
+    /// In-memory storage.
+    Memory,
+    /// File-based persistent storage.
+    Persistent(PathBuf),
+}
 
 /// Builder for the [`Node`].
 ///
@@ -85,7 +96,7 @@ where
     gc_policy: GcPolicy,
     dns_resolver: Option<DnsResolver>,
     node_discovery: DiscoveryConfig,
-    docs_store: iroh_docs::store::Store,
+    docs_storage: DocsStorage,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
     /// Callback to register when a gc loop is done
@@ -146,7 +157,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             dns_resolver: None,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
-            docs_store: iroh_docs::store::Store::memory(),
+            docs_storage: DocsStorage::Memory,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -159,7 +170,7 @@ impl<D: Map> Builder<D> {
     /// Creates a new builder for [`Node`] using the given databases.
     pub fn with_db_and_store(
         blobs_store: D,
-        docs_store: iroh_docs::store::Store,
+        docs_storage: DocsStorage,
         storage: StorageConfig,
     ) -> Self {
         Self {
@@ -172,7 +183,7 @@ impl<D: Map> Builder<D> {
             dns_resolver: None,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
-            docs_store,
+            docs_storage,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -200,8 +211,7 @@ where
             .with_context(|| {
                 format!("Failed to load blobs database from {}", blob_dir.display())
             })?;
-        let docs_store =
-            iroh_docs::store::fs::Store::persistent(IrohPaths::DocsDatabase.with_root(root))?;
+        let docs_storage = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
 
         let v0 = blobs_store
             .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
@@ -237,7 +247,7 @@ where
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
-            docs_store,
+            docs_storage,
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -258,7 +268,7 @@ where
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
-            docs_store: self.docs_store,
+            docs_storage: self.docs_storage,
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
@@ -284,7 +294,7 @@ where
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
-            docs_store: self.docs_store,
+            docs_storage: self.docs_storage,
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
@@ -297,6 +307,12 @@ where
     /// By default garbage collection is disabled.
     pub fn gc_policy(mut self, gc_policy: GcPolicy) -> Self {
         self.gc_policy = gc_policy;
+        self
+    }
+
+    /// Disables documents support on this node completely.
+    pub fn disable_docs(mut self) -> Self {
+        self.docs_storage = DocsStorage::Disabled;
         self
     }
 
@@ -405,7 +421,6 @@ where
     async fn build_inner(self) -> Result<ProtocolBuilder<D, E>> {
         trace!("building node");
         let lp = LocalPoolHandle::new(num_cpus::get());
-
         let endpoint = {
             let mut transport_config = quinn::TransportConfig::default();
             transport_config
@@ -461,28 +476,28 @@ where
         let addr = endpoint.node_addr().await?;
         trace!("endpoint address: {addr:?}");
 
-        // initialize the gossip protocol
+        // Initialize the gossip protocol.
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
-
-        // initialize the downloader
+        // Initialize the downloader.
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
 
-        // load or create the default author for documents
-        // spawn the docs engine
-        let docs = DocsEngine(
-            Engine::spawn(
-                endpoint.clone(),
-                gossip.clone(),
-                self.docs_store,
-                self.blobs_store.clone(),
-                downloader.clone(),
-                self.storage.default_author_storage(),
-            )
-            .await?,
-        );
+        // Spawn the docs engine, if enabled.
+        // This returns None for DocsStorage::Disabled, otherwise Some(DocsEngine).
+        let docs = DocsEngine::spawn(
+            self.docs_storage,
+            self.blobs_store.clone(),
+            self.storage.default_author_storage(),
+            endpoint.clone(),
+            gossip.clone(),
+            downloader.clone(),
+        )
+        .await?;
 
         // Initialize the internal RPC connection.
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
+        // box the controller. Boxing has a special case for the flume channel that avoids allocations,
+        // so this has zero overhead.
+        let controller = quic_rpc::transport::boxed::Connection::new(controller);
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
         let inner = Arc::new(NodeInner {
@@ -545,7 +560,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
     /// # use std::sync::Arc;
     /// # use anyhow::Result;
     /// # use futures_lite::future::Boxed as BoxedFuture;
-    /// # use iroh::{node::{Node, ProtocolHandler}, net::endpoint::Connecting, client::MemIroh};
+    /// # use iroh::{node::{Node, ProtocolHandler}, net::endpoint::Connecting, client::Iroh};
     /// #
     /// # #[tokio::main]
     /// # async fn main() -> Result<()> {
@@ -554,7 +569,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
     ///
     /// #[derive(Debug)]
     /// struct MyProtocol {
-    ///     client: MemIroh
+    ///     client: Iroh
     /// }
     ///
     /// impl ProtocolHandler for MyProtocol {
@@ -589,7 +604,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
     ///
     /// Note that RPC calls performed with the client will not complete until the node is
     /// spawned.
-    pub fn client(&self) -> &crate::client::MemIroh {
+    pub fn client(&self) -> &crate::client::Iroh {
         &self.inner.client
     }
 
@@ -637,9 +652,10 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
         let gossip = self.gossip().clone();
         self = self.accept(GOSSIP_ALPN, Arc::new(gossip));
 
-        // Register docs.
-        let docs = self.inner.docs.clone();
-        self = self.accept(DOCS_ALPN, Arc::new(docs));
+        // Register docs, if enabled.
+        if let Some(docs) = self.inner.docs.clone() {
+            self = self.accept(DOCS_ALPN, Arc::new(docs));
+        }
 
         self
     }

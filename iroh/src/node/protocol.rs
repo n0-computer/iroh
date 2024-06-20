@@ -5,8 +5,6 @@ use futures_lite::future::Boxed as BoxedFuture;
 use futures_util::future::join_all;
 use iroh_net::endpoint::Connecting;
 
-use crate::node::DocsEngine;
-
 /// Handler for incoming connections.
 ///
 /// An iroh node can accept connections for arbitrary ALPN protocols. By default, the iroh node
@@ -117,11 +115,5 @@ impl iroh_blobs::provider::EventSender for MockEventSender {
 impl ProtocolHandler for iroh_gossip::net::Gossip {
     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move { self.handle_connection(conn.await?).await })
-    }
-}
-
-impl ProtocolHandler for DocsEngine {
-    fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
-        Box::pin(async move { self.handle_connection(conn).await })
     }
 }

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{ensure, Context, Result};
 use clap::Parser;
 use derive_more::FromStr;
-use iroh::client::QuicIroh;
+use iroh::client::Iroh;
 
 use crate::config::{ConsoleEnv, NodeConfig};
 
@@ -130,7 +130,7 @@ impl Cli {
                     .await
                 } else {
                     crate::logging::init_terminal_logging()?;
-                    let iroh = QuicIroh::connect(data_dir).await.context("rpc connect")?;
+                    let iroh = Iroh::connect(data_dir).await.context("rpc connect")?;
                     let env = ConsoleEnv::for_console(data_dir_owned, &iroh).await?;
                     console::run(&iroh, &env).await
                 }
@@ -151,7 +151,7 @@ impl Cli {
                     .await
                 } else {
                     crate::logging::init_terminal_logging()?;
-                    let iroh = QuicIroh::connect(data_dir).await.context("rpc connect")?;
+                    let iroh = Iroh::connect(data_dir).await.context("rpc connect")?;
                     let env = ConsoleEnv::for_cli(data_dir_owned, &iroh).await?;
                     command.run(&iroh, &env).await
                 }
