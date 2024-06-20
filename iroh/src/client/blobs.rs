@@ -38,19 +38,13 @@ use crate::rpc_protocol::{
     CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, SetTagOption,
 };
 
-use super::{flatten, tags, Iroh, IrohRpcClient};
+use super::{flatten, tags, RpcClient};
 
 /// Iroh blobs client.
 #[derive(Debug, Clone, RefCast)]
 #[repr(transparent)]
 pub struct Client {
-    pub(super) rpc: IrohRpcClient,
-}
-
-impl<'a> From<&'a Iroh> for &'a IrohRpcClient {
-    fn from(client: &'a Iroh) -> &'a IrohRpcClient {
-        &client.blobs().rpc
-    }
+    pub(super) rpc: RpcClient,
 }
 
 impl Client {
@@ -780,12 +774,12 @@ impl Reader {
         }
     }
 
-    pub(crate) async fn from_rpc_read(rpc: &IrohRpcClient, hash: Hash) -> anyhow::Result<Self> {
+    pub(crate) async fn from_rpc_read(rpc: &RpcClient, hash: Hash) -> anyhow::Result<Self> {
         Self::from_rpc_read_at(rpc, hash, 0, None).await
     }
 
     async fn from_rpc_read_at(
-        rpc: &IrohRpcClient,
+        rpc: &RpcClient,
         hash: Hash,
         offset: u64,
         len: Option<usize>,

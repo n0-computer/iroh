@@ -16,7 +16,7 @@ pub enum RpcStatus {
         /// The port we are connected on.
         port: u16,
         /// Actual connected RPC client.
-        client: crate::client::IrohRpcClient,
+        client: crate::client::RpcClient,
     },
 }
 

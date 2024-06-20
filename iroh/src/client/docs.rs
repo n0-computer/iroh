@@ -21,7 +21,7 @@ use iroh_docs::{
 };
 use iroh_net::NodeAddr;
 use portable_atomic::{AtomicBool, Ordering};
-use quic_rpc::{message::RpcMsg, RpcClient};
+use quic_rpc::message::RpcMsg;
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
@@ -36,13 +36,13 @@ use crate::rpc_protocol::{
 #[doc(inline)]
 pub use iroh_docs::engine::{Origin, SyncEvent, SyncReason};
 
-use super::{blobs, flatten, IrohRpcClient};
+use super::{blobs, flatten, RpcClient};
 
 /// Iroh docs client.
 #[derive(Debug, Clone, RefCast)]
 #[repr(transparent)]
 pub struct Client {
-    pub(super) rpc: RpcClient<RpcService, quic_rpc::transport::boxed::Connection<RpcService>>,
+    pub(super) rpc: RpcClient,
 }
 
 impl Client {
@@ -127,7 +127,7 @@ impl Eq for Doc {}
 #[derive(Debug)]
 struct DocInner {
     id: NamespaceId,
-    rpc: IrohRpcClient,
+    rpc: RpcClient,
     closed: AtomicBool,
     rt: tokio::runtime::Handle,
 }
@@ -145,7 +145,7 @@ impl Drop for DocInner {
 }
 
 impl Doc {
-    fn new(rpc: IrohRpcClient, id: NamespaceId) -> Self {
+    fn new(rpc: RpcClient, id: NamespaceId) -> Self {
         Self(Arc::new(DocInner {
             rpc,
             id,
@@ -411,8 +411,8 @@ impl Doc {
     }
 }
 
-impl<'a> From<&'a Doc> for &'a IrohRpcClient {
-    fn from(doc: &'a Doc) -> &'a IrohRpcClient {
+impl<'a> From<&'a Doc> for &'a RpcClient {
+    fn from(doc: &'a Doc) -> &'a RpcClient {
         &doc.0.rpc
     }
 }
@@ -467,14 +467,14 @@ impl Entry {
     /// Read the content of an [`Entry`] as a streaming [`blobs::Reader`].
     ///
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
-    pub async fn content_reader(&self, client: impl Into<&IrohRpcClient>) -> Result<blobs::Reader> {
+    pub async fn content_reader(&self, client: impl Into<&RpcClient>) -> Result<blobs::Reader> {
         blobs::Reader::from_rpc_read(client.into(), self.content_hash()).await
     }
 
     /// Read all content of an [`Entry`] into a buffer.
     ///
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
-    pub async fn content_bytes(&self, client: impl Into<&IrohRpcClient>) -> Result<Bytes> {
+    pub async fn content_bytes(&self, client: impl Into<&RpcClient>) -> Result<Bytes> {
         blobs::Reader::from_rpc_read(client.into(), self.content_hash())
             .await?
             .read_to_bytes()

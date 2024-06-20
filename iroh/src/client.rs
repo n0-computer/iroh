@@ -1,7 +1,6 @@
 //! Client to an Iroh node.
 
 use futures_lite::{Stream, StreamExt};
-use quic_rpc::RpcClient;
 use ref_cast::RefCast;
 
 #[doc(inline)]
@@ -30,20 +29,18 @@ pub mod tags;
 mod node;
 
 /// Iroh rpc client - boxed so that we can have a concrete type.
-pub(crate) type IrohRpcClient =
-    RpcClient<RpcService, quic_rpc::transport::boxed::Connection<RpcService>>;
+pub(crate) type RpcClient =
+    quic_rpc::RpcClient<RpcService, quic_rpc::transport::boxed::Connection<RpcService>>;
 
 /// Iroh client.
 #[derive(Debug, Clone)]
 pub struct Iroh {
-    rpc: IrohRpcClient,
+    rpc: RpcClient,
 }
 
 impl Iroh {
     /// Create a new high-level client to a Iroh node from the low-level RPC client.
-    pub fn new(
-        rpc: RpcClient<RpcService, quic_rpc::transport::boxed::Connection<RpcService>>,
-    ) -> Self {
+    pub fn new(rpc: RpcClient) -> Self {
         Self { rpc }
     }
 
