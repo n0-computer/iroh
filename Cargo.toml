@@ -77,6 +77,3 @@ debug-assertions = false
 opt-level = 3
 panic = 'abort'
 incremental = false
-
-[patch.crates-io]
-iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "fix-openbsd" }
