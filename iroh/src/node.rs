@@ -13,7 +13,6 @@ use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
 use iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store as BaoStore};
 use iroh_blobs::{downloader::Downloader, protocol::Closed};
-use iroh_docs::engine::Engine;
 use iroh_gossip::net::Gossip;
 use iroh_net::key::SecretKey;
 use iroh_net::Endpoint;
@@ -24,14 +23,18 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, error, info, warn};
 
-use crate::{client::RpcService, node::protocol::ProtocolMap};
+use crate::{
+    client::RpcService,
+    node::{docs::DocsEngine, protocol::ProtocolMap},
+};
 
 mod builder;
+mod docs;
 mod protocol;
 mod rpc;
 mod rpc_status;
 
-pub use self::builder::{Builder, DiscoveryConfig, GcPolicy, StorageConfig};
+pub use self::builder::{Builder, DiscoveryConfig, DocsStorage, GcPolicy, StorageConfig};
 pub use self::rpc_status::RpcStatus;
 pub use protocol::ProtocolHandler;
 
@@ -55,7 +58,7 @@ pub struct Node<D> {
 #[derive(derive_more::Debug)]
 struct NodeInner<D> {
     db: D,
-    docs: DocsEngine,
+    docs: Option<DocsEngine>,
     endpoint: Endpoint,
     gossip: Gossip,
     secret_key: SecretKey,
@@ -314,9 +317,22 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         join_set.shutdown().await;
     }
 
+    /// Shutdown the different parts of the node concurrently.
     async fn shutdown(&self, protocols: Arc<ProtocolMap>) {
-        // Shutdown the different parts of the node concurrently.
         let error_code = Closed::ProviderTerminating;
+
+        // Shutdown future for the docs engine, if enabled.
+        let docs_shutdown = {
+            let docs = self.docs.clone();
+            async move {
+                if let Some(docs) = docs {
+                    docs.shutdown().await
+                } else {
+                    Ok(())
+                }
+            }
+        };
+
         // We ignore all errors during shutdown.
         let _ = tokio::join!(
             // Close the endpoint.
@@ -326,8 +342,8 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             self.endpoint
                 .clone()
                 .close(error_code.into(), error_code.reason()),
-            // Shutdown sync engine.
-            self.docs.shutdown(),
+            // Shutdown docs engine.
+            docs_shutdown,
             // Shutdown blobs store engine.
             self.db.shutdown(),
             // Shutdown protocol handlers.
@@ -342,7 +358,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
     ) {
         tracing::info!("Starting GC task with interval {:?}", gc_period);
         let db = &self.db;
-        let docs = &self.docs;
         let mut live = BTreeSet::new();
         'outer: loop {
             if let Err(cause) = db.gc_start().await {
@@ -356,21 +371,23 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             tracing::debug!("Starting GC");
             live.clear();
 
-            let doc_hashes = match docs.sync.content_hashes().await {
-                Ok(hashes) => hashes,
-                Err(err) => {
-                    tracing::warn!("Error getting doc hashes: {}", err);
-                    continue 'outer;
-                }
-            };
-            for hash in doc_hashes {
-                match hash {
-                    Ok(hash) => {
-                        live.insert(hash);
-                    }
+            if let Some(docs) = &self.docs {
+                let doc_hashes = match docs.sync.content_hashes().await {
+                    Ok(hashes) => hashes,
                     Err(err) => {
-                        tracing::error!("Error getting doc hash: {}", err);
+                        tracing::warn!("Error getting doc hashes: {}", err);
                         continue 'outer;
+                    }
+                };
+                for hash in doc_hashes {
+                    match hash {
+                        Ok(hash) => {
+                            live.insert(hash);
+                        }
+                        Err(err) => {
+                            tracing::error!("Error getting doc hash: {}", err);
+                            continue 'outer;
+                        }
                     }
                 }
             }
@@ -433,17 +450,6 @@ async fn handle_connection(
     };
     if let Err(err) = handler.accept(connecting).await {
         warn!("Handling incoming connection ended with error: {err}");
-    }
-}
-
-/// Wrapper around [`Engine`] so that we can implement our RPC methods directly.
-#[derive(Debug, Clone)]
-pub(crate) struct DocsEngine(Engine);
-
-impl std::ops::Deref for DocsEngine {
-    type Target = Engine;
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }
 
@@ -655,7 +661,6 @@ mod tests {
     }
 
     #[cfg(feature = "fs-store")]
-    #[ignore = "flaky"]
     #[tokio::test]
     async fn test_default_author_persist() -> Result<()> {
         use crate::util::path::IrohPaths;

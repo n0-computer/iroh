@@ -42,7 +42,7 @@ where
     ///
     /// The default author can be set with [`Self::set_default`].
     pub async fn default(&self) -> Result<AuthorId> {
-        let res = self.rpc.rpc(AuthorGetDefaultRequest).await?;
+        let res = self.rpc.rpc(AuthorGetDefaultRequest).await??;
         Ok(res.author_id)
     }
 
