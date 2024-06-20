@@ -1,11 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use crate::proto::grouping::{Area, AreaOfInterest};
 use crate::proto::keys::NamespaceId;
 use crate::proto::sync::{AccessChallenge, AreaOfInterestHandle, ChallengeHash, ReadAuthorisation};
-use crate::{
-    auth::CapSelector,
-    proto::grouping::{Area, AreaOfInterest},
-};
 
 pub mod channels;
 mod data;
