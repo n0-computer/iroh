@@ -275,7 +275,7 @@ pub(crate) enum RelayConnWriter {
     ),
 }
 
-fn tung_to_io_err(e: tokio_tungstenite_wasm::Error) -> std::io::Error {
+fn tung_wasm_to_io_err(e: tokio_tungstenite_wasm::Error) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
 }
 
@@ -296,7 +296,7 @@ impl Sink<Frame> for RelayConnWriter {
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Relay(ref mut ws) => Pin::new(ws).poll_ready(cx),
-            Self::Ws(ref mut ws) => Pin::new(ws).poll_ready(cx).map_err(tung_to_io_err),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_ready(cx).map_err(tung_wasm_to_io_err),
         }
     }
 
@@ -305,21 +305,21 @@ impl Sink<Frame> for RelayConnWriter {
             Self::Relay(ref mut ws) => Pin::new(ws).start_send(item),
             Self::Ws(ref mut ws) => Pin::new(ws)
                 .start_send(item.into_wasm_ws_message()?)
-                .map_err(tung_to_io_err),
+                .map_err(tung_wasm_to_io_err),
         }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Relay(ref mut ws) => Pin::new(ws).poll_flush(cx),
-            Self::Ws(ref mut ws) => Pin::new(ws).poll_flush(cx).map_err(tung_to_io_err),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_flush(cx).map_err(tung_wasm_to_io_err),
         }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Relay(ref mut ws) => Pin::new(ws).poll_close(cx),
-            Self::Ws(ref mut ws) => Pin::new(ws).poll_close(cx).map_err(tung_to_io_err),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_close(cx).map_err(tung_wasm_to_io_err),
         }
     }
 }

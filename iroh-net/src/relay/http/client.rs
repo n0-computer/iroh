@@ -588,9 +588,9 @@ impl Actor {
     }
 
     async fn connect_0(&self) -> Result<(RelayClient, RelayClientReceiver), ClientError> {
-        const PROTOCOL: Protocol = Protocol::Relay;
+        let protocol = Protocol::from_url_scheme(&self.url);
 
-        let (reader, writer, local_addr) = match &PROTOCOL {
+        let (reader, writer, local_addr) = match &protocol {
             Protocol::Websocket => {
                 let (writer, reader) = tokio_tungstenite_wasm::connect(self.url.as_str())
                     .await?
@@ -619,10 +619,10 @@ impl Actor {
                         .ok_or_else(|| ClientError::InvalidUrl("No tls servername".into()))?;
                     let tls_stream = self.tls_connector.connect(hostname, tcp_stream).await?;
                     debug!("tls_connector connect success");
-                    Self::start_upgrade(tls_stream, &PROTOCOL).await?
+                    Self::start_upgrade(tls_stream, &protocol).await?
                 } else {
                     debug!("Starting handshake");
-                    Self::start_upgrade(tcp_stream, &PROTOCOL).await?
+                    Self::start_upgrade(tcp_stream, &protocol).await?
                 };
 
                 if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
