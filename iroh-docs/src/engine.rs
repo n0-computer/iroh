@@ -78,7 +78,7 @@ impl Engine {
         };
         let sync = SyncHandle::spawn(replica_store, Some(content_status_cb.clone()), me.clone());
 
-        let mut actor = LiveActor::new(
+        let actor = LiveActor::new(
             sync.clone(),
             endpoint.clone(),
             gossip.clone(),
@@ -108,7 +108,7 @@ impl Engine {
             Err(err) => {
                 // If loading the default author failed, make sure to shutdown the sync actor before
                 // returning.
-                sync.shutdown().await?;
+                let _store = sync.shutdown().await.ok();
                 return Err(err);
             }
         };
@@ -207,7 +207,11 @@ impl Engine {
 
     /// Shutdown the engine.
     pub async fn shutdown(&self) -> Result<()> {
-        self.to_live_actor.send(ToLiveActor::Shutdown).await?;
+        let (reply, reply_rx) = oneshot::channel();
+        self.to_live_actor
+            .send(ToLiveActor::Shutdown { reply })
+            .await?;
+        reply_rx.await?;
         Ok(())
     }
 }
