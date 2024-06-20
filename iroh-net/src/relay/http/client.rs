@@ -9,6 +9,7 @@ use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
 use fastwebsockets::WebSocket;
 use futures_lite::future::Boxed as BoxFuture;
+use futures_util::StreamExt;
 use http_body_util::Empty;
 use hyper::body::Incoming;
 use hyper::header::UPGRADE;
@@ -22,11 +23,13 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
+use tokio_tungstenite_wasm::WebSocketStream;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 use url::Url;
 
 use crate::dns::{DnsResolver, ResolverExt};
 use crate::key::{PublicKey, SecretKey};
+use crate::relay::client::{RelayConnReader, RelayConnWriter};
 use crate::relay::http::streams::{downcast_upgrade, MaybeTlsStream};
 use crate::relay::http::WEBSOCKET_UPGRADE_PROTOCOL;
 use crate::relay::RelayUrl;
@@ -122,6 +125,9 @@ pub enum ClientError {
     /// The inner actor is gone, likely means things are shutdown.
     #[error("actor gone")]
     ActorGone,
+    /// There was an error related to websockets
+    #[error("websocket error")]
+    WebsocketError(#[from] tokio_tungstenite_wasm::Error),
 }
 
 /// An HTTP Relay client.
@@ -582,53 +588,62 @@ impl Actor {
     }
 
     async fn connect_0(&self) -> Result<(RelayClient, RelayClientReceiver), ClientError> {
-        let tcp_stream = self.dial_url().await?;
+        // let tcp_stream = self.dial_url().await?;
 
-        let local_addr = tcp_stream
-            .local_addr()
-            .map_err(|e| ClientError::NoLocalAddr(e.to_string()))?;
+        // let local_addr = tcp_stream
+        //     .local_addr()
+        //     .map_err(|e| ClientError::NoLocalAddr(e.to_string()))?;
 
-        debug!(server_addr = ?tcp_stream.peer_addr(), %local_addr, "TCP stream connected");
+        // debug!(server_addr = ?tcp_stream.peer_addr(), %local_addr, "TCP stream connected");
 
-        let response = if self.use_https() {
-            debug!("Starting TLS handshake");
-            let hostname = self
-                .tls_servername()
-                .ok_or_else(|| ClientError::InvalidUrl("No tls servername".into()))?;
-            let tls_stream = self.tls_connector.connect(hostname, tcp_stream).await?;
-            debug!("tls_connector connect success");
-            Self::start_upgrade(tls_stream).await?
-        } else {
-            debug!("Starting handshake");
-            Self::start_upgrade(tcp_stream).await?
-        };
+        // let response = if self.use_https() {
+        //     debug!("Starting TLS handshake");
+        //     let hostname = self
+        //         .tls_servername()
+        //         .ok_or_else(|| ClientError::InvalidUrl("No tls servername".into()))?;
+        //     let tls_stream = self.tls_connector.connect(hostname, tcp_stream).await?;
+        //     debug!("tls_connector connect success");
+        //     Self::start_upgrade(tls_stream).await?
+        // } else {
+        //     debug!("Starting handshake");
+        //     Self::start_upgrade(tcp_stream).await?
+        // };
 
-        if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            error!(
-                "expected status 101 SWITCHING_PROTOCOLS, got: {}",
-                response.status()
-            );
-            return Err(ClientError::UnexpectedStatusCode(
-                hyper::StatusCode::SWITCHING_PROTOCOLS,
-                response.status(),
-            ));
-        }
+        // if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
+        //     error!(
+        //         "expected status 101 SWITCHING_PROTOCOLS, got: {}",
+        //         response.status()
+        //     );
+        //     return Err(ClientError::UnexpectedStatusCode(
+        //         hyper::StatusCode::SWITCHING_PROTOCOLS,
+        //         response.status(),
+        //     ));
+        // }
 
-        debug!("starting upgrade");
-        let upgraded = match hyper::upgrade::on(response).await {
-            Ok(upgraded) => upgraded,
-            Err(err) => {
-                warn!("upgrade failed: {:#}", err);
-                return Err(ClientError::Hyper(err));
-            }
-        };
+        // debug!("starting upgrade");
+        // let upgraded = match hyper::upgrade::on(response).await {
+        //     Ok(upgraded) => upgraded,
+        //     Err(err) => {
+        //         warn!("upgrade failed: {:#}", err);
+        //         return Err(ClientError::Hyper(err));
+        //     }
+        // };
 
-        debug!("connection upgraded");
-        let (reader, writer) =
-            downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
+        // debug!("connection upgraded");
+        // let (reader, writer) =
+        //     downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
 
-        let (reader, writer) =
-            fastwebsockets::after_handshake_split(reader, writer, fastwebsockets::Role::Client);
+        // let (reader, writer) =
+        //     fastwebsockets::after_handshake_split(reader, writer, fastwebsockets::Role::Client);
+
+        let (writer, reader) = tokio_tungstenite_wasm::connect(self.url.as_str())
+            .await?
+            .split();
+
+        let reader = RelayConnReader::Ws(reader);
+        let writer = RelayConnWriter::Ws(writer);
+
+        let local_addr = None;
 
         let (relay_client, receiver) =
             RelayClientBuilder::new(self.secret_key.clone(), local_addr, reader, writer)
@@ -705,12 +720,10 @@ impl Actor {
             return None;
         }
         if let Some((ref client, _)) = self.relay_client {
-            match client.local_addr() {
-                Ok(addr) => return Some(addr),
-                _ => return None,
-            }
+            client.local_addr()
+        } else {
+            None
         }
-        None
     }
 
     async fn ping(&mut self, s: oneshot::Sender<Result<Duration, ClientError>>) {

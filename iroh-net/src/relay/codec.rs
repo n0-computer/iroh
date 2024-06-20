@@ -315,6 +315,58 @@ impl Frame {
         }
     }
 
+    pub fn into_ws_message(self) -> std::io::Result<tungstenite::Message> {
+        let mut bytes = bytes::BytesMut::new();
+        DerpCodec.encode(self, &mut bytes)?;
+        Ok(tungstenite::Message::binary(bytes))
+    }
+
+    pub fn into_wasm_ws_message(self) -> std::io::Result<tokio_tungstenite_wasm::Message> {
+        let mut bytes = bytes::BytesMut::new();
+        DerpCodec.encode(self, &mut bytes)?;
+        Ok(tokio_tungstenite_wasm::Message::binary(bytes))
+    }
+
+    pub fn from_ws_message(
+        msg: Option<tungstenite::Result<tungstenite::Message>>,
+    ) -> Option<anyhow::Result<Self>> {
+        match msg {
+            Some(Ok(tungstenite::Message::Binary(vec))) => {
+                let mut bytes = BytesMut::new();
+                bytes.extend_from_slice(&vec); // TODO(matheus23) this is slow/weird
+                Some(DerpCodec.decode(&mut bytes).and_then(|option| {
+                    option.ok_or_else(|| anyhow::anyhow!("incomplete frame in websocket message"))
+                }))
+            }
+            Some(Ok(msg)) => {
+                tracing::warn!(?msg, "Got msg of unsupported type, skipping.");
+                None
+            }
+            Some(Err(e)) => Some(Err(e.into())),
+            None => None,
+        }
+    }
+
+    pub fn from_wasm_ws_message(
+        msg: Option<tokio_tungstenite_wasm::Result<tokio_tungstenite_wasm::Message>>,
+    ) -> Option<anyhow::Result<Self>> {
+        match msg {
+            Some(Ok(tokio_tungstenite_wasm::Message::Binary(vec))) => {
+                let mut bytes = BytesMut::new();
+                bytes.extend_from_slice(&vec); // TODO(matheus23) this is slow/weird
+                Some(DerpCodec.decode(&mut bytes).and_then(|option| {
+                    option.ok_or_else(|| anyhow::anyhow!("incomplete frame in websocket message"))
+                }))
+            }
+            Some(Ok(msg)) => {
+                tracing::warn!(?msg, "Got msg of unsupported type, skipping.");
+                None
+            }
+            Some(Err(e)) => Some(Err(e.into())),
+            None => None,
+        }
+    }
+
     /// Writes it self to the given buffer.
     fn write_to(&self, dst: &mut BytesMut) {
         match self {

@@ -185,34 +185,8 @@ pub(crate) enum RelayIo {
     Ws(WebSocketStream<MaybeTlsStream>),
 }
 
-impl RelayIo {
-    fn frame_to_message(item: Frame) -> std::io::Result<Message> {
-        let mut bytes = bytes::BytesMut::new();
-        DerpCodec.encode(item, &mut bytes)?;
-        Ok(Message::binary(bytes))
-    }
-
-    fn message_to_frame(msg: Option<Result<Message, tungstenite::Error>>) -> Option<Result<Frame>> {
-        match msg {
-            Some(Ok(Message::Binary(vec))) => {
-                let mut bytes = BytesMut::new();
-                bytes.extend_from_slice(&vec); // TODO(matheus23) this is slow/weird
-                Some(DerpCodec.decode(&mut bytes).and_then(|option| {
-                    option.ok_or_else(|| anyhow::anyhow!("incomplete frame in websocket message"))
-                }))
-            }
-            Some(Ok(msg)) => {
-                tracing::warn!(?msg, "Got msg of unsupported type, skipping.");
-                None
-            }
-            Some(Err(e)) => Some(Err(e.into())),
-            None => None,
-        }
-    }
-
-    fn tung_to_io_err(e: tungstenite::Error) -> std::io::Error {
-        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-    }
+fn tung_to_io_err(e: tungstenite::Error) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
 }
 
 impl Sink<Frame> for RelayIo {
@@ -221,7 +195,7 @@ impl Sink<Frame> for RelayIo {
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Derp(ref mut framed) => framed.poll_ready_unpin(cx),
-            Self::Ws(ref mut ws) => ws.poll_ready_unpin(cx).map_err(Self::tung_to_io_err),
+            Self::Ws(ref mut ws) => ws.poll_ready_unpin(cx).map_err(tung_to_io_err),
         }
     }
 
@@ -229,22 +203,22 @@ impl Sink<Frame> for RelayIo {
         match *self {
             Self::Derp(ref mut framed) => framed.start_send_unpin(item),
             Self::Ws(ref mut ws) => ws
-                .start_send_unpin(Self::frame_to_message(item)?)
-                .map_err(Self::tung_to_io_err),
+                .start_send_unpin(item.into_ws_message()?)
+                .map_err(tung_to_io_err),
         }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Derp(ref mut framed) => framed.poll_flush_unpin(cx),
-            Self::Ws(ref mut ws) => ws.poll_flush_unpin(cx).map_err(Self::tung_to_io_err),
+            Self::Ws(ref mut ws) => ws.poll_flush_unpin(cx).map_err(tung_to_io_err),
         }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Derp(ref mut framed) => framed.poll_close_unpin(cx),
-            Self::Ws(ref mut ws) => ws.poll_close_unpin(cx).map_err(Self::tung_to_io_err),
+            Self::Ws(ref mut ws) => ws.poll_close_unpin(cx).map_err(tung_to_io_err),
         }
     }
 }
@@ -255,7 +229,7 @@ impl Stream for RelayIo {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
             Self::Derp(ref mut framed) => framed.poll_next_unpin(cx),
-            Self::Ws(ref mut ws) => ws.poll_next_unpin(cx).map(Self::message_to_frame),
+            Self::Ws(ref mut ws) => ws.poll_next_unpin(cx).map(Frame::from_ws_message),
         }
     }
 }
@@ -686,14 +660,10 @@ mod tests {
             MaybeTlsStreamWriter::Mem(client_writer),
             fastwebsockets::Role::Client,
         );
+        let (client_reader, client_writer) = todo!(); // TODO(matheus23) fix tests. Probably just use relay protocol here
         (
             server,
-            ClientBuilder::new(
-                secret_key,
-                "127.0.0.1:0".parse().unwrap(),
-                client_reader,
-                client_writer,
-            ),
+            ClientBuilder::new(secret_key, None, client_reader, client_writer),
         )
     }
 

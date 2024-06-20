@@ -91,6 +91,7 @@ strum = { version = "0.26.2", features = ["derive"] }
 tungstenite = "0.23.0"
 fastwebsockets = { git = "https://github.com/denoland/fastwebsockets", revision = "efc0788", features = ["upgrade", "unstable-split"] }
 tokio-tungstenite = "0.23.1"
+tokio-tungstenite-wasm = "0.3.1"
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
