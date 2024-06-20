@@ -12,12 +12,13 @@ use crate::{
     form::{AuthForm, EntryForm, EntryOrForm},
     proto::{
         grouping::ThreeDRange,
-        keys::NamespaceId,
-        meadowcap,
+        keys::{NamespaceId, NamespaceKind, UserId, UserSecretKey},
+        meadowcap::{self, AccessMode},
         willow::{AuthorisedEntry, Entry},
     },
     session::{Channels, Error, InitialTransmission, Role, Session, SessionId, SessionInit},
     store::{
+        auth::{CapSelector, CapabilityPack, DelegateTo},
         traits::{EntryReader, SecretStorage, Storage},
         Origin, Store,
     },
@@ -33,6 +34,10 @@ pub struct ActorHandle {
 }
 
 impl ActorHandle {
+    pub fn spawn_memory(payloads: iroh_blobs::store::mem::Store, me: NodeId) -> Self {
+        Self::spawn(move || crate::store::memory::Store::new(payloads), me)
+    }
+
     pub fn spawn<S: Storage>(
         create_store: impl 'static + Send + FnOnce() -> S,
         me: NodeId,
@@ -93,11 +98,11 @@ impl ActorHandle {
         Ok(())
     }
 
-    pub async fn insert_form<F, Fut, S>(
+    pub async fn insert_form(
         &self,
         form: EntryForm,
         authorisation: impl Into<AuthForm>,
-    ) -> Result<bool> {
+    ) -> Result<(Entry, bool)> {
         let (reply, reply_rx) = oneshot::channel();
         self.send(ToActor::InsertEntry {
             entry: EntryOrForm::Form(form),
@@ -150,7 +155,46 @@ impl ActorHandle {
             reply,
         })
         .await?;
+        reply_rx.await?
+    }
+    pub async fn create_namespace(
+        &self,
+        kind: NamespaceKind,
+        owner: UserId,
+    ) -> Result<NamespaceId> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.send(ToActor::CreateNamespace { kind, owner, reply })
+            .await?;
+        reply_rx.await?
+    }
 
+    pub async fn create_user(&self) -> Result<UserId> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.send(ToActor::CreateUser { reply }).await?;
+        reply_rx.await?
+    }
+
+    pub async fn delegate_caps(
+        &self,
+        from: CapSelector,
+        access_mode: AccessMode,
+        to: DelegateTo,
+    ) -> Result<Vec<CapabilityPack>> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.send(ToActor::DelegateCaps {
+            from,
+            access_mode,
+            to,
+            store: false,
+            reply,
+        })
+        .await?;
+        reply_rx.await?
+    }
+
+    pub async fn import_caps(&self, caps: Vec<CapabilityPack>) -> Result<()> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.send(ToActor::ImportCaps { caps, reply }).await?;
         reply_rx.await?
     }
 }
@@ -234,11 +278,30 @@ pub enum ToActor {
     InsertEntry {
         entry: EntryOrForm,
         auth: AuthForm,
-        reply: oneshot::Sender<Result<bool, Error>>,
+        reply: oneshot::Sender<Result<(Entry, bool), Error>>,
     },
     InsertSecret {
         secret: meadowcap::SecretKey,
         reply: oneshot::Sender<Result<()>>,
+    },
+    CreateNamespace {
+        kind: NamespaceKind,
+        owner: UserId,
+        reply: oneshot::Sender<Result<NamespaceId>>,
+    },
+    CreateUser {
+        reply: oneshot::Sender<Result<UserId>>,
+    },
+    ImportCaps {
+        caps: Vec<CapabilityPack>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    DelegateCaps {
+        from: CapSelector,
+        access_mode: AccessMode,
+        to: DelegateTo,
+        store: bool,
+        reply: oneshot::Sender<Result<Vec<CapabilityPack>>>,
     },
     Shutdown {
         #[debug(skip)]
@@ -382,6 +445,31 @@ impl<S: Storage> Actor<S> {
             }
             ToActor::InsertSecret { secret, reply } => {
                 let res = self.store.secrets().insert(secret);
+                send_reply(reply, res.map_err(anyhow::Error::from))
+            }
+            ToActor::CreateNamespace { kind, owner, reply } => {
+                let res = self
+                    .store
+                    .create_namespace(&mut rand::thread_rng(), kind, owner);
+                send_reply(reply, res.map_err(anyhow::Error::from))
+            }
+            ToActor::CreateUser { reply } => {
+                let secret = UserSecretKey::generate(&mut rand::thread_rng());
+                let res = self.store.secrets().insert_user(secret);
+                send_reply(reply, res.map_err(anyhow::Error::from))
+            }
+            ToActor::ImportCaps { caps, reply } => {
+                let res = self.store.import_caps(caps);
+                send_reply(reply, res.map_err(anyhow::Error::from))
+            }
+            ToActor::DelegateCaps {
+                from,
+                access_mode,
+                to,
+                store,
+                reply,
+            } => {
+                let res = self.store.delegate_cap(from, access_mode, to, store);
                 send_reply(reply, res.map_err(anyhow::Error::from))
             }
         }

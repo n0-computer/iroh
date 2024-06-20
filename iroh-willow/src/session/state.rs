@@ -295,6 +295,7 @@ impl Session {
 
     pub fn on_setup_bind_read_capability(&self, msg: SetupBindReadCapability) -> Result<(), Error> {
         // TODO: verify intersection handle
+        tracing::debug!("setup bind cap {msg:?}");
         msg.capability.validate()?;
         let mut state = self.state_mut();
         state

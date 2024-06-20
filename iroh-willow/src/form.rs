@@ -16,15 +16,9 @@ use tokio::io::AsyncRead;
 use crate::{
     proto::{
         keys::UserId,
-        willow::{
-            AuthorisedEntry, Entry, NamespaceId, Path, SubspaceId, Timestamp, WriteCapability,
-        },
+        willow::{Entry, NamespaceId, Path, SubspaceId, Timestamp, WriteCapability},
     },
-    session::Error,
-    store::{
-        traits::{SecretStorage as _, Storage},
-        Store,
-    },
+    store::{traits::Storage, Store},
     util::time::system_time_now,
 };
 
@@ -134,7 +128,7 @@ pub enum HashForm {
 
 #[derive(Debug, Clone, Serialize, Deserialize, derive_more::From)]
 pub enum AuthForm {
-    Find(UserId),
+    Any(UserId),
     // TODO: WriteCapabilityHash
     Exact(WriteCapability),
 }
@@ -142,30 +136,9 @@ pub enum AuthForm {
 impl AuthForm {
     pub fn user_id(&self) -> UserId {
         match self {
-            AuthForm::Find(user) => *user,
+            AuthForm::Any(user) => *user,
             AuthForm::Exact(cap) => cap.receiver().id(),
         }
-    }
-    pub fn into_write_cap<S: Storage>(self, _store: &Store<S>) -> Result<WriteCapability, Error> {
-        match self {
-            AuthForm::Find(_) => todo!(),
-            AuthForm::Exact(cap) => Ok(cap),
-        }
-    }
-
-    pub fn resolve_and_attach<S: Storage>(
-        self,
-        store: &Store<S>,
-        entry: Entry,
-    ) -> Result<AuthorisedEntry, Error> {
-        let cap = self.into_write_cap(store)?;
-        let user_id = cap.receiver().id();
-        let secret_key = store
-            .secrets()
-            .get_user(&user_id)
-            .ok_or(Error::MissingUserKey(user_id))?;
-        let entry = entry.attach_authorisation(cap, &secret_key)?;
-        Ok(entry)
     }
 }
 
