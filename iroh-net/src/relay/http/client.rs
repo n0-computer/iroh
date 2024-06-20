@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
-use fastwebsockets::WebSocket;
 use futures_lite::future::Boxed as BoxFuture;
 use futures_util::StreamExt;
 use http_body_util::Empty;
@@ -23,7 +22,6 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
-use tokio_tungstenite_wasm::WebSocketStream;
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 use url::Url;
@@ -33,7 +31,6 @@ use crate::key::{PublicKey, SecretKey};
 use crate::relay::client::{RelayConnReader, RelayConnWriter};
 use crate::relay::codec::DerpCodec;
 use crate::relay::http::streams::{downcast_upgrade, MaybeTlsStream};
-use crate::relay::http::WEBSOCKET_UPGRADE_PROTOCOL;
 use crate::relay::RelayUrl;
 use crate::relay::{
     client::Client as RelayClient, client::ClientBuilder as RelayClientBuilder,
@@ -707,7 +704,7 @@ impl Actor {
                     .header(UPGRADE, protocol.upgrade_header())
                     .header(
                         "Sec-WebSocket-Key",
-                        fastwebsockets::handshake::generate_key(),
+                        tungstenite::handshake::client::generate_key(),
                     )
                     .header("Sec-WebSocket-Version", "13");
             }

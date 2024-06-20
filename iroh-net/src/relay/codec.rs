@@ -2,12 +2,10 @@ use std::time::Duration;
 
 use anyhow::{bail, ensure, Context};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use fastwebsockets::WebSocketWrite;
 use futures_lite::{Stream, StreamExt};
 use futures_sink::Sink;
 use futures_util::SinkExt;
 use iroh_base::key::{Signature, PUBLIC_KEY_LENGTH};
-use tokio::io::AsyncWrite;
 use tokio_util::codec::{Decoder, Encoder};
 
 use super::types::ClientInfo;
@@ -114,29 +112,7 @@ impl std::fmt::Display for FrameType {
 }
 
 /// Writes complete frame, errors if it is unable to write within the given `timeout`.
-/// Ignores the timeout if it's `None`
-///
-/// Does not flush.
-pub(super) async fn write_frame_ws<S: AsyncWrite + Unpin>(
-    writer: &mut WebSocketWrite<S>,
-    frame: Frame,
-    timeout: Option<Duration>,
-) -> anyhow::Result<()> {
-    let mut bytes = BytesMut::new();
-    DerpCodec.encode(frame, &mut bytes)?;
-    let frame = fastwebsockets::Frame::binary(fastwebsockets::Payload::Bytes(bytes));
-
-    if let Some(duration) = timeout {
-        tokio::time::timeout(duration, writer.write_frame(frame)).await??;
-    } else {
-        writer.write_frame(frame).await?;
-    }
-
-    Ok(())
-}
-
-/// Writes complete frame, errors if it is unable to write within the given `timeout`.
-/// Ignores the timeout if `timeout.is_zero()`
+/// Ignores the timeout if `None`
 ///
 /// Does not flush.
 pub(super) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
@@ -173,33 +149,6 @@ pub(crate) async fn send_client_key<S: Sink<Frame, Error = std::io::Error> + Unp
         })
         .await?;
     writer.flush().await?;
-    Ok(())
-}
-
-/// Writes a `FrameType::ClientInfo`, including the client's [`PublicKey`],
-/// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
-///
-/// Flushes after writing.
-pub(crate) async fn send_client_key_ws<S: AsyncWrite + Unpin>(
-    writer: &mut WebSocketWrite<S>,
-    client_secret_key: &SecretKey,
-    client_info: &ClientInfo,
-) -> anyhow::Result<()> {
-    let msg = postcard::to_stdvec(client_info)?;
-    let signature = client_secret_key.sign(&msg);
-    let frame = Frame::ClientInfo {
-        client_public_key: client_secret_key.public(),
-        message: msg.into(),
-        signature,
-    };
-    let mut bytes = BytesMut::new();
-    DerpCodec.encode(frame, &mut bytes)?;
-
-    writer
-        .write_frame(fastwebsockets::Frame::binary(
-            fastwebsockets::Payload::Bytes(bytes),
-        ))
-        .await?;
     Ok(())
 }
 

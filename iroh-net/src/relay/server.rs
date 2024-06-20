@@ -6,11 +6,9 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use anyhow::{bail, Context as _, Result};
-use bytes::BytesMut;
-use futures_lite::stream::FilterMap;
 use futures_sink::Sink;
-use futures_util::sink::{SinkExt, SinkMapErr, With};
-use futures_util::{Stream, StreamExt, TryStreamExt};
+use futures_util::sink::SinkExt;
+use futures_util::{Stream, StreamExt};
 use hyper::HeaderMap;
 use iroh_metrics::core::UsageStatsReport;
 use iroh_metrics::{inc, report_usage_stats};
@@ -18,12 +16,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::WebSocketStream;
-use tokio_util::codec::{Decoder, Encoder, Framed};
-use tokio_util::either::Either;
+use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{info_span, trace, Instrument};
 use tungstenite::protocol::Role;
-use tungstenite::{Message, WebSocket};
 
 use crate::key::{PublicKey, SecretKey};
 
@@ -504,15 +500,11 @@ mod tests {
 
     use crate::relay::{
         client::{ClientBuilder, RelayConnReader, RelayConnWriter},
-        codec::{recv_frame, Frame, FrameType},
-        http::{
-            server::Protocol,
-            streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
-        },
+        codec::{recv_frame, FrameType},
+        http::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         types::ClientInfo,
         ReceivedMessage,
     };
-    use fastwebsockets::WebSocketRead;
     use tokio_util::codec::{FramedRead, FramedWrite};
     use tracing_subscriber::{prelude::*, EnvFilter};
 

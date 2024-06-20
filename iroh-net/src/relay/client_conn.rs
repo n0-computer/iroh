@@ -5,10 +5,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_lite::StreamExt;
-use futures_sink::Sink;
-use futures_util::{SinkExt, Stream};
+use futures_util::SinkExt;
 use tokio::sync::mpsc;
-use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{trace, Instrument};
 
@@ -17,8 +15,8 @@ use crate::{disco::looks_like_disco_wrapper, key::PublicKey};
 
 use iroh_metrics::{inc, inc_by};
 
-use super::codec::{DerpCodec, Frame};
-use super::server::{MaybeTlsStream, RelayIo};
+use super::codec::Frame;
+use super::server::RelayIo;
 use super::{
     codec::{write_frame, KEEP_ALIVE},
     metrics::Metrics,
@@ -454,11 +452,13 @@ impl ClientConnIo {
 #[cfg(test)]
 mod tests {
     use crate::key::SecretKey;
-    use crate::relay::codec::{recv_frame, FrameType};
+    use crate::relay::codec::{recv_frame, DerpCodec, FrameType};
+    use crate::relay::MaybeTlsStreamServer as MaybeTlsStream;
 
     use super::*;
 
     use anyhow::bail;
+    use tokio_util::codec::Framed;
 
     #[tokio::test]
     async fn test_client_conn_io_basic() -> Result<()> {

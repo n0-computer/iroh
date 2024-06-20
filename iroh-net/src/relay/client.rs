@@ -1,5 +1,4 @@
 //! based on tailscale/derp/derp_client.go
-use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -7,16 +6,14 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, ensure, Result};
-use bytes::{Bytes, BytesMut};
-use fastwebsockets::{WebSocketError, WebSocketRead, WebSocketWrite};
+use bytes::Bytes;
 use futures_sink::Sink;
 use futures_util::sink::SinkExt;
 use futures_util::stream::{SplitSink, SplitStream};
-use futures_util::{Stream, StreamExt, TryFutureExt};
-use tokio::io::{AsyncWrite, ReadHalf, WriteHalf};
+use futures_util::{Stream, StreamExt};
 use tokio::sync::mpsc;
-use tokio_tungstenite_wasm::{Message, WebSocketStream};
-use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
+use tokio_tungstenite_wasm::WebSocketStream;
+use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, info_span, trace, Instrument};
 
 use super::codec::PER_CLIENT_READ_QUEUE_DEPTH;
@@ -30,7 +27,6 @@ use super::{
 };
 
 use crate::key::{PublicKey, SecretKey};
-use crate::relay::codec::write_frame_ws;
 use crate::util::AbortingJoinHandle;
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
@@ -491,35 +487,6 @@ pub enum ReceivedMessage {
         /// than a few seconds.
         try_for: Duration,
     },
-}
-
-pub(crate) async fn send_packet_ws<S: AsyncWrite + Unpin>(
-    writer: &mut WebSocketWrite<S>,
-    rate_limiter: &Option<RateLimiter>,
-    dst_key: PublicKey,
-    packet: Bytes,
-) -> Result<()> {
-    ensure!(
-        packet.len() <= MAX_PACKET_SIZE,
-        "packet too big: {}",
-        packet.len()
-    );
-
-    let frame = Frame::SendPacket { dst_key, packet };
-    if let Some(rate_limiter) = rate_limiter {
-        if rate_limiter.check_n(frame.len()).is_err() {
-            tracing::warn!("dropping send: rate limit reached");
-            return Ok(());
-        }
-    }
-
-    let mut bytes = BytesMut::new();
-    DerpCodec.encode(frame, &mut bytes)?;
-
-    let ws_frame = fastwebsockets::Frame::binary(fastwebsockets::Payload::Bytes(bytes));
-    writer.write_frame(ws_frame).await?;
-
-    Ok(())
 }
 
 pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(

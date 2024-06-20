@@ -732,7 +732,6 @@ pub mod test_support {
         BlockSize, ChunkRanges,
     };
     use futures_lite::{Stream, StreamExt};
-    use iroh_base::hash::Hash;
     use iroh_io::AsyncStreamReader;
     use rand::RngCore;
     use range_collections::RangeSet2;

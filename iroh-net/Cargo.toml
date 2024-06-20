@@ -89,7 +89,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 iroh-metrics = { version = "0.18.0", path = "../iroh-metrics", default-features = false }
 strum = { version = "0.26.2", features = ["derive"] }
 tungstenite = "0.23.0"
-fastwebsockets = { git = "https://github.com/denoland/fastwebsockets", revision = "efc0788", features = ["upgrade", "unstable-split"] }
 tokio-tungstenite = "0.23.1"
 tokio-tungstenite-wasm = "0.3.1"
 
