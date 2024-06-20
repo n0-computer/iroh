@@ -38,13 +38,19 @@ use crate::rpc_protocol::{
     CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, SetTagOption,
 };
 
-use super::{flatten, tags, RpcClient};
+use super::{flatten, tags, Iroh, RpcClient};
 
 /// Iroh blobs client.
 #[derive(Debug, Clone, RefCast)]
 #[repr(transparent)]
 pub struct Client {
     pub(super) rpc: RpcClient,
+}
+
+impl<'a> From<&'a Iroh> for &'a RpcClient {
+    fn from(client: &'a Iroh) -> &'a RpcClient {
+        &client.blobs().rpc
+    }
 }
 
 impl Client {
