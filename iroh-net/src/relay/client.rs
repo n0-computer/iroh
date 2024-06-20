@@ -226,19 +226,19 @@ impl<W: Sink<Frame, Error = std::io::Error> + Unpin + 'static> ClientWriter<W> {
             match msg {
                 ClientWriterMessage::Packet((key, bytes)) => {
                     send_packet(&mut self.writer, &self.rate_limiter, key, bytes).await?;
-                    self.writer.flush();
+                    self.writer.flush().await?;
                 }
                 ClientWriterMessage::Pong(data) => {
                     write_frame(&mut self.writer, Frame::Pong { data }, None).await?;
-                    self.writer.flush();
+                    self.writer.flush().await?;
                 }
                 ClientWriterMessage::Ping(data) => {
                     write_frame(&mut self.writer, Frame::Ping { data }, None).await?;
-                    self.writer.flush();
+                    self.writer.flush().await?;
                 }
                 ClientWriterMessage::NotePreferred(preferred) => {
                     write_frame(&mut self.writer, Frame::NotePreferred { preferred }, None).await?;
-                    self.writer.flush();
+                    self.writer.flush().await?;
                 }
                 ClientWriterMessage::Shutdown => {
                     return Ok(());
@@ -260,11 +260,19 @@ pub struct ClientBuilder {
 
 #[derive(derive_more::Debug)]
 pub(crate) enum RelayConnReader {
+    Relay(
+        #[debug("FramedRead<MaybeTlsStreamReader, DerpCodec>")]
+        FramedRead<MaybeTlsStreamReader, DerpCodec>,
+    ),
     Ws(#[debug("SplitStream<WebSocketStream>")] SplitStream<WebSocketStream>),
 }
 
 #[derive(derive_more::Debug)]
 pub(crate) enum RelayConnWriter {
+    Relay(
+        #[debug("FramedWrite<MaybeTlsStreamWriter, DerpCodec>")]
+        FramedWrite<MaybeTlsStreamWriter, DerpCodec>,
+    ),
     Ws(
         #[debug("SplitSink<WebSocketStream, tokio_tungstenite_wasm::Message>")]
         SplitSink<WebSocketStream, tokio_tungstenite_wasm::Message>,
@@ -280,6 +288,7 @@ impl Stream for RelayConnReader {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
+            Self::Relay(ref mut ws) => ws.poll_next_unpin(cx),
             Self::Ws(ref mut ws) => ws.poll_next_unpin(cx).map(Frame::from_wasm_ws_message),
         }
     }
@@ -290,12 +299,14 @@ impl Sink<Frame> for RelayConnWriter {
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
+            Self::Relay(ref mut ws) => ws.poll_ready_unpin(cx),
             Self::Ws(ref mut ws) => ws.poll_ready_unpin(cx).map_err(tung_to_io_err),
         }
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
         match *self {
+            Self::Relay(ref mut ws) => ws.start_send_unpin(item),
             Self::Ws(ref mut ws) => ws
                 .start_send_unpin(item.into_wasm_ws_message()?)
                 .map_err(tung_to_io_err),
@@ -304,12 +315,14 @@ impl Sink<Frame> for RelayConnWriter {
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
+            Self::Relay(ref mut ws) => ws.poll_flush_unpin(cx),
             Self::Ws(ref mut ws) => ws.poll_flush_unpin(cx).map_err(tung_to_io_err),
         }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
+            Self::Relay(ref mut ws) => ws.poll_close_unpin(cx),
             Self::Ws(ref mut ws) => ws.poll_close_unpin(cx).map_err(tung_to_io_err),
         }
     }

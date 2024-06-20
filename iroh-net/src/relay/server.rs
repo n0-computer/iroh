@@ -503,7 +503,7 @@ mod tests {
     use super::*;
 
     use crate::relay::{
-        client::ClientBuilder,
+        client::{ClientBuilder, RelayConnReader, RelayConnWriter},
         codec::{recv_frame, Frame, FrameType},
         http::{
             server::Protocol,
@@ -655,12 +655,16 @@ mod tests {
     fn make_test_client(secret_key: SecretKey) -> (tokio::io::DuplexStream, ClientBuilder) {
         let (client, server) = tokio::io::duplex(10);
         let (client_reader, client_writer) = tokio::io::split(client);
-        let (client_reader, client_writer) = fastwebsockets::after_handshake_split(
-            MaybeTlsStreamReader::Mem(client_reader),
-            MaybeTlsStreamWriter::Mem(client_writer),
-            fastwebsockets::Role::Client,
+        let (client_reader, client_writer) = (
+            RelayConnReader::Relay(FramedRead::new(
+                MaybeTlsStreamReader::Mem(client_reader),
+                DerpCodec,
+            )),
+            RelayConnWriter::Relay(FramedWrite::new(
+                MaybeTlsStreamWriter::Mem(client_writer),
+                DerpCodec,
+            )),
         );
-        let (client_reader, client_writer) = todo!(); // TODO(matheus23) fix tests. Probably just use relay protocol here
         (
             server,
             ClientBuilder::new(secret_key, None, client_reader, client_writer),
@@ -682,7 +686,7 @@ mod tests {
         let handler = server.client_conn_handler(Default::default());
         let handler_task = tokio::spawn(async move {
             handler
-                .accept(Protocol::Websocket, MaybeTlsStream::Test(rw_a))
+                .accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
                 .await
         });
         let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
@@ -695,7 +699,7 @@ mod tests {
         let handler = server.client_conn_handler(Default::default());
         let handler_task = tokio::spawn(async move {
             handler
-                .accept(Protocol::Websocket, MaybeTlsStream::Test(rw_b))
+                .accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
                 .await
         });
         let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
@@ -758,7 +762,7 @@ mod tests {
         let handler = server.client_conn_handler(Default::default());
         let handler_task = tokio::spawn(async move {
             handler
-                .accept(Protocol::Websocket, MaybeTlsStream::Test(rw_a))
+                .accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
                 .await
         });
         let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
@@ -771,7 +775,7 @@ mod tests {
         let handler = server.client_conn_handler(Default::default());
         let handler_task = tokio::spawn(async move {
             handler
-                .accept(Protocol::Websocket, MaybeTlsStream::Test(rw_b))
+                .accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
                 .await
         });
         let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
@@ -808,7 +812,7 @@ mod tests {
         let handler = server.client_conn_handler(Default::default());
         let handler_task = tokio::spawn(async move {
             handler
-                .accept(Protocol::Websocket, MaybeTlsStream::Test(new_rw_b))
+                .accept(Protocol::Relay, MaybeTlsStream::Test(new_rw_b))
                 .await
         });
         let (new_client_b, mut new_client_receiver_b) = new_client_b_builder.build().await?;
