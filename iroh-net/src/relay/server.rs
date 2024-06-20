@@ -7,8 +7,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context as _, Result};
 use futures_sink::Sink;
-use futures_util::sink::SinkExt;
-use futures_util::{Stream, StreamExt};
+use futures_util::Stream;
 use hyper::HeaderMap;
 use iroh_metrics::core::UsageStatsReport;
 use iroh_metrics::{inc, report_usage_stats};
@@ -190,31 +189,31 @@ impl Sink<Frame> for RelayIo {
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp(ref mut framed) => framed.poll_ready_unpin(cx),
-            Self::Ws(ref mut ws) => ws.poll_ready_unpin(cx).map_err(tung_to_io_err),
+            Self::Derp(ref mut framed) => Pin::new(framed).poll_ready(cx),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_ready(cx).map_err(tung_to_io_err),
         }
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
         match *self {
-            Self::Derp(ref mut framed) => framed.start_send_unpin(item),
-            Self::Ws(ref mut ws) => ws
-                .start_send_unpin(item.into_ws_message()?)
+            Self::Derp(ref mut framed) => Pin::new(framed).start_send(item),
+            Self::Ws(ref mut ws) => Pin::new(ws)
+                .start_send(item.into_ws_message()?)
                 .map_err(tung_to_io_err),
         }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp(ref mut framed) => framed.poll_flush_unpin(cx),
-            Self::Ws(ref mut ws) => ws.poll_flush_unpin(cx).map_err(tung_to_io_err),
+            Self::Derp(ref mut framed) => Pin::new(framed).poll_flush(cx),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_flush(cx).map_err(tung_to_io_err),
         }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp(ref mut framed) => framed.poll_close_unpin(cx),
-            Self::Ws(ref mut ws) => ws.poll_close_unpin(cx).map_err(tung_to_io_err),
+            Self::Derp(ref mut framed) => Pin::new(framed).poll_close(cx),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_close(cx).map_err(tung_to_io_err),
         }
     }
 }
@@ -224,8 +223,8 @@ impl Stream for RelayIo {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
-            Self::Derp(ref mut framed) => framed.poll_next_unpin(cx),
-            Self::Ws(ref mut ws) => ws.poll_next_unpin(cx).map(Frame::from_ws_message),
+            Self::Derp(ref mut framed) => Pin::new(framed).poll_next(cx),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_next(cx).map(Frame::from_ws_message),
         }
     }
 }

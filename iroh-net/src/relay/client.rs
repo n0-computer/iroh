@@ -284,8 +284,8 @@ impl Stream for RelayConnReader {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
-            Self::Relay(ref mut ws) => ws.poll_next_unpin(cx),
-            Self::Ws(ref mut ws) => ws.poll_next_unpin(cx).map(Frame::from_wasm_ws_message),
+            Self::Relay(ref mut ws) => Pin::new(ws).poll_next(cx),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_next(cx).map(Frame::from_wasm_ws_message),
         }
     }
 }
@@ -295,31 +295,31 @@ impl Sink<Frame> for RelayConnWriter {
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Relay(ref mut ws) => ws.poll_ready_unpin(cx),
-            Self::Ws(ref mut ws) => ws.poll_ready_unpin(cx).map_err(tung_to_io_err),
+            Self::Relay(ref mut ws) => Pin::new(ws).poll_ready(cx),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_ready(cx).map_err(tung_to_io_err),
         }
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
         match *self {
-            Self::Relay(ref mut ws) => ws.start_send_unpin(item),
-            Self::Ws(ref mut ws) => ws
-                .start_send_unpin(item.into_wasm_ws_message()?)
+            Self::Relay(ref mut ws) => Pin::new(ws).start_send(item),
+            Self::Ws(ref mut ws) => Pin::new(ws)
+                .start_send(item.into_wasm_ws_message()?)
                 .map_err(tung_to_io_err),
         }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Relay(ref mut ws) => ws.poll_flush_unpin(cx),
-            Self::Ws(ref mut ws) => ws.poll_flush_unpin(cx).map_err(tung_to_io_err),
+            Self::Relay(ref mut ws) => Pin::new(ws).poll_flush(cx),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_flush(cx).map_err(tung_to_io_err),
         }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Relay(ref mut ws) => ws.poll_close_unpin(cx),
-            Self::Ws(ref mut ws) => ws.poll_close_unpin(cx).map_err(tung_to_io_err),
+            Self::Relay(ref mut ws) => Pin::new(ws).poll_close(cx),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_close(cx).map_err(tung_to_io_err),
         }
     }
 }
