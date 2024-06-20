@@ -136,9 +136,11 @@ impl Drop for DocInner {
     fn drop(&mut self) {
         let doc_id = self.id;
         let rpc = self.rpc.clone();
-        self.rt.spawn(async move {
-            rpc.rpc(DocCloseRequest { doc_id }).await.ok();
-        });
+        if !self.closed.swap(true, Ordering::Relaxed) {
+            self.rt.spawn(async move {
+                rpc.rpc(DocCloseRequest { doc_id }).await.ok();
+            });
+        }
     }
 }
 
@@ -167,13 +169,14 @@ impl Doc {
 
     /// Close the document.
     pub async fn close(&self) -> Result<()> {
-        self.0.closed.store(true, Ordering::Release);
-        self.rpc(DocCloseRequest { doc_id: self.id() }).await??;
+        if !self.0.closed.swap(true, Ordering::Relaxed) {
+            self.rpc(DocCloseRequest { doc_id: self.id() }).await??;
+        }
         Ok(())
     }
 
     fn ensure_open(&self) -> Result<()> {
-        if self.0.closed.load(Ordering::Acquire) {
+        if self.0.closed.load(Ordering::Relaxed) {
             Err(anyhow!("document is closed"))
         } else {
             Ok(())
@@ -759,6 +762,30 @@ mod tests {
         tokio::task::spawn_blocking(move || res.join().map_err(|e| anyhow::anyhow!("{:?}", e)))
             .await??;
 
+        Ok(())
+    }
+
+    /// Test that closing a doc does not close other instances.
+    #[tokio::test]
+    async fn test_doc_close() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let node = crate::node::Node::memory().spawn().await?;
+        let author = node.authors().default().await?;
+        // open doc two times
+        let doc1 = node.docs().create().await?;
+        let doc2 = node.docs().open(doc1.id()).await?.expect("doc to exist");
+        // close doc1 instance
+        doc1.close().await?;
+        // operations on doc1 now fail.
+        assert!(doc1.set_bytes(author, "foo", "bar").await.is_err());
+        // dropping doc1 will close the doc if not already closed
+        // wait a bit because the close-on-drop spawns a task for which we cannot track completion.
+        drop(doc1);
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // operations on doc2 still succeed
+        doc2.set_bytes(author, "foo", "bar").await?;
         Ok(())
     }
 
