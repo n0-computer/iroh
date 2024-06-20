@@ -2,20 +2,17 @@ use anyhow::{anyhow, Result};
 use rand_core::CryptoRngCore;
 
 use crate::{
+    auth::{Auth, AuthError, CapSelector, UserSelector},
     form::{AuthForm, EntryOrForm},
     proto::{
         keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserId},
-        meadowcap::AccessMode,
         willow::Entry,
     },
     session::Error,
-    store::{
-        auth::{AuthError, CapSelector, CapabilityPack, DelegateTo, UserSelector},
-        traits::SecretStorage,
-    },
+    store::traits::SecretStorage,
 };
 
-use self::{auth::AuthStore, traits::Storage};
+use self::traits::Storage;
 
 pub use self::entry::{Origin, WatchableEntryStore};
 
@@ -29,7 +26,7 @@ pub struct Store<S: Storage> {
     entries: WatchableEntryStore<S::Entries>,
     secrets: S::Secrets,
     payloads: S::Payloads,
-    auth: AuthStore,
+    auth: Auth<S>,
 }
 
 impl<S: Storage> Store<S> {
@@ -38,7 +35,7 @@ impl<S: Storage> Store<S> {
             entries: WatchableEntryStore::new(storage.entries().clone()),
             secrets: storage.secrets().clone(),
             payloads: storage.payloads().clone(),
-            auth: Default::default(),
+            auth: Auth::new(storage.secrets().clone()),
         }
     }
 
@@ -54,7 +51,7 @@ impl<S: Storage> Store<S> {
         &self.payloads
     }
 
-    pub fn auth(&self) -> &AuthStore {
+    pub fn auth(&self) -> &Auth<S> {
         &self.auth
     }
 
@@ -91,37 +88,7 @@ impl<S: Storage> Store<S> {
         let namespace_secret = NamespaceSecretKey::generate(rng, kind);
         let namespace_id = namespace_secret.id();
         self.secrets().insert_namespace(namespace_secret)?;
-        self.mint_caps(namespace_id, owner)?;
+        self.auth().create_full_caps(namespace_id, owner)?;
         Ok(namespace_id)
-    }
-
-    pub fn delegate_cap(
-        &self,
-        from: CapSelector,
-        access_mode: AccessMode,
-        to: DelegateTo,
-        store: bool,
-    ) -> Result<Vec<CapabilityPack>, AuthError> {
-        self.auth()
-            .delegate_full_caps(&self.secrets, from, access_mode, to, store)
-    }
-
-    pub fn import_caps(&self, caps: Vec<CapabilityPack>) -> Result<(), AuthError> {
-        // Only allow importing caps we can use.
-        // TODO: Is this what we want?
-        for cap in &caps {
-            let user_id = cap.receiver();
-            if !self.secrets().has_user(&user_id) {
-                return Err(AuthError::MissingUserSecret(user_id));
-            }
-        }
-        self.auth().insert_caps(caps);
-        Ok(())
-    }
-
-    fn mint_caps(&self, namespace_id: NamespaceId, user_id: UserId) -> Result<(), AuthError> {
-        self.auth()
-            .create_full_caps(&self.secrets, namespace_id, user_id)?;
-        Ok(())
     }
 }
