@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use crate::proto::keys::NamespaceId;
 use crate::proto::sync::{AccessChallenge, AreaOfInterestHandle, ChallengeHash, ReadAuthorisation};
 use crate::{
+    auth::CapSelector,
     proto::grouping::{Area, AreaOfInterest},
-    store::auth::CapSelector,
 };
 
 pub mod channels;
@@ -75,22 +75,24 @@ pub enum Interests {
     #[default]
     All,
     Some(BTreeMap<NamespaceId, BTreeSet<AreaOfInterest>>),
+    // TODO: Remove?
     Explicit(HashMap<ReadAuthorisation, BTreeSet<AreaOfInterest>>),
 }
 
-#[derive(Debug, Default, Clone)]
-pub enum Interests2 {
-    #[default]
-    All,
-    Some(Vec<(CapSelector, AreaOfInterestSelector)>),
-}
-
-#[derive(Debug, Default, Clone)]
-pub enum AreaOfInterestSelector {
-    #[default]
-    Widest,
-    Exact(BTreeSet<AreaOfInterest>),
-}
+// TODO: I think the interests would be better represented like this maybe?
+// #[derive(Debug, Default, Clone)]
+// pub enum Interests2 {
+//     #[default]
+//     All,
+//     Some(Vec<(CapSelector, AreaOfInterestSelector)>),
+// }
+//
+// #[derive(Debug, Default, Clone)]
+// pub enum AreaOfInterestSelector {
+//     #[default]
+//     Widest,
+//     Exact(BTreeSet<AreaOfInterest>),
+// }
 
 /// Options to initialize a session with.
 #[derive(Debug)]

@@ -305,6 +305,7 @@ mod tests {
 
     use crate::{
         actor::ActorHandle,
+        auth::{CapSelector, DelegateTo},
         form::{AuthForm, EntryForm, PayloadForm, SubspaceForm, TimestampForm},
         net::run,
         proto::{
@@ -318,10 +319,7 @@ mod tests {
             willow::{Entry, InvalidPath, Path, WriteCapability},
         },
         session::{Interests, Role, SessionInit, SessionMode},
-        store::{
-            auth::{CapSelector, DelegateTo},
-            memory,
-        },
+        store::memory,
     };
 
     const ALPN: &[u8] = b"iroh-willow/0";

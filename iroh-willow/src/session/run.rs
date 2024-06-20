@@ -199,7 +199,7 @@ async fn setup<S: Storage>(
 ) -> Result<(), Error> {
     // debug!(interests = init.interests.len(), "start setup");
     debug!(?init, "start setup");
-    let interests = store.auth().resolve_interests(init.interests)?;
+    let interests = store.auth().find_read_caps_for_interests(init.interests)?;
     debug!(?interests, "found interests");
     for (authorisation, aois) in interests {
         // TODO: implement private area intersection

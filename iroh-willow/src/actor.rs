@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, trace, warn, Instrument};
 
 use crate::{
+    auth::{CapSelector, CapabilityPack, DelegateTo},
     form::{AuthForm, EntryForm, EntryOrForm},
     proto::{
         grouping::ThreeDRange,
@@ -18,7 +19,6 @@ use crate::{
     },
     session::{Channels, Error, InitialTransmission, Role, Session, SessionId, SessionInit},
     store::{
-        auth::{CapSelector, CapabilityPack, DelegateTo},
         traits::{EntryReader, SecretStorage, Storage},
         Origin, Store,
     },
@@ -459,7 +459,7 @@ impl<S: Storage> Actor<S> {
                 send_reply(reply, res.map_err(anyhow::Error::from))
             }
             ToActor::ImportCaps { caps, reply } => {
-                let res = self.store.import_caps(caps);
+                let res = self.store.auth().import_caps(caps);
                 send_reply(reply, res.map_err(anyhow::Error::from))
             }
             ToActor::DelegateCaps {
@@ -469,7 +469,10 @@ impl<S: Storage> Actor<S> {
                 store,
                 reply,
             } => {
-                let res = self.store.delegate_cap(from, access_mode, to, store);
+                let res = self
+                    .store
+                    .auth()
+                    .delegate_full_caps(from, access_mode, to, store);
                 send_reply(reply, res.map_err(anyhow::Error::from))
             }
         }
