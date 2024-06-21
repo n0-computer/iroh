@@ -23,10 +23,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
 use futures_lite::StreamExt;
-use quinn_proto::{
-    crypto::rustls::{QuicClientConfig, QuicServerConfig},
-    VarInt,
-};
+use quinn_proto::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, info_span, trace, warn};
 use url::Url;
@@ -335,6 +332,7 @@ impl Builder {
         self.discovery = Some(discovery);
         self
     }
+}
 
 /// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
 #[derive(Debug)]
