@@ -297,10 +297,8 @@ mod tests {
 
     use futures_lite::StreamExt;
     use iroh_base::key::SecretKey;
-    use iroh_blobs::store::Store as PayloadStore;
     use iroh_net::{Endpoint, NodeAddr, NodeId};
     use rand::SeedableRng;
-    use rand_core::CryptoRngCore;
     use tracing::info;
 
     use crate::{
@@ -309,17 +307,12 @@ mod tests {
         form::{AuthForm, EntryForm, PayloadForm, SubspaceForm, TimestampForm},
         net::run,
         proto::{
-            grouping::{AreaOfInterest, ThreeDRange},
-            keys::{
-                NamespaceId, NamespaceKind, NamespaceSecretKey, UserId, UserPublicKey,
-                UserSecretKey,
-            },
-            meadowcap::{AccessMode, McCapability, OwnedCapability},
-            sync::ReadCapability,
-            willow::{Entry, InvalidPath, Path, WriteCapability},
+            grouping::ThreeDRange,
+            keys::{NamespaceId, NamespaceKind, UserId},
+            meadowcap::AccessMode,
+            willow::{Entry, InvalidPath, Path},
         },
         session::{Interests, Role, SessionInit, SessionMode},
-        store::memory,
     };
 
     const ALPN: &[u8] = b"iroh-willow/0";
@@ -357,7 +350,7 @@ mod tests {
 
         handle_betty.import_caps(cap_for_betty).await?;
 
-        insert2(
+        insert(
             &handle_alfie,
             namespace_id,
             user_alfie,
@@ -368,7 +361,7 @@ mod tests {
         )
         .await?;
 
-        insert2(
+        insert(
             &handle_betty,
             namespace_id,
             user_betty,
@@ -379,14 +372,8 @@ mod tests {
         )
         .await?;
 
-        let init_alfie = SessionInit {
-            interests: Interests::All,
-            mode: SessionMode::ReconcileOnce,
-        };
-        let init_betty = SessionInit {
-            interests: Interests::All,
-            mode: SessionMode::ReconcileOnce,
-        };
+        let init_alfie = SessionInit::new(Interests::All, SessionMode::ReconcileOnce);
+        let init_betty = SessionInit::new(Interests::All, SessionMode::ReconcileOnce);
 
         info!("init took {:?}", start.elapsed());
 
@@ -442,35 +429,49 @@ mod tests {
         let (ep_alfie, node_id_alfie, _) = create_endpoint(&mut rng).await?;
         let (ep_betty, node_id_betty, addr_betty) = create_endpoint(&mut rng).await?;
 
-        let namespace_secret = NamespaceSecretKey::generate(&mut rng, NamespaceKind::Owned);
-        let namespace_id = namespace_secret.id();
+        let handle_alfie = ActorHandle::spawn_memory(Default::default(), node_id_alfie);
+        let handle_betty = ActorHandle::spawn_memory(Default::default(), node_id_betty);
 
-        let start = Instant::now();
+        let user_alfie = handle_alfie.create_user().await?;
+        let user_betty = handle_betty.create_user().await?;
+
+        let namespace_id = handle_alfie
+            .create_namespace(NamespaceKind::Owned, user_alfie)
+            .await?;
+
+        let cap_for_betty = handle_alfie
+            .delegate_caps(
+                CapSelector::widest(namespace_id),
+                AccessMode::Write,
+                DelegateTo::new(user_betty, None),
+            )
+            .await?;
+
+        handle_betty.import_caps(cap_for_betty).await?;
+
         let mut expected_entries = BTreeSet::new();
+        let start = Instant::now();
 
-        let (handle_alfie, payloads_alfie) = create_willow(node_id_alfie);
-        let (handle_betty, payloads_betty) = create_willow(node_id_betty);
-
-        let (init_alfie, cap_alfie) = setup_and_insert(
-            SessionMode::Live,
-            &mut rng,
+        let n_init = 2;
+        insert(
             &handle_alfie,
-            &payloads_alfie,
-            &namespace_secret,
-            2,
+            namespace_id,
+            user_alfie,
+            n_init,
+            |n| Path::new(&[b"alfie-init", n.to_string().as_bytes()]),
+            |n| format!("alfie{n}"),
             &mut expected_entries,
-            |n| Path::new(&[b"alfie", n.to_string().as_bytes()]),
         )
         .await?;
-        let (init_betty, _cap_betty) = setup_and_insert(
-            SessionMode::Live,
-            &mut rng,
+
+        insert(
             &handle_betty,
-            &payloads_betty,
-            &namespace_secret,
-            2,
+            namespace_id,
+            user_betty,
+            n_init,
+            |n| Path::new(&[b"betty-init", n.to_string().as_bytes()]),
+            |n| format!("betty{n}"),
             &mut expected_entries,
-            |n| Path::new(&[b"betty", n.to_string().as_bytes()]),
         )
         .await?;
 
@@ -488,23 +489,21 @@ mod tests {
 
         // alfie insert 3 enries after waiting a second
         let _insert_task_alfie = tokio::task::spawn({
-            let store = handle_alfie.clone();
-            let payload_store = payloads_alfie.clone();
+            let handle_alfie = handle_alfie.clone();
             let count = 3;
-            let content_fn = |i: usize| format!("alfie live insert {i} for alfie");
+            let content_fn = |i: usize| format!("alfie live {i}");
             let path_fn = |i: usize| Path::new(&[b"alfie-live", i.to_string().as_bytes()]);
             let mut track_entries = vec![];
 
             async move {
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 insert(
-                    &store,
-                    &payload_store,
+                    &handle_alfie,
                     namespace_id,
-                    cap_alfie,
+                    user_alfie,
                     count,
-                    content_fn,
                     path_fn,
+                    content_fn,
                     &mut track_entries,
                 )
                 .await
@@ -512,6 +511,9 @@ mod tests {
                 done_tx.send(track_entries).unwrap();
             }
         });
+
+        let init_alfie = SessionInit::new(Interests::All, SessionMode::Live);
+        let init_betty = SessionInit::new(Interests::All, SessionMode::Live);
 
         let (session_alfie, session_betty) = tokio::join!(
             run(
@@ -567,13 +569,6 @@ mod tests {
         Ok((ep, node_id, addr))
     }
 
-    pub fn create_willow(me: NodeId) -> (ActorHandle, iroh_blobs::store::mem::Store) {
-        let payloads = iroh_blobs::store::mem::Store::default();
-        let payloads_clone = payloads.clone();
-        let handle = ActorHandle::spawn(move || memory::Store::new(payloads_clone), me);
-        (handle, payloads)
-    }
-
     async fn get_entries(
         store: &ActorHandle,
         namespace: NamespaceId,
@@ -586,7 +581,7 @@ mod tests {
         entries
     }
 
-    async fn insert2(
+    async fn insert(
         handle: &ActorHandle,
         namespace_id: NamespaceId,
         user_id: UserId,
@@ -610,102 +605,6 @@ mod tests {
             track_entries.extend([entry]);
         }
         Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn insert<P: PayloadStore>(
-        actor: &ActorHandle,
-        payload_store: &P,
-        namespace_id: NamespaceId,
-        write_cap: WriteCapability,
-        count: usize,
-        content_fn: impl Fn(usize) -> String,
-        path_fn: impl Fn(usize) -> Result<Path, InvalidPath>,
-        track_entries: &mut impl Extend<Entry>,
-    ) -> anyhow::Result<()> {
-        for i in 0..count {
-            let payload = content_fn(i).as_bytes().to_vec();
-            let payload_len = payload.len() as u64;
-            let temp_tag = payload_store
-                .import_bytes(payload.into(), iroh_base::hash::BlobFormat::Raw)
-                .await?;
-            let payload_digest = *temp_tag.hash();
-            let path = path_fn(i).expect("invalid path");
-            let entry = Entry::new_current(
-                namespace_id,
-                write_cap.receiver().id(),
-                path,
-                payload_digest,
-                payload_len,
-            );
-            track_entries.extend([entry.clone()]);
-            actor.insert_entry(entry, write_cap.clone()).await?;
-            drop(temp_tag);
-        }
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn setup_and_insert<P: PayloadStore>(
-        mode: SessionMode,
-        rng: &mut impl CryptoRngCore,
-        store: &ActorHandle,
-        payload_store: &P,
-        namespace_secret: &NamespaceSecretKey,
-        count: usize,
-        track_entries: &mut impl Extend<Entry>,
-        path_fn: impl Fn(usize) -> Result<Path, InvalidPath>,
-    ) -> anyhow::Result<(SessionInit, WriteCapability)> {
-        let (read_cap, write_cap) = setup_capabilities(rng, store, namespace_secret).await?;
-        let content_fn = |i| {
-            format!(
-                "initial entry {i} for {}",
-                write_cap.receiver().id().fmt_short()
-            )
-        };
-        insert(
-            store,
-            payload_store,
-            namespace_secret.id(),
-            write_cap.clone(),
-            count,
-            content_fn,
-            path_fn,
-            track_entries,
-        )
-        .await?;
-        let init =
-            SessionInit::with_explicit_interest(mode, read_cap.into(), AreaOfInterest::full());
-        Ok((init, write_cap))
-    }
-
-    async fn setup_capabilities(
-        rng: &mut impl CryptoRngCore,
-        store: &ActorHandle,
-        namespace_secret: &NamespaceSecretKey,
-    ) -> anyhow::Result<(ReadCapability, WriteCapability)> {
-        let user_secret = UserSecretKey::generate(rng);
-        let user_public_key = user_secret.public_key();
-        store.insert_secret(user_secret.clone()).await?;
-        let (read_cap, write_cap) = create_capabilities(namespace_secret, user_public_key);
-        Ok((read_cap, write_cap))
-    }
-
-    fn create_capabilities(
-        namespace_secret: &NamespaceSecretKey,
-        user_public_key: UserPublicKey,
-    ) -> (ReadCapability, WriteCapability) {
-        let read_capability = McCapability::Owned(OwnedCapability::new(
-            namespace_secret,
-            user_public_key,
-            AccessMode::Read,
-        ));
-        let write_capability = McCapability::Owned(OwnedCapability::new(
-            namespace_secret,
-            user_public_key,
-            AccessMode::Write,
-        ));
-        (read_capability, write_capability)
     }
 
     fn parse_env_var<T>(var: &str, default: T) -> T
