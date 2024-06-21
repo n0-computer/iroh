@@ -562,7 +562,7 @@ mod tests {
             .alpns(vec![ALPN.to_vec()])
             .bind(0)
             .await?;
-        let addr = ep.my_addr().await?;
+        let addr = ep.node_addr().await?;
         let node_id = ep.node_id();
         Ok((ep, node_id, addr))
     }
