@@ -269,12 +269,12 @@ impl Frame {
             bail!("error parsing relay::codec::Frame: too few bytes (0)");
         }
         let bytes = Bytes::from(vec);
-        let typ = FrameType::try_from(bytes[0])?;
+        let typ = FrameType::from(bytes[0]);
         let frame = Self::from_bytes(typ, bytes.slice(1..))?;
         Ok(frame)
     }
 
-    fn to_ws_vec(self) -> Vec<u8> {
+    fn into_ws_vec(self) -> Vec<u8> {
         let mut bytes = BytesMut::new();
         bytes.put_u8(self.typ().into());
         self.write_to(&mut bytes);
@@ -282,11 +282,11 @@ impl Frame {
     }
 
     pub fn into_ws_message(self) -> std::io::Result<tungstenite::Message> {
-        Ok(tungstenite::Message::binary(self.to_ws_vec()))
+        Ok(tungstenite::Message::binary(self.into_ws_vec()))
     }
 
     pub fn into_wasm_ws_message(self) -> std::io::Result<tokio_tungstenite_wasm::Message> {
-        Ok(tokio_tungstenite_wasm::Message::binary(self.to_ws_vec()))
+        Ok(tokio_tungstenite_wasm::Message::binary(self.into_ws_vec()))
     }
 
     pub fn from_ws_message(

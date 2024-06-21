@@ -832,6 +832,7 @@ impl Actor {
 
     fn use_https(&self) -> bool {
         // only disable https if we are explicitly dialing a http url
+        #[allow(clippy::match_like_matches_macro)]
         match self.url.scheme() {
             "http" => false,
             "ws" => false,
