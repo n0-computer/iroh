@@ -57,13 +57,19 @@ fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes)> {
     }
 }
 
+/// The HTTP upgrade protocol used for relaying.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Protocol {
+    /// Relays over the custom relaying protocol with a custom HTTP upgrade header
     Relay,
+    /// Relays over websockets
+    ///
+    /// Originally introduced to support browser connections.
     Websocket,
 }
 
 impl Protocol {
+    /// The HTTP upgrade header used or expected
     pub const fn upgrade_header(&self) -> &'static str {
         match self {
             Protocol::Relay => HTTP_UPGRADE_PROTOCOL,
@@ -71,6 +77,9 @@ impl Protocol {
         }
     }
 
+    /// Determines which protocol to use depending on a URL.
+    ///
+    /// `ws(s)` parses as websockets, `http(s)` parses to the custom relay protocol.
     pub fn from_url_scheme(url: &RelayUrl) -> Self {
         match url.scheme() {
             "ws" => Protocol::Websocket,
@@ -82,6 +91,7 @@ impl Protocol {
         }
     }
 
+    /// Tries to match the value of an HTTP upgrade header to figure out which protocol should be initiated.
     pub fn parse_header(header: &HeaderValue) -> Option<Self> {
         let header_bytes = header.as_bytes();
         if header_bytes == Protocol::Relay.upgrade_header().as_bytes() {

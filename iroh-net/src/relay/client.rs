@@ -71,7 +71,7 @@ impl ClientReceiver {
 pub struct InnerClient {
     /// Our local address, if known.
     ///
-    /// `None` if we don't control the connection establishment, e.g. in browsers.
+    /// Is `None` in tests or when using websockets (because we don't control connection establishment in browsers).
     local_addr: Option<SocketAddr>,
     /// Channel on which to communicate to the server. The associated [`mpsc::Receiver`] will close
     /// if there is ever an error writing to the server.
@@ -126,6 +126,8 @@ impl Client {
     }
 
     /// The local address that the [`Client`] is listening on.
+    ///
+    /// `None`, when run in a testing environment or when using websockets.
     pub fn local_addr(&self) -> Option<SocketAddr> {
         self.inner.local_addr
     }
