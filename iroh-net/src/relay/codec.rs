@@ -612,6 +612,94 @@ mod tests {
         assert_eq!(client_info, got_client_info);
         Ok(())
     }
+
+    #[test]
+    fn test_frame_snapshot() -> anyhow::Result<()> {
+        let client_key = SecretKey::from_bytes(&[42u8; 32]);
+        let client_info = ClientInfo {
+            version: PROTOCOL_VERSION,
+        };
+        let message = postcard::to_stdvec(&client_info)?;
+        let signature = client_key.sign(&message);
+
+        let frames = vec![
+            (
+                Frame::ClientInfo {
+                    client_public_key: client_key.public(),
+                    message: Bytes::from(message),
+                    signature,
+                },
+                "02 52 45 4c 41 59 f0 9f 94 91 19 7f 6b 23 e1 6c
+                85 32 c6 ab c8 38 fa cd 5e a7 89 be 0c 76 b2 92
+                03 34 03 9b fa 8b 3d 36 8d 61 88 e7 7b 22 f2 92
+                ab 37 43 5d a8 de 0b c8 cb 84 e2 88 f4 e7 3b 35
+                82 a5 27 31 e9 ff 98 65 46 5c 87 e0 5e 8d 42 7d
+                f4 22 bb 6e 85 e1 c0 5f 6f 74 98 37 ba a4 a5 c7
+                eb a3 23 0d 77 56 99 10 43 0e 03",
+            ),
+            (
+                Frame::Health {
+                    problem: "Hello? Yes this is dog.".into(),
+                },
+                "0e 48 65 6c 6c 6f 3f 20 59 65 73 20 74 68 69 73
+                20 69 73 20 64 6f 67 2e",
+            ),
+            (Frame::KeepAlive, "06"),
+            (Frame::NotePreferred { preferred: true }, "07 01"),
+            (
+                Frame::PeerGone {
+                    peer: client_key.public(),
+                },
+                "08 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
+                a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
+                61",
+            ),
+            (
+                Frame::Ping { data: [42u8; 8] },
+                "0c 2a 2a 2a 2a 2a 2a 2a 2a",
+            ),
+            (
+                Frame::Pong { data: [42u8; 8] },
+                "0d 2a 2a 2a 2a 2a 2a 2a 2a",
+            ),
+            (
+                Frame::RecvPacket {
+                    src_key: client_key.public(),
+                    content: "Hello World!".into(),
+                },
+                "05 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
+                a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
+                61 48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
+            ),
+            (
+                Frame::SendPacket {
+                    dst_key: client_key.public(),
+                    packet: "Goodbye!".into(),
+                },
+                "04 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
+                a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
+                61 47 6f 6f 64 62 79 65 21",
+            ),
+            (
+                Frame::Restarting {
+                    reconnect_in: 10,
+                    try_for: 20,
+                },
+                "0f 00 00 00 0a 00 00 00 14",
+            ),
+        ];
+
+        for (frame, expected_hex) in frames {
+            let bytes = frame.into_ws_vec();
+            // To regenerate the hexdumps:
+            // let hexdump = iroh_test::hexdump::print_hexdump(bytes, []);
+            // println!("{hexdump}");
+            let expected_bytes = iroh_test::hexdump::parse_hexdump(expected_hex)?;
+            assert_eq!(bytes, expected_bytes);
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -712,6 +800,13 @@ mod proptests {
             let mut buf = BytesMut::new();
             DerpCodec.encode(frame.clone(), &mut buf).unwrap();
             let decoded = DerpCodec.decode(&mut buf).unwrap().unwrap();
+            prop_assert_eq!(frame, decoded);
+        }
+
+        #[test]
+        fn frame_ws_roundtrip(frame in frame()) {
+            let encoded = frame.clone().into_ws_vec();
+            let decoded = Frame::from_ws_vec(encoded).unwrap();
             prop_assert_eq!(frame, decoded);
         }
 
