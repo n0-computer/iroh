@@ -613,10 +613,7 @@ impl MagicSock {
             }
             None => {
                 error!(dst=%dest, "no node_state for mapped address");
-                Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::NotConnected,
-                    "trying to send to unknown node",
-                )))
+                Poll::Ready(Ok(n))
             }
         }
     }
