@@ -152,7 +152,9 @@ impl<S: Storage> Auth<S> {
         &self,
         selector: &CapSelector,
     ) -> Result<Option<WriteCapability>, AuthError> {
-        Ok(self.caps.read().unwrap().get_write_cap(selector))
+        let cap = self.caps.read().unwrap().get_write_cap(selector);
+        debug!(?selector, ?cap, "get write cap");
+        Ok(cap)
     }
 
     pub fn get_read_cap(
@@ -165,6 +167,7 @@ impl<S: Storage> Auth<S> {
     }
 
     pub fn list_read_caps(&self) -> impl Iterator<Item = ReadAuthorisation> {
+        // TODO: Less clones?
         self.caps
             .read()
             .unwrap()
@@ -180,6 +183,7 @@ impl<S: Storage> Auth<S> {
         &self,
         caps: impl IntoIterator<Item = CapabilityPack>,
     ) -> Result<(), AuthError> {
+        let mut store = self.caps.write().unwrap();
         for cap in caps.into_iter() {
             cap.validate()?;
             // Only allow importing caps we can use.
@@ -188,15 +192,16 @@ impl<S: Storage> Auth<S> {
             if !self.secrets.has_user(&user_id) {
                 return Err(AuthError::MissingUserSecret(user_id));
             }
+            store.insert_cap(cap);
         }
         Ok(())
     }
 
-    pub fn insert_unchecked(&self, caps: impl IntoIterator<Item = CapabilityPack>) {
+    pub fn insert_caps_unchecked(&self, caps: impl IntoIterator<Item = CapabilityPack>) {
         let mut store = self.caps.write().unwrap();
         for cap in caps.into_iter() {
             debug!(?cap, "insert cap");
-            store.insert_caps(cap);
+            store.insert_cap(cap);
         }
     }
 
@@ -253,7 +258,7 @@ impl<S: Storage> Auth<S> {
         let read_cap = self.create_read_cap(namespace_key, user_key)?;
         let write_cap = self.create_write_cap(namespace_key, user_key)?;
         let pack = [read_cap, write_cap];
-        self.insert_unchecked(pack.clone());
+        self.insert_caps_unchecked(pack.clone());
         Ok(pack)
     }
 
@@ -322,7 +327,7 @@ impl<S: Storage> Auth<S> {
             out.push(write_cap);
         }
         if store {
-            self.insert_unchecked(out.clone());
+            self.insert_caps_unchecked(out.clone());
         }
         Ok(out)
     }
@@ -417,7 +422,7 @@ impl CapStore {
         best.cloned()
     }
 
-    fn insert_caps(&mut self, cap: CapabilityPack) {
+    fn insert_cap(&mut self, cap: CapabilityPack) {
         match cap {
             CapabilityPack::Read(cap) => {
                 self.read_caps
