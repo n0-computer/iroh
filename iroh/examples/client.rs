@@ -16,8 +16,8 @@ async fn main() -> anyhow::Result<()> {
     // Could also use `node` directly, as it derefs to the client.
     let client = node.client();
 
-    let doc = client.docs.create().await?;
-    let author = client.authors.create().await?;
+    let doc = client.docs().create().await?;
+    let author = client.authors().default().await?;
 
     doc.set_bytes(author, "hello", "world").await?;
 
@@ -34,7 +34,7 @@ async fn main() -> anyhow::Result<()> {
 fn fmt_entry(entry: &Entry) -> String {
     let id = entry.id();
     let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>");
-    let author = base32::fmt_short(id.author());
+    let author = id.author().fmt_short();
     let hash = entry.content_hash();
     let hash = base32::fmt_short(hash.as_bytes());
     let len = HumanBytes(entry.content_len());

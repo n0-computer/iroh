@@ -1,4 +1,4 @@
-//! This module contains an impl block on [`Engine`] with handlers for RPC requests
+//! This module contains an impl block on [`DocsEngine`] with handlers for RPC requests
 
 use anyhow::anyhow;
 use futures_lite::Stream;
@@ -7,31 +7,28 @@ use iroh_docs::{Author, DocTicket, NamespaceSecret};
 use tokio_stream::StreamExt;
 
 use crate::client::docs::ShareMode;
+use crate::node::DocsEngine;
 use crate::rpc_protocol::{
-    AuthorDeleteRequest, AuthorDeleteResponse, AuthorExportRequest, AuthorExportResponse,
-    AuthorImportRequest, AuthorImportResponse, DocGetSyncPeersRequest, DocGetSyncPeersResponse,
-};
-use crate::{
-    docs_engine::Engine,
-    rpc_protocol::{
-        AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-        DocCloseRequest, DocCloseResponse, DocCreateRequest, DocCreateResponse, DocDelRequest,
-        DocDelResponse, DocDropRequest, DocDropResponse, DocGetDownloadPolicyRequest,
-        DocGetDownloadPolicyResponse, DocGetExactRequest, DocGetExactResponse, DocGetManyRequest,
-        DocGetManyResponse, DocImportRequest, DocImportResponse, DocLeaveRequest, DocLeaveResponse,
-        DocListRequest, DocListResponse, DocOpenRequest, DocOpenResponse,
-        DocSetDownloadPolicyRequest, DocSetDownloadPolicyResponse, DocSetHashRequest,
-        DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
-        DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest, DocStatusResponse,
-        DocSubscribeRequest, DocSubscribeResponse, RpcResult,
-    },
+    AuthorCreateRequest, AuthorCreateResponse, AuthorDeleteRequest, AuthorDeleteResponse,
+    AuthorExportRequest, AuthorExportResponse, AuthorGetDefaultRequest, AuthorGetDefaultResponse,
+    AuthorImportRequest, AuthorImportResponse, AuthorListRequest, AuthorListResponse,
+    AuthorSetDefaultRequest, AuthorSetDefaultResponse, DocCloseRequest, DocCloseResponse,
+    DocCreateRequest, DocCreateResponse, DocDelRequest, DocDelResponse, DocDropRequest,
+    DocDropResponse, DocGetDownloadPolicyRequest, DocGetDownloadPolicyResponse, DocGetExactRequest,
+    DocGetExactResponse, DocGetManyRequest, DocGetManyResponse, DocGetSyncPeersRequest,
+    DocGetSyncPeersResponse, DocImportRequest, DocImportResponse, DocLeaveRequest,
+    DocLeaveResponse, DocListRequest, DocListResponse, DocOpenRequest, DocOpenResponse,
+    DocSetDownloadPolicyRequest, DocSetDownloadPolicyResponse, DocSetHashRequest,
+    DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
+    DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest, DocStatusResponse,
+    DocSubscribeRequest, DocSubscribeResponse, RpcResult,
 };
 
 /// Capacity for the flume channels to forward sync store iterators to async RPC streams.
 const ITER_CHANNEL_CAP: usize = 64;
 
 #[allow(missing_docs)]
-impl Engine {
+impl DocsEngine {
     pub async fn author_create(
         &self,
         _req: AuthorCreateRequest,
@@ -42,6 +39,19 @@ impl Engine {
         Ok(AuthorCreateResponse {
             author_id: author.id(),
         })
+    }
+
+    pub fn author_default(&self, _req: AuthorGetDefaultRequest) -> AuthorGetDefaultResponse {
+        let author_id = self.default_author.get();
+        AuthorGetDefaultResponse { author_id }
+    }
+
+    pub async fn author_set_default(
+        &self,
+        req: AuthorSetDefaultRequest,
+    ) -> RpcResult<AuthorSetDefaultResponse> {
+        self.default_author.set(req.author_id, &self.sync).await?;
+        Ok(AuthorSetDefaultResponse)
     }
 
     pub fn author_list(
@@ -76,6 +86,9 @@ impl Engine {
     }
 
     pub async fn author_delete(&self, req: AuthorDeleteRequest) -> RpcResult<AuthorDeleteResponse> {
+        if req.author == self.default_author.get() {
+            return Err(anyhow!("Deleting the default author is not supported").into());
+        }
         self.sync.delete_author(req.author).await?;
         Ok(AuthorDeleteResponse)
     }
@@ -133,7 +146,7 @@ impl Engine {
             mode,
             addr_options,
         } = req;
-        let mut me = self.endpoint.my_addr().await?;
+        let mut me = self.endpoint.node_addr().await?;
         me.apply_options(addr_options);
 
         let capability = match mode {
@@ -164,13 +177,9 @@ impl Engine {
     }
 
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {
-        let DocImportRequest(DocTicket {
-            capability,
-            nodes: peers,
-        }) = req;
+        let DocImportRequest { capability } = req;
         let doc_id = self.sync.import_namespace(capability).await?;
         self.sync.open(doc_id, Default::default()).await?;
-        self.start_sync(doc_id, peers).await?;
         Ok(DocImportResponse { doc_id })
     }
 

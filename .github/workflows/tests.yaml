@@ -23,7 +23,7 @@ env:
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
   SCCACHE_CACHE_SIZE: "50G"
-  CRATES_LIST: "iroh,iroh-blobs,iroh-gossip,iroh-metrics,iroh-net,iroh-docs,iroh-test,iroh-cli,iroh-dns-server"
+  CRATES_LIST: "iroh,iroh-blobs,iroh-gossip,iroh-metrics,iroh-net,iroh-net-bench,iroh-docs,iroh-test,iroh-cli,iroh-dns-server"
 
 jobs:
   build_and_test_nix:

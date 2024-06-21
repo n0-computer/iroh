@@ -60,11 +60,12 @@ pub(super) enum State<'a> {
     Empty,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ClearReason {
     Reset,
     Inactive,
     PongTimeout,
+    MatchesOurLocalAddr,
 }
 
 impl BestAddr {
@@ -173,14 +174,14 @@ impl BestAddr {
                 %addr,
                 latency = ?latency,
                 trust_for = ?trust_until.duration_since(Instant::now()),
-               "re-selecting direct path for endpoint"
+               "re-selecting direct path for node"
             );
         } else {
             info!(
                %addr,
                latency = ?latency,
                trust_for = ?trust_until.duration_since(Instant::now()),
-               "selecting new direct path for endpoint"
+               "selecting new direct path for node"
             );
         }
         let was_empty = self.is_empty();

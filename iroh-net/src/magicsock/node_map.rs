@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     path::Path,
@@ -17,7 +17,10 @@ use stun_rs::TransactionId;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, trace, warn};
 
-use self::node_state::{NodeState, Options, PingHandled};
+use self::{
+    best_addr::ClearReason,
+    node_state::{NodeState, Options, PingHandled},
+};
 use super::{
     metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
 };
@@ -74,11 +77,29 @@ pub(super) struct NodeMapInner {
 /// You can look up entries in [`NodeMap`] with various keys, depending on the context you
 /// have for the node.  These are all the keys the [`NodeMap`] can use.
 #[derive(Clone)]
-enum NodeStateKey<'a> {
-    Idx(&'a usize),
-    NodeId(&'a NodeId),
-    QuicMappedAddr(&'a QuicMappedAddr),
-    IpPort(&'a IpPort),
+enum NodeStateKey {
+    Idx(usize),
+    NodeId(NodeId),
+    QuicMappedAddr(QuicMappedAddr),
+    IpPort(IpPort),
+}
+
+/// Source for a new node.
+///
+/// This is used for debugging purposes.
+#[derive(strum::Display, Debug)]
+#[strum(serialize_all = "kebab-case")]
+pub(crate) enum Source {
+    /// Node was loaded from the fs.
+    Saved,
+    /// Node communicated with us first via UDP.
+    Udp,
+    /// Node communicated with us first via relay.
+    Relay,
+    /// Application layer added the node directly.
+    App,
+    #[strum(serialize = "{name}")]
+    NamedApp { name: &'static str },
 }
 
 impl NodeMap {
@@ -99,8 +120,8 @@ impl NodeMap {
     }
 
     /// Add the contact information for a node.
-    pub(super) fn add_node_addr(&self, node_addr: NodeAddr) {
-        self.inner.lock().add_node_addr(node_addr)
+    pub(super) fn add_node_addr(&self, node_addr: NodeAddr, source: Source) {
+        self.inner.lock().add_node_addr(node_addr, source)
     }
 
     /// Number of nodes currently listed.
@@ -112,8 +133,8 @@ impl NodeMap {
         self.inner.lock().receive_udp(udp_addr)
     }
 
-    pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: PublicKey) -> QuicMappedAddr {
-        self.inner.lock().receive_relay(relay_url, &src)
+    pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> QuicMappedAddr {
+        self.inner.lock().receive_relay(relay_url, src)
     }
 
     pub(super) fn notify_ping_sent(
@@ -124,20 +145,20 @@ impl NodeMap {
         purpose: DiscoPingPurpose,
         msg_sender: tokio::sync::mpsc::Sender<ActorMessage>,
     ) {
-        if let Some(ep) = self.inner.lock().get_mut(NodeStateKey::Idx(&id)) {
+        if let Some(ep) = self.inner.lock().get_mut(NodeStateKey::Idx(id)) {
             ep.ping_sent(dst, tx_id, purpose, msg_sender);
         }
     }
 
     pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: stun::TransactionId) {
-        if let Some(ep) = self.inner.lock().get_mut(NodeStateKey::Idx(&id)) {
+        if let Some(ep) = self.inner.lock().get_mut(NodeStateKey::Idx(id)) {
             ep.ping_timeout(tx_id);
         }
     }
 
     pub(super) fn get_quic_mapped_addr_for_node_key(
         &self,
-        node_key: &PublicKey,
+        node_key: NodeId,
     ) -> Option<QuicMappedAddr> {
         self.inner
             .lock()
@@ -172,7 +193,7 @@ impl NodeMap {
     #[allow(clippy::type_complexity)]
     pub(super) fn get_send_addrs(
         &self,
-        addr: &QuicMappedAddr,
+        addr: QuicMappedAddr,
         have_ipv6: bool,
     ) -> Option<(
         PublicKey,
@@ -223,16 +244,13 @@ impl NodeMap {
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    pub(super) fn conn_type_stream(
-        &self,
-        public_key: &PublicKey,
-    ) -> anyhow::Result<ConnectionTypeStream> {
-        self.inner.lock().conn_type_stream(public_key)
+    pub(super) fn conn_type_stream(&self, node_id: NodeId) -> anyhow::Result<ConnectionTypeStream> {
+        self.inner.lock().conn_type_stream(node_id)
     }
 
     /// Get the [`NodeInfo`]s for each endpoint
-    pub(super) fn node_info(&self, public_key: &PublicKey) -> Option<NodeInfo> {
-        self.inner.lock().node_info(public_key)
+    pub(super) fn node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
+        self.inner.lock().node_info(node_id)
     }
 
     /// Saves the known node info to the given path, returning the number of nodes persisted.
@@ -289,6 +307,13 @@ impl NodeMap {
     pub(super) fn prune_inactive(&self) {
         self.inner.lock().prune_inactive();
     }
+
+    pub(crate) fn on_direct_addr_discovered(
+        &self,
+        discovered: impl Iterator<Item = impl Into<IpPort>>,
+    ) {
+        self.inner.lock().on_direct_addr_discovered(discovered);
+    }
 }
 
 impl NodeMapInner {
@@ -312,7 +337,7 @@ impl NodeMapInner {
         while !slice.is_empty() {
             let (node_addr, next_contents) =
                 postcard::take_from_bytes(slice).context("failed to load node data")?;
-            me.add_node_addr(node_addr);
+            me.add_node_addr(node_addr, Source::Saved);
             slice = next_contents;
         }
         Ok(me)
@@ -320,13 +345,14 @@ impl NodeMapInner {
 
     /// Add the contact information for a node.
     #[instrument(skip_all, fields(node = %node_addr.node_id.fmt_short()))]
-    fn add_node_addr(&mut self, node_addr: NodeAddr) {
+    fn add_node_addr(&mut self, node_addr: NodeAddr, source: Source) {
         let NodeAddr { node_id, info } = node_addr;
 
-        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(&node_id), || Options {
+        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
             node_id,
             relay_url: info.relay_url.clone(),
             active: false,
+            source,
         });
 
         node_state.update_from_node_addr(&info);
@@ -336,12 +362,40 @@ impl NodeMapInner {
         }
     }
 
+    /// Prunes direct addresses from nodes that claim to share an address we know points to us.
+    pub(super) fn on_direct_addr_discovered(
+        &mut self,
+        discovered: impl Iterator<Item = impl Into<IpPort>>,
+    ) {
+        for addr in discovered {
+            self.remove_by_ipp(addr.into(), ClearReason::MatchesOurLocalAddr)
+        }
+    }
+
+    /// Removes a direct address from a node.
+    fn remove_by_ipp(&mut self, ipp: IpPort, reason: ClearReason) {
+        if let Some(id) = self.by_ip_port.remove(&ipp) {
+            if let Entry::Occupied(mut entry) = self.by_id.entry(id) {
+                let node = entry.get_mut();
+                node.remove_direct_addr(&ipp, reason);
+                if node.direct_addresses().count() == 0 {
+                    let node_id = node.public_key();
+                    let mapped_addr = node.quic_mapped_addr();
+                    self.by_node_key.remove(node_id);
+                    self.by_quic_mapped_addr.remove(mapped_addr);
+                    debug!(node_id=%node_id.fmt_short(), ?reason, "removing node");
+                    entry.remove();
+                }
+            }
+        }
+    }
+
     fn get_id(&self, id: NodeStateKey) -> Option<usize> {
         match id {
-            NodeStateKey::Idx(id) => Some(*id),
-            NodeStateKey::NodeId(node_key) => self.by_node_key.get(node_key).copied(),
-            NodeStateKey::QuicMappedAddr(addr) => self.by_quic_mapped_addr.get(addr).copied(),
-            NodeStateKey::IpPort(ipp) => self.by_ip_port.get(ipp).copied(),
+            NodeStateKey::Idx(id) => Some(id),
+            NodeStateKey::NodeId(node_key) => self.by_node_key.get(&node_key).copied(),
+            NodeStateKey::QuicMappedAddr(addr) => self.by_quic_mapped_addr.get(&addr).copied(),
+            NodeStateKey::IpPort(ipp) => self.by_ip_port.get(&ipp).copied(),
         }
     }
 
@@ -373,7 +427,7 @@ impl NodeMapInner {
     /// Marks the node we believe to be at `ipp` as recently used.
     fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(NodeId, QuicMappedAddr)> {
         let ip_port: IpPort = udp_addr.into();
-        let Some(node_state) = self.get_mut(NodeStateKey::IpPort(&ip_port)) else {
+        let Some(node_state) = self.get_mut(NodeStateKey::IpPort(ip_port)) else {
             info!(src=%udp_addr, "receive_udp: no node_state found for addr, ignore");
             return None;
         };
@@ -382,13 +436,14 @@ impl NodeMapInner {
     }
 
     #[instrument(skip_all, fields(src = %src.fmt_short()))]
-    fn receive_relay(&mut self, relay_url: &RelayUrl, src: &PublicKey) -> QuicMappedAddr {
+    fn receive_relay(&mut self, relay_url: &RelayUrl, src: NodeId) -> QuicMappedAddr {
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(src), || {
             trace!("packets from unknown node, insert into node map");
             Options {
-                node_id: *src,
+                node_id: src,
                 relay_url: Some(relay_url.clone()),
                 active: true,
+                source: Source::Relay,
             }
         });
         node_state.receive_relay(relay_url, src, Instant::now());
@@ -409,8 +464,8 @@ impl NodeMapInner {
     }
 
     /// Get the [`NodeInfo`]s for each endpoint
-    fn node_info(&self, public_key: &PublicKey) -> Option<NodeInfo> {
-        self.get(NodeStateKey::NodeId(public_key))
+    fn node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
+        self.get(NodeStateKey::NodeId(node_id))
             .map(|ep| ep.info(Instant::now()))
     }
 
@@ -423,18 +478,18 @@ impl NodeMapInner {
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    fn conn_type_stream(&self, public_key: &PublicKey) -> anyhow::Result<ConnectionTypeStream> {
-        match self.get(NodeStateKey::NodeId(public_key)) {
+    fn conn_type_stream(&self, node_id: NodeId) -> anyhow::Result<ConnectionTypeStream> {
+        match self.get(NodeStateKey::NodeId(node_id)) {
             Some(ep) => Ok(ConnectionTypeStream {
                 initial: Some(ep.conn_type()),
                 inner: ep.conn_type_stream(),
             }),
-            None => anyhow::bail!("No endpoint for {public_key:?} found"),
+            None => anyhow::bail!("No endpoint for {node_id:?} found"),
         }
     }
 
-    fn handle_pong(&mut self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
-        if let Some(ns) = self.get_mut(NodeStateKey::NodeId(&sender)).as_mut() {
+    fn handle_pong(&mut self, sender: NodeId, src: &DiscoMessageSource, pong: Pong) {
+        if let Some(ns) = self.get_mut(NodeStateKey::NodeId(sender)).as_mut() {
             let insert = ns.handle_pong(&pong, src.into());
             if let Some((src, key)) = insert {
                 self.set_node_key_for_ip_port(src, &key);
@@ -446,8 +501,8 @@ impl NodeMapInner {
     }
 
     #[must_use = "actions must be handled"]
-    fn handle_call_me_maybe(&mut self, sender: PublicKey, cm: CallMeMaybe) -> Vec<PingAction> {
-        let ns_id = NodeStateKey::NodeId(&sender);
+    fn handle_call_me_maybe(&mut self, sender: NodeId, cm: CallMeMaybe) -> Vec<PingAction> {
+        let ns_id = NodeStateKey::NodeId(sender);
         if let Some(id) = self.get_id(ns_id.clone()) {
             for number in &cm.my_numbers {
                 // ensure the new addrs are known
@@ -468,18 +523,19 @@ impl NodeMapInner {
         }
     }
 
-    fn handle_ping(
-        &mut self,
-        sender: PublicKey,
-        src: SendAddr,
-        tx_id: TransactionId,
-    ) -> PingHandled {
-        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(&sender), || {
+    fn handle_ping(&mut self, sender: NodeId, src: SendAddr, tx_id: TransactionId) -> PingHandled {
+        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(sender), || {
             debug!("received ping: node unknown, add to node map");
+            let source = if src.is_relay() {
+                Source::Relay
+            } else {
+                Source::Udp
+            };
             Options {
                 node_id: sender,
                 relay_url: src.relay_url(),
                 active: true,
+                source,
             }
         });
 
@@ -497,6 +553,7 @@ impl NodeMapInner {
         info!(
             node = %options.node_id.fmt_short(),
             relay_url = ?options.relay_url,
+            source = %options.source,
             "inserting new node in NodeMap",
         );
         let id = self.next_id;
@@ -641,8 +698,15 @@ impl IpPort {
 mod tests {
     use super::node_state::MAX_INACTIVE_DIRECT_ADDRESSES;
     use super::*;
-    use crate::{key::SecretKey, magic_endpoint::AddrInfo};
+    use crate::{endpoint::AddrInfo, key::SecretKey};
     use std::net::Ipv4Addr;
+
+    impl NodeMap {
+        #[track_caller]
+        fn add_test_addr(&self, node_addr: NodeAddr) {
+            self.add_node_addr(node_addr, Source::NamedApp { name: "test" })
+        }
+    }
 
     /// Test persisting and loading of known nodes.
     #[tokio::test]
@@ -669,10 +733,10 @@ mod tests {
         let node_addr_c = NodeAddr::new(node_c).with_direct_addresses(direct_addresses_c);
         let node_addr_d = NodeAddr::new(node_d);
 
-        node_map.add_node_addr(node_addr_a);
-        node_map.add_node_addr(node_addr_b);
-        node_map.add_node_addr(node_addr_c);
-        node_map.add_node_addr(node_addr_d);
+        node_map.add_test_addr(node_addr_a);
+        node_map.add_test_addr(node_addr_b);
+        node_map.add_test_addr(node_addr_c);
+        node_map.add_test_addr(node_addr_d);
 
         let root = testdir::testdir!();
         let path = root.join("nodes.postcard");
@@ -705,7 +769,7 @@ mod tests {
         let node_addr_a = NodeAddr::new(node_a).with_direct_addresses(direct_addrs_a);
 
         let node_map = NodeMap::default();
-        node_map.add_node_addr(node_addr_a.clone());
+        node_map.add_test_addr(node_addr_a.clone());
 
         // unused endpoints are included
         let list = node_map.node_addresses_for_storage();
@@ -738,6 +802,7 @@ mod tests {
                 node_id: public_key,
                 relay_url: None,
                 active: false,
+                source: Source::NamedApp { name: "test" },
             })
             .id();
 
@@ -751,7 +816,7 @@ mod tests {
             let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
             let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
             // add address
-            node_map.add_node_addr(node_addr);
+            node_map.add_test_addr(node_addr);
             // make it active
             node_map.inner.lock().receive_udp(addr);
         }
@@ -760,7 +825,7 @@ mod tests {
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES * 2 {
             let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
             let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
-            node_map.add_node_addr(node_addr);
+            node_map.add_test_addr(node_addr);
         }
 
         let mut node_map_inner = node_map.inner.lock();
@@ -801,12 +866,12 @@ mod tests {
         // add one active node and more than MAX_INACTIVE_NODES inactive nodes
         let active_node = SecretKey::generate().public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
-        node_map.add_node_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
+        node_map.add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
         node_map.inner.lock().receive_udp(addr).expect("registered");
 
         for _ in 0..MAX_INACTIVE_NODES + 1 {
             let node = SecretKey::generate().public();
-            node_map.add_node_addr(NodeAddr::new(node));
+            node_map.add_test_addr(NodeAddr::new(node));
         }
 
         assert_eq!(node_map.node_count(), MAX_INACTIVE_NODES + 2);
@@ -815,7 +880,7 @@ mod tests {
         node_map
             .inner
             .lock()
-            .get(NodeStateKey::NodeId(&active_node))
+            .get(NodeStateKey::NodeId(active_node))
             .expect("should not be pruned");
     }
 }

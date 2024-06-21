@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{ensure, Context, Result};
 use clap::Parser;
 use derive_more::FromStr;
-use iroh::client::QuicIroh;
+use iroh::client::Iroh;
 
 use crate::config::{ConsoleEnv, NodeConfig};
 
@@ -37,7 +37,7 @@ pub(crate) struct Cli {
     #[clap(long, global = true)]
     start: bool,
 
-    /// Port to serve metrics on. -1 to disable.
+    /// Port to serve metrics on. Disabled by default.
     #[clap(long)]
     pub(crate) metrics_port: Option<MetricsPort>,
 }
@@ -115,36 +115,44 @@ impl Cli {
 
         match self.command {
             Commands::Console => {
-                let env = ConsoleEnv::for_console(data_dir)?;
+                let data_dir_owned = data_dir.to_owned();
                 if self.start {
                     let config = NodeConfig::load(self.config.as_deref()).await?;
                     start::run_with_command(
                         &config,
                         data_dir,
                         RunType::SingleCommandNoAbort,
-                        |iroh| async move { console::run(&iroh, &env).await },
+                        |iroh| async move {
+                            let env = ConsoleEnv::for_console(data_dir_owned, &iroh).await?;
+                            console::run(&iroh, &env).await
+                        },
                     )
                     .await
                 } else {
                     crate::logging::init_terminal_logging()?;
-                    let iroh = QuicIroh::connect(data_dir).await.context("rpc connect")?;
+                    let iroh = Iroh::connect(data_dir).await.context("rpc connect")?;
+                    let env = ConsoleEnv::for_console(data_dir_owned, &iroh).await?;
                     console::run(&iroh, &env).await
                 }
             }
             Commands::Rpc(command) => {
-                let env = ConsoleEnv::for_cli(data_dir)?;
+                let data_dir_owned = data_dir.to_owned();
                 if self.start {
                     let config = NodeConfig::load(self.config.as_deref()).await?;
                     start::run_with_command(
                         &config,
                         data_dir,
                         RunType::SingleCommandAbortable,
-                        |iroh| async move { command.run(&iroh, &env).await },
+                        move |iroh| async move {
+                            let env = ConsoleEnv::for_cli(data_dir_owned, &iroh).await?;
+                            command.run(&iroh, &env).await
+                        },
                     )
                     .await
                 } else {
                     crate::logging::init_terminal_logging()?;
-                    let iroh = QuicIroh::connect(data_dir).await.context("rpc connect")?;
+                    let iroh = Iroh::connect(data_dir).await.context("rpc connect")?;
+                    let env = ConsoleEnv::for_cli(data_dir_owned, &iroh).await?;
                     command.run(&iroh, &env).await
                 }
             }
@@ -184,7 +192,13 @@ impl Cli {
                 .await
             }
             Commands::Doctor { command } => {
-                let config = NodeConfig::load(self.config.as_deref()).await?;
+                let mut config = NodeConfig::load(self.config.as_deref()).await?;
+                if let Some(metrics_port) = self.metrics_port {
+                    config.metrics_addr = match metrics_port {
+                        MetricsPort::Disabled => None,
+                        MetricsPort::Port(port) => Some(([127, 0, 0, 1], port).into()),
+                    };
+                }
                 self::doctor::run(command, &config).await
             }
         }

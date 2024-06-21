@@ -2,6 +2,7 @@
 //! and to test connectivity to specific other nodes.
 use std::{
     collections::HashMap,
+    io,
     net::SocketAddr,
     num::NonZeroU16,
     path::PathBuf,
@@ -26,27 +27,37 @@ use iroh::{
     },
     docs::{Capability, DocTicket},
     net::{
-        defaults::DEFAULT_RELAY_STUN_PORT,
+        defaults::DEFAULT_STUN_PORT,
         discovery::{
             dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery,
         },
         dns::default_resolver,
+        endpoint::{self, Connection, ConnectionTypeStream, RecvStream, SendStream},
         key::{PublicKey, SecretKey},
-        magic_endpoint, netcheck, portmapper,
+        netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
         ticket::NodeTicket,
-        util::AbortingJoinHandle,
-        MagicEndpoint, NodeAddr, NodeId,
+        util::CancelOnDrop,
+        Endpoint, NodeAddr, NodeId,
     },
     util::{path::IrohPaths, progress::ProgressWriter},
 };
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
+use ratatui::backend::Backend;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
 
 use iroh::net::metrics::MagicsockMetrics;
 use iroh_metrics::core::Core;
+
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use rand::Rng;
+use ratatui::{prelude::*, widgets::*};
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum SecretKeyOption {
@@ -82,7 +93,7 @@ pub enum Commands {
         #[clap(long)]
         stun_host: Option<String>,
         /// The port of the STUN server.
-        #[clap(long, default_value_t = DEFAULT_RELAY_STUN_PORT)]
+        #[clap(long, default_value_t = DEFAULT_STUN_PORT)]
         stun_port: u16,
     },
     /// Wait for incoming requests from iroh doctor connect
@@ -211,6 +222,20 @@ pub enum Commands {
         #[clap(long)]
         repair: bool,
     },
+    /// Plot metric counters
+    Plot {
+        /// How often to collect samples in milliseconds.
+        #[clap(long, default_value_t = 500)]
+        interval: u64,
+        /// Which metrics to plot. Commas separated list of metric names.
+        metrics: String,
+        /// What the plotted time frame should be in seconds.
+        #[clap(long, default_value_t = 60)]
+        timeframe: usize,
+        /// Endpoint to scrape for prometheus metrics
+        #[clap(long, default_value = "http://localhost:9090")]
+        scrape_url: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, MaxSize)]
@@ -248,8 +273,8 @@ fn update_pb(
 
 /// handle a test stream request
 async fn handle_test_request(
-    mut send: quinn::SendStream,
-    mut recv: quinn::RecvStream,
+    mut send: SendStream,
+    mut recv: RecvStream,
     gui: &Gui,
 ) -> anyhow::Result<()> {
     let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
@@ -346,11 +371,11 @@ struct Gui {
     recv_pb: ProgressBar,
     echo_pb: ProgressBar,
     #[allow(dead_code)]
-    counter_task: Option<AbortingJoinHandle<()>>,
+    counter_task: Option<CancelOnDrop>,
 }
 
 impl Gui {
-    fn new(endpoint: MagicEndpoint, node_id: NodeId) -> Self {
+    fn new(endpoint: Endpoint, node_id: NodeId) -> Self {
         let mp = MultiProgress::new();
         mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
         let counters = mp.add(ProgressBar::hidden());
@@ -372,13 +397,13 @@ impl Gui {
             .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
-        let counter_task = AbortingJoinHandle::from(tokio::spawn(async move {
+        let counter_task = tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
                 Self::update_connection_info(&conn_info, &endpoint, &node_id);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        }));
+        });
         Self {
             mp,
             pb,
@@ -386,17 +411,20 @@ impl Gui {
             send_pb,
             recv_pb,
             echo_pb,
-            counter_task: Some(counter_task),
+            counter_task: Some(CancelOnDrop::new(
+                "counter_task",
+                counter_task.abort_handle(),
+            )),
         }
     }
 
-    fn update_connection_info(target: &ProgressBar, endpoint: &MagicEndpoint, node_id: &NodeId) {
+    fn update_connection_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &NodeId) {
         let format_latency = |x: Option<Duration>| {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())
         };
         let msg = match endpoint.connection_info(*node_id) {
-            Some(magic_endpoint::ConnectionInfo {
+            Some(endpoint::ConnectionInfo {
                 relay_url,
                 conn_type,
                 latency,
@@ -477,7 +505,7 @@ Ipv6:
 }
 
 async fn active_side(
-    connection: quinn::Connection,
+    connection: Connection,
     config: &TestConfig,
     gui: Option<&Gui>,
 ) -> anyhow::Result<()> {
@@ -504,7 +532,7 @@ async fn active_side(
 }
 
 async fn send_test_request(
-    send: &mut quinn::SendStream,
+    send: &mut SendStream,
     request: &TestStreamRequest,
 ) -> anyhow::Result<()> {
     let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
@@ -514,7 +542,7 @@ async fn send_test_request(
 }
 
 async fn echo_test(
-    connection: &quinn::Connection,
+    connection: &Connection,
     config: &TestConfig,
     pb: Option<&indicatif::ProgressBar>,
 ) -> anyhow::Result<Duration> {
@@ -535,7 +563,7 @@ async fn echo_test(
 }
 
 async fn send_test(
-    connection: &quinn::Connection,
+    connection: &Connection,
     config: &TestConfig,
     pb: Option<&indicatif::ProgressBar>,
 ) -> anyhow::Result<Duration> {
@@ -559,7 +587,7 @@ async fn send_test(
 }
 
 async fn recv_test(
-    connection: &quinn::Connection,
+    connection: &Connection,
     config: &TestConfig,
     pb: Option<&indicatif::ProgressBar>,
 ) -> anyhow::Result<Duration> {
@@ -586,12 +614,7 @@ async fn recv_test(
 }
 
 /// Passive side that just accepts connections and answers requests (echo, drain or send)
-async fn passive_side(
-    endpoint: MagicEndpoint,
-    connection: quinn::Connection,
-) -> anyhow::Result<()> {
-    let remote_peer_id = magic_endpoint::get_remote_node_id(&connection)?;
-    let gui = Gui::new(endpoint, remote_peer_id);
+async fn passive_side(gui: Gui, connection: Connection) -> anyhow::Result<()> {
     loop {
         match connection.accept_bi().await {
             Ok((send, recv)) => {
@@ -608,7 +631,7 @@ async fn passive_side(
 }
 
 fn configure_local_relay_map() -> RelayMap {
-    let stun_port = DEFAULT_RELAY_STUN_PORT;
+    let stun_port = DEFAULT_STUN_PORT;
     let url = "http://localhost:3340".parse().unwrap();
     RelayMap::default_from_node(url, stun_port)
 }
@@ -619,18 +642,18 @@ async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
     discovery: Option<Box<dyn Discovery>>,
-) -> anyhow::Result<MagicEndpoint> {
+) -> anyhow::Result<Endpoint> {
     tracing::info!(
         "public key: {}",
         hex::encode(secret_key.public().as_bytes())
     );
     tracing::info!("relay map {:#?}", relay_map);
 
-    let mut transport_config = quinn::TransportConfig::default();
+    let mut transport_config = endpoint::TransportConfig::default();
     transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
     transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
-    let endpoint = MagicEndpoint::builder()
+    let endpoint = Endpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![DR_RELAY_ALPN.to_vec()])
         .transport_config(transport_config);
@@ -646,7 +669,7 @@ async fn make_endpoint(
     };
     let endpoint = endpoint.bind(0).await?;
 
-    tokio::time::timeout(Duration::from_secs(10), endpoint.local_endpoints().next())
+    tokio::time::timeout(Duration::from_secs(10), endpoint.direct_addresses().next())
         .await
         .context("wait for relay connection")?
         .context("no endpoints")?;
@@ -669,7 +692,13 @@ async fn connect(
     let conn = endpoint.connect(node_addr, &DR_RELAY_ALPN).await;
     match conn {
         Ok(connection) => {
-            if let Err(cause) = passive_side(endpoint.clone(), connection).await {
+            let maybe_stream = endpoint.conn_type_stream(node_id);
+            let gui = Gui::new(endpoint, node_id);
+            if let Ok(stream) = maybe_stream {
+                log_connection_changes(gui.mp.clone(), node_id, stream);
+            }
+
+            if let Err(cause) = passive_side(gui, connection).await {
                 eprintln!("error handling connection: {cause}");
             }
         }
@@ -698,7 +727,7 @@ async fn accept(
 ) -> anyhow::Result<()> {
     let endpoint = make_endpoint(secret_key.clone(), relay_map, discovery).await?;
     let endpoints = endpoint
-        .local_endpoints()
+        .direct_addresses()
         .next()
         .await
         .context("no endpoints")?;
@@ -713,7 +742,7 @@ async fn accept(
         secret_key.public(),
         remote_addrs,
     );
-    if let Some(relay_url) = endpoint.my_relay() {
+    if let Some(relay_url) = endpoint.home_relay() {
         println!(
             "\tUsing just the relay url:\niroh doctor connect {} --relay-url {}\n",
             secret_key.public(),
@@ -735,13 +764,15 @@ async fn accept(
             match connecting.await {
                 Ok(connection) => {
                     if n == 0 {
-                        let Ok(remote_peer_id) = magic_endpoint::get_remote_node_id(&connection)
-                        else {
+                        let Ok(remote_peer_id) = endpoint::get_remote_node_id(&connection) else {
                             return;
                         };
                         println!("Accepted connection from {}", remote_peer_id);
                         let t0 = Instant::now();
                         let gui = Gui::new(endpoint.clone(), remote_peer_id);
+                        if let Ok(stream) = endpoint.conn_type_stream(remote_peer_id) {
+                            log_connection_changes(gui.mp.clone(), remote_peer_id, stream);
+                        }
                         let res = active_side(connection, &config, Some(&gui)).await;
                         gui.clear();
                         let dt = t0.elapsed().as_secs_f64();
@@ -764,6 +795,19 @@ async fn accept(
     }
 
     Ok(())
+}
+
+fn log_connection_changes(pb: MultiProgress, node_id: NodeId, mut stream: ConnectionTypeStream) {
+    tokio::spawn(async move {
+        let start = Instant::now();
+        while let Some(conn_type) = stream.next().await {
+            pb.println(format!(
+                "Connection with {node_id:#} changed: {conn_type} (after {:?})",
+                start.elapsed()
+            ))
+            .ok();
+        }
+    });
 }
 
 async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<()> {
@@ -1024,7 +1068,8 @@ fn inspect_ticket(ticket: &str, zbase32: bool) -> anyhow::Result<()> {
 pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     let data_dir = iroh_data_root()?;
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
-    match command {
+    let metrics_fut = super::start::start_metrics_server(config.metrics_addr);
+    let cmd_res = match command {
         Commands::Report {
             stun_host,
             stun_port,
@@ -1125,5 +1170,279 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             task.await?;
             Ok(())
         }
+        Commands::Plot {
+            interval,
+            metrics,
+            timeframe,
+            scrape_url,
+        } => {
+            let metrics: Vec<String> = metrics.split(',').map(|s| s.to_string()).collect();
+            let interval = Duration::from_millis(interval);
+
+            enable_raw_mode()?;
+            let mut stdout = io::stdout();
+            execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+            let backend = CrosstermBackend::new(stdout);
+            let mut terminal = Terminal::new(backend)?;
+
+            let app = PlotterApp::new(metrics, timeframe, scrape_url);
+            let res = run_plotter(&mut terminal, app, interval).await;
+            disable_raw_mode()?;
+            execute!(
+                terminal.backend_mut(),
+                LeaveAlternateScreen,
+                DisableMouseCapture
+            )?;
+            terminal.show_cursor()?;
+
+            if let Err(err) = res {
+                println!("{err:?}");
+            }
+
+            Ok(())
+        }
+    };
+    if let Some(metrics_fut) = metrics_fut {
+        metrics_fut.abort();
     }
+    cmd_res
+}
+
+async fn run_plotter<B: Backend>(
+    terminal: &mut Terminal<B>,
+    mut app: PlotterApp,
+    tick_rate: Duration,
+) -> anyhow::Result<()> {
+    let mut last_tick = Instant::now();
+    loop {
+        terminal.draw(|f| plotter_draw(f, &mut app))?;
+
+        if crossterm::event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    if let KeyCode::Char(c) = key.code {
+                        app.on_key(c)
+                    }
+                }
+            }
+        }
+        if last_tick.elapsed() >= tick_rate {
+            app.on_tick().await;
+            last_tick = Instant::now();
+        }
+        if app.should_quit {
+            return Ok(());
+        }
+    }
+}
+
+fn area_into_chunks(area: Rect, n: usize, horizontal: bool) -> std::rc::Rc<[Rect]> {
+    let mut constraints = vec![];
+    for _ in 0..n {
+        constraints.push(Constraint::Percentage(100 / n as u16));
+    }
+    let layout = match horizontal {
+        true => Layout::horizontal(constraints),
+        false => Layout::vertical(constraints),
+    };
+    layout.split(area)
+}
+
+fn generate_layout_chunks(area: Rect, n: usize) -> Vec<Rect> {
+    if n < 4 {
+        let chunks = area_into_chunks(area, n, false);
+        return chunks.iter().copied().collect();
+    }
+    let main_chunks = area_into_chunks(area, 2, true);
+    let left_chunks = area_into_chunks(main_chunks[0], n / 2 + n % 2, false);
+    let right_chunks = area_into_chunks(main_chunks[1], n / 2, false);
+    let mut chunks = vec![];
+    chunks.extend(left_chunks.iter());
+    chunks.extend(right_chunks.iter());
+    chunks
+}
+
+fn plotter_draw(f: &mut Frame, app: &mut PlotterApp) {
+    let area = f.size();
+
+    let metrics_cnt = app.metrics.len();
+    let areas = generate_layout_chunks(area, metrics_cnt);
+
+    for (i, metric) in app.metrics.iter().enumerate() {
+        plot_chart(f, areas[i], app, metric);
+    }
+}
+
+fn plot_chart(frame: &mut Frame, area: Rect, app: &PlotterApp, metric: &str) {
+    let elapsed = app.internal_ts.as_secs_f64();
+    let data = app.data.get(metric).unwrap().clone();
+    let data_y_range = app.data_y_range.get(metric).unwrap();
+
+    let moved = (elapsed / 15.0).floor() * 15.0 - app.timeframe as f64;
+    let moved = moved.max(0.0);
+    let x_start = 0.0 + moved;
+    let x_end = moved + app.timeframe as f64 + 25.0;
+
+    let y_start = data_y_range.0;
+    let y_end = data_y_range.1;
+
+    let datasets = vec![Dataset::default()
+        .name(metric)
+        .marker(symbols::Marker::Dot)
+        .graph_type(GraphType::Line)
+        .style(Style::default().fg(Color::Cyan))
+        .data(&data)];
+
+    // TODO(arqu): labels are incorrectly spaced for > 3 labels https://github.com/ratatui-org/ratatui/issues/334
+    let x_labels = vec![
+        Span::styled(
+            format!("{:.1}s", x_start),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!("{:.1}s", x_start + (x_end - x_start) / 2.0)),
+        Span::styled(
+            format!("{:.1}s", x_end),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+    ];
+
+    let mut y_labels = vec![Span::styled(
+        format!("{:.1}", y_start),
+        Style::default().add_modifier(Modifier::BOLD),
+    )];
+
+    for i in 1..=10 {
+        y_labels.push(Span::raw(format!(
+            "{:.1}",
+            y_start + (y_end - y_start) / 10.0 * i as f64
+        )));
+    }
+
+    y_labels.push(Span::styled(
+        format!("{:.1}", y_end),
+        Style::default().add_modifier(Modifier::BOLD),
+    ));
+
+    let chart = Chart::new(datasets)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("Chart: {}", metric)),
+        )
+        .x_axis(
+            Axis::default()
+                .title("X Axis")
+                .style(Style::default().fg(Color::Gray))
+                .labels(x_labels)
+                .bounds([x_start, x_end]),
+        )
+        .y_axis(
+            Axis::default()
+                .title("Y Axis")
+                .style(Style::default().fg(Color::Gray))
+                .labels(y_labels)
+                .bounds([y_start, y_end]),
+        );
+
+    frame.render_widget(chart, area);
+}
+
+struct PlotterApp {
+    should_quit: bool,
+    metrics: Vec<String>,
+    start_ts: Instant,
+    data: HashMap<String, Vec<(f64, f64)>>,
+    data_y_range: HashMap<String, (f64, f64)>,
+    timeframe: usize,
+    rng: rand::rngs::ThreadRng,
+    freeze: bool,
+    internal_ts: Duration,
+    scrape_url: String,
+}
+
+impl PlotterApp {
+    fn new(metrics: Vec<String>, timeframe: usize, scrape_url: String) -> Self {
+        let data = metrics.iter().map(|m| (m.clone(), vec![])).collect();
+        let data_y_range = metrics.iter().map(|m| (m.clone(), (0.0, 0.0))).collect();
+        Self {
+            should_quit: false,
+            metrics,
+            start_ts: Instant::now(),
+            data,
+            data_y_range,
+            timeframe: timeframe - 25,
+            rng: rand::thread_rng(),
+            freeze: false,
+            internal_ts: Duration::default(),
+            scrape_url,
+        }
+    }
+
+    fn on_key(&mut self, c: char) {
+        match c {
+            'q' => {
+                self.should_quit = true;
+            }
+            'f' => {
+                self.freeze = !self.freeze;
+            }
+            _ => {}
+        }
+    }
+
+    async fn on_tick(&mut self) {
+        if self.freeze {
+            return;
+        }
+
+        let req = reqwest::Client::new().get(&self.scrape_url).send().await;
+        if req.is_err() {
+            return;
+        }
+        let data = req.unwrap().text().await.unwrap();
+        let metrics_response = parse_prometheus_metrics(&data);
+        if metrics_response.is_err() {
+            return;
+        }
+        let metrics_response = metrics_response.unwrap();
+        self.internal_ts = self.start_ts.elapsed();
+        for metric in &self.metrics {
+            let val = if metric.eq("random") {
+                self.rng.gen_range(0..101) as f64
+            } else if let Some(v) = metrics_response.get(metric) {
+                *v
+            } else {
+                0.0
+            };
+            let e = self.data.entry(metric.clone()).or_default();
+            e.push((self.internal_ts.as_secs_f64(), val));
+            let yr = self.data_y_range.get_mut(metric).unwrap();
+            if val * 1.1 < yr.0 {
+                yr.0 = val * 1.2;
+            }
+            if val * 1.1 > yr.1 {
+                yr.1 = val * 1.2;
+            }
+        }
+    }
+}
+
+fn parse_prometheus_metrics(data: &str) -> anyhow::Result<HashMap<String, f64>> {
+    let mut metrics = HashMap::new();
+    for line in data.lines() {
+        if line.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let metric = parts[0];
+        let value = parts[1].parse::<f64>();
+        if value.is_err() {
+            continue;
+        }
+        metrics.insert(metric.to_string(), value.unwrap());
+    }
+    Ok(metrics)
 }

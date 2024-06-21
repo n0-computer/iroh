@@ -196,6 +196,11 @@ impl<PI: PeerIdentity, R: Rng + Clone> State<PI, R> {
             .unwrap_or(false)
     }
 
+    /// Returns the maximum message size configured in the gossip protocol.
+    pub fn max_message_size(&self) -> usize {
+        self.config.max_message_size
+    }
+
     /// Handle an [`InEvent`]
     ///
     /// This returns an iterator of [`OutEvent`]s that must be processed.

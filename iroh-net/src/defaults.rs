@@ -9,8 +9,20 @@ pub const NA_RELAY_HOSTNAME: &str = "use1-1.relay.iroh.network.";
 /// Hostname of the default EU relay.
 pub const EU_RELAY_HOSTNAME: &str = "euw1-1.relay.iroh.network.";
 
-/// STUN port as defined by [RFC 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
-pub const DEFAULT_RELAY_STUN_PORT: u16 = 3478;
+/// The default STUN port used by the Relay server.
+///
+/// The STUN port as defined by [RFC
+/// 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
+pub const DEFAULT_STUN_PORT: u16 = 3478;
+
+/// The default HTTP port used by the Relay server.
+pub const DEFAULT_HTTP_PORT: u16 = 80;
+
+/// The default HTTPS port used by the Relay server.
+pub const DEFAULT_HTTPS_PORT: u16 = 443;
+
+/// The default metrics port used by the Relay server.
+pub const DEFAULT_METRICS_PORT: u16 = 9090;
 
 /// Get the default [`RelayMap`].
 pub fn default_relay_map() -> RelayMap {
@@ -27,7 +39,7 @@ pub fn default_na_relay_node() -> RelayNode {
     RelayNode {
         url: url.into(),
         stun_only: false,
-        stun_port: DEFAULT_RELAY_STUN_PORT,
+        stun_port: DEFAULT_STUN_PORT,
     }
 }
 
@@ -40,6 +52,6 @@ pub fn default_eu_relay_node() -> RelayNode {
     RelayNode {
         url: url.into(),
         stun_only: false,
-        stun_port: DEFAULT_RELAY_STUN_PORT,
+        stun_port: DEFAULT_STUN_PORT,
     }
 }

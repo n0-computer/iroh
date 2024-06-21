@@ -22,7 +22,6 @@ pub mod client;
 pub mod node;
 pub mod util;
 
-mod docs_engine;
 mod rpc_protocol;
 
 /// Expose metrics module

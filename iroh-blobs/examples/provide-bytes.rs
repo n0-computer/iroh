@@ -1,6 +1,6 @@
 //! An example that provides a blob or a collection over a Quinn connection.
 //!
-//! Since this example does not use `iroh-net::MagicEndpoint`, it does not do any holepunching, and so will only work locally or between two processes that have public IP addresses.
+//! Since this example does not use [`iroh-net::Endpoint`], it does not do any holepunching, and so will only work locally or between two processes that have public IP addresses.
 //!
 //! Run this example with
 //!    cargo run --example provide-bytes blob
@@ -11,6 +11,7 @@
 //! To provide a collection (multiple blobs)
 use anyhow::Result;
 use tokio_util::task::LocalPoolHandle;
+use tracing::warn;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_blobs::{format::collection::Collection, Hash};
@@ -99,6 +100,14 @@ async fn main() -> Result<()> {
 
             // spawn a task to handle the connection
             tokio::spawn(async move {
+                let remote_addr = incoming.remote_address();
+                let conn = match incoming.await {
+                    Ok(conn) => conn,
+                    Err(err) => {
+                        warn!(%remote_addr, "Error connecting: {err:#}");
+                        return;
+                    }
+                };
                 iroh_blobs::provider::handle_connection(conn, db, MockEventSender, lp).await
             });
         }

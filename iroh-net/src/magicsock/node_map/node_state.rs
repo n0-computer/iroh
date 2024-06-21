@@ -14,8 +14,8 @@ use watchable::{Watchable, WatcherStream};
 
 use crate::{
     disco::{self, SendAddr},
+    endpoint::AddrInfo,
     key::PublicKey,
-    magic_endpoint::AddrInfo,
     magicsock::{Timer, HEARTBEAT_INTERVAL},
     net::ip::is_unicast_link_local,
     relay::RelayUrl,
@@ -140,12 +140,14 @@ pub(super) struct NodeState {
     conn_type: Watchable<ConnectionType>,
 }
 
+/// Options for creating a new [`NodeState`].
 #[derive(Debug)]
 pub(super) struct Options {
     pub(super) node_id: NodeId,
     pub(super) relay_url: Option<RelayUrl>,
     /// Is this endpoint currently active (sending data)?
     pub(super) active: bool,
+    pub(super) source: super::Source,
 }
 
 impl NodeState {
@@ -296,26 +298,37 @@ impl NodeState {
                 (addr, self.relay_url())
             }
         };
-        match (best_addr, relay_url.clone()) {
-            (Some(best_addr), Some(relay_url)) => {
-                let _ = self
-                    .conn_type
-                    .update(ConnectionType::Mixed(best_addr, relay_url));
-            }
-            (Some(best_addr), None) => {
-                let _ = self.conn_type.update(ConnectionType::Direct(best_addr));
-            }
-            (None, Some(relay_url)) => {
-                let _ = self.conn_type.update(ConnectionType::Relay(relay_url));
-            }
-            (None, None) => {
-                let _ = self.conn_type.update(ConnectionType::None);
-            }
+        let typ = match (best_addr, relay_url.clone()) {
+            (Some(best_addr), Some(relay_url)) => ConnectionType::Mixed(best_addr, relay_url),
+            (Some(best_addr), None) => ConnectionType::Direct(best_addr),
+            (None, Some(relay_url)) => ConnectionType::Relay(relay_url),
+            (None, None) => ConnectionType::None,
+        };
+        if self.conn_type.update(typ).is_ok() {
+            let typ = self.conn_type.get();
+            info!(%typ, "new connection type");
         }
         (best_addr, relay_url)
     }
 
-    /// Fixup best_addr from candidates.
+    /// Removes a direct address for this node.
+    ///
+    /// If this is also the best address, it will be cleared as well.
+    pub(super) fn remove_direct_addr(&mut self, ip_port: &IpPort, reason: ClearReason) {
+        let Some(state) = self.direct_addr_state.remove(ip_port) else {
+            return;
+        };
+
+        match state.last_alive().map(|instant| instant.elapsed()) {
+            Some(last_alive) => debug!(%ip_port, ?last_alive, ?reason, "pruning address"),
+            None => debug!(%ip_port, last_seen=%"never", ?reason, "pruning address"),
+        }
+
+        self.best_addr
+            .clear_if_equals((*ip_port).into(), reason, self.relay_url.is_some());
+    }
+
+    /// Fixup best_adrr from candidates.
     ///
     /// If somehow we end up in a state where we failed to set a best_addr, while we do have
     /// valid candidates, this will chose a candidate and set best_addr again.  Most likely
@@ -766,19 +779,8 @@ impl NodeState {
         // used ones) last
         prune_candidates.sort_unstable_by_key(|(_ip_port, last_alive)| *last_alive);
         prune_candidates.truncate(prune_count);
-        for (ip_port, last_alive) in prune_candidates.into_iter() {
-            self.direct_addr_state.remove(&ip_port);
-
-            match last_alive.map(|instant| instant.elapsed()) {
-                Some(last_alive) => debug!(%ip_port, ?last_alive, "pruning address"),
-                None => debug!(%ip_port, last_seen=%"never", "pruning address"),
-            }
-
-            self.best_addr.clear_if_equals(
-                ip_port.into(),
-                ClearReason::Inactive,
-                self.relay_url.is_some(),
-            );
+        for (ip_port, _last_alive) in prune_candidates.into_iter() {
+            self.remove_direct_addr(&ip_port, ClearReason::Inactive)
         }
         debug!(
             paths = %summarize_node_paths(&self.direct_addr_state),
@@ -799,20 +801,13 @@ impl NodeState {
     /// Handles a Pong message (a reply to an earlier ping).
     ///
     /// It reports the address and key that should be inserted for the endpoint if any.
+    #[instrument(skip(self))]
     pub(super) fn handle_pong(
         &mut self,
         m: &disco::Pong,
         src: SendAddr,
     ) -> Option<(SocketAddr, PublicKey)> {
         let is_relay = src.is_relay();
-
-        trace!(
-            tx = %hex::encode(m.tx_id),
-            pong_src = %src,
-            pong_ping_src = %m.src,
-            is_relay = %src.is_relay(),
-            "received pong"
-        );
         match self.sent_pings.remove(&m.tx_id) {
             None => {
                 // This is not a pong for a ping we sent.
@@ -830,7 +825,7 @@ impl NodeState {
                 debug!(
                     tx = %hex::encode(m.tx_id),
                     src = %src,
-                    reported_ping_src = %m.src,
+                    reported_ping_src = %m.ping_observed_addr,
                     ping_dst = %sp.to,
                     is_relay = %src.is_relay(),
                     latency = %latency.as_millis(),
@@ -851,7 +846,7 @@ impl NodeState {
                                     latency,
                                     pong_at: now,
                                     from: src,
-                                    pong_src: m.src.clone(),
+                                    pong_src: m.ping_observed_addr.clone(),
                                 });
                             }
                         }
@@ -866,7 +861,7 @@ impl NodeState {
                                 latency,
                                 pong_at: now,
                                 from: src,
-                                pong_src: m.src.clone(),
+                                pong_src: m.ping_observed_addr.clone(),
                             });
                         }
                         other => {
@@ -874,7 +869,11 @@ impl NodeState {
                             // waiting for the response. It was either set to None or changed to
                             // another relay. This should either never happen or be extremely
                             // unlikely. Log and ignore for now
-                            warn!(stored=?other, received=?url, "disco: ignoring pong via relay for different relay to the last one stored");
+                            warn!(
+                                stored=?other,
+                                received=?url,
+                                "ignoring pong via relay for different relay from last one",
+                            );
                         }
                     },
                 }
@@ -971,7 +970,7 @@ impl NodeState {
             .reconfirm_if_used(addr.into(), Source::Udp, now);
     }
 
-    pub(super) fn receive_relay(&mut self, url: &RelayUrl, _src: &PublicKey, now: Instant) {
+    pub(super) fn receive_relay(&mut self, url: &RelayUrl, _src: NodeId, now: Instant) {
         match self.relay_url.as_mut() {
             Some((current_home, state)) if current_home == url => {
                 // We received on the expected url. update state.
@@ -1293,7 +1292,7 @@ impl PathState {
             write!(w, "active ")?;
         }
         if let Some(ref pong) = self.recent_pong {
-            write!(w, "pong-received({:?} ago)", pong.pong_at.elapsed())?;
+            write!(w, "pong-received({:?} ago) ", pong.pong_at.elapsed())?;
         }
         if let Some(when) = self.last_incoming_ping() {
             write!(w, "ping-received({:?} ago) ", when.elapsed())?;
@@ -1728,6 +1727,7 @@ mod tests {
             node_id: key.public(),
             relay_url: None,
             active: true,
+            source: crate::magicsock::Source::NamedApp { name: "test" },
         };
         let mut ep = NodeState::new(0, opts);
 

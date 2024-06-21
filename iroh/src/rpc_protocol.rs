@@ -19,15 +19,17 @@ use iroh_blobs::{
     util::Tag,
 };
 use iroh_net::{
+    endpoint::{ConnectionInfo, NodeAddr},
     key::PublicKey,
-    magic_endpoint::{ConnectionInfo, NodeAddr},
+    relay::RelayUrl,
     NodeId,
 };
 
 use iroh_docs::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
-    Author, AuthorId, CapabilityKind, DocTicket, Entry, NamespaceId, PeerIdBytes, SignedEntry,
+    Author, AuthorId, Capability, CapabilityKind, DocTicket, Entry, NamespaceId, PeerIdBytes,
+    SignedEntry,
 };
 use quic_rpc::{
     message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -39,15 +41,13 @@ use serde::{Deserialize, Serialize};
 pub use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_blobs::store::{ExportFormat, ExportMode};
 pub use iroh_blobs::{provider::AddProgress, store::ValidateProgress};
+use iroh_docs::engine::LiveEvent;
 
-use crate::{
-    client::{
-        blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
-        docs::ShareMode,
-        node::NodeStatus,
-        tags::TagInfo,
-    },
-    docs_engine::LiveEvent,
+use crate::client::{
+    blobs::{BlobInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
+    docs::{ImportProgress, ShareMode},
+    tags::TagInfo,
+    NodeStatus,
 };
 pub use iroh_blobs::util::SetTagOption;
 
@@ -205,21 +205,38 @@ impl ServerStreamingMsg<RpcService> for BlobListIncompleteRequest {
 ///
 /// Lists all collections that have been explicitly added to the database.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlobListCollectionsRequest;
-
-impl Msg<RpcService> for BlobListCollectionsRequest {
-    type Pattern = ServerStreaming;
+pub struct ListTagsRequest {
+    /// List raw tags
+    pub raw: bool,
+    /// List hash seq tags
+    pub hash_seq: bool,
 }
 
-impl ServerStreamingMsg<RpcService> for BlobListCollectionsRequest {
-    type Response = RpcResult<CollectionInfo>;
-}
+impl ListTagsRequest {
+    /// List all tags
+    pub fn all() -> Self {
+        Self {
+            raw: true,
+            hash_seq: true,
+        }
+    }
 
-/// List all collections
-///
-/// Lists all collections that have been explicitly added to the database.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ListTagsRequest;
+    /// List raw tags
+    pub fn raw() -> Self {
+        Self {
+            raw: true,
+            hash_seq: false,
+        }
+    }
+
+    /// List hash seq tags
+    pub fn hash_seq() -> Self {
+        Self {
+            raw: false,
+            hash_seq: true,
+        }
+    }
+}
 
 impl Msg<RpcService> for ListTagsRequest {
     type Pattern = ServerStreaming;
@@ -250,25 +267,6 @@ pub struct DeleteTagRequest {
 impl RpcMsg<RpcService> for DeleteTagRequest {
     type Response = RpcResult<()>;
 }
-
-/// Get a collection
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BlobGetCollectionRequest {
-    /// Hash of the collection
-    pub hash: Hash,
-}
-
-impl RpcMsg<RpcService> for BlobGetCollectionRequest {
-    type Response = RpcResult<BlobGetCollectionResponse>;
-}
-
-/// The response for a `BlobGetCollectionRequest`.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BlobGetCollectionResponse {
-    /// The collection.
-    pub collection: Collection,
-}
-
 /// Create a collection.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateCollectionRequest {
@@ -360,6 +358,20 @@ impl RpcMsg<RpcService> for NodeIdRequest {
     type Response = RpcResult<NodeId>;
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct NodeAddrRequest;
+
+impl RpcMsg<RpcService> for NodeAddrRequest {
+    type Response = RpcResult<NodeAddr>;
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct NodeRelayRequest;
+
+impl RpcMsg<RpcService> for NodeRelayRequest {
+    type Response = RpcResult<Option<RelayUrl>>;
+}
+
 /// A request to watch for the node status
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeWatchRequest;
@@ -421,6 +433,35 @@ pub struct AuthorCreateResponse {
     /// The id of the created author
     pub author_id: AuthorId,
 }
+
+/// Get the default author.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorGetDefaultRequest;
+
+impl RpcMsg<RpcService> for AuthorGetDefaultRequest {
+    type Response = RpcResult<AuthorGetDefaultResponse>;
+}
+
+/// Response for [`AuthorGetDefaultRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorGetDefaultResponse {
+    /// The id of the author
+    pub author_id: AuthorId,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorSetDefaultRequest {
+    /// The id of the author
+    pub author_id: AuthorId,
+}
+
+impl RpcMsg<RpcService> for AuthorSetDefaultRequest {
+    type Response = RpcResult<AuthorSetDefaultResponse>;
+}
+
+/// Response for [`AuthorGetDefaultRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorSetDefaultResponse;
 
 /// Delete an author
 #[derive(Serialize, Deserialize, Debug)]
@@ -533,9 +574,12 @@ pub struct DocCreateResponse {
     pub id: NamespaceId,
 }
 
-/// Import a document from a ticket.
+/// Import a document from a capability.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocImportRequest(pub DocTicket);
+pub struct DocImportRequest {
+    /// The namespace capability.
+    pub capability: Capability,
+}
 
 impl RpcMsg<RpcService> for DocImportRequest {
     type Response = RpcResult<DocImportResponse>;
@@ -691,7 +735,7 @@ pub struct DocSetResponse {
 
 /// A request to the node to add the data at the given filepath as an entry to the document
 ///
-/// Will produce a stream of [`DocImportProgress`] messages.
+/// Will produce a stream of [`ImportProgress`] messages.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DocImportFileRequest {
     /// The document id
@@ -719,49 +763,9 @@ impl ServerStreamingMsg<RpcService> for DocImportFileRequest {
     type Response = DocImportFileResponse;
 }
 
-/// Wrapper around [`DocImportProgress`].
+/// Wrapper around [`ImportProgress`].
 #[derive(Debug, Serialize, Deserialize, derive_more::Into)]
-pub struct DocImportFileResponse(pub DocImportProgress);
-
-/// Progress messages for an doc import operation
-///
-/// An import operation involves computing the outboard of a file, and then
-/// either copying or moving the file into the database, then setting the author, hash, size, and tag of that file as an entry in the doc
-#[derive(Debug, Serialize, Deserialize)]
-pub enum DocImportProgress {
-    /// An item was found with name `name`, from now on referred to via `id`
-    Found {
-        /// A new unique id for this entry.
-        id: u64,
-        /// The name of the entry.
-        name: String,
-        /// The size of the entry in bytes.
-        size: u64,
-    },
-    /// We got progress ingesting item `id`.
-    Progress {
-        /// The unique id of the entry.
-        id: u64,
-        /// The offset of the progress, in bytes.
-        offset: u64,
-    },
-    /// We are done adding `id` to the data store and the hash is `hash`.
-    IngestDone {
-        /// The unique id of the entry.
-        id: u64,
-        /// The hash of the entry.
-        hash: Hash,
-    },
-    /// We are done setting the entry to the doc
-    AllDone {
-        /// The key of the entry
-        key: Bytes,
-    },
-    /// We got an error and need to abort.
-    ///
-    /// This will be the last message in the stream.
-    Abort(RpcError),
-}
+pub struct DocImportFileResponse(pub ImportProgress);
 
 /// A request to the node to save the data of the entry to the given filepath
 ///
@@ -1041,6 +1045,8 @@ pub struct RpcService;
 pub enum Request {
     NodeStatus(NodeStatusRequest),
     NodeId(NodeIdRequest),
+    NodeAddr(NodeAddrRequest),
+    NodeRelay(NodeRelayRequest),
     NodeStats(NodeStatsRequest),
     NodeShutdown(NodeShutdownRequest),
     NodeConnections(NodeConnectionsRequest),
@@ -1055,12 +1061,10 @@ pub enum Request {
     BlobExport(BlobExportRequest),
     BlobList(BlobListRequest),
     BlobListIncomplete(BlobListIncompleteRequest),
-    BlobListCollections(BlobListCollectionsRequest),
     BlobDeleteBlob(BlobDeleteBlobRequest),
     BlobValidate(BlobValidateRequest),
     BlobFsck(BlobConsistencyCheckRequest),
     CreateCollection(CreateCollectionRequest),
-    BlobGetCollection(BlobGetCollectionRequest),
 
     DeleteTag(DeleteTagRequest),
     ListTags(ListTagsRequest),
@@ -1089,6 +1093,8 @@ pub enum Request {
 
     AuthorList(AuthorListRequest),
     AuthorCreate(AuthorCreateRequest),
+    AuthorGetDefault(AuthorGetDefaultRequest),
+    AuthorSetDefault(AuthorSetDefaultRequest),
     AuthorImport(AuthorImportRequest),
     AuthorExport(AuthorExportRequest),
     AuthorDelete(AuthorDeleteRequest),
@@ -1100,6 +1106,8 @@ pub enum Request {
 pub enum Response {
     NodeStatus(RpcResult<NodeStatus>),
     NodeId(RpcResult<NodeId>),
+    NodeAddr(RpcResult<NodeAddr>),
+    NodeRelay(RpcResult<Option<RelayUrl>>),
     NodeStats(RpcResult<NodeStatsResponse>),
     NodeConnections(RpcResult<NodeConnectionsResponse>),
     NodeConnectionInfo(RpcResult<NodeConnectionInfoResponse>),
@@ -1111,13 +1119,11 @@ pub enum Response {
     BlobAddPath(BlobAddPathResponse),
     BlobList(RpcResult<BlobInfo>),
     BlobListIncomplete(RpcResult<IncompleteBlobInfo>),
-    BlobListCollections(RpcResult<CollectionInfo>),
     BlobDownload(BlobDownloadResponse),
     BlobFsck(ConsistencyCheckProgress),
     BlobExport(BlobExportResponse),
     BlobValidate(ValidateProgress),
     CreateCollection(RpcResult<CreateCollectionResponse>),
-    BlobGetCollection(RpcResult<BlobGetCollectionResponse>),
 
     ListTags(TagInfo),
     DeleteTag(RpcResult<()>),
@@ -1147,6 +1153,8 @@ pub enum Response {
 
     AuthorList(RpcResult<AuthorListResponse>),
     AuthorCreate(RpcResult<AuthorCreateResponse>),
+    AuthorGetDefault(RpcResult<AuthorGetDefaultResponse>),
+    AuthorSetDefault(RpcResult<AuthorSetDefaultResponse>),
     AuthorImport(RpcResult<AuthorImportResponse>),
     AuthorExport(RpcResult<AuthorExportResponse>),
     AuthorDelete(RpcResult<AuthorDeleteResponse>),

@@ -1,6 +1,6 @@
 [package]
 name = "iroh-net"
-version = "0.15.0"
+version = "0.18.0"
 edition = "2021"
 readme = "README.md"
 description = "networking support for iroh"
@@ -10,7 +10,7 @@ repository = "https://github.com/n0-computer/iroh"
 keywords = ["quic", "networking", "holepunching", "p2p"]
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.75"
+rust-version = "1.76"
 
 [lints]
 workspace = true
@@ -19,13 +19,15 @@ workspace = true
 axum = { version = "0.7.4", optional = true }
 aead = { version = "0.5.2", features = ["bytes"] }
 anyhow = { version = "1" }
+base64 = "0.22.1"
 backoff = "0.4.0"
 bytes = "1"
-netdev = "0.25"
+netdev = "0.27.0"
 der = { version = "0.7", features = ["alloc", "derive"] }
 derive_more = { version = "1.0.0-beta.6", features = ["debug", "display", "from", "try_into", "deref"] }
 flume = "0.11"
 futures-buffered = "0.2.4"
+futures-concurrency = "7.6.0"
 futures-lite = "2.3"
 futures-sink = "0.3.25"
 futures-util = "0.3.25"
@@ -39,11 +41,12 @@ http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 igd-next = { version = "0.14.3", features = ["aio_tokio"] }
-iroh-base = { version = "0.15.0", path = "../iroh-base", features = ["key"] }
+iroh-base = { version = "0.18.0", path = "../iroh-base", features = ["key"] }
 libc = "0.2.139"
 num_enum = "0.7"
 once_cell = "1.18.0"
 parking_lot = "0.12.1"
+pin-project = "1"
 pkarr = { version = "1.1.4", default-features = false, features = ["async", "relay"] }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quinn = { version = "0.11" }
@@ -51,8 +54,8 @@ quinn-proto = { version = "0.11" }
 quinn-udp = { version = "0.5" }
 rand = "0.8"
 rand_core = "0.6.4"
-rcgen = "0.11"
-reqwest = { version = "0.11.19", default-features = false, features = ["rustls-tls"] }
+rcgen = "0.12"
+reqwest = { version = "0.12.4", default-features = false, features = ["rustls-tls"] }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive", "rc"] }
@@ -83,7 +86,7 @@ toml = { version = "0.8", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # metrics
-iroh-metrics = { version = "0.15.0", path = "../iroh-metrics", default-features = false }
+iroh-metrics = { version = "0.18.0", path = "../iroh-metrics", default-features = false }
 strum = { version = "0.26.2", features = ["derive"] }
 pin-project = "1.1.5"
 

@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use iroh_net::{key::PublicKey, magic_endpoint::get_remote_node_id, MagicEndpoint, NodeAddr};
+use iroh_net::{endpoint::get_remote_node_id, key::PublicKey, Endpoint, NodeAddr};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error_span, trace, Instrument};
 
@@ -27,7 +27,7 @@ mod codec;
 
 /// Connect to a peer and sync a replica
 pub async fn connect_and_sync(
-    endpoint: &MagicEndpoint,
+    endpoint: &Endpoint,
     sync: &SyncHandle,
     namespace: NamespaceId,
     peer: NodeAddr,
@@ -106,7 +106,7 @@ pub enum AcceptOutcome {
 /// Handle an iroh-docs connection and sync all shared documents in the replica store.
 pub async fn handle_connection<F, Fut>(
     sync: SyncHandle,
-    connecting: quinn::Connecting,
+    connecting: iroh_net::endpoint::Connecting,
     accept_cb: F,
 ) -> Result<SyncFinished, AcceptError>
 where

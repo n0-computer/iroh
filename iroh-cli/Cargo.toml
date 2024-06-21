@@ -1,6 +1,6 @@
 [package]
 name = "iroh-cli"
-version = "0.15.0"
+version = "0.18.0"
 edition = "2021"
 readme = "README.md"
 description = "Bytes. Distributed."
@@ -29,7 +29,8 @@ clap = { version = "4", features = ["derive"] }
 colored = "2.0.4"
 comfy-table = "7.0.1"
 console = "0.15.5"
-derive_more = { version = "1.0.0-beta.6", features = ["display"] }
+crossterm = "0.27.0"
+derive_more = { version = "1.0.0-beta.1", features = ["display"] }
 dialoguer = { version = "0.11.0", default-features = false }
 dirs-next = "2.0.0"
 flume = "0.11.0"
@@ -38,15 +39,17 @@ futures-lite = "2.3"
 hex = "0.4.3"
 human-time = "0.1.6"
 indicatif = { version = "0.17", features = ["tokio"] }
-iroh = { version = "0.15.0", path = "../iroh", features = ["metrics"] }
-iroh-metrics = { version = "0.15.0", path = "../iroh-metrics" }
+iroh = { version = "0.18.0", path = "../iroh", features = ["metrics"] }
+iroh-metrics = { version = "0.18.0", path = "../iroh-metrics" }
 parking_lot = "0.12.1"
 pkarr = { version = "1.1.5", default-features = false }
 portable-atomic = "1"
 postcard = "1.0.8"
-quic-rpc = { version = "0.8.0", features = ["flume-transport", "quinn-transport"] }
+quic-rpc = { version = "0.10.2", features = ["flume-transport", "quinn-transport"] }
 quinn = { version = "0.11" }
 rand = "0.8.5"
+ratatui = "0.26.2"
+reqwest = { version = "0.12.4", default-features = false, features = ["json", "rustls-tls"] }
 rustyline = "12.0.0"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_with = "3.7.0"

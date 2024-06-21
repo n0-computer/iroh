@@ -5,8 +5,10 @@ use bytes::{Bytes, BytesMut};
 use futures_lite::stream::Stream;
 use genawaiter::sync::{Co, Gen};
 use iroh_net::{
-    dialer::Dialer, key::PublicKey, magic_endpoint::get_remote_node_id, AddrInfo, MagicEndpoint,
-    NodeAddr,
+    dialer::Dialer,
+    endpoint::{get_remote_node_id, Connection},
+    key::PublicKey,
+    AddrInfo, Endpoint, NodeAddr,
 };
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
@@ -24,10 +26,6 @@ pub mod util;
 
 /// ALPN protocol name
 pub const GOSSIP_ALPN: &[u8] = b"/iroh-gossip/0";
-/// Maximum message size is limited currently. The limit is more-or-less arbitrary.
-// TODO: Make the limit configurable.
-pub const MAX_MESSAGE_SIZE: usize = 4096;
-
 /// Channel capacity for all subscription broadcast channels (single)
 const SUBSCRIBE_ALL_CAP: usize = 2048;
 /// Channel capacity for topic subscription broadcast channels (one per topic)
@@ -40,6 +38,8 @@ const TO_ACTOR_CAP: usize = 64;
 const IN_EVENT_CAP: usize = 1024;
 /// Channel capacity for endpoint change message queue (single)
 const ON_ENDPOINTS_CAP: usize = 64;
+/// Name used for logging when new node addresses are added from gossip.
+const SOURCE_NAME: &str = "gossip";
 
 /// Events emitted from the gossip protocol
 pub type Event = proto::Event<PublicKey>;
@@ -63,8 +63,8 @@ type ProtoMessage = proto::Message<PublicKey>;
 ///
 /// With the default settings, the protocol will maintain up to 5 peer connections per topic.
 ///
-/// Even though the [`Gossip`] is created from a [`MagicEndpoint`], it does not accept connections
-/// itself. You should run an accept loop on the MagicEndpoint yourself, check the ALPN protocol of incoming
+/// Even though the [`Gossip`] is created from a [`Endpoint`], it does not accept connections
+/// itself. You should run an accept loop on the [`Endpoint`] yourself, check the ALPN protocol of incoming
 /// connections, and if the ALPN protocol equals [`GOSSIP_ALPN`], forward the connection to the
 /// gossip actor through [Self::handle_connection].
 ///
@@ -72,17 +72,14 @@ type ProtoMessage = proto::Message<PublicKey>;
 #[derive(Debug, Clone)]
 pub struct Gossip {
     to_actor_tx: mpsc::Sender<ToActor>,
-    on_endpoints_tx: mpsc::Sender<Vec<iroh_net::config::Endpoint>>,
+    on_direct_addrs_tx: mpsc::Sender<Vec<iroh_net::endpoint::DirectAddr>>,
     _actor_handle: Arc<JoinHandle<anyhow::Result<()>>>,
+    max_message_size: usize,
 }
 
 impl Gossip {
     /// Spawn a gossip actor and get a handle for it
-    pub fn from_endpoint(
-        endpoint: MagicEndpoint,
-        config: proto::Config,
-        my_addr: &AddrInfo,
-    ) -> Self {
+    pub fn from_endpoint(endpoint: Endpoint, config: proto::Config, my_addr: &AddrInfo) -> Self {
         let peer_id = endpoint.node_id();
         let dialer = Dialer::new(endpoint.clone());
         let state = proto::State::new(
@@ -96,6 +93,7 @@ impl Gossip {
         let (on_endpoints_tx, on_endpoints_rx) = mpsc::channel(ON_ENDPOINTS_CAP);
 
         let me = endpoint.node_id().fmt_short();
+        let max_message_size = state.max_message_size();
         let actor = Actor {
             endpoint,
             state,
@@ -103,7 +101,7 @@ impl Gossip {
             to_actor_rx,
             in_event_rx,
             in_event_tx,
-            on_endpoints_rx,
+            on_direct_addr_rx: on_endpoints_rx,
             conns: Default::default(),
             conn_send_tx: Default::default(),
             pending_sends: Default::default(),
@@ -125,17 +123,23 @@ impl Gossip {
         );
         Self {
             to_actor_tx,
-            on_endpoints_tx,
+            on_direct_addrs_tx: on_endpoints_tx,
             _actor_handle: Arc::new(actor_handle),
+            max_message_size,
         }
+    }
+
+    /// Get the maximum message size configured for this gossip actor.
+    pub fn max_message_size(&self) -> usize {
+        self.max_message_size
     }
 
     /// Join a topic and connect to peers.
     ///
     ///
     /// This method only asks for [`PublicKey`]s. You must supply information on how to
-    /// connect to these peers manually before, by calling [`MagicEndpoint::add_node_addr`] on
-    /// the underlying [`MagicEndpoint`].
+    /// connect to these peers manually before, by calling [`Endpoint::add_node_addr`] on
+    /// the underlying [`Endpoint`].
     ///
     /// This method returns a future that completes once the request reached the local actor.
     /// This completion returns a [`JoinTopicFut`] which completes once at least peer was joined
@@ -229,26 +233,29 @@ impl Gossip {
         }
     }
 
-    /// Handle an incoming [`quinn::Connection`].
+    /// Handle an incoming [`Connection`].
     ///
     /// Make sure to check the ALPN protocol yourself before passing the connection.
-    pub async fn handle_connection(&self, conn: quinn::Connection) -> anyhow::Result<()> {
+    pub async fn handle_connection(&self, conn: Connection) -> anyhow::Result<()> {
         let peer_id = get_remote_node_id(&conn)?;
         self.send(ToActor::ConnIncoming(peer_id, ConnOrigin::Accept, conn))
             .await?;
         Ok(())
     }
 
-    /// Set info on our local endpoints.
+    /// Set info on our direct addresses.
     ///
     /// This will be sent to peers on Neighbor and Join requests so that they can connect directly
     /// to us.
     ///
     /// This is only best effort, and will drop new events if backed up.
-    pub fn update_endpoints(&self, endpoints: &[iroh_net::config::Endpoint]) -> anyhow::Result<()> {
-        let endpoints = endpoints.to_vec();
-        self.on_endpoints_tx
-            .try_send(endpoints)
+    pub fn update_direct_addresses(
+        &self,
+        addrs: &[iroh_net::endpoint::DirectAddr],
+    ) -> anyhow::Result<()> {
+        let addrs = addrs.to_vec();
+        self.on_direct_addrs_tx
+            .try_send(addrs)
             .map_err(|_| anyhow!("endpoints channel dropped"))?;
         Ok(())
     }
@@ -297,7 +304,7 @@ enum ConnOrigin {
 enum ToActor {
     /// Handle a new QUIC connection, either from accept (external to the actor) or from connect
     /// (happens internally in the actor).
-    ConnIncoming(PublicKey, ConnOrigin, #[debug(skip)] quinn::Connection),
+    ConnIncoming(PublicKey, ConnOrigin, #[debug(skip)] Connection),
     /// Join a topic with a list of peers. Reply with oneshot once at least one peer joined.
     Join(
         TopicId,
@@ -330,7 +337,7 @@ enum ToActor {
 struct Actor {
     /// Protocol state
     state: proto::State<PublicKey, StdRng>,
-    endpoint: MagicEndpoint,
+    endpoint: Endpoint,
     /// Dial machine to connect to peers
     dialer: Dialer,
     /// Input messages to the actor
@@ -340,11 +347,11 @@ struct Actor {
     /// Input events to the state (emitted from the connection loops)
     in_event_rx: mpsc::Receiver<InEvent>,
     /// Updates of discovered endpoint addresses
-    on_endpoints_rx: mpsc::Receiver<Vec<iroh_net::config::Endpoint>>,
+    on_direct_addr_rx: mpsc::Receiver<Vec<iroh_net::endpoint::DirectAddr>>,
     /// Queued timers
     timers: Timers<Timer>,
     /// Currently opened quinn connections to peers
-    conns: HashMap<PublicKey, quinn::Connection>,
+    conns: HashMap<PublicKey, Connection>,
     /// Channels to send outbound messages into the connection loops
     conn_send_tx: HashMap<PublicKey, mpsc::Sender<ProtoMessage>>,
     /// Queued messages that were to be sent before a dial completed
@@ -373,10 +380,14 @@ impl Actor {
                         }
                     }
                 },
-                new_endpoints = self.on_endpoints_rx.recv() => {
+                new_endpoints = self.on_direct_addr_rx.recv() => {
                     match new_endpoints {
                         Some(endpoints) => {
-                            let addr = self.endpoint.my_addr_with_endpoints(endpoints)?;
+                            let addr = NodeAddr::from_parts(
+                                self.endpoint.node_id(),
+                                self.endpoint.home_relay(),
+                                endpoints.into_iter().map(|x| x.addr).collect(),
+                            );
                             let peer_data = encode_peer_data(&addr.info)?;
                             self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
                         }
@@ -429,12 +440,23 @@ impl Actor {
                 let (send_tx, send_rx) = mpsc::channel(SEND_QUEUE_CAP);
                 self.conn_send_tx.insert(peer_id, send_tx.clone());
 
+                let max_message_size = self.state.max_message_size();
+
                 // Spawn a task for this connection
                 let in_event_tx = self.in_event_tx.clone();
                 tokio::spawn(
                     async move {
                         debug!("connection established");
-                        match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
+                        match connection_loop(
+                            peer_id,
+                            conn,
+                            origin,
+                            send_rx,
+                            &in_event_tx,
+                            max_message_size,
+                        )
+                        .await
+                        {
                             Ok(()) => {
                                 debug!("connection closed without error")
                             }
@@ -558,7 +580,10 @@ impl Actor {
                     Ok(info) => {
                         debug!(peer = ?node_id, "add known addrs: {info:?}");
                         let node_addr = NodeAddr { node_id, info };
-                        if let Err(err) = self.endpoint.add_node_addr(node_addr) {
+                        if let Err(err) = self
+                            .endpoint
+                            .add_node_addr_with_source(node_addr, SOURCE_NAME)
+                        {
                             debug!(peer = ?node_id, "add known failed: {err:?}");
                         }
                     }
@@ -603,10 +628,11 @@ async fn wait_for_neighbor_up(mut sub: broadcast::Receiver<Event>) -> anyhow::Re
 
 async fn connection_loop(
     from: PublicKey,
-    conn: quinn::Connection,
+    conn: Connection,
     origin: ConnOrigin,
     mut send_rx: mpsc::Receiver<ProtoMessage>,
     in_event_tx: &mpsc::Sender<InEvent>,
+    max_message_size: usize,
 ) -> anyhow::Result<()> {
     let (mut send, mut recv) = match origin {
         ConnOrigin::Accept => conn.accept_bi().await?,
@@ -617,14 +643,16 @@ async fn connection_loop(
     loop {
         tokio::select! {
             biased;
-            msg = send_rx.recv() => {
-                match msg {
-                    None => break,
-                    Some(msg) =>  write_message(&mut send, &mut send_buf, &msg).await?,
-                }
+            // If `send_rx` is closed,
+            // stop selecting it but don't quit.
+            // We are not going to use connection for sending anymore,
+            // but the other side may still want to use it to
+            // send data to us.
+            Some(msg) = send_rx.recv(), if !send_rx.is_closed() => {
+                write_message(&mut send, &mut send_buf, &msg, max_message_size).await?
             }
 
-            msg = read_message(&mut recv, &mut recv_buf) => {
+            msg = read_message(&mut recv, &mut recv_buf, max_message_size) => {
                 let msg = msg?;
                 match msg {
                     None => break,
@@ -655,6 +683,7 @@ fn decode_peer_data(peer_data: &PeerData) -> anyhow::Result<AddrInfo> {
 mod test {
     use std::time::Duration;
 
+    use iroh_net::key::SecretKey;
     use iroh_net::relay::{RelayMap, RelayMode};
     use tokio::spawn;
     use tokio::time::timeout;
@@ -663,16 +692,21 @@ mod test {
 
     use super::*;
 
-    async fn create_endpoint(relay_map: RelayMap) -> anyhow::Result<MagicEndpoint> {
-        MagicEndpoint::builder()
+    async fn create_endpoint(
+        rng: &mut rand_chacha::ChaCha12Rng,
+        relay_map: RelayMap,
+    ) -> anyhow::Result<Endpoint> {
+        Endpoint::builder()
+            .secret_key(SecretKey::generate_with_rng(rng))
             .alpns(vec![GOSSIP_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
+            .insecure_skip_relay_cert_verify(true)
             .bind(0)
             .await
     }
 
     async fn endpoint_loop(
-        endpoint: MagicEndpoint,
+        endpoint: Endpoint,
         gossip: Gossip,
         cancel: CancellationToken,
     ) -> anyhow::Result<()> {
@@ -690,16 +724,15 @@ mod test {
     }
 
     #[tokio::test]
-    #[ignore = "flaky"]
     async fn gossip_net_smoke() {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let _guard = iroh_test::logging::setup();
-        let (relay_map, relay_url, cleanup) = util::run_relay_and_stun([127, 0, 0, 1].into())
-            .await
-            .unwrap();
+        let (relay_map, relay_url, _guard) =
+            iroh_net::test_utils::run_relay_server().await.unwrap();
 
-        let ep1 = create_endpoint(relay_map.clone()).await.unwrap();
-        let ep2 = create_endpoint(relay_map.clone()).await.unwrap();
-        let ep3 = create_endpoint(relay_map.clone()).await.unwrap();
+        let ep1 = create_endpoint(&mut rng, relay_map.clone()).await.unwrap();
+        let ep2 = create_endpoint(&mut rng, relay_map.clone()).await.unwrap();
+        let ep3 = create_endpoint(&mut rng, relay_map.clone()).await.unwrap();
         let addr1 = AddrInfo {
             relay_url: Some(relay_url.clone()),
             direct_addresses: Default::default(),
@@ -724,8 +757,8 @@ mod test {
         let cancel = CancellationToken::new();
         let tasks = [
             spawn(endpoint_loop(ep1.clone(), go1.clone(), cancel.clone())),
-            spawn(endpoint_loop(ep2.clone(), go3.clone(), cancel.clone())),
-            spawn(endpoint_loop(ep3.clone(), go2.clone(), cancel.clone())),
+            spawn(endpoint_loop(ep2.clone(), go2.clone(), cancel.clone())),
+            spawn(endpoint_loop(ep3.clone(), go3.clone(), cancel.clone())),
         ];
 
         debug!("----- adding peers  ----- ");
@@ -741,7 +774,7 @@ mod test {
         go2.join(topic, vec![pi1]).await.unwrap().await.unwrap();
         go3.join(topic, vec![pi1]).await.unwrap().await.unwrap();
 
-        let len = 10;
+        let len = 2;
 
         // subscribe nodes 2 and 3 to the topic
         let mut stream2 = go2.subscribe(topic).await.unwrap();
@@ -815,125 +848,6 @@ mod test {
                 .unwrap()
                 .unwrap()
                 .unwrap();
-        }
-        drop(cleanup);
-    }
-
-    // This is copied from iroh-net/src/hp/magicsock/conn.rs
-    // TODO: Move into a public test_utils module in iroh-net?
-    mod util {
-        use std::net::{IpAddr, SocketAddr};
-
-        use anyhow::Result;
-        use iroh_net::{
-            key::SecretKey,
-            relay::{RelayMap, RelayUrl},
-            stun::{is, parse_binding_request, response},
-        };
-        use tokio::sync::oneshot;
-        use tracing::{debug, info, trace};
-
-        /// A drop guard to clean up test infrastructure.
-        ///
-        /// After dropping the test infrastructure will asynchronously shutdown and release its
-        /// resources.
-        // Nightly sees the sender as dead code currently, but we only rely on Drop of the
-        // sender.
-        #[derive(Debug)]
-        #[allow(dead_code)]
-        pub(crate) struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
-
-        /// Runs a relay server with STUN enabled suitable for tests.
-        ///
-        /// The returned `Url` is the url of the relay server in the returned [`RelayMap`], it
-        /// is always `Some` as that is how the [`MagicEndpoint::connect`] API expects it.
-        ///
-        /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
-        pub(crate) async fn run_relay_and_stun(
-            stun_ip: IpAddr,
-        ) -> Result<(RelayMap, RelayUrl, CleanupDropGuard)> {
-            let server_key = SecretKey::generate();
-            let server = iroh_net::relay::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
-                .secret_key(Some(server_key))
-                .tls_config(None)
-                .spawn()
-                .await?;
-
-            let http_addr = server.addr();
-            info!("relay listening on {:?}", http_addr);
-
-            let (stun_addr, stun_drop_guard) = serve(stun_ip).await?;
-            let relay_url: RelayUrl = format!("http://localhost:{}", http_addr.port())
-                .parse()
-                .unwrap();
-            let m = RelayMap::default_from_node(relay_url.clone(), stun_addr.port());
-
-            let (tx, rx) = oneshot::channel();
-            tokio::spawn(async move {
-                let _stun_cleanup = stun_drop_guard; // move into this closure
-
-                // Wait until we're dropped or receive a message.
-                rx.await.ok();
-                server.shutdown().await;
-            });
-
-            Ok((m, relay_url, CleanupDropGuard(tx)))
-        }
-
-        /// Sets up a simple STUN server.
-        async fn serve(ip: IpAddr) -> Result<(SocketAddr, CleanupDropGuard)> {
-            let pc = tokio::net::UdpSocket::bind((ip, 0)).await?;
-            let mut addr = pc.local_addr()?;
-            match addr.ip() {
-                IpAddr::V4(ip) => {
-                    if ip.octets() == [0, 0, 0, 0] {
-                        addr.set_ip("127.0.0.1".parse().unwrap());
-                    }
-                }
-                _ => unreachable!("using ipv4"),
-            }
-
-            info!("STUN listening on {}", addr);
-            let (s, r) = oneshot::channel();
-            tokio::task::spawn(async move {
-                run_stun(pc, r).await;
-            });
-
-            Ok((addr, CleanupDropGuard(s)))
-        }
-
-        async fn run_stun(pc: tokio::net::UdpSocket, mut done: oneshot::Receiver<()>) {
-            let mut buf = vec![0u8; 64 << 10];
-            loop {
-                trace!("read loop");
-                tokio::select! {
-                    _ = &mut done => {
-                        debug!("shutting down");
-                        break;
-                    }
-                    res = pc.recv_from(&mut buf) => match res {
-                        Ok((n, addr)) => {
-                            trace!("read packet {}bytes from {}", n, addr);
-                            let pkt = &buf[..n];
-                            if !is(pkt) {
-                                debug!("received non STUN pkt");
-                                continue;
-                            }
-                            if let Ok(txid) = parse_binding_request(pkt) {
-                                debug!("received binding request");
-
-                                let res = response(txid, addr);
-                                if let Err(err) = pc.send_to(&res, addr).await {
-                                    eprintln!("STUN server write failed: {:?}", err);
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            eprintln!("failed to read: {:?}", err);
-                        }
-                    }
-                }
-            }
         }
     }
 }

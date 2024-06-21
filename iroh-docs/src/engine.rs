@@ -1,31 +1,37 @@
-//! Handlers and actors to for live syncing [`iroh_docs`] replicas.
+//! Handlers and actors to for live syncing replicas.
 //!
-//! [`iroh_docs::Replica`] is also called documents here.
+//! [`crate::Replica`] is also called documents here.
 
-use std::{io, sync::Arc};
+use std::path::PathBuf;
+use std::{
+    io,
+    str::FromStr,
+    sync::{Arc, RwLock},
+};
 
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use futures_lite::{Stream, StreamExt};
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::{store::EntryStatus, Hash};
-use iroh_docs::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
 use iroh_gossip::net::Gossip;
 use iroh_net::util::SharedAbortingJoinHandle;
-use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
+use iroh_net::{key::PublicKey, Endpoint, NodeAddr};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, error_span, Instrument};
 
-mod gossip;
-mod live;
-pub mod rpc;
-mod state;
+use crate::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
+use crate::{Author, AuthorId};
 
-use gossip::GossipActor;
-use live::{LiveActor, ToLiveActor};
+use self::gossip::GossipActor;
+use self::live::{LiveActor, ToLiveActor};
 
 pub use self::live::SyncEvent;
 pub use self::state::{Origin, SyncReason};
+
+mod gossip;
+mod live;
+mod state;
 
 /// Capacity of the channel for the [`ToLiveActor`] messages.
 const ACTOR_CHANNEL_CAP: usize = 64;
@@ -34,13 +40,14 @@ const SUBSCRIBE_CHANNEL_CAP: usize = 256;
 
 /// The sync engine coordinates actors that manage open documents, set-reconciliation syncs with
 /// peers and a gossip swarm for each syncing document.
-///
-/// The RPC methods dealing with documents and sync operate on the `Engine`, with method
-/// implementations in [rpc].
 #[derive(derive_more::Debug, Clone)]
 pub struct Engine {
-    pub(crate) endpoint: MagicEndpoint,
-    pub(crate) sync: SyncHandle,
+    /// [`Endpoint`] used by the engine.
+    pub endpoint: Endpoint,
+    /// Handle to the actor thread.
+    pub sync: SyncHandle,
+    /// The persistent default author for this engine.
+    pub default_author: Arc<DefaultAuthor>,
     to_live_actor: mpsc::Sender<ToLiveActor>,
     #[allow(dead_code)]
     actor_handle: SharedAbortingJoinHandle<()>,
@@ -52,14 +59,15 @@ impl Engine {
     /// Start the sync engine.
     ///
     /// This will spawn two tokio tasks for the live sync coordination and gossip actors, and a
-    /// thread for the [`iroh_docs::actor::SyncHandle`].
-    pub(crate) fn spawn<B: iroh_blobs::store::Store>(
-        endpoint: MagicEndpoint,
+    /// thread for the [`crate::actor::SyncHandle`].
+    pub async fn spawn<B: iroh_blobs::store::Store>(
+        endpoint: Endpoint,
         gossip: Gossip,
-        replica_store: iroh_docs::store::Store,
+        replica_store: crate::store::Store,
         bao_store: B,
         downloader: Downloader,
-    ) -> Self {
+        default_author_storage: DefaultAuthorStorage,
+    ) -> anyhow::Result<Self> {
         let (live_actor_tx, to_live_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
         let (to_gossip_actor, to_gossip_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
         let me = endpoint.node_id().fmt_short();
@@ -70,7 +78,7 @@ impl Engine {
         };
         let sync = SyncHandle::spawn(replica_store, Some(content_status_cb.clone()), me.clone());
 
-        let mut actor = LiveActor::new(
+        let actor = LiveActor::new(
             sync.clone(),
             endpoint.clone(),
             gossip.clone(),
@@ -95,20 +103,31 @@ impl Engine {
             .instrument(error_span!("sync", %me)),
         );
 
-        Self {
+        let default_author = match DefaultAuthor::load(default_author_storage, &sync).await {
+            Ok(author) => author,
+            Err(err) => {
+                // If loading the default author failed, make sure to shutdown the sync actor before
+                // returning.
+                let _store = sync.shutdown().await.ok();
+                return Err(err);
+            }
+        };
+
+        Ok(Self {
             endpoint,
             sync,
             to_live_actor: live_actor_tx,
             actor_handle: actor_handle.into(),
             content_status_cb,
-        }
+            default_author: Arc::new(default_author),
+        })
     }
 
     /// Start to sync a document.
     ///
     /// If `peers` is non-empty, it will both do an initial set-reconciliation sync with each peer,
     /// and join an iroh-gossip swarm with these peers to receive and broadcast document updates.
-    async fn start_sync(&self, namespace: NamespaceId, peers: Vec<NodeAddr>) -> Result<()> {
+    pub async fn start_sync(&self, namespace: NamespaceId, peers: Vec<NodeAddr>) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
         self.to_live_actor
             .send(ToLiveActor::StartSync {
@@ -125,7 +144,7 @@ impl Engine {
     ///
     /// If `kill_subscribers` is true, all existing event subscribers will be dropped. This means
     /// they will receive `None` and no further events in case of rejoining the document.
-    async fn leave(&self, namespace: NamespaceId, kill_subscribers: bool) -> Result<()> {
+    pub async fn leave(&self, namespace: NamespaceId, kill_subscribers: bool) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
         self.to_live_actor
             .send(ToLiveActor::Leave {
@@ -139,7 +158,7 @@ impl Engine {
     }
 
     /// Subscribe to replica and sync progress events.
-    async fn subscribe(
+    pub async fn subscribe(
         &self,
         namespace: NamespaceId,
     ) -> Result<impl Stream<Item = Result<LiveEvent>> + Unpin + 'static> {
@@ -183,13 +202,19 @@ impl Engine {
         Ok(())
     }
 
-    pub(crate) async fn start_shutdown(&self) -> Result<()> {
-        self.to_live_actor.send(ToLiveActor::Shutdown).await?;
+    /// Shutdown the engine.
+    pub async fn shutdown(&self) -> Result<()> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.to_live_actor
+            .send(ToLiveActor::Shutdown { reply })
+            .await?;
+        reply_rx.await?;
         Ok(())
     }
 }
 
-pub(crate) fn entry_to_content_status(entry: io::Result<EntryStatus>) -> ContentStatus {
+/// Converts an [`EntryStatus`] into a ['ContentStatus'].
+pub fn entry_to_content_status(entry: io::Result<EntryStatus>) -> ContentStatus {
     match entry {
         Ok(EntryStatus::Complete) => ContentStatus::Complete,
         Ok(EntryStatus::Partial) => ContentStatus::Incomplete,
@@ -223,6 +248,16 @@ pub enum LiveEvent {
         /// The content hash of the newly available entry content
         hash: Hash,
     },
+    /// All pending content is now ready.
+    ///
+    /// This event signals that all queued content downloads from the last sync run have either
+    /// completed or failed.
+    ///
+    /// It will only be emitted after a [`Self::SyncFinished`] event, never before.
+    ///
+    /// Receiving this event does not guarantee that all content in the document is available. If
+    /// blobs failed to download, this event will still be emitted after all operations completed.
+    PendingContentReady,
     /// We have a new neighbor in the swarm.
     NeighborUp(PublicKey),
     /// We lost a neighbor in the swarm.
@@ -238,24 +273,140 @@ impl From<live::Event> for LiveEvent {
             live::Event::NeighborUp(peer) => Self::NeighborUp(peer),
             live::Event::NeighborDown(peer) => Self::NeighborDown(peer),
             live::Event::SyncFinished(ev) => Self::SyncFinished(ev),
+            live::Event::PendingContentReady => Self::PendingContentReady,
         }
     }
 }
 
 impl LiveEvent {
     fn from_replica_event(
-        ev: iroh_docs::Event,
+        ev: crate::Event,
         content_status_cb: &ContentStatusCallback,
     ) -> Result<Self> {
         Ok(match ev {
-            iroh_docs::Event::LocalInsert { entry, .. } => Self::InsertLocal {
+            crate::Event::LocalInsert { entry, .. } => Self::InsertLocal {
                 entry: entry.into(),
             },
-            iroh_docs::Event::RemoteInsert { entry, from, .. } => Self::InsertRemote {
+            crate::Event::RemoteInsert { entry, from, .. } => Self::InsertRemote {
                 content_status: content_status_cb(entry.content_hash()),
                 entry: entry.into(),
                 from: PublicKey::from_bytes(&from)?,
             },
         })
+    }
+}
+
+/// Where to persist the default author.
+///
+/// If set to `Mem`, a new author will be created in the docs store before spawning the sync
+/// engine. Changing the default author will not be persisted.
+///
+/// If set to `Persistent`, the default author will be loaded from and persisted to the specified
+/// path (as base32 encoded string of the author's public key).
+#[derive(Debug)]
+pub enum DefaultAuthorStorage {
+    /// Memory storage.
+    Mem,
+    /// File based persistent storage.
+    Persistent(PathBuf),
+}
+
+impl DefaultAuthorStorage {
+    /// Load the default author from the storage.
+    ///
+    /// Will create and save a new author if the storage is empty.
+    ///
+    /// Returns an error if the author can't be parsed or if the uathor does not exist in the docs
+    /// store.
+    pub async fn load(&self, docs_store: &SyncHandle) -> anyhow::Result<AuthorId> {
+        match self {
+            Self::Mem => {
+                let author = Author::new(&mut rand::thread_rng());
+                let author_id = author.id();
+                docs_store.import_author(author).await?;
+                Ok(author_id)
+            }
+            Self::Persistent(ref path) => {
+                if path.exists() {
+                    let data = tokio::fs::read_to_string(path).await.with_context(|| {
+                        format!(
+                            "Failed to read the default author file at `{}`",
+                            path.to_string_lossy()
+                        )
+                    })?;
+                    let author_id = AuthorId::from_str(&data).with_context(|| {
+                        format!(
+                            "Failed to parse the default author from `{}`",
+                            path.to_string_lossy()
+                        )
+                    })?;
+                    if docs_store.export_author(author_id).await?.is_none() {
+                        bail!("The default author is missing from the docs store. To recover, delete the file `{}`. Then iroh will create a new default author.", path.to_string_lossy())
+                    }
+                    Ok(author_id)
+                } else {
+                    let author = Author::new(&mut rand::thread_rng());
+                    let author_id = author.id();
+                    docs_store.import_author(author).await?;
+                    self.persist(author_id).await?;
+                    Ok(author_id)
+                }
+            }
+        }
+    }
+
+    /// Save a new default author.
+    pub async fn persist(&self, author_id: AuthorId) -> anyhow::Result<()> {
+        match self {
+            Self::Mem => {
+                // persistence is not possible for the mem storage so this is a noop.
+            }
+            Self::Persistent(ref path) => {
+                tokio::fs::write(path, author_id.to_string())
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to write the default author to `{}`",
+                            path.to_string_lossy()
+                        )
+                    })?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Peristent default author for a docs engine.
+#[derive(Debug)]
+pub struct DefaultAuthor {
+    value: RwLock<AuthorId>,
+    storage: DefaultAuthorStorage,
+}
+
+impl DefaultAuthor {
+    /// Load the default author from storage.
+    ///
+    /// If the storage is empty creates a new author and perists it.
+    pub async fn load(storage: DefaultAuthorStorage, docs_store: &SyncHandle) -> Result<Self> {
+        let value = storage.load(docs_store).await?;
+        Ok(Self {
+            value: RwLock::new(value),
+            storage,
+        })
+    }
+
+    /// Get the current default author.
+    pub fn get(&self) -> AuthorId {
+        *self.value.read().unwrap()
+    }
+
+    /// Set the default author.
+    pub async fn set(&self, author_id: AuthorId, docs_store: &SyncHandle) -> Result<()> {
+        if docs_store.export_author(author_id).await?.is_none() {
+            bail!("The author does not exist");
+        }
+        self.storage.persist(author_id).await?;
+        *self.value.write().unwrap() = author_id;
+        Ok(())
     }
 }

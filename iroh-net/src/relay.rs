@@ -15,6 +15,7 @@ pub(crate) mod client_conn;
 pub(crate) mod clients;
 mod codec;
 pub mod http;
+pub mod iroh_relay;
 mod map;
 mod metrics;
 pub(crate) mod server;

@@ -30,11 +30,10 @@ use iroh::{
             BlobInfo, BlobStatus, CollectionInfo, DownloadMode, DownloadOptions,
             IncompleteBlobInfo, WrapOption,
         },
-        Iroh, RpcService,
+        Iroh,
     },
     net::{key::PublicKey, relay::RelayUrl, NodeAddr},
 };
-use quic_rpc::ServiceConnection;
 use tokio::io::AsyncWriteExt;
 
 #[allow(clippy::large_enum_variant)]
@@ -182,10 +181,7 @@ impl std::str::FromStr for TicketOrHash {
 }
 
 impl BlobCommands {
-    pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
-    where
-        C: ServiceConnection<RpcService>,
-    {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Get {
                 ticket,
@@ -262,7 +258,7 @@ impl BlobCommands {
                 };
 
                 let mut stream = iroh
-                    .blobs
+                    .blobs()
                     .download_with_opts(
                         hash,
                         DownloadOptions {
@@ -281,7 +277,7 @@ impl BlobCommands {
                     Some(OutputTarget::Stdout) => {
                         // we asserted above that `OutputTarget::Stdout` is only permitted if getting a
                         // single hash and not a hashseq.
-                        let mut blob_read = iroh.blobs.read(hash).await?;
+                        let mut blob_read = iroh.blobs().read(hash).await?;
                         tokio::io::copy(&mut blob_read, &mut tokio::io::stdout()).await?;
                     }
                     Some(OutputTarget::Path(path)) => {
@@ -299,7 +295,7 @@ impl BlobCommands {
                             false => ExportFormat::Blob,
                         };
                         tracing::info!("exporting to {} -> {}", path.display(), absolute.display());
-                        let stream = iroh.blobs.export(hash, absolute, format, mode).await?;
+                        let stream = iroh.blobs().export(hash, absolute, format, mode).await?;
 
                         // TODO: report export progress
                         stream.await?;
@@ -320,7 +316,7 @@ impl BlobCommands {
                             !recursive,
                             "Recursive option is not supported when exporting to STDOUT"
                         );
-                        let mut blob_read = iroh.blobs.read(hash).await?;
+                        let mut blob_read = iroh.blobs().read(hash).await?;
                         tokio::io::copy(&mut blob_read, &mut tokio::io::stdout()).await?;
                     }
                     OutputTarget::Path(path) => {
@@ -341,7 +337,7 @@ impl BlobCommands {
                             path.display(),
                             absolute.display()
                         );
-                        let stream = iroh.blobs.export(hash, absolute, format, mode).await?;
+                        let stream = iroh.blobs().export(hash, absolute, format, mode).await?;
                         // TODO: report export progress
                         stream.await?;
                     }
@@ -369,8 +365,8 @@ impl BlobCommands {
                 } else {
                     BlobFormat::Raw
                 };
-                let status = iroh.blobs.status(hash).await?;
-                let ticket = iroh.blobs.share(hash, format, addr_options).await?;
+                let status = iroh.blobs().status(hash).await?;
+                let ticket = iroh.blobs().share(hash, format, addr_options).await?;
 
                 let (blob_status, size) = match (status, format) {
                     (BlobStatus::Complete { size }, BlobFormat::Raw) => ("blob", size),
@@ -447,27 +443,24 @@ pub enum ListCommands {
 }
 
 impl ListCommands {
-    pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
-    where
-        C: ServiceConnection<RpcService>,
-    {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Blobs => {
-                let mut response = iroh.blobs.list().await?;
+                let mut response = iroh.blobs().list().await?;
                 while let Some(item) = response.next().await {
                     let BlobInfo { path, hash, size } = item?;
                     println!("{} {} ({})", path, hash, HumanBytes(size));
                 }
             }
             Self::IncompleteBlobs => {
-                let mut response = iroh.blobs.list_incomplete().await?;
+                let mut response = iroh.blobs().list_incomplete().await?;
                 while let Some(item) = response.next().await {
                     let IncompleteBlobInfo { hash, size, .. } = item?;
                     println!("{} ({})", hash, HumanBytes(size));
                 }
             }
             Self::Collections => {
-                let mut response = iroh.blobs.list_collections().await?;
+                let mut response = iroh.blobs().list_collections()?;
                 while let Some(item) = response.next().await {
                     let CollectionInfo {
                         tag,
@@ -507,13 +500,10 @@ pub enum DeleteCommands {
 }
 
 impl DeleteCommands {
-    pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
-    where
-        C: ServiceConnection<RpcService>,
-    {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Blob { hash } => {
-                let response = iroh.blobs.delete_blob(hash).await;
+                let response = iroh.blobs().delete_blob(hash).await;
                 if let Err(e) = response {
                     eprintln!("Error: {}", e);
                 }
@@ -540,11 +530,8 @@ fn apply_report_level(text: String, level: ReportLevel) -> console::StyledObject
     }
 }
 
-pub async fn consistency_check<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
-where
-    C: ServiceConnection<RpcService>,
-{
-    let mut response = iroh.blobs.consistency_check(repair).await?;
+pub async fn consistency_check(iroh: &Iroh, verbose: u8, repair: bool) -> Result<()> {
+    let mut response = iroh.blobs().consistency_check(repair).await?;
     let verbosity = get_report_level(verbose);
     let print = |level: ReportLevel, entry: Option<Hash>, message: String| {
         if level < verbosity {
@@ -584,12 +571,9 @@ where
     Ok(())
 }
 
-pub async fn validate<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
-where
-    C: ServiceConnection<RpcService>,
-{
+pub async fn validate(iroh: &Iroh, verbose: u8, repair: bool) -> Result<()> {
     let mut state = ValidateProgressState::new();
-    let mut response = iroh.blobs.validate(repair).await?;
+    let mut response = iroh.blobs().validate(repair).await?;
     let verbosity = get_report_level(verbose);
     let print = |level: ReportLevel, entry: Option<Hash>, message: String| {
         if level < verbosity {
@@ -807,8 +791,8 @@ pub enum TicketOption {
     Print,
 }
 
-pub async fn add_with_opts<C: ServiceConnection<RpcService>>(
-    client: &iroh::client::Iroh<C>,
+pub async fn add_with_opts(
+    client: &iroh::client::Iroh,
     source: BlobSource,
     opts: BlobAddOptions,
 ) -> Result<()> {
@@ -840,8 +824,8 @@ pub async fn add_with_opts<C: ServiceConnection<RpcService>>(
 }
 
 /// Add data to iroh, either from a path or, if path is `None`, from STDIN.
-pub async fn add<C: ServiceConnection<RpcService>>(
-    client: &iroh::client::Iroh<C>,
+pub async fn add(
+    client: &iroh::client::Iroh,
     source: BlobSourceIroh,
     tag: SetTagOption,
     ticket: TicketOption,
@@ -854,7 +838,7 @@ pub async fn add<C: ServiceConnection<RpcService>>(
 
             // tell the node to add the data
             let stream = client
-                .blobs
+                .blobs()
                 .add_from_path(absolute, in_place, tag, wrap)
                 .await?;
             aggregate_add_response(stream).await?
@@ -872,7 +856,7 @@ pub async fn add<C: ServiceConnection<RpcService>>(
 
             // tell the node to add the data
             let stream = client
-                .blobs
+                .blobs()
                 .add_from_path(path_buf, false, tag, wrap)
                 .await?;
             aggregate_add_response(stream).await?
@@ -881,7 +865,7 @@ pub async fn add<C: ServiceConnection<RpcService>>(
 
     print_add_response(hash, format, entries);
     if let TicketOption::Print = ticket {
-        let status = client.node.status().await?;
+        let status = client.status().await?;
         let ticket = BlobTicket::new(status.addr, hash, format)?;
         println!("All-in-one ticket: {ticket}");
     }
