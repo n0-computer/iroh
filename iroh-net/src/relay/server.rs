@@ -413,7 +413,15 @@ impl Stream for RelayIo {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
             Self::Derp(ref mut framed) => Pin::new(framed).poll_next(cx),
-            Self::Ws(ref mut ws) => Pin::new(ws).poll_next(cx).map(Frame::from_ws_message),
+            Self::Ws(ref mut ws) => match Pin::new(ws).poll_next(cx) {
+                Poll::Ready(Some(item)) => match Frame::from_ws_message(item) {
+                    Some(frame) => Poll::Ready(Some(frame)),
+                    // We filter websocket messages that don't carry `Frame`s.
+                    None => Poll::Pending,
+                },
+                Poll::Ready(None) => Poll::Ready(None),
+                Poll::Pending => Poll::Pending,
+            },
         }
     }
 }

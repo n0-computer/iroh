@@ -290,30 +290,28 @@ impl Frame {
     }
 
     pub fn from_ws_message(
-        msg: Option<tungstenite::Result<tungstenite::Message>>,
+        msg: tungstenite::Result<tungstenite::Message>,
     ) -> Option<anyhow::Result<Self>> {
         match msg {
-            Some(Ok(tungstenite::Message::Binary(vec))) => Some(Self::from_ws_vec(vec)),
-            Some(Ok(msg)) => {
+            Ok(tungstenite::Message::Binary(vec)) => Some(Self::from_ws_vec(vec)),
+            Ok(msg) => {
                 tracing::warn!(?msg, "Got msg of unsupported type, skipping.");
                 None
             }
-            Some(Err(e)) => Some(Err(e.into())),
-            None => None,
+            Err(e) => Some(Err(e.into())),
         }
     }
 
     pub fn from_wasm_ws_message(
-        msg: Option<tokio_tungstenite_wasm::Result<tokio_tungstenite_wasm::Message>>,
+        msg: tokio_tungstenite_wasm::Result<tokio_tungstenite_wasm::Message>,
     ) -> Option<anyhow::Result<Self>> {
         match msg {
-            Some(Ok(tokio_tungstenite_wasm::Message::Binary(vec))) => Some(Self::from_ws_vec(vec)),
-            Some(Ok(msg)) => {
+            Ok(tokio_tungstenite_wasm::Message::Binary(vec)) => Some(Self::from_ws_vec(vec)),
+            Ok(msg) => {
                 tracing::warn!(?msg, "Got msg of unsupported type, skipping.");
                 None
             }
-            Some(Err(e)) => Some(Err(e.into())),
-            None => None,
+            Err(e) => Some(Err(e.into())),
         }
     }
 

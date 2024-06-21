@@ -7,10 +7,10 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail, ensure, Result};
 use bytes::Bytes;
+use futures_lite::Stream;
 use futures_sink::Sink;
-use futures_util::sink::SinkExt;
-use futures_util::stream::{SplitSink, SplitStream};
-use futures_util::{Stream, StreamExt};
+use futures_util::stream::{SplitSink, SplitStream, StreamExt};
+use futures_util::SinkExt;
 use tokio::sync::mpsc;
 use tokio_tungstenite_wasm::WebSocketStream;
 use tokio_util::codec::{FramedRead, FramedWrite};
@@ -285,7 +285,15 @@ impl Stream for RelayConnReader {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
             Self::Relay(ref mut ws) => Pin::new(ws).poll_next(cx),
-            Self::Ws(ref mut ws) => Pin::new(ws).poll_next(cx).map(Frame::from_wasm_ws_message),
+            Self::Ws(ref mut ws) => match Pin::new(ws).poll_next(cx) {
+                Poll::Ready(Some(item)) => match Frame::from_wasm_ws_message(item) {
+                    Some(frame) => Poll::Ready(Some(frame)),
+                    // We filter websocket messages that don't carry `Frame`s.
+                    None => Poll::Pending,
+                },
+                Poll::Ready(None) => Poll::Ready(None),
+                Poll::Pending => Poll::Pending,
+            },
         }
     }
 }

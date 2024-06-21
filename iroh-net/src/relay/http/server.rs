@@ -95,7 +95,7 @@ impl Protocol {
 
     /// The server HTTP handler to do HTTP upgrades
     async fn relay_connection_handler(
-        &self,
+        self,
         conn_handler: &ClientConnHandler,
         upgraded: Upgraded,
     ) -> Result<()> {
@@ -107,7 +107,7 @@ impl Protocol {
             read_buf
         );
 
-        conn_handler.accept(*self, io).await
+        conn_handler.accept(self, io).await
     }
 }
 
