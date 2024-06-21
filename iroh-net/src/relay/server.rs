@@ -184,8 +184,12 @@ impl ClientConnHandler {
     pub async fn accept(&self, protocol: Protocol, io: MaybeTlsStream) -> Result<()> {
         trace!(?protocol, "accept: start");
         let mut io = match protocol {
-            Protocol::Relay => RelayIo::Derp(Framed::new(io, DerpCodec)),
+            Protocol::Relay => {
+                inc!(Metrics, derp_accepts);
+                RelayIo::Derp(Framed::new(io, DerpCodec))
+            }
             Protocol::Websocket => {
+                inc!(Metrics, websocket_accepts);
                 RelayIo::Ws(WebSocketStream::from_raw_socket(io, Role::Server, None).await)
             }
         };

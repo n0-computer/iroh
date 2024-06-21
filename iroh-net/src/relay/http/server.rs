@@ -24,11 +24,9 @@ use tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
 use tungstenite::handshake::derive_accept_key;
 
 use crate::key::SecretKey;
-use crate::relay::http::HTTP_UPGRADE_PROTOCOL;
+use crate::relay::http::{HTTP_UPGRADE_PROTOCOL, WEBSOCKET_UPGRADE_PROTOCOL};
 use crate::relay::server::{ClientConnHandler, MaybeTlsStream};
 use crate::relay::MaybeTlsStreamServer;
-
-use super::WEBSOCKET_UPGRADE_PROTOCOL;
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
