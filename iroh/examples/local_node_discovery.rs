@@ -64,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Starting iroh node with local node discovery...");
     let node = Node::memory()
+        .secret_key(key)
         .node_discovery(cfg)
         .bind_port(0)
         .relay_mode(iroh_net::relay::RelayMode::Disabled)
