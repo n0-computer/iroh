@@ -15,7 +15,7 @@ use crate::{
         sync::ReadAuthorisation,
         willow::{Entry, WriteCapability},
     },
-    session::Interests,
+    session::{AreaOfInterestSelector, Interests},
     store::traits::{SecretStorage, SecretStoreError, Storage},
 };
 
@@ -45,15 +45,27 @@ impl CapSelector {
     pub fn matches(&self, cap: &McCapability) -> bool {
         self.namespace_id == cap.granted_namespace().id()
             && self.user.includes(&cap.receiver().id())
-            && self.area.is_included_in(&cap.granted_area())
+            && self.area.matches(&cap.granted_area())
+    }
+
+    pub fn new(namespace_id: NamespaceId, user: UserSelector, area: AreaSelector) -> Self {
+        Self {
+            namespace_id,
+            user,
+            area,
+        }
+    }
+
+    pub fn with_user(namespace_id: NamespaceId, user_id: UserId) -> Self {
+        Self::new(
+            namespace_id,
+            UserSelector::Exact(user_id),
+            AreaSelector::Widest,
+        )
     }
 
     pub fn widest(namespace_id: NamespaceId) -> Self {
-        Self {
-            namespace_id,
-            user: UserSelector::Any,
-            area: AreaSelector::Widest,
-        }
+        Self::new(namespace_id, UserSelector::Any, AreaSelector::Widest)
     }
 }
 
@@ -82,7 +94,7 @@ pub enum AreaSelector {
 }
 
 impl AreaSelector {
-    pub fn is_included_in(&self, other: &Area) -> bool {
+    pub fn matches(&self, other: &Area) -> bool {
         match self {
             AreaSelector::Widest => true,
             AreaSelector::Area(area) => other.includes_area(area),
@@ -221,21 +233,23 @@ impl<S: Storage> Auth<S> {
                     .collect::<HashMap<_, _>>();
                 Ok(out)
             }
-            Interests::Explicit(interests) => Ok(interests),
             Interests::Some(interests) => {
                 let mut out: HashMap<ReadAuthorisation, BTreeSet<AreaOfInterest>> = HashMap::new();
-                for (namespace_id, aois) in interests {
-                    for aoi in aois {
-                        // TODO: check if aoi is already covered before trying to cover it
-                        let selector = CapSelector {
-                            namespace_id,
-                            user: UserSelector::Any,
-                            area: AreaSelector::Area(aoi.area.clone()),
-                        };
-                        let cap = self.get_read_cap(&selector)?;
-                        if let Some(cap) = cap {
-                            let set = out.entry(cap).or_default();
-                            set.insert(aoi);
+                for (cap_selector, aoi_selector) in interests {
+                    let cap = self.get_read_cap(&cap_selector)?;
+                    if let Some(cap) = cap {
+                        let entry = out.entry(cap.clone()).or_default();
+                        match aoi_selector {
+                            AreaOfInterestSelector::Widest => {
+                                let area = cap.read_cap().granted_area();
+                                let aoi = AreaOfInterest::new(area);
+                                entry.insert(aoi);
+                            }
+                            AreaOfInterestSelector::Exact(aois) => {
+                                for aoi in aois {
+                                    entry.insert(aoi);
+                                }
+                            }
                         }
                     }
                 }

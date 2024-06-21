@@ -1,8 +1,13 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::proto::grouping::{Area, AreaOfInterest};
-use crate::proto::keys::NamespaceId;
-use crate::proto::sync::{AccessChallenge, AreaOfInterestHandle, ChallengeHash, ReadAuthorisation};
+use crate::{
+    auth::CapSelector,
+    proto::{
+        grouping::{Area, AreaOfInterest},
+        keys::NamespaceId,
+        sync::{AccessChallenge, AreaOfInterestHandle, ChallengeHash},
+    },
+};
 
 pub mod channels;
 mod data;
@@ -71,25 +76,15 @@ impl SessionMode {
 pub enum Interests {
     #[default]
     All,
-    Some(BTreeMap<NamespaceId, BTreeSet<AreaOfInterest>>),
-    // TODO: Remove?
-    Explicit(HashMap<ReadAuthorisation, BTreeSet<AreaOfInterest>>),
+    Some(BTreeMap<CapSelector, AreaOfInterestSelector>),
 }
 
-// TODO: I think the interests would be better represented like this maybe?
-// #[derive(Debug, Default, Clone)]
-// pub enum Interests2 {
-//     #[default]
-//     All,
-//     Some(Vec<(CapSelector, AreaOfInterestSelector)>),
-// }
-//
-// #[derive(Debug, Default, Clone)]
-// pub enum AreaOfInterestSelector {
-//     #[default]
-//     Widest,
-//     Exact(BTreeSet<AreaOfInterest>),
-// }
+#[derive(Debug, Default, Clone)]
+pub enum AreaOfInterestSelector {
+    #[default]
+    Widest,
+    Exact(BTreeSet<AreaOfInterest>),
+}
 
 /// Options to initialize a session with.
 #[derive(Debug)]
@@ -100,33 +95,8 @@ pub struct SessionInit {
 }
 
 impl SessionInit {
-    /// Returns a [`SessionInit`] with a single interest.
-    pub fn with_interest(
-        mode: SessionMode,
-        namespace: NamespaceId,
-        area_of_interest: AreaOfInterest,
-    ) -> Self {
-        Self {
-            mode,
-            interests: Interests::Some(BTreeMap::from_iter([(
-                namespace,
-                BTreeSet::from_iter([area_of_interest]),
-            )])),
-        }
-    }
-
-    pub fn with_explicit_interest(
-        mode: SessionMode,
-        authorisation: ReadAuthorisation,
-        area_of_interest: AreaOfInterest,
-    ) -> Self {
-        Self {
-            mode,
-            interests: Interests::Explicit(HashMap::from_iter([(
-                authorisation,
-                BTreeSet::from_iter([area_of_interest]),
-            )])),
-        }
+    pub fn new(interests: Interests, mode: SessionMode) -> Self {
+        Self { interests, mode }
     }
 }
 

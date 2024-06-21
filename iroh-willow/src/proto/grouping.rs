@@ -515,8 +515,10 @@ impl Point {
         }
     }
 
-    // pub fn into_area(&self) -> Area {
-    // }
+    pub fn into_area(&self) -> Area {
+        let times = Range::new(self.timestamp, RangeEnd::Closed(self.timestamp + 1));
+        Area::new(SubspaceArea::Id(self.subspace_id), self.path.clone(), times)
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
