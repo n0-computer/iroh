@@ -91,6 +91,9 @@ async fn main() -> anyhow::Result<()> {
             let outcome = stream.finish().await?;
             println!("NodeId: {}", node.node_id());
             println!("Hash: {}", outcome.hash);
+            tokio::signal::ctrl_c().await?;
+            node.shutdown().await?;
+            std::process::exit(0);
         }
         Commands::Connect { node_id, hash, out } => {
             println!("NodeID: {}", node.node_id());
