@@ -6,8 +6,8 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use anyhow::{bail, Context as _, Result};
+use futures_lite::Stream;
 use futures_sink::Sink;
-use futures_util::Stream;
 use hyper::HeaderMap;
 use iroh_metrics::core::UsageStatsReport;
 use iroh_metrics::{inc, report_usage_stats};
@@ -23,7 +23,7 @@ use tungstenite::protocol::Role;
 use crate::key::{PublicKey, SecretKey};
 
 use super::codec::Frame;
-use super::http::server::Protocol;
+use super::http::Protocol;
 use super::{
     client_conn::ClientConnBuilder,
     clients::Clients,
@@ -657,16 +657,13 @@ mod tests {
     fn make_test_client(secret_key: SecretKey) -> (tokio::io::DuplexStream, ClientBuilder) {
         let (client, server) = tokio::io::duplex(10);
         let (client_reader, client_writer) = tokio::io::split(client);
-        let (client_reader, client_writer) = (
-            RelayConnReader::Relay(FramedRead::new(
-                MaybeTlsStreamReader::Mem(client_reader),
-                DerpCodec,
-            )),
-            RelayConnWriter::Relay(FramedWrite::new(
-                MaybeTlsStreamWriter::Mem(client_writer),
-                DerpCodec,
-            )),
-        );
+
+        let client_reader = MaybeTlsStreamReader::Mem(client_reader);
+        let client_writer = MaybeTlsStreamWriter::Mem(client_writer);
+
+        let client_reader = RelayConnReader::Derp(FramedRead::new(client_reader, DerpCodec));
+        let client_writer = RelayConnWriter::Derp(FramedWrite::new(client_writer, DerpCodec));
+
         (
             server,
             ClientBuilder::new(secret_key, None, client_reader, client_writer),
