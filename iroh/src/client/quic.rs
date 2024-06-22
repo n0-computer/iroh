@@ -25,23 +25,29 @@ pub type RpcClient = quic_rpc::RpcClient<RpcService, BoxedConnection<RpcService>
 
 impl Iroh {
     /// Connect to an iroh node running on the same computer, but in a different process.
-    pub async fn connect(root: impl AsRef<Path>) -> anyhow::Result<Self> {
+    pub async fn connect_path(root: impl AsRef<Path>) -> anyhow::Result<Self> {
         let rpc_status = RpcStatus::load(root).await?;
         match rpc_status {
             RpcStatus::Stopped => {
                 bail!("iroh is not running, please start it");
             }
-            RpcStatus::Running { client, .. } => Ok(Iroh::new(client)),
+            RpcStatus::Running { client, port: _ } => Ok(Iroh::new(client)),
         }
+    }
+
+    /// Connect to an iroh node at the given RPC address.
+    pub async fn connect_addr(addr: SocketAddr) -> anyhow::Result<Self> {
+        let client = connect_raw(addr).await?;
+        Ok(Iroh::new(client))
     }
 }
 
 /// Create a raw RPC client to an iroh node running on the same computer, but in a different
 /// process.
-pub(crate) async fn connect_raw(rpc_port: u16) -> anyhow::Result<RpcClient> {
+pub(crate) async fn connect_raw(addr: SocketAddr) -> anyhow::Result<RpcClient> {
     let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into();
     let endpoint = create_quinn_client(bind_addr, vec![RPC_ALPN.to_vec()], false)?;
-    let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), rpc_port);
+
     let server_name = "localhost".to_string();
     let connection = QuinnConnection::<RpcService>::new(endpoint, addr, server_name);
     let connection = BoxedConnection::new(connection);

@@ -130,7 +130,7 @@ impl Cli {
                     .await
                 } else {
                     crate::logging::init_terminal_logging()?;
-                    let iroh = Iroh::connect(data_dir).await.context("rpc connect")?;
+                    let iroh = Iroh::connect_path(data_dir).await.context("rpc connect")?;
                     let env = ConsoleEnv::for_console(data_dir_owned, &iroh).await?;
                     console::run(&iroh, &env).await
                 }
@@ -151,7 +151,7 @@ impl Cli {
                     .await
                 } else {
                     crate::logging::init_terminal_logging()?;
-                    let iroh = Iroh::connect(data_dir).await.context("rpc connect")?;
+                    let iroh = Iroh::connect_path(data_dir).await.context("rpc connect")?;
                     let env = ConsoleEnv::for_cli(data_dir_owned, &iroh).await?;
                     command.run(&iroh, &env).await
                 }

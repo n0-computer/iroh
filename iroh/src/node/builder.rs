@@ -90,6 +90,7 @@ where
     bind_port: Option<u16>,
     secret_key: SecretKey,
     rpc_endpoint: E,
+    rpc_port: Option<u16>,
     blobs_store: D,
     keylog: bool,
     relay_mode: RelayMode,
@@ -156,6 +157,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             relay_mode: RelayMode::Default,
             dns_resolver: None,
             rpc_endpoint: Default::default(),
+            rpc_port: None,
             gc_policy: GcPolicy::Disabled,
             docs_storage: DocsStorage::Memory,
             node_discovery: Default::default(),
@@ -182,6 +184,7 @@ impl<D: Map> Builder<D> {
             relay_mode: RelayMode::Default,
             dns_resolver: None,
             rpc_endpoint: Default::default(),
+            rpc_port: None,
             gc_policy: GcPolicy::Disabled,
             docs_storage,
             node_discovery: Default::default(),
@@ -244,6 +247,7 @@ where
             blobs_store,
             keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
+            rpc_port: self.rpc_port,
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
@@ -256,7 +260,11 @@ where
     }
 
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint<E2: ServiceEndpoint<RpcService>>(self, value: E2) -> Builder<D, E2> {
+    pub fn rpc_endpoint<E2: ServiceEndpoint<RpcService>>(
+        self,
+        value: E2,
+        port: Option<u16>,
+    ) -> Builder<D, E2> {
         // we can't use ..self here because the return type is different
         Builder {
             storage: self.storage,
@@ -265,6 +273,7 @@ where
             blobs_store: self.blobs_store,
             keylog: self.keylog,
             rpc_endpoint: value,
+            rpc_port: port,
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
@@ -291,6 +300,7 @@ where
             blobs_store: self.blobs_store,
             keylog: self.keylog,
             rpc_endpoint: ep,
+            rpc_port: Some(actual_rpc_port),
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
@@ -501,6 +511,8 @@ where
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
         let inner = Arc::new(NodeInner {
+            storage: self.storage,
+            rpc_port: self.rpc_port,
             db: self.blobs_store,
             docs,
             endpoint,
