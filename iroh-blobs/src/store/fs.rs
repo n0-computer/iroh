@@ -660,6 +660,35 @@ pub(crate) enum ActorMessage {
 }
 
 impl ActorMessage {
+    fn name(&self) -> String {
+        match self {
+            Self::Get { .. } => "Get",
+            Self::GetOrCreate { .. } => "GetOrCreate",
+            Self::EntryStatus { .. } => "EntryStatus",
+            Self::Blobs { .. } => "Blobs",
+            Self::Tags { .. } => "Tags",
+            Self::GcStart { .. } => "GcStart",
+            Self::GetFullEntryState { .. } => "GetFullEntryState",
+            Self::Dump => "Dump",
+            Self::Import { .. } => "Import",
+            Self::Export { .. } => "Export",
+            Self::OnMemSizeExceeded { .. } => "OnMemSizeExceeded",
+            Self::OnComplete { .. } => "OnComplete",
+            Self::SetTag { .. } => "SetTag",
+            Self::CreateTag { .. } => "CreateTag",
+            Self::SetFullEntryState { .. } => "SetFullEntryState",
+            Self::Delete { .. } => "Delete",
+            Self::UpdateInlineOptions { .. } => "UpdateInlineOptions",
+            Self::Sync { .. } => "Sync",
+            Self::Shutdown { .. } => "Shutdown",
+            Self::Fsck { .. } => "Fsck",
+            Self::ImportFlatStore { .. } => "ImportFlatStore",
+            #[cfg(test)]
+            Self::EntryState { .. } => "EntryState",
+        }
+        .to_string()
+    }
+
     fn category(&self) -> MessageCategory {
         match self {
             Self::Get { .. }
@@ -1485,6 +1514,7 @@ impl Actor {
     fn run_batched(mut self) -> ActorResult<()> {
         let mut msgs = PeekableFlumeReceiver::new(self.state.msgs.clone());
         while let Some(msg) = msgs.recv() {
+            tracing::debug!("redb actor recv'd message {:?}", msg.name());
             if let ActorMessage::Shutdown { tx } = msg {
                 // Make sure the database is dropped before we send the reply.
                 drop(self);
@@ -2207,6 +2237,7 @@ impl ActorState {
         tables: &impl ReadableTables,
         msg: ActorMessage,
     ) -> ActorResult<std::result::Result<(), ActorMessage>> {
+        tracing::debug!("handle_readonly {}", msg.name());
         match msg {
             ActorMessage::Get { hash, tx } => {
                 let res = self.get(tables, hash);
@@ -2254,6 +2285,7 @@ impl ActorState {
         tables: &mut Tables,
         msg: ActorMessage,
     ) -> ActorResult<std::result::Result<(), ActorMessage>> {
+        tracing::debug!("handle_readwrite {}", msg.name());
         match msg {
             ActorMessage::Import { cmd, tx } => {
                 let res = self.import(tables, cmd);
