@@ -21,7 +21,7 @@ use quic_rpc::{RpcServer, ServiceEndpoint};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     client::RpcService,
@@ -265,14 +265,17 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         });
 
         loop {
+            trace!("wait for tick");
             tokio::select! {
                 biased;
                 _ = self.cancel_token.cancelled() => {
+                    trace!("tick: cancel");
                     break;
                 },
                 // handle rpc requests. This will do nothing if rpc is not configured, since
                 // accept is just a pending future.
                 request = external_rpc.accept() => {
+                    trace!("tick: external_rpc");
                     match request {
                         Ok((msg, chan)) => {
                             rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, msg, chan);
@@ -284,6 +287,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 },
                 // handle internal rpc requests.
                 request = internal_rpc.accept() => {
+                    trace!("tick: internal_rpc");
                     match request {
                         Ok((msg, chan)) => {
                             rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, msg, chan);
@@ -295,6 +299,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 },
                 // handle incoming p2p connections.
                 Some(connecting) = self.endpoint.accept() => {
+                    trace!("tick: endpoint.accept");
                     let protocols = protocols.clone();
                     join_set.spawn(async move {
                         handle_connection(connecting, protocols).await;
@@ -303,12 +308,16 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 },
                 // handle task terminations and quit on panics.
                 res = join_set.join_next(), if !join_set.is_empty() => {
+                    trace!("tick: join_set.join_next");
                     if let Some(Err(err)) = res {
                         error!("Task failed: {err:?}");
                         break;
                     }
                 },
-                else => break,
+                else => {
+                    trace!("tick: else, break");
+                    break;
+                }
             }
         }
 

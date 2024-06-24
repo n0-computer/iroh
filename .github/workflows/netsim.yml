@@ -120,7 +120,7 @@ jobs:
         cd ../chuck/netsim
         sudo kill -9 $(pgrep ovs) || true
         sudo mn --clean || true
-        export RUST_LOG=debug,iroh_net=warn
+        export RUST_LOG=debug,iroh_net=warn,iroh::node=trace
         c='${{ steps.detect_comment_config.outputs.NETSIM_CONFIG }}'
         if [ -z "${c}" ];
         then
