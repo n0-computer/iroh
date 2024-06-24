@@ -267,6 +267,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             tokio::select! {
                 biased;
                 _ = self.cancel_token.cancelled() => {
+                    tracing::debug!("cancel_token cancelled");
                     break;
                 },
                 // handle rpc requests. This will do nothing if rpc is not configured, since
@@ -307,10 +308,14 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                         break;
                     }
                 },
-                else => break,
+                else => {
+                    tracing::debug!("else break");
+                    break
+                },
             }
         }
 
+        tracing::debug!("end of node run loop - shutdown");
         self.shutdown(protocols).await;
 
         // Abort remaining tasks.
