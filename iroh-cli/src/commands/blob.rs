@@ -277,8 +277,10 @@ impl BlobCommands {
                     Some(OutputTarget::Stdout) => {
                         // we asserted above that `OutputTarget::Stdout` is only permitted if getting a
                         // single hash and not a hashseq.
+                        tracing::debug!("starting blobs read {}", hash);
                         let mut blob_read = iroh.blobs().read(hash).await?;
                         tokio::io::copy(&mut blob_read, &mut tokio::io::stdout()).await?;
+                        tracing::debug!("finished blobs read {}", hash);
                     }
                     Some(OutputTarget::Path(path)) => {
                         let absolute = std::env::current_dir()?.join(&path);

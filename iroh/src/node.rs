@@ -331,16 +331,19 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         }
 
         // Abort rpc tasks.
+        debug!("shutting down RPC tasks ({})", rpc_join_set.len());
         rpc_join_set.shutdown().await;
 
         self.shutdown(protocols).await;
 
         // Abort remaining tasks.
+        debug!("shutting down remaining tasks ({})", join_set.len());
         join_set.shutdown().await;
     }
 
     /// Shutdown the different parts of the node concurrently.
     async fn shutdown(&self, protocols: Arc<ProtocolMap>) {
+        debug!("shutting down node");
         let error_code = Closed::ProviderTerminating;
 
         // Shutdown future for the docs engine, if enabled.
