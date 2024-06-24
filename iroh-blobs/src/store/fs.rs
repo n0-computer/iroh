@@ -2332,6 +2332,7 @@ impl ActorState {
             msg => {
                 // try to handle it as readonly
                 if let Err(msg) = self.handle_readonly(tables, msg)? {
+                    tracing::debug!("neither readwrite nor readonly message: {}", msg.name());
                     return Ok(Err(msg));
                 }
             }
