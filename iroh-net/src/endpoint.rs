@@ -12,7 +12,7 @@
 //! [module docs]: crate
 
 use std::any::Any;
-use std::future::Future;
+use std::future::{Future, IntoFuture};
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -22,7 +22,8 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
-use futures_lite::StreamExt;
+use futures_lite::{Stream, StreamExt};
+use pin_project::pin_project;
 use quinn_proto::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, info_span, trace, warn};
@@ -43,8 +44,8 @@ mod rtt_actor;
 use self::rtt_actor::RttMessage;
 
 pub use quinn::{
-    Connection, ConnectionError, ReadError, RecvStream, SendStream, TransportConfig, VarInt,
-    WriteError,
+    Connection, ConnectionError, ReadError, RecvStream, RetryError, SendStream, ServerConfig,
+    TransportConfig, VarInt, WriteError,
 };
 
 pub use super::magicsock::{
@@ -127,7 +128,6 @@ impl Builder {
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config.unwrap_or_default()),
             keylog: self.keylog,
-            concurrent_connections: self.concurrent_connections,
             secret_key: secret_key.clone(),
         };
         let dns_resolver = self
@@ -281,57 +281,6 @@ impl Builder {
         self.insecure_skip_relay_cert_verify = skip_verify;
         self
     }
-
-    /// Sets the relay servers to assist in establishing connectivity.
-    ///
-    /// relay servers are used to discover other peers by [`PublicKey`] and also help
-    /// establish connections between peers by being an initial relay for traffic while
-    /// assisting in holepunching to establish a direct connection between peers.
-    ///
-    /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
-    /// configured relay node.  If an invalid [`RelayMap`] is provided [`bind`]
-    /// will result in an error.
-    ///
-    /// [`bind`]: MagicEndpointBuilder::bind
-    pub fn relay_mode(mut self, relay_mode: RelayMode) -> Self {
-        self.relay_mode = relay_mode;
-        self
-    }
-
-    /// Set a custom [quinn::TransportConfig] for this endpoint.
-    ///
-    /// The transport config contains parameters governing the QUIC state machine.
-    ///
-    /// If unset, the default config is used. Default values should be suitable for most internet
-    /// applications. Applications protocols which forbid remotely-initiated streams should set
-    /// `max_concurrent_bidi_streams` and `max_concurrent_uni_streams` to zero.
-    pub fn transport_config(mut self, transport_config: quinn::TransportConfig) -> Self {
-        self.transport_config = Some(transport_config);
-        self
-    }
-
-    /// Optionally set the path where peer info should be stored.
-    ///
-    /// If the file exists, it will be used to populate an initial set of peers. Peers will be
-    /// saved periodically and on shutdown to this path.
-    pub fn peers_data_path(mut self, path: PathBuf) -> Self {
-        self.peers_path = Some(path);
-        self
-    }
-
-    /// Optionally set a discovery mechanism for this endpoint.
-    ///
-    /// If you want to combine multiple discovery services, you can pass a
-    /// [`crate::discovery::ConcurrentDiscovery`].
-    ///
-    /// If no discovery service is set, connecting to a node without providing its
-    /// direct addresses or relay URLs will fail.
-    ///
-    /// See the documentation of the [`Discovery`] trait for details.
-    pub fn discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
-        self.discovery = Some(discovery);
-        self
-    }
 }
 
 /// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
@@ -340,21 +289,17 @@ struct StaticConfig {
     secret_key: SecretKey,
     transport_config: Arc<quinn::TransportConfig>,
     keylog: bool,
-    concurrent_connections: Option<u32>,
 }
 
 impl StaticConfig {
     /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
     fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> Result<quinn::ServerConfig> {
-        let mut server_config = make_server_config(
+        let server_config = make_server_config(
             &self.secret_key,
             alpn_protocols,
             self.transport_config.clone(),
             self.keylog,
         )?;
-        if let Some(c) = self.concurrent_connections {
-            server_config.concurrent_connections(c);
-        }
         Ok(server_config)
     }
 }
@@ -369,7 +314,7 @@ pub fn make_server_config(
     let tls_server_config = tls::make_server_config(secret_key, alpn_protocols, keylog)?;
     let mut server_config =
         quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls_server_config)?));
-    server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
+    server_config.transport_config(transport_config);
 
     Ok(server_config)
 }
@@ -443,7 +388,7 @@ impl Endpoint {
 
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
-            server_config,
+            Some(server_config),
             Arc::new(msock.clone()),
             Arc::new(quinn::TokioRuntime),
         )?;
@@ -594,7 +539,7 @@ impl Endpoint {
     pub fn accept(&self) -> Accept<'_> {
         Accept {
             inner: self.endpoint.accept(),
-            magic_ep: self.clone(),
+            ep: self.clone(),
         }
     }
 
@@ -944,36 +889,146 @@ impl Endpoint {
 
 /// Future produced by [`Endpoint::accept`].
 #[derive(Debug)]
-#[pin_project::pin_project]
+#[pin_project]
 pub struct Accept<'a> {
     #[pin]
     inner: quinn::Accept<'a>,
-    magic_ep: Endpoint,
+    ep: Endpoint,
 }
 
 impl<'a> Future for Accept<'a> {
-    type Output = Option<Connecting>;
+    type Output = Option<Incoming>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         match this.inner.poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(inner)) => Poll::Ready(Some(Connecting {
+            Poll::Ready(Some(inner)) => Poll::Ready(Some(Incoming {
                 inner,
-                magic_ep: this.magic_ep.clone(),
+                ep: this.ep.clone(),
             })),
+        }
+    }
+}
+
+/// An incoming connection for which the server has not yet begun its parts of the
+/// handshake.
+#[derive(Debug)]
+pub struct Incoming {
+    inner: quinn::Incoming,
+    ep: Endpoint,
+}
+
+impl Incoming {
+    /// Attempts to accept this incoming connection (an error may still occur).
+    pub fn accept(self) -> Result<Connecting, ConnectionError> {
+        self.inner.accept().map(|conn| Connecting {
+            inner: conn,
+            ep: self.ep,
+        })
+    }
+
+    /// Accepts this incoming connection using a custom configuration.
+    ///
+    /// See [`accept()`] for more details.
+    ///
+    /// [`accept()`]: Incoming::accept
+    pub fn accept_with(
+        self,
+        server_config: Arc<ServerConfig>,
+    ) -> Result<Connecting, ConnectionError> {
+        self.inner
+            .accept_with(server_config)
+            .map(|conn| Connecting {
+                inner: conn,
+                ep: self.ep,
+            })
+    }
+
+    /// Rejects this incoming connection attempt.
+    pub fn refuse(self) {
+        self.inner.refuse()
+    }
+
+    /// Responds with a retry packet.
+    ///
+    /// This requires the client to retry with address validation.
+    ///
+    /// Errors if `remote_address_validated()` is true.
+    pub fn retry(self) -> Result<(), RetryError> {
+        self.inner.retry()
+    }
+
+    /// Ignores this incoming connection attempt, not sending any packet in response.
+    pub fn ignore(self) {
+        self.inner.ignore()
+    }
+
+    /// Returns the local IP address which was used when the peer established the
+    /// connection.
+    pub fn local_ip(&self) -> Option<IpAddr> {
+        self.inner.local_ip()
+    }
+
+    /// Returns the peer's UDP address.
+    pub fn remote_address(&self) -> SocketAddr {
+        self.inner.remote_address()
+    }
+
+    /// Whether the socket address that is initiating this connection has been validated.
+    ///
+    /// This means that the sender of the initial packet has proved that they can receive
+    /// traffic sent to `self.remote_address()`.
+    pub fn remote_address_validated(&self) -> bool {
+        self.inner.remote_address_validated()
+    }
+}
+
+impl IntoFuture for Incoming {
+    type Output = Result<Connection, ConnectionError>;
+    type IntoFuture = IncomingFuture;
+
+    fn into_future(self) -> Self::IntoFuture {
+        IncomingFuture {
+            inner: self.inner.into_future(),
+            ep: self.ep,
+        }
+    }
+}
+
+/// Adaptor to let [`Incoming`] be `await`ed like a [`Connecting`].
+#[derive(Debug)]
+#[pin_project]
+pub struct IncomingFuture {
+    #[pin]
+    inner: quinn::IncomingFuture,
+    ep: Endpoint,
+}
+
+impl Future for IncomingFuture {
+    type Output = Result<quinn::Connection, ConnectionError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        match this.inner.poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Ok(conn)) => {
+                try_send_rtt_msg(&conn, this.ep);
+                Poll::Ready(Ok(conn))
+            }
         }
     }
 }
 
 /// In-progress connection attempt future
 #[derive(Debug)]
-#[pin_project::pin_project]
+#[pin_project]
 pub struct Connecting {
     #[pin]
     inner: quinn::Connecting,
-    magic_ep: Endpoint,
+    ep: Endpoint,
 }
 
 impl Connecting {
@@ -981,13 +1036,10 @@ impl Connecting {
     pub fn into_0rtt(self) -> Result<(quinn::Connection, quinn::ZeroRttAccepted), Self> {
         match self.inner.into_0rtt() {
             Ok((conn, zrtt_accepted)) => {
-                try_send_rtt_msg(&conn, &self.magic_ep);
+                try_send_rtt_msg(&conn, &self.ep);
                 Ok((conn, zrtt_accepted))
             }
-            Err(inner) => Err(Self {
-                inner,
-                magic_ep: self.magic_ep,
-            }),
+            Err(inner) => Err(Self { inner, ep: self.ep }),
         }
     }
 
@@ -1030,7 +1082,7 @@ impl Future for Connecting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(conn)) => {
-                try_send_rtt_msg(&conn, this.magic_ep);
+                try_send_rtt_msg(&conn, this.ep);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -1038,6 +1090,7 @@ impl Future for Connecting {
 }
 
 /// Extract the [`PublicKey`] from the peer's TLS certificate.
+// TODO: make this a method now
 pub fn get_remote_node_id(connection: &quinn::Connection) -> Result<PublicKey> {
     let data = connection.peer_identity();
     match data {
@@ -1458,9 +1511,13 @@ mod tests {
         }
 
         async fn accept_world(ep: Endpoint, src: NodeId) {
-            let mut incoming = ep.accept().await.unwrap();
-            let alpn = incoming.alpn().await.unwrap();
-            let conn = incoming.await.unwrap();
+            let incoming = ep.accept().await.unwrap();
+            let mut iconn = incoming.accept().unwrap();
+            let alpn = iconn.alpn().await.unwrap();
+            let conn = iconn.await.unwrap();
+            // TODO: make this work:
+            // let conn = ep.accept().await.unwrap().await.unwrap();
+            // let alpn = conn.alpn();
             let node_id = get_remote_node_id(&conn).unwrap();
             assert_eq!(node_id, src);
             assert_eq!(alpn, TEST_ALPN);

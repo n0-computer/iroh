@@ -86,11 +86,11 @@ impl From<endpoint::ReadError> for GetError {
     fn from(value: endpoint::ReadError) -> Self {
         use endpoint::ReadError;
         match value {
-            e @ quinn::ReadError::Reset(_) => GetError::RemoteReset(e.into()),
-            quinn::ReadError::ConnectionLost(conn_error) => conn_error.into(),
-            quinn::ReadError::ClosedStream
-            | quinn::ReadError::IllegalOrderedRead
-            | quinn::ReadError::ZeroRttRejected => {
+            e @ ReadError::Reset(_) => GetError::RemoteReset(e.into()),
+            ReadError::ConnectionLost(conn_error) => conn_error.into(),
+            ReadError::ClosedStream
+            | ReadError::IllegalOrderedRead
+            | ReadError::ZeroRttRejected => {
                 // all these errors indicate the peer is not usable at this moment
                 GetError::Io(value.into())
             }
@@ -107,9 +107,9 @@ impl From<endpoint::WriteError> for GetError {
     fn from(value: endpoint::WriteError) -> Self {
         use endpoint::WriteError;
         match value {
-            e @ quinn::WriteError::Stopped(_) => GetError::RemoteReset(e.into()),
-            quinn::WriteError::ConnectionLost(conn_error) => conn_error.into(),
-            quinn::WriteError::ClosedStream | quinn::WriteError::ZeroRttRejected => {
+            e @ WriteError::Stopped(_) => GetError::RemoteReset(e.into()),
+            WriteError::ConnectionLost(conn_error) => conn_error.into(),
+            WriteError::ClosedStream | WriteError::ZeroRttRejected => {
                 // all these errors indicate the peer is not usable at this moment
                 GetError::Io(value.into())
             }

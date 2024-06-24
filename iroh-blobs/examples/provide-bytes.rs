@@ -100,8 +100,8 @@ async fn main() -> Result<()> {
 
             // spawn a task to handle the connection
             tokio::spawn(async move {
-                let remote_addr = incoming.remote_address();
-                let conn = match incoming.await {
+                let remote_addr = conn.remote_address();
+                let conn = match conn.await {
                     Ok(conn) => conn,
                     Err(err) => {
                         warn!(%remote_addr, "Error connecting: {err:#}");

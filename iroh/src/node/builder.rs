@@ -445,7 +445,6 @@ where
                 .proxy_from_env()
                 .keylog(self.keylog)
                 .transport_config(transport_config)
-                .concurrent_connections(MAX_CONNECTIONS)
                 .relay_mode(self.relay_mode);
             let endpoint = match discovery {
                 Some(discovery) => endpoint.discovery(discovery),
@@ -742,24 +741,20 @@ const DEFAULT_RPC_PORT: u16 = 0x1337;
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u32 = 1024;
 
-/// Create a [`quinn::ServerConfig`] with the given secret key and limits.
-// TODO: duplicated from iroh_net::magic_endpoint
-pub fn make_server_config(
-    secret_key: &SecretKey,
-    alpn_protocols: Vec<Vec<u8>>,
-    transport_config: Option<quinn::TransportConfig>,
-    keylog: bool,
-) -> Result<quinn::ServerConfig> {
-    todo!()
-    // needs quic-rpc to upgrade to rustls@0.23
-    /*
-    // We get away with this because rustls is still using the same version.
-    let tls_server_config = iroh_net::tls::make_server_config(secret_key, alpn_protocols, keylog)?;
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
-    server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
+// /// Create a [`quinn::ServerConfig`] with the given secret key and limits.
+// // TODO: duplicated from iroh_net::magic_endpoint
+// pub fn make_server_config(
+//     secret_key: &SecretKey,
+//     alpn_protocols: Vec<Vec<u8>>,
+//     transport_config: Option<quinn::TransportConfig>,
+//     keylog: bool,
+// ) -> Result<quinn::ServerConfig> {
+//     let tls_server_config = iroh_net::tls::make_server_config(secret_key, alpn_protocols, keylog)?;
+//     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+//     server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
 
-    Ok(server_config)*/
-}
+//     Ok(server_config)
+// }
 
 /// Makes a an RPC endpoint that uses a QUIC transport.
 ///
@@ -779,7 +774,6 @@ fn make_rpc_endpoint(
         Arc::new(transport_config),
         false,
     )?;
-    server_config.concurrent_connections(MAX_RPC_CONNECTIONS);
 
     let rpc_quinn_endpoint = quinn::Endpoint::server(server_config.clone(), rpc_addr.into());
     let rpc_quinn_endpoint = match rpc_quinn_endpoint {

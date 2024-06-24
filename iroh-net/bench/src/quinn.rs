@@ -70,7 +70,8 @@ pub async fn connect_client(
     let secret_key = iroh_net::key::SecretKey::generate();
     let tls_client_config =
         iroh_net::tls::make_client_config(&secret_key, None, vec![ALPN.to_vec()], false)?;
-    let mut config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+    let quic_client_config = quinn::crypto::rustls::QuicClientConfig::try_from(tls_client_config)?;
+    let mut config = quinn::ClientConfig::new(Arc::new(quic_client_config));
 
     let transport = transport_config(opt.max_streams, opt.initial_mtu);
 
@@ -211,7 +212,11 @@ async fn send_data_on_stream(stream: &mut SendStream, stream_size: u64) -> Resul
             .context("failed sending data")?;
     }
 
-    stream.finish().await.context("failed finishing stream")?;
+    stream.finish().context("failed finishing stream")?;
+    stream
+        .stopped()
+        .await
+        .context("failed to wait for stream to be stopped")?;
 
     Ok(())
 }

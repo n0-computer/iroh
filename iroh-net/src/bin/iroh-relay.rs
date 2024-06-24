@@ -47,7 +47,9 @@ enum CertMode {
     LetsEncrypt,
 }
 
-fn load_certs(filename: impl AsRef<Path>) -> Result<Vec<rustls::Certificate>> {
+fn load_certs(
+    filename: impl AsRef<Path>,
+) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>> {
     let certfile = std::fs::File::open(filename).context("cannot open certificate file")?;
     let mut reader = std::io::BufReader::new(certfile);
 

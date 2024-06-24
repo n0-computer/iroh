@@ -5,10 +5,23 @@
 
 use std::sync::Arc;
 
+use quinn::crypto::rustls::{NoInitialCipherSuite, QuicClientConfig, QuicServerConfig};
+
 use crate::key::{PublicKey, SecretKey};
 
 pub mod certificate;
 mod verifier;
+
+/// Error for generating iroh p2p TLS configs.
+#[derive(Debug, thiserror::Error)]
+pub enum CreateConfigError {
+    /// Error generating the certificate.
+    #[error("Error generating the certificate")]
+    CertError(#[from] certificate::GenError),
+    /// Error creating QUIC config.
+    #[error("Error creating QUIC config")]
+    ConfigError(#[from] NoInitialCipherSuite),
+}
 
 /// Create a TLS client configuration.
 ///
@@ -20,7 +33,7 @@ pub fn make_client_config(
     remote_peer_id: Option<PublicKey>,
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
-) -> Result<rustls::ClientConfig, certificate::GenError> {
+) -> Result<QuicClientConfig, CreateConfigError> {
     let (certificate, secret_key) = certificate::generate(secret_key)?;
 
     let mut crypto = rustls::ClientConfig::builder_with_provider(Arc::new(
@@ -38,8 +51,8 @@ pub fn make_client_config(
     if keylog {
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
-
-    Ok(crypto)
+    let config = crypto.try_into()?;
+    Ok(config)
 }
 
 /// Create a TLS server configuration.
@@ -51,7 +64,7 @@ pub fn make_server_config(
     secret_key: &SecretKey,
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
-) -> Result<rustls::ServerConfig, certificate::GenError> {
+) -> Result<QuicServerConfig, CreateConfigError> {
     let (certificate, secret_key) = certificate::generate(secret_key)?;
 
     let mut crypto = rustls::ServerConfig::builder_with_provider(Arc::new(
@@ -66,5 +79,6 @@ pub fn make_server_config(
     if keylog {
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
-    Ok(crypto)
+    let config = crypto.try_into()?;
+    Ok(config)
 }

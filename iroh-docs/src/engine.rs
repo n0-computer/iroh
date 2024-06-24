@@ -195,7 +195,10 @@ impl Engine {
     }
 
     /// Handle an incoming iroh-docs connection.
-    pub(super) async fn handle_connection(&self, conn: quinnx::Connecting) -> anyhow::Result<()> {
+    pub async fn handle_connection(
+        &self,
+        conn: iroh_net::endpoint::Connecting,
+    ) -> anyhow::Result<()> {
         self.to_live_actor
             .send(ToLiveActor::HandleConnection { conn })
             .await?;

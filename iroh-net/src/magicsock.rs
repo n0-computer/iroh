@@ -477,14 +477,13 @@ impl MagicSock {
             ));
         }
 
+        let dest = QuicMappedAddr(transmit.destination);
         trace!(
-            dst = %QuicMappedAddr(transmit.destination),
+            dst = %dest,
             src = ?transmit.src_ip,
             len = %transmit.contents.len(),
             "sending",
         );
-
-        let dest = QuicMappedAddr(transmit.destination);
         let mut transmit = transmit.clone();
         match self
             .node_map
@@ -503,14 +502,14 @@ impl MagicSock {
                     pings_sent = true;
                 }
 
-                if udp_addr.is_none() && relay_url.is_none() {
-                    // Handle no addresses being available
-                    warn!(node = %node_id.fmt_short(), "failed to send: no UDP or relay addr");
-                    return Err(io::Error::new(
-                        io::ErrorKind::NotConnected,
-                        "no UDP or relay address available for node",
-                    ));
-                }
+                // if udp_addr.is_none() && relay_url.is_none() {
+                //     // Handle no addresses being available
+                //     warn!(node = %node_id.fmt_short(), "failed to send: no UDP or relay addr");
+                //     return Err(io::Error::new(
+                //         io::ErrorKind::NotConnected,
+                //         "no UDP or relay address available for node",
+                //     ));
+                // }
 
                 let mut udp_sent = false;
                 let mut udp_error = None;
@@ -551,53 +550,45 @@ impl MagicSock {
                 if udp_addr.is_none() && relay_url.is_none() {
                     // Returning an error here would lock up the entire `Endpoint`.
                     //
-                    // If we returned `Poll::Pending`, the waker driving the `poll_send` will never get woken up.
+                    // If we returned `Poll::Pending`, the waker driving the `poll_send`
+                    // will never get woken up.
                     //
-                    // Our best bet here is to log an error and return `Poll::Ready(Ok(n))`.
+                    // Our best bet here is to log an error and return `Ok(())`.  In doing
+                    // so, we are effectively dropping this transmit, by lying to QUIC and
+                    // saying they were sent.  If we returned `Err(WouldBlock)` instead
+                    // Quinn would loop to attempt to re-send this transmit, blocking other
+                    // destinations.
                     //
-                    // `n` is the number of consecutive transmits in this batch that are meant for the same destination (a destination that we have no addresses for, and so we can never actually send).
-                    //
-                    // When we return `Poll::Ready(Ok(n))`, we are effectively dropping those n messages, by lying to QUIC and saying they were sent.
-                    // (If we returned `Poll::Ready(Ok(0))` instead, QUIC would loop to attempt to re-send those messages, blocking other traffic.)
-                    //
-                    // When `QUIC` gets no `ACK`s for those messages, the connection will eventually timeout.
-                    error!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
-                    return Poll::Ready(Ok(n));
-                    // let udp_pending = udp_error
-                    //     .as_ref()
-                    //     .map(|err| err.kind() == io::ErrorKind::WouldBlock)
-                    //     .unwrap_or_default();
-                    // let relay_pending = relay_error
-                    //     .as_ref()
-                    //     .map(|err| err.kind() == io::ErrorKind::WouldBlock)
-                    //     .unwrap_or_default();
-                    // if udp_pending && relay_pending {
-                    //     // Handle backpressure.  The explicit choice here is to return pending
-                    //     // as soon as one of the channels would be pending.  This matches the
-                    //     // polling behaviour of IoPoller.
-                    //     return Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"));
+                    // When `Quinn` gets no `ACK`s for those messages, the connection will
+                    // eventually timeout.
+                    error!(node = %node_id.fmt_short(), "failed to send: no UDP or relay addr");
+                    return Ok(());
                 }
-
-                if (udp_addr.is_none() || udp_pending) && (relay_url.is_none() || relay_pending) {
-                    // Handle backpressure
-                    // The explicit choice here is to only return pending, iff all available paths returned
-                    // pending.
-                    // This might result in one channel being backed up, without the system noticing, but
-                    // for now this seems to be the best choice workable in the current implementation.
-                    return Poll::Pending;
+                let udp_pending = udp_error
+                    .as_ref()
+                    .map(|err| err.kind() == io::ErrorKind::WouldBlock)
+                    .unwrap_or_default();
+                let relay_pending = relay_error
+                    .as_ref()
+                    .map(|err| err.kind() == io::ErrorKind::WouldBlock)
+                    .unwrap_or_default();
+                if udp_pending && relay_pending {
+                    // Handle backpressure.
+                    return Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"));
                 }
 
                 if !relay_sent && !udp_sent && !pings_sent {
-                    // Returning an error here would lock up the entire `Endpoint`.
-                    // Instead, log an error and return `Poll::Pending`, the connection will timeout.
+                    // Returning an error here would kill the Quinn EndpointDriver and lock
+                    // up the entire Endpoint.  Instead, log an error and return
+                    // `Err(WouldBlock)`, the connection will timeout.
                     let err = udp_error.unwrap_or_else(|| {
                         io::Error::new(
-                            io::ErrorKind::NotConnected,
+                            io::ErrorKind::WouldBlock,
                             "no UDP or relay address available for node",
                         )
                     });
-                    error!(node = %public_key.fmt_short(), "{err:?}");
-                    return Poll::Pending;
+                    error!(node = %node_id.fmt_short(), "{err:?}");
+                    return Err(err);
                 }
 
                 trace!(
@@ -611,7 +602,7 @@ impl MagicSock {
             None => {
                 error!(%dest, "no endpoint for mapped address");
                 Err(io::Error::new(
-                    io::ErrorKind::NotConnected,
+                    io::ErrorKind::WouldBlock,
                     "trying to send to unknown endpoint",
                 ))
             }

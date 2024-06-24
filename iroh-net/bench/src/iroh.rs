@@ -158,7 +158,11 @@ async fn send_data_on_stream(stream: &mut SendStream, stream_size: u64) -> Resul
             .context("failed sending data")?;
     }
 
-    stream.finish().await.context("failed finishing stream")?;
+    stream.finish().context("failed finishing stream")?;
+    stream
+        .stopped()
+        .await
+        .context("failed to wait for stream to be stopped")?;
 
     Ok(())
 }

@@ -190,7 +190,14 @@ async fn subscribe_loop(gossip: Gossip, topic: TopicId) -> anyhow::Result<()> {
 }
 
 async fn endpoint_loop(endpoint: Endpoint, gossip: Gossip) {
-    while let Some(conn) = endpoint.accept().await {
+    while let Some(incoming) = endpoint.accept().await {
+        let conn = match incoming.accept() {
+            Ok(conn) => conn,
+            Err(err) => {
+                println!("incoming connection failed: {err:#}");
+                continue;
+            }
+        };
         let gossip = gossip.clone();
         tokio::spawn(async move {
             if let Err(err) = handle_connection(conn, gossip).await {

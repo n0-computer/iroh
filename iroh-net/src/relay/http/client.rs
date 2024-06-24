@@ -848,9 +848,9 @@ impl Actor {
         let io = if proxy_url.scheme() == "http" {
             MaybeTlsStream::Raw(tcp_stream)
         } else {
-            let hostname = proxy_url
+            let hostname: rustls::pki_types::ServerName<'static> = proxy_url
                 .host_str()
-                .and_then(|s| rustls::ServerName::try_from(s).ok())
+                .and_then(|s| rustls::pki_types::ServerName::try_from(s.to_string()).ok())
                 .ok_or_else(|| ClientError::InvalidUrl("No tls servername for proxy url".into()))?;
             let tls_stream = self.tls_connector.connect(hostname, tcp_stream).await?;
             MaybeTlsStream::Tls(tls_stream)
