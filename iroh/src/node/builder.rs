@@ -511,7 +511,6 @@ where
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
         let inner = Arc::new(NodeInner {
-            storage: self.storage,
             rpc_port: self.rpc_port,
             db: self.blobs_store,
             docs,

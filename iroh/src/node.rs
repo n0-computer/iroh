@@ -58,8 +58,6 @@ pub struct Node<D> {
 #[derive(derive_more::Debug)]
 struct NodeInner<D> {
     db: D,
-    #[allow(dead_code)]
-    storage: StorageConfig,
     rpc_port: Option<u16>,
     docs: Option<DocsEngine>,
     endpoint: Endpoint,
