@@ -1,0 +1,1 @@
+docker buildx build -f Dockerfile --tag n0computer/iroh:latest .
