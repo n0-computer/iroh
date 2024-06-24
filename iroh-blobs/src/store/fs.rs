@@ -1557,6 +1557,7 @@ impl Actor {
                         }
                     }
                     drop(tables);
+                    tracing::debug!("committing write transaction");
                     txn.commit()?;
                     delete_after_commit.apply_and_clear(&self.state.options.path);
                     tracing::debug!("write transaction committed");
@@ -2240,7 +2241,13 @@ impl ActorState {
         tracing::debug!("handle_readonly {}", msg.name());
         match msg {
             ActorMessage::Get { hash, tx } => {
+                tracing::debug!("get {}", hash.to_hex());
                 let res = self.get(tables, hash);
+                if let Ok(Some(_handle)) = &res {
+                    tracing::debug!("get OK");
+                } else {
+                    tracing::debug!("get {:?}", res);
+                }
                 tx.send(res).ok();
             }
             ActorMessage::GetOrCreate { hash, tx } => {

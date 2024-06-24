@@ -174,10 +174,15 @@ impl<'a, T> Iterator for BatchIter<'a, T> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.remaining == 0 {
+            tracing::debug!("no more remaining messages in batch_iter",);
             return None;
         }
         let elapsed = self.start.elapsed();
         if elapsed >= self.max_duration {
+            tracing::debug!(
+                "batch_iter: transaction has been open for too long: {}",
+                elapsed.as_secs_f64()
+            );
             return None;
         }
         let remaining_time = self.max_duration - elapsed;
