@@ -281,15 +281,20 @@ impl Frame {
         bytes
     }
 
-    pub fn into_ws_message(self) -> std::io::Result<tungstenite::Message> {
+    /// Serializes this to bytes and wraps it in a websocket binary message.
+    pub(crate) fn into_ws_message(self) -> std::io::Result<tungstenite::Message> {
         Ok(tungstenite::Message::binary(self.into_ws_vec()))
     }
 
-    pub fn into_wasm_ws_message(self) -> std::io::Result<tokio_tungstenite_wasm::Message> {
+    /// Serializes this to bytes and wraps it in a websocket binary message for use in wasm.
+    pub(crate) fn into_wasm_ws_message(self) -> std::io::Result<tokio_tungstenite_wasm::Message> {
         Ok(tokio_tungstenite_wasm::Message::binary(self.into_ws_vec()))
     }
 
-    pub fn from_ws_message(
+    /// Unwraps any binary messages received via websockets and parses them into `Frame`s.
+    ///
+    /// Ignores any non-binary websocket messages with a warning.
+    pub(crate) fn from_ws_message(
         msg: tungstenite::Result<tungstenite::Message>,
     ) -> Option<anyhow::Result<Self>> {
         match msg {
@@ -302,7 +307,10 @@ impl Frame {
         }
     }
 
-    pub fn from_wasm_ws_message(
+    /// Unwraps any binary messages received via websockets (in wasm) and parses them into `Frame`s.
+    ///
+    /// Ignores any non-binary websocket messages with a warning.
+    pub(crate) fn from_wasm_ws_message(
         msg: tokio_tungstenite_wasm::Result<tokio_tungstenite_wasm::Message>,
     ) -> Option<anyhow::Result<Self>> {
         match msg {
