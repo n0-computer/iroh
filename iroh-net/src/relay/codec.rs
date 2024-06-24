@@ -275,10 +275,10 @@ impl Frame {
     }
 
     fn into_ws_vec(self) -> Vec<u8> {
-        let mut bytes = BytesMut::new();
+        let mut bytes = Vec::new();
         bytes.put_u8(self.typ().into());
         self.write_to(&mut bytes);
-        bytes.to_vec()
+        bytes
     }
 
     pub fn into_ws_message(self) -> std::io::Result<tungstenite::Message> {
@@ -316,7 +316,7 @@ impl Frame {
     }
 
     /// Writes it self to the given buffer.
-    fn write_to(&self, dst: &mut BytesMut) {
+    fn write_to(&self, mut dst: impl BufMut) {
         match self {
             Frame::ClientInfo {
                 client_public_key,
