@@ -1201,6 +1201,7 @@ impl StoreInner {
 impl Drop for StoreInner {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
+            tracing::debug!("shutdown due to drop");
             self.tx.send(ActorMessage::Shutdown { tx: None }).ok();
             handle.join().ok();
         }
@@ -1454,6 +1455,7 @@ impl super::Store for Store {
     }
 
     async fn shutdown(&self) {
+        tracing::debug!("explicit call to blob store shutdown");
         self.0.shutdown().await;
     }
 }
