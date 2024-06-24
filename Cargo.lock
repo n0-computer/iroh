@@ -2832,13 +2832,13 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.24.1",
  "tokio-rustls-acme",
- "tokio-tungstenite 0.23.1",
+ "tokio-tungstenite",
  "tokio-tungstenite-wasm",
  "tokio-util",
  "toml",
  "tracing",
  "tracing-subscriber",
- "tungstenite 0.23.0",
+ "tungstenite",
  "url",
  "watchable",
  "webpki-roots 0.25.4",
@@ -5749,19 +5749,7 @@ dependencies = [
  "futures-util",
  "log",
  "tokio",
- "tungstenite 0.21.0",
-]
-
-[[package]]
-name = "tokio-tungstenite"
-version = "0.23.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6989540ced10490aaf14e6bad2e3d33728a2813310a0c71d1574304c49631cd"
-dependencies = [
- "futures-util",
- "log",
- "tokio",
- "tungstenite 0.23.0",
+ "tungstenite",
 ]
 
 [[package]]
@@ -5777,7 +5765,7 @@ dependencies = [
  "js-sys",
  "thiserror",
  "tokio",
- "tokio-tungstenite 0.21.0",
+ "tokio-tungstenite",
  "wasm-bindgen",
  "web-sys",
 ]
@@ -6021,24 +6009,6 @@ dependencies = [
  "sha1",
  "thiserror",
  "url",
- "utf-8",
-]
-
-[[package]]
-name = "tungstenite"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e2e2ce1e47ed2994fd43b04c8f618008d4cabdd5ee34027cf14f9d918edd9c8"
-dependencies = [
- "byteorder",
- "bytes",
- "data-encoding",
- "http 1.1.0",
- "httparse",
- "log",
- "rand",
- "sha1",
- "thiserror",
  "utf-8",
 ]
 
