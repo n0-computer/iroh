@@ -9,7 +9,7 @@ use iroh::{
     net::relay::{RelayMap, RelayMode},
     node::RpcStatus,
 };
-use tracing::{info_span, Instrument};
+use tracing::{debug, info_span, Instrument};
 
 /// Whether to stop the node after running a command or run forever until stopped.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -106,7 +106,10 @@ where
         }
         // abort if the command task finishes (will run forever if not in single-command mode)
         res = &mut command_task => {
+            debug!("cli: command complete: {res:?}");
+            debug!("cli: node shutdown start");
             let _ = node.shutdown().await;
+            debug!("cli: node shutdown complete");
             res??;
         }
     }

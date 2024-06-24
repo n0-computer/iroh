@@ -29,7 +29,7 @@ use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
@@ -795,12 +795,14 @@ impl Reader {
             .await?;
         let mut stream = flatten(stream);
 
+        debug!("client: start blob_read_at");
         let (size, is_complete) = match stream.next().await {
             Some(Ok(BlobReadAtResponse::Entry { size, is_complete })) => (size, is_complete),
             Some(Err(err)) => return Err(err),
             Some(Ok(_)) => return Err(anyhow!("Expected header frame, but got data frame")),
             None => return Err(anyhow!("Expected header frame, but RPC stream was dropped")),
         };
+        debug!("client: header received");
 
         let stream = stream.map(|item| match item {
             Ok(BlobReadAtResponse::Data { chunk }) => Ok(chunk),

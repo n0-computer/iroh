@@ -164,6 +164,7 @@ impl<D: BaoStore> Node<D> {
 
         // Wait for the main task to terminate.
         self.task.await.map_err(|err| anyhow!(err))?;
+        debug!("node shutdown complete");
 
         Ok(())
     }
@@ -319,6 +320,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
 
     /// Shutdown the different parts of the node concurrently.
     async fn shutdown(&self, protocols: Arc<ProtocolMap>) {
+        debug!("node shutdown services: start");
         let error_code = Closed::ProviderTerminating;
 
         // Shutdown future for the docs engine, if enabled.
@@ -349,6 +351,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             // Shutdown protocol handlers.
             protocols.shutdown(),
         );
+        debug!("node shutdown services: done");
     }
 
     async fn run_gc_loop(

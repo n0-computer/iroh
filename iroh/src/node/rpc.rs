@@ -31,7 +31,7 @@ use quic_rpc::{
 };
 use tokio::task::JoinSet;
 use tokio_util::{either::Either, task::LocalPoolHandle};
-use tracing::{debug, info, warn};
+use tracing::{debug, error_span, info, warn, Instrument};
 
 use crate::client::{
     blobs::{BlobInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
@@ -909,10 +909,16 @@ impl<D: BaoStore> Handler<D> {
     ) -> impl Stream<Item = RpcResult<BlobReadAtResponse>> + Send + 'static {
         let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
         let db = self.inner.db.clone();
-        self.inner.rt.spawn_pinned(move || async move {
-            if let Err(err) = read_loop(req, db, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
-                tx.send_async(RpcResult::Err(err.into())).await.ok();
+        self.inner.rt.spawn_pinned(move || {
+            async move {
+                if let Err(err) = read_loop(req, db, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
+                    debug!("blob_read_at failed: {err:?}");
+                    tx.send_async(RpcResult::Err(err.into())).await.ok();
+                } else {
+                    debug!("blob_read_at complete");
+                }
             }
+            .instrument(error_span!("blob_read_at"))
         });
 
         async fn read_loop<D: iroh_blobs::store::Store>(
@@ -921,7 +927,9 @@ impl<D: BaoStore> Handler<D> {
             tx: flume::Sender<RpcResult<BlobReadAtResponse>>,
             max_chunk_size: usize,
         ) -> anyhow::Result<()> {
+            debug!("loop start");
             let entry = db.get(&req.hash).await?;
+            debug!(is_some = entry.is_some(), "loop got entry");
             let entry = entry.ok_or_else(|| anyhow!("Blob not found"))?;
             let size = entry.size();
             tx.send_async(Ok(BlobReadAtResponse::Entry {
@@ -929,6 +937,7 @@ impl<D: BaoStore> Handler<D> {
                 is_complete: entry.is_complete(),
             }))
             .await?;
+            debug!("header sent");
             let mut reader = entry.data_reader().await?;
 
             let len = req.len.unwrap_or((size.value() - req.offset) as usize);
@@ -960,6 +969,7 @@ impl<D: BaoStore> Handler<D> {
                     read += chunk_len as u64;
                 }
             }
+            debug!("loop complete");
             Ok(())
         }
 
