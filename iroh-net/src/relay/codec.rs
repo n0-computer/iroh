@@ -300,7 +300,7 @@ impl Frame {
         match msg {
             Ok(tungstenite::Message::Binary(vec)) => Some(Self::from_ws_vec(vec)),
             Ok(msg) => {
-                tracing::warn!(?msg, "Got msg of unsupported type, skipping.");
+                tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
                 None
             }
             Err(e) => Some(Err(e.into())),
@@ -316,7 +316,7 @@ impl Frame {
         match msg {
             Ok(tokio_tungstenite_wasm::Message::Binary(vec)) => Some(Self::from_ws_vec(vec)),
             Ok(msg) => {
-                tracing::warn!(?msg, "Got msg of unsupported type, skipping.");
+                tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
                 None
             }
             Err(e) => Some(Err(e.into())),
