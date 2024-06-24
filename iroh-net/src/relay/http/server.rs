@@ -24,7 +24,9 @@ use tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
 use tungstenite::handshake::derive_accept_key;
 
 use crate::key::SecretKey;
-use crate::relay::http::{HTTP_UPGRADE_PROTOCOL, WEBSOCKET_UPGRADE_PROTOCOL};
+use crate::relay::http::{
+    HTTP_UPGRADE_PROTOCOL, SUPPORTED_WEBSOCKET_VERSION, WEBSOCKET_UPGRADE_PROTOCOL,
+};
 use crate::relay::server::{ClientConnHandler, MaybeTlsStream};
 use crate::relay::MaybeTlsStreamServer;
 
@@ -487,12 +489,12 @@ impl Service<Request<Incoming>> for ClientConnHandler {
                             .expect("valid body"));
                     };
 
-                    if version.as_bytes() != b"13" {
+                    if version.as_bytes() != SUPPORTED_WEBSOCKET_VERSION.as_bytes() {
                         warn!("invalid header Sec-WebSocket-Version: {:?}", version);
                         return Ok(builder
                             .status(StatusCode::BAD_REQUEST)
                             // It's convention to send back the version(s) we *do* support
-                            .header("Sec-WebSocket-Version", "13")
+                            .header("Sec-WebSocket-Version", SUPPORTED_WEBSOCKET_VERSION)
                             .body(body_empty())
                             .expect("valid body"));
                     }

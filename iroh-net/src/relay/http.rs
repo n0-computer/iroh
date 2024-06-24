@@ -10,6 +10,7 @@ pub use self::server::{Protocol, Server, ServerBuilder, ServerHandle, TlsAccepto
 
 pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
 pub(crate) const WEBSOCKET_UPGRADE_PROTOCOL: &str = "websocket";
+pub(crate) const SUPPORTED_WEBSOCKET_VERSION: &str = "13";
 
 #[cfg(test)]
 mod tests {
