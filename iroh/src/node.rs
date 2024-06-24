@@ -263,6 +263,8 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             Ok(())
         });
 
+        let mut rpc_join_set = JoinSet::default();
+
         loop {
             tokio::select! {
                 biased;
@@ -274,7 +276,10 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 request = external_rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, msg, chan);
+                            let this = self.clone();
+                            rpc_join_set.spawn(async move {
+                                rpc::Handler::spawn_rpc_request(this, msg, chan).await
+                            });
                         }
                         Err(e) => {
                             info!("rpc request error: {:?}", e);
@@ -285,7 +290,10 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 request = internal_rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, msg, chan);
+                            let this = self.clone();
+                            rpc_join_set.spawn(async move {
+                                rpc::Handler::spawn_rpc_request(this, msg, chan).await
+                            });
                         }
                         Err(e) => {
                             info!("internal rpc request error: {:?}", e);
@@ -307,9 +315,23 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                         break;
                     }
                 },
+                res = rpc_join_set.join_next(), if !rpc_join_set.is_empty() => match res {
+                    None => {},
+                    Some(Ok(Ok(()))) => {},
+                    Some(Ok(Err(err))) => {
+                        warn!("RPC request failed: {err:?}");
+                    }
+                    Some(Err(err)) => {
+                        error!("RPC task failed: {err:?}");
+                        break;
+                    }
+                },
                 else => break,
             }
         }
+
+        // Abort rpc tasks.
+        rpc_join_set.shutdown().await;
 
         self.shutdown(protocols).await;
 
