@@ -798,7 +798,11 @@ impl Reader {
         let (size, is_complete) = match stream.next().await {
             Some(Ok(BlobReadAtResponse::Entry { size, is_complete })) => (size, is_complete),
             Some(Err(err)) => return Err(err),
-            None | Some(Ok(_)) => return Err(anyhow!("Expected header frame")),
+            None | Some(Ok(_)) => {
+                println!("{}", std::backtrace::Backtrace::capture());
+                panic!("Expected header frame");
+                // return Err(anyhow!("Expected header frame"))
+            }
         };
 
         let stream = stream.map(|item| match item {
