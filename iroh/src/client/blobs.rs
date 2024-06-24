@@ -800,7 +800,7 @@ impl Reader {
             Some(Err(err)) => return Err(err),
             None | Some(Ok(_)) => {
                 println!("{}", std::backtrace::Backtrace::capture());
-                panic!("Expected header frame");
+                panic!("Expected header frame!");
                 // return Err(anyhow!("Expected header frame"))
             }
         };
