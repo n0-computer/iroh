@@ -161,6 +161,8 @@ impl<D: BaoStore> Node<D> {
     pub async fn shutdown(self) -> Result<()> {
         // Trigger shutdown of the main run task by activating the cancel token.
         tracing::debug!("shutting down node - calling cancel_token.cancel()");
+        let backtrace = std::backtrace::Backtrace::capture();
+        tracing::debug!("backtrace: {:?}", backtrace);
         self.inner.cancel_token.cancel();
 
         // Wait for the main task to terminate.
