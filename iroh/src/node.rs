@@ -21,7 +21,7 @@ use quic_rpc::{RpcServer, ServiceEndpoint};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     client::RpcService,
@@ -301,12 +301,12 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                     });
                 },
                 // handle task terminations and quit on panics.
-                res = join_set.join_next(), if !join_set.is_empty() => {
-                    if let Some(Err(err)) = res {
-                        error!("Task failed: {err:?}");
-                        break;
-                    }
-                },
+                // res = join_set.join_next(), if !join_set.is_empty() => {
+                //     if let Some(Err(err)) = res {
+                //         error!("Task failed: {err:?}");
+                //         break;
+                //     }
+                // },
                 else => break,
             }
         }
