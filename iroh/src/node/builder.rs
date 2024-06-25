@@ -23,7 +23,7 @@ use iroh_net::{
 };
 use quic_rpc::{
     transport::{
-        flume::FlumeServerEndpoint, misc::DummyServerEndpoint, quinn::QuinnServerEndpoint,
+        misc::DummyServerEndpoint, quinn::QuinnServerEndpoint, tokio_mpsc::ServerEndpoint,
     },
     ServiceEndpoint,
 };
@@ -494,7 +494,7 @@ where
         .await?;
 
         // Initialize the internal RPC connection.
-        let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
+        let (internal_rpc, controller) = quic_rpc::transport::tokio_mpsc::connection(1);
         // box the controller. Boxing has a special case for the flume channel that avoids allocations,
         // so this has zero overhead.
         let controller = quic_rpc::transport::boxed::Connection::new(controller);
@@ -538,7 +538,7 @@ where
 #[derive(derive_more::Debug)]
 pub struct ProtocolBuilder<D, E> {
     inner: Arc<NodeInner<D>>,
-    internal_rpc: FlumeServerEndpoint<RpcService>,
+    internal_rpc: ServerEndpoint<RpcService>,
     external_rpc: E,
     protocols: ProtocolMap,
     #[debug("callback")]

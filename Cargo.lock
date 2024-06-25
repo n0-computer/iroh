@@ -4042,8 +4042,7 @@ dependencies = [
 [[package]]
 name = "quic-rpc"
 version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e56dc58272a3f9c151b1c3a6df0e3caca083fd843b337e60f706fae2d974b6b"
+source = "git+https://github.com/n0-computer/quic-rpc?branch=feat-async-channel#e004ac4fbbcb9fb4a7cf8da47733a968b7a3eaf6"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4059,6 +4058,7 @@ dependencies = [
  "serde",
  "tokio",
  "tokio-serde",
+ "tokio-stream",
  "tokio-util",
  "tracing",
 ]
