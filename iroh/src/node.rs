@@ -21,7 +21,7 @@ use quic_rpc::{RpcServer, ServiceEndpoint};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     client::RpcService,
@@ -274,7 +274,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 request = external_rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, msg, chan);
+                            rpc::Handler::spawn_rpc_request(self.clone(), msg, chan);
                         }
                         Err(e) => {
                             info!("rpc request error: {:?}", e);
@@ -285,7 +285,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 request = internal_rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, msg, chan);
+                            rpc::Handler::spawn_rpc_request(self.clone(), msg, chan);
                         }
                         Err(e) => {
                             info!("internal rpc request error: {:?}", e);
@@ -295,18 +295,17 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 // handle incoming p2p connections.
                 Some(connecting) = self.endpoint.accept() => {
                     let protocols = protocols.clone();
-                    join_set.spawn(async move {
+                    tokio::spawn(async move {
                         handle_connection(connecting, protocols).await;
-                        Ok(())
                     });
                 },
                 // handle task terminations and quit on panics.
-                // res = join_set.join_next(), if !join_set.is_empty() => {
-                //     if let Some(Err(err)) = res {
-                //         error!("Task failed: {err:?}");
-                //         break;
-                //     }
-                // },
+                res = join_set.join_next(), if !join_set.is_empty() => {
+                    if let Some(Err(err)) = res {
+                        error!("Task failed: {err:?}");
+                        break;
+                    }
+                },
                 else => break,
             }
         }

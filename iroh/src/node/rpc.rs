@@ -29,7 +29,6 @@ use quic_rpc::{
     server::{RpcChannel, RpcServerError},
     ServiceEndpoint,
 };
-use tokio::task::JoinSet;
 use tokio_util::{either::Either, task::LocalPoolHandle};
 use tracing::{debug, info, warn};
 
@@ -108,16 +107,14 @@ impl<D: BaoStore> Handler<D> {
 
     pub(crate) fn spawn_rpc_request<E: ServiceEndpoint<RpcService>>(
         inner: Arc<NodeInner<D>>,
-        join_set: &mut JoinSet<anyhow::Result<()>>,
         msg: Request,
         chan: RpcChannel<RpcService, E>,
     ) {
         let handler = Self::new(inner);
-        join_set.spawn(async move {
+        tokio::spawn(async move {
             if let Err(err) = handler.handle_rpc_request(msg, chan).await {
                 warn!("rpc request handler error: {err:?}");
             }
-            Ok(())
         });
     }
 
