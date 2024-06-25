@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::{collections::BTreeSet, net::SocketAddr};
 use std::{fmt::Debug, time::Duration};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
 use iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store as BaoStore};
@@ -264,6 +264,43 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             Ok(())
         });
 
+        // Spawn a task for the internal RPC.
+        // TODO: Find out if this is really needed? If flume is cancel-safe, it is *not* needed.
+        let internal_rpc_task = tokio::task::spawn({
+            let cancel_token = self.cancel_token.clone();
+            let inner = self.clone();
+            let mut join_set = JoinSet::new();
+            async move {
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = cancel_token.cancelled() => {
+                            trace!("tick: cancel");
+                            break;
+                        },
+                        // handle internal rpc requests.
+                        request = internal_rpc.accept() => {
+                            trace!("tick: internal_rpc");
+                            // We cannot poll this in the tokio::select! because on completion a
+                            // internal_rpc.accept() future could be dropped. But we need to clear
+                            // finished tasks from the join_set to not amass them.
+                            if let Some(Err(err)) = join_set.try_join_next() {
+                                warn!("internal RPC task paniced: {err:?}");
+                            }
+                            match request {
+                                Ok((msg, chan)) => {
+                                    rpc::Handler::spawn_rpc_request(inner.clone(), &mut join_set, msg, chan);
+                                }
+                                Err(e) => {
+                                    info!("internal rpc request error: {:?}", e);
+                                }
+                            }
+                        },
+                    }
+                }
+            }
+        });
+
         loop {
             trace!("wait for tick");
             tokio::select! {
@@ -282,18 +319,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                         }
                         Err(e) => {
                             info!("rpc request error: {:?}", e);
-                        }
-                    }
-                },
-                // handle internal rpc requests.
-                request = internal_rpc.accept() => {
-                    trace!("tick: internal_rpc");
-                    match request {
-                        Ok((msg, chan)) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, msg, chan);
-                        }
-                        Err(e) => {
-                            info!("internal rpc request error: {:?}", e);
                         }
                     }
                 },
@@ -319,6 +344,10 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                     break;
                 }
             }
+        }
+
+        if let Err(err) = internal_rpc_task.await {
+            warn!("internal rpc task panicked: {err:?}");
         }
 
         self.shutdown(protocols).await;
