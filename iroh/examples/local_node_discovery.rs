@@ -104,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
                 .await?;
             show_download_progress(*hash, &mut stream).await?;
             if let Some(path) = out {
-                let absolute = std::env::current_dir()?.join(&path);
+                let absolute = std::env::current_dir()?.join(path);
                 ensure!(!absolute.is_dir(), "output must not be a directory");
                 tracing::info!(
                     "exporting {hash} to {} -> {}",
