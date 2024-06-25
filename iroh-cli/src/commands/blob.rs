@@ -17,7 +17,6 @@ use iroh::{
     base::node_addr::AddrInfoOptions,
     base::ticket::BlobTicket,
     blobs::{
-        get::{db::DownloadProgress, progress::BlobProgress, Stats},
         provider::AddProgress,
         store::{
             ConsistencyCheckProgress, ExportFormat, ExportMode, ReportLevel, ValidateProgress,
@@ -34,6 +33,7 @@ use iroh::{
     },
     net::{key::PublicKey, relay::RelayUrl, NodeAddr},
 };
+use iroh_progress::show_download_progress;
 use tokio::io::AsyncWriteExt;
 
 #[allow(clippy::large_enum_variant)]
@@ -877,6 +877,83 @@ pub struct ProvideResponseEntry {
     pub name: String,
     pub size: u64,
     pub hash: Hash,
+}
+
+pub async fn aggregate_add_response(
+    mut stream: impl Stream<Item = Result<AddProgress>> + Unpin,
+) -> Result<(Hash, BlobFormat, Vec<ProvideResponseEntry>)> {
+    let mut hash_and_format = None;
+    let mut collections = BTreeMap::<u64, (String, u64, Option<Hash>)>::new();
+    let mut mp = Some(ProvideProgressState::new());
+    while let Some(item) = stream.next().await {
+        match item? {
+            AddProgress::Found { name, id, size } => {
+                tracing::trace!("Found({id},{name},{size})");
+                if let Some(mp) = mp.as_mut() {
+                    mp.found(name.clone(), id, size);
+                }
+                collections.insert(id, (name, size, None));
+            }
+            AddProgress::Progress { id, offset } => {
+                tracing::trace!("Progress({id}, {offset})");
+                if let Some(mp) = mp.as_mut() {
+                    mp.progress(id, offset);
+                }
+            }
+            AddProgress::Done { hash, id } => {
+                tracing::trace!("Done({id},{hash:?})");
+                if let Some(mp) = mp.as_mut() {
+                    mp.done(id, hash);
+                }
+                match collections.get_mut(&id) {
+                    Some((_, _, ref mut h)) => {
+                        *h = Some(hash);
+                    }
+                    None => {
+                        anyhow::bail!("Got Done for unknown collection id {id}");
+                    }
+                }
+            }
+            AddProgress::AllDone { hash, format, .. } => {
+                tracing::trace!("AllDone({hash:?})");
+                if let Some(mp) = mp.take() {
+                    mp.all_done();
+                }
+                hash_and_format = Some(HashAndFormat { hash, format });
+                break;
+            }
+            AddProgress::Abort(e) => {
+                if let Some(mp) = mp.take() {
+                    mp.error();
+                }
+                anyhow::bail!("Error while adding data: {e}");
+            }
+        }
+    }
+    let HashAndFormat { hash, format } =
+        hash_and_format.context("Missing hash for collection or blob")?;
+    let entries = collections
+        .into_iter()
+        .map(|(_, (name, size, hash))| {
+            let hash = hash.context(format!("Missing hash for {name}"))?;
+            Ok(ProvideResponseEntry { name, size, hash })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((hash, format, entries))
+}
+
+pub fn print_add_response(hash: Hash, format: BlobFormat, entries: Vec<ProvideResponseEntry>) {
+    let mut total_size = 0;
+    for ProvideResponseEntry { name, size, hash } in entries {
+        total_size += size;
+        println!("- {}: {} {:#}", name, HumanBytes(size), hash);
+    }
+    println!("Total: {}", HumanBytes(total_size));
+    println!();
+    match format {
+        BlobFormat::Raw => println!("Blob: {}", hash),
+        BlobFormat::HashSeq => println!("Collection: {}", hash),
+    }
 }
 
 #[derive(Debug)]

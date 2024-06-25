@@ -13,9 +13,8 @@ use crate::{AddrInfo, Endpoint, NodeId};
 pub mod dns;
 
 /// enable local node discovery
-// TODO(ramfox): rename
-#[cfg(feature = "mdns")]
-pub mod mdns;
+#[cfg(feature = "local-node-discovery")]
+pub mod local_node_discovery;
 pub mod pkarr_publish;
 
 /// Name used for logging when new node addresses are added from discovery.

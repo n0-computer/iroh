@@ -29,9 +29,6 @@ const PROVENANCE: &str = "local.node.discovery";
 /// How long we will wait before we stop sending discovery items
 const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
 
-/// The time after which a new peer should have discovered some parts of the swarm
-const DEFAULT_CADENCE: Duration = Duration::from_secs(1);
-
 /// Discovery using `swarm-discovery`, a variation on mdns
 #[derive(Debug)]
 pub struct LocalNodeDiscovery {
@@ -57,21 +54,24 @@ impl LocalNodeDiscovery {
     /// Create a new LocalNodeDiscovery Service.
     ///
     /// This starts a `Discoverer` that broadcasts your addresses and receives addresses from other nodes in your local network.
-    pub fn new(node_id: NodeId, info: Option<(u16, Vec<IpAddr>)>) -> Self {
+    pub fn new(node_id: NodeId) -> Self {
         tracing::debug!("Creating new LocalNodeDiscovery service");
         let (send, recv) = flume::bounded(64);
         let task_sender = send.clone();
         let rt = tokio::runtime::Handle::current();
         let handle = tokio::spawn(async move {
-            let mut guard =
-                match LocalNodeDiscovery::spawn_discoverer(node_id, task_sender.clone(), info, &rt)
-                {
-                    Ok(guard) => Some(guard),
-                    Err(e) => {
-                        tracing::error!("LocalNodeDiscovery error creating discovery service: {e}");
-                        return;
-                    }
-                };
+            let mut guard = match LocalNodeDiscovery::spawn_discoverer(
+                node_id,
+                task_sender.clone(),
+                BTreeSet::new(),
+                &rt,
+            ) {
+                Ok(guard) => Some(guard),
+                Err(e) => {
+                    tracing::error!("LocalNodeDiscovery error creating discovery service: {e}");
+                    return;
+                }
+            };
             tracing::debug!("Created LocalNodeDiscovery Service");
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
             let mut senders: HashMap<PublicKey, Sender<Result<DiscoveryItem>>> = HashMap::default();
@@ -109,7 +109,7 @@ impl LocalNodeDiscovery {
                             continue;
                         }
 
-                        if peer_info.addrs.is_empty() {
+                        if peer_info.is_expiry() {
                             tracing::debug!(
                                 ?discovered_node_id,
                                 "removing node from LocalNodeDiscovery address book"
@@ -119,7 +119,7 @@ impl LocalNodeDiscovery {
                         }
 
                         if let Some(sender) = senders.get(&discovered_node_id) {
-                            let item = peer_info_to_discovery_time(&peer_info);
+                            let item: DiscoveryItem = (&peer_info).into();
                             tracing::debug!(?item, "sending DiscoveryItem");
                             sender.send_async(Ok(item)).await.ok();
                         }
@@ -133,7 +133,7 @@ impl LocalNodeDiscovery {
                     Message::SendAddrs((node_id, sender)) => {
                         tracing::debug!(?node_id, "LocalNodeDiscovery Message::SendAddrs");
                         if let Some(peer_info) = node_addrs.get(&node_id) {
-                            let item = peer_info_to_discovery_time(peer_info);
+                            let item: DiscoveryItem = peer_info.into();
                             tracing::debug!(?item, "sending DiscoveryItem");
                             sender.send_async(Ok(item)).await.ok();
                         }
@@ -151,40 +151,13 @@ impl LocalNodeDiscovery {
                     }
                     Message::ChangeLocalAddrs(addrs) => {
                         tracing::debug!(?addrs, "LocalNodeDiscovery Message::ChangeLocalAddrs");
-                        // TODO(ramfox): currently, filtering out any addrs that aren't ipv4 and private. If we add more information into our `AddrInfo`s to include the `EndpointType`, we can also add the private ipv6 addresses in.
-                        // Either way, we will likely want to publish SocketAddrs rather than a single port to a vec of IpAddrs, in which case, we can just publish all direct addresses, rather than filtering any out.
-                        let addrs = addrs
-                            .direct_addresses
-                            .into_iter()
-                            .filter(|addr| {
-                                if let IpAddr::V4(ipv4_addr) = addr.ip() {
-                                    ipv4_addr.is_private()
-                                } else {
-                                    false
-                                }
-                            })
-                            .collect::<Vec<_>>();
-                        // if we have no addrs we should start a new discovery service that does not publish addresses, but only listens for addresses
-                        let addrs = if addrs.is_empty() {
-                            None
-                        } else {
-                            let port = addrs[0].port();
-                            let addrs = addrs.into_iter().map(|addr| addr.ip()).collect();
-                            tracing::debug!(
-                                ?port,
-                                ?addrs,
-                                "LocalNodeDiscovery: publishing this node's address information"
-                            );
-                            Some((port, addrs))
-                        };
-
                         let callback_send = task_sender.clone();
                         let g = guard.take();
                         drop(g);
                         guard = match LocalNodeDiscovery::spawn_discoverer(
                             node_id,
                             callback_send.clone(),
-                            addrs,
+                            addrs.direct_addresses,
                             &rt,
                         ) {
                             Ok(guard) => Some(guard),
@@ -209,7 +182,7 @@ impl LocalNodeDiscovery {
     fn spawn_discoverer(
         node_id: PublicKey,
         sender: Sender<Message>,
-        addrs: Option<(u16, Vec<IpAddr>)>,
+        socketaddrs: BTreeSet<SocketAddr>,
         rt: &tokio::runtime::Handle,
     ) -> Result<DropGuard> {
         let callback = move |node_id: &str, peer: &Peer| {
@@ -225,33 +198,43 @@ impl LocalNodeDiscovery {
 
         let node_id_str = node_id.to_string();
         tracing::warn!("node id str is: {node_id_str}");
+        let mut addrs: HashMap<u16, Vec<IpAddr>> = HashMap::default();
+        for socketaddr in socketaddrs {
+            addrs
+                .entry(socketaddr.port())
+                .and_modify(|a| a.push(socketaddr.ip()))
+                .or_insert(vec![socketaddr.ip()]);
+        }
 
         let parsed_id = PublicKey::from_str(&node_id_str);
         tracing::warn!("parsed id is {parsed_id:?}");
-        let mut discoverer = Discoverer::new(N0_MDNS_SWARM.to_string(), node_id.to_string())
-            .with_callback(callback)
-            .with_cadence(DEFAULT_CADENCE);
-        if let Some(addrs) = addrs {
-            discoverer = discoverer.with_addrs(addrs.0, addrs.1);
+        let mut discoverer =
+            Discoverer::new_interactive(N0_MDNS_SWARM.to_string(), node_id.to_string())
+                .with_callback(callback);
+        if !addrs.is_empty() {
+            for addr in addrs {
+                discoverer = discoverer.with_addrs(addr.0, addr.1);
+            }
         }
         discoverer.spawn(rt)
     }
 }
 
-fn peer_info_to_discovery_time(peer_info: &Peer) -> DiscoveryItem {
-    let port = peer_info.port;
-    let direct_addresses: BTreeSet<SocketAddr> = peer_info
-        .addrs
-        .iter()
-        .map(|ip| SocketAddr::new(*ip, port))
-        .collect();
-    DiscoveryItem {
-        provenance: PROVENANCE,
-        last_updated: None,
-        addr_info: AddrInfo {
-            relay_url: None,
-            direct_addresses,
-        },
+impl From<&Peer> for DiscoveryItem {
+    fn from(peer_info: &Peer) -> Self {
+        let direct_addresses: BTreeSet<SocketAddr> = peer_info
+            .addrs()
+            .iter()
+            .map(|(ip, port)| SocketAddr::new(*ip, *port))
+            .collect();
+        DiscoveryItem {
+            provenance: PROVENANCE,
+            last_updated: None,
+            addr_info: AddrInfo {
+                relay_url: None,
+                direct_addresses,
+            },
+        }
     }
 }
 
