@@ -2612,6 +2612,7 @@ dependencies = [
  "iroh",
  "iroh-gossip",
  "iroh-metrics",
+ "iroh-progress",
  "nix 0.27.1",
  "parking_lot",
  "pkarr 1.1.5",
@@ -5540,9 +5541,8 @@ dependencies = [
 
 [[package]]
 name = "swarm-discovery"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a672c05480f6b400131576cae040bc0bfca68e5e4a3ffe89fcddcf19011f31cc"
+version = "0.2.0"
+source = "git+https://github.com/rkuhn/swarm-discovery/?branch=api-improvements#e11e3cb40d54f65496ddbc94b07159b8ebb9460e"
 dependencies = [
  "acto",
  "anyhow",

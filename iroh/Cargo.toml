@@ -31,6 +31,7 @@ iroh-base = { version = "0.19.0", path = "../iroh-base", features = ["key"] }
 iroh-io = { version = "0.6.0", features = ["stats"] }
 iroh-metrics = { version = "0.19.0", path = "../iroh-metrics", optional = true }
 iroh-net = { version = "0.19.0", path = "../iroh-net" features = ["mdns"]}
+iroh-net = { version = "0.19.0", path = "../iroh-net" features = ["local-node-discovery"]}
 nested_enum_utils = "0.1.0"
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
@@ -63,7 +64,7 @@ metrics = ["iroh-metrics", "iroh-blobs/metrics"]
 fs-store = ["iroh-blobs/fs-store"]
 test = []
 examples = ["dep:clap", "dep:indicatif"]
-local_node_discovery = ["iroh-net/mdns", "examples", "dep:iroh-progress"]
+local_node_discovery = ["iroh-net/local-node-discovery", "examples", "dep:iroh-progress"]
 test-utils = ["iroh-net/test-utils"]
 
 [dev-dependencies]
