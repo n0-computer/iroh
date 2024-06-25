@@ -102,10 +102,12 @@ where
         // always abort on signal-c
         _ = tokio::signal::ctrl_c(), if run_type != RunType::SingleCommandNoAbort => {
             command_task.abort();
+            tracing::debug!("Aborted command task");
             node.shutdown().await?;
         }
         // abort if the command task finishes (will run forever if not in single-command mode)
         res = &mut command_task => {
+            tracing::debug!("Command task finished");
             let _ = node.shutdown().await;
             res??;
         }
