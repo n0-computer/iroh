@@ -72,12 +72,11 @@ impl LocalNodeDiscovery {
                     return;
                 }
             };
-            tracing::debug!("Created LocalNodeDiscovery Service");
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
             let mut senders: HashMap<PublicKey, Sender<Result<DiscoveryItem>>> = HashMap::default();
             let mut timeouts = JoinSet::new();
             loop {
-                tracing::debug!(?node_addrs, "LocalNodeDiscovery Service loop tick");
+                tracing::trace!(?node_addrs, "LocalNodeDiscovery Service loop tick");
                 let msg = match recv.recv_async().await {
                     Err(err) => {
                         tracing::error!("LocalNodeDiscovery service error: {err:?}");
@@ -89,7 +88,7 @@ impl LocalNodeDiscovery {
                 };
                 match msg {
                     Message::Discovery((discovered_node_id, peer_info)) => {
-                        tracing::debug!(
+                        tracing::trace!(
                             ?discovered_node_id,
                             ?peer_info,
                             "LocalNodeDiscovery Message::Discovery"
@@ -110,7 +109,7 @@ impl LocalNodeDiscovery {
                         }
 
                         if peer_info.is_expiry() {
-                            tracing::debug!(
+                            tracing::trace!(
                                 ?discovered_node_id,
                                 "removing node from LocalNodeDiscovery address book"
                             );
@@ -120,10 +119,10 @@ impl LocalNodeDiscovery {
 
                         if let Some(sender) = senders.get(&discovered_node_id) {
                             let item: DiscoveryItem = (&peer_info).into();
-                            tracing::debug!(?item, "sending DiscoveryItem");
+                            tracing::trace!(?item, "sending DiscoveryItem");
                             sender.send_async(Ok(item)).await.ok();
                         }
-                        tracing::debug!(
+                        tracing::trace!(
                             ?discovered_node_id,
                             ?peer_info,
                             "adding node to LocalNodeDiscovery address book"
@@ -131,7 +130,7 @@ impl LocalNodeDiscovery {
                         node_addrs.insert(discovered_node_id, peer_info);
                     }
                     Message::SendAddrs((node_id, sender)) => {
-                        tracing::debug!(?node_id, "LocalNodeDiscovery Message::SendAddrs");
+                        tracing::trace!(?node_id, "LocalNodeDiscovery Message::SendAddrs");
                         if let Some(peer_info) = node_addrs.get(&node_id) {
                             let item: DiscoveryItem = peer_info.into();
                             tracing::debug!(?item, "sending DiscoveryItem");
@@ -141,16 +140,19 @@ impl LocalNodeDiscovery {
                         let timeout_sender = task_sender.clone();
                         timeouts.spawn(async move {
                             tokio::time::sleep(DISCOVERY_DURATION).await;
-                            tracing::debug!(?node_id, "discovery timeout");
-                            timeout_sender.send(Message::Timeout(node_id)).ok();
+                            tracing::trace!(?node_id, "discovery timeout");
+                            timeout_sender
+                                .send_async(Message::Timeout(node_id))
+                                .await
+                                .ok();
                         });
                     }
                     Message::Timeout(node_id) => {
-                        tracing::debug!(?node_id, "LocalNodeDiscovery Message::Timeout");
+                        tracing::trace!(?node_id, "LocalNodeDiscovery Message::Timeout");
                         senders.remove(&node_id);
                     }
                     Message::ChangeLocalAddrs(addrs) => {
-                        tracing::debug!(?addrs, "LocalNodeDiscovery Message::ChangeLocalAddrs");
+                        tracing::trace!(?addrs, "LocalNodeDiscovery Message::ChangeLocalAddrs");
                         let callback_send = task_sender.clone();
                         let g = guard.take();
                         drop(g);
@@ -170,7 +172,6 @@ impl LocalNodeDiscovery {
                         };
                     }
                 }
-                tracing::debug!("LocalNodeDiscovery end of loop");
             }
         });
         Self {
@@ -186,7 +187,7 @@ impl LocalNodeDiscovery {
         rt: &tokio::runtime::Handle,
     ) -> Result<DropGuard> {
         let callback = move |node_id: &str, peer: &Peer| {
-            tracing::debug!(
+            tracing::trace!(
                 node_id,
                 ?peer,
                 "Received peer information from LocalNodeDiscovery"
@@ -196,8 +197,6 @@ impl LocalNodeDiscovery {
                 .ok();
         };
 
-        let node_id_str = node_id.to_string();
-        tracing::warn!("node id str is: {node_id_str}");
         let mut addrs: HashMap<u16, Vec<IpAddr>> = HashMap::default();
         for socketaddr in socketaddrs {
             addrs
@@ -206,8 +205,6 @@ impl LocalNodeDiscovery {
                 .or_insert(vec![socketaddr.ip()]);
         }
 
-        let parsed_id = PublicKey::from_str(&node_id_str);
-        tracing::warn!("parsed id is {parsed_id:?}");
         let mut discoverer =
             Discoverer::new_interactive(N0_MDNS_SWARM.to_string(), node_id.to_string())
                 .with_callback(callback);
