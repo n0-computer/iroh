@@ -64,6 +64,7 @@ pub struct DiscoveryItem {
     /// Optional timestamp when this node address info was last updated.
     ///
     /// Must be microseconds since the unix epoch.
+    // TODO(ramfox): this is currently unused. As we develope more `DiscoveryService`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each node to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
     pub last_updated: Option<u64>,
     /// The address info for the node being resolved.
     pub addr_info: AddrInfo,
