@@ -1,8 +1,10 @@
 //! Example that runs and iroh node with local node discovery and no relay server
 //!
-//! Run the follow commands on two different machines in the same local network:
-//!  $ cargo run --example local-node-discovery accept [PATH_TO_FILE]
-//!  $ cargo run --example local-node-discovery connect [NODE_ID] [HASH]
+//! Run the follow command to run the "accept" side, that hosts the content:
+//!  $ cargo run --example local_node_discovery --features="local_node_discovery" -- accept [FILE_PATH]
+//! Wait for output that looks like the following:
+//!  $ cargo run --example local_node_discovery --features="local_node_discovery" -- connect [NODE_ID] [HASH] -o [FILE_PATH]
+//! Run that command on another machine in the same local network, replacing [FILE_PATH] to the path on which you want to save the transfered content.
 use std::path::PathBuf;
 
 use anyhow::ensure;
@@ -90,8 +92,7 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await?;
             let outcome = stream.finish().await?;
-            println!("NodeId: {}", node.node_id());
-            println!("Hash: {}", outcome.hash);
+            println!("To fetch the blob:\n\tcargo run --example local_node_discovery --features=\"local_node_discovery\" -- connect {} {} -o [FILE_PATH]", node.node_id(), outcome.hash);
             tokio::signal::ctrl_c().await?;
             node.shutdown().await?;
             std::process::exit(0);
