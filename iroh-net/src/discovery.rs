@@ -13,7 +13,7 @@ use crate::{AddrInfo, Endpoint, NodeId};
 pub mod dns;
 
 /// enable local node discovery
-#[cfg(feature = "local-node-discovery")]
+#[cfg(feature = "local_node_discovery")]
 pub mod local_node_discovery;
 pub mod pkarr_publish;
 
