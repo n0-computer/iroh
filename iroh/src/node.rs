@@ -160,6 +160,7 @@ impl<D: BaoStore> Node<D> {
     /// The future resolves to an error if the main task panicked.
     pub async fn shutdown(self) -> Result<()> {
         // Trigger shutdown of the main run task by activating the cancel token.
+        tracing::debug!("shutting down node - calling cancel_token.cancel()");
         self.inner.cancel_token.cancel();
 
         // Wait for the main task to terminate.
