@@ -790,6 +790,7 @@ impl Reader {
         offset: u64,
         len: Option<usize>,
     ) -> anyhow::Result<Self> {
+        debug!("sending server_streaming BlobReadAtRequest");
         let stream = rpc
             .server_streaming(BlobReadAtRequest { hash, offset, len })
             .await?;
