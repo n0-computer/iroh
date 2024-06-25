@@ -19,7 +19,10 @@ use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
 };
 use iroh_net::{
-    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
+    discovery::{
+        dns::DnsDiscovery, local_node_discovery::LocalNodeDiscovery, pkarr::PkarrPublisher,
+        ConcurrentDiscovery, Discovery,
+    },
     dns::DnsResolver,
     relay::RelayMode,
     Endpoint,
@@ -460,6 +463,8 @@ where
                         Box::new(DnsDiscovery::n0_dns()),
                         // Enable pkarr publishing by default
                         Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
+                        // Enable local node discovery by default
+                        Box::new(LocalNodeDiscovery::new(self.secret_key.public())),
                     ]);
                     Some(Box::new(discovery))
                 }
