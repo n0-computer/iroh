@@ -9,10 +9,7 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use clap::Subcommand;
 use console::{style, Emoji};
 use futures_lite::{Stream, StreamExt};
-use indicatif::{
-    HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
-    ProgressStyle,
-};
+use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use iroh::{
     base::node_addr::AddrInfoOptions,
     base::ticket::BlobTicket,
