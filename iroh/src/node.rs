@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::{collections::BTreeSet, net::SocketAddr};
 use std::{fmt::Debug, time::Duration};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
 use iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store as BaoStore};
