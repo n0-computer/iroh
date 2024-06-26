@@ -1,0 +1,19 @@
+[package]
+name = "iroh-progress"
+version = "0.18.0"
+edition = "2021"
+readme = "README.md"
+description = "utilities for printing progress to the console"
+license = "MIT OR Apache-2.0"
+authors = ["n0 team"]
+repository = "https://github.com/n0-computer/iroh"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1.0.81"
+console = "0.15.5"
+futures-lite = "2.3"
+indicatif = { version = "0.17", features = ["tokio"] }
+iroh-blobs = { version = "0.18.0", path = "../iroh-blobs"}
