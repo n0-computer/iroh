@@ -549,23 +549,23 @@ impl Service<Request<Incoming>> for RelayService {
 
     fn call(&self, req: Request<Incoming>) -> Self::Future {
         // if the request hits the relay endpoint
-        match (req.method(), req.uri().path()) {
-            // /derp for backwards compat
-            (&hyper::Method::GET, "/derp" | RELAY_HTTP_PATH) => {
-                match &self.0.relay_handler {
-                    RelayHandler::Override(f) => {
-                        // see if we have some override response
-                        let res = f(req, self.0.default_response());
-                        return Box::pin(async move { res });
-                    }
-                    RelayHandler::ConnHandler(handler) => {
-                        let h = handler.clone();
-                        // otherwise handle the relay connection as normal
-                        return Box::pin(async move { h.call(req).await.map_err(Into::into) });
-                    }
+        // or /derp for backwards compat
+        if matches!(
+            (req.method(), req.uri().path()),
+            (&hyper::Method::GET, "/derp" | RELAY_HTTP_PATH)
+        ) {
+            match &self.0.relay_handler {
+                RelayHandler::Override(f) => {
+                    // see if we have some override response
+                    let res = f(req, self.0.default_response());
+                    return Box::pin(async move { res });
+                }
+                RelayHandler::ConnHandler(handler) => {
+                    let h = handler.clone();
+                    // otherwise handle the relay connection as normal
+                    return Box::pin(async move { h.call(req).await.map_err(Into::into) });
                 }
             }
-            _ => {}
         }
         // check all other possible endpoints
         let uri = req.uri().clone();
