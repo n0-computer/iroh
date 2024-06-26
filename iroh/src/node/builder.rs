@@ -53,6 +53,11 @@ const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 
+type BoxedServerEndpoint = quic_rpc::transport::boxed::ServerEndpoint<
+    crate::rpc_protocol::Request,
+    crate::rpc_protocol::Response,
+>;
+
 /// Storage backend for documents.
 #[derive(Debug, Clone)]
 pub enum DocsStorage {
@@ -85,10 +90,7 @@ where
     storage: StorageConfig,
     bind_port: Option<u16>,
     secret_key: SecretKey,
-    rpc_endpoint: quic_rpc::transport::boxed::ServerEndpoint<
-        crate::rpc_protocol::Request,
-        crate::rpc_protocol::Response,
-    >,
+    rpc_endpoint: BoxedServerEndpoint,
     blobs_store: D,
     keylog: bool,
     relay_mode: RelayMode,
@@ -144,8 +146,11 @@ impl From<Box<ConcurrentDiscovery>> for DiscoveryConfig {
     }
 }
 
+/// A server endpoint that does nothing. Accept will never resolve.
+///
+/// This is used unless an external rpc endpoint is configured.
 #[derive(Debug, Default)]
-pub struct DummyServerEndpoint;
+struct DummyServerEndpoint;
 
 impl BoxableServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Response>
     for DummyServerEndpoint
@@ -171,10 +176,7 @@ impl BoxableServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Re
     }
 }
 
-fn mk_external_rpc() -> quic_rpc::transport::boxed::ServerEndpoint<
-    crate::rpc_protocol::Request,
-    crate::rpc_protocol::Response,
-> {
+fn mk_external_rpc() -> BoxedServerEndpoint {
     quic_rpc::transport::boxed::ServerEndpoint::new(DummyServerEndpoint::default())
 }
 
@@ -288,13 +290,7 @@ where
     }
 
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint(
-        self,
-        value: quic_rpc::transport::boxed::ServerEndpoint<
-            crate::rpc_protocol::Request,
-            crate::rpc_protocol::Response,
-        >,
-    ) -> Builder<D> {
+    pub fn rpc_endpoint(self, value: BoxedServerEndpoint) -> Builder<D> {
         // we can't use ..self here because the return type is different
         Builder {
             storage: self.storage,
@@ -579,10 +575,7 @@ pub struct ProtocolBuilder<D> {
     inner: Arc<NodeInner<D>>,
     internal_rpc: FlumeServerEndpoint<RpcService>,
     #[debug("external rpc")]
-    external_rpc: quic_rpc::transport::boxed::ServerEndpoint<
-        crate::rpc_protocol::Request,
-        crate::rpc_protocol::Response,
-    >,
+    external_rpc: BoxedServerEndpoint,
     protocols: ProtocolMap,
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
