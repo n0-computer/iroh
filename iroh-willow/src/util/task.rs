@@ -51,8 +51,7 @@ impl<K: Unpin, T: 'static> JoinMap<K, T> {
     pub fn spawn_local<F: Future<Output = T> + 'static>(&mut self, key: K, future: F) -> TaskKey {
         let handle = tokio::task::spawn_local(future);
         let abort_handle = handle.abort_handle();
-        let k = self.tasks.insert(handle);
-        let k = TaskKey(k);
+        let k = TaskKey(self.tasks.insert(handle));
         self.keys.insert(k, key);
         self.abort_handles.insert(k, abort_handle);
         k

@@ -1,13 +1,13 @@
 use futures_lite::StreamExt;
 use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error_span, trace};
+use tracing::{debug, error_span, trace, warn};
 
 use crate::{
     proto::sync::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
     session::{channels::LogicalChannelReceivers, Error, Scope, Session, SessionInit},
     store::{traits::Storage, Store},
-    util::channel::Receiver,
+    util::{channel::Receiver, stream::Cancelable},
 };
 
 use super::{
@@ -32,12 +32,20 @@ impl Session {
             logical_recv:
                 LogicalChannelReceivers {
                     reconciliation_recv,
-                    mut static_tokens_recv,
-                    mut capability_recv,
-                    mut aoi_recv,
+                    static_tokens_recv,
+                    capability_recv,
+                    aoi_recv,
                     data_recv,
                 },
         } = recv;
+
+        // Make all our receivers close once the cancel_token is triggered.
+        let control_recv = Cancelable::new(control_recv, cancel_token.clone());
+        let reconciliation_recv = Cancelable::new(reconciliation_recv, cancel_token.clone());
+        let mut static_tokens_recv = Cancelable::new(static_tokens_recv, cancel_token.clone());
+        let mut capability_recv = Cancelable::new(capability_recv, cancel_token.clone());
+        let mut aoi_recv = Cancelable::new(aoi_recv, cancel_token.clone());
+        let mut data_recv = Cancelable::new(data_recv, cancel_token.clone());
 
         // Spawn a task to handle incoming static tokens.
         self.spawn(error_span!("stt"), move |session| async move {
@@ -52,7 +60,10 @@ impl Session {
             self.spawn(error_span!("dat:r"), {
                 let store = store.clone();
                 move |session| async move {
-                    DataReceiver::new(session, store, data_recv).run().await?;
+                    let mut data_receiver = DataReceiver::new(session, store);
+                    while let Some(message) = data_recv.try_next().await? {
+                        data_receiver.on_message(message).await?;
+                    }
                     Ok(())
                 }
             });
@@ -74,13 +85,11 @@ impl Session {
         });
 
         // Spawn a task to handle incoming areas of interest.
-        self.spawn(error_span!("aoi"), {
-            move |session| async move {
-                while let Some(message) = aoi_recv.try_next().await? {
-                    session.on_bind_area_of_interest(message).await?;
-                }
-                Ok(())
+        self.spawn(error_span!("aoi"), move |session| async move {
+            while let Some(message) = aoi_recv.try_next().await? {
+                session.on_bind_area_of_interest(message).await?;
             }
+            Ok(())
         });
 
         // Spawn a task to handle reconciliation messages
@@ -88,18 +97,21 @@ impl Session {
             let cancel_token = cancel_token.clone();
             let store = store.clone();
             move |session| async move {
-                let res = Reconciler::new(session, store, reconciliation_recv)?
+                let res = Reconciler::new(session.clone(), store, reconciliation_recv)?
                     .run()
                     .await;
-                cancel_token.cancel();
+                if !session.mode().is_live() {
+                    debug!("reconciliation complete and not in live mode: close session");
+                    cancel_token.cancel();
+                }
                 res
             }
         });
 
         // Spawn a task to handle control messages
         self.spawn(error_span!("ctl"), {
-            let cancel_token = cancel_token.clone();
             let store = store.clone();
+            let cancel_token = cancel_token.clone();
             move |session| async move {
                 let res = control_loop(session, store, control_recv, init).await;
                 cancel_token.cancel();
@@ -107,50 +119,55 @@ impl Session {
             }
         });
 
-        // Spawn a task to handle session termination.
-        self.spawn(error_span!("fin"), {
-            let cancel_token = cancel_token.clone();
-            move |session| async move {
-                // Wait until the session is cancelled:
-                // * either because SessionMode is ReconcileOnce and reconciliation finished
-                // * or because the session was cancelled from the outside session handle
-                cancel_token.cancelled().await;
-                debug!("closing session");
-                // Then close all senders. This will make all other tasks terminate once the remote
-                // closed their senders as well.
-                session.close_senders();
-                // Unsubscribe from the store.  This stops the data send task.
-                store.entries().unsubscribe(session.id());
-                Ok(())
+        // Wait until the session is cancelled, or until a task fails.
+        let result = loop {
+            tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    break Ok(());
+                },
+                Some((span, result)) = self.join_next_task() => {
+                    let _guard = span.enter();
+                    trace!(?result, remaining = self.remaining_tasks(), "task complete");
+                    if let Err(err) = result {
+                        warn!(?err, "session task failed: abort session");
+                        break Err(err);
+                    }
+                },
             }
-        });
+        };
 
-        // Wait for all tasks to complete.
-        // We are not cancelling here so we have to make sure that all tasks terminate (structured
-        // concurrency basically).
-        let mut final_result = Ok(());
+        if result.is_err() {
+            self.abort_all_tasks();
+        } else {
+            debug!("closing session");
+        }
+
+        // Unsubscribe from the store.  This stops the data send task.
+        store.entries().unsubscribe(self.id());
+
+        // Wait for remaining tasks to terminate to catch any panics.
+        // TODO: Add timeout?
         while let Some((span, result)) = self.join_next_task().await {
             let _guard = span.enter();
-            // trace!(?result, remaining = self.remaining_tasks(), "task complete");
-            debug!(?result, remaining = self.remaining_tasks(), "task complete");
+            trace!(?result, remaining = self.remaining_tasks(), "task complete");
             if let Err(err) = result {
-                tracing::warn!(?err, "task failed: {err}");
-                cancel_token.cancel();
-                // self.abort_all_tasks();
-                if final_result.is_ok() {
-                    final_result = Err(err);
-                }
+                warn!("task failed: {err:?}");
             }
         }
-        debug!(success = final_result.is_ok(), "session complete");
-        final_result
+
+        // Close our channel senders.
+        // This will stop the network send loop after all pending data has been sent.
+        self.close_senders();
+
+        debug!(success = result.is_ok(), "session complete");
+        result
     }
 }
 
 async fn control_loop<S: Storage>(
     session: Session,
     store: Store<S>,
-    mut control_recv: Receiver<Message>,
+    mut control_recv: Cancelable<Receiver<Message>>,
     init: SessionInit,
 ) -> Result<(), Error> {
     debug!(role = ?session.our_role(), "start session");

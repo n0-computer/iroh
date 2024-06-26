@@ -8,10 +8,10 @@ use std::{
 
 use futures_lite::Stream;
 
-/// A simple unbounded queue.
+/// A simple unbounded FIFO queue.
 ///
 /// Values are pushed into the queue, synchronously.
-/// The queue can be polled for the next value from the start.
+/// The queue can be polled for the next value asynchronously.
 #[derive(Debug)]
 pub struct Queue<T> {
     items: VecDeque<T>,

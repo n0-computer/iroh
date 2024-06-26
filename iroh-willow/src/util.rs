@@ -3,5 +3,6 @@
 pub mod channel;
 pub mod codec;
 pub mod queue;
+pub mod stream;
 pub mod task;
 pub mod time;

@@ -338,6 +338,18 @@ impl Message {
     pub fn same_kind(&self, other: &Self) -> bool {
         std::mem::discriminant(self) == std::mem::discriminant(other)
     }
+
+    pub fn covers_region(&self) -> Option<(AreaOfInterestHandle, u64)> {
+        match self {
+            Message::ReconciliationSendFingerprint(msg) => {
+                msg.covers.map(|covers| (msg.receiver_handle, covers))
+            }
+            Message::ReconciliationAnnounceEntries(msg) => {
+                msg.covers.map(|covers| (msg.receiver_handle, covers))
+            }
+            _ => None,
+        }
+    }
 }
 
 impl Encoder for Message {
