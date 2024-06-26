@@ -1,5 +1,3 @@
-use futures_lite::StreamExt;
-
 use tokio::sync::broadcast;
 
 use crate::{
@@ -11,7 +9,6 @@ use crate::{
     store::{traits::Storage, Origin, Store},
 };
 
-use super::channels::MessageReceiver;
 use super::payload::{send_payload_chunked, CurrentPayload};
 use super::Session;
 
@@ -81,26 +78,18 @@ pub struct DataReceiver<S: Storage> {
     session: Session,
     store: Store<S>,
     current_payload: CurrentPayload,
-    recv: MessageReceiver<DataMessage>,
 }
 
 impl<S: Storage> DataReceiver<S> {
-    pub fn new(session: Session, store: Store<S>, recv: MessageReceiver<DataMessage>) -> Self {
+    pub fn new(session: Session, store: Store<S>) -> Self {
         Self {
             session,
             store,
             current_payload: Default::default(),
-            recv,
         }
-    }
-    pub async fn run(mut self) -> Result<(), Error> {
-        while let Some(message) = self.recv.try_next().await? {
-            self.on_message(message).await?;
-        }
-        Ok(())
     }
 
-    async fn on_message(&mut self, message: DataMessage) -> Result<(), Error> {
+    pub async fn on_message(&mut self, message: DataMessage) -> Result<(), Error> {
         match message {
             DataMessage::SendEntry(message) => self.on_send_entry(message).await?,
             DataMessage::SendPayload(message) => self.on_send_payload(message).await?,

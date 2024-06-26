@@ -165,7 +165,7 @@ impl<S: Storage> Auth<S> {
         selector: &CapSelector,
     ) -> Result<Option<WriteCapability>, AuthError> {
         let cap = self.caps.read().unwrap().get_write_cap(selector);
-        debug!(?selector, ?cap, "get write cap");
+        // debug!(?selector, ?cap, "get write cap");
         Ok(cap)
     }
 
@@ -174,7 +174,7 @@ impl<S: Storage> Auth<S> {
         selector: &CapSelector,
     ) -> Result<Option<ReadAuthorisation>, AuthError> {
         let cap = self.caps.read().unwrap().get_read_cap(selector);
-        debug!(?selector, ?cap, "get read cap");
+        // debug!(?selector, ?cap, "get read cap");
         Ok(cap)
     }
 

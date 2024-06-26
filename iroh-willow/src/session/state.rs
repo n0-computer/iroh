@@ -8,7 +8,7 @@ use std::{
 };
 
 use futures_lite::Stream;
-use tracing::{Instrument, Span};
+use tracing::{debug, trace, Instrument, Span};
 
 use crate::{
     proto::{
@@ -103,9 +103,19 @@ impl Session {
         self.0.tasks.borrow_mut().abort_all();
     }
 
-    pub fn remaining_tasks(&self) -> usize {
+    // pub fn remaining_tasks(&self) -> usize {
+    //     let tasks = self.0.tasks.borrow();
+    //     tasks.len()
+    // }
+
+    pub fn remaining_tasks(&self) -> String {
         let tasks = self.0.tasks.borrow();
-        tasks.len()
+        let mut out = vec![];
+        for (span, _k) in tasks.iter() {
+            let name = span.metadata().unwrap().name();
+            out.push(name.to_string());
+        }
+        out.join(",")
     }
 
     pub fn log_remaining_tasks(&self) {
@@ -114,10 +124,21 @@ impl Session {
             .iter()
             .map(|t| t.0.metadata().unwrap().name())
             .collect::<Vec<_>>();
-        tracing::debug!(tasks=?names, "active_tasks");
+        debug!(tasks=?names, "active_tasks");
     }
 
     pub async fn send(&self, message: impl Into<Message>) -> Result<(), WriteError> {
+        let message: Message = message.into();
+        if let Some((their_handle, range_count)) = message.covers_region() {
+            if let Err(err) = self
+                .state_mut()
+                .mark_their_range_covered(their_handle, range_count)
+            {
+                // TODO: Is this really unreachable? I think so, as this would indicate a logic
+                // error purely on our side.
+                unreachable!("mark_their_range_covered: {err:?}");
+            }
+        }
         self.0.send.send(message).await
     }
 
@@ -196,7 +217,7 @@ impl Session {
         Ok((our_handle, maybe_message))
     }
 
-    pub fn mark_range_pending(&self, our_handle: AreaOfInterestHandle) {
+    pub fn mark_our_range_pending(&self, our_handle: AreaOfInterestHandle) {
         let mut state = self.state_mut();
         state.reconciliation_started = true;
         let range_count = state.our_range_counter;
@@ -211,7 +232,7 @@ impl Session {
         let range_count = {
             let mut state = self.state_mut();
             if let Some(range_count) = message.covers {
-                state.mark_range_covered(message.receiver_handle, range_count)?;
+                state.mark_our_range_covered(message.receiver_handle, range_count)?;
             }
             if state.pending_announced_entries.is_some() {
                 return Err(Error::InvalidMessageInCurrentState);
@@ -220,8 +241,7 @@ impl Session {
                 state.pending_announced_entries = Some(message.count);
             }
             if message.want_response {
-                let range_count = state.their_range_counter;
-                state.their_range_counter += 1;
+                let range_count = state.add_pending_range_theirs(message.sender_handle);
                 Some(range_count)
             } else {
                 None
@@ -245,11 +265,9 @@ impl Session {
             let mut state = self.state_mut();
             state.reconciliation_started = true;
             if let Some(range_count) = message.covers {
-                state.mark_range_covered(message.receiver_handle, range_count)?;
+                state.mark_our_range_covered(message.receiver_handle, range_count)?;
             }
-            let range_count = state.their_range_counter;
-            state.their_range_counter += 1;
-            range_count
+            state.add_pending_range_theirs(message.sender_handle)
         };
 
         let namespace = self
@@ -295,7 +313,7 @@ impl Session {
 
     pub fn on_setup_bind_read_capability(&self, msg: SetupBindReadCapability) -> Result<(), Error> {
         // TODO: verify intersection handle
-        tracing::debug!("setup bind cap {msg:?}");
+        trace!("received capability {msg:?}");
         msg.capability.validate()?;
         let mut state = self.state_mut();
         state
@@ -308,14 +326,16 @@ impl Session {
     pub fn reconciliation_is_complete(&self) -> bool {
         let state = self.state();
         // tracing::debug!(
-        //     "reconciliation_is_complete started {} pending_ranges {}, pending_entries {:?} mode {:?}",
+        //     "reconciliation_is_complete started {} our_pending_ranges {}, their_pending_ranges {}, pending_entries {:?} mode {:?}",
         //     state.reconciliation_started,
         //     state.our_uncovered_ranges.len(),
+        //     state.their_uncovered_ranges.len(),
         //     state.pending_announced_entries,
         //     self.mode(),
         // );
         state.reconciliation_started
             && state.our_uncovered_ranges.is_empty()
+            && state.their_uncovered_ranges.is_empty()
             && state.pending_announced_entries.is_none()
     }
 
@@ -457,6 +477,7 @@ struct SessionState {
     our_range_counter: u64,
     their_range_counter: u64,
     our_uncovered_ranges: HashSet<(AreaOfInterestHandle, u64)>,
+    their_uncovered_ranges: HashSet<(AreaOfInterestHandle, u64)>,
     pending_announced_entries: Option<u64>,
     intersection_queue: Queue<AreaOfInterestIntersection>,
 }
@@ -476,6 +497,7 @@ impl SessionState {
             our_range_counter: 0,
             their_range_counter: 0,
             our_uncovered_ranges: Default::default(),
+            their_uncovered_ranges: Default::default(),
             pending_announced_entries: Default::default(),
             intersection_queue: Default::default(),
         }
@@ -542,7 +564,7 @@ impl SessionState {
         Ok(())
     }
 
-    fn mark_range_covered(
+    fn mark_our_range_covered(
         &mut self,
         our_handle: AreaOfInterestHandle,
         range_count: u64,
@@ -552,5 +574,30 @@ impl SessionState {
         } else {
             Ok(())
         }
+    }
+
+    fn mark_their_range_covered(
+        &mut self,
+        their_handle: AreaOfInterestHandle,
+        range_count: u64,
+    ) -> Result<(), Error> {
+        // trace!(?their_handle, ?range_count, "mark_their_range_covered");
+        if !self
+            .their_uncovered_ranges
+            .remove(&(their_handle, range_count))
+        {
+            Err(Error::InvalidMessageInCurrentState)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn add_pending_range_theirs(&mut self, their_handle: AreaOfInterestHandle) -> u64 {
+        let range_count = self.their_range_counter;
+        self.their_range_counter += 1;
+        // debug!(?their_handle, ?range_count, "add_pending_range_theirs");
+        self.their_uncovered_ranges
+            .insert((their_handle, range_count));
+        range_count
     }
 }

@@ -21,14 +21,14 @@ use crate::{
         traits::{EntryReader, EntryStorage, SplitAction, SplitOpts, Storage},
         Origin, Store,
     },
-    util::channel::WriteError,
+    util::{channel::WriteError, stream::Cancelable},
 };
 
 #[derive(derive_more::Debug)]
 pub struct Reconciler<S: Storage> {
     session: Session,
     store: Store<S>,
-    recv: MessageReceiver<ReconciliationMessage>,
+    recv: Cancelable<MessageReceiver<ReconciliationMessage>>,
     snapshot: <S::Entries as EntryStorage>::Snapshot,
     current_payload: CurrentPayload,
 }
@@ -37,7 +37,7 @@ impl<S: Storage> Reconciler<S> {
     pub fn new(
         session: Session,
         store: Store<S>,
-        recv: MessageReceiver<ReconciliationMessage>,
+        recv: Cancelable<MessageReceiver<ReconciliationMessage>>,
     ) -> Result<Self, Error> {
         let snapshot = store.entries().snapshot()?;
         Ok(Self {
@@ -68,11 +68,8 @@ impl<S: Storage> Reconciler<S> {
                     }
                 }
             }
-            if self.session.reconciliation_is_complete()
-                && !self.session.mode().is_live()
-                && !self.current_payload.is_active()
-            {
-                debug!("reconciliation complete and not in live mode: close session");
+            if self.session.reconciliation_is_complete() && !self.current_payload.is_active() {
+                debug!("reconciliation complete");
                 break;
             }
         }
@@ -222,7 +219,7 @@ impl<S: Storage> Reconciler<S> {
         their_handle: AreaOfInterestHandle,
         covers: Option<u64>,
     ) -> anyhow::Result<()> {
-        self.session.mark_range_pending(our_handle);
+        self.session.mark_our_range_pending(our_handle);
         let msg = ReconciliationSendFingerprint {
             range,
             fingerprint,
@@ -259,7 +256,7 @@ impl<S: Storage> Reconciler<S> {
             covers,
         };
         if want_response {
-            self.session.mark_range_pending(our_handle);
+            self.session.mark_our_range_pending(our_handle);
         }
         self.send(msg).await?;
         for authorised_entry in self
