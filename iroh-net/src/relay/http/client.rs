@@ -31,6 +31,7 @@ use crate::key::{PublicKey, SecretKey};
 use crate::relay::client::{ConnReader, ConnWriter};
 use crate::relay::codec::DerpCodec;
 use crate::relay::http::streams::{downcast_upgrade, MaybeTlsStream};
+use crate::relay::http::RELAY_HTTP_PATH;
 use crate::relay::RelayUrl;
 use crate::relay::{
     client::Client as RelayClient, client::ClientBuilder as RelayClientBuilder,
@@ -620,7 +621,7 @@ impl Actor {
 
     async fn connect_ws(&self) -> Result<(ConnReader, ConnWriter), ClientError> {
         let mut dial_url = (*self.url).clone();
-        dial_url.set_path("/derp");
+        dial_url.set_path(RELAY_HTTP_PATH);
 
         debug!(%dial_url, "Dialing relay by websocket");
 
@@ -706,7 +707,7 @@ impl Actor {
         );
         debug!("Sending upgrade request");
         let req = Request::builder()
-            .uri("/derp")
+            .uri(RELAY_HTTP_PATH)
             .header(UPGRADE, Protocol::Relay.upgrade_header())
             .body(http_body_util::Empty::<hyper::body::Bytes>::new())?;
         request_sender.send_request(req).await.map_err(From::from)

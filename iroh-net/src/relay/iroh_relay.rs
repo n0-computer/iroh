@@ -76,7 +76,7 @@ pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
 
 /// Configuration for the Relay HTTP and HTTPS server.
 ///
-/// This includes the HTTP services hosted by the Relay server, the Relay `/derp` HTTP
+/// This includes the HTTP services hosted by the Relay server, the Relay `/relay` HTTP
 /// endpoint is only one of the services served.
 #[derive(Debug)]
 pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
@@ -235,7 +235,8 @@ impl Server {
                     .relay_override(Box::new(relay_disabled_handler))
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
-                    .request_handler(Method::GET, "/derp/probe", Box::new(probe_handler))
+                    .request_handler(Method::GET, "/derp/probe", Box::new(probe_handler)) // backwards compat
+                    .request_handler(Method::GET, "/relay/probe", Box::new(probe_handler))
                     .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
                 let http_addr = match relay_config.tls {
                     Some(tls_config) => {

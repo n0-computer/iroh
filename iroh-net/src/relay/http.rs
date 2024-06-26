@@ -12,6 +12,10 @@ pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
 pub(crate) const WEBSOCKET_UPGRADE_PROTOCOL: &str = "websocket";
 pub(crate) const SUPPORTED_WEBSOCKET_VERSION: &str = "13";
 
+/// The path under which the relay accepts relaying connections
+/// (over websockets and a custom upgrade protocol).
+pub const RELAY_HTTP_PATH: &str = "/relay";
+
 #[cfg(test)]
 mod tests {
     use super::*;

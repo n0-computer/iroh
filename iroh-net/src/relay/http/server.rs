@@ -30,6 +30,8 @@ use crate::relay::http::{
 use crate::relay::server::{ClientConnHandler, MaybeTlsStream};
 use crate::relay::MaybeTlsStreamServer;
 
+use super::RELAY_HTTP_PATH;
+
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
 type HyperResult<T> = std::result::Result<T, HyperError>;
@@ -226,8 +228,6 @@ pub struct ServerBuilder {
     /// Used when certain routes in your server should be made available at the same port as
     /// the relay server, and so must be handled along side requests to the relay endpoint.
     handlers: Handlers,
-    /// Defaults to `GET` request at "/derp".
-    relay_endpoint: &'static str,
     /// Use a custom relay response handler.
     ///
     /// Typically used when you want to disable any relay connections.
@@ -250,7 +250,6 @@ impl ServerBuilder {
             addr,
             tls_config: None,
             handlers: Default::default(),
-            relay_endpoint: "/derp",
             relay_override: None,
             headers: HeaderMap::new(),
             not_found_fn: None,
@@ -293,14 +292,6 @@ impl ServerBuilder {
     /// This is required if no [`SecretKey`] was provided to the builder.
     pub fn relay_override(mut self, handler: HyperHandler) -> Self {
         self.relay_override = Some(handler);
-        self
-    }
-
-    /// Sets a custom endpoint for the relay handler.
-    ///
-    /// The default is `/derp`.
-    pub fn relay_endpoint(mut self, endpoint: &'static str) -> Self {
-        self.relay_endpoint = endpoint;
         self
     }
 
@@ -347,13 +338,7 @@ impl ServerBuilder {
             }),
         };
 
-        let service = RelayService::new(
-            self.handlers,
-            relay_handler,
-            self.relay_endpoint,
-            not_found_fn,
-            self.headers,
-        );
+        let service = RelayService::new(self.handlers, relay_handler, not_found_fn, self.headers);
 
         let server_state = ServerState {
             addr: self.addr,
@@ -564,19 +549,23 @@ impl Service<Request<Incoming>> for RelayService {
 
     fn call(&self, req: Request<Incoming>) -> Self::Future {
         // if the request hits the relay endpoint
-        if req.method() == hyper::Method::GET && req.uri().path() == self.0.relay_endpoint {
-            match &self.0.relay_handler {
-                RelayHandler::Override(f) => {
-                    // see if we have some override response
-                    let res = f(req, self.0.default_response());
-                    return Box::pin(async move { res });
-                }
-                RelayHandler::ConnHandler(handler) => {
-                    let h = handler.clone();
-                    // otherwise handle the relay connection as normal
-                    return Box::pin(async move { h.call(req).await.map_err(Into::into) });
+        match (req.method(), req.uri().path()) {
+            // /derp for backwards compat
+            (&hyper::Method::GET, "/derp" | RELAY_HTTP_PATH) => {
+                match &self.0.relay_handler {
+                    RelayHandler::Override(f) => {
+                        // see if we have some override response
+                        let res = f(req, self.0.default_response());
+                        return Box::pin(async move { res });
+                    }
+                    RelayHandler::ConnHandler(handler) => {
+                        let h = handler.clone();
+                        // otherwise handle the relay connection as normal
+                        return Box::pin(async move { h.call(req).await.map_err(Into::into) });
+                    }
                 }
             }
+            _ => {}
         }
         // check all other possible endpoints
         let uri = req.uri().clone();
@@ -597,7 +586,6 @@ struct RelayService(Arc<Inner>);
 #[derive(derive_more::Debug)]
 struct Inner {
     pub relay_handler: RelayHandler,
-    pub relay_endpoint: &'static str,
     #[debug("Box<Fn(ResponseBuilder) -> Result<Response<BytesBody>> + Send + Sync + 'static>")]
     pub not_found_fn: HyperHandler,
     pub handlers: Handlers,
@@ -645,14 +633,12 @@ impl RelayService {
     fn new(
         handlers: Handlers,
         relay_handler: RelayHandler,
-        relay_endpoint: &'static str,
         not_found_fn: HyperHandler,
         headers: HeaderMap,
     ) -> Self {
         Self(Arc::new(Inner {
             relay_handler,
             handlers,
-            relay_endpoint,
             not_found_fn,
             headers,
         }))
