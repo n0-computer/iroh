@@ -240,18 +240,18 @@ impl PkarrRelayClient {
     }
 
     /// Resolve a [`SignedPacket`]
-    pub async fn resolve(self, node_id: NodeId) -> anyhow::Result<SignedPacket> {
+    pub async fn resolve(&self, node_id: NodeId) -> anyhow::Result<SignedPacket> {
         let public_key = pkarr::PublicKey::try_from(node_id.as_bytes())?;
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()
-            .map_err(|_| anyhow!("Failed to publish: Invalid relay URL"))?
+            .map_err(|_| anyhow!("Failed to resolve: Invalid relay URL"))?
             .push(&public_key.to_z32());
 
         let response = self.http_client.get(url).send().await?;
 
         if !response.status().is_success() {
             bail!(format!(
-                "Publish request failed with status {}",
+                "Resolve request failed with status {}",
                 response.status()
             ))
         }
