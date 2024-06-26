@@ -4041,8 +4041,9 @@ dependencies = [
 
 [[package]]
 name = "quic-rpc"
-version = "0.10.2"
-source = "git+https://github.com/n0-computer/quic-rpc?branch=two-stage-accept#90137e6899076ad92feec94c7d68c8227e5ae54a"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "110f0fbbf7c4a694902e11d890157245801d89a18d8e9b8d9d2afd91358a6a7c"
 dependencies = [
  "anyhow",
  "bincode",
