@@ -4042,7 +4042,8 @@ dependencies = [
 [[package]]
 name = "quic-rpc"
 version = "0.10.2"
-source = "git+https://github.com/n0-computer/quic-rpc?branch=boxed-futures-public-constructor#95dc615b36e416aab9bb7aa9c4e2df568e31fea4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e56dc58272a3f9c151b1c3a6df0e3caca083fd843b337e60f706fae2d974b6b"
 dependencies = [
  "anyhow",
  "bincode",
