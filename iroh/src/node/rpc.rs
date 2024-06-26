@@ -109,11 +109,11 @@ impl<D: BaoStore> Handler<D> {
     pub(crate) fn spawn_rpc_request<E: ServiceEndpoint<RpcService>>(
         inner: Arc<NodeInner<D>>,
         join_set: &mut JoinSet<anyhow::Result<()>>,
-        msg: Request,
-        chan: RpcChannel<RpcService, E>,
+        accepting: quic_rpc::server::Accepting<RpcService, E>,
     ) {
         let handler = Self::new(inner);
         join_set.spawn(async move {
+            let (msg, chan) = accepting.read_first().await?;
             if let Err(err) = handler.handle_rpc_request(msg, chan).await {
                 warn!("rpc request handler error: {err:?}");
             }
