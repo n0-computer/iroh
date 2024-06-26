@@ -5,7 +5,7 @@ use clap::{Parser, ValueEnum};
 use iroh_net::{
     discovery::{
         dns::N0_DNS_NODE_ORIGIN_PROD,
-        pkarr_publish::{PkarrRelayClient, N0_DNS_PKARR_RELAY},
+        pkarr::{PkarrRelayClient, N0_DNS_PKARR_RELAY},
     },
     dns::node_info::{to_z32, NodeInfo, IROH_TXT_NAME},
     key::SecretKey,
