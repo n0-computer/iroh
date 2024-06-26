@@ -174,6 +174,7 @@ async fn open_logical_channels(
             .ok_or(MissingChannel(channel))
     };
 
+    let pai = take_and_spawn_channel(LogicalChannel::Intersection)?;
     let rec = take_and_spawn_channel(LogicalChannel::Reconciliation)?;
     let stt = take_and_spawn_channel(LogicalChannel::StaticToken)?;
     let aoi = take_and_spawn_channel(LogicalChannel::AreaOfInterest)?;
@@ -182,6 +183,7 @@ async fn open_logical_channels(
 
     Ok((
         LogicalChannelSenders {
+            intersection: pai.0,
             reconciliation: rec.0,
             static_tokens: stt.0,
             aoi: aoi.0,
@@ -189,6 +191,7 @@ async fn open_logical_channels(
             data: dat.0,
         },
         LogicalChannelReceivers {
+            intersection_recv: pai.1.into(),
             reconciliation_recv: rec.1.into(),
             static_tokens_recv: stt.1.into(),
             aoi_recv: aoi.1.into(),

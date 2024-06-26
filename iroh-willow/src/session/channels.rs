@@ -10,7 +10,7 @@ use tracing::trace;
 
 use crate::{
     proto::sync::{
-        Channel, DataMessage, LogicalChannel, Message, ReconciliationMessage,
+        Channel, DataMessage, IntersectionMessage, LogicalChannel, Message, ReconciliationMessage,
         SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken,
     },
     util::channel::{Receiver, Sender, WriteError},
@@ -66,6 +66,7 @@ impl<T: TryFrom<Message>> From<Receiver<Message>> for MessageReceiver<T> {
 
 #[derive(Debug)]
 pub struct LogicalChannelReceivers {
+    pub intersection_recv: MessageReceiver<IntersectionMessage>,
     pub reconciliation_recv: MessageReceiver<ReconciliationMessage>,
     pub static_tokens_recv: MessageReceiver<SetupBindStaticToken>,
     pub capability_recv: MessageReceiver<SetupBindReadCapability>,
@@ -75,6 +76,7 @@ pub struct LogicalChannelReceivers {
 
 impl LogicalChannelReceivers {
     pub fn close(&self) {
+        self.intersection_recv.close();
         self.reconciliation_recv.close();
         self.static_tokens_recv.close();
         self.capability_recv.close();
@@ -85,6 +87,7 @@ impl LogicalChannelReceivers {
 
 #[derive(Debug, Clone)]
 pub struct LogicalChannelSenders {
+    pub intersection: Sender<Message>,
     pub reconciliation: Sender<Message>,
     pub static_tokens: Sender<Message>,
     pub aoi: Sender<Message>,
@@ -93,6 +96,7 @@ pub struct LogicalChannelSenders {
 }
 impl LogicalChannelSenders {
     pub fn close(&self) {
+        self.intersection.close();
         self.reconciliation.close();
         self.static_tokens.close();
         self.aoi.close();
@@ -102,6 +106,7 @@ impl LogicalChannelSenders {
 
     pub fn get(&self, channel: LogicalChannel) -> &Sender<Message> {
         match channel {
+            LogicalChannel::Intersection => &self.intersection,
             LogicalChannel::Reconciliation => &self.reconciliation,
             LogicalChannel::StaticToken => &self.static_tokens,
             LogicalChannel::Capability => &self.capability,
