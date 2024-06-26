@@ -47,7 +47,7 @@ num_enum = "0.7"
 once_cell = "1.18.0"
 parking_lot = "0.12.1"
 pin-project = "1"
-pkarr = { version = "1.1.4", default-features = false, features = ["async", "relay"] }
+pkarr = { version = "2.0.0", default-features = false, features = ["async", "rand", "relay"] }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quinn = { package = "iroh-quinn", version = "0.10.5" }
 quinn-proto = { package = "iroh-quinn-proto", version = "0.10.8" }

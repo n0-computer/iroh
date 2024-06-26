@@ -1265,6 +1265,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "document-features"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef5282ad69563b5fc40319526ba27e0e7363d552a896f0297d54f767717f9b95"
+dependencies = [
+ "litrs",
+]
+
+[[package]]
 name = "dtoa"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2578,7 +2587,7 @@ dependencies = [
  "iroh-metrics",
  "nix 0.27.1",
  "parking_lot",
- "pkarr",
+ "pkarr 1.1.5",
  "portable-atomic",
  "postcard",
  "quic-rpc",
@@ -2629,7 +2638,7 @@ dependencies = [
  "lru",
  "mainline",
  "parking_lot",
- "pkarr",
+ "pkarr 1.1.5",
  "rcgen 0.12.1",
  "redb 2.1.0",
  "regex",
@@ -2803,7 +2812,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "pin-project",
- "pkarr",
+ "pkarr 2.0.1",
  "postcard",
  "pretty_assertions",
  "proptest",
@@ -3013,6 +3022,12 @@ name = "linux-raw-sys"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78b3ae25bc7c8c38cec158d1f2757ee79e9b3740fbc7ccf0e59e4b08d793fa89"
+
+[[package]]
+name = "litrs"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4ce301924b7887e9d637144fdade93f9dfff9b60981d4ac161db09720d39aa5"
 
 [[package]]
 name = "lock_api"
@@ -3720,6 +3735,31 @@ dependencies = [
  "simple-dns",
  "thiserror",
  "url",
+ "z32",
+]
+
+[[package]]
+name = "pkarr"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fcfc0c8c57e10eb27ee787ee77baa03b1bbc4f539f5e19475fc027ac9e540549"
+dependencies = [
+ "bytes",
+ "document-features",
+ "ed25519-dalek",
+ "flume",
+ "futures",
+ "js-sys",
+ "lru",
+ "rand",
+ "self_cell",
+ "simple-dns",
+ "thiserror",
+ "tracing",
+ "ureq",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "z32",
 ]
 
@@ -6057,6 +6097,22 @@ name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
+
+[[package]]
+name = "ureq"
+version = "2.9.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d11a831e3c0b56e438a28308e7c810799e3c118417f342d30ecec080105395cd"
+dependencies = [
+ "base64 0.22.1",
+ "log",
+ "once_cell",
+ "rustls 0.22.4",
+ "rustls-pki-types",
+ "rustls-webpki 0.102.4",
+ "url",
+ "webpki-roots 0.26.1",
+]
 
 [[package]]
 name = "url"

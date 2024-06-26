@@ -11,7 +11,7 @@ use tracing::{debug, error_span, warn, Instrument};
 use crate::{AddrInfo, Endpoint, NodeId};
 
 pub mod dns;
-pub mod pkarr_publish;
+pub mod pkarr;
 
 /// Name used for logging when new node addresses are added from discovery.
 const SOURCE_NAME: &str = "discovery";
