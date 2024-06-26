@@ -273,8 +273,8 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 // accept is just a pending future.
                 request = external_rpc.accept() => {
                     match request {
-                        Ok((msg, chan)) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, msg, chan);
+                        Ok(accepting) => {
+                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting);
                         }
                         Err(e) => {
                             info!("rpc request error: {:?}", e);
@@ -284,8 +284,8 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 // handle internal rpc requests.
                 request = internal_rpc.accept() => {
                     match request {
-                        Ok((msg, chan)) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, msg, chan);
+                        Ok(accepting) => {
+                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting);
                         }
                         Err(e) => {
                             info!("internal rpc request error: {:?}", e);
