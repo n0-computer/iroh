@@ -26,6 +26,7 @@ hickory-server = { version = "0.24.0", features = ["dns-over-rustls"] }
 http = "1.0.0"
 iroh-metrics = { version = "0.19.0", path = "../iroh-metrics" }
 lru = "0.12.3"
+mainline = "2.0.1"
 parking_lot = "0.12.1"
 pkarr = { version = "2.0.0", features = [ "async", "relay", "dht"], default-features = false }
 rcgen = "0.12.1"
@@ -54,7 +55,7 @@ z32 = "1.1.1"
 hickory-resolver = "0.24.0"
 iroh-net = { version = "0.19.0", path = "../iroh-net" }
 iroh-test = { path = "../iroh-test" }
-mainline = "<1.5.0"
+pkarr = { version = "2.0.0", features = ["rand"] }
 
 [package.metadata.docs.rs]
 all-features = true

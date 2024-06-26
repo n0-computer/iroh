@@ -6,6 +6,7 @@ use anyhow::Result;
 use hickory_proto::rr::{Name, RecordSet, RecordType, RrKey};
 use iroh_metrics::inc;
 use lru::LruCache;
+use mainline::dht::DhtSettings;
 use parking_lot::Mutex;
 use pkarr::{PkarrClient, SignedPacket};
 use tracing::{debug, trace};
@@ -64,10 +65,14 @@ impl ZoneStore {
     /// mainline bootstrap nodes.
     pub fn with_mainline_fallback(self, bootstrap: BootstrapOption) -> Self {
         let pkarr_client = match bootstrap {
-            BootstrapOption::Default => PkarrClient::default(),
-            BootstrapOption::Custom(bootstrap) => {
-                PkarrClient::builder().bootstrap(&bootstrap).build()
-            }
+            BootstrapOption::Default => PkarrClient::builder().build().unwrap(),
+            BootstrapOption::Custom(bootstrap) => PkarrClient::builder()
+                .dht_settings(DhtSettings {
+                    bootstrap: Some(bootstrap),
+                    ..Default::default()
+                })
+                .build()
+                .unwrap(),
         };
         Self {
             pkarr: Some(Arc::new(pkarr_client)),
@@ -111,7 +116,7 @@ impl ZoneStore {
             //
             // it will be cached for some time.
             debug!("DHT resolve {}", key.to_z32());
-            let packet_opt = pkarr.as_ref().resolve_most_recent(key).await;
+            let packet_opt = pkarr.as_ref().clone().as_async().resolve(&key).await?;
             if let Some(packet) = packet_opt {
                 debug!("DHT resolve successful {:?}", packet.packet());
                 return self
