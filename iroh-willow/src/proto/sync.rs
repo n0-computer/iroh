@@ -147,6 +147,8 @@ impl Channel {
     strum::EnumCount,
 )]
 pub enum LogicalChannel {
+    /// Logical channel for controlling the binding of new IntersectionHandles.
+    Intersection,
     /// Logical channel for performing 3d range-based set reconciliation.
     Reconciliation,
     // TODO: use all the channels
@@ -183,6 +185,7 @@ impl LogicalChannel {
     }
     pub fn fmt_short(&self) -> &'static str {
         match self {
+            LogicalChannel::Intersection => "Pai",
             LogicalChannel::Reconciliation => "Rec",
             LogicalChannel::StaticToken => "StT",
             LogicalChannel::Capability => "Cap",
@@ -193,22 +196,24 @@ impl LogicalChannel {
 
     pub fn from_id(id: u8) -> Result<Self, InvalidChannelId> {
         match id {
-            2 => Ok(Self::AreaOfInterest),
-            3 => Ok(Self::Capability),
-            4 => Ok(Self::StaticToken),
-            5 => Ok(Self::Reconciliation),
-            6 => Ok(Self::Data),
+            2 => Ok(Self::Intersection),
+            3 => Ok(Self::AreaOfInterest),
+            4 => Ok(Self::Capability),
+            5 => Ok(Self::StaticToken),
+            6 => Ok(Self::Reconciliation),
+            7 => Ok(Self::Data),
             _ => Err(InvalidChannelId),
         }
     }
 
     pub fn id(&self) -> u8 {
         match self {
-            LogicalChannel::AreaOfInterest => 2,
-            LogicalChannel::Capability => 3,
-            LogicalChannel::StaticToken => 4,
-            LogicalChannel::Reconciliation => 5,
-            LogicalChannel::Data => 6,
+            LogicalChannel::Intersection => 2,
+            LogicalChannel::AreaOfInterest => 3,
+            LogicalChannel::Capability => 4,
+            LogicalChannel::StaticToken => 5,
+            LogicalChannel::Reconciliation => 6,
+            LogicalChannel::Data => 7,
         }
     }
 }
@@ -292,10 +297,14 @@ pub struct CommitmentReveal {
 pub enum Message {
     #[debug("{:?}", _0)]
     CommitmentReveal(CommitmentReveal),
-    // PaiReplyFragment
-    // PaiBindFragment
-    // PaiRequestSubspaceCapability
-    // PaiReplySubspaceCapability
+    #[debug("{:?}", _0)]
+    PaiReplyFragment(PaiReplyFragment),
+    #[debug("{:?}", _0)]
+    PaiBindFragment(PaiBindFragment),
+    #[debug("{:?}", _0)]
+    PaiRequestSubspaceCapability(PaiRequestSubspaceCapability),
+    #[debug("{:?}", _0)]
+    PaiReplySubspaceCapability(PaiReplySubspaceCapability),
     #[debug("{:?}", _0)]
     SetupBindStaticToken(SetupBindStaticToken),
     #[debug("{:?}", _0)]
@@ -395,6 +404,10 @@ impl Decoder for Message {
 impl Message {
     pub fn channel(&self) -> Channel {
         match self {
+            Message::PaiBindFragment(_) | Message::PaiReplyFragment(_) => {
+                Channel::Logical(LogicalChannel::Intersection)
+            }
+
             Message::SetupBindReadCapability(_) => Channel::Logical(LogicalChannel::Capability),
             Message::SetupBindAreaOfInterest(_) => Channel::Logical(LogicalChannel::AreaOfInterest),
             Message::SetupBindStaticToken(_) => Channel::Logical(LogicalChannel::StaticToken),
@@ -412,6 +425,8 @@ impl Message {
             | Message::DataSetMetadata(_) => Channel::Logical(LogicalChannel::Data),
 
             Message::CommitmentReveal(_)
+            | Message::PaiRequestSubspaceCapability(_)
+            | Message::PaiReplySubspaceCapability(_)
             | Message::ControlIssueGuarantee(_)
             | Message::ControlAbsolve(_)
             | Message::ControlPlead(_)
@@ -456,7 +471,7 @@ impl Message {
 //         }
 //     }
 // }
-//
+
 #[derive(Debug, derive_more::From, strum::Display)]
 pub enum ReconciliationMessage {
     SendFingerprint(ReconciliationSendFingerprint),
@@ -465,6 +480,7 @@ pub enum ReconciliationMessage {
     SendPayload(ReconciliationSendPayload),
     TerminatePayload(ReconciliationTerminatePayload),
 }
+
 impl TryFrom<Message> for ReconciliationMessage {
     type Error = ();
     fn try_from(message: Message) -> Result<Self, Self::Error> {
@@ -478,6 +494,7 @@ impl TryFrom<Message> for ReconciliationMessage {
         }
     }
 }
+
 impl From<ReconciliationMessage> for Message {
     fn from(message: ReconciliationMessage) -> Self {
         match message {
@@ -496,6 +513,7 @@ pub enum DataMessage {
     SendPayload(DataSendPayload),
     SetMetadata(DataSetMetadata),
 }
+
 impl TryFrom<Message> for DataMessage {
     type Error = ();
     fn try_from(message: Message) -> Result<Self, Self::Error> {
@@ -507,6 +525,7 @@ impl TryFrom<Message> for DataMessage {
         }
     }
 }
+
 impl From<DataMessage> for Message {
     fn from(message: DataMessage) -> Self {
         match message {
@@ -516,7 +535,33 @@ impl From<DataMessage> for Message {
         }
     }
 }
-//
+
+#[derive(Debug, derive_more::From, strum::Display)]
+pub enum IntersectionMessage {
+    BindFragment(PaiBindFragment),
+    ReplyFragment(PaiReplyFragment),
+}
+
+impl TryFrom<Message> for IntersectionMessage {
+    type Error = ();
+    fn try_from(message: Message) -> Result<Self, Self::Error> {
+        match message {
+            Message::PaiBindFragment(msg) => Ok(msg.into()),
+            Message::PaiReplyFragment(msg) => Ok(msg.into()),
+            _ => Err(()),
+        }
+    }
+}
+
+impl From<IntersectionMessage> for Message {
+    fn from(message: IntersectionMessage) -> Self {
+        match message {
+            IntersectionMessage::BindFragment(msg) => msg.into(),
+            IntersectionMessage::ReplyFragment(msg) => msg.into(),
+        }
+    }
+}
+
 // impl Encoder for ReconciliationMessage {
 //     fn encoded_len(&self) -> usize {
 //         Message::from(se)
@@ -826,4 +871,41 @@ pub struct ControlFreeHandle {
     /// Indicates whether the peer sending this message is the one who created the handle (true) or not (false).
     mine: bool,
     handle_type: HandleType,
+}
+
+type PsiGroup = ();
+/// Bind data to an IntersectionHandle for performing private area intersection.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PaiBindFragment {
+    /// The result of first applying hash_into_group to some fragment for private area intersection and then performing scalar multiplication with scalar.
+    group_member: PsiGroup,
+    /// Set to true if the private set intersection item is a secondary fragment.
+    is_secondary: bool,
+}
+
+/// Finalise private set intersection for a single item.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PaiReplyFragment {
+    /// The IntersectionHandle of the PaiBindFragment message which this finalises.
+    handle: IntersectionHandle,
+    /// The result of performing scalar multiplication between the group_member of the message that this is replying to and scalar.
+    group_member: PsiGroup,
+}
+
+/// Ask the receiver to send a SubspaceCapability.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PaiRequestSubspaceCapability {
+    /// The IntersectionHandle bound by the sender for the least-specific secondary fragment for whose NamespaceId to request the SubspaceCapability.
+    handle: IntersectionHandle,
+}
+
+/// Send a previously requested SubspaceCapability.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PaiReplySubspaceCapability {
+    /// The handle of the PaiRequestSubspaceCapability message that this answers (hence, an IntersectionHandle bound by the receiver of this message).
+    handle: IntersectionHandle,
+    /// A SubspaceCapability whose granted namespace corresponds to the request this answers.
+    capability: SubspaceCapability,
+    /// The SyncSubspaceSignature issued by the receiver of the capability over the sender’s challenge.
+    signature: SyncSignature,
 }

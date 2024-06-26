@@ -36,6 +36,7 @@ impl Session {
                     capability_recv,
                     aoi_recv,
                     data_recv,
+                    intersection_recv,
                 },
         } = recv;
 
