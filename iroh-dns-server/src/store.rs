@@ -106,7 +106,7 @@ impl ZoneStore {
         };
 
         if let Some(pkarr) = self.pkarr.as_ref() {
-            let key = pkarr::PublicKey::try_from(*pubkey.as_bytes()).expect("valid public key");
+            let key = pkarr::PublicKey::try_from(pubkey.as_bytes()).expect("valid public key");
             // use the more expensive `resolve_most_recent` here.
             //
             // it will be cached for some time.
@@ -243,12 +243,12 @@ impl CachedZone {
             signed_packet_to_hickory_records_without_origin(signed_packet, |_| true)?;
         Ok(Self {
             records,
-            timestamp: *signed_packet.timestamp(),
+            timestamp: signed_packet.timestamp(),
         })
     }
 
     fn is_newer_than(&self, signed_packet: &SignedPacket) -> bool {
-        self.timestamp > *signed_packet.timestamp()
+        self.timestamp > signed_packet.timestamp()
     }
 
     fn resolve(&self, name: &Name, record_type: RecordType) -> Option<Arc<RecordSet>> {
