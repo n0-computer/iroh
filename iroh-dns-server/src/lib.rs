@@ -93,9 +93,10 @@ mod tests {
             ));
             SignedPacket::from_packet(&keypair, &packet)?
         };
-        let pkarr_client = pkarr::PkarrClient::builder()
-            .resolvers(Some(vec![pkarr_relay_url.to_string()]))
-            .build()?;
+        let pkarr_client = pkarr::PkarrRelayClient::new(pkarr::RelaySettings {
+            relays: vec![pkarr_relay_url.to_string()],
+            ..Default::default()
+        })?;
         pkarr_client.as_async().publish(&signed_packet).await?;
 
         use hickory_proto::rr::Name;
