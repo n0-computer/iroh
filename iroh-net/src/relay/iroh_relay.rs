@@ -27,7 +27,7 @@ use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument
 
 use crate::key::SecretKey;
 use crate::relay;
-use crate::relay::http::{ServerBuilder as RelayServerBuilder, TlsAcceptor};
+use crate::relay::http::{ServerBuilder as RelayServerBuilder, TlsAcceptor, RELAY_PROBE_HTTP_PATH};
 use crate::stun;
 use crate::util::AbortingJoinHandle;
 
@@ -236,7 +236,7 @@ impl Server {
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
                     .request_handler(Method::GET, "/derp/probe", Box::new(probe_handler)) // backwards compat
-                    .request_handler(Method::GET, "/relay/probe", Box::new(probe_handler))
+                    .request_handler(Method::GET, RELAY_PROBE_HTTP_PATH, Box::new(probe_handler))
                     .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
                 let http_addr = match relay_config.tls {
                     Some(tls_config) => {

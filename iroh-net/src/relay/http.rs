@@ -15,6 +15,8 @@ pub(crate) const SUPPORTED_WEBSOCKET_VERSION: &str = "13";
 /// The path under which the relay accepts relaying connections
 /// (over websockets and a custom upgrade protocol).
 pub const RELAY_HTTP_PATH: &str = "/relay";
+/// The path under which the relay allows doing latency queries for testing.
+pub const RELAY_PROBE_HTTP_PATH: &str = "/relay/probe";
 
 #[cfg(test)]
 mod tests {
