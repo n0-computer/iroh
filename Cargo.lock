@@ -1292,6 +1292,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dyn-clone"
+version = "1.0.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d6ef0072f8a535281e4876be788938b528e9a1d43900b82c2569af7da799125"
+
+[[package]]
 name = "ecdsa"
 version = "0.16.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2636,9 +2642,9 @@ dependencies = [
  "iroh-net",
  "iroh-test",
  "lru",
- "mainline",
+ "mainline 1.4.0",
  "parking_lot",
- "pkarr 1.1.5",
+ "pkarr 2.0.1",
  "rcgen 0.12.1",
  "redb 2.1.0",
  "regex",
@@ -3068,6 +3074,26 @@ name = "mainline"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "907bd8136f5eb985f3c0faa70051d4809c7e0cfbcc5700bec2ceb5df0de118ca"
+dependencies = [
+ "bytes",
+ "crc",
+ "ed25519-dalek",
+ "flume",
+ "lru",
+ "rand",
+ "serde",
+ "serde_bencode",
+ "serde_bytes",
+ "sha1_smol",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "mainline"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b751ffb57303217bcae8f490eee6044a5b40eadf6ca05ff476cad37e7b7970d"
 dependencies = [
  "bytes",
  "crc",
@@ -3728,9 +3754,7 @@ checksum = "242ae92dfb9d2ba3aaa9caf4723e72043bc50729ad05a763771771ba03196ffb"
 dependencies = [
  "bytes",
  "ed25519-dalek",
- "mainline",
  "rand",
- "reqwest 0.11.27",
  "self_cell",
  "simple-dns",
  "thiserror",
@@ -3746,11 +3770,13 @@ checksum = "fcfc0c8c57e10eb27ee787ee77baa03b1bbc4f539f5e19475fc027ac9e540549"
 dependencies = [
  "bytes",
  "document-features",
+ "dyn-clone",
  "ed25519-dalek",
  "flume",
  "futures",
  "js-sys",
  "lru",
+ "mainline 2.0.1",
  "rand",
  "self_cell",
  "simple-dns",

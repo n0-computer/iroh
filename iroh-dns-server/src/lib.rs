@@ -21,7 +21,7 @@ mod tests {
         AsyncResolver,
     };
     use iroh_net::{
-        discovery::pkarr_publish::PkarrRelayClient,
+        discovery::pkarr::PkarrRelayClient,
         dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
         key::SecretKey,
     };
@@ -93,7 +93,7 @@ mod tests {
             ));
             SignedPacket::from_packet(&keypair, &packet)?
         };
-        let pkarr_client = pkarr::PkarrClient::builder().build();
+        let pkarr_client = pkarr::PkarrClient::builder().build()?;
         pkarr_client
             .relay_put(&pkarr_relay_url, &signed_packet)
             .await?;

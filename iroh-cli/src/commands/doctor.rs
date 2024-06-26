@@ -28,9 +28,7 @@ use iroh::{
     docs::{Capability, DocTicket},
     net::{
         defaults::DEFAULT_STUN_PORT,
-        discovery::{
-            dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery,
-        },
+        discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
         dns::default_resolver,
         endpoint::{self, Connection, ConnectionTypeStream, RecvStream, SendStream},
         key::{PublicKey, SecretKey},

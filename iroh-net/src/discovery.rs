@@ -564,7 +564,7 @@ mod test_dns_pkarr {
     use iroh_base::key::SecretKey;
 
     use crate::{
-        discovery::pkarr_publish::PkarrPublisher,
+        discovery::pkarr::PkarrPublisher,
         dns::{node_info::NodeInfo, ResolverExt},
         relay::{RelayMap, RelayMode},
         test_utils::{
