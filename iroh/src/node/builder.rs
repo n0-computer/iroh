@@ -177,7 +177,7 @@ impl BoxableServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Re
 }
 
 fn mk_external_rpc() -> BoxedServerEndpoint {
-    quic_rpc::transport::boxed::ServerEndpoint::new(DummyServerEndpoint::default())
+    quic_rpc::transport::boxed::ServerEndpoint::new(DummyServerEndpoint)
 }
 
 impl Default for Builder<iroh_blobs::store::mem::Store> {
