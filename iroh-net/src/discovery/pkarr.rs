@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
+use futures_util::stream::BoxStream;
 use pkarr::SignedPacket;
 use tokio::{
     task::JoinHandle,
@@ -18,7 +19,12 @@ use tracing::{debug, error_span, info, warn, Instrument};
 use url::Url;
 use watchable::{Watchable, Watcher};
 
-use crate::{discovery::Discovery, dns::node_info::NodeInfo, key::SecretKey, AddrInfo, NodeId};
+use crate::{
+    discovery::{Discovery, DiscoveryItem},
+    dns::node_info::NodeInfo,
+    key::SecretKey,
+    AddrInfo, Endpoint, NodeId,
+};
 
 /// The pkarr relay run by n0.
 pub const N0_DNS_PKARR_RELAY: &str = "https://dns.iroh.link/pkarr";
@@ -175,6 +181,48 @@ impl PublisherService {
     }
 }
 
+/// Resolve node info using a pkarr relay.
+#[derive(derive_more::Debug, Clone)]
+pub struct PkarrResolver {
+    pkarr_client: PkarrRelayClient,
+}
+
+impl PkarrResolver {
+    /// Create a new config with a pkarr relay URL.
+    pub fn new(pkarr_relay: Url) -> Self {
+        Self {
+            pkarr_client: PkarrRelayClient::new(pkarr_relay),
+        }
+    }
+
+    /// Create a config that resolves using the n0 dns server through [`N0_DNS_PKARR_RELAY`].
+    pub fn n0_dns() -> Self {
+        let pkarr_relay: Url = N0_DNS_PKARR_RELAY.parse().expect("url is valid");
+        Self::new(pkarr_relay)
+    }
+}
+
+impl Discovery for PkarrResolver {
+    fn resolve(
+        &self,
+        _ep: Endpoint,
+        node_id: NodeId,
+    ) -> Option<BoxStream<'static, Result<DiscoveryItem>>> {
+        let pkarr_client = self.pkarr_client.clone();
+        let fut = async move {
+            let signed_packet = pkarr_client.resolve(node_id).await?;
+            let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)?;
+            Ok(DiscoveryItem {
+                provenance: "pkarr",
+                last_updated: None,
+                addr_info: info.into(),
+            })
+        };
+        let stream = futures_lite::stream::once_future(fut);
+        Some(Box::pin(stream))
+    }
+}
+
 /// A pkarr client to publish [`pkarr::SignedPacket`]s to a pkarr relay.
 #[derive(Debug, Clone)]
 pub struct PkarrRelayClient {
@@ -191,6 +239,27 @@ impl PkarrRelayClient {
         }
     }
 
+    /// Resolve a [`SignedPacket`]
+    pub async fn resolve(self, node_id: NodeId) -> anyhow::Result<SignedPacket> {
+        let public_key = pkarr::PublicKey::try_from(node_id.as_bytes())?;
+        let mut url = self.pkarr_relay_url.clone();
+        url.path_segments_mut()
+            .map_err(|_| anyhow!("Failed to publish: Invalid relay URL"))?
+            .push(&public_key.to_z32());
+
+        let response = self.http_client.get(url).send().await?;
+
+        if !response.status().is_success() {
+            bail!(format!(
+                "Publish request failed with status {}",
+                response.status()
+            ))
+        }
+
+        let payload = response.bytes().await?;
+        Ok(SignedPacket::from_relay_payload(&public_key, &payload)?)
+    }
+
     /// Publish a [`SignedPacket`]
     pub async fn publish(&self, signed_packet: &SignedPacket) -> anyhow::Result<()> {
         let mut url = self.pkarr_relay_url.clone();
@@ -201,7 +270,7 @@ impl PkarrRelayClient {
         let response = self
             .http_client
             .put(url)
-            .body(signed_packet.as_relay_request())
+            .body(signed_packet.to_relay_payload())
             .send()
             .await?;
 
