@@ -58,6 +58,7 @@ pub struct Node<D> {
 #[derive(derive_more::Debug)]
 struct NodeInner<D> {
     db: D,
+    rpc_port: Option<u16>,
     docs: Option<DocsEngine>,
     endpoint: Endpoint,
     gossip: Gossip,
@@ -148,6 +149,11 @@ impl<D: BaoStore> Node<D> {
     /// Get the relay server we are connected to.
     pub fn my_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
         self.inner.endpoint.home_relay()
+    }
+
+    /// Returns `Some(port)` if an RPC endpoint is running on this port.
+    pub fn my_rpc_port(&self) -> Option<u16> {
+        self.inner.rpc_port
     }
 
     /// Shutdown the node.
