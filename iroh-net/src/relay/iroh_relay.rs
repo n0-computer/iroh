@@ -711,6 +711,20 @@ mod tests {
 
     use super::*;
 
+    async fn spawn_local_relay() -> Result<Server> {
+        Server::spawn(ServerConfig::<(), ()> {
+            relay: Some(RelayConfig {
+                secret_key: SecretKey::generate(),
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                tls: None,
+                limits: Default::default(),
+            }),
+            stun: None,
+            metrics_addr: None,
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_no_services() {
         let _guard = iroh_test::logging::setup();
@@ -749,18 +763,7 @@ mod tests {
     #[tokio::test]
     async fn test_root_handler() {
         let _guard = iroh_test::logging::setup();
-        let server = Server::spawn(ServerConfig::<(), ()> {
-            relay: Some(RelayConfig {
-                secret_key: SecretKey::generate(),
-                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-                tls: None,
-                limits: Default::default(),
-            }),
-            stun: None,
-            metrics_addr: None,
-        })
-        .await
-        .unwrap();
+        let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}", server.http_addr().unwrap());
 
         let response = reqwest::get(&url).await.unwrap();
@@ -772,18 +775,7 @@ mod tests {
     #[tokio::test]
     async fn test_captive_portal_service() {
         let _guard = iroh_test::logging::setup();
-        let server = Server::spawn(ServerConfig::<(), ()> {
-            relay: Some(RelayConfig {
-                secret_key: SecretKey::generate(),
-                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-                tls: None,
-                limits: Default::default(),
-            }),
-            stun: None,
-            metrics_addr: None,
-        })
-        .await
-        .unwrap();
+        let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}/generate_204", server.http_addr().unwrap());
         let challenge = "123az__.";
 
@@ -802,20 +794,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_relay_client_legacy_route() {
+        let _guard = iroh_test::logging::setup();
+        let server = spawn_local_relay().await.unwrap();
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse().unwrap();
+
+        // set up client a
+        let secret_key = SecretKey::generate();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client, _) = ClientBuilder::new(relay_url)
+            .relay_path("/derp") // Try the legacy relay path for backwards compatibility
+            .build(secret_key, resolver);
+
+        client.ping().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn test_relay_clients_both_derp() {
         let _guard = iroh_test::logging::setup();
-        let server = Server::spawn(ServerConfig::<(), ()> {
-            relay: Some(RelayConfig {
-                secret_key: SecretKey::generate(),
-                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-                tls: None,
-                limits: Default::default(),
-            }),
-            stun: None,
-            metrics_addr: None,
-        })
-        .await
-        .unwrap();
+        let server = spawn_local_relay().await.unwrap();
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();
 
@@ -880,18 +878,7 @@ mod tests {
     #[tokio::test]
     async fn test_relay_clients_both_websockets() {
         let _guard = iroh_test::logging::setup();
-        let server = Server::spawn(ServerConfig::<(), ()> {
-            relay: Some(RelayConfig {
-                secret_key: SecretKey::generate(),
-                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-                tls: None,
-                limits: Default::default(),
-            }),
-            stun: None,
-            metrics_addr: None,
-        })
-        .await
-        .unwrap();
+        let server = spawn_local_relay().await.unwrap();
         // NOTE: Using `ws://` URL scheme to trigger websockets.
         let relay_url = format!("ws://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();
@@ -957,18 +944,7 @@ mod tests {
     #[tokio::test]
     async fn test_relay_clients_websocket_and_derp() {
         let _guard = iroh_test::logging::setup();
-        let server = Server::spawn(ServerConfig::<(), ()> {
-            relay: Some(RelayConfig {
-                secret_key: SecretKey::generate(),
-                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-                tls: None,
-                limits: Default::default(),
-            }),
-            stun: None,
-            metrics_addr: None,
-        })
-        .await
-        .unwrap();
+        let server = spawn_local_relay().await.unwrap();
 
         let derp_relay_url = format!("http://{}", server.http_addr().unwrap());
         let derp_relay_url: RelayUrl = derp_relay_url.parse().unwrap();
