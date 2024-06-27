@@ -15,7 +15,7 @@ use crate::{
     session::{
         channels::MessageReceiver,
         payload::{send_payload_chunked, CurrentPayload},
-        AreaOfInterestIntersection, Error, Session,
+        AoiIntersection, Error, Session,
     },
     store::{
         traits::{EntryReader, EntryStorage, SplitAction, SplitOpts, Storage},
@@ -93,8 +93,8 @@ impl<S: Storage> Reconciler<S> {
         Ok(())
     }
 
-    async fn initiate(&mut self, intersection: AreaOfInterestIntersection) -> Result<(), Error> {
-        let AreaOfInterestIntersection {
+    async fn initiate(&mut self, intersection: AoiIntersection) -> Result<(), Error> {
+        let AoiIntersection {
             our_handle,
             their_handle,
             intersection,

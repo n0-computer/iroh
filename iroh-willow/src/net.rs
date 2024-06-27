@@ -105,7 +105,10 @@ impl SessionHandle {
     pub async fn join(&mut self) -> anyhow::Result<()> {
         let session_res = self.handle.on_finish().await;
         let net_tasks_res = join_all(&mut self.tasks).await;
-        session_res.or(net_tasks_res)
+        match session_res {
+            Err(err) => Err(err.into()),
+            Ok(()) => net_tasks_res,
+        }
     }
 }
 
@@ -232,7 +235,7 @@ async fn recv_loop(mut recv_stream: RecvStream, mut channel_writer: Writer) -> a
     let max_buffer_size = channel_writer.max_buffer_size();
     while let Some(buf) = recv_stream.read_chunk(max_buffer_size, true).await? {
         channel_writer.write_all(&buf.bytes[..]).await?;
-        trace!(len = buf.bytes.len(), "recv");
+        // trace!(len = buf.bytes.len(), "recv");
     }
     channel_writer.close();
     trace!("close");
@@ -241,9 +244,9 @@ async fn recv_loop(mut recv_stream: RecvStream, mut channel_writer: Writer) -> a
 
 async fn send_loop(mut send_stream: SendStream, channel_reader: Reader) -> anyhow::Result<()> {
     while let Some(data) = channel_reader.read_bytes().await {
-        let len = data.len();
+        // let len = data.len();
         send_stream.write_chunk(data).await?;
-        trace!(len, "sent");
+        // trace!(len, "sent");
     }
     send_stream.finish().await?;
     trace!("close");
@@ -279,7 +282,7 @@ async fn join_all(join_set: &mut JoinSet<anyhow::Result<()>>) -> anyhow::Result<
     let mut joined = 0;
     while let Some(res) = join_set.join_next().await {
         joined += 1;
-        tracing::trace!("joined {joined} tasks, remaining {}", join_set.len());
+        trace!("joined {joined} tasks, remaining {}", join_set.len());
         let res = match res {
             Ok(Ok(())) => Ok(()),
             Ok(Err(err)) => Err(err),

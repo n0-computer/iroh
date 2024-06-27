@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{hash_map, HashMap, VecDeque},
     task::{Context, Poll, Waker},
 };
 
@@ -33,8 +33,9 @@ impl ResourceMaps {
         F: for<'a> Fn(&'a Self) -> &'a ResourceMap<H, R>,
         R: Eq + PartialEq + Clone,
     {
-        let res = selector(self);
-        res.try_get(&handle).cloned()
+        let store = selector(self);
+        let res = store.try_get(&handle).cloned()?;
+        Ok(res)
     }
 
     pub fn poll_get_eventually<F, H: IsHandle, R: Eq + PartialEq + Clone>(
@@ -111,12 +112,12 @@ where
         }
     }
 
-    pub fn try_get(&self, handle: &H) -> Result<&R, Error> {
+    pub fn try_get(&self, handle: &H) -> Result<&R, MissingResource> {
         self.map
             .get(handle)
             .as_ref()
             .map(|r| &r.value)
-            .ok_or_else(|| Error::MissingResource((*handle).into()))
+            .ok_or_else(|| MissingResource((*handle).into()))
     }
 
     pub fn get(&self, handle: &H) -> Option<&R> {
@@ -151,7 +152,21 @@ where
             Poll::Pending
         }
     }
+
+    pub fn update(&mut self, handle: H, resource: R) -> Result<(), Error> {
+        match self.map.entry(handle) {
+            hash_map::Entry::Vacant(_) => Err(Error::MissingResource(handle.into())),
+            hash_map::Entry::Occupied(mut entry) => {
+                entry.get_mut().value = resource;
+                Ok(())
+            }
+        }
+    }
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("missing resource {0:?}")]
+pub struct MissingResource(pub ResourceHandle);
 
 // #[derive(Debug)]
 // enum ResourceState {

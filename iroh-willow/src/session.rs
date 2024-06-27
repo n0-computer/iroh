@@ -12,6 +12,7 @@ use crate::{
 pub mod channels;
 mod data;
 mod error;
+mod pai;
 mod payload;
 mod reconciler;
 mod resource;
@@ -113,7 +114,7 @@ pub enum Scope {
 
 /// Intersection between two areas of interest.
 #[derive(Debug, Clone)]
-pub struct AreaOfInterestIntersection {
+pub struct AoiIntersection {
     pub our_handle: AreaOfInterestHandle,
     pub their_handle: AreaOfInterestHandle,
     pub intersection: Area,

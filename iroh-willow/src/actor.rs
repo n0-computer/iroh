@@ -389,13 +389,18 @@ impl<S: Storage> Actor<S> {
             } => {
                 let Channels { send, recv } = channels;
                 let id = self.next_session_id();
-                let session = Session::new(id, init.mode, our_role, send, initial_transmission);
+                let session =
+                    Session::new(&self.store, id, our_role, send, init, initial_transmission);
+                let session = match session {
+                    Ok(session) => session,
+                    Err(err) => return send_reply(reply, Err(err.into())),
+                };
 
                 let store = self.store.clone();
                 let cancel_token = CancellationToken::new();
 
                 let future = session
-                    .run(store, recv, init, cancel_token.clone())
+                    .run(store, recv, cancel_token.clone())
                     .instrument(error_span!("session", peer = %peer.fmt_short()));
                 let task_key = self.session_tasks.spawn_local(id, future);
 
@@ -481,6 +486,7 @@ impl<S: Storage> Actor<S> {
     fn complete_session(&mut self, session_id: &SessionId, result: Result<(), Error>) {
         let session = self.sessions.remove(session_id);
         if let Some(session) = session {
+            debug!(?session, ?result, "complete session");
             session.on_finish.send(result).ok();
             self.session_tasks.remove(&session.task_key);
         } else {

@@ -11,27 +11,32 @@ use futures_lite::Stream;
 use tracing::{debug, trace, Instrument, Span};
 
 use crate::{
+    auth::InterestMap,
     proto::{
         challenge::ChallengeState,
         grouping::ThreeDRange,
         keys::NamespaceId,
         sync::{
             AreaOfInterestHandle, CapabilityHandle, Channel, CommitmentReveal, DynamicToken,
-            IntersectionHandle, IsHandle, LogicalChannel, Message, ReadCapability,
-            ReconciliationAnnounceEntries, ReconciliationSendFingerprint, SetupBindAreaOfInterest,
-            SetupBindReadCapability, SetupBindStaticToken, StaticToken, StaticTokenHandle,
+            IntersectionHandle, IsHandle, LogicalChannel, Message, PaiReplySubspaceCapability,
+            ReadCapability, ReconciliationAnnounceEntries, ReconciliationSendFingerprint,
+            SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken, StaticToken,
+            StaticTokenHandle, SubspaceCapability,
         },
         willow::{AuthorisedEntry, Entry},
     },
-    session::InitialTransmission,
-    store::traits::SecretStorage,
+    session::{pai::PaiIntersection, InitialTransmission, SessionInit},
+    store::{
+        traits::{SecretStorage, Storage},
+        Store,
+    },
     util::{channel::WriteError, queue::Queue, task::JoinMap},
 };
 
 use super::{
     channels::ChannelSenders,
     resource::{ResourceMap, ResourceMaps},
-    AreaOfInterestIntersection, Error, Role, Scope, SessionId, SessionMode,
+    AoiIntersection, Error, Role, Scope, SessionId, SessionMode,
 };
 
 #[derive(Debug, Clone)]
@@ -42,36 +47,44 @@ struct SessionInner {
     id: SessionId,
     our_role: Role,
     mode: SessionMode,
+    interests: InterestMap,
     state: RefCell<SessionState>,
     send: ChannelSenders,
     tasks: RefCell<JoinMap<Span, Result<(), Error>>>,
 }
 
 impl Session {
-    pub fn new(
+    pub fn new<S: Storage>(
+        store: &Store<S>,
         id: SessionId,
-        mode: SessionMode,
         our_role: Role,
         send: ChannelSenders,
+        init: SessionInit,
         initial_transmission: InitialTransmission,
-    ) -> Self {
+    ) -> Result<Self, Error> {
         let state = SessionState::new(initial_transmission);
-        Self(Rc::new(SessionInner {
-            mode,
+        let interests = store.auth().find_read_caps_for_interests(init.interests)?;
+        Ok(Self(Rc::new(SessionInner {
+            mode: init.mode,
             id,
             our_role,
+            interests,
             state: RefCell::new(state),
             send,
             tasks: Default::default(),
-        }))
+        })))
     }
 
     pub fn id(&self) -> &SessionId {
         &self.0.id
     }
 
-    pub fn mode(&self) -> &SessionMode {
-        &self.0.mode
+    pub fn mode(&self) -> SessionMode {
+        self.0.mode
+    }
+
+    pub fn interests(&self) -> &InterestMap {
+        &self.0.interests
     }
 
     pub fn spawn<F, Fut>(&self, span: Span, f: F)
@@ -157,9 +170,9 @@ impl Session {
         self.0.our_role
     }
 
-    pub async fn next_aoi_intersection(&self) -> Option<AreaOfInterestIntersection> {
+    pub async fn next_aoi_intersection(&self) -> Option<AoiIntersection> {
         poll_fn(|cx| {
-            let mut queue = &mut self.0.state.borrow_mut().intersection_queue;
+            let mut queue = &mut self.0.state.borrow_mut().aoi_intersection_queue;
             Pin::new(&mut queue).poll_next(cx)
         })
         .await
@@ -193,6 +206,23 @@ impl Session {
                 .poll_get_eventually(&selector, handle, cx)
         })
         .await
+    }
+
+    pub fn sign_subspace_capabiltiy<K: SecretStorage>(
+        &self,
+        key_store: &K,
+        cap: &SubspaceCapability,
+        handle: IntersectionHandle,
+    ) -> Result<PaiReplySubspaceCapability, Error> {
+        let inner = self.state();
+        let signable = inner.challenge.signable()?;
+        let signature = key_store.sign_user(&cap.receiver().id(), &signable)?;
+        let message = PaiReplySubspaceCapability {
+            handle,
+            capability: cap.clone(),
+            signature,
+        };
+        Ok(message)
     }
 
     pub fn bind_and_sign_capability<K: SecretStorage>(
@@ -323,6 +353,17 @@ impl Session {
         Ok(())
     }
 
+    pub fn verify_subspace_capability(
+        &self,
+        msg: &PaiReplySubspaceCapability,
+    ) -> Result<(), Error> {
+        msg.capability.validate()?;
+        self.state()
+            .challenge
+            .verify(msg.capability.receiver(), &msg.signature)?;
+        Ok(())
+    }
+
     pub fn reconciliation_is_complete(&self) -> bool {
         let state = self.state();
         // tracing::debug!(
@@ -434,6 +475,64 @@ impl Session {
         (handle, msg)
     }
 
+    pub fn push_pai_intersection(&self, intersection: PaiIntersection) {
+        self.state_mut()
+            .pai_intersection_queue
+            .push_back(intersection)
+    }
+
+    pub async fn next_pai_intersection(&self) -> Option<PaiIntersection> {
+        poll_fn(|cx| {
+            let mut queue = &mut self.0.state.borrow_mut().pai_intersection_queue;
+            Pin::new(&mut queue).poll_next(cx)
+        })
+        .await
+    }
+
+    pub fn pai_intersection_stream(&self) -> PaiIntersectionStream {
+        PaiIntersectionStream {
+            session: self.clone(),
+        }
+    }
+
+    pub async fn on_pai_intersection<S: Storage>(
+        &self,
+        store: &Store<S>,
+        intersection: PaiIntersection,
+    ) -> Result<(), Error> {
+        // TODO: Somehow getting from the BTreeMap is not working, even though the equality check
+        // below works as exepcted.
+        // let aois = self
+        //     .0
+        //     .interests
+        //     .get(&intersection.authorisation)
+        //     .ok_or(Error::NoKnownInterestsForCapability)?;
+        for (authorisation, aois) in self.0.interests.iter() {
+            if *authorisation != intersection.authorisation {
+                continue;
+            }
+            let read_cap = authorisation.read_cap();
+            let (our_capability_handle, message) = self.bind_and_sign_capability(
+                store.secrets(),
+                intersection.handle,
+                read_cap.clone(),
+            )?;
+            if let Some(message) = message {
+                self.send(message).await?;
+            }
+
+            for area_of_interest in aois.iter().cloned() {
+                let msg = SetupBindAreaOfInterest {
+                    area_of_interest,
+                    authorisation: our_capability_handle,
+                };
+                self.bind_area_of_interest(Scope::Ours, msg.clone(), read_cap)?;
+                self.send(msg).await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn their_aoi_to_namespace_eventually(
         &self,
         handle: AreaOfInterestHandle,
@@ -479,7 +578,8 @@ struct SessionState {
     our_uncovered_ranges: HashSet<(AreaOfInterestHandle, u64)>,
     their_uncovered_ranges: HashSet<(AreaOfInterestHandle, u64)>,
     pending_announced_entries: Option<u64>,
-    intersection_queue: Queue<AreaOfInterestIntersection>,
+    aoi_intersection_queue: Queue<AoiIntersection>,
+    pai_intersection_queue: Queue<PaiIntersection>,
 }
 
 impl SessionState {
@@ -499,7 +599,8 @@ impl SessionState {
             our_uncovered_ranges: Default::default(),
             their_uncovered_ranges: Default::default(),
             pending_announced_entries: Default::default(),
-            intersection_queue: Default::default(),
+            aoi_intersection_queue: Default::default(),
+            pai_intersection_queue: Default::default(),
         }
     }
 
@@ -523,6 +624,7 @@ impl SessionState {
             Scope::Theirs => &self.our_resources,
         };
 
+        // TODO: If we stored the AoIs by namespace we would need to iterate less.
         for (candidate_handle, candidate) in other_resources.areas_of_interest.iter() {
             let candidate_handle = *candidate_handle;
             // Ignore areas without a capability.
@@ -540,13 +642,13 @@ impl SessionState {
                     Scope::Ours => (handle, candidate_handle),
                     Scope::Theirs => (candidate_handle, handle),
                 };
-                let info = AreaOfInterestIntersection {
+                let info = AoiIntersection {
                     our_handle,
                     their_handle,
                     intersection,
                     namespace: namespace.into(),
                 };
-                self.intersection_queue.push_back(info);
+                self.aoi_intersection_queue.push_back(info);
             }
         }
         Ok(())
@@ -599,5 +701,22 @@ impl SessionState {
         self.their_uncovered_ranges
             .insert((their_handle, range_count));
         range_count
+    }
+}
+
+#[derive(Debug)]
+pub struct PaiIntersectionStream {
+    session: Session,
+}
+
+impl Stream for PaiIntersectionStream {
+    type Item = PaiIntersection;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let mut queue = &mut self.session.0.state.borrow_mut().pai_intersection_queue;
+        Pin::new(&mut queue).poll_next(cx)
     }
 }
