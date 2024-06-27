@@ -62,9 +62,9 @@ fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes)> {
 /// The HTTP upgrade protocol used for relaying.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Protocol {
-    /// Relays over the custom relaying protocol with a custom HTTP upgrade header
+    /// Relays over the custom relaying protocol with a custom HTTP upgrade header.
     Relay,
-    /// Relays over websockets
+    /// Relays over websockets.
     ///
     /// Originally introduced to support browser connections.
     Websocket,
