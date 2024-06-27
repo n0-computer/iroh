@@ -798,7 +798,8 @@ impl Reader {
         let (size, is_complete) = match stream.next().await {
             Some(Ok(BlobReadAtResponse::Entry { size, is_complete })) => (size, is_complete),
             Some(Err(err)) => return Err(err),
-            None | Some(Ok(_)) => return Err(anyhow!("Expected header frame")),
+            Some(Ok(_)) => return Err(anyhow!("Expected header frame, but got data frame")),
+            None => return Err(anyhow!("Expected header frame, but RPC stream was dropped")),
         };
 
         let stream = stream.map(|item| match item {

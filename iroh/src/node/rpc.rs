@@ -109,11 +109,11 @@ impl<D: BaoStore> Handler<D> {
     pub(crate) fn spawn_rpc_request<E: ServiceEndpoint<RpcService>>(
         inner: Arc<NodeInner<D>>,
         join_set: &mut JoinSet<anyhow::Result<()>>,
-        msg: Request,
-        chan: RpcChannel<RpcService, E>,
+        accepting: quic_rpc::server::Accepting<RpcService, E>,
     ) {
         let handler = Self::new(inner);
         join_set.spawn(async move {
+            let (msg, chan) = accepting.read_first().await?;
             if let Err(err) = handler.handle_rpc_request(msg, chan).await {
                 warn!("rpc request handler error: {err:?}");
             }
@@ -790,6 +790,7 @@ impl<D: BaoStore> Handler<D> {
                 .await
                 .unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            rpc_port: self.inner.rpc_port,
         })
     }
 
@@ -910,27 +911,18 @@ impl<D: BaoStore> Handler<D> {
         let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
         let db = self.inner.db.clone();
         self.inner.rt.spawn_pinned(move || async move {
-            let entry = db.get(&req.hash).await.unwrap();
-            if let Err(err) = read_loop(
-                req.offset,
-                req.len,
-                entry,
-                tx.clone(),
-                RPC_BLOB_GET_CHUNK_SIZE,
-            )
-            .await
-            {
+            if let Err(err) = read_loop(req, db, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
                 tx.send_async(RpcResult::Err(err.into())).await.ok();
             }
         });
 
-        async fn read_loop(
-            offset: u64,
-            len: Option<usize>,
-            entry: Option<impl MapEntry>,
+        async fn read_loop<D: iroh_blobs::store::Store>(
+            req: BlobReadAtRequest,
+            db: D,
             tx: flume::Sender<RpcResult<BlobReadAtResponse>>,
             max_chunk_size: usize,
         ) -> anyhow::Result<()> {
+            let entry = db.get(&req.hash).await?;
             let entry = entry.ok_or_else(|| anyhow!("Blob not found"))?;
             let size = entry.size();
             tx.send_async(Ok(BlobReadAtResponse::Entry {
@@ -940,7 +932,7 @@ impl<D: BaoStore> Handler<D> {
             .await?;
             let mut reader = entry.data_reader().await?;
 
-            let len = len.unwrap_or((size.value() - offset) as usize);
+            let len = req.len.unwrap_or((size.value() - req.offset) as usize);
 
             let (num_chunks, chunk_size) = if len <= max_chunk_size {
                 (1, len)
@@ -957,7 +949,7 @@ impl<D: BaoStore> Handler<D> {
                 } else {
                     chunk_size
                 };
-                let chunk = reader.read_at(offset + read, chunk_size).await?;
+                let chunk = reader.read_at(req.offset + read, chunk_size).await?;
                 let chunk_len = chunk.len();
                 if !chunk.is_empty() {
                     tx.send_async(Ok(BlobReadAtResponse::Data { chunk }))
