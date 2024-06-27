@@ -343,6 +343,18 @@ impl From<&UserSecretKey> for UserPublicKey {
 #[derive(Serialize, Deserialize, Clone, From, PartialEq, Eq, Deref)]
 pub struct NamespaceSignature(ed25519_dalek::Signature);
 
+impl PartialOrd for NamespaceSignature {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for NamespaceSignature {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.to_bytes().cmp(&other.to_bytes())
+    }
+}
+
 bytestring!(NamespaceSignature, SIGNATURE_LENGTH);
 
 impl std::hash::Hash for NamespaceSignature {
@@ -354,6 +366,18 @@ impl std::hash::Hash for NamespaceSignature {
 /// The signature obtained by signing a message with a [`UserSecretKey`].
 #[derive(Serialize, Deserialize, Clone, From, PartialEq, Eq, Deref)]
 pub struct UserSignature(ed25519_dalek::Signature);
+
+impl PartialOrd for UserSignature {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for UserSignature {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.to_bytes().cmp(&other.to_bytes())
+    }
+}
 
 bytestring!(UserSignature, SIGNATURE_LENGTH);
 
