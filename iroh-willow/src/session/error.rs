@@ -6,6 +6,7 @@ use crate::{
         sync::ResourceHandle,
         willow::Unauthorised,
     },
+    session::{pai::PaiError, resource::MissingResource},
     store::traits::SecretStoreError,
     util::channel::{ReadError, WriteError},
 };
@@ -64,6 +65,10 @@ pub enum Error {
     MissingUserKey(UserId),
     #[error("a task failed to join")]
     TaskFailed(#[from] tokio::task::JoinError),
+    #[error("no known interests for given capability")]
+    NoKnownInterestsForCapability,
+    #[error("private area intersection error: {0}")]
+    Pai(#[from] PaiError),
 }
 
 impl From<Unauthorised> for Error {
@@ -86,5 +91,11 @@ impl From<SignatureError> for Error {
 impl From<meadowcap::InvalidParams> for Error {
     fn from(_value: meadowcap::InvalidParams) -> Self {
         Self::InvalidParameters("")
+    }
+}
+
+impl From<MissingResource> for Error {
+    fn from(value: MissingResource) -> Self {
+        Self::MissingResource(value.0)
     }
 }

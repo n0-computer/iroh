@@ -10,7 +10,7 @@ use crate::util::codec::{DecodeOutcome, Decoder, Encoder};
 use super::{
     grouping::{Area, AreaOfInterest, ThreeDRange},
     meadowcap,
-    willow::{Entry, DIGEST_LENGTH},
+    willow::{Entry, NamespaceId, DIGEST_LENGTH},
 };
 
 pub const MAX_PAYLOAD_SIZE_POWER: u8 = 12;
@@ -55,7 +55,7 @@ pub type SyncSignature = meadowcap::UserSignature;
 pub type Receiver = meadowcap::UserPublicKey;
 
 /// Represents an authorisation to read an area of data in a Namespace.
-#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ReadAuthorisation(pub ReadCapability, pub Option<SubspaceCapability>);
 
 impl From<ReadCapability> for ReadAuthorisation {
@@ -75,6 +75,10 @@ impl ReadAuthorisation {
 
     pub fn subspace_cap(&self) -> Option<&SubspaceCapability> {
         self.1.as_ref()
+    }
+
+    pub fn namespace(&self) -> NamespaceId {
+        self.0.granted_namespace().id()
     }
 }
 
@@ -304,7 +308,7 @@ pub enum Message {
     #[debug("{:?}", _0)]
     PaiRequestSubspaceCapability(PaiRequestSubspaceCapability),
     #[debug("{:?}", _0)]
-    PaiReplySubspaceCapability(PaiReplySubspaceCapability),
+    PaiReplySubspaceCapability(Box<PaiReplySubspaceCapability>),
     #[debug("{:?}", _0)]
     SetupBindStaticToken(SetupBindStaticToken),
     #[debug("{:?}", _0)]
@@ -873,39 +877,40 @@ pub struct ControlFreeHandle {
     handle_type: HandleType,
 }
 
-type PsiGroup = ();
+pub type PsiGroupBytes = [u8; 32];
+
 /// Bind data to an IntersectionHandle for performing private area intersection.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PaiBindFragment {
     /// The result of first applying hash_into_group to some fragment for private area intersection and then performing scalar multiplication with scalar.
-    group_member: PsiGroup,
+    pub group_member: PsiGroupBytes,
     /// Set to true if the private set intersection item is a secondary fragment.
-    is_secondary: bool,
+    pub is_secondary: bool,
 }
 
 /// Finalise private set intersection for a single item.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PaiReplyFragment {
     /// The IntersectionHandle of the PaiBindFragment message which this finalises.
-    handle: IntersectionHandle,
+    pub handle: IntersectionHandle,
     /// The result of performing scalar multiplication between the group_member of the message that this is replying to and scalar.
-    group_member: PsiGroup,
+    pub group_member: PsiGroupBytes,
 }
 
 /// Ask the receiver to send a SubspaceCapability.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PaiRequestSubspaceCapability {
     /// The IntersectionHandle bound by the sender for the least-specific secondary fragment for whose NamespaceId to request the SubspaceCapability.
-    handle: IntersectionHandle,
+    pub handle: IntersectionHandle,
 }
 
 /// Send a previously requested SubspaceCapability.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PaiReplySubspaceCapability {
     /// The handle of the PaiRequestSubspaceCapability message that this answers (hence, an IntersectionHandle bound by the receiver of this message).
-    handle: IntersectionHandle,
+    pub handle: IntersectionHandle,
     /// A SubspaceCapability whose granted namespace corresponds to the request this answers.
-    capability: SubspaceCapability,
+    pub capability: SubspaceCapability,
     /// The SyncSubspaceSignature issued by the receiver of the capability over the sender’s challenge.
-    signature: SyncSignature,
+    pub signature: SyncSignature,
 }

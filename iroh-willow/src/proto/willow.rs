@@ -93,6 +93,11 @@ impl Path {
         Path(path)
     }
 
+    pub fn from_components(components: &[Component]) -> Self {
+        let path: Arc<[Component]> = components.to_vec().into();
+        Self(path)
+    }
+
     pub fn validate(components: &[&[u8]]) -> Result<(), InvalidPath> {
         if components.len() > MAX_COMPONENT_COUNT {
             return Err(InvalidPath::TooManyComponents);
@@ -145,6 +150,14 @@ impl Path {
     pub fn remove_prefix(&self, count: usize) -> Path {
         let start = count.min(self.len());
         Self::new_unchecked(self[start..].to_vec())
+    }
+
+    pub fn component_count(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn components(&self) -> &[Component] {
+        &self.0
     }
 }
 

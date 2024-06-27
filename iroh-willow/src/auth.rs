@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::{Arc, RwLock},
 };
 
@@ -18,6 +18,8 @@ use crate::{
     session::{AreaOfInterestSelector, Interests},
     store::traits::{SecretStorage, SecretStoreError, Storage},
 };
+
+pub type InterestMap = BTreeMap<ReadAuthorisation, BTreeSet<AreaOfInterest>>;
 
 #[derive(Debug, Clone)]
 pub struct DelegateTo {
@@ -220,7 +222,7 @@ impl<S: Storage> Auth<S> {
     pub fn find_read_caps_for_interests(
         &self,
         interests: Interests,
-    ) -> Result<HashMap<ReadAuthorisation, BTreeSet<AreaOfInterest>>, AuthError> {
+    ) -> Result<InterestMap, AuthError> {
         match interests {
             Interests::All => {
                 let out = self
@@ -230,11 +232,12 @@ impl<S: Storage> Auth<S> {
                         let aoi = AreaOfInterest::new(area);
                         (auth, BTreeSet::from_iter([aoi]))
                     })
-                    .collect::<HashMap<_, _>>();
+                    .collect::<BTreeMap<_, _>>();
                 Ok(out)
             }
             Interests::Some(interests) => {
-                let mut out: HashMap<ReadAuthorisation, BTreeSet<AreaOfInterest>> = HashMap::new();
+                let mut out: BTreeMap<ReadAuthorisation, BTreeSet<AreaOfInterest>> =
+                    BTreeMap::new();
                 for (cap_selector, aoi_selector) in interests {
                     let cap = self.get_read_cap(&cap_selector)?;
                     if let Some(cap) = cap {

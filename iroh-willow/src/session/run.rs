@@ -4,8 +4,12 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error_span, trace, warn};
 
 use crate::{
-    proto::sync::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
-    session::{channels::LogicalChannelReceivers, Error, Scope, Session, SessionInit},
+    proto::sync::{ControlIssueGuarantee, LogicalChannel, Message},
+    session::{
+        channels::LogicalChannelReceivers,
+        pai::{PaiFinder, ToPai},
+        Error, Session,
+    },
     store::{traits::Storage, Store},
     util::{channel::Receiver, stream::Cancelable},
 };
@@ -24,7 +28,6 @@ impl Session {
         self,
         store: Store<S>,
         recv: ChannelReceivers,
-        init: SessionInit,
         cancel_token: CancellationToken,
     ) -> Result<(), Error> {
         let ChannelReceivers {
@@ -43,10 +46,18 @@ impl Session {
         // Make all our receivers close once the cancel_token is triggered.
         let control_recv = Cancelable::new(control_recv, cancel_token.clone());
         let reconciliation_recv = Cancelable::new(reconciliation_recv, cancel_token.clone());
+        let intersection_recv = Cancelable::new(intersection_recv, cancel_token.clone());
         let mut static_tokens_recv = Cancelable::new(static_tokens_recv, cancel_token.clone());
         let mut capability_recv = Cancelable::new(capability_recv, cancel_token.clone());
         let mut aoi_recv = Cancelable::new(aoi_recv, cancel_token.clone());
         let mut data_recv = Cancelable::new(data_recv, cancel_token.clone());
+
+        // Setup the private area intersection finder.
+        let pai_finder = PaiFinder::new(self.clone(), store.clone());
+        let (to_pai_tx, to_pai_rx) = flume::bounded(128);
+        self.spawn(error_span!("pai"), {
+            move |_session| async move { pai_finder.run(to_pai_rx, intersection_recv).await }
+        });
 
         // Spawn a task to handle incoming static tokens.
         self.spawn(error_span!("stt"), move |session| async move {
@@ -57,7 +68,7 @@ impl Session {
         });
 
         // Only setup data receiver if session is configured in live mode.
-        if init.mode == SessionMode::Live {
+        if self.mode() == SessionMode::Live {
             self.spawn(error_span!("dat:r"), {
                 let store = store.clone();
                 move |session| async move {
@@ -78,11 +89,19 @@ impl Session {
         }
 
         // Spawn a task to handle incoming capabilities.
-        self.spawn(error_span!("cap"), move |session| async move {
-            while let Some(message) = capability_recv.try_next().await? {
-                session.on_setup_bind_read_capability(message)?;
+        self.spawn(error_span!("cap"), {
+            let to_pai = to_pai_tx.clone();
+            move |session| async move {
+                while let Some(message) = capability_recv.try_next().await? {
+                    let handle = message.handle;
+                    session.on_setup_bind_read_capability(message)?;
+                    to_pai
+                        .send_async(ToPai::ReceivedReadCapForIntersection(handle))
+                        .await
+                        .map_err(|_| Error::InvalidState("PAI actor dead"))?;
+                }
+                Ok(())
             }
-            Ok(())
         });
 
         // Spawn a task to handle incoming areas of interest.
@@ -109,12 +128,24 @@ impl Session {
             }
         });
 
+        // Spawn a task to react to found PAI intersections.
+        let pai_intersections = self.pai_intersection_stream();
+        let mut pai_intersections = Cancelable::new(pai_intersections, cancel_token.clone());
+        self.spawn(error_span!("pai:intersections"), {
+            let store = store.clone();
+            move |session| async move {
+                while let Some(intersection) = pai_intersections.next().await {
+                    session.on_pai_intersection(&store, intersection).await?;
+                }
+                Ok(())
+            }
+        });
+
         // Spawn a task to handle control messages
         self.spawn(error_span!("ctl"), {
-            let store = store.clone();
             let cancel_token = cancel_token.clone();
             move |session| async move {
-                let res = control_loop(session, store, control_recv, init).await;
+                let res = control_loop(session, control_recv, to_pai_tx).await;
                 cancel_token.cancel();
                 res
             }
@@ -152,7 +183,10 @@ impl Session {
             let _guard = span.enter();
             trace!(?result, remaining = self.remaining_tasks(), "task complete");
             if let Err(err) = result {
-                warn!("task failed: {err:?}");
+                match err {
+                    Error::TaskFailed(err) if err.is_cancelled() => {}
+                    err => warn!("task failed: {err:?}"),
+                }
             }
         }
 
@@ -165,14 +199,13 @@ impl Session {
     }
 }
 
-async fn control_loop<S: Storage>(
+async fn control_loop(
     session: Session,
-    store: Store<S>,
     mut control_recv: Cancelable<Receiver<Message>>,
-    init: SessionInit,
+    to_pai: flume::Sender<ToPai>,
 ) -> Result<(), Error> {
     debug!(role = ?session.our_role(), "start session");
-    let mut init = Some(init);
+    let mut commitment_revealed = false;
 
     // Reveal our nonce.
     let reveal_message = session.reveal_commitment()?;
@@ -191,17 +224,35 @@ async fn control_loop<S: Storage>(
         match message {
             Message::CommitmentReveal(msg) => {
                 session.on_commitment_reveal(msg)?;
-                let init = init.take().ok_or(Error::InvalidMessageInCurrentState)?;
-                // send setup messages, but in a separate task to not block incoming guarantees
-                let store = store.clone();
-                session.spawn(error_span!("setup"), move |session| {
-                    setup(store, session, init)
+                if commitment_revealed {
+                    return Err(Error::InvalidMessageInCurrentState)?;
+                }
+                commitment_revealed = true;
+                let to_pai = to_pai.clone();
+                session.spawn(error_span!("setup-pai"), move |session| {
+                    setup_pai(session, to_pai)
                 });
             }
             Message::ControlIssueGuarantee(msg) => {
                 let ControlIssueGuarantee { amount, channel } = msg;
-                trace!(?channel, %amount, "add guarantees");
+                // trace!(?channel, %amount, "add guarantees");
                 session.add_guarantees(channel, amount);
+            }
+            Message::PaiRequestSubspaceCapability(msg) => {
+                to_pai
+                    .send_async(ToPai::ReceivedSubspaceCapRequest(msg.handle))
+                    .await
+                    .map_err(|_| Error::InvalidState("PAI actor dead"))?;
+            }
+            Message::PaiReplySubspaceCapability(msg) => {
+                session.verify_subspace_capability(&msg)?;
+                to_pai
+                    .send_async(ToPai::ReceivedVerifiedSubspaceCapReply(
+                        msg.handle,
+                        msg.capability.granted_namespace().id(),
+                    ))
+                    .await
+                    .map_err(|_| Error::InvalidState("PAI actor dead"))?;
             }
             _ => return Err(Error::UnsupportedMessage),
         }
@@ -210,38 +261,12 @@ async fn control_loop<S: Storage>(
     Ok(())
 }
 
-async fn setup<S: Storage>(
-    store: Store<S>,
-    session: Session,
-    init: SessionInit,
-) -> Result<(), Error> {
-    // debug!(interests = init.interests.len(), "start setup");
-    debug!(?init, "start setup");
-    let interests = store.auth().find_read_caps_for_interests(init.interests)?;
-    debug!(?interests, "found interests");
-    for (authorisation, aois) in interests {
-        // TODO: implement private area intersection
-        let intersection_handle = 0.into();
-        let read_cap = authorisation.read_cap();
-        let (our_capability_handle, message) = session.bind_and_sign_capability(
-            store.secrets(),
-            intersection_handle,
-            read_cap.clone(),
-        )?;
-        if let Some(message) = message {
-            session.send(message).await?;
-        }
-
-        for area_of_interest in aois {
-            let msg = SetupBindAreaOfInterest {
-                area_of_interest,
-                authorisation: our_capability_handle,
-            };
-            // TODO: We could skip the clone if we re-enabled sending by reference.
-            session.bind_area_of_interest(Scope::Ours, msg.clone(), read_cap)?;
-            session.send(msg).await?;
-        }
+async fn setup_pai(session: Session, to_pai: flume::Sender<ToPai>) -> Result<(), Error> {
+    for authorisation in session.interests().keys() {
+        to_pai
+            .send_async(ToPai::SubmitAuthorisation(authorisation.clone()))
+            .await
+            .map_err(|_| Error::InvalidState("PAI actor dead"))?;
     }
-    debug!("setup done");
     Ok(())
 }

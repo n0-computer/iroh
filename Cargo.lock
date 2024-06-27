@@ -1020,7 +1020,9 @@ dependencies = [
  "curve25519-dalek-derive",
  "digest",
  "fiat-crypto",
+ "rand_core",
  "rustc_version",
+ "serde",
  "subtle",
  "zeroize",
 ]
@@ -2927,6 +2929,7 @@ version = "0.18.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "curve25519-dalek",
  "derive_more",
  "ed25519-dalek",
  "flume",
@@ -2947,6 +2950,7 @@ dependencies = [
  "rand_core",
  "redb 2.1.0",
  "serde",
+ "sha2",
  "strum 0.26.2",
  "tempfile",
  "test-strategy",
