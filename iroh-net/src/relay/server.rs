@@ -512,7 +512,7 @@ mod tests {
     use super::*;
 
     use crate::relay::{
-        client::{ClientBuilder, RelayConnReader, RelayConnWriter},
+        client::{ClientBuilder, ConnReader, ConnWriter},
         codec::{recv_frame, FrameType},
         http::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         types::ClientInfo,
@@ -664,8 +664,8 @@ mod tests {
         let client_reader = MaybeTlsStreamReader::Mem(client_reader);
         let client_writer = MaybeTlsStreamWriter::Mem(client_writer);
 
-        let client_reader = RelayConnReader::Derp(FramedRead::new(client_reader, DerpCodec));
-        let client_writer = RelayConnWriter::Derp(FramedWrite::new(client_writer, DerpCodec));
+        let client_reader = ConnReader::Derp(FramedRead::new(client_reader, DerpCodec));
+        let client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, DerpCodec));
 
         (
             server,

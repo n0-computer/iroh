@@ -216,7 +216,7 @@ enum ClientWriterMessage {
 /// the server.
 struct ClientWriter {
     recv_msgs: mpsc::Receiver<ClientWriterMessage>,
-    writer: RelayConnWriter,
+    writer: ConnWriter,
     rate_limiter: Option<RateLimiter>,
 }
 
@@ -252,17 +252,17 @@ impl ClientWriter {
 /// The Builder returns a [`Client`] and a started [`ClientWriter`] run task.
 pub struct ClientBuilder {
     secret_key: SecretKey,
-    reader: RelayConnReader,
-    writer: RelayConnWriter,
+    reader: ConnReader,
+    writer: ConnWriter,
     local_addr: Option<SocketAddr>,
 }
 
-pub(crate) enum RelayConnReader {
+pub(crate) enum ConnReader {
     Derp(FramedRead<MaybeTlsStreamReader, DerpCodec>),
     Ws(SplitStream<WebSocketStream>),
 }
 
-pub(crate) enum RelayConnWriter {
+pub(crate) enum ConnWriter {
     Derp(FramedWrite<MaybeTlsStreamWriter, DerpCodec>),
     Ws(SplitSink<WebSocketStream, tokio_tungstenite_wasm::Message>),
 }
@@ -274,7 +274,7 @@ fn tung_wasm_to_io_err(e: tokio_tungstenite_wasm::Error) -> std::io::Error {
     }
 }
 
-impl Stream for RelayConnReader {
+impl Stream for ConnReader {
     type Item = Result<Frame>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -293,7 +293,7 @@ impl Stream for RelayConnReader {
     }
 }
 
-impl Sink<Frame> for RelayConnWriter {
+impl Sink<Frame> for ConnWriter {
     type Error = std::io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -331,8 +331,8 @@ impl ClientBuilder {
     pub fn new(
         secret_key: SecretKey,
         local_addr: Option<SocketAddr>,
-        reader: RelayConnReader,
-        writer: RelayConnWriter,
+        reader: ConnReader,
+        writer: ConnWriter,
     ) -> Self {
         Self {
             secret_key,

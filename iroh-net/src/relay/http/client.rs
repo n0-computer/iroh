@@ -28,7 +28,7 @@ use url::Url;
 
 use crate::dns::{DnsResolver, ResolverExt};
 use crate::key::{PublicKey, SecretKey};
-use crate::relay::client::{RelayConnReader, RelayConnWriter};
+use crate::relay::client::{ConnReader, ConnWriter};
 use crate::relay::codec::DerpCodec;
 use crate::relay::http::streams::{downcast_upgrade, MaybeTlsStream};
 use crate::relay::RelayUrl;
@@ -618,7 +618,7 @@ impl Actor {
         Ok((relay_client, receiver))
     }
 
-    async fn connect_ws(&self) -> Result<(RelayConnReader, RelayConnWriter), ClientError> {
+    async fn connect_ws(&self) -> Result<(ConnReader, ConnWriter), ClientError> {
         let mut dial_url = (*self.url).clone();
         dial_url.set_path("/derp");
 
@@ -626,15 +626,13 @@ impl Actor {
 
         let (writer, reader) = tokio_tungstenite_wasm::connect(dial_url).await?.split();
 
-        let reader = RelayConnReader::Ws(reader);
-        let writer = RelayConnWriter::Ws(writer);
+        let reader = ConnReader::Ws(reader);
+        let writer = ConnWriter::Ws(writer);
 
         Ok((reader, writer))
     }
 
-    async fn connect_derp(
-        &self,
-    ) -> Result<(RelayConnReader, RelayConnWriter, SocketAddr), ClientError> {
+    async fn connect_derp(&self) -> Result<(ConnReader, ConnWriter, SocketAddr), ClientError> {
         let tcp_stream = self.dial_url().await?;
 
         let local_addr = tcp_stream
@@ -680,8 +678,8 @@ impl Actor {
         let (reader, writer) =
             downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
 
-        let reader = RelayConnReader::Derp(FramedRead::new(reader, DerpCodec));
-        let writer = RelayConnWriter::Derp(FramedWrite::new(writer, DerpCodec));
+        let reader = ConnReader::Derp(FramedRead::new(reader, DerpCodec));
+        let writer = ConnWriter::Derp(FramedWrite::new(writer, DerpCodec));
 
         Ok((reader, writer, local_addr))
     }
