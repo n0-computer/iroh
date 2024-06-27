@@ -641,7 +641,7 @@ impl Actor {
 
         debug!(server_addr = ?tcp_stream.peer_addr(), %local_addr, "TCP stream connected");
 
-        let response = if self.use_https() {
+        let response = if self.use_tls() {
             debug!("Starting TLS handshake");
             let hostname = self
                 .tls_servername()
@@ -824,8 +824,8 @@ impl Actor {
             .and_then(|s| rustls::ServerName::try_from(s).ok())
     }
 
-    fn use_https(&self) -> bool {
-        // only disable https if we are explicitly dialing a http url
+    fn use_tls(&self) -> bool {
+        // only disable tls if we are explicitly dialing a http url
         #[allow(clippy::match_like_matches_macro)]
         match self.url.scheme() {
             "http" => false,
