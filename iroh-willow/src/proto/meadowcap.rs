@@ -134,7 +134,9 @@ impl ValidatedCapability {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash, derive_more::From)]
+#[derive(
+    Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash, Ord, PartialOrd, derive_more::From,
+)]
 pub enum McCapability {
     Communal(CommunalCapability),
     Owned(OwnedCapability),
@@ -261,14 +263,14 @@ impl Encoder for McCapability {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum AccessMode {
     Read,
     Write,
 }
 
 /// A capability that authorizes reads or writes in communal namespaces.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct CommunalCapability {
     /// The kind of access this grants.
     access_mode: AccessMode,
@@ -298,7 +300,7 @@ impl CommunalCapability {
     pub fn receiver(&self) -> &UserPublicKey {
         match self.delegations.last() {
             None => &self.user_key,
-            Some((_, user_key, _)) => user_key,
+            Some(Delegation(_, user_key, _)) => user_key,
         }
     }
 
@@ -309,7 +311,7 @@ impl CommunalCapability {
     pub fn granted_area(&self) -> Area {
         match self.delegations.last() {
             None => Area::subspace(self.user_key.into()),
-            Some((area, _, _)) => area.clone(),
+            Some(Delegation(area, _, _)) => area.clone(),
         }
     }
 
@@ -325,7 +327,7 @@ impl CommunalCapability {
             let mut prev = None;
             let mut prev_receiver = &self.user_key;
             for delegation in self.delegations.iter() {
-                let (new_area, new_user, new_signature) = &delegation;
+                let Delegation(new_area, new_user, new_signature) = &delegation;
                 let signable = self.handover(prev, new_area, new_user)?;
                 prev_receiver.verify(&signable, new_signature)?;
                 prev = Some((new_area, new_signature));
@@ -347,10 +349,10 @@ impl CommunalCapability {
         let prev = self
             .delegations
             .last()
-            .map(|(area, _user_key, sig)| (area, sig));
+            .map(|Delegation(area, _user_key, sig)| (area, sig));
         let handover = self.handover(prev, &new_area, &new_user)?;
         let signature = user_secret.sign(&handover);
-        let delegation = (new_area, new_user, signature);
+        let delegation = Delegation(new_area, new_user, signature);
         let mut cap = self.clone();
         cap.delegations.push(delegation);
         Ok(cap)
@@ -396,10 +398,11 @@ impl CommunalCapability {
     }
 }
 
-pub type Delegation = (Area, UserPublicKey, UserSignature);
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, Hash, Ord, PartialOrd)]
+pub struct Delegation(Area, UserPublicKey, UserSignature);
 
 /// A capability that authorizes reads or writes in owned namespaces.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct OwnedCapability {
     /// The kind of access this grants.
     access_mode: AccessMode,
@@ -434,7 +437,7 @@ impl OwnedCapability {
     pub fn receiver(&self) -> &UserPublicKey {
         match self.delegations.last() {
             None => &self.user_key,
-            Some((_, user_key, _)) => user_key,
+            Some(Delegation(_, user_key, _)) => user_key,
         }
     }
 
@@ -445,7 +448,7 @@ impl OwnedCapability {
     pub fn granted_area(&self) -> Area {
         match self.delegations.last() {
             None => Area::full(),
-            Some((area, _, _)) => area.clone(),
+            Some(Delegation(area, _, _)) => area.clone(),
         }
     }
 
@@ -472,7 +475,7 @@ impl OwnedCapability {
         );
         for delegation in self.delegations.iter() {
             let (prev_area, prev_user, prev_signature) = prev;
-            let (new_area, new_user, new_signature) = delegation;
+            let Delegation(new_area, new_user, new_signature) = delegation;
             let handover =
                 Handover::new(prev_area, prev_signature, new_area, new_user)?.encode()?;
             prev_user.verify(&handover, new_signature)?;
@@ -511,13 +514,13 @@ impl OwnedCapability {
         }
         let prev_signature = match self.delegations.last() {
             None => PrevSignature::Namespace(&self.initial_authorisation),
-            Some((_, _, prev_signature)) => PrevSignature::User(prev_signature),
+            Some(Delegation(_, _, prev_signature)) => PrevSignature::User(prev_signature),
         };
         let prev_area = self.granted_area();
         let handover = Handover::new(&prev_area, prev_signature, &new_area, &new_user)?;
         let signable = handover.encode()?;
         let signature = secret_key.sign(&signable);
-        let delegation = (new_area, new_user, signature);
+        let delegation = Delegation(new_area, new_user, signature);
         let mut cap = self.clone();
         cap.delegations.push(delegation);
         Ok(cap)
@@ -574,7 +577,9 @@ impl<'a> Encoder for Handover<'a> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash, derive_more::From)]
+#[derive(
+    Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash, derive_more::From, Ord, PartialOrd,
+)]
 /// A capability that certifies read access to arbitrary SubspaceIds at some unspecified Path.
 pub struct McSubspaceCapability {
     /// The namespace for which this grants access.
