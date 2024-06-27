@@ -81,4 +81,6 @@ pub struct NodeStatus {
     pub listen_addrs: Vec<SocketAddr>,
     /// The version of the node
     pub version: String,
+    /// RPC port, if currently listening.
+    pub rpc_port: Option<u16>,
 }
