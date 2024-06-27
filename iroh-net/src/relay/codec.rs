@@ -324,7 +324,7 @@ impl Frame {
     }
 
     /// Writes it self to the given buffer.
-    fn write_to(&self, mut dst: impl BufMut) {
+    fn write_to(&self, dst: &mut impl BufMut) {
         match self {
             Frame::ClientInfo {
                 client_public_key,
