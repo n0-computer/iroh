@@ -370,7 +370,10 @@ pub(crate) enum RelayIo {
 }
 
 fn tung_to_io_err(e: tungstenite::Error) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+    match e {
+        tungstenite::Error::Io(io_err) => io_err,
+        _ => std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+    }
 }
 
 impl Sink<Frame> for RelayIo {

@@ -268,7 +268,10 @@ pub(crate) enum RelayConnWriter {
 }
 
 fn tung_wasm_to_io_err(e: tokio_tungstenite_wasm::Error) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+    match e {
+        tokio_tungstenite_wasm::Error::Io(io_err) => io_err,
+        _ => std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+    }
 }
 
 impl Stream for RelayConnReader {
