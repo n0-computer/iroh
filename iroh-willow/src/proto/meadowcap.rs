@@ -144,12 +144,12 @@ pub enum McCapability {
 
 impl McCapability {
     pub fn new_owned(
-        namespace_secret: NamespaceSecretKey,
+        namespace_secret: &NamespaceSecretKey,
         user_key: UserPublicKey,
         access_mode: AccessMode,
     ) -> Self {
         McCapability::Owned(OwnedCapability::new(
-            &namespace_secret,
+            namespace_secret,
             user_key,
             access_mode,
         ))
@@ -692,7 +692,7 @@ mod tests {
         let betty_secret = UserSecretKey::generate(&mut rng);
         let alfie_public = alfie_secret.public_key();
         let betty_public = betty_secret.public_key();
-        let cap = McCapability::new_owned(namespace_secret, alfie_public, AccessMode::Write);
+        let cap = McCapability::new_owned(&namespace_secret, alfie_public, AccessMode::Write);
         cap.validate().expect("cap to be valid");
         let cap_betty = cap
             .delegate(&alfie_secret, betty_public, Area::full())

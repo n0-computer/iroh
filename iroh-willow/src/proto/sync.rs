@@ -1,4 +1,4 @@
-use std::{fmt, io::Write};
+use std::{fmt, io::Write, sync::Arc};
 
 use iroh_base::hash::Hash;
 
@@ -56,29 +56,29 @@ pub type Receiver = meadowcap::UserPublicKey;
 
 /// Represents an authorisation to read an area of data in a Namespace.
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub struct ReadAuthorisation(pub ReadCapability, pub Option<SubspaceCapability>);
+pub struct ReadAuthorisation(Arc<(ReadCapability, Option<SubspaceCapability>)>);
 
 impl From<ReadCapability> for ReadAuthorisation {
     fn from(value: ReadCapability) -> Self {
-        Self(value, None)
+        Self(Arc::new((value, None)))
     }
 }
 
 impl ReadAuthorisation {
     pub fn new(read_cap: ReadCapability, subspace_cap: Option<SubspaceCapability>) -> Self {
-        Self(read_cap, subspace_cap)
+        Self(Arc::new((read_cap, subspace_cap)))
     }
 
     pub fn read_cap(&self) -> &ReadCapability {
-        &self.0
+        &self.0 .0
     }
 
     pub fn subspace_cap(&self) -> Option<&SubspaceCapability> {
-        self.1.as_ref()
+        self.0 .1.as_ref()
     }
 
     pub fn namespace(&self) -> NamespaceId {
-        self.0.granted_namespace().id()
+        self.0 .0.granted_namespace().id()
     }
 }
 
@@ -880,20 +880,22 @@ pub struct ControlFreeHandle {
 pub type PsiGroupBytes = [u8; 32];
 
 /// Bind data to an IntersectionHandle for performing private area intersection.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(derive_more::Debug, Serialize, Deserialize)]
 pub struct PaiBindFragment {
     /// The result of first applying hash_into_group to some fragment for private area intersection and then performing scalar multiplication with scalar.
+    #[debug("{}", hex::encode(self.group_member))]
     pub group_member: PsiGroupBytes,
     /// Set to true if the private set intersection item is a secondary fragment.
     pub is_secondary: bool,
 }
 
 /// Finalise private set intersection for a single item.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(derive_more::Debug, Serialize, Deserialize)]
 pub struct PaiReplyFragment {
     /// The IntersectionHandle of the PaiBindFragment message which this finalises.
     pub handle: IntersectionHandle,
     /// The result of performing scalar multiplication between the group_member of the message that this is replying to and scalar.
+    #[debug("{}", hex::encode(self.group_member))]
     pub group_member: PsiGroupBytes,
 }
 
