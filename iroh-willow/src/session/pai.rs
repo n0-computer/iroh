@@ -11,18 +11,18 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
-use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint, Scalar};
 use futures_lite::StreamExt;
 use tracing::debug;
 
 use crate::{
     proto::{
         grouping::SubspaceArea,
+        pai::{Fragment, FragmentSet, PaiScheme, PsiGroup, PsiScalar},
         sync::{
             IntersectionHandle, IntersectionMessage, PaiBindFragment, PaiReplyFragment,
-            PaiRequestSubspaceCapability, ReadAuthorisation, ReadCapability,
+            PaiRequestSubspaceCapability, ReadAuthorisation,
         },
-        willow::{NamespaceId, Path, SubspaceId},
+        willow::{NamespaceId, Path},
     },
     session::{
         channels::MessageReceiver,
@@ -30,7 +30,7 @@ use crate::{
         Error, Scope, Session,
     },
     store::{traits::Storage, Store},
-    util::{codec::Encoder, stream::Cancelable},
+    util::stream::Cancelable,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -189,7 +189,7 @@ impl<S: Storage> PaiFinder<S> {
         fragment: Fragment,
         is_secondary: bool,
     ) -> Result<(IntersectionHandle, PaiBindFragment)> {
-        let unmixed = PaiScheme::fragment_to_group(fragment);
+        let unmixed = PaiScheme::hash_into_group(fragment);
         let multiplied = PaiScheme::scalar_mult(unmixed, self.scalar);
         let info = FragmentInfo {
             group: multiplied,
@@ -379,149 +379,6 @@ impl LocalFragmentInfo {
         PaiIntersection {
             authorisation: self.authorisation.clone(),
             handle,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Fragment {
-    Pair(FragmentPair),
-    Triple(FragmentTriple),
-}
-
-impl Encoder for Fragment {
-    fn encoded_len(&self) -> usize {
-        match self {
-            Fragment::Pair((_, path)) => NamespaceId::LENGTH + path.encoded_len(),
-            Fragment::Triple((_, _, path)) => {
-                NamespaceId::LENGTH + SubspaceId::LENGTH + path.encoded_len()
-            }
-        }
-    }
-    fn encode_into<W: std::io::Write>(&self, out: &mut W) -> Result<()> {
-        match self {
-            Fragment::Pair((namespace_id, path)) => {
-                out.write_all(namespace_id.as_bytes())?;
-                path.encode_into(out)?;
-            }
-            Fragment::Triple((namespace_id, subspace_id, path)) => {
-                out.write_all(namespace_id.as_bytes())?;
-                out.write_all(subspace_id.as_bytes())?;
-                path.encode_into(out)?;
-            }
-        }
-        Ok(())
-    }
-}
-
-pub type FragmentTriple = (NamespaceId, SubspaceId, Path);
-
-pub type FragmentPair = (NamespaceId, Path);
-
-#[derive(Debug, Clone)]
-pub enum FragmentSet {
-    Complete(Vec<FragmentPair>),
-    Selective {
-        primary: Vec<FragmentTriple>,
-        secondary: Vec<FragmentPair>,
-    },
-}
-
-#[derive(Debug)]
-pub enum FragmentKit {
-    Complete(NamespaceId, Path),
-    Selective(NamespaceId, SubspaceId, Path),
-}
-
-impl FragmentKit {
-    fn into_fragment_set(self) -> FragmentSet {
-        match self {
-            FragmentKit::Complete(namespace_id, path) => {
-                let mut pairs = vec![];
-                for prefix in prefixes_of(&path) {
-                    pairs.push((namespace_id, prefix));
-                }
-                FragmentSet::Complete(pairs)
-            }
-            FragmentKit::Selective(namespace_id, subspace_id, path) => {
-                let mut primary = vec![];
-                let mut secondary = vec![];
-                for prefix in prefixes_of(&path) {
-                    primary.push((namespace_id, subspace_id, prefix.clone()));
-                    secondary.push((namespace_id, prefix.clone()));
-                }
-                FragmentSet::Selective { primary, secondary }
-            }
-        }
-    }
-}
-
-fn prefixes_of(path: &Path) -> Vec<Path> {
-    let mut out = vec![Path::empty()];
-    let components = path.components();
-    if components.is_empty() {
-        return out;
-    }
-    for i in 1..=components.len() {
-        let prefix = Path::from_components(&components[..i]);
-        out.push(prefix);
-    }
-    out
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub struct PsiGroup(RistrettoPoint);
-
-#[derive(Debug, thiserror::Error)]
-#[error("Invalid Psi Group")]
-pub struct InvalidPsiGroup;
-
-impl PsiGroup {
-    pub fn from_bytes(bytes: [u8; 32]) -> Result<Self, InvalidPsiGroup> {
-        let compressed = CompressedRistretto(bytes);
-        let uncompressed = compressed.decompress().ok_or(InvalidPsiGroup)?;
-        Ok(Self(uncompressed))
-    }
-
-    pub fn to_bytes(self) -> [u8; 32] {
-        self.0.compress().0
-    }
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub struct PsiScalar(Scalar);
-
-pub struct PaiScheme;
-
-impl PaiScheme {
-    fn fragment_to_group(fragment: Fragment) -> PsiGroup {
-        let encoded = fragment.encode().expect("encoding not to fail");
-        let point = RistrettoPoint::hash_from_bytes::<sha2::Sha512>(&encoded);
-        PsiGroup(point)
-    }
-
-    fn get_scalar() -> PsiScalar {
-        PsiScalar(Scalar::random(&mut rand::thread_rng()))
-    }
-
-    fn scalar_mult(group: PsiGroup, scalar: PsiScalar) -> PsiGroup {
-        PsiGroup(group.0 * scalar.0)
-    }
-
-    fn is_group_equal(a: &PsiGroup, b: &PsiGroup) -> bool {
-        a == b
-    }
-
-    fn get_fragment_kit(cap: &ReadCapability) -> FragmentKit {
-        let granted_area = cap.granted_area();
-        let granted_namespace = cap.granted_namespace().id();
-        let granted_path = granted_area.path.clone();
-
-        match granted_area.subspace {
-            SubspaceArea::Any => FragmentKit::Complete(granted_namespace, granted_path),
-            SubspaceArea::Id(granted_subspace) => {
-                FragmentKit::Selective(granted_namespace, granted_subspace, granted_path)
-            }
         }
     }
 }

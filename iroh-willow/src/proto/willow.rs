@@ -159,6 +159,19 @@ impl Path {
     pub fn components(&self) -> &[Component] {
         &self.0
     }
+
+    pub fn all_prefixes(&self) -> Vec<Path> {
+        let mut out = vec![Path::empty()];
+        let components = self.components();
+        if components.is_empty() {
+            return out;
+        }
+        for i in 1..=components.len() {
+            let prefix = Path::from_components(&components[..i]);
+            out.push(prefix);
+        }
+        out
+    }
 }
 
 impl std::ops::Deref for Path {
