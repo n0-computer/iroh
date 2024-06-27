@@ -44,7 +44,7 @@ pub struct PsiScalar(Scalar);
 pub struct PaiScheme;
 
 impl PaiScheme {
-    pub fn hash_into_group(fragment: Fragment) -> PsiGroup {
+    pub fn hash_into_group(fragment: &Fragment) -> PsiGroup {
         let encoded = fragment.encode().expect("encoding not to fail");
         let point = RistrettoPoint::hash_from_bytes::<sha2::Sha512>(&encoded);
         PsiGroup(point)
@@ -82,6 +82,17 @@ pub enum Fragment {
     Triple(FragmentTriple),
 }
 
+impl Fragment {
+    pub fn into_parts(self) -> (NamespaceId, SubspaceArea, Path) {
+        match self {
+            Fragment::Pair((namespace_id, path)) => (namespace_id, SubspaceArea::Any, path),
+            Fragment::Triple((namespace_id, subspace_id, path)) => {
+                (namespace_id, SubspaceArea::Id(subspace_id), path)
+            }
+        }
+    }
+}
+
 impl Encoder for Fragment {
     fn encoded_len(&self) -> usize {
         match self {
@@ -110,6 +121,18 @@ impl Encoder for Fragment {
 pub type FragmentTriple = (NamespaceId, SubspaceId, Path);
 
 pub type FragmentPair = (NamespaceId, Path);
+
+#[derive(Debug, Clone, Copy)]
+pub enum FragmentKind {
+    Primary,
+    Secondary,
+}
+
+impl FragmentKind {
+    pub fn is_secondary(&self) -> bool {
+        matches!(self, FragmentKind::Secondary)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum FragmentSet {

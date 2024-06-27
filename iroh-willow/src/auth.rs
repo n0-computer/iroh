@@ -291,7 +291,7 @@ impl<S: Storage> Auth<S> {
                     .secrets
                     .get_namespace(&namespace_id)
                     .ok_or(AuthError::MissingNamespaceSecret(namespace_id))?;
-                McCapability::new_owned(namespace_secret, user_key, AccessMode::Read)
+                McCapability::new_owned(&namespace_secret, user_key, AccessMode::Read)
             }
             NamespaceKind::Communal => {
                 McCapability::new_communal(namespace_key, user_key, AccessMode::Read)
@@ -314,7 +314,7 @@ impl<S: Storage> Auth<S> {
                     .secrets
                     .get_namespace(&namespace_id)
                     .ok_or(AuthError::MissingNamespaceSecret(namespace_id))?;
-                McCapability::new_owned(namespace_secret, user_key, AccessMode::Write)
+                McCapability::new_owned(&namespace_secret, user_key, AccessMode::Write)
             }
             NamespaceKind::Communal => {
                 McCapability::new_communal(namespace_key, user_key, AccessMode::Write)
@@ -356,7 +356,8 @@ impl<S: Storage> Auth<S> {
         restrict_area: Option<Area>,
     ) -> Result<CapabilityPack, AuthError> {
         let auth = self.get_read_cap(from)?.ok_or(AuthError::NoCapability)?;
-        let ReadAuthorisation(read_cap, _subspace_cap) = auth;
+        let read_cap = auth.read_cap();
+        let _subspace_cap = auth.subspace_cap();
         let user_id = read_cap.receiver().id();
         let user_secret = self
             .secrets

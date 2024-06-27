@@ -1,4 +1,5 @@
-use futures_lite::StreamExt;
+use futures_concurrency::stream::StreamExt as _;
+use futures_lite::StreamExt as _;
 use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error_span, trace, warn};
@@ -7,7 +8,7 @@ use crate::{
     proto::sync::{ControlIssueGuarantee, LogicalChannel, Message},
     session::{
         channels::LogicalChannelReceivers,
-        pai::{PaiFinder, ToPai},
+        pai::{self, PaiFinder},
         Error, Session,
     },
     store::{traits::Storage, Store},
@@ -53,10 +54,13 @@ impl Session {
         let mut data_recv = Cancelable::new(data_recv, cancel_token.clone());
 
         // Setup the private area intersection finder.
-        let pai_finder = PaiFinder::new(self.clone(), store.clone());
-        let (to_pai_tx, to_pai_rx) = flume::bounded(128);
+        let (pai_inbox_tx, pai_inbox_rx) = flume::bounded(128);
         self.spawn(error_span!("pai"), {
-            move |_session| async move { pai_finder.run(to_pai_rx, intersection_recv).await }
+            let store = store.clone();
+            let inbox = pai_inbox_rx
+                .into_stream()
+                .merge(intersection_recv.map(pai::Input::ReceivedMessage));
+            move |session| async move { PaiFinder::run_with_session(session, store, inbox).await }
         });
 
         // Spawn a task to handle incoming static tokens.
@@ -90,13 +94,13 @@ impl Session {
 
         // Spawn a task to handle incoming capabilities.
         self.spawn(error_span!("cap"), {
-            let to_pai = to_pai_tx.clone();
+            let to_pai = pai_inbox_tx.clone();
             move |session| async move {
                 while let Some(message) = capability_recv.try_next().await? {
                     let handle = message.handle;
                     session.on_setup_bind_read_capability(message)?;
                     to_pai
-                        .send_async(ToPai::ReceivedReadCapForIntersection(handle))
+                        .send_async(pai::Input::ReceivedReadCapForIntersection(handle))
                         .await
                         .map_err(|_| Error::InvalidState("PAI actor dead"))?;
                 }
@@ -145,7 +149,7 @@ impl Session {
         self.spawn(error_span!("ctl"), {
             let cancel_token = cancel_token.clone();
             move |session| async move {
-                let res = control_loop(session, control_recv, to_pai_tx).await;
+                let res = control_loop(session, control_recv, pai_inbox_tx).await;
                 cancel_token.cancel();
                 res
             }
@@ -202,7 +206,7 @@ impl Session {
 async fn control_loop(
     session: Session,
     mut control_recv: Cancelable<Receiver<Message>>,
-    to_pai: flume::Sender<ToPai>,
+    to_pai: flume::Sender<pai::Input>,
 ) -> Result<(), Error> {
     debug!(role = ?session.our_role(), "start session");
     let mut commitment_revealed = false;
@@ -240,14 +244,14 @@ async fn control_loop(
             }
             Message::PaiRequestSubspaceCapability(msg) => {
                 to_pai
-                    .send_async(ToPai::ReceivedSubspaceCapRequest(msg.handle))
+                    .send_async(pai::Input::ReceivedSubspaceCapRequest(msg.handle))
                     .await
                     .map_err(|_| Error::InvalidState("PAI actor dead"))?;
             }
             Message::PaiReplySubspaceCapability(msg) => {
                 session.verify_subspace_capability(&msg)?;
                 to_pai
-                    .send_async(ToPai::ReceivedVerifiedSubspaceCapReply(
+                    .send_async(pai::Input::ReceivedVerifiedSubspaceCapReply(
                         msg.handle,
                         msg.capability.granted_namespace().id(),
                     ))
@@ -261,10 +265,10 @@ async fn control_loop(
     Ok(())
 }
 
-async fn setup_pai(session: Session, to_pai: flume::Sender<ToPai>) -> Result<(), Error> {
+async fn setup_pai(session: Session, to_pai: flume::Sender<pai::Input>) -> Result<(), Error> {
     for authorisation in session.interests().keys() {
         to_pai
-            .send_async(ToPai::SubmitAuthorisation(authorisation.clone()))
+            .send_async(pai::Input::SubmitAuthorisation(authorisation.clone()))
             .await
             .map_err(|_| Error::InvalidState("PAI actor dead"))?;
     }
