@@ -182,6 +182,12 @@ impl PublisherService {
 }
 
 /// Resolve node info using a pkarr relay.
+///
+/// Pkarr stores signed DNS records in the mainline dht. These can be queried directly
+/// via the pkarr relay HTTP api or alternatively via a dns server that provides the
+/// pkarr records using `DnsDiscovery`. The main difference is that `DnsDiscovery` makes
+/// use of the system dns resolver and caching which can return stale records, while the
+/// `PkarrResolver` always gets recent data.
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrResolver {
     pkarr_client: PkarrRelayClient,
