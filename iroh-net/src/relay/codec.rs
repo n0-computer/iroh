@@ -264,7 +264,10 @@ impl Frame {
         }
     }
 
-    fn from_ws_vec(vec: Vec<u8>) -> anyhow::Result<Self> {
+    /// Tries to decode a frame received over websockets.
+    ///
+    /// Specifically, bytes received from a binary websocket message frame.
+    pub(crate) fn decode_from_ws_msg(vec: Vec<u8>) -> anyhow::Result<Self> {
         if vec.is_empty() {
             bail!("error parsing relay::codec::Frame: too few bytes (0)");
         }
@@ -274,53 +277,14 @@ impl Frame {
         Ok(frame)
     }
 
-    fn into_ws_vec(self) -> Vec<u8> {
+    /// Encodes this frame for sending over websockets.
+    ///
+    /// Specifically meant for being put into a binary websocket message frame.
+    pub(crate) fn encode_for_ws_msg(self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.put_u8(self.typ().into());
         self.write_to(&mut bytes);
         bytes
-    }
-
-    /// Serializes this to bytes and wraps it in a websocket binary message.
-    pub(crate) fn into_ws_message(self) -> std::io::Result<tungstenite::Message> {
-        Ok(tungstenite::Message::binary(self.into_ws_vec()))
-    }
-
-    /// Serializes this to bytes and wraps it in a websocket binary message for use in wasm.
-    pub(crate) fn into_wasm_ws_message(self) -> std::io::Result<tokio_tungstenite_wasm::Message> {
-        Ok(tokio_tungstenite_wasm::Message::binary(self.into_ws_vec()))
-    }
-
-    /// Unwraps any binary messages received via websockets and parses them into `Frame`s.
-    ///
-    /// Ignores any non-binary websocket messages with a warning.
-    pub(crate) fn from_ws_message(
-        msg: tungstenite::Result<tungstenite::Message>,
-    ) -> Option<anyhow::Result<Self>> {
-        match msg {
-            Ok(tungstenite::Message::Binary(vec)) => Some(Self::from_ws_vec(vec)),
-            Ok(msg) => {
-                tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
-                None
-            }
-            Err(e) => Some(Err(e.into())),
-        }
-    }
-
-    /// Unwraps any binary messages received via websockets (in wasm) and parses them into `Frame`s.
-    ///
-    /// Ignores any non-binary websocket messages with a warning.
-    pub(crate) fn from_wasm_ws_message(
-        msg: tokio_tungstenite_wasm::Result<tokio_tungstenite_wasm::Message>,
-    ) -> Option<anyhow::Result<Self>> {
-        match msg {
-            Ok(tokio_tungstenite_wasm::Message::Binary(vec)) => Some(Self::from_ws_vec(vec)),
-            Ok(msg) => {
-                tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
-                None
-            }
-            Err(e) => Some(Err(e.into())),
-        }
     }
 
     /// Writes it self to the given buffer.
@@ -698,7 +662,7 @@ mod tests {
         ];
 
         for (frame, expected_hex) in frames {
-            let bytes = frame.into_ws_vec();
+            let bytes = frame.encode_for_ws_msg();
             // To regenerate the hexdumps:
             // let hexdump = iroh_test::hexdump::print_hexdump(bytes, []);
             // println!("{hexdump}");
@@ -813,8 +777,8 @@ mod proptests {
 
         #[test]
         fn frame_ws_roundtrip(frame in frame()) {
-            let encoded = frame.clone().into_ws_vec();
-            let decoded = Frame::from_ws_vec(encoded).unwrap();
+            let encoded = frame.clone().encode_for_ws_msg();
+            let decoded = Frame::decode_from_ws_msg(encoded).unwrap();
             prop_assert_eq!(frame, decoded);
         }
 

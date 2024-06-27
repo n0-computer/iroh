@@ -390,7 +390,7 @@ impl Sink<Frame> for RelayIo {
         match *self {
             Self::Derp(ref mut framed) => Pin::new(framed).start_send(item),
             Self::Ws(ref mut ws) => Pin::new(ws)
-                .start_send(item.into_ws_message()?)
+                .start_send(tungstenite::Message::Binary(item.encode_for_ws_msg()))
                 .map_err(tung_to_io_err),
         }
     }
@@ -417,11 +417,14 @@ impl Stream for RelayIo {
         match *self {
             Self::Derp(ref mut framed) => Pin::new(framed).poll_next(cx),
             Self::Ws(ref mut ws) => match Pin::new(ws).poll_next(cx) {
-                Poll::Ready(Some(item)) => match Frame::from_ws_message(item) {
-                    Some(frame) => Poll::Ready(Some(frame)),
-                    // We filter websocket messages that don't carry `Frame`s.
-                    None => Poll::Pending,
-                },
+                Poll::Ready(Some(Ok(tungstenite::Message::Binary(vec)))) => {
+                    Poll::Ready(Some(Frame::decode_from_ws_msg(vec)))
+                }
+                Poll::Ready(Some(Ok(msg))) => {
+                    tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
+                    Poll::Pending
+                }
+                Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e.into()))),
                 Poll::Ready(None) => Poll::Ready(None),
                 Poll::Pending => Poll::Pending,
             },

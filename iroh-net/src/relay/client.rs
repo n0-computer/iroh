@@ -281,11 +281,14 @@ impl Stream for ConnReader {
         match *self {
             Self::Derp(ref mut ws) => Pin::new(ws).poll_next(cx),
             Self::Ws(ref mut ws) => match Pin::new(ws).poll_next(cx) {
-                Poll::Ready(Some(item)) => match Frame::from_wasm_ws_message(item) {
-                    Some(frame) => Poll::Ready(Some(frame)),
-                    // We filter websocket messages that don't carry `Frame`s.
-                    None => Poll::Pending,
-                },
+                Poll::Ready(Some(Ok(tokio_tungstenite_wasm::Message::Binary(vec)))) => {
+                    Poll::Ready(Some(Frame::decode_from_ws_msg(vec)))
+                }
+                Poll::Ready(Some(Ok(msg))) => {
+                    tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
+                    Poll::Pending
+                }
+                Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e.into()))),
                 Poll::Ready(None) => Poll::Ready(None),
                 Poll::Pending => Poll::Pending,
             },
@@ -307,7 +310,9 @@ impl Sink<Frame> for ConnWriter {
         match *self {
             Self::Derp(ref mut ws) => Pin::new(ws).start_send(item),
             Self::Ws(ref mut ws) => Pin::new(ws)
-                .start_send(item.into_wasm_ws_message()?)
+                .start_send(tokio_tungstenite_wasm::Message::binary(
+                    item.encode_for_ws_msg(),
+                ))
                 .map_err(tung_wasm_to_io_err),
         }
     }
