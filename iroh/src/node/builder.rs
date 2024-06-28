@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeSet,
     net::{Ipv4Addr, SocketAddrV4},
     path::{Path, PathBuf},
     sync::Arc,
@@ -11,10 +10,9 @@ use futures_lite::StreamExt;
 use iroh_base::key::SecretKey;
 use iroh_blobs::{
     downloader::Downloader,
-    protocol::Closed,
-    store::{GcMarkEvent, GcSweepEvent, Map, Store as BaoStore},
+    store::{Map, Store as BaoStore},
 };
-use iroh_docs::engine::{DefaultAuthorStorage, Engine};
+use iroh_docs::engine::DefaultAuthorStorage;
 use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::{
     dispatcher::GossipDispatcher,
@@ -26,16 +24,12 @@ use iroh_net::{
     relay::RelayMode,
     Endpoint,
 };
-use quic_rpc::{
-    transport::{
-        flume::FlumeServerEndpoint, misc::DummyServerEndpoint, quinn::QuinnServerEndpoint,
-    },
-    RpcServer, ServiceEndpoint,
+use quic_rpc::transport::{
+    boxed::BoxableServerEndpoint, flume::FlumeServerEndpoint, quinn::QuinnServerEndpoint,
 };
 use serde::{Deserialize, Serialize};
-use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
-use tracing::{debug, error, error_span, info, trace, warn, Instrument};
+use tracing::{debug, error_span, trace, Instrument};
 
 use crate::{
     client::RPC_ALPN,
@@ -47,7 +41,7 @@ use crate::{
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-use super::{rpc, rpc_status::RpcStatus, DocsEngine, Node, NodeInner};
+use super::{docs::DocsEngine, rpc_status::RpcStatus, Node, NodeInner};
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
@@ -61,6 +55,22 @@ const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
+
+type BoxedServerEndpoint = quic_rpc::transport::boxed::ServerEndpoint<
+    crate::rpc_protocol::Request,
+    crate::rpc_protocol::Response,
+>;
+
+/// Storage backend for documents.
+#[derive(Debug, Clone)]
+pub enum DocsStorage {
+    /// Disable docs completely.
+    Disabled,
+    /// In-memory storage.
+    Memory,
+    /// File-based persistent storage.
+    Persistent(PathBuf),
+}
 
 /// Builder for the [`Node`].
 ///
@@ -76,22 +86,22 @@ const MAX_STREAMS: u64 = 10;
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(derive_more::Debug)]
-pub struct Builder<D, E = DummyServerEndpoint>
+pub struct Builder<D>
 where
     D: Map,
-    E: ServiceEndpoint<RpcService>,
 {
     storage: StorageConfig,
     bind_port: Option<u16>,
     secret_key: SecretKey,
-    rpc_endpoint: E,
+    rpc_endpoint: BoxedServerEndpoint,
+    rpc_port: Option<u16>,
     blobs_store: D,
     keylog: bool,
     relay_mode: RelayMode,
     gc_policy: GcPolicy,
     dns_resolver: Option<DnsResolver>,
     node_discovery: DiscoveryConfig,
-    docs_store: iroh_docs::store::Store,
+    docs_storage: DocsStorage,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
     /// Callback to register when a gc loop is done
@@ -106,6 +116,18 @@ pub enum StorageConfig {
     Mem,
     /// On disk persistet, at this location.
     Persistent(PathBuf),
+}
+
+impl StorageConfig {
+    fn default_author_storage(&self) -> DefaultAuthorStorage {
+        match self {
+            StorageConfig::Persistent(ref root) => {
+                let path = IrohPaths::DefaultAuthor.with_root(root);
+                DefaultAuthorStorage::Persistent(path)
+            }
+            StorageConfig::Mem => DefaultAuthorStorage::Mem,
+        }
+    }
 }
 
 /// Configuration for node discovery.
@@ -128,6 +150,40 @@ impl From<Box<ConcurrentDiscovery>> for DiscoveryConfig {
     }
 }
 
+/// A server endpoint that does nothing. Accept will never resolve.
+///
+/// This is used unless an external rpc endpoint is configured.
+#[derive(Debug, Default)]
+struct DummyServerEndpoint;
+
+impl BoxableServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Response>
+    for DummyServerEndpoint
+{
+    fn clone_box(
+        &self,
+    ) -> Box<dyn BoxableServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Response>>
+    {
+        Box::new(DummyServerEndpoint)
+    }
+
+    fn accept_bi_boxed(
+        &self,
+    ) -> quic_rpc::transport::boxed::AcceptFuture<
+        crate::rpc_protocol::Request,
+        crate::rpc_protocol::Response,
+    > {
+        quic_rpc::transport::boxed::AcceptFuture::boxed(futures_lite::future::pending())
+    }
+
+    fn local_addr(&self) -> &[quic_rpc::transport::LocalAddr] {
+        &[]
+    }
+}
+
+fn mk_external_rpc() -> BoxedServerEndpoint {
+    quic_rpc::transport::boxed::ServerEndpoint::new(DummyServerEndpoint)
+}
+
 impl Default for Builder<iroh_blobs::store::mem::Store> {
     fn default() -> Self {
         Self {
@@ -138,9 +194,10 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             keylog: false,
             relay_mode: RelayMode::Default,
             dns_resolver: None,
-            rpc_endpoint: Default::default(),
+            rpc_endpoint: mk_external_rpc(),
+            rpc_port: None,
             gc_policy: GcPolicy::Disabled,
-            docs_store: iroh_docs::store::Store::memory(),
+            docs_storage: DocsStorage::Memory,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -153,7 +210,7 @@ impl<D: Map> Builder<D> {
     /// Creates a new builder for [`Node`] using the given databases.
     pub fn with_db_and_store(
         blobs_store: D,
-        docs_store: iroh_docs::store::Store,
+        docs_storage: DocsStorage,
         storage: StorageConfig,
     ) -> Self {
         Self {
@@ -164,9 +221,10 @@ impl<D: Map> Builder<D> {
             keylog: false,
             relay_mode: RelayMode::Default,
             dns_resolver: None,
-            rpc_endpoint: Default::default(),
+            rpc_endpoint: mk_external_rpc(),
+            rpc_port: None,
             gc_policy: GcPolicy::Disabled,
-            docs_store,
+            docs_storage,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -175,16 +233,15 @@ impl<D: Map> Builder<D> {
     }
 }
 
-impl<D, E> Builder<D, E>
+impl<D> Builder<D>
 where
     D: BaoStore,
-    E: ServiceEndpoint<RpcService>,
 {
     /// Persist all node data in the provided directory.
     pub async fn persist(
         self,
         root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_blobs::store::fs::Store, E>> {
+    ) -> Result<Builder<iroh_blobs::store::fs::Store>> {
         let root = root.as_ref();
         let blob_dir = IrohPaths::BaoStoreDir.with_root(root);
 
@@ -194,8 +251,7 @@ where
             .with_context(|| {
                 format!("Failed to load blobs database from {}", blob_dir.display())
             })?;
-        let docs_store =
-            iroh_docs::store::fs::Store::persistent(IrohPaths::DocsDatabase.with_root(root))?;
+        let docs_storage = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
 
         let v0 = blobs_store
             .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
@@ -228,10 +284,11 @@ where
             blobs_store,
             keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
+            rpc_port: self.rpc_port,
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
-            docs_store,
+            docs_storage,
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -240,7 +297,7 @@ where
     }
 
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint<E2: ServiceEndpoint<RpcService>>(self, value: E2) -> Builder<D, E2> {
+    pub fn rpc_endpoint(self, value: BoxedServerEndpoint, port: Option<u16>) -> Builder<D> {
         // we can't use ..self here because the return type is different
         Builder {
             storage: self.storage,
@@ -249,10 +306,11 @@ where
             blobs_store: self.blobs_store,
             keylog: self.keylog,
             rpc_endpoint: value,
+            rpc_port: port,
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
-            docs_store: self.docs_store,
+            docs_storage: self.docs_storage,
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
@@ -261,8 +319,9 @@ where
     }
 
     /// Configure the default iroh rpc endpoint.
-    pub async fn enable_rpc(self) -> Result<Builder<D, QuinnServerEndpoint<RpcService>>> {
+    pub async fn enable_rpc(self) -> Result<Builder<D>> {
         let (ep, actual_rpc_port) = make_rpc_endpoint(&self.secret_key, DEFAULT_RPC_PORT)?;
+        let ep = quic_rpc::transport::boxed::ServerEndpoint::new(ep);
         if let StorageConfig::Persistent(ref root) = self.storage {
             // store rpc endpoint
             RpcStatus::store(root, actual_rpc_port).await?;
@@ -275,10 +334,11 @@ where
             blobs_store: self.blobs_store,
             keylog: self.keylog,
             rpc_endpoint: ep,
+            rpc_port: Some(actual_rpc_port),
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
-            docs_store: self.docs_store,
+            docs_storage: self.docs_storage,
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
@@ -291,6 +351,12 @@ where
     /// By default garbage collection is disabled.
     pub fn gc_policy(mut self, gc_policy: GcPolicy) -> Self {
         self.gc_policy = gc_policy;
+        self
+    }
+
+    /// Disables documents support on this node completely.
+    pub fn disable_docs(mut self) -> Self {
+        self.docs_storage = DocsStorage::Disabled;
         self
     }
 
@@ -380,11 +446,11 @@ where
         unspawned_node.spawn().await
     }
 
-    /// Build a node without spawning it.
+    /// Builds a node without spawning it.
     ///
-    /// Returns an `ProtocolBuilder`, on which custom protocols can be registered with
+    /// Returns an [`ProtocolBuilder`], on which custom protocols can be registered with
     /// [`ProtocolBuilder::accept`]. To spawn the node, call [`ProtocolBuilder::spawn`].
-    pub async fn build(self) -> Result<ProtocolBuilder<D, E>> {
+    pub async fn build(self) -> Result<ProtocolBuilder<D>> {
         // Clone the blob store to shutdown in case of error.
         let blobs_store = self.blobs_store.clone();
         match self.build_inner().await {
@@ -396,302 +462,115 @@ where
         }
     }
 
-    async fn build_inner(self) -> Result<ProtocolBuilder<D, E>> {
+    async fn build_inner(self) -> Result<ProtocolBuilder<D>> {
         trace!("building node");
         let lp = LocalPoolHandle::new(num_cpus::get());
+        let endpoint = {
+            let mut transport_config = quinn::TransportConfig::default();
+            transport_config
+                .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
+                .max_concurrent_uni_streams(0u32.into());
 
-        let mut transport_config = quinn::TransportConfig::default();
-        transport_config
-            .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
-            .max_concurrent_uni_streams(0u32.into());
+            let discovery: Option<Box<dyn Discovery>> = match self.node_discovery {
+                DiscoveryConfig::None => None,
+                DiscoveryConfig::Custom(discovery) => Some(discovery),
+                DiscoveryConfig::Default => {
+                    let discovery = ConcurrentDiscovery::from_services(vec![
+                        // Enable DNS discovery by default
+                        Box::new(DnsDiscovery::n0_dns()),
+                        // Enable pkarr publishing by default
+                        Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
+                    ]);
+                    Some(Box::new(discovery))
+                }
+            };
 
-        let discovery: Option<Box<dyn Discovery>> = match self.node_discovery {
-            DiscoveryConfig::None => None,
-            DiscoveryConfig::Custom(discovery) => Some(discovery),
-            DiscoveryConfig::Default => {
-                let discovery = ConcurrentDiscovery::from_services(vec![
-                    // Enable DNS discovery by default
-                    Box::new(DnsDiscovery::n0_dns()),
-                    // Enable pkarr publishing by default
-                    Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
-                ]);
-                Some(Box::new(discovery))
-            }
+            let endpoint = Endpoint::builder()
+                .secret_key(self.secret_key.clone())
+                .proxy_from_env()
+                .keylog(self.keylog)
+                .transport_config(transport_config)
+                .concurrent_connections(MAX_CONNECTIONS)
+                .relay_mode(self.relay_mode);
+            let endpoint = match discovery {
+                Some(discovery) => endpoint.discovery(discovery),
+                None => endpoint,
+            };
+            let endpoint = match self.dns_resolver {
+                Some(resolver) => endpoint.dns_resolver(resolver),
+                None => endpoint,
+            };
+
+            #[cfg(any(test, feature = "test-utils"))]
+            let endpoint =
+                endpoint.insecure_skip_relay_cert_verify(self.insecure_skip_relay_cert_verify);
+
+            let endpoint = match self.storage {
+                StorageConfig::Persistent(ref root) => {
+                    let peers_data_path = IrohPaths::PeerData.with_root(root);
+                    endpoint.peers_data_path(peers_data_path)
+                }
+                StorageConfig::Mem => endpoint,
+            };
+            let bind_port = self.bind_port.unwrap_or(DEFAULT_BIND_PORT);
+            endpoint.bind(bind_port).await?
         };
-
-        let endpoint = Endpoint::builder()
-            .secret_key(self.secret_key.clone())
-            .proxy_from_env()
-            .keylog(self.keylog)
-            .transport_config(transport_config)
-            .concurrent_connections(MAX_CONNECTIONS)
-            .relay_mode(self.relay_mode);
-        let endpoint = match discovery {
-            Some(discovery) => endpoint.discovery(discovery),
-            None => endpoint,
-        };
-        let endpoint = match self.dns_resolver {
-            Some(resolver) => endpoint.dns_resolver(resolver),
-            None => endpoint,
-        };
-
-        #[cfg(any(test, feature = "test-utils"))]
-        let endpoint =
-            endpoint.insecure_skip_relay_cert_verify(self.insecure_skip_relay_cert_verify);
-
-        let endpoint = match self.storage {
-            StorageConfig::Persistent(ref root) => {
-                let peers_data_path = IrohPaths::PeerData.with_root(root);
-                endpoint.peers_data_path(peers_data_path)
-            }
-            StorageConfig::Mem => endpoint,
-        };
-        let bind_port = self.bind_port.unwrap_or(DEFAULT_BIND_PORT);
-        let endpoint = endpoint.bind(bind_port).await?;
-        trace!("created quinn endpoint");
-
-        let cancel_token = CancellationToken::new();
+        trace!("created endpoint");
 
         let addr = endpoint.node_addr().await?;
+        trace!("endpoint address: {addr:?}");
 
-        // initialize the gossip protocol
+        // Initialize the gossip protocol.
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
-
-        // initialize the downloader
+        // Initialize the downloader.
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
 
-        // load or create the default author for documents
-        let default_author_storage = match self.storage {
-            StorageConfig::Persistent(ref root) => {
-                let path = IrohPaths::DefaultAuthor.with_root(root);
-                DefaultAuthorStorage::Persistent(path)
-            }
-            StorageConfig::Mem => DefaultAuthorStorage::Mem,
-        };
-
-        // spawn the docs engine
-        let sync = Engine::spawn(
+        // Spawn the docs engine, if enabled.
+        // This returns None for DocsStorage::Disabled, otherwise Some(DocsEngine).
+        let docs = DocsEngine::spawn(
+            self.docs_storage,
+            self.blobs_store.clone(),
+            self.storage.default_author_storage(),
             endpoint.clone(),
             gossip.clone(),
-            self.docs_store,
-            self.blobs_store.clone(),
             downloader.clone(),
-            default_author_storage,
         )
         .await?;
         let gossip_dispatcher = GossipDispatcher::new(gossip.clone());
-        let sync = DocsEngine(sync);
 
         // Initialize the internal RPC connection.
-        let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
+        let (internal_rpc, controller) = quic_rpc::transport::flume::connection(32);
+        // box the controller. Boxing has a special case for the flume channel that avoids allocations,
+        // so this has zero overhead.
+        let controller = quic_rpc::transport::boxed::Connection::new(controller);
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
-        debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
 
         let inner = Arc::new(NodeInner {
-            db: self.blobs_store.clone(),
-            sync,
-            endpoint: endpoint.clone(),
+            rpc_port: self.rpc_port,
+            db: self.blobs_store,
+            docs,
+            endpoint,
             secret_key: self.secret_key,
-            controller,
-            cancel_token,
+            client,
+            cancel_token: CancellationToken::new(),
             rt: lp,
             downloader,
             gossip,
             gossip_dispatcher,
         });
 
-        let node = ProtocolBuilder {
+        let protocol_builder = ProtocolBuilder {
             inner,
-            client,
             protocols: Default::default(),
             internal_rpc,
+            external_rpc: self.rpc_endpoint,
             gc_policy: self.gc_policy,
             gc_done_callback: self.gc_done_callback,
-            rpc_endpoint: self.rpc_endpoint,
         };
 
-        let node = node.register_iroh_protocols();
+        let protocol_builder = protocol_builder.register_iroh_protocols();
 
-        Ok(node)
-    }
-
-    async fn run(
-        inner: Arc<NodeInner<D>>,
-        rpc: E,
-        internal_rpc: impl ServiceEndpoint<RpcService>,
-        protocols: Arc<ProtocolMap>,
-        mut join_set: JoinSet<Result<()>>,
-    ) {
-        let endpoint = inner.endpoint.clone();
-
-        let handler = rpc::Handler {
-            inner: inner.clone(),
-        };
-        let rpc = RpcServer::new(rpc);
-        let internal_rpc = RpcServer::new(internal_rpc);
-        let (ipv4, ipv6) = endpoint.bound_sockets();
-        debug!(
-            "listening at: {}{}",
-            ipv4,
-            ipv6.map(|addr| format!(" and {addr}")).unwrap_or_default()
-        );
-
-        let cancel_token = handler.inner.cancel_token.clone();
-
-        // forward the initial endpoints to the gossip protocol.
-        // it may happen the the first endpoint update callback is missed because the gossip cell
-        // is only initialized once the endpoint is fully bound
-        if let Some(direct_addresses) = endpoint.direct_addresses().next().await {
-            debug!(me = ?endpoint.node_id(), "gossip initial update: {direct_addresses:?}");
-            inner.gossip.update_direct_addresses(&direct_addresses).ok();
-        }
-
-        loop {
-            tokio::select! {
-                biased;
-                _ = cancel_token.cancelled() => {
-                    break;
-                },
-                // handle rpc requests. This will do nothing if rpc is not configured, since
-                // accept is just a pending future.
-                request = rpc.accept() => {
-                    match request {
-                        Ok((msg, chan)) => {
-                            handler.handle_rpc_request(msg, chan);
-                        }
-                        Err(e) => {
-                            info!("rpc request error: {:?}", e);
-                        }
-                    }
-                },
-                // handle internal rpc requests.
-                request = internal_rpc.accept() => {
-                    match request {
-                        Ok((msg, chan)) => {
-                            handler.handle_rpc_request(msg, chan);
-                        }
-                        Err(e) => {
-                            info!("internal rpc request error: {:?}", e);
-                        }
-                    }
-                },
-                // handle incoming p2p connections.
-                Some(connecting) = endpoint.accept() => {
-                    let protocols = protocols.clone();
-                    join_set.spawn(async move {
-                        handle_connection(connecting, protocols).await;
-                        Ok(())
-                    });
-                },
-                // handle task terminations and quit on panics.
-                res = join_set.join_next(), if !join_set.is_empty() => {
-                    if let Some(Err(err)) = res {
-                        error!("Task failed: {err:?}");
-                        break;
-                    }
-                },
-                else => break,
-            }
-        }
-
-        // Shutdown the different parts of the node concurrently.
-        let error_code = Closed::ProviderTerminating;
-        // We ignore all errors during shutdown.
-        let _ = tokio::join!(
-            // Close the endpoint.
-            // Closing the Endpoint is the equivalent of calling Connection::close on all
-            // connections: Operations will immediately fail with ConnectionError::LocallyClosed.
-            // All streams are interrupted, this is not graceful.
-            endpoint.close(error_code.into(), error_code.reason()),
-            // Shutdown sync engine.
-            inner.sync.shutdown(),
-            // Shutdown blobs store engine.
-            inner.db.shutdown(),
-            // Shutdown protocol handlers.
-            protocols.shutdown(),
-        );
-
-        // Abort remaining tasks.
-        join_set.shutdown().await;
-    }
-
-    async fn gc_loop(
-        db: D,
-        ds: DocsEngine,
-        gc_period: Duration,
-        done_cb: Option<Box<dyn Fn() + Send>>,
-    ) {
-        let mut live = BTreeSet::new();
-        tracing::debug!("GC loop starting {:?}", gc_period);
-        'outer: loop {
-            if let Err(cause) = db.gc_start().await {
-                tracing::debug!(
-                    "unable to notify the db of GC start: {cause}. Shutting down GC loop."
-                );
-                break;
-            }
-            // do delay before the two phases of GC
-            tokio::time::sleep(gc_period).await;
-            tracing::debug!("Starting GC");
-            live.clear();
-
-            let doc_hashes = match ds.sync.content_hashes().await {
-                Ok(hashes) => hashes,
-                Err(err) => {
-                    tracing::warn!("Error getting doc hashes: {}", err);
-                    continue 'outer;
-                }
-            };
-            for hash in doc_hashes {
-                match hash {
-                    Ok(hash) => {
-                        live.insert(hash);
-                    }
-                    Err(err) => {
-                        tracing::error!("Error getting doc hash: {}", err);
-                        continue 'outer;
-                    }
-                }
-            }
-
-            tracing::debug!("Starting GC mark phase");
-            let mut stream = db.gc_mark(&mut live);
-            while let Some(item) = stream.next().await {
-                match item {
-                    GcMarkEvent::CustomDebug(text) => {
-                        tracing::debug!("{}", text);
-                    }
-                    GcMarkEvent::CustomWarning(text, _) => {
-                        tracing::warn!("{}", text);
-                    }
-                    GcMarkEvent::Error(err) => {
-                        tracing::error!("Fatal error during GC mark {}", err);
-                        continue 'outer;
-                    }
-                }
-            }
-            drop(stream);
-
-            tracing::debug!("Starting GC sweep phase");
-            let mut stream = db.gc_sweep(&live);
-            while let Some(item) = stream.next().await {
-                match item {
-                    GcSweepEvent::CustomDebug(text) => {
-                        tracing::debug!("{}", text);
-                    }
-                    GcSweepEvent::CustomWarning(text, _) => {
-                        tracing::warn!("{}", text);
-                    }
-                    GcSweepEvent::Error(err) => {
-                        tracing::error!("Fatal error during GC mark {}", err);
-                        continue 'outer;
-                    }
-                }
-            }
-            if let Some(ref cb) = done_cb {
-                cb();
-            }
-        }
+        Ok(protocol_builder)
     }
 }
 
@@ -704,19 +583,19 @@ where
 /// Note that RPC calls performed with client returned from [`Self::client`] will not complete
 /// until the node is spawned.
 #[derive(derive_more::Debug)]
-pub struct ProtocolBuilder<D, E> {
+pub struct ProtocolBuilder<D> {
     inner: Arc<NodeInner<D>>,
-    client: crate::client::MemIroh,
     internal_rpc: FlumeServerEndpoint<RpcService>,
-    rpc_endpoint: E,
+    #[debug("external rpc")]
+    external_rpc: BoxedServerEndpoint,
     protocols: ProtocolMap,
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
     gc_policy: GcPolicy,
 }
 
-impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilder<D, E> {
-    /// Register a protocol handler for incoming connections.
+impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
+    /// Registers a protocol handler for incoming connections.
     ///
     /// Use this to register custom protocols onto the iroh node. Whenever a new connection for
     /// `alpn` comes in, it is passed to this protocol handler.
@@ -729,7 +608,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
     /// # use std::sync::Arc;
     /// # use anyhow::Result;
     /// # use futures_lite::future::Boxed as BoxedFuture;
-    /// # use iroh::{node::{Node, ProtocolHandler}, net::endpoint::Connecting, client::MemIroh};
+    /// # use iroh::{node::{Node, ProtocolHandler}, net::endpoint::Connecting, client::Iroh};
     /// #
     /// # #[tokio::main]
     /// # async fn main() -> Result<()> {
@@ -738,7 +617,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
     ///
     /// #[derive(Debug)]
     /// struct MyProtocol {
-    ///     client: MemIroh
+    ///     client: Iroh
     /// }
     ///
     /// impl ProtocolHandler for MyProtocol {
@@ -769,12 +648,12 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
         self
     }
 
-    /// Return a client to control this node over an in-memory channel.
+    /// Returns a client to control this node over an in-memory channel.
     ///
     /// Note that RPC calls performed with the client will not complete until the node is
     /// spawned.
-    pub fn client(&self) -> &crate::client::MemIroh {
-        &self.client
+    pub fn client(&self) -> &crate::client::Iroh {
+        &self.inner.client
     }
 
     /// Returns the [`Endpoint`] of the node.
@@ -810,7 +689,7 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
         self.protocols.get_typed(alpn)
     }
 
-    /// Register the core iroh protocols (blobs, gossip, docs).
+    /// Registers the core iroh protocols (blobs, gossip, docs).
     fn register_iroh_protocols(mut self) -> Self {
         // Register blobs.
         let blobs_proto =
@@ -821,108 +700,75 @@ impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilde
         let gossip = self.gossip().clone();
         self = self.accept(GOSSIP_ALPN, Arc::new(gossip));
 
-        // Register docs.
-        let docs = self.inner.sync.clone();
-        self = self.accept(DOCS_ALPN, Arc::new(docs));
+        // Register docs, if enabled.
+        if let Some(docs) = self.inner.docs.clone() {
+            self = self.accept(DOCS_ALPN, Arc::new(docs));
+        }
 
         self
     }
 
-    /// Spawn the node and start accepting connections.
+    /// Spawns the node and starts accepting connections.
     pub async fn spawn(self) -> Result<Node<D>> {
         let Self {
             inner,
-            client,
             internal_rpc,
-            rpc_endpoint,
+            external_rpc,
             protocols,
             gc_done_callback,
             gc_policy,
         } = self;
         let protocols = Arc::new(protocols);
-        let protocols_clone = protocols.clone();
+        let node_id = inner.endpoint.node_id();
 
-        // Create the actual spawn future in an async block so that we can shutdown the protocols in case of
-        // error.
-        let node_fut = async move {
-            let mut join_set = JoinSet::new();
+        // Update the endpoint with our alpns.
+        let alpns = protocols
+            .alpns()
+            .map(|alpn| alpn.to_vec())
+            .collect::<Vec<_>>();
+        if let Err(err) = inner.endpoint.set_alpns(alpns) {
+            inner.shutdown(protocols).await;
+            return Err(err);
+        }
 
-            // Spawn a task for the garbage collection.
-            if let GcPolicy::Interval(gc_period) = gc_policy {
-                tracing::info!("Starting GC task with interval {:?}", gc_period);
-                let lp = inner.rt.clone();
-                let docs = inner.sync.clone();
-                let blobs_store = inner.db.clone();
-                let handle = lp.spawn_pinned(move || {
-                    Builder::<D, E>::gc_loop(blobs_store, docs, gc_period, gc_done_callback)
-                });
-                // We cannot spawn tasks that run on the local pool directly into the join set,
-                // so instead we create a new task that supervises the local task.
-                join_set.spawn(async move {
-                    if let Err(err) = handle.await {
-                        return Err(anyhow::Error::from(err));
-                    }
-                    Ok(())
-                });
-            }
+        // Spawn the main task and store it in the node for structured termination in shutdown.
+        let fut = inner
+            .clone()
+            .run(
+                external_rpc,
+                internal_rpc,
+                protocols.clone(),
+                gc_policy,
+                gc_done_callback,
+            )
+            .instrument(error_span!("node", me=%node_id.fmt_short()));
+        let task = tokio::task::spawn(fut);
 
-            // Spawn a task that updates the gossip endpoints.
-            let mut stream = inner.endpoint.direct_addresses();
-            let gossip = inner.gossip.clone();
-            join_set.spawn(async move {
-                while let Some(eps) = stream.next().await {
-                    if let Err(err) = gossip.update_direct_addresses(&eps) {
-                        warn!("Failed to update direct addresses for gossip: {err:?}");
-                    }
-                }
-                warn!("failed to retrieve local endpoints");
-                Ok(())
-            });
-
-            // Update the endpoint with our alpns.
-            let alpns = protocols
-                .alpns()
-                .map(|alpn| alpn.to_vec())
-                .collect::<Vec<_>>();
-            inner.endpoint.set_alpns(alpns)?;
-
-            // Spawn the main task and store it in the node for structured termination in shutdown.
-            let task = tokio::task::spawn(
-                Builder::run(
-                    inner.clone(),
-                    rpc_endpoint,
-                    internal_rpc,
-                    protocols.clone(),
-                    join_set,
-                )
-                .instrument(error_span!("node", me=%inner.endpoint.node_id().fmt_short())),
-            );
-
-            let node = Node {
-                inner,
-                client,
-                protocols,
-                task: task.into(),
-            };
-
-            // Wait for a single endpoint update, to make sure
-            // we found some endpoints
-            tokio::time::timeout(ENDPOINT_WAIT, node.endpoint().direct_addresses().next())
-                .await
-                .context("waiting for endpoint")?
-                .context("no endpoints")?;
-
-            Ok(node)
+        let node = Node {
+            inner,
+            protocols,
+            task: task.into(),
         };
 
-        match node_fut.await {
-            Ok(node) => Ok(node),
-            Err(err) => {
-                // Shutdown the protocols in case of error.
-                protocols_clone.shutdown().await;
-                Err(err)
+        // Wait for a single direct address update, to make sure
+        // we found at least one direct address.
+        let wait_for_endpoints = {
+            let node = node.clone();
+            async move {
+                tokio::time::timeout(ENDPOINT_WAIT, node.endpoint().direct_addresses().next())
+                    .await
+                    .context("waiting for endpoint")?
+                    .context("no endpoints")?;
+                Ok(())
             }
+        };
+
+        if let Err(err) = wait_for_endpoints.await {
+            node.shutdown().await.ok();
+            return Err(err);
         }
+
+        Ok(node)
     }
 }
 
@@ -938,26 +784,6 @@ pub enum GcPolicy {
 impl Default for GcPolicy {
     fn default() -> Self {
         Self::Interval(DEFAULT_GC_INTERVAL)
-    }
-}
-
-async fn handle_connection(
-    mut connecting: iroh_net::endpoint::Connecting,
-    protocols: Arc<ProtocolMap>,
-) {
-    let alpn = match connecting.alpn().await {
-        Ok(alpn) => alpn,
-        Err(err) => {
-            warn!("Ignoring connection: invalid handshake: {:?}", err);
-            return;
-        }
-    };
-    let Some(handler) = protocols.get(&alpn) else {
-        warn!("Ignoring connection: unsupported ALPN protocol");
-        return;
-    };
-    if let Err(err) = handler.accept(connecting).await {
-        warn!("Handling incoming connection ended with error: {err}");
     }
 }
 

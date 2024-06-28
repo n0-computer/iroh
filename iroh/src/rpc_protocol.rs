@@ -445,7 +445,7 @@ pub struct AuthorCreateResponse {
 pub struct AuthorGetDefaultRequest;
 
 impl RpcMsg<RpcService> for AuthorGetDefaultRequest {
-    type Response = AuthorGetDefaultResponse;
+    type Response = RpcResult<AuthorGetDefaultResponse>;
 }
 
 /// Response for [`AuthorGetDefaultRequest`]
@@ -1184,7 +1184,7 @@ pub enum Response {
 
     AuthorList(RpcResult<AuthorListResponse>),
     AuthorCreate(RpcResult<AuthorCreateResponse>),
-    AuthorGetDefault(AuthorGetDefaultResponse),
+    AuthorGetDefault(RpcResult<AuthorGetDefaultResponse>),
     AuthorSetDefault(RpcResult<AuthorSetDefaultResponse>),
     AuthorImport(RpcResult<AuthorImportResponse>),
     AuthorExport(RpcResult<AuthorExportResponse>),

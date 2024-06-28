@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Parser;
 use futures_lite::future::Boxed as BoxedFuture;
 use iroh::{
-    client::MemIroh,
+    client::Iroh,
     net::{
         endpoint::{get_remote_node_id, Connecting},
         Endpoint, NodeId,
@@ -59,7 +59,7 @@ const EXAMPLE_ALPN: &[u8] = b"example-proto/0";
 
 #[derive(Debug, Clone)]
 struct ExampleProto {
-    client: MemIroh,
+    client: Iroh,
     endpoint: Endpoint,
 }
 
@@ -89,7 +89,7 @@ impl ProtocolHandler for ExampleProto {
 }
 
 impl ExampleProto {
-    pub fn new(client: MemIroh, endpoint: Endpoint) -> Self {
+    pub fn new(client: Iroh, endpoint: Endpoint) -> Self {
         Self { client, endpoint }
     }
 

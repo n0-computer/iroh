@@ -2411,7 +2411,7 @@ checksum = "8f518f335dce6725a761382244631d86cf0ccb2863413590b31338feb467f9c3"
 
 [[package]]
 name = "iroh"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2461,7 +2461,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2505,7 +2505,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-blobs"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2554,7 +2554,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-cli"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2608,7 +2608,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2657,7 +2657,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-docs"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2698,7 +2698,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-gossip"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2742,7 +2742,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "erased_set",
@@ -2761,7 +2761,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2851,7 +2851,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-bench"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2917,7 +2917,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-test"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "tokio",
@@ -4045,10 +4045,11 @@ dependencies = [
 
 [[package]]
 name = "quic-rpc"
-version = "0.10.1"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0d69b05325e19956f123fce85ebc4d99226552a0bb24bba4c886106297e708b"
+checksum = "110f0fbbf7c4a694902e11d890157245801d89a18d8e9b8d9d2afd91358a6a7c"
 dependencies = [
+ "anyhow",
  "bincode",
  "derive_more",
  "educe",

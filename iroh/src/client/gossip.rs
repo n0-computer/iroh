@@ -6,18 +6,17 @@ use futures_lite::{Stream, StreamExt};
 use futures_util::{Sink, SinkExt};
 use iroh_gossip::proto::TopicId;
 use iroh_net::NodeId;
-use quic_rpc::{RpcClient, ServiceConnection};
 use ref_cast::RefCast;
 
 use crate::rpc_protocol::{GossipSubscribeRequest, GossipSubscribeResponse, GossipSubscribeUpdate};
 
-use super::RpcService;
+use super::RpcClient;
 
 /// Iroh gossip client.
 #[derive(Debug, Clone, RefCast)]
 #[repr(transparent)]
-pub struct Client<C> {
-    pub(super) rpc: RpcClient<RpcService, C>,
+pub struct Client {
+    pub(super) rpc: RpcClient,
 }
 
 /// Options for subscribing to a gossip topic.
@@ -29,10 +28,7 @@ pub struct SubscribeOpts {
     pub subscription_capacity: usize,
 }
 
-impl<C> Client<C>
-where
-    C: ServiceConnection<RpcService>,
-{
+impl Client {
     /// Subscribe to a gossip topic.
     ///
     /// Returns a sink to send updates to the topic and a stream of responses.

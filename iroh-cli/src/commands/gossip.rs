@@ -4,9 +4,8 @@ use clap::{ArgGroup, Subcommand};
 use futures_lite::StreamExt;
 use futures_util::SinkExt;
 use iroh::client::gossip::SubscribeOpts;
-use iroh::client::{Iroh, RpcService};
+use iroh::client::Iroh;
 use iroh::net::NodeId;
-use quic_rpc::ServiceConnection;
 use tokio::io::AsyncBufReadExt;
 
 #[derive(Subcommand, Debug, Clone)]
@@ -34,10 +33,7 @@ pub enum GossipCommands {
 }
 
 impl GossipCommands {
-    pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
-    where
-        C: ServiceConnection<RpcService>,
-    {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Subscribe {
                 topic,

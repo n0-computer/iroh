@@ -2,8 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use iroh::base::base32::fmt_short;
-use iroh::client::{Iroh, RpcService};
-use quic_rpc::ServiceConnection;
+use iroh::client::Iroh;
 use rustyline::{error::ReadlineError, Config, DefaultEditor};
 use tokio::sync::{mpsc, oneshot};
 
@@ -12,10 +11,7 @@ use crate::{
     config::{ConsoleEnv, ConsolePaths},
 };
 
-pub async fn run<C>(iroh: &Iroh<C>, env: &ConsoleEnv) -> Result<()>
-where
-    C: ServiceConnection<RpcService>,
-{
+pub async fn run(iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
     println!("{}", "Welcome to the Iroh console!".purple().bold());
     println!("Type `{}` for a list of commands.", "help".bold());
     let mut from_repl = Repl::spawn(env.clone());

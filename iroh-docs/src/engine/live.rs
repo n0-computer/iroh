@@ -70,7 +70,9 @@ pub enum ToLiveActor {
         #[debug("onsehot::Sender")]
         reply: sync::oneshot::Sender<anyhow::Result<()>>,
     },
-    Shutdown,
+    Shutdown {
+        reply: sync::oneshot::Sender<()>,
+    },
     Subscribe {
         namespace: NamespaceId,
         #[debug("sender")]
@@ -211,7 +213,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
     }
 
     /// Run the actor loop.
-    pub async fn run(&mut self, mut gossip_actor: GossipActor) -> Result<()> {
+    pub async fn run(mut self, mut gossip_actor: GossipActor) -> Result<()> {
         let me = self.endpoint.node_id().fmt_short();
         let gossip_handle = tokio::task::spawn(
             async move {
@@ -222,15 +224,22 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             .instrument(error_span!("sync", %me)),
         );
 
-        let res = self.run_inner().await;
+        let shutdown_reply = self.run_inner().await;
         if let Err(err) = self.shutdown().await {
             error!(?err, "Error during shutdown");
         }
         gossip_handle.await?;
-        res
+        drop(self);
+        match shutdown_reply {
+            Ok(reply) => {
+                reply.send(()).ok();
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
     }
 
-    async fn run_inner(&mut self) -> Result<()> {
+    async fn run_inner(&mut self) -> Result<oneshot::Sender<()>> {
         let mut i = 0;
         loop {
             i += 1;
@@ -240,8 +249,13 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 msg = self.inbox.recv() => {
                     let msg = msg.context("to_actor closed")?;
                     trace!(?i, %msg, "tick: to_actor");
-                    if !self.on_actor_message(msg).await.context("on_actor_message")? {
-                        break;
+                    match msg {
+                        ToLiveActor::Shutdown { reply } => {
+                            break Ok(reply);
+                        }
+                        msg => {
+                            self.on_actor_message(msg).await.context("on_actor_message")?;
+                        }
                     }
                 }
                 event = self.replica_events_rx.recv_async() => {
@@ -270,14 +284,12 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 }
             }
         }
-        debug!("close (shutdown)");
-        Ok(())
     }
 
     async fn on_actor_message(&mut self, msg: ToLiveActor) -> anyhow::Result<bool> {
         match msg {
-            ToLiveActor::Shutdown => {
-                return Ok(false);
+            ToLiveActor::Shutdown { .. } => {
+                unreachable!("handled in run");
             }
             ToLiveActor::IncomingSyncReport { from, report } => {
                 self.on_sync_report(from, report).await
@@ -365,7 +377,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             .await
             .ok();
         // shutdown sync thread
-        let _ = self.sync.shutdown().await;
+        let _store = self.sync.shutdown().await;
         Ok(())
     }
 

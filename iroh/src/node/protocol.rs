@@ -5,8 +5,6 @@ use futures_lite::future::Boxed as BoxedFuture;
 use futures_util::future::join_all;
 use iroh_net::endpoint::Connecting;
 
-use crate::node::DocsEngine;
-
 /// Handler for incoming connections.
 ///
 /// An iroh node can accept connections for arbitrary ALPN protocols. By default, the iroh node
@@ -47,7 +45,7 @@ pub(super) struct ProtocolMap(BTreeMap<&'static [u8], Arc<dyn ProtocolHandler>>)
 
 impl ProtocolMap {
     /// Returns the registered protocol handler for an ALPN as a concrete type.
-    pub fn get_typed<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
+    pub(super) fn get_typed<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
         let protocol: Arc<dyn ProtocolHandler> = self.0.get(alpn)?.clone();
         let protocol_any: Arc<dyn Any + Send + Sync> = protocol.into_arc_any();
         let protocol_ref = Arc::downcast(protocol_any).ok()?;
@@ -55,24 +53,24 @@ impl ProtocolMap {
     }
 
     /// Returns the registered protocol handler for an ALPN as a [`Arc<dyn ProtocolHandler>`].
-    pub fn get(&self, alpn: &[u8]) -> Option<Arc<dyn ProtocolHandler>> {
+    pub(super) fn get(&self, alpn: &[u8]) -> Option<Arc<dyn ProtocolHandler>> {
         self.0.get(alpn).cloned()
     }
 
-    /// Insert a protocol handler.
-    pub fn insert(&mut self, alpn: &'static [u8], handler: Arc<dyn ProtocolHandler>) {
+    /// Inserts a protocol handler.
+    pub(super) fn insert(&mut self, alpn: &'static [u8], handler: Arc<dyn ProtocolHandler>) {
         self.0.insert(alpn, handler);
     }
 
     /// Returns an iterator of all registered ALPN protocol identifiers.
-    pub fn alpns(&self) -> impl Iterator<Item = &&[u8]> {
+    pub(super) fn alpns(&self) -> impl Iterator<Item = &&[u8]> {
         self.0.keys()
     }
 
-    /// Shutdown all protocol handlers.
+    /// Shuts down all protocol handlers.
     ///
     /// Calls and awaits [`ProtocolHandler::shutdown`] for all registered handlers concurrently.
-    pub async fn shutdown(&self) {
+    pub(super) async fn shutdown(&self) {
         let handlers = self.0.values().cloned().map(ProtocolHandler::shutdown);
         join_all(handlers).await;
     }
@@ -117,11 +115,5 @@ impl iroh_blobs::provider::EventSender for MockEventSender {
 impl ProtocolHandler for iroh_gossip::net::Gossip {
     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move { self.handle_connection(conn.await?).await })
-    }
-}
-
-impl ProtocolHandler for DocsEngine {
-    fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
-        Box::pin(async move { self.handle_connection(conn).await })
     }
 }

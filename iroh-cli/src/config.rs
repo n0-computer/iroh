@@ -15,11 +15,10 @@ use iroh::net::{
 };
 use iroh::node::GcPolicy;
 use iroh::{
-    client::{Iroh, RpcService},
+    client::Iroh,
     docs::{AuthorId, NamespaceId},
 };
 use parking_lot::RwLock;
-use quic_rpc::ServiceConnection;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -133,10 +132,7 @@ struct ConsoleEnvInner {
 
 impl ConsoleEnv {
     /// Read from environment variables and the console config file.
-    pub(crate) async fn for_console<C: ServiceConnection<RpcService>>(
-        iroh_data_dir: PathBuf,
-        iroh: &Iroh<C>,
-    ) -> Result<Self> {
+    pub(crate) async fn for_console(iroh_data_dir: PathBuf, iroh: &Iroh) -> Result<Self> {
         let console_data_dir = ConsolePaths::root(&iroh_data_dir);
         tokio::fs::create_dir_all(&console_data_dir)
             .await
@@ -161,10 +157,7 @@ impl ConsoleEnv {
     }
 
     /// Read only from environment variables.
-    pub(crate) async fn for_cli<C: ServiceConnection<RpcService>>(
-        iroh_data_dir: PathBuf,
-        iroh: &Iroh<C>,
-    ) -> Result<Self> {
+    pub(crate) async fn for_cli(iroh_data_dir: PathBuf, iroh: &Iroh) -> Result<Self> {
         let author = env_author(None, iroh).await?;
         let env = ConsoleEnvInner {
             author,
@@ -278,10 +271,7 @@ impl ConsoleEnv {
     }
 }
 
-async fn env_author<C: ServiceConnection<RpcService>>(
-    from_config: Option<AuthorId>,
-    iroh: &Iroh<C>,
-) -> Result<AuthorId> {
+async fn env_author(from_config: Option<AuthorId>, iroh: &Iroh) -> Result<AuthorId> {
     if let Some(author) = env::var(ENV_AUTHOR)
         .ok()
         .map(|s| {
