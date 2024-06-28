@@ -25,7 +25,7 @@ where
     S: Store,
 {
     let node = builder
-        .enable_rpc()
+        .enable_rpc(None)
         .await? // enable the RPC endpoint
         .spawn()
         .await?;

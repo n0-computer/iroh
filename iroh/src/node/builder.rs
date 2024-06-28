@@ -294,7 +294,11 @@ where
     }
 
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint(self, value: BoxedServerEndpoint, rpc_addr: Option<SocketAddr>) -> Builder<D> {
+    pub fn rpc_endpoint(
+        self,
+        value: BoxedServerEndpoint,
+        rpc_addr: Option<SocketAddr>,
+    ) -> Builder<D> {
         // we can't use ..self here because the return type is different
         Builder {
             storage: self.storage,
