@@ -1,8 +1,4 @@
-//! A discovery service which publishes node information to a [Pkarr] relay.
-//!
-//! This service only implements the [`Discovery::publish`] method and does not provide discovery.
-//! It encodes the node information into a DNS packet in the format resolvable by the
-//! [`super::dns::DnsDiscovery`].
+//! A discovery service which publishes and resolves node information to a [pkarr] relay.
 //!
 //! [pkarr]: https://pkarr.org
 
@@ -29,13 +25,19 @@ use crate::{
 /// The pkarr relay run by n0.
 pub const N0_DNS_PKARR_RELAY: &str = "https://dns.iroh.link/pkarr";
 
-/// Default TTL for the records in the pkarr signed packet
+/// Default TTL for the records in the pkarr signed packet. TTL tells DNS caches
+/// how long to store a record. It is ignored by the iroh-dns-server as the home
+/// server keeps the records for the domain. When using the pkarr relay no DNS is
+/// involved and the setting is ignored.
 pub const DEFAULT_PKARR_TTL: u32 = 30;
 
 /// Interval in which we will republish our node info even if unchanged: 5 minutes.
 pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 /// Publish node info to a pkarr relay.
+///
+/// Publishes either the relay url if the relay is enabled or the direct addresses
+/// if the relay is disabled.
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrPublisher {
     node_id: NodeId,
