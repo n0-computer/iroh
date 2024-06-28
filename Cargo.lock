@@ -5542,13 +5542,13 @@ dependencies = [
 [[package]]
 name = "swarm-discovery"
 version = "0.2.0"
-source = "git+https://github.com/rkuhn/swarm-discovery/?branch=api-improvements#e11e3cb40d54f65496ddbc94b07159b8ebb9460e"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0685d4eda80e2dfee7fc413ba861ef11411ca813d836a77ab8f0d3a00286488"
 dependencies = [
  "acto",
  "anyhow",
  "hickory-proto",
  "rand",
- "serde",
  "socket2",
  "tokio",
  "tracing",
