@@ -2,7 +2,6 @@
 
 use futures_lite::{future::Boxed as BoxFuture, FutureExt};
 use parking_lot::RwLock;
-use std::{sync::Arc, time::Duration};
 
 use super::*;
 

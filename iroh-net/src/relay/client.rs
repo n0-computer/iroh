@@ -1,15 +1,18 @@
 //! based on tailscale/derp/derp_client.go
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, ensure, Result};
 use bytes::Bytes;
-use futures_lite::StreamExt;
+use futures_lite::Stream;
 use futures_sink::Sink;
-use futures_util::sink::SinkExt;
-use tokio::io::AsyncWrite;
+use futures_util::stream::{SplitSink, SplitStream, StreamExt};
+use futures_util::SinkExt;
 use tokio::sync::mpsc;
+use tokio_tungstenite_wasm::WebSocketStream;
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, info_span, trace, Instrument};
 
@@ -64,12 +67,12 @@ impl ClientReceiver {
     }
 }
 
-type RelayReader = FramedRead<MaybeTlsStreamReader, DerpCodec>;
-
 #[derive(derive_more::Debug)]
 pub struct InnerClient {
-    // our local addrs
-    local_addr: SocketAddr,
+    /// Our local address, if known.
+    ///
+    /// Is `None` in tests or when using websockets (because we don't control connection establishment in browsers).
+    local_addr: Option<SocketAddr>,
     /// Channel on which to communicate to the server. The associated [`mpsc::Receiver`] will close
     /// if there is ever an error writing to the server.
     writer_channel: mpsc::Sender<ClientWriterMessage>,
@@ -123,8 +126,10 @@ impl Client {
     }
 
     /// The local address that the [`Client`] is listening on.
-    pub fn local_addr(&self) -> Result<SocketAddr> {
-        Ok(self.inner.local_addr)
+    ///
+    /// `None`, when run in a testing environment or when using websockets.
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        self.inner.local_addr
     }
 
     /// Whether or not this [`Client`] is closed.
@@ -209,13 +214,13 @@ enum ClientWriterMessage {
 ///
 /// Shutsdown when you send a [`ClientWriterMessage::Shutdown`], or if there is an error writing to
 /// the server.
-struct ClientWriter<W: AsyncWrite + Unpin + Send + 'static> {
+struct ClientWriter {
     recv_msgs: mpsc::Receiver<ClientWriterMessage>,
-    writer: FramedWrite<W, DerpCodec>,
+    writer: ConnWriter,
     rate_limiter: Option<RateLimiter>,
 }
 
-impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
+impl ClientWriter {
     async fn run(mut self) -> Result<()> {
         while let Some(msg) = self.recv_msgs.recv().await {
             match msg {
@@ -244,25 +249,100 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
     }
 }
 
-/// The Builder returns a [`Client`] starts a [`ClientWriter`] run task.
+/// The Builder returns a [`Client`] and a started [`ClientWriter`] run task.
 pub struct ClientBuilder {
     secret_key: SecretKey,
-    reader: RelayReader,
-    writer: FramedWrite<MaybeTlsStreamWriter, DerpCodec>,
-    local_addr: SocketAddr,
+    reader: ConnReader,
+    writer: ConnWriter,
+    local_addr: Option<SocketAddr>,
+}
+
+pub(crate) enum ConnReader {
+    Derp(FramedRead<MaybeTlsStreamReader, DerpCodec>),
+    Ws(SplitStream<WebSocketStream>),
+}
+
+pub(crate) enum ConnWriter {
+    Derp(FramedWrite<MaybeTlsStreamWriter, DerpCodec>),
+    Ws(SplitSink<WebSocketStream, tokio_tungstenite_wasm::Message>),
+}
+
+fn tung_wasm_to_io_err(e: tokio_tungstenite_wasm::Error) -> std::io::Error {
+    match e {
+        tokio_tungstenite_wasm::Error::Io(io_err) => io_err,
+        _ => std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+    }
+}
+
+impl Stream for ConnReader {
+    type Item = Result<Frame>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match *self {
+            Self::Derp(ref mut ws) => Pin::new(ws).poll_next(cx),
+            Self::Ws(ref mut ws) => match Pin::new(ws).poll_next(cx) {
+                Poll::Ready(Some(Ok(tokio_tungstenite_wasm::Message::Binary(vec)))) => {
+                    Poll::Ready(Some(Frame::decode_from_ws_msg(vec)))
+                }
+                Poll::Ready(Some(Ok(msg))) => {
+                    tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
+                    Poll::Pending
+                }
+                Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e.into()))),
+                Poll::Ready(None) => Poll::Ready(None),
+                Poll::Pending => Poll::Pending,
+            },
+        }
+    }
+}
+
+impl Sink<Frame> for ConnWriter {
+    type Error = std::io::Error;
+
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match *self {
+            Self::Derp(ref mut ws) => Pin::new(ws).poll_ready(cx),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_ready(cx).map_err(tung_wasm_to_io_err),
+        }
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
+        match *self {
+            Self::Derp(ref mut ws) => Pin::new(ws).start_send(item),
+            Self::Ws(ref mut ws) => Pin::new(ws)
+                .start_send(tokio_tungstenite_wasm::Message::binary(
+                    item.encode_for_ws_msg(),
+                ))
+                .map_err(tung_wasm_to_io_err),
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match *self {
+            Self::Derp(ref mut ws) => Pin::new(ws).poll_flush(cx),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_flush(cx).map_err(tung_wasm_to_io_err),
+        }
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match *self {
+            Self::Derp(ref mut ws) => Pin::new(ws).poll_close(cx),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_close(cx).map_err(tung_wasm_to_io_err),
+        }
+    }
 }
 
 impl ClientBuilder {
     pub fn new(
         secret_key: SecretKey,
-        local_addr: SocketAddr,
-        reader: MaybeTlsStreamReader,
-        writer: MaybeTlsStreamWriter,
+        local_addr: Option<SocketAddr>,
+        reader: ConnReader,
+        writer: ConnWriter,
     ) -> Self {
         Self {
             secret_key,
-            reader: FramedRead::new(reader, DerpCodec),
-            writer: FramedWrite::new(writer, DerpCodec),
+            reader,
+            writer,
             local_addr,
         }
     }

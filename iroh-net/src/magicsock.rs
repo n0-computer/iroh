@@ -2747,7 +2747,6 @@ impl NetInfo {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
-    use futures_lite::StreamExt;
     use iroh_test::CallOnDrop;
     use rand::RngCore;
 

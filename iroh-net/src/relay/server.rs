@@ -6,18 +6,24 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use anyhow::{bail, Context as _, Result};
+use futures_lite::Stream;
+use futures_sink::Sink;
 use hyper::HeaderMap;
 use iroh_metrics::core::UsageStatsReport;
 use iroh_metrics::{inc, report_usage_stats};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio_tungstenite::WebSocketStream;
 use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{info_span, trace, Instrument};
+use tungstenite::protocol::Role;
 
 use crate::key::{PublicKey, SecretKey};
 
+use super::codec::Frame;
+use super::http::Protocol;
 use super::{
     client_conn::ClientConnBuilder,
     clients::Clients,
@@ -175,9 +181,18 @@ impl ClientConnHandler {
     /// and is unable to verify this one, or if there is some issue communicating with the server.
     ///
     /// The provided [`AsyncRead`] and [`AsyncWrite`] must be already connected to the connection.
-    pub async fn accept(&self, io: MaybeTlsStream) -> Result<()> {
-        let mut io = Framed::new(io, DerpCodec);
-        trace!("accept: start");
+    pub async fn accept(&self, protocol: Protocol, io: MaybeTlsStream) -> Result<()> {
+        trace!(?protocol, "accept: start");
+        let mut io = match protocol {
+            Protocol::Relay => {
+                inc!(Metrics, derp_accepts);
+                RelayIo::Derp(Framed::new(io, DerpCodec))
+            }
+            Protocol::Websocket => {
+                inc!(Metrics, websocket_accepts);
+                RelayIo::Ws(WebSocketStream::from_raw_socket(io, Role::Server, None).await)
+            }
+        };
         trace!("accept: recv client key");
         let (client_key, info) = recv_client_key(&mut io)
             .await
@@ -247,9 +262,9 @@ impl ServerActor {
                             anyhow::bail!("server channel sender closed unexpectedly, closed client connections, and shutting down server loop");
                         }
                     };
-                   match msg {
+                    match msg {
                         ServerMessage::SendPacket((key, packet)) => {
-                           tracing::trace!("send packet from: {:?} to: {:?} ({}b)", packet.src, key, packet.bytes.len());
+                            tracing::trace!("send packet from: {:?} to: {:?} ({}b)", packet.src, key, packet.bytes.len());
                             let src = packet.src;
                             if self.clients.contains_key(&key) {
                                 // if this client is in our local network, just try to send the
@@ -262,14 +277,13 @@ impl ServerActor {
                                 inc!(Metrics, send_packets_dropped);
                             }
                         }
-                       ServerMessage::SendDiscoPacket((key, packet)) => {
-                           tracing::trace!("send disco packet from: {:?} to: {:?} ({}b)", packet.src, key, packet.bytes.len());
+                        ServerMessage::SendDiscoPacket((key, packet)) => {
+                            tracing::trace!("send disco packet from: {:?} to: {:?} ({}b)", packet.src, key, packet.bytes.len());
                             let src = packet.src;
                             if self.clients.contains_key(&key) {
                                 // if this client is in our local network, just try to send the
                                 // packet
                                 if self.clients.send_disco_packet(&key, packet).is_ok() {
-
                                     self.clients.record_send(&src, key);
                                 }
                             } else {
@@ -347,6 +361,75 @@ fn init_meta_cert(server_key: &PublicKey) -> Vec<u8> {
         .expect("fixed inputs")
         .serialize_der()
         .expect("fixed allocations")
+}
+
+#[derive(Debug)]
+pub(crate) enum RelayIo {
+    Derp(Framed<MaybeTlsStream, DerpCodec>),
+    Ws(WebSocketStream<MaybeTlsStream>),
+}
+
+fn tung_to_io_err(e: tungstenite::Error) -> std::io::Error {
+    match e {
+        tungstenite::Error::Io(io_err) => io_err,
+        _ => std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+    }
+}
+
+impl Sink<Frame> for RelayIo {
+    type Error = std::io::Error;
+
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match *self {
+            Self::Derp(ref mut framed) => Pin::new(framed).poll_ready(cx),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_ready(cx).map_err(tung_to_io_err),
+        }
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
+        match *self {
+            Self::Derp(ref mut framed) => Pin::new(framed).start_send(item),
+            Self::Ws(ref mut ws) => Pin::new(ws)
+                .start_send(tungstenite::Message::Binary(item.encode_for_ws_msg()))
+                .map_err(tung_to_io_err),
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match *self {
+            Self::Derp(ref mut framed) => Pin::new(framed).poll_flush(cx),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_flush(cx).map_err(tung_to_io_err),
+        }
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match *self {
+            Self::Derp(ref mut framed) => Pin::new(framed).poll_close(cx),
+            Self::Ws(ref mut ws) => Pin::new(ws).poll_close(cx).map_err(tung_to_io_err),
+        }
+    }
+}
+
+impl Stream for RelayIo {
+    type Item = anyhow::Result<Frame>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match *self {
+            Self::Derp(ref mut framed) => Pin::new(framed).poll_next(cx),
+            Self::Ws(ref mut ws) => match Pin::new(ws).poll_next(cx) {
+                Poll::Ready(Some(Ok(tungstenite::Message::Binary(vec)))) => {
+                    Poll::Ready(Some(Frame::decode_from_ws_msg(vec)))
+                }
+                Poll::Ready(Some(Ok(msg))) => {
+                    tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
+                    Poll::Pending
+                }
+                Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e.into()))),
+                Poll::Ready(None) => Poll::Ready(None),
+                Poll::Pending => Poll::Pending,
+            },
+        }
+    }
 }
 
 /// Whether or not the underlying [`tokio::net::TcpStream`] is served over Tls
@@ -432,8 +515,8 @@ mod tests {
     use super::*;
 
     use crate::relay::{
-        client::ClientBuilder,
-        codec::{recv_frame, Frame, FrameType},
+        client::{ClientBuilder, ConnReader, ConnWriter},
+        codec::{recv_frame, FrameType},
         http::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         types::ClientInfo,
         ReceivedMessage,
@@ -454,7 +537,7 @@ mod tests {
             ClientConnBuilder {
                 key,
                 conn_num,
-                io: Framed::new(MaybeTlsStream::Test(io), DerpCodec),
+                io: RelayIo::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,
@@ -562,7 +645,9 @@ mod tests {
         });
 
         // attempt to add the connection to the server
-        handler.accept(MaybeTlsStream::Test(server_io)).await?;
+        handler
+            .accept(Protocol::Relay, MaybeTlsStream::Test(server_io))
+            .await?;
         client_task.await??;
 
         // ensure we inform the server to create the client from the connection!
@@ -578,16 +663,16 @@ mod tests {
     fn make_test_client(secret_key: SecretKey) -> (tokio::io::DuplexStream, ClientBuilder) {
         let (client, server) = tokio::io::duplex(10);
         let (client_reader, client_writer) = tokio::io::split(client);
+
         let client_reader = MaybeTlsStreamReader::Mem(client_reader);
         let client_writer = MaybeTlsStreamWriter::Mem(client_writer);
+
+        let client_reader = ConnReader::Derp(FramedRead::new(client_reader, DerpCodec));
+        let client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, DerpCodec));
+
         (
             server,
-            ClientBuilder::new(
-                secret_key,
-                "127.0.0.1:0".parse().unwrap(),
-                client_reader,
-                client_writer,
-            ),
+            ClientBuilder::new(secret_key, None, client_reader, client_writer),
         )
     }
 
@@ -604,8 +689,11 @@ mod tests {
         let public_key_a = key_a.public();
         let (rw_a, client_a_builder) = make_test_client(key_a);
         let handler = server.client_conn_handler(Default::default());
-        let handler_task =
-            tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_a)).await });
+        let handler_task = tokio::spawn(async move {
+            handler
+                .accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
+                .await
+        });
         let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
         handler_task.await??;
 
@@ -614,8 +702,11 @@ mod tests {
         let public_key_b = key_b.public();
         let (rw_b, client_b_builder) = make_test_client(key_b);
         let handler = server.client_conn_handler(Default::default());
-        let handler_task =
-            tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_b)).await });
+        let handler_task = tokio::spawn(async move {
+            handler
+                .accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
+                .await
+        });
         let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
         handler_task.await??;
 
@@ -674,8 +765,11 @@ mod tests {
         let public_key_a = key_a.public();
         let (rw_a, client_a_builder) = make_test_client(key_a);
         let handler = server.client_conn_handler(Default::default());
-        let handler_task =
-            tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_a)).await });
+        let handler_task = tokio::spawn(async move {
+            handler
+                .accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
+                .await
+        });
         let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
         handler_task.await??;
 
@@ -684,8 +778,11 @@ mod tests {
         let public_key_b = key_b.public();
         let (rw_b, client_b_builder) = make_test_client(key_b.clone());
         let handler = server.client_conn_handler(Default::default());
-        let handler_task =
-            tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_b)).await });
+        let handler_task = tokio::spawn(async move {
+            handler
+                .accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
+                .await
+        });
         let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
         handler_task.await??;
 
@@ -718,8 +815,11 @@ mod tests {
         // create client b and connect it to the server
         let (new_rw_b, new_client_b_builder) = make_test_client(key_b);
         let handler = server.client_conn_handler(Default::default());
-        let handler_task =
-            tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(new_rw_b)).await });
+        let handler_task = tokio::spawn(async move {
+            handler
+                .accept(Protocol::Relay, MaybeTlsStream::Test(new_rw_b))
+                .await
+        });
         let (new_client_b, mut new_client_receiver_b) = new_client_b_builder.build().await?;
         handler_task.await??;
 

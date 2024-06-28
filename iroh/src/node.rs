@@ -474,8 +474,6 @@ async fn handle_connection(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use anyhow::{bail, Context};
     use bytes::Bytes;
     use iroh_base::node_addr::AddrInfoOptions;

@@ -7,7 +7,6 @@ use bytes::Bytes;
 use futures_lite::StreamExt;
 use futures_util::SinkExt;
 use tokio::sync::mpsc;
-use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{trace, Instrument};
 
@@ -16,8 +15,8 @@ use crate::{disco::looks_like_disco_wrapper, key::PublicKey};
 
 use iroh_metrics::{inc, inc_by};
 
-use super::codec::{DerpCodec, Frame};
-use super::server::MaybeTlsStream;
+use super::codec::Frame;
+use super::server::RelayIo;
 use super::{
     codec::{write_frame, KEEP_ALIVE},
     metrics::Metrics,
@@ -73,7 +72,7 @@ pub(crate) struct ClientChannels {
 pub struct ClientConnBuilder {
     pub(crate) key: PublicKey,
     pub(crate) conn_num: usize,
-    pub(crate) io: Framed<MaybeTlsStream, DerpCodec>,
+    pub(crate) io: RelayIo,
     pub(crate) write_timeout: Option<Duration>,
     pub(crate) channel_capacity: usize,
     pub(crate) server_channel: mpsc::Sender<ServerMessage>,
@@ -102,7 +101,7 @@ impl ClientConnManager {
     pub fn new(
         key: PublicKey,
         conn_num: usize,
-        io: Framed<MaybeTlsStream, DerpCodec>,
+        io: RelayIo,
         write_timeout: Option<Duration>,
         channel_capacity: usize,
         server_channel: mpsc::Sender<ServerMessage>,
@@ -203,7 +202,7 @@ impl ClientConnManager {
 #[derive(Debug)]
 pub(crate) struct ClientConnIo {
     /// Io to talk to the client
-    io: Framed<MaybeTlsStream, DerpCodec>,
+    io: RelayIo,
     /// Max time we wait to complete a write to the client
     timeout: Option<Duration>,
     /// Packets queued to send to the client
@@ -453,11 +452,13 @@ impl ClientConnIo {
 #[cfg(test)]
 mod tests {
     use crate::key::SecretKey;
-    use crate::relay::codec::{recv_frame, FrameType};
+    use crate::relay::codec::{recv_frame, DerpCodec, FrameType};
+    use crate::relay::MaybeTlsStreamServer as MaybeTlsStream;
 
     use super::*;
 
     use anyhow::bail;
+    use tokio_util::codec::Framed;
 
     #[tokio::test]
     async fn test_client_conn_io_basic() -> Result<()> {
@@ -472,7 +473,7 @@ mod tests {
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
         let conn_io = ClientConnIo {
-            io: Framed::new(MaybeTlsStream::Test(io), DerpCodec),
+            io: RelayIo::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -607,7 +608,7 @@ mod tests {
 
         println!("-- create client conn");
         let conn_io = ClientConnIo {
-            io: Framed::new(MaybeTlsStream::Test(io), DerpCodec),
+            io: RelayIo::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
