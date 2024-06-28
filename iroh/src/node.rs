@@ -308,9 +308,22 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 },
                 // handle task terminations and quit on panics.
                 res = join_set.join_next(), if !join_set.is_empty() => {
-                    if let Some(Err(err)) = res {
-                        error!("Task failed: {err:?}");
-                        break;
+                    match res {
+                        Some(Err(outer)) => {
+                            if outer.is_panic() {
+                                error!("Task panicked: {outer:?}");
+                                break;
+                            } else if outer.is_cancelled() {
+                                debug!("Task cancelled: {outer:?}");
+                            } else {
+                                error!("Task failed: {outer:?}");
+                                break;
+                            }
+                        }
+                        Some(Ok(Err(inner))) => {
+                            debug!("Task errored: {inner:?}");
+                        }
+                        _ => {}
                     }
                 },
                 else => break,
