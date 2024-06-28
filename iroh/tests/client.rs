@@ -59,7 +59,7 @@ fn await_messages(
 async fn gossip_smoke() {
     let _ = tracing_subscriber::fmt::try_init();
     let (addr1, node1) = spawn_node();
-    let (_addr2, node2) = spawn_node();
+    let (addr2, node2) = spawn_node();
     let gossip1 = node1.gossip();
     let gossip2 = node2.gossip();
     let topic = TopicId::from([0u8; 32]);
@@ -67,8 +67,8 @@ async fn gossip_smoke() {
         .subscribe_with_opts(
             topic,
             SubscribeOpts {
-                bootstrap: Default::default(),
-                subscription_capacity: 10,
+                bootstrap: [addr2.node_id].into_iter().collect(),
+                ..Default::default()
             },
         )
         .await
@@ -78,7 +78,7 @@ async fn gossip_smoke() {
             topic,
             SubscribeOpts {
                 bootstrap: [addr1.node_id].into_iter().collect(),
-                subscription_capacity: 10,
+                ..Default::default()
             },
         )
         .await

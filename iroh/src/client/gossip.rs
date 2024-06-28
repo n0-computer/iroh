@@ -28,6 +28,15 @@ pub struct SubscribeOpts {
     pub subscription_capacity: usize,
 }
 
+impl Default for SubscribeOpts {
+    fn default() -> Self {
+        Self {
+            bootstrap: BTreeSet::new(),
+            subscription_capacity: 256,
+        }
+    }
+}
+
 impl Client {
     /// Subscribe to a gossip topic.
     ///
