@@ -596,6 +596,17 @@ pub struct McSubspaceCapability {
 }
 
 impl McSubspaceCapability {
+    pub fn new(namespace_secret_key: &NamespaceSecretKey, user_key: UserPublicKey) -> Self {
+        let namespace_key = namespace_secret_key.public_key();
+        let handover = Self::initial_handover(&user_key);
+        let initial_authorisation = namespace_secret_key.sign(&handover);
+        Self {
+            namespace_key,
+            user_key,
+            initial_authorisation,
+            delegations: Default::default(),
+        }
+    }
     pub fn receiver(&self) -> &UserPublicKey {
         &self.user_key
     }

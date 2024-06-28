@@ -43,6 +43,12 @@ pub enum PaiError {
 }
 
 #[derive(Debug)]
+pub struct PaiIntersection {
+    pub authorisation: ReadAuthorisation,
+    pub handle: IntersectionHandle,
+}
+
+#[derive(Debug)]
 pub enum Input {
     SubmitAuthorisation(ReadAuthorisation),
     ReceivedMessage(Result<IntersectionMessage, Error>),
@@ -131,7 +137,7 @@ impl PaiFinder {
 
     async fn input(&mut self, input: Input) -> Result<(), Error> {
         match input {
-            Input::SubmitAuthorisation(auth) => self.submit_autorisation(auth).await?,
+            Input::SubmitAuthorisation(auth) => self.submit_autorisation(auth).await,
             Input::ReceivedMessage(message) => match message? {
                 IntersectionMessage::BindFragment(message) => self.receive_bind(message).await?,
                 IntersectionMessage::ReplyFragment(message) => self.receive_reply(message).await?,
@@ -150,7 +156,7 @@ impl PaiFinder {
         Ok(())
     }
 
-    async fn submit_autorisation(&mut self, authorisation: ReadAuthorisation) -> Result<(), Error> {
+    async fn submit_autorisation(&mut self, authorisation: ReadAuthorisation) {
         trace!(?authorisation, "pai submit auth");
         let read_cap = authorisation.read_cap();
         let fragment_kit = PaiScheme::get_fragment_kit(read_cap);
@@ -165,7 +171,7 @@ impl PaiFinder {
                         FragmentKind::Primary,
                         i == last,
                     )
-                    .await?;
+                    .await;
                 }
             }
             FragmentSet::Selective { primary, secondary } => {
@@ -177,7 +183,7 @@ impl PaiFinder {
                         FragmentKind::Primary,
                         i == last,
                     )
-                    .await?;
+                    .await;
                 }
                 let last = secondary.len().wrapping_sub(1);
                 for (i, pair) in secondary.into_iter().enumerate() {
@@ -187,11 +193,10 @@ impl PaiFinder {
                         FragmentKind::Secondary,
                         i == last,
                     )
-                    .await?;
+                    .await;
                 }
             }
         }
-        Ok(())
     }
 
     async fn submit_fragment(
@@ -200,16 +205,16 @@ impl PaiFinder {
         fragment: Fragment,
         kind: FragmentKind,
         is_most_specific: bool,
-    ) -> Result<IntersectionHandle> {
+    ) -> IntersectionHandle {
         let unmixed = PaiScheme::hash_into_group(&fragment);
         let multiplied = PaiScheme::scalar_mult(unmixed, self.scalar);
         let group_state = GroupState::new_pending(multiplied, kind.is_secondary());
-        let message = group_state.to_message();
+        let message = group_state.to_bind_fragment_message();
         let handle = self.our_intersection_handles.bind(group_state);
         let info = LocalFragmentInfo::new(authorisation, fragment, kind, is_most_specific);
         self.fragments_info.insert(handle, info);
         self.out(Output::SendMessage(message.into())).await;
-        Ok(handle)
+        handle
     }
 
     async fn receive_bind(&mut self, message: PaiBindFragment) -> Result<()> {
@@ -221,11 +226,11 @@ impl PaiFinder {
         let multiplied = PaiScheme::scalar_mult(unmixed, self.scalar);
         let group_state = GroupState::new_complete(multiplied, is_secondary);
         let handle = self.their_intersection_handles.bind(group_state);
-        let reply = PaiReplyFragment {
+        let message = PaiReplyFragment {
             handle,
             group_member: multiplied.to_bytes(),
         };
-        self.out(Output::SendMessage(reply.into())).await;
+        self.out(Output::SendMessage(message.into())).await;
         self.check_for_intersection(handle, Scope::Theirs).await?;
         Ok(())
     }
@@ -394,6 +399,7 @@ impl LocalFragmentInfo {
             subspace,
         }
     }
+
     fn to_pai_intersection(&self, handle: IntersectionHandle) -> PaiIntersection {
         PaiIntersection {
             authorisation: self.authorisation.clone(),
@@ -432,14 +438,8 @@ impl GroupState {
     }
 }
 
-#[derive(Debug)]
-pub struct PaiIntersection {
-    pub authorisation: ReadAuthorisation,
-    pub handle: IntersectionHandle,
-}
-
 impl GroupState {
-    fn to_message(&self) -> PaiBindFragment {
+    fn to_bind_fragment_message(&self) -> PaiBindFragment {
         PaiBindFragment {
             group_member: self.group.to_bytes(),
             is_secondary: self.is_secondary,
@@ -497,7 +497,6 @@ mod tests {
     use crate::{
         proto::{
             keys::{NamespaceKind, NamespaceSecretKey, UserSecretKey},
-            meadowcap::{AccessMode, McCapability},
             sync::{
                 IntersectionMessage, Message, PaiBindFragment, PaiReplyFragment, ReadAuthorisation,
             },
@@ -516,57 +515,37 @@ mod tests {
     async fn pai_smoke_inner() {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
 
-        let (alfie, betty) = Handle::create_two();
+        let namespace = NamespaceSecretKey::generate(&mut rng, NamespaceKind::Owned);
 
-        let namespace_secret = NamespaceSecretKey::generate(&mut rng, NamespaceKind::Owned);
         let alfie_secret = UserSecretKey::generate(&mut rng);
         let betty_secret = UserSecretKey::generate(&mut rng);
         let alfie_public = alfie_secret.public_key();
         let betty_public = betty_secret.public_key();
 
-        let read_cap_alfie =
-            McCapability::new_owned(&namespace_secret, alfie_public, AccessMode::Read);
-        let read_cap_betty =
-            McCapability::new_owned(&namespace_secret, betty_public, AccessMode::Read);
-        let auth_alfie = ReadAuthorisation::new(read_cap_alfie.clone(), None);
-        let auth_betty = ReadAuthorisation::new(read_cap_betty.clone(), None);
+        let auth_alfie = ReadAuthorisation::new_owned(&namespace, alfie_public);
+        let auth_betty = ReadAuthorisation::new_owned(&namespace, betty_public);
+
+        let (alfie, betty) = Handle::create_two();
 
         alfie.submit(auth_alfie.clone()).await;
-        let alfie_bind = alfie.next_out_message::<PaiBindFragment>().await;
-
         betty.submit(auth_betty.clone()).await;
-        let betty_bind = betty.next_out_message::<PaiBindFragment>().await;
 
-        alfie.receive(betty_bind).await;
-        betty.receive(alfie_bind).await;
+        transfer::<PaiBindFragment>(&alfie, &betty).await;
+        transfer::<PaiBindFragment>(&betty, &alfie).await;
+        transfer::<PaiReplyFragment>(&alfie, &betty).await;
+        transfer::<PaiReplyFragment>(&betty, &alfie).await;
 
-        let alfie_reply = alfie.next_out_message::<PaiReplyFragment>().await;
-        let betty_reply = betty.next_out_message::<PaiReplyFragment>().await;
-
-        betty.receive(alfie_reply).await;
-        alfie.receive(betty_reply).await;
-
-        match alfie.next_out().await {
-            Output::NewIntersection(intersection) => {
-                assert_eq!(
-                    intersection.authorisation,
-                    ReadAuthorisation::new(read_cap_alfie, None)
-                );
-            }
-            out => panic!("expected NewIntersection but got {out:?}"),
-        }
-        match betty.next_out().await {
-            Output::NewIntersection(intersection) => {
-                assert_eq!(
-                    intersection.authorisation,
-                    ReadAuthorisation::new(read_cap_betty, None)
-                );
-            }
-            out => panic!("expected NewIntersection but got {out:?}"),
-        }
+        assert_eq!(alfie.next_intersection().await, auth_alfie);
+        assert_eq!(betty.next_intersection().await, auth_betty);
 
         alfie.join().await;
         betty.join().await;
+    }
+
+    async fn transfer<T: TryFrom<Message> + Into<IntersectionMessage>>(from: &Handle, to: &Handle) {
+        let message = from.next_message::<T>().await;
+        let message: IntersectionMessage = message.into();
+        to.receive(message).await;
     }
 
     struct Handle {
@@ -585,17 +564,12 @@ mod tests {
         pub fn new(span: Span) -> Self {
             let (input, input_rx) = flume::bounded(1);
             let (output_tx, output) = flume::bounded(1);
+            let outbox = output_tx
+                .into_sink()
+                .sink_map_err(|_| Error::InvalidState("failed to send"));
+            let inbox = input_rx.into_stream();
             let task = spawn_local(
-                async move {
-                    PaiFinder::run_with_sink(
-                        input_rx.into_stream(),
-                        output_tx
-                            .into_sink()
-                            .sink_map_err(|_| Error::InvalidState("failed to send")),
-                    )
-                    .await
-                }
-                .instrument(span),
+                async move { PaiFinder::run_with_sink(inbox, outbox).await }.instrument(span),
             );
             Handle {
                 input,
@@ -613,18 +587,22 @@ mod tests {
         }
 
         pub async fn receive(&self, message: impl Into<IntersectionMessage>) {
-            self.input
-                .send_async(Input::ReceivedMessage(Ok(message.into())))
-                .await
-                .unwrap();
+            self.input(Input::ReceivedMessage(Ok(message.into()))).await
         }
 
-        pub async fn next_out(&self) -> Output {
+        pub async fn next(&self) -> Output {
             self.output.recv_async().await.unwrap()
         }
 
-        pub async fn next_out_message<T: TryFrom<Message>>(&self) -> T {
-            match self.next_out().await {
+        pub async fn next_intersection(&self) -> ReadAuthorisation {
+            match self.next().await {
+                Output::NewIntersection(intersection) => intersection.authorisation,
+                out => panic!("expected NewIntersection but got {out:?}"),
+            }
+        }
+
+        pub async fn next_message<T: TryFrom<Message>>(&self) -> T {
+            match self.next().await {
                 Output::SendMessage(message) => match T::try_from(message) {
                     Err(_err) => panic!("wrong message type"),
                     Ok(message) => message,

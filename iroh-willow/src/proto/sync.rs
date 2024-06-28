@@ -9,7 +9,8 @@ use crate::util::codec::{DecodeOutcome, Decoder, Encoder};
 
 use super::{
     grouping::{Area, AreaOfInterest, ThreeDRange},
-    meadowcap,
+    keys::{NamespaceSecretKey, UserPublicKey},
+    meadowcap::{self, AccessMode},
     willow::{Entry, NamespaceId, DIGEST_LENGTH},
 };
 
@@ -67,6 +68,12 @@ impl From<ReadCapability> for ReadAuthorisation {
 impl ReadAuthorisation {
     pub fn new(read_cap: ReadCapability, subspace_cap: Option<SubspaceCapability>) -> Self {
         Self(Arc::new((read_cap, subspace_cap)))
+    }
+
+    pub fn new_owned(namespace_secret: &NamespaceSecretKey, user_key: UserPublicKey) -> Self {
+        let read_cap = ReadCapability::new_owned(namespace_secret, user_key, AccessMode::Read);
+        let subspace_cap = SubspaceCapability::new(namespace_secret, user_key);
+        Self::new(read_cap, Some(subspace_cap))
     }
 
     pub fn read_cap(&self) -> &ReadCapability {
