@@ -10,7 +10,7 @@ use futures_lite::{stream::Boxed as BoxStream, StreamExt};
 
 use flume::Sender;
 use iroh_base::key::PublicKey;
-use swarm_discovery::{Discoverer, DropGuard, Peer};
+use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::task::{JoinHandle, JoinSet};
 
 use crate::{
@@ -198,6 +198,10 @@ impl LocalNodeDiscovery {
         };
 
         let mut addrs: HashMap<u16, Vec<IpAddr>> = HashMap::default();
+        let socketaddrs: BTreeSet<SocketAddr> = socketaddrs
+            .into_iter()
+            .filter(|socketaddr| socketaddr.is_ipv4())
+            .collect();
         for socketaddr in socketaddrs {
             addrs
                 .entry(socketaddr.port())
@@ -207,7 +211,8 @@ impl LocalNodeDiscovery {
 
         let mut discoverer =
             Discoverer::new_interactive(N0_MDNS_SWARM.to_string(), node_id.to_string())
-                .with_callback(callback);
+                .with_callback(callback)
+                .with_ip_class(IpClass::V4Only);
         if !addrs.is_empty() {
             for addr in addrs {
                 discoverer = discoverer.with_addrs(addr.0, addr.1);
