@@ -1,20 +1,29 @@
+FROM rust:alpine AS chef
+
+RUN update-ca-certificates
+RUN apk add --no-cache musl-dev openssl-dev pkgconfig
+RUN cargo install cargo-chef 
+WORKDIR /iroh
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare  --recipe-path recipe.json
+
 ### Builder image
-FROM rust:alpine AS rust_builder
+FROM chef AS rust_builder
 
 RUN update-ca-certificates
 RUN apk add --no-cache musl-dev openssl-dev pkgconfig
 
-# has the side effect of updating the crates.io index & installing rust toolchain
-# called in a separate step for nicer caching. the command itself will fail,
-# b/c empty-library is not a dependency, so we override with an exit code 0
-RUN cargo install empty-library; exit 0
+COPY --from=planner /iroh/recipe.json recipe.json
+# Build dependencies - this is the caching Docker layer!
+RUN cargo chef cook --release --recipe-path recipe.json
 
 WORKDIR /iroh
 
 # copy entire workspace
 COPY . .
 
-RUN cargo clean
 RUN cargo build --release --all-features
 
 ### Target image
@@ -51,7 +60,7 @@ WORKDIR /
 
 # expose the default ports
 # http, https, stun, metrics
-EXPOSE  80 443 3478 9090
+EXPOSE  80 443 3478/udp 9090
 ENTRYPOINT ["/iroh-relay"]
 CMD [""]
 
@@ -70,6 +79,6 @@ WORKDIR /
 
 # expose the default ports
 # dns, metrics
-EXPOSE 53 9090
+EXPOSE 53/udp 9090
 ENTRYPOINT ["/iroh-relay"]
 CMD [""]
