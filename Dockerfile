@@ -34,5 +34,5 @@ WORKDIR /
 # Use nonroot (unprivileged) user
 # USER nonroot
 # expose the default ports
-EXPOSE 4433 8000 9090
-ENTRYPOINT ["./iroh start"]
+EXPOSE 4433 8000 9090 4919
+ENTRYPOINT ["/iroh --rpc-addr 0.0.0.0:4919 start"]

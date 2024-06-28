@@ -58,7 +58,7 @@ pub struct Node<D> {
 #[derive(derive_more::Debug)]
 struct NodeInner<D> {
     db: D,
-    rpc_port: Option<u16>,
+    rpc_addr: Option<SocketAddr>,
     docs: Option<DocsEngine>,
     endpoint: Endpoint,
     gossip: Gossip,
@@ -151,9 +151,9 @@ impl<D: BaoStore> Node<D> {
         self.inner.endpoint.home_relay()
     }
 
-    /// Returns `Some(port)` if an RPC endpoint is running on this port.
-    pub fn my_rpc_port(&self) -> Option<u16> {
-        self.inner.rpc_port
+    /// Returns `Some(addr)` if an RPC endpoint is running, `None` otherwise.
+    pub fn my_rpc_addr(&self) -> Option<SocketAddr> {
+        self.inner.rpc_addr
     }
 
     /// Shutdown the node.
