@@ -310,8 +310,15 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 res = join_set.join_next(), if !join_set.is_empty() => {
                     match res {
                         Some(Err(outer)) => {
-                            error!("Task failed: {outer:?}");
-                            break;
+                            if outer.is_panic() {
+                                error!("Task panicked: {outer:?}");
+                                break;
+                            } else if outer.is_cancelled() {
+                                debug!("Task cancelled: {outer:?}");
+                            } else {
+                                error!("Task failed: {outer:?}");
+                                break;
+                            }
                         }
                         Some(Ok(Err(inner))) => {
                             debug!("Task errored: {inner:?}");
