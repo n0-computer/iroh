@@ -92,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
 
     // configure our relay map
     let relay_mode = match (args.no_relay, args.relay) {
-        (false, None) => RelayMode::Default,
+        (false, None) => RelayMode::DefaultProd,
         (false, Some(url)) => RelayMode::Custom(RelayMap::from_url(url)),
         (true, None) => RelayMode::Disabled,
         (true, Some(_)) => bail!("You cannot set --no-relay and --relay at the same time"),
@@ -298,7 +298,8 @@ impl FromStr for Ticket {
 fn fmt_relay_mode(relay_mode: &RelayMode) -> String {
     match relay_mode {
         RelayMode::Disabled => "None".to_string(),
-        RelayMode::Default => "Default Relay servers".to_string(),
+        RelayMode::DefaultProd => "Default Relay (production) servers".to_string(),
+        RelayMode::DefaultStaging => "Default Relay (staging) servers".to_string(),
         RelayMode::Custom(map) => map
             .urls()
             .map(|url| url.to_string())

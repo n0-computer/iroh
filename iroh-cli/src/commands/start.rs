@@ -128,7 +128,7 @@ pub(crate) async fn start_node(
     }
 
     let relay_mode = match relay_map {
-        None => RelayMode::Default,
+        None => RelayMode::DefaultProd,
         Some(relay_map) => RelayMode::Custom(relay_map),
     };
 

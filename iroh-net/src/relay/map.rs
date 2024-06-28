@@ -14,8 +14,10 @@ use super::RelayUrl;
 pub enum RelayMode {
     /// Disable relay servers completely.
     Disabled,
-    /// Use the default relay map, with relay servers from n0.
-    Default,
+    /// Use the default relay map, with production relay servers from n0.
+    DefaultProd,
+    /// Use the default relay map, with staging relay servers from n0.
+    DefaultStaging,
     /// Use a custom relay map.
     Custom(RelayMap),
 }

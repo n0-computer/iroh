@@ -24,11 +24,11 @@ async fn main() -> anyhow::Result<()> {
         .secret_key(secret_key)
         // set the ALPN protocols this endpoint will accept on incoming connections
         .alpns(vec![EXAMPLE_ALPN.to_vec()])
-        // `RelayMode::Default` means that we will use the default relay servers to holepunch and relay.
+        // `RelayMode::DefaultProd` means that we will use the default relay servers to holepunch and relay.
         // Use `RelayMode::Custom` to pass in a `RelayMap` with custom relay urls.
         // Use `RelayMode::Disable` to disable holepunching and relaying over HTTPS
         // If you want to experiment with relaying using your own relay server, you must pass in the same custom relay url to both the `listen` code AND the `connect` code
-        .relay_mode(RelayMode::Default)
+        .relay_mode(RelayMode::DefaultProd)
         // you can choose a port to bind to, but passing in `0` will bind the socket to a random available port
         .bind(0)
         .await?;
