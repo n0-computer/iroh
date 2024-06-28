@@ -477,8 +477,9 @@ impl SyncHandle {
     pub async fn shutdown(&self) -> Result<Store> {
         let (reply, rx) = oneshot::channel();
         let action = Action::Shutdown { reply: Some(reply) };
-        self.send(action).await.ok();
-        Ok(rx.await?)
+        self.send(action).await?;
+        let store = rx.await?;
+        Ok(store)
     }
 
     pub async fn list_authors(&self, reply: flume::Sender<Result<AuthorId>>) -> Result<()> {
@@ -581,10 +582,12 @@ impl Actor {
             .enable_time()
             .build()?;
         let local_set = tokio::task::LocalSet::new();
-        local_set.block_on(&rt, async move { self.run_async().await })
+        local_set.block_on(&rt, async move { self.run_async().await });
+        Ok(())
     }
-    async fn run_async(mut self) -> Result<()> {
-        loop {
+
+    async fn run_async(mut self) {
+        let reply = loop {
             let timeout = tokio::time::sleep(MAX_COMMIT_DELAY);
             tokio::pin!(timeout);
             let action = tokio::select! {
@@ -599,7 +602,7 @@ impl Actor {
                         Ok(action) => action,
                         Err(flume::RecvError::Disconnected) => {
                             debug!("action channel disconnected");
-                            break;
+                            break None;
                         }
 
                     }
@@ -608,14 +611,7 @@ impl Actor {
             trace!(%action, "tick");
             match action {
                 Action::Shutdown { reply } => {
-                    if let Err(cause) = self.store.flush() {
-                        warn!(?cause, "failed to flush store");
-                    }
-                    self.close_all();
-                    if let Some(reply) = reply {
-                        send_reply(reply, self.store).ok();
-                    }
-                    break;
+                    break reply;
                 }
                 action => {
                     if self.on_action(action).is_err() {
@@ -623,16 +619,23 @@ impl Actor {
                     }
                 }
             }
+        };
+
+        if let Err(cause) = self.store.flush() {
+            warn!(?cause, "failed to flush store");
         }
+        self.close_all();
         self.tasks.abort_all();
-        debug!("shutdown");
-        Ok(())
+        debug!("docs actor shutdown");
+        if let Some(reply) = reply {
+            reply.send(self.store).ok();
+        }
     }
 
     fn on_action(&mut self, action: Action) -> Result<(), SendReplyError> {
         match action {
             Action::Shutdown { .. } => {
-                unreachable!("Shutdown action should be handled in run()")
+                unreachable!("Shutdown is handled in run()")
             }
             Action::ImportAuthor { author, reply } => {
                 let id = author.id();

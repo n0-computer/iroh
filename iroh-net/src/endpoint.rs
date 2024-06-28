@@ -28,7 +28,6 @@ use tracing::{debug, info_span, trace, warn};
 use url::Url;
 
 use crate::{
-    config,
     defaults::default_relay_map,
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
@@ -48,8 +47,8 @@ pub use quinn::{
 };
 
 pub use super::magicsock::{
-    ConnectionInfo, ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo,
-    LocalEndpointsStream,
+    ConnectionInfo, ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo,
+    DirectAddrType, DirectAddrsStream,
 };
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
@@ -126,15 +125,12 @@ impl Builder {
             }
         };
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
-        let mut server_config = make_server_config(
-            &secret_key,
-            self.alpn_protocols,
-            self.transport_config,
-            self.keylog,
-        )?;
-        if let Some(c) = self.concurrent_connections {
-            server_config.concurrent_connections(c);
-        }
+        let static_config = StaticConfig {
+            transport_config: Arc::new(self.transport_config.unwrap_or_default()),
+            keylog: self.keylog,
+            concurrent_connections: self.concurrent_connections,
+            secret_key: secret_key.clone(),
+        };
         let dns_resolver = self
             .dns_resolver
             .unwrap_or_else(|| default_resolver().clone());
@@ -150,7 +146,7 @@ impl Builder {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         };
-        Endpoint::bind(Some(server_config), msock_opts, self.keylog).await
+        Endpoint::bind(static_config, msock_opts, self.alpn_protocols).await
     }
 
     // # The very common methods everyone basically needs.
@@ -297,17 +293,41 @@ impl Builder {
     }
 }
 
+/// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
+#[derive(Debug)]
+struct StaticConfig {
+    secret_key: SecretKey,
+    transport_config: Arc<quinn::TransportConfig>,
+    keylog: bool,
+    concurrent_connections: Option<u32>,
+}
+
+impl StaticConfig {
+    /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
+    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> Result<quinn::ServerConfig> {
+        let mut server_config = make_server_config(
+            &self.secret_key,
+            alpn_protocols,
+            self.transport_config.clone(),
+            self.keylog,
+        )?;
+        if let Some(c) = self.concurrent_connections {
+            server_config.concurrent_connections(c);
+        }
+        Ok(server_config)
+    }
+}
+
 /// Creates a [`quinn::ServerConfig`] with the given secret key and limits.
 pub fn make_server_config(
     secret_key: &SecretKey,
     alpn_protocols: Vec<Vec<u8>>,
-    transport_config: Option<quinn::TransportConfig>,
+    transport_config: Arc<quinn::TransportConfig>,
     keylog: bool,
 ) -> Result<quinn::ServerConfig> {
     let tls_server_config = tls::make_server_config(secret_key, alpn_protocols, keylog)?;
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
-    server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
-
+    server_config.transport_config(transport_config);
     Ok(server_config)
 }
 
@@ -335,12 +355,11 @@ pub fn make_server_config(
 /// [QUIC]: https://quicwg.org
 #[derive(Clone, Debug)]
 pub struct Endpoint {
-    secret_key: Arc<SecretKey>,
     msock: Handle,
     endpoint: quinn::Endpoint,
     rtt_actor: Arc<rtt_actor::RttHandle>,
-    keylog: bool,
     cancel_token: CancellationToken,
+    static_config: Arc<StaticConfig>,
 }
 
 impl Endpoint {
@@ -360,15 +379,16 @@ impl Endpoint {
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
     async fn bind(
-        server_config: Option<quinn::ServerConfig>,
+        static_config: StaticConfig,
         msock_opts: magicsock::Options,
-        keylog: bool,
+        initial_alpns: Vec<Vec<u8>>,
     ) -> Result<Self> {
-        let secret_key = msock_opts.secret_key.clone();
-        let span = info_span!("magic_ep", me = %secret_key.public().fmt_short());
+        let span = info_span!("magic_ep", me = %static_config.secret_key.public().fmt_short());
         let _guard = span.enter();
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
+
+        let server_config = static_config.create_server_config(initial_alpns)?;
 
         let mut endpoint_config = quinn::EndpointConfig::default();
         // Setting this to false means that quinn will ignore packets that have the QUIC fixed bit
@@ -380,20 +400,29 @@ impl Endpoint {
 
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
-            server_config,
+            Some(server_config),
             msock.clone(),
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");
 
         Ok(Self {
-            secret_key: Arc::new(secret_key),
             msock,
             endpoint,
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
-            keylog,
             cancel_token: CancellationToken::new(),
+            static_config: Arc::new(static_config),
         })
+    }
+
+    /// Sets the list of accepted ALPN protocols.
+    ///
+    /// This will only affect new incoming connections.
+    /// Note that this *overrides* the current list of ALPNs.
+    pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) -> Result<()> {
+        let server_config = self.static_config.create_server_config(alpns)?;
+        self.endpoint.set_server_config(Some(server_config));
+        Ok(())
     }
 
     // # Methods for establishing connectivity.
@@ -481,10 +510,10 @@ impl Endpoint {
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
             let tls_client_config = tls::make_client_config(
-                &self.secret_key,
+                &self.static_config.secret_key,
                 Some(*node_id),
                 alpn_protocols,
-                self.keylog,
+                self.static_config.keylog,
             )?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
             let mut transport_config = quinn::TransportConfig::default();
@@ -502,7 +531,7 @@ impl Endpoint {
 
         let rtt_msg = RttMessage::NewConnection {
             connection: connection.weak_handle(),
-            conn_type_changes: self.conn_type_stream(node_id)?,
+            conn_type_changes: self.conn_type_stream(*node_id)?,
             node_id: *node_id,
         };
         if let Err(err) = self.rtt_actor.msg_tx.send(rtt_msg).await {
@@ -532,12 +561,40 @@ impl Endpoint {
     /// This updates the local state for the remote node.  If the provided [`NodeAddr`]
     /// contains a [`RelayUrl`] this will be used as the new relay server for this node.  If
     /// it contains any new IP endpoints they will also be stored and tried when next
-    /// connecting to this node.
+    /// connecting to this node. Any address that matches this node's direct addresses will be
+    /// silently ignored.
+    ///
+    /// See also [`Endpoint::add_node_addr_with_source`].
     ///
     /// # Errors
     ///
-    /// Will return an error if we attempt to add our own [`PublicKey`] to the node map.
+    /// Will return an error if we attempt to add our own [`PublicKey`] to the node map or if the
+    /// direct addresses are a subset of ours.
     pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
+        self.add_node_addr_inner(node_addr, magicsock::Source::App)
+    }
+
+    /// Informs this [`Endpoint`] about addresses of the iroh-net node, noting the source.
+    ///
+    /// This updates the local state for the remote node.  If the provided [`NodeAddr`] contains a
+    /// [`RelayUrl`] this will be used as the new relay server for this node.  If it contains any
+    /// new IP endpoints they will also be stored and tried when next connecting to this node. Any
+    /// address that matches this node's direct addresses will be silently ignored. The *source* is
+    /// used for logging exclusively and will not be stored.
+    ///
+    /// # Errors
+    ///
+    /// Will return an error if we attempt to add our own [`PublicKey`] to the node map or if the
+    /// direct addresses are a subset of ours.
+    pub fn add_node_addr_with_source(
+        &self,
+        node_addr: NodeAddr,
+        source: &'static str,
+    ) -> Result<()> {
+        self.add_node_addr_inner(node_addr, magicsock::Source::NamedApp { name: source })
+    }
+
+    fn add_node_addr_inner(&self, node_addr: NodeAddr, source: magicsock::Source) -> Result<()> {
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
             bail!(
@@ -545,15 +602,14 @@ impl Endpoint {
                 node_addr.node_id.fmt_short()
             );
         }
-        self.msock.add_node_addr(node_addr);
-        Ok(())
+        self.msock.add_node_addr(node_addr, source)
     }
 
     // # Getter methods for properties of this Endpoint itself.
 
     /// Returns the secret_key of this endpoint.
     pub fn secret_key(&self) -> &SecretKey {
-        &self.secret_key
+        &self.static_config.secret_key
     }
 
     /// Returns the node id of this endpoint.
@@ -561,32 +617,22 @@ impl Endpoint {
     /// This ID is the unique addressing information of this node and other peers must know
     /// it to be able to connect to this node.
     pub fn node_id(&self) -> NodeId {
-        self.secret_key.public()
+        self.static_config.secret_key.public()
     }
 
     /// Returns the current [`NodeAddr`] for this endpoint.
     ///
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and local IP endpoints
-    /// as they would be returned by [`Endpoint::my_relay`] and
-    /// [`Endpoint::local_endpoints`].
-    pub async fn my_addr(&self) -> Result<NodeAddr> {
+    /// as they would be returned by [`Endpoint::home_relay`] and
+    /// [`Endpoint::direct_addresses`].
+    pub async fn node_addr(&self) -> Result<NodeAddr> {
         let addrs = self
-            .local_endpoints()
+            .direct_addresses()
             .next()
             .await
             .ok_or(anyhow!("No IP endpoints found"))?;
-        let relay = self.my_relay();
+        let relay = self.home_relay();
         let addrs = addrs.into_iter().map(|x| x.addr).collect();
-        Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
-    }
-
-    /// Returns the [`NodeAddr`] for this endpoint with the provided endpoints.
-    ///
-    /// Like [`Endpoint::my_addr`] but uses the provided IP endpoints rather than those from
-    /// [`Endpoint::local_endpoints`].
-    pub fn my_addr_with_endpoints(&self, eps: Vec<config::Endpoint>) -> Result<NodeAddr> {
-        let relay = self.my_relay();
-        let addrs = eps.into_iter().map(|x| x.addr).collect();
         Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
     }
 
@@ -602,7 +648,7 @@ impl Endpoint {
     /// Note that this will be `None` right after the [`Endpoint`] is created since it takes
     /// some time to connect to find and connect to the home relay server.  Use
     /// [`Endpoint::watch_home_relay`] to wait until the home relay server is available.
-    pub fn my_relay(&self) -> Option<RelayUrl> {
+    pub fn home_relay(&self) -> Option<RelayUrl> {
         self.msock.my_relay()
     }
 
@@ -648,20 +694,20 @@ impl Endpoint {
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
     /// let mep =  Endpoint::builder().bind(0).await.unwrap();
-    /// let _endpoints = mep.local_endpoints().next().await;
+    /// let _addrs = mep.direct_addresses().next().await;
     /// # });
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    pub fn local_endpoints(&self) -> LocalEndpointsStream {
-        self.msock.local_endpoints()
+    pub fn direct_addresses(&self) -> DirectAddrsStream {
+        self.msock.direct_addresses()
     }
 
     /// Returns the local socket addresses on which the underlying sockets are bound.
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
-    pub fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
+    pub fn bound_sockets(&self) -> (SocketAddr, Option<SocketAddr>) {
         self.msock.local_addr()
     }
 
@@ -711,7 +757,7 @@ impl Endpoint {
     /// # Errors
     ///
     /// Will error if we do not have any address information for the given `node_id`.
-    pub fn conn_type_stream(&self, node_id: &NodeId) -> Result<ConnectionTypeStream> {
+    pub fn conn_type_stream(&self, node_id: NodeId) -> Result<ConnectionTypeStream> {
         self.msock.conn_type_stream(node_id)
     }
 
@@ -805,7 +851,7 @@ impl Endpoint {
         // Only return a mapped addr if we have some way of dialing this node, in other
         // words, we have either a relay URL or at least one direct address.
         let addr = if self.msock.has_send_address(node_id) {
-            self.msock.get_mapping_addr(&node_id)
+            self.msock.get_mapping_addr(node_id)
         } else {
             None
         };
@@ -833,7 +879,7 @@ impl Endpoint {
                 let mut discovery = DiscoveryTask::start(self.clone(), node_id)?;
                 discovery.first_arrived().await?;
                 if self.msock.has_send_address(node_id) {
-                    let addr = self.msock.get_mapping_addr(&node_id).expect("checked");
+                    let addr = self.msock.get_mapping_addr(node_id).expect("checked");
                     Ok((addr, Some(discovery)))
                 } else {
                     bail!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}");
@@ -919,11 +965,11 @@ impl Connecting {
     /// Extracts the ALPN protocol from the peer's handshake data.
     // Note, we could totally provide this method to be on a Connection as well.  But we'd
     // need to wrap Connection too.
-    pub async fn alpn(&mut self) -> Result<String> {
+    pub async fn alpn(&mut self) -> Result<Vec<u8>> {
         let data = self.handshake_data().await?;
         match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
             Ok(data) => match data.protocol {
-                Some(protocol) => std::string::String::from_utf8(protocol).map_err(Into::into),
+                Some(protocol) => Ok(protocol),
                 None => bail!("no ALPN protocol available"),
             },
             Err(_) => bail!("unknown handshake type"),
@@ -978,7 +1024,7 @@ fn try_send_rtt_msg(conn: &quinn::Connection, magic_ep: &Endpoint) {
         warn!(?conn, "failed to get remote node id");
         return;
     };
-    let Ok(conn_type_changes) = magic_ep.conn_type_stream(&peer_id) else {
+    let Ok(conn_type_changes) = magic_ep.conn_type_stream(peer_id) else {
         warn!(?conn, "failed to create conn_type_stream");
         return;
     };
@@ -1078,7 +1124,7 @@ mod tests {
             .bind(0)
             .await
             .unwrap();
-        let my_addr = ep.my_addr().await.unwrap();
+        let my_addr = ep.node_addr().await.unwrap();
         let res = ep.connect(my_addr.clone(), TEST_ALPN).await;
         assert!(res.is_err());
         let err = res.err().unwrap();
@@ -1257,7 +1303,7 @@ mod tests {
                         .bind(0)
                         .await
                         .unwrap();
-                    let eps = ep.local_addr();
+                    let eps = ep.bound_sockets();
                     info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server bound");
                     for i in 0..n_clients {
                         let now = Instant::now();
@@ -1302,7 +1348,7 @@ mod tests {
                     .bind(0)
                     .await
                     .unwrap();
-                let eps = ep.local_addr();
+                let eps = ep.bound_sockets();
                 info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "client bound");
                 let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
                 info!(to = ?node_addr, "client connecting");
@@ -1352,8 +1398,8 @@ mod tests {
             .bind(0)
             .await
             .unwrap();
-        let ep1_nodeaddr = ep1.my_addr().await.unwrap();
-        let ep2_nodeaddr = ep2.my_addr().await.unwrap();
+        let ep1_nodeaddr = ep1.node_addr().await.unwrap();
+        let ep2_nodeaddr = ep2.node_addr().await.unwrap();
         ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
         ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
         let ep1_nodeid = ep1.node_id();
@@ -1376,7 +1422,7 @@ mod tests {
             let conn = incoming.await.unwrap();
             let node_id = get_remote_node_id(&conn).unwrap();
             assert_eq!(node_id, src);
-            assert_eq!(alpn.as_bytes(), TEST_ALPN);
+            assert_eq!(alpn, TEST_ALPN);
             let (mut send, mut recv) = conn.accept_bi().await.unwrap();
             let m = recv.read_to_end(100).await.unwrap();
             assert_eq!(m, b"hello");
@@ -1397,8 +1443,9 @@ mod tests {
 
     #[tokio::test]
     async fn endpoint_conn_type_stream() {
+        const TIMEOUT: Duration = std::time::Duration::from_secs(15);
         let _logging_guard = iroh_test::logging::setup();
-        let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
+        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await.unwrap();
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let ep1_secret_key = SecretKey::generate_with_rng(&mut rng);
         let ep2_secret_key = SecretKey::generate_with_rng(&mut rng);
@@ -1419,76 +1466,62 @@ mod tests {
             .await
             .unwrap();
 
-        async fn handle_direct_conn(ep: Endpoint, node_id: PublicKey) -> Result<()> {
-            let node_addr = NodeAddr::new(node_id);
-            ep.add_node_addr(node_addr)?;
-            let stream = ep.conn_type_stream(&node_id)?;
-            async fn get_direct_event(
-                src: &PublicKey,
-                dst: &PublicKey,
-                mut stream: ConnectionTypeStream,
-            ) -> Result<()> {
-                let src = src.fmt_short();
-                let dst = dst.fmt_short();
-                while let Some(conn_type) = stream.next().await {
-                    tracing::info!(me = %src, dst = %dst, conn_type = ?conn_type);
-                    if matches!(conn_type, ConnectionType::Direct(_)) {
-                        return Ok(());
-                    }
+        async fn handle_direct_conn(ep: &Endpoint, node_id: PublicKey) -> Result<()> {
+            let mut stream = ep.conn_type_stream(node_id)?;
+            let src = ep.node_id().fmt_short();
+            let dst = node_id.fmt_short();
+            while let Some(conn_type) = stream.next().await {
+                tracing::info!(me = %src, dst = %dst, conn_type = ?conn_type);
+                if matches!(conn_type, ConnectionType::Direct(_)) {
+                    return Ok(());
                 }
-                anyhow::bail!("conn_type stream ended before `ConnectionType::Direct`");
             }
-            tokio::time::timeout(
-                Duration::from_secs(15),
-                get_direct_event(&ep.node_id(), &node_id, stream),
-            )
-            .await??;
-            Ok(())
+            anyhow::bail!("conn_type stream ended before `ConnectionType::Direct`");
+        }
+
+        async fn accept(ep: &Endpoint) -> NodeId {
+            let incoming = ep.accept().await.unwrap();
+            let conn = incoming.await.unwrap();
+            let node_id = get_remote_node_id(&conn).unwrap();
+            tracing::info!(node_id=%node_id.fmt_short(), "accepted connection");
+            node_id
         }
 
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
 
-        let ep1_nodeaddr = ep1.my_addr().await.unwrap();
+        let ep1_nodeaddr = ep1.node_addr().await.unwrap();
         tracing::info!(
             "node id 1 {ep1_nodeid}, relay URL {:?}",
             ep1_nodeaddr.relay_url()
         );
         tracing::info!("node id 2 {ep2_nodeid}");
 
-        let res_ep1 = tokio::spawn(handle_direct_conn(ep1.clone(), ep2_nodeid));
+        let ep1_side = async move {
+            accept(&ep1).await;
+            handle_direct_conn(&ep1, ep2_nodeid).await
+        };
+
+        let ep2_side = async move {
+            ep2.connect(ep1_nodeaddr, TEST_ALPN).await.unwrap();
+            handle_direct_conn(&ep2, ep1_nodeid).await
+        };
+
+        let res_ep1 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep1_side));
 
         let ep1_abort_handle = res_ep1.abort_handle();
         let _ep1_guard = CallOnDrop::new(move || {
             ep1_abort_handle.abort();
         });
 
-        let res_ep2 = tokio::spawn(handle_direct_conn(ep2.clone(), ep1_nodeid));
+        let res_ep2 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep2_side));
         let ep2_abort_handle = res_ep2.abort_handle();
         let _ep2_guard = CallOnDrop::new(move || {
             ep2_abort_handle.abort();
         });
-        async fn accept(ep: Endpoint) -> NodeId {
-            let incoming = ep.accept().await.unwrap();
-            let conn = incoming.await.unwrap();
-            get_remote_node_id(&conn).unwrap()
-        }
 
-        // create a node addr with no direct connections
-        let ep1_nodeaddr = NodeAddr::from_parts(ep1_nodeid, Some(relay_url), vec![]);
-
-        let accept_res = tokio::spawn(accept(ep1.clone()));
-        let accept_abort_handle = accept_res.abort_handle();
-        let _accept_guard = CallOnDrop::new(move || {
-            accept_abort_handle.abort();
-        });
-
-        let _conn_2 = ep2.connect(ep1_nodeaddr, TEST_ALPN).await.unwrap();
-
-        let got_id = accept_res.await.unwrap();
-        assert_eq!(ep2_nodeid, got_id);
-
-        res_ep1.await.unwrap().unwrap();
-        res_ep2.await.unwrap().unwrap();
+        let (r1, r2) = tokio::try_join!(res_ep1, res_ep2).unwrap();
+        r1.expect("ep1 timeout").unwrap();
+        r2.expect("ep2 timeout").unwrap();
     }
 }

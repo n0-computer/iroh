@@ -16,13 +16,13 @@ use iroh_blobs::{
     util::{SetTagOption, TagDrop},
     BlobFormat, HashAndFormat, Tag, TempTag,
 };
-use quic_rpc::{client::UpdateSink, RpcClient, ServiceConnection};
+use quic_rpc::client::UpdateSink;
 use tokio::io::AsyncRead;
 use tokio_util::io::ReaderStream;
 use tracing::{debug, warn};
 
 use crate::{
-    client::RpcService,
+    client::{RpcClient, RpcConnection, RpcService},
     rpc_protocol::{
         BatchAddPathRequest, BatchAddStreamRequest, BatchAddStreamResponse, BatchAddStreamUpdate,
         BatchCreateTempTagRequest, BatchId, BatchUpdate, CreateTagRequest, SetTagRequest,
@@ -33,14 +33,14 @@ use super::WrapOption;
 
 /// A scope in which blobs can be added.
 #[derive(derive_more::Debug)]
-struct BatchInner<C: ServiceConnection<RpcService>> {
+struct BatchInner {
     /// The id of the scope.
     batch: BatchId,
     /// The rpc client.
-    rpc: RpcClient<RpcService, C>,
+    rpc: RpcClient,
     /// The stream to send drop
     #[debug(skip)]
-    updates: Mutex<Buffer<UpdateSink<RpcService, C, BatchUpdate>, BatchUpdate>>,
+    updates: Mutex<Buffer<UpdateSink<RpcService, RpcConnection, BatchUpdate>, BatchUpdate>>,
 }
 
 /// A batch for write operations.
@@ -50,9 +50,9 @@ struct BatchInner<C: ServiceConnection<RpcService>> {
 /// It is not a transaction, so things in a batch are not atomic. Also, there is
 /// no isolation between batches.
 #[derive(derive_more::Debug)]
-pub struct Batch<C: ServiceConnection<RpcService>>(Arc<BatchInner<C>>);
+pub struct Batch(Arc<BatchInner>);
 
-impl<C: ServiceConnection<RpcService>> TagDrop for BatchInner<C> {
+impl TagDrop for BatchInner {
     fn on_drop(&self, content: &HashAndFormat) {
         let mut updates = self.updates.lock().unwrap();
         // make a spirited attempt to notify the server that we are dropping the content
@@ -119,11 +119,11 @@ impl Default for AddReaderOpts {
     }
 }
 
-impl<C: ServiceConnection<RpcService>> Batch<C> {
+impl Batch {
     pub(super) fn new(
         batch: BatchId,
-        rpc: RpcClient<RpcService, C>,
-        updates: UpdateSink<RpcService, C, BatchUpdate>,
+        rpc: RpcClient,
+        updates: UpdateSink<RpcService, RpcConnection, BatchUpdate>,
         buffer_size: usize,
     ) -> Self {
         let updates = updates.buffer(buffer_size);

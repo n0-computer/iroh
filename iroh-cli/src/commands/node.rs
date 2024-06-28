@@ -8,12 +8,10 @@ use comfy_table::{presets::NOTHING, Cell};
 use futures_lite::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
 use iroh::client::Iroh;
-use iroh::client::RpcService;
 use iroh::net::{
     endpoint::{ConnectionInfo, DirectAddrInfo},
     key::PublicKey,
 };
-use quic_rpc::ServiceConnection;
 
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
@@ -38,10 +36,7 @@ pub enum NodeCommands {
 }
 
 impl NodeCommands {
-    pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
-    where
-        C: ServiceConnection<RpcService>,
-    {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Connections => {
                 let connections = iroh.connections().await?;
@@ -80,6 +75,9 @@ impl NodeCommands {
                 println!("Listening addresses: {:#?}", response.listen_addrs);
                 println!("Node public key: {}", response.addr.node_id);
                 println!("Version: {}", response.version);
+                if let Some(port) = response.rpc_port {
+                    println!("RPC Port: {}", port);
+                }
             }
         }
         Ok(())

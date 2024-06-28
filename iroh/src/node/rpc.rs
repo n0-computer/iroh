@@ -8,7 +8,7 @@ use futures_buffered::BufferedStreamExt;
 use futures_lite::{Stream, StreamExt};
 use futures_util::FutureExt;
 use genawaiter::sync::{Co, Gen};
-use iroh_base::rpc::RpcResult;
+use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_blobs::downloader::{DownloadRequest, Downloader};
 use iroh_blobs::export::ExportProgress;
 use iroh_blobs::format::collection::Collection;
@@ -31,12 +31,17 @@ use quic_rpc::{
     server::{RpcChannel, RpcServerError},
     ServiceEndpoint,
 };
-use tokio_util::task::LocalPoolHandle;
-use tracing::{debug, info};
+use tokio::task::JoinSet;
+use tokio_util::{either::Either, task::LocalPoolHandle};
+use tracing::{debug, info, warn};
 
-use crate::client::blobs::{BlobInfo, BlobStatus, DownloadMode, IncompleteBlobInfo, WrapOption};
-use crate::client::tags::TagInfo;
-use crate::client::NodeStatus;
+use crate::client::blobs::BlobStatus;
+use crate::client::{
+    blobs::{BlobInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
+    tags::TagInfo,
+    NodeStatus,
+};
+use crate::node::{docs::DocsEngine, NodeInner};
 use crate::rpc_protocol::{
     BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest, BatchAddStreamResponse,
     BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse, BatchCreateTempTagRequest,
@@ -52,8 +57,6 @@ use crate::rpc_protocol::{
     NodeWatchRequest, NodeWatchResponse, Request, RpcService, SetTagOption, SetTagRequest,
 };
 
-use super::NodeInner;
-
 mod docs;
 
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
@@ -61,255 +64,289 @@ const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 const RPC_BLOB_GET_CHUNK_SIZE: usize = 1024 * 64;
 /// Channel cap for getting blobs over RPC
 const RPC_BLOB_GET_CHANNEL_CAP: usize = 2;
+/// Name used for logging when new node addresses are added from gossip.
+const BLOB_DOWNLOAD_SOURCE_NAME: &str = "blob_download";
 
 #[derive(Debug, Clone)]
 pub(crate) struct Handler<D> {
     pub(crate) inner: Arc<NodeInner<D>>,
 }
 
+impl<D> Handler<D> {
+    pub fn new(inner: Arc<NodeInner<D>>) -> Self {
+        Self { inner }
+    }
+}
+
 impl<D: BaoStore> Handler<D> {
-    pub(crate) fn handle_rpc_request<E: ServiceEndpoint<RpcService>>(
-        &self,
+    fn docs(&self) -> Option<&DocsEngine> {
+        self.inner.docs.as_ref()
+    }
+
+    async fn with_docs<T, F, Fut>(self, f: F) -> RpcResult<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(DocsEngine) -> Fut,
+        Fut: std::future::Future<Output = RpcResult<T>>,
+    {
+        if let Some(docs) = self.docs() {
+            let docs = docs.clone();
+            f(docs).await
+        } else {
+            Err(docs_disabled())
+        }
+    }
+
+    fn with_docs_stream<T, F, S>(self, f: F) -> impl Stream<Item = RpcResult<T>>
+    where
+        T: Send + 'static,
+        F: FnOnce(DocsEngine) -> S,
+        S: Stream<Item = RpcResult<T>>,
+    {
+        if let Some(docs) = self.docs() {
+            let docs = docs.clone();
+            Either::Left(f(docs))
+        } else {
+            Either::Right(futures_lite::stream::once(Err(docs_disabled())))
+        }
+    }
+
+    pub(crate) fn spawn_rpc_request<E: ServiceEndpoint<RpcService>>(
+        inner: Arc<NodeInner<D>>,
+        join_set: &mut JoinSet<anyhow::Result<()>>,
+        accepting: quic_rpc::server::Accepting<RpcService, E>,
+    ) {
+        let handler = Self::new(inner);
+        join_set.spawn(async move {
+            let (msg, chan) = accepting.read_first().await?;
+            if let Err(err) = handler.handle_rpc_request(msg, chan).await {
+                warn!("rpc request handler error: {err:?}");
+            }
+            Ok(())
+        });
+    }
+
+    pub(crate) async fn handle_rpc_request<E: ServiceEndpoint<RpcService>>(
+        self,
         msg: Request,
         chan: RpcChannel<RpcService, E>,
-    ) {
-        let handler = self.clone();
-        tokio::task::spawn(async move {
-            use Request::*;
-            debug!("handling rpc request: {msg}");
-            match msg {
-                NodeWatch(msg) => chan.server_streaming(msg, handler, Self::node_watch).await,
-                NodeStatus(msg) => chan.rpc(msg, handler, Self::node_status).await,
-                NodeId(msg) => chan.rpc(msg, handler, Self::node_id).await,
-                NodeAddr(msg) => chan.rpc(msg, handler, Self::node_addr).await,
-                NodeRelay(msg) => chan.rpc(msg, handler, Self::node_relay).await,
-                NodeShutdown(msg) => chan.rpc(msg, handler, Self::node_shutdown).await,
-                NodeStats(msg) => chan.rpc(msg, handler, Self::node_stats).await,
-                NodeConnections(msg) => {
-                    chan.server_streaming(msg, handler, Self::node_connections)
-                        .await
-                }
-                NodeConnectionInfo(msg) => chan.rpc(msg, handler, Self::node_connection_info).await,
-                BlobStatus(msg) => chan.rpc(msg, handler, Self::blob_status).await,
-                BlobList(msg) => chan.server_streaming(msg, handler, Self::blob_list).await,
-                BlobListIncomplete(msg) => {
-                    chan.server_streaming(msg, handler, Self::blob_list_incomplete)
-                        .await
-                }
-                BatchCreateTempTag(msg) => {
-                    chan.rpc(msg, handler, Self::batch_create_temp_tag).await
-                }
-                BatchAddStream(msg) => {
-                    chan.bidi_streaming(msg, handler, Self::batch_add_stream)
-                        .await
-                }
-                BatchAddStreamUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
-                BatchAddPath(msg) => {
-                    chan.server_streaming(msg, handler, Self::batch_add_from_path)
-                        .await
-                }
-                ListTags(msg) => {
-                    chan.server_streaming(msg, handler, Self::tags_list_tags)
-                        .await
-                }
-                SetTag(msg) => chan.rpc(msg, handler, Self::tags_set_tag).await,
-                CreateTag(msg) => chan.rpc(msg, handler, Self::tags_create_tag).await,
-                BlobDeleteBlob(msg) => chan.rpc(msg, handler, Self::blob_delete_blob).await,
-                BlobAddPath(msg) => {
-                    chan.server_streaming(msg, handler, Self::blob_add_from_path)
-                        .await
-                }
-                BlobDownload(msg) => {
-                    chan.server_streaming(msg, handler, Self::blob_download)
-                        .await
-                }
-                BlobExport(msg) => chan.server_streaming(msg, handler, Self::blob_export).await,
-                BlobValidate(msg) => {
-                    chan.server_streaming(msg, handler, Self::blob_validate)
-                        .await
-                }
-                BlobFsck(msg) => {
-                    chan.server_streaming(msg, handler, Self::blob_consistency_check)
-                        .await
-                }
-                BlobReadAt(msg) => {
-                    chan.server_streaming(msg, handler, Self::blob_read_at)
-                        .await
-                }
-                BlobAddStream(msg) => {
-                    chan.bidi_streaming(msg, handler, Self::blob_add_stream)
-                        .await
-                }
-                BlobAddStreamUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
-                BatchCreate(msg) => chan.bidi_streaming(msg, handler, Self::batch_create).await,
-                BatchUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
-                AuthorList(msg) => {
-                    chan.server_streaming(msg, handler, |handler, req| {
-                        handler.inner.sync.author_list(req)
-                    })
+    ) -> Result<(), RpcServerError<E>> {
+        use Request::*;
+        debug!("handling rpc request: {msg}");
+        match msg {
+            NodeWatch(msg) => chan.server_streaming(msg, self, Self::node_watch).await,
+            NodeStatus(msg) => chan.rpc(msg, self, Self::node_status).await,
+            NodeId(msg) => chan.rpc(msg, self, Self::node_id).await,
+            NodeAddr(msg) => chan.rpc(msg, self, Self::node_addr).await,
+            NodeRelay(msg) => chan.rpc(msg, self, Self::node_relay).await,
+            NodeShutdown(msg) => chan.rpc(msg, self, Self::node_shutdown).await,
+            NodeStats(msg) => chan.rpc(msg, self, Self::node_stats).await,
+            NodeConnections(msg) => {
+                chan.server_streaming(msg, self, Self::node_connections)
                     .await
-                }
-                AuthorCreate(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.author_create(req).await
-                    })
-                    .await
-                }
-                AuthorImport(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.author_import(req).await
-                    })
-                    .await
-                }
-                AuthorExport(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.author_export(req).await
-                    })
-                    .await
-                }
-                AuthorDelete(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.author_delete(req).await
-                    })
-                    .await
-                }
-                AuthorGetDefault(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.author_default(req)
-                    })
-                    .await
-                }
-                AuthorSetDefault(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.author_set_default(req).await
-                    })
-                    .await
-                }
-                DocOpen(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_open(req).await
-                    })
-                    .await
-                }
-                DocClose(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_close(req).await
-                    })
-                    .await
-                }
-                DocStatus(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_status(req).await
-                    })
-                    .await
-                }
-                DocList(msg) => {
-                    chan.server_streaming(msg, handler, |handler, req| {
-                        handler.inner.sync.doc_list(req)
-                    })
-                    .await
-                }
-                DocCreate(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_create(req).await
-                    })
-                    .await
-                }
-                DocDrop(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_drop(req).await
-                    })
-                    .await
-                }
-                DocImport(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_import(req).await
-                    })
-                    .await
-                }
-                DocSet(msg) => {
-                    let bao_store = handler.inner.db.clone();
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_set(&bao_store, req).await
-                    })
-                    .await
-                }
-                DocImportFile(msg) => {
-                    chan.server_streaming(msg, handler, Self::doc_import_file)
-                        .await
-                }
-                DocExportFile(msg) => {
-                    chan.server_streaming(msg, handler, Self::doc_export_file)
-                        .await
-                }
-                DocDel(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_del(req).await
-                    })
-                    .await
-                }
-                DocSetHash(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_set_hash(req).await
-                    })
-                    .await
-                }
-                DocGet(msg) => {
-                    chan.server_streaming(msg, handler, |handler, req| {
-                        handler.inner.sync.doc_get_many(req)
-                    })
-                    .await
-                }
-                DocGetExact(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_get_exact(req).await
-                    })
-                    .await
-                }
-                DocStartSync(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_start_sync(req).await
-                    })
-                    .await
-                }
-                DocLeave(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_leave(req).await
-                    })
-                    .await
-                }
-                DocShare(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_share(req).await
-                    })
-                    .await
-                }
-                DocSubscribe(msg) => {
-                    chan.try_server_streaming(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_subscribe(req).await
-                    })
-                    .await
-                }
-                DocSetDownloadPolicy(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_set_download_policy(req).await
-                    })
-                    .await
-                }
-                DocGetDownloadPolicy(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_get_download_policy(req).await
-                    })
-                    .await
-                }
-                DocGetSyncPeers(msg) => {
-                    chan.rpc(msg, handler, |handler, req| async move {
-                        handler.inner.sync.doc_get_sync_peers(req).await
-                    })
-                    .await
-                }
             }
-        });
+            NodeConnectionInfo(msg) => chan.rpc(msg, self, Self::node_connection_info).await,
+            BlobStatus(msg) => chan.rpc(msg, self, Self::blob_status).await,
+            BlobList(msg) => chan.server_streaming(msg, self, Self::blob_list).await,
+            BlobListIncomplete(msg) => {
+                chan.server_streaming(msg, self, Self::blob_list_incomplete)
+                    .await
+            }
+            SetTag(msg) => chan.rpc(msg, self, Self::tags_set_tag).await,
+            CreateTag(msg) => chan.rpc(msg, self, Self::tags_create_tag).await,
+            ListTags(msg) => chan.server_streaming(msg, self, Self::tags_list_tags).await,
+            BlobDeleteBlob(msg) => chan.rpc(msg, self, Self::blob_delete_blob).await,
+            BlobAddPath(msg) => {
+                chan.server_streaming(msg, self, Self::blob_add_from_path)
+                    .await
+            }
+            BlobDownload(msg) => chan.server_streaming(msg, self, Self::blob_download).await,
+            BlobExport(msg) => chan.server_streaming(msg, self, Self::blob_export).await,
+            BlobValidate(msg) => chan.server_streaming(msg, self, Self::blob_validate).await,
+            BlobFsck(msg) => {
+                chan.server_streaming(msg, self, Self::blob_consistency_check)
+                    .await
+            }
+            BlobReadAt(msg) => chan.server_streaming(msg, self, Self::blob_read_at).await,
+            BlobAddStream(msg) => chan.bidi_streaming(msg, self, Self::blob_add_stream).await,
+            BlobAddStreamUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
+            BatchCreate(msg) => chan.bidi_streaming(msg, self, Self::batch_create).await,
+            BatchUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
+            BatchCreateTempTag(msg) => chan.rpc(msg, self, Self::batch_create_temp_tag).await,
+            BatchAddStream(msg) => chan.bidi_streaming(msg, self, Self::batch_add_stream).await,
+            BatchAddStreamUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
+            BatchAddPath(msg) => {
+                chan.server_streaming(msg, self, Self::batch_add_from_path)
+                    .await
+            }
+            AuthorList(msg) => {
+                chan.server_streaming(msg, self, |handler, req| {
+                    handler.with_docs_stream(|docs| docs.author_list(req))
+                })
+                .await
+            }
+            AuthorCreate(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.author_create(req).await })
+                })
+                .await
+            }
+            AuthorImport(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.author_import(req).await })
+                })
+                .await
+            }
+            AuthorExport(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.author_export(req).await })
+                })
+                .await
+            }
+            AuthorDelete(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.author_delete(req).await })
+                })
+                .await
+            }
+            AuthorGetDefault(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { Ok(docs.author_default(req)) })
+                })
+                .await
+            }
+            AuthorSetDefault(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.author_set_default(req).await })
+                })
+                .await
+            }
+            DocOpen(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_open(req).await })
+                })
+                .await
+            }
+            DocClose(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_close(req).await })
+                })
+                .await
+            }
+            DocStatus(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_status(req).await })
+                })
+                .await
+            }
+            DocList(msg) => {
+                chan.server_streaming(msg, self, |handler, req| {
+                    handler.with_docs_stream(|docs| docs.doc_list(req))
+                })
+                .await
+            }
+            DocCreate(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_create(req).await })
+                })
+                .await
+            }
+            DocDrop(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_drop(req).await })
+                })
+                .await
+            }
+            DocImport(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_import(req).await })
+                })
+                .await
+            }
+            DocSet(msg) => {
+                let blobs_store = self.inner.db.clone();
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_set(&blobs_store, req).await })
+                })
+                .await
+            }
+            DocImportFile(msg) => {
+                chan.server_streaming(msg, self, Self::doc_import_file)
+                    .await
+            }
+            DocExportFile(msg) => {
+                chan.server_streaming(msg, self, Self::doc_export_file)
+                    .await
+            }
+            DocDel(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_del(req).await })
+                })
+                .await
+            }
+            DocSetHash(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_set_hash(req).await })
+                })
+                .await
+            }
+            DocGet(msg) => {
+                chan.server_streaming(msg, self, |handler, req| {
+                    handler.with_docs_stream(|docs| docs.doc_get_many(req))
+                })
+                .await
+            }
+            DocGetExact(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_get_exact(req).await })
+                })
+                .await
+            }
+            DocStartSync(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_start_sync(req).await })
+                })
+                .await
+            }
+            DocLeave(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_leave(req).await })
+                })
+                .await
+            }
+            DocShare(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_share(req).await })
+                })
+                .await
+            }
+            DocSubscribe(msg) => {
+                chan.try_server_streaming(msg, self, |handler, req| async move {
+                    handler
+                        .with_docs(|docs| async move { docs.doc_subscribe(req).await })
+                        .await
+                })
+                .await
+            }
+            DocSetDownloadPolicy(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_set_download_policy(req).await })
+                })
+                .await
+            }
+            DocGetDownloadPolicy(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_get_download_policy(req).await })
+                })
+                .await
+            }
+            DocGetSyncPeers(msg) => {
+                chan.rpc(msg, self, |handler, req| {
+                    handler.with_docs(|docs| async move { docs.doc_get_sync_peers(req).await })
+                })
+                .await
+            }
+        }
     }
 
     fn rt(&self) -> LocalPoolHandle {
@@ -517,6 +554,7 @@ impl<D: BaoStore> Handler<D> {
         msg: DocImportFileRequest,
         progress: flume::Sender<crate::client::docs::ImportProgress>,
     ) -> anyhow::Result<()> {
+        let docs = self.docs().ok_or_else(|| anyhow!("docs are disabled"))?;
         use crate::client::docs::ImportProgress as DocImportProgress;
         use iroh_blobs::store::ImportMode;
         use std::collections::BTreeMap;
@@ -569,16 +607,14 @@ impl<D: BaoStore> Handler<D> {
 
         let hash_and_format = temp_tag.inner();
         let HashAndFormat { hash, .. } = *hash_and_format;
-        self.inner
-            .sync
-            .doc_set_hash(DocSetHashRequest {
-                doc_id,
-                author_id,
-                key: key.clone(),
-                hash,
-                size,
-            })
-            .await?;
+        docs.doc_set_hash(DocSetHashRequest {
+            doc_id,
+            author_id,
+            key: key.clone(),
+            hash,
+            size,
+        })
+        .await?;
         drop(temp_tag);
         progress.send(DocImportProgress::AllDone { key }).await?;
         Ok(())
@@ -603,6 +639,7 @@ impl<D: BaoStore> Handler<D> {
         msg: DocExportFileRequest,
         progress: flume::Sender<ExportProgress>,
     ) -> anyhow::Result<()> {
+        let _docs = self.docs().ok_or_else(|| anyhow!("docs are disabled"))?;
         let progress = FlumeProgressSender::new(progress);
         let DocExportFileRequest { entry, path, mode } = msg;
         let key = bytes::Bytes::from(entry.key().to_vec());
@@ -835,13 +872,14 @@ impl<D: BaoStore> Handler<D> {
 
     async fn node_status(self, _: NodeStatusRequest) -> RpcResult<NodeStatus> {
         Ok(NodeStatus {
-            addr: self.inner.endpoint.my_addr().await?,
+            addr: self.inner.endpoint.node_addr().await?,
             listen_addrs: self
                 .inner
                 .local_endpoint_addresses()
                 .await
                 .unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            rpc_port: self.inner.rpc_port,
         })
     }
 
@@ -851,13 +889,13 @@ impl<D: BaoStore> Handler<D> {
     }
 
     async fn node_addr(self, _: NodeAddrRequest) -> RpcResult<NodeAddr> {
-        let addr = self.inner.endpoint.my_addr().await?;
+        let addr = self.inner.endpoint.node_addr().await?;
         Ok(addr)
     }
 
     #[allow(clippy::unused_async)]
     async fn node_relay(self, _: NodeRelayRequest) -> RpcResult<Option<RelayUrl>> {
-        Ok(self.inner.endpoint.my_relay())
+        Ok(self.inner.endpoint.home_relay())
     }
 
     #[allow(clippy::unused_async)]
@@ -1075,27 +1113,18 @@ impl<D: BaoStore> Handler<D> {
         let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
         let db = self.inner.db.clone();
         self.inner.rt.spawn_pinned(move || async move {
-            let entry = db.get(&req.hash).await.unwrap();
-            if let Err(err) = read_loop(
-                req.offset,
-                req.len,
-                entry,
-                tx.clone(),
-                RPC_BLOB_GET_CHUNK_SIZE,
-            )
-            .await
-            {
+            if let Err(err) = read_loop(req, db, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
                 tx.send_async(RpcResult::Err(err.into())).await.ok();
             }
         });
 
-        async fn read_loop(
-            offset: u64,
-            len: Option<usize>,
-            entry: Option<impl MapEntry>,
+        async fn read_loop<D: iroh_blobs::store::Store>(
+            req: BlobReadAtRequest,
+            db: D,
             tx: flume::Sender<RpcResult<BlobReadAtResponse>>,
             max_chunk_size: usize,
         ) -> anyhow::Result<()> {
+            let entry = db.get(&req.hash).await?;
             let entry = entry.ok_or_else(|| anyhow!("Blob not found"))?;
             let size = entry.size();
             tx.send_async(Ok(BlobReadAtResponse::Entry {
@@ -1105,7 +1134,7 @@ impl<D: BaoStore> Handler<D> {
             .await?;
             let mut reader = entry.data_reader().await?;
 
-            let len = len.unwrap_or((size.value() - offset) as usize);
+            let len = req.len.unwrap_or((size.value() - req.offset) as usize);
 
             let (num_chunks, chunk_size) = if len <= max_chunk_size {
                 (1, len)
@@ -1122,7 +1151,7 @@ impl<D: BaoStore> Handler<D> {
                 } else {
                     chunk_size
                 };
-                let chunk = reader.read_at(offset + read, chunk_size).await?;
+                let chunk = reader.read_at(req.offset + read, chunk_size).await?;
                 let chunk_len = chunk.len();
                 if !chunk.is_empty() {
                     tx.send_async(Ok(BlobReadAtResponse::Data { chunk }))
@@ -1188,6 +1217,7 @@ where
         mode,
     } = req;
     let hash_and_format = HashAndFormat { hash, format };
+    let temp_tag = db.temp_tag(hash_and_format);
     let stats = match mode {
         DownloadMode::Queued => {
             download_queued(
@@ -1195,18 +1225,26 @@ where
                 downloader,
                 hash_and_format,
                 nodes,
-                tag,
                 progress.clone(),
             )
             .await?
         }
         DownloadMode::Direct => {
-            download_direct_from_nodes(db, endpoint, hash_and_format, nodes, tag, progress.clone())
+            download_direct_from_nodes(db, endpoint, hash_and_format, nodes, progress.clone())
                 .await?
         }
     };
 
     progress.send(DownloadProgress::AllDone(stats)).await.ok();
+    match tag {
+        SetTagOption::Named(tag) => {
+            db.set_tag(tag, Some(hash_and_format)).await?;
+        }
+        SetTagOption::Auto => {
+            db.create_tag(hash_and_format).await?;
+        }
+    }
+    drop(temp_tag);
 
     Ok(())
 }
@@ -1216,17 +1254,20 @@ async fn download_queued(
     downloader: &Downloader,
     hash_and_format: HashAndFormat,
     nodes: Vec<NodeAddr>,
-    tag: SetTagOption,
     progress: FlumeProgressSender<DownloadProgress>,
 ) -> Result<Stats> {
     let mut node_ids = Vec::with_capacity(nodes.len());
+    let mut any_added = false;
     for node in nodes {
         node_ids.push(node.node_id);
-        endpoint.add_node_addr(node)?;
+        if !node.info.is_empty() {
+            endpoint.add_node_addr_with_source(node, BLOB_DOWNLOAD_SOURCE_NAME)?;
+            any_added = true;
+        }
     }
-    let req = DownloadRequest::new(hash_and_format, node_ids)
-        .progress_sender(progress)
-        .tag(tag);
+    let can_download = !node_ids.is_empty() && (any_added || endpoint.discovery().is_some());
+    anyhow::ensure!(can_download, "no way to reach a node for download");
+    let req = DownloadRequest::new(hash_and_format, node_ids).progress_sender(progress);
     let handle = downloader.queue(req).await;
     let stats = handle.await?;
     Ok(stats)
@@ -1237,7 +1278,6 @@ async fn download_direct_from_nodes<D>(
     endpoint: Endpoint,
     hash_and_format: HashAndFormat,
     nodes: Vec<NodeAddr>,
-    tag: SetTagOption,
     progress: FlumeProgressSender<DownloadProgress>,
 ) -> Result<Stats>
 where
@@ -1252,7 +1292,6 @@ where
             endpoint.clone(),
             hash_and_format,
             node,
-            tag.clone(),
             progress.clone(),
         )
         .await
@@ -1272,13 +1311,11 @@ async fn download_direct<D>(
     endpoint: Endpoint,
     hash_and_format: HashAndFormat,
     node: NodeAddr,
-    tag: SetTagOption,
     progress: FlumeProgressSender<DownloadProgress>,
 ) -> Result<Stats>
 where
     D: BaoStore,
 {
-    let temp_pin = db.temp_tag(hash_and_format);
     let get_conn = {
         let progress = progress.clone();
         move || async move {
@@ -1290,18 +1327,9 @@ where
 
     let res = iroh_blobs::get::db::get_to_db(db, get_conn, &hash_and_format, progress).await;
 
-    if res.is_ok() {
-        match tag {
-            SetTagOption::Named(tag) => {
-                db.set_tag(tag, Some(hash_and_format)).await?;
-            }
-            SetTagOption::Auto => {
-                db.create_tag(hash_and_format).await?;
-            }
-        }
-    }
-
-    drop(temp_pin);
-
     res.map_err(Into::into)
+}
+
+fn docs_disabled() -> RpcError {
+    anyhow!("docs are disabled").into()
 }

@@ -24,7 +24,7 @@ async fn wait_for_gc() {
 #[tokio::test]
 async fn add_bytes() -> anyhow::Result<()> {
     let node = create_node().await?;
-    let client = &node.client().blobs;
+    let client = &node.client().blobs();
     let batch = client.batch().await?;
     let data: &[u8] = b"test";
     let tag = batch.add_bytes(data).await?;
@@ -39,7 +39,7 @@ async fn add_bytes() -> anyhow::Result<()> {
 #[tokio::test]
 async fn add_stream() -> anyhow::Result<()> {
     let node = create_node().await?;
-    let client = &node.client().blobs;
+    let client = &node.client().blobs();
     let batch = client.batch().await?;
     let data: &[u8] = b"test";
     let data_stream = futures_lite::stream::iter([io::Result::Ok(Bytes::copy_from_slice(data))]);
@@ -55,7 +55,7 @@ async fn add_stream() -> anyhow::Result<()> {
 #[tokio::test]
 async fn add_file() -> anyhow::Result<()> {
     let node = create_node().await?;
-    let client = &node.client().blobs;
+    let client = &node.client().blobs();
     let batch = client.batch().await?;
     let dir = tempfile::tempdir()?;
     let temp_path = dir.path().join("test");
@@ -72,7 +72,7 @@ async fn add_file() -> anyhow::Result<()> {
 #[tokio::test]
 async fn add_dir() -> anyhow::Result<()> {
     let node = create_node().await?;
-    let client = &node.client().blobs;
+    let client = &node.client().blobs();
     let batch = client.batch().await?;
     let dir = tempfile::tempdir()?;
     let data: [(&str, &[u8]); 2] = [("test1", b"test1"), ("test2", b"test2")];
@@ -94,7 +94,7 @@ async fn add_dir() -> anyhow::Result<()> {
 #[tokio::test]
 async fn add_dir_single_file() -> anyhow::Result<()> {
     let node = create_node().await?;
-    let client = &node.client().blobs;
+    let client = &node.client().blobs();
     let batch = client.batch().await?;
     let dir = tempfile::tempdir()?;
     let temp_path = dir.path().join("test");
@@ -119,7 +119,7 @@ async fn add_dir_single_file() -> anyhow::Result<()> {
 #[tokio::test]
 async fn batch_drop() -> anyhow::Result<()> {
     let node = create_node().await?;
-    let client = &node.client().blobs;
+    let client = &node.client().blobs();
     let batch = client.batch().await?;
     let data: &[u8] = b"test";
     let tag = batch.add_bytes(data).await?;
@@ -141,7 +141,7 @@ async fn batch_drop() -> anyhow::Result<()> {
 #[tokio::test]
 async fn tag_drop_raw() -> anyhow::Result<()> {
     let node = create_node().await?;
-    let client = &node.client().blobs;
+    let client = &node.client().blobs();
     let batch = client.batch().await?;
     let data: &[u8] = b"test";
     let tag = batch.add_bytes(data).await?;
@@ -161,7 +161,7 @@ async fn tag_drop_raw() -> anyhow::Result<()> {
 #[tokio::test]
 async fn temp_tag_copy() -> anyhow::Result<()> {
     let node = create_node().await?;
-    let client = &node.client().blobs;
+    let client = &node.client().blobs();
     let batch = client.batch().await?;
     let data: &[u8] = b"test";
     let tag = batch.add_bytes(data).await?;
@@ -190,7 +190,7 @@ async fn temp_tag_copy() -> anyhow::Result<()> {
 #[tokio::test]
 async fn tag_drop_hashseq() -> anyhow::Result<()> {
     let node = create_node().await?;
-    let client = &node.client().blobs;
+    let client = &node.client().blobs();
     let batch = client.batch().await?;
     let dir = tempfile::tempdir()?;
     let data: [(&str, &[u8]); 2] = [("test1", b"test1"), ("test2", b"test2")];
@@ -228,7 +228,7 @@ async fn tag_drop_hashseq() -> anyhow::Result<()> {
 #[tokio::test]
 async fn wrong_batch() -> anyhow::Result<()> {
     let node = create_node().await?;
-    let client = &node.client().blobs;
+    let client = &node.client().blobs();
     let batch = client.batch().await?;
     let data: &[u8] = b"test";
     let tag = batch.add_bytes(data).await?;

@@ -1,5 +1,9 @@
 [bans]
 multiple-versions = "allow"
+deny = [
+     "openssl",
+     "native-tls",
+]
 
 [licenses]
 allow = [

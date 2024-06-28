@@ -3,21 +3,20 @@
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
 use iroh_blobs::{BlobFormat, Hash, HashAndFormat, Tag};
-use quic_rpc::{RpcClient, ServiceConnection};
+use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
-use crate::rpc_protocol::{CreateTagRequest, ListTagsRequest, RpcService, SetTagRequest};
+use super::RpcClient;
+use crate::rpc_protocol::{CreateTagRequest, ListTagsRequest, SetTagRequest};
 
 /// Iroh tags client.
-#[derive(Debug, Clone)]
-pub struct Client<C> {
-    pub(super) rpc: RpcClient<RpcService, C>,
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
+pub struct Client {
+    pub(super) rpc: RpcClient,
 }
 
-impl<C> Client<C>
-where
-    C: ServiceConnection<RpcService>,
-{
+impl Client {
     /// List all tags.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<TagInfo>>> {
         let stream = self.rpc.server_streaming(ListTagsRequest::all()).await?;

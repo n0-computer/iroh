@@ -20,7 +20,8 @@ pub(crate) const DEFAULT_FILE_RUST_LOG: &str = "rustyline=warn,debug";
 /// - use the default [`fmt::format::Format`] save for:
 ///   - including line numbers.
 ///   - not using ansi colors.
-/// - create log files in the `logs` dir inside the given `iroh_data_root`.
+/// - create log files in the [`FileLogging::dir`] directory. If not provided, the `logs` dir
+///   inside the given `iroh_data_root` is used.
 /// - rotate files every [`Self::rotation`].
 /// - keep at most [`Self::max_files`] log files.
 /// - use the filtering defined by [`Self::rust_log`]. When not provided, the default
@@ -38,6 +39,7 @@ pub(crate) fn init_terminal_and_file_logging(
             rust_log,
             max_files,
             rotation,
+            dir,
         } = file_log_config;
 
         let filter = rust_log.layer();
@@ -51,7 +53,9 @@ pub(crate) fn init_terminal_and_file_logging(
                     Rotation::Daily => rolling::Rotation::DAILY,
                     Rotation::Never => rolling::Rotation::NEVER,
                 };
-                let logs_path = logs_dir.join("logs");
+
+                // prefer the directory set in the config file over the default
+                let logs_path = dir.clone().unwrap_or_else(|| logs_dir.join("logs"));
 
                 let file_appender = rolling::Builder::new()
                     .rotation(rotation)
@@ -102,6 +106,8 @@ pub(crate) struct FileLogging {
     pub(crate) max_files: usize,
     /// How often should a new log file be produced.
     pub(crate) rotation: Rotation,
+    /// Where to store log files.
+    pub(crate) dir: Option<std::path::PathBuf>,
 }
 
 impl Default for FileLogging {
@@ -110,6 +116,7 @@ impl Default for FileLogging {
             rust_log: EnvFilter::default(),
             max_files: 4,
             rotation: Rotation::default(),
+            dir: None,
         }
     }
 }

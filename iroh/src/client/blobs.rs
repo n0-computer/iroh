@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context as _, Result};
+use batch::Batch;
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use futures_util::SinkExt;
@@ -24,43 +25,38 @@ use iroh_blobs::{
 };
 use iroh_net::NodeAddr;
 use portable_atomic::{AtomicU64, Ordering};
-use quic_rpc::{client::BoxStreamSync, RpcClient, ServiceConnection};
+use quic_rpc::client::BoxStreamSync;
+use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
+mod batch;
+pub use batch::{AddDirOpts, AddFileOpts, AddReaderOpts};
 
 use crate::rpc_protocol::{
     BatchCreateRequest, BatchCreateResponse, BlobAddPathRequest, BlobAddStreamRequest,
     BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest,
     BlobExportRequest, BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest,
-    BlobReadAtResponse, BlobStatusRequest, BlobValidateRequest, NodeStatusRequest, RpcService,
-    SetTagOption,
+    BlobReadAtResponse, BlobStatusRequest, BlobValidateRequest, NodeStatusRequest, SetTagOption,
 };
 
-use super::{flatten, tags, Iroh};
-mod batch;
-pub use batch::{AddDirOpts, AddFileOpts, AddReaderOpts, Batch};
-
-pub use iroh_blobs::store::ImportMode;
-pub use iroh_blobs::TempTag;
+use super::{flatten, tags, Iroh, RpcClient};
 
 /// Iroh blobs client.
-#[derive(Debug, Clone)]
-pub struct Client<C> {
-    pub(super) rpc: RpcClient<RpcService, C>,
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
+pub struct Client {
+    pub(super) rpc: RpcClient,
 }
 
-impl<'a, C: ServiceConnection<RpcService>> From<&'a Iroh<C>> for &'a RpcClient<RpcService, C> {
-    fn from(client: &'a Iroh<C>) -> &'a RpcClient<RpcService, C> {
+impl<'a> From<&'a Iroh> for &'a RpcClient {
+    fn from(client: &'a Iroh) -> &'a RpcClient {
         &client.blobs().rpc
     }
 }
 
-impl<C> Client<C>
-where
-    C: ServiceConnection<RpcService>,
-{
+impl Client {
     /// Check if a blob is completely stored on the node.
     ///
     /// Note that this will return false for blobs that are partially stored on
@@ -86,7 +82,7 @@ where
     /// A batch is a context in which temp tags are created and data is added to the node. Temp tags
     /// are automatically deleted when the batch is dropped, leading to the data being garbage collected
     /// unless a permanent tag is created for it.
-    pub async fn batch(&self) -> Result<Batch<C>> {
+    pub async fn batch(&self) -> Result<Batch> {
         let (updates, mut stream) = self.rpc.bidi(BatchCreateRequest).await?;
         let BatchCreateResponse::Id(batch) = stream.next().await.context("expected scope id")??;
         let rpc = self.rpc.clone();
@@ -413,17 +409,14 @@ where
         Ok(ticket)
     }
 
-    fn tags_client(&self) -> tags::Client<C> {
+    fn tags_client(&self) -> tags::Client {
         tags::Client {
             rpc: self.rpc.clone(),
         }
     }
 }
 
-impl<C> SimpleStore for Client<C>
-where
-    C: ServiceConnection<RpcService>,
-{
+impl SimpleStore for Client {
     async fn load(&self, hash: Hash) -> anyhow::Result<Bytes> {
         self.read_to_bytes(hash).await
     }
@@ -799,15 +792,12 @@ impl Reader {
         }
     }
 
-    pub(crate) async fn from_rpc_read<C: ServiceConnection<RpcService>>(
-        rpc: &RpcClient<RpcService, C>,
-        hash: Hash,
-    ) -> anyhow::Result<Self> {
+    pub(crate) async fn from_rpc_read(rpc: &RpcClient, hash: Hash) -> anyhow::Result<Self> {
         Self::from_rpc_read_at(rpc, hash, 0, None).await
     }
 
-    async fn from_rpc_read_at<C: ServiceConnection<RpcService>>(
-        rpc: &RpcClient<RpcService, C>,
+    async fn from_rpc_read_at(
+        rpc: &RpcClient,
         hash: Hash,
         offset: u64,
         len: Option<usize>,
@@ -820,7 +810,8 @@ impl Reader {
         let (size, is_complete) = match stream.next().await {
             Some(Ok(BlobReadAtResponse::Entry { size, is_complete })) => (size, is_complete),
             Some(Err(err)) => return Err(err),
-            None | Some(Ok(_)) => return Err(anyhow!("Expected header frame")),
+            Some(Ok(_)) => return Err(anyhow!("Expected header frame, but got data frame")),
+            None => return Err(anyhow!("Expected header frame, but RPC stream was dropped")),
         };
 
         let stream = stream.map(|item| match item {

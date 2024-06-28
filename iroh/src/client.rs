@@ -1,17 +1,23 @@
 //! Client to an Iroh node.
 
 use futures_lite::{Stream, StreamExt};
-use quic_rpc::{RpcClient, ServiceConnection};
+use ref_cast::RefCast;
 
 #[doc(inline)]
 pub use crate::rpc_protocol::RpcService;
 
-mod mem;
 mod quic;
 
-pub use self::mem::{Doc as MemDoc, Iroh as MemIroh, RpcClient as MemRpcClient};
+#[deprecated]
+pub use self::docs::Doc as MemDoc;
+#[deprecated]
+pub use self::docs::Doc as QuicDoc;
+pub use self::docs::Doc;
 pub use self::node::NodeStatus;
-pub use self::quic::{Doc as QuicDoc, Iroh as QuicIroh, RpcClient as QuicRpcClient};
+#[deprecated]
+pub use self::Iroh as MemIroh;
+#[deprecated]
+pub use self::Iroh as QuicIroh;
 
 pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
 
@@ -22,63 +28,42 @@ pub mod tags;
 
 mod node;
 
+/// Iroh rpc client - boxed so that we can have a concrete type.
+pub(crate) type RpcConnection = quic_rpc::transport::boxed::Connection<RpcService>;
+
+/// Iroh rpc client - boxed so that we can have a concrete type.
+pub(crate) type RpcClient = quic_rpc::RpcClient<RpcService, RpcConnection>;
+
 /// Iroh client.
 #[derive(Debug, Clone)]
-pub struct Iroh<C> {
-    /// Client for blobs operations.
-    #[deprecated(note = "Use `blobs` method instead", since = "0.18.0")]
-    pub blobs: blobs::Client<C>,
-    /// Client for docs operations.
-    #[deprecated(note = "Use `docs` method instead", since = "0.18.0")]
-    pub docs: docs::Client<C>,
-    /// Client for author operations.
-    #[deprecated(note = "Use `authors` method instead", since = "0.18.0")]
-    pub authors: authors::Client<C>,
-    /// Client for tags operations.
-    #[deprecated(note = "Use `tags` method instead", since = "0.18.0")]
-    pub tags: tags::Client<C>,
-
-    rpc: RpcClient<RpcService, C>,
+pub struct Iroh {
+    rpc: RpcClient,
 }
 
-impl<C> Iroh<C>
-where
-    C: ServiceConnection<RpcService>,
-{
+impl Iroh {
     /// Create a new high-level client to a Iroh node from the low-level RPC client.
-    pub fn new(rpc: RpcClient<RpcService, C>) -> Self {
-        #[allow(deprecated)]
-        Self {
-            blobs: blobs::Client { rpc: rpc.clone() },
-            docs: docs::Client { rpc: rpc.clone() },
-            authors: authors::Client { rpc: rpc.clone() },
-            tags: tags::Client { rpc: rpc.clone() },
-            rpc,
-        }
+    pub fn new(rpc: RpcClient) -> Self {
+        Self { rpc }
     }
 
-    /// Client for blobs operations.
-    pub fn blobs(&self) -> &blobs::Client<C> {
-        #[allow(deprecated)]
-        &self.blobs
+    /// Blobs client
+    pub fn blobs(&self) -> &blobs::Client {
+        blobs::Client::ref_cast(&self.rpc)
     }
 
-    /// Client for docs operations.
-    pub fn docs(&self) -> &docs::Client<C> {
-        #[allow(deprecated)]
-        &self.docs
+    /// Docs client
+    pub fn docs(&self) -> &docs::Client {
+        docs::Client::ref_cast(&self.rpc)
     }
 
-    /// Client for author operations.
-    pub fn authors(&self) -> &authors::Client<C> {
-        #[allow(deprecated)]
-        &self.authors
+    /// Authors client
+    pub fn authors(&self) -> &authors::Client {
+        authors::Client::ref_cast(&self.rpc)
     }
 
-    /// Client for tags operations.
-    pub fn tags(&self) -> &tags::Client<C> {
-        #[allow(deprecated)]
-        &self.tags
+    /// Tags client
+    pub fn tags(&self) -> &tags::Client {
+        tags::Client::ref_cast(&self.rpc)
     }
 }
 
