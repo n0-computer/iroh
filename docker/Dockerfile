@@ -31,8 +31,8 @@ RUN chmod +x /iroh
 WORKDIR /
 
 # expose the default ports
-# rpc, nat-pmp, metrics, iroh_node
-EXPOSE 4919 5351 9090 11204
+# rpc, nat-pmp, metrics, iroh_node_ipv4, iroh_node_ipv6
+EXPOSE 4919/udp 5351 9090 11204/udp 11205/udp
 ENTRYPOINT ["/iroh"]
 CMD ["start"]
 
