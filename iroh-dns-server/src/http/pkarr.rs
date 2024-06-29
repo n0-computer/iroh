@@ -20,7 +20,7 @@ pub async fn put(
     let key = pkarr::PublicKey::try_from(key.as_str())
         .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, Some(format!("invalid key: {e}"))))?;
     let label = &key.to_z32()[..10];
-    let signed_packet = pkarr::SignedPacket::from_relay_response(key, body).map_err(|e| {
+    let signed_packet = pkarr::SignedPacket::from_relay_payload(&key, &body).map_err(|e| {
         AppError::new(
             StatusCode::BAD_REQUEST,
             Some(format!("invalid body payload: {e}")),
@@ -46,7 +46,7 @@ pub async fn get(
         .get_signed_packet(&pubkey)
         .await?
         .ok_or_else(|| AppError::with_status(StatusCode::NOT_FOUND))?;
-    let body = signed_packet.as_relay_request();
+    let body = signed_packet.to_relay_payload();
     let headers = [(header::CONTENT_TYPE, "application/x-pkarr-signed-packet")];
     Ok((headers, body))
 }

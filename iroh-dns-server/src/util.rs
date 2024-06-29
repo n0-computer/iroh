@@ -66,7 +66,7 @@ impl From<pkarr::PublicKey> for PublicKeyBytes {
 impl TryFrom<PublicKeyBytes> for pkarr::PublicKey {
     type Error = anyhow::Error;
     fn try_from(value: PublicKeyBytes) -> Result<Self, Self::Error> {
-        pkarr::PublicKey::try_from(value.0).map_err(anyhow::Error::from)
+        pkarr::PublicKey::try_from(&value.0).map_err(anyhow::Error::from)
     }
 }
 

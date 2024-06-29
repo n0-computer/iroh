@@ -104,6 +104,6 @@ fn get_packet(
     let Some(row) = table.get(key.as_ref())? else {
         return Ok(None);
     };
-    let packet = SignedPacket::from_bytes(row.value().to_vec().into(), false)?;
+    let packet = SignedPacket::from_bytes(&row.value().to_vec().into())?;
     Ok(Some(packet))
 }

@@ -20,7 +20,7 @@ fn main() -> anyhow::Result<()> {
     match args.command {
         Command::NodeToPkarr { node_id } => {
             let node_id = NodeId::from_str(&node_id)?;
-            let public_key = pkarr::PublicKey::try_from(*node_id.as_bytes())?;
+            let public_key = pkarr::PublicKey::try_from(node_id.as_bytes())?;
             println!("{}", public_key.to_z32())
         }
         Command::PkarrToNode { z32_pubkey } => {
