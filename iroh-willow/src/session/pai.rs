@@ -490,40 +490,39 @@ impl OnIntersection {
 #[cfg(test)]
 mod tests {
     use futures_util::SinkExt;
-    use rand_core::SeedableRng;
-    use tokio::task::{spawn_local, JoinHandle};
+    use rand_core::{CryptoRngCore, SeedableRng};
+    use tokio::task::{spawn_local, JoinHandle, LocalSet};
     use tracing::{error_span, Instrument, Span};
 
     use crate::{
         proto::{
-            keys::{NamespaceKind, NamespaceSecretKey, UserSecretKey},
+            grouping::{Area, SubspaceArea},
+            keys::{NamespaceKind, NamespaceSecretKey, UserPublicKey, UserSecretKey},
             sync::{
-                IntersectionMessage, Message, PaiBindFragment, PaiReplyFragment, ReadAuthorisation,
+                IntersectionMessage, Message, PaiBindFragment, PaiReplyFragment,
+                PaiRequestSubspaceCapability, ReadAuthorisation,
             },
+            willow::Path,
         },
-        session::Error,
+        session::{pai::PaiIntersection, Error},
     };
 
     use super::{Input, Output, PaiFinder};
 
     #[tokio::test]
     async fn pai_smoke() {
-        iroh_test::logging::setup_multithreaded();
-        let local = tokio::task::LocalSet::new();
-        local.run_until(pai_smoke_inner()).await
+        let _guard = iroh_test::logging::setup();
+        LocalSet::new().run_until(pai_smoke_inner()).await
     }
     async fn pai_smoke_inner() {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let namespace_secret = NamespaceSecretKey::generate(&mut rng, NamespaceKind::Owned);
 
-        let namespace = NamespaceSecretKey::generate(&mut rng, NamespaceKind::Owned);
+        let (_, alfie_public) = keypair(&mut rng);
+        let (_, betty_public) = keypair(&mut rng);
 
-        let alfie_secret = UserSecretKey::generate(&mut rng);
-        let betty_secret = UserSecretKey::generate(&mut rng);
-        let alfie_public = alfie_secret.public_key();
-        let betty_public = betty_secret.public_key();
-
-        let auth_alfie = ReadAuthorisation::new_owned(&namespace, alfie_public);
-        let auth_betty = ReadAuthorisation::new_owned(&namespace, betty_public);
+        let auth_alfie = ReadAuthorisation::new_owned(&namespace_secret, alfie_public);
+        let auth_betty = ReadAuthorisation::new_owned(&namespace_secret, betty_public);
 
         let (alfie, betty) = Handle::create_two();
 
@@ -535,11 +534,99 @@ mod tests {
         transfer::<PaiReplyFragment>(&alfie, &betty).await;
         transfer::<PaiReplyFragment>(&betty, &alfie).await;
 
-        assert_eq!(alfie.next_intersection().await, auth_alfie);
-        assert_eq!(betty.next_intersection().await, auth_betty);
+        assert_eq!(alfie.next_intersection().await.authorisation, auth_alfie);
+        assert_eq!(betty.next_intersection().await.authorisation, auth_betty);
 
         alfie.join().await;
         betty.join().await;
+    }
+
+    #[tokio::test]
+    async fn pai_subspace() {
+        let _guard = iroh_test::logging::setup();
+        LocalSet::new().run_until(pai_subspace_inner()).await
+    }
+    async fn pai_subspace_inner() {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let namespace = NamespaceSecretKey::generate(&mut rng, NamespaceKind::Owned);
+
+        let (root_secret, root_public) = keypair(&mut rng);
+        let root_auth = ReadAuthorisation::new_owned(&namespace, root_public);
+
+        let (_, alfie_public) = keypair(&mut rng);
+        let (_, betty_public) = keypair(&mut rng);
+        let (_, gemma_public) = keypair(&mut rng);
+
+        let alfie_area = Area::new(
+            SubspaceArea::Id(gemma_public.id()),
+            Path::empty(),
+            Default::default(),
+        );
+        let alfie_auth = root_auth
+            .delegate(&root_secret, alfie_public, alfie_area)
+            .unwrap();
+        assert!(alfie_auth.subspace_cap().is_none());
+
+        let betty_area = Area::new(
+            SubspaceArea::Any,
+            Path::new(&[b"chess"]).unwrap(),
+            Default::default(),
+        );
+        let betty_auth = root_auth
+            .delegate(&root_secret, betty_public, betty_area)
+            .unwrap();
+        assert!(betty_auth.subspace_cap().is_some());
+
+        let (alfie, betty) = Handle::create_two();
+
+        alfie.submit(alfie_auth.clone()).await;
+        betty.submit(betty_auth.clone()).await;
+
+        transfer::<PaiBindFragment>(&alfie, &betty).await;
+        transfer::<PaiBindFragment>(&betty, &alfie).await;
+
+        transfer::<PaiBindFragment>(&alfie, &betty).await;
+        transfer::<PaiBindFragment>(&betty, &alfie).await;
+
+        transfer::<PaiReplyFragment>(&alfie, &betty).await;
+        transfer::<PaiReplyFragment>(&betty, &alfie).await;
+
+        transfer::<PaiReplyFragment>(&alfie, &betty).await;
+        transfer::<PaiReplyFragment>(&betty, &alfie).await;
+
+        let next: PaiRequestSubspaceCapability = alfie.next_message().await;
+        betty
+            .input(Input::ReceivedSubspaceCapRequest(next.handle))
+            .await;
+
+        let (handle, cap) = match betty.next().await {
+            Output::SignAndSendSubspaceCap(handle, cap) => (handle, cap),
+            other => panic!("expected SignAndSendSubspaceCap but got {other:?}"),
+        };
+
+        assert_eq!(&cap, betty_auth.subspace_cap().unwrap());
+        let namespace = cap.granted_namespace().id();
+        alfie
+            .input(Input::ReceivedVerifiedSubspaceCapReply(handle, namespace))
+            .await;
+
+        let next = alfie.next_intersection().await;
+        assert_eq!(next.authorisation, alfie_auth);
+        betty
+            .input(Input::ReceivedReadCapForIntersection(next.handle))
+            .await;
+
+        let next = betty.next_intersection().await;
+        assert_eq!(next.authorisation, betty_auth);
+
+        alfie.join().await;
+        betty.join().await;
+    }
+
+    fn keypair<R: CryptoRngCore + ?Sized>(rng: &mut R) -> (UserSecretKey, UserPublicKey) {
+        let secret = UserSecretKey::generate(rng);
+        let public = secret.public_key();
+        (secret, public)
     }
 
     async fn transfer<T: TryFrom<Message> + Into<IntersectionMessage>>(from: &Handle, to: &Handle) {
@@ -594,19 +681,26 @@ mod tests {
             self.output.recv_async().await.unwrap()
         }
 
-        pub async fn next_intersection(&self) -> ReadAuthorisation {
+        pub async fn next_intersection(&self) -> PaiIntersection {
             match self.next().await {
-                Output::NewIntersection(intersection) => intersection.authorisation,
+                Output::NewIntersection(intersection) => intersection,
                 out => panic!("expected NewIntersection but got {out:?}"),
             }
         }
 
         pub async fn next_message<T: TryFrom<Message>>(&self) -> T {
             match self.next().await {
-                Output::SendMessage(message) => match T::try_from(message) {
-                    Err(_err) => panic!("wrong message type"),
-                    Ok(message) => message,
-                },
+                Output::SendMessage(message) => {
+                    let dbg = format!("{}", message);
+                    match T::try_from(message) {
+                        Err(_err) => panic!(
+                            "wrong message type: expected {} but got {:?}",
+                            std::any::type_name::<T>(),
+                            dbg
+                        ),
+                        Ok(message) => message,
+                    }
+                }
                 other => panic!("expected SendMessage but got {other:?}"),
             }
         }

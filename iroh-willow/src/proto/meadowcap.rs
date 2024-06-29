@@ -263,6 +263,19 @@ impl Encoder for McCapability {
     }
 }
 
+impl Encoder for McSubspaceCapability {
+    // TODO: Use spec-compliant encoding instead of postcard.
+    fn encoded_len(&self) -> usize {
+        postcard::experimental::serialized_size(&self).unwrap()
+    }
+
+    // TODO: Use spec-compliant encoding instead of postcard.
+    fn encode_into<W: std::io::Write>(&self, out: &mut W) -> anyhow::Result<()> {
+        postcard::to_io(&self, out)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum AccessMode {
     Read,

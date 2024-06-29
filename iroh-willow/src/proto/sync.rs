@@ -5,7 +5,10 @@ use iroh_base::hash::Hash;
 use serde::{Deserialize, Serialize};
 use strum::{EnumCount, VariantArray};
 
-use crate::util::codec::{DecodeOutcome, Decoder, Encoder};
+use crate::{
+    proto::keys::UserSecretKey,
+    util::codec::{DecodeOutcome, Decoder, Encoder},
+};
 
 use super::{
     grouping::{Area, AreaOfInterest, ThreeDRange},
@@ -86,6 +89,22 @@ impl ReadAuthorisation {
 
     pub fn namespace(&self) -> NamespaceId {
         self.0 .0.granted_namespace().id()
+    }
+
+    pub fn delegate(
+        &self,
+        user_secret: &UserSecretKey,
+        new_user: UserPublicKey,
+        new_area: Area,
+    ) -> anyhow::Result<Self> {
+        let subspace_cap = match self.subspace_cap() {
+            Some(subspace_cap) if new_area.subspace.is_any() && !new_area.path.is_empty() => {
+                Some(subspace_cap.delegate(user_secret, new_user)?)
+            }
+            _ => None,
+        };
+        let read_cap = self.read_cap().delegate(user_secret, new_user, new_area)?;
+        Ok(Self::new(read_cap, subspace_cap))
     }
 }
 
