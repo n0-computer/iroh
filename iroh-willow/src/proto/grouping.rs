@@ -464,6 +464,10 @@ pub enum SubspaceArea {
 }
 
 impl SubspaceArea {
+    pub fn is_any(&self) -> bool {
+        matches!(self, SubspaceArea::Any)
+    }
+
     fn includes(&self, other: &SubspaceArea) -> bool {
         match (self, other) {
             (SubspaceArea::Any, SubspaceArea::Any) => true,
