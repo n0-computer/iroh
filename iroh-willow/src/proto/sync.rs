@@ -52,7 +52,7 @@ pub type ReadCapability = meadowcap::McCapability;
 /// Each subspace capability must have a single receiver (a public key of some signature scheme),
 /// and a single granted namespace (a NamespaceId).
 /// The receiver can authenticate itself by signing a collaboratively selected nonce.
-pub type SubspaceCapability = meadowcap::McSubspaceCapability;
+pub type SubspaceCapability = Arc<meadowcap::McSubspaceCapability>;
 
 pub type SyncSignature = meadowcap::UserSignature;
 
@@ -60,35 +60,32 @@ pub type Receiver = meadowcap::UserPublicKey;
 
 /// Represents an authorisation to read an area of data in a Namespace.
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub struct ReadAuthorisation(Arc<(ReadCapability, Option<SubspaceCapability>)>);
-
-impl From<ReadCapability> for ReadAuthorisation {
-    fn from(value: ReadCapability) -> Self {
-        Self(Arc::new((value, None)))
-    }
-}
+pub struct ReadAuthorisation(ReadCapability, Option<SubspaceCapability>);
 
 impl ReadAuthorisation {
     pub fn new(read_cap: ReadCapability, subspace_cap: Option<SubspaceCapability>) -> Self {
-        Self(Arc::new((read_cap, subspace_cap)))
+        Self(read_cap, subspace_cap)
     }
 
     pub fn new_owned(namespace_secret: &NamespaceSecretKey, user_key: UserPublicKey) -> Self {
         let read_cap = ReadCapability::new_owned(namespace_secret, user_key, AccessMode::Read);
-        let subspace_cap = SubspaceCapability::new(namespace_secret, user_key);
+        let subspace_cap = Arc::new(meadowcap::McSubspaceCapability::new(
+            namespace_secret,
+            user_key,
+        ));
         Self::new(read_cap, Some(subspace_cap))
     }
 
     pub fn read_cap(&self) -> &ReadCapability {
-        &self.0 .0
+        &self.0
     }
 
     pub fn subspace_cap(&self) -> Option<&SubspaceCapability> {
-        self.0 .1.as_ref()
+        self.1.as_ref()
     }
 
     pub fn namespace(&self) -> NamespaceId {
-        self.0 .0.granted_namespace().id()
+        self.0.granted_namespace().id()
     }
 
     pub fn delegate(
@@ -99,7 +96,7 @@ impl ReadAuthorisation {
     ) -> anyhow::Result<Self> {
         let subspace_cap = match self.subspace_cap() {
             Some(subspace_cap) if new_area.subspace.is_any() && !new_area.path.is_empty() => {
-                Some(subspace_cap.delegate(user_secret, new_user)?)
+                Some(Arc::new(subspace_cap.delegate(user_secret, new_user)?))
             }
             _ => None,
         };

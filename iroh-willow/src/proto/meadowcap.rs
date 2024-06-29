@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::{io::Write, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
@@ -138,8 +138,8 @@ impl ValidatedCapability {
     Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash, Ord, PartialOrd, derive_more::From,
 )]
 pub enum McCapability {
-    Communal(CommunalCapability),
-    Owned(OwnedCapability),
+    Communal(Arc<CommunalCapability>),
+    Owned(Arc<OwnedCapability>),
 }
 
 impl McCapability {
@@ -148,11 +148,11 @@ impl McCapability {
         user_key: UserPublicKey,
         access_mode: AccessMode,
     ) -> Self {
-        McCapability::Owned(OwnedCapability::new(
+        McCapability::Owned(Arc::new(OwnedCapability::new(
             namespace_secret,
             user_key,
             access_mode,
-        ))
+        )))
     }
 
     pub fn new_communal(
@@ -160,11 +160,11 @@ impl McCapability {
         user_key: UserPublicKey,
         access_mode: AccessMode,
     ) -> Self {
-        McCapability::Communal(CommunalCapability::new(
+        McCapability::Communal(Arc::new(CommunalCapability::new(
             namespace_key,
             user_key,
             access_mode,
-        ))
+        )))
     }
     pub fn access_mode(&self) -> AccessMode {
         match self {
@@ -243,8 +243,12 @@ impl McCapability {
         new_area: Area,
     ) -> anyhow::Result<Self> {
         let cap = match self {
-            Self::Communal(cap) => Self::Communal(cap.delegate(user_secret, new_user, new_area)?),
-            Self::Owned(cap) => Self::Owned(cap.delegate(user_secret, new_user, new_area)?),
+            Self::Communal(cap) => {
+                Self::Communal(Arc::new(cap.delegate(user_secret, new_user, new_area)?))
+            }
+            Self::Owned(cap) => {
+                Self::Owned(Arc::new(cap.delegate(user_secret, new_user, new_area)?))
+            }
         };
         Ok(cap)
     }
