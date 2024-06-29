@@ -141,7 +141,7 @@ impl<D: BaoStore> Node<D> {
         &self.inner.client
     }
 
-    /// Returns a referenc to the used `LocalPoolHandle`.
+    /// Returns a reference to the used `LocalPoolHandle`.
     pub fn local_pool_handle(&self) -> &LocalPoolHandle {
         &self.inner.rt
     }

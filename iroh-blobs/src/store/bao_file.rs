@@ -275,7 +275,7 @@ impl Default for BaoFileStorage {
 impl BaoFileStorage {
     /// Take the storage out, leaving an empty storage in its place.
     ///
-    /// Be careful to put somethign back in its place, or you will lose data.
+    /// Be careful to put something back in its place, or you will lose data.
     #[cfg(feature = "fs-store")]
     pub fn take(&mut self) -> Self {
         std::mem::take(self)

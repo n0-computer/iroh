@@ -717,7 +717,7 @@ impl Endpoint {
     ///
     /// Then [`Endpoint`] stores some information about all the other iroh-net nodes it has
     /// information about.  This includes information about the relay server in use, any
-    /// known direct addresses, when there was last any conact with this node and what kind
+    /// known direct addresses, when there was last any contact with this node and what kind
     /// of connection this was.
     pub fn connection_info(&self, node_id: NodeId) -> Option<ConnectionInfo> {
         self.msock.connection_info(node_id)
@@ -1038,7 +1038,7 @@ fn try_send_rtt_msg(conn: &quinn::Connection, magic_ep: &Endpoint) {
     }
 }
 
-/// Read a proxy url from the environemnt, in this order
+/// Read a proxy url from the environment, in this order
 ///
 /// - `HTTP_PROXY`
 /// - `http_proxy`

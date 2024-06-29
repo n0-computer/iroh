@@ -379,7 +379,7 @@ impl DefaultAuthorStorage {
     }
 }
 
-/// Peristent default author for a docs engine.
+/// Persistent default author for a docs engine.
 #[derive(Debug)]
 pub struct DefaultAuthor {
     value: RwLock<AuthorId>,

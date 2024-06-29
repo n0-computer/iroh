@@ -87,7 +87,7 @@ pub trait Dialer: Stream<Item = (NodeId, anyhow::Result<Self::Connection>)> + Un
 pub enum FailureAction {
     /// The request was cancelled by us.
     AllIntentsDropped,
-    /// An error ocurred that prevents the request from being retried at all.
+    /// An error occurred that prevents the request from being retried at all.
     AbortRequest(anyhow::Error),
     /// An error occurred that suggests the node should not be used in general.
     DropPeer(anyhow::Error),

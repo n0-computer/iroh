@@ -90,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
     };
     println!("> our secret key: {secret_key}");
 
-    // confgure our relay map
+    // configure our relay map
     let relay_mode = match (args.no_relay, args.relay) {
         (false, None) => RelayMode::Default,
         (false, Some(url)) => RelayMode::Custom(RelayMap::from_url(url)),

@@ -80,7 +80,7 @@ pub struct DnsQuery {
     /// Privacy setting for how your IP address is forwarded to authoritative nameservers
     #[allow(dead_code)]
     pub edns_client_subnet: Option<String>,
-    /// Some url-safe random characters to pad your messages for privacy (to avoid being fingerprinted by encrytped message length)
+    /// Some url-safe random characters to pad your messages for privacy (to avoid being fingerprinted by encrypted message length)
     #[allow(dead_code)]
     pub random_padding: Option<String>,
     /// Whether to provide answers for all records up to the root

@@ -238,7 +238,7 @@ impl NodeMap {
     /// Returns a stream of [`ConnectionType`].
     ///
     /// Sends the current [`ConnectionType`] whenever any changes to the
-    /// connection type for `public_key` has occured.
+    /// connection type for `public_key` has occurred.
     ///
     /// # Errors
     ///
@@ -472,7 +472,7 @@ impl NodeMapInner {
     /// Returns a stream of [`ConnectionType`].
     ///
     /// Sends the current [`ConnectionType`] whenever any changes to the
-    /// connection type for `public_key` has occured.
+    /// connection type for `public_key` has occurred.
     ///
     /// # Errors
     ///
