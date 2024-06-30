@@ -343,7 +343,7 @@ impl Store {
         })
     }
 
-    /// Delte an author.
+    /// Delete an author.
     pub fn delete_author(&mut self, author: AuthorId) -> Result<()> {
         self.modify(|tables| {
             tables.authors.remove(author.as_bytes())?;
@@ -881,7 +881,7 @@ impl Iterator for ParentIterator {
 /// a database snapshot open until it is dropped.
 ///
 /// Also, this represents a snapshot of the database at the time of creation.
-/// It nees a copy of a redb::ReadOnlyTable to be self-contained.
+/// It needs a copy of a redb::ReadOnlyTable to be self-contained.
 #[derive(derive_more::Debug)]
 pub struct ContentHashesIterator {
     #[debug(skip)]

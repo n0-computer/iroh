@@ -112,7 +112,7 @@ impl ServerStreamingMsg<RpcService> for BlobDownloadRequest {
     type Response = BlobDownloadResponse;
 }
 
-/// Progress resposne for [`BlobDownloadRequest`]
+/// Progress response for [`BlobDownloadRequest`]
 #[derive(Debug, Clone, Serialize, Deserialize, derive_more::From, derive_more::Into)]
 pub struct BlobDownloadResponse(pub DownloadProgress);
 
@@ -143,7 +143,7 @@ impl ServerStreamingMsg<RpcService> for BlobExportRequest {
     type Response = BlobExportResponse;
 }
 
-/// Progress resposne for [`BlobExportRequest`]
+/// Progress response for [`BlobExportRequest`]
 #[derive(Debug, Clone, Serialize, Deserialize, derive_more::From, derive_more::Into)]
 pub struct BlobExportResponse(pub ExportProgress);
 
@@ -953,7 +953,7 @@ pub struct BlobReadAtRequest {
     pub hash: Hash,
     /// Offset to start reading at
     pub offset: u64,
-    /// Lenghth of the data to get
+    /// Length of the data to get
     pub len: Option<usize>,
 }
 
