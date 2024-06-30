@@ -370,10 +370,15 @@ impl BlobCommands {
 
                 let (blob_status, size) = match (status, format) {
                     (BlobStatus::Complete { size }, BlobFormat::Raw) => ("blob", size),
-                    (BlobStatus::Partial { size }, BlobFormat::Raw) => ("incomplete blob", size),
+                    (BlobStatus::Partial { size }, BlobFormat::Raw) => {
+                        ("incomplete blob", size.value())
+                    }
                     (BlobStatus::Complete { size }, BlobFormat::HashSeq) => ("collection", size),
                     (BlobStatus::Partial { size }, BlobFormat::HashSeq) => {
-                        ("incomplete collection", size)
+                        ("incomplete collection", size.value())
+                    }
+                    (BlobStatus::NotFound, _) => {
+                        return Err(anyhow!("blob is missing"));
                     }
                 };
                 println!(

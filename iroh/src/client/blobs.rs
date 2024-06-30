@@ -9,7 +9,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
+use batch::Batch;
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use futures_util::SinkExt;
@@ -19,7 +20,7 @@ use iroh_blobs::{
     export::ExportProgress as BytesExportProgress,
     format::collection::{Collection, SimpleStore},
     get::db::DownloadProgress as BytesDownloadProgress,
-    store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
+    store::{BaoBlobSize, ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
     BlobFormat, Hash, Tag,
 };
 use iroh_net::NodeAddr;
@@ -30,12 +31,14 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
+mod batch;
+pub use batch::{AddDirOpts, AddFileOpts, AddReaderOpts};
 
 use crate::rpc_protocol::{
-    BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
-    BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobListIncompleteRequest,
-    BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, SetTagOption,
+    BatchCreateRequest, BatchCreateResponse, BlobAddPathRequest, BlobAddStreamRequest,
+    BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest,
+    BlobExportRequest, BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest,
+    BlobReadAtResponse, BlobStatusRequest, BlobValidateRequest, NodeStatusRequest, SetTagOption,
 };
 
 use super::{flatten, tags, Iroh, RpcClient};
@@ -54,6 +57,38 @@ impl<'a> From<&'a Iroh> for &'a RpcClient {
 }
 
 impl Client {
+    /// Check if a blob is completely stored on the node.
+    ///
+    /// Note that this will return false for blobs that are partially stored on
+    /// the node.
+    pub async fn status(&self, hash: Hash) -> Result<BlobStatus> {
+        let status = self.rpc.rpc(BlobStatusRequest { hash }).await??;
+        Ok(status.0)
+    }
+
+    /// Check if a blob is completely stored on the node.
+    ///
+    /// This is just a convenience wrapper around `status` that returns a boolean.
+    pub async fn has(&self, hash: Hash) -> Result<bool> {
+        match self.status(hash).await {
+            Ok(BlobStatus::Complete { .. }) => Ok(true),
+            Ok(_) => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Create a new batch for adding data.
+    ///
+    /// A batch is a context in which temp tags are created and data is added to the node. Temp tags
+    /// are automatically deleted when the batch is dropped, leading to the data being garbage collected
+    /// unless a permanent tag is created for it.
+    pub async fn batch(&self) -> Result<Batch> {
+        let (updates, mut stream) = self.rpc.bidi(BatchCreateRequest).await?;
+        let BatchCreateResponse::Id(batch) = stream.next().await.context("expected scope id")??;
+        let rpc = self.rpc.clone();
+        Ok(Batch::new(batch, rpc, updates, 1024))
+    }
+
     /// Stream the contents of a a single blob.
     ///
     /// Returns a [`Reader`], which can report the size of the blob before reading it.
@@ -127,17 +162,19 @@ impl Client {
     pub async fn create_collection(
         &self,
         collection: Collection,
-        tag: SetTagOption,
+        opts: SetTagOption,
         tags_to_delete: Vec<Tag>,
     ) -> anyhow::Result<(Hash, Tag)> {
-        let CreateCollectionResponse { hash, tag } = self
-            .rpc
-            .rpc(CreateCollectionRequest {
-                collection,
-                tag,
-                tags_to_delete,
-            })
-            .await??;
+        let batch = self.batch().await?;
+        let temp_tag = batch.add_collection(collection).await?;
+        let hash = *temp_tag.hash();
+        let tag = batch.upgrade_with_opts(temp_tag, opts).await?;
+        if !tags_to_delete.is_empty() {
+            let tags = self.tags_client();
+            for tag in tags_to_delete {
+                tags.delete(tag).await?;
+            }
+        }
         Ok((hash, tag))
     }
 
@@ -372,17 +409,6 @@ impl Client {
         Ok(ticket)
     }
 
-    /// Get the status of a blob.
-    pub async fn status(&self, hash: Hash) -> Result<BlobStatus> {
-        // TODO: this could be implemented more efficiently
-        let reader = self.read(hash).await?;
-        if reader.is_complete {
-            Ok(BlobStatus::Complete { size: reader.size })
-        } else {
-            Ok(BlobStatus::Partial { size: reader.size })
-        }
-    }
-
     fn tags_client(&self) -> tags::Client {
         tags::Client {
             rpc: self.rpc.clone(),
@@ -397,29 +423,15 @@ impl SimpleStore for Client {
 }
 
 /// Whether to wrap the added data in a collection.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub enum WrapOption {
     /// Do not wrap the file or directory.
+    #[default]
     NoWrap,
     /// Wrap the file or directory in a collection.
     Wrap {
         /// Override the filename in the wrapping collection.
         name: Option<String>,
-    },
-}
-
-/// Status information about a blob.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BlobStatus {
-    /// The blob is only stored partially.
-    Partial {
-        /// The size of the currently stored partial blob.
-        size: u64,
-    },
-    /// The blob is stored completely.
-    Complete {
-        /// The size of the blob.
-        size: u64,
     },
 }
 
@@ -887,11 +899,30 @@ pub enum DownloadMode {
     Queued,
 }
 
+/// Status information about a blob.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BlobStatus {
+    /// The blob is not stored on the node.
+    NotFound,
+    /// The blob is only stored partially.
+    Partial {
+        /// The size of the currently stored partial blob.
+        ///
+        /// This can be either a verified size if the last chunk was received,
+        /// or an unverified size if the last chunk was not yet received.
+        size: BaoBlobSize,
+    },
+    /// The blob is stored completely.
+    Complete {
+        /// The size of the blob. For a complete blob the size is always known.
+        size: u64,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use anyhow::Context as _;
     use rand::RngCore;
     use tokio::io::AsyncWriteExt;
 

@@ -15,7 +15,7 @@ use crate::{
     },
     util::{
         progress::{BoxedProgressSender, IdGenerator, ProgressSender},
-        Tag,
+        Tag, TagDrop,
     },
     BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
@@ -322,6 +322,10 @@ impl super::Store for Store {
 
     fn temp_tag(&self, inner: HashAndFormat) -> TempTag {
         TempTag::new(inner, None)
+    }
+
+    fn tag_drop(&self) -> Option<&dyn TagDrop> {
+        None
     }
 
     async fn gc_start(&self) -> io::Result<()> {

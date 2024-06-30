@@ -6,6 +6,7 @@ use std::time::Duration;
 use anyhow::{anyhow, ensure, Result};
 use futures_buffered::BufferedStreamExt;
 use futures_lite::{Stream, StreamExt};
+use futures_util::FutureExt;
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_blobs::downloader::{DownloadRequest, Downloader};
@@ -13,15 +14,16 @@ use iroh_blobs::export::ExportProgress;
 use iroh_blobs::format::collection::Collection;
 use iroh_blobs::get::db::DownloadProgress;
 use iroh_blobs::get::Stats;
+use iroh_blobs::provider::BatchAddPathProgress;
 use iroh_blobs::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
 use iroh_blobs::util::progress::ProgressSender;
-use iroh_blobs::BlobFormat;
 use iroh_blobs::{
     provider::AddProgress,
     store::{Store as BaoStore, ValidateProgress},
     util::progress::FlumeProgressSender,
     HashAndFormat,
 };
+use iroh_blobs::{BlobFormat, Tag};
 use iroh_io::AsyncSliceReader;
 use iroh_net::relay::RelayUrl;
 use iroh_net::{Endpoint, NodeAddr, NodeId};
@@ -33,6 +35,7 @@ use tokio::task::JoinSet;
 use tokio_util::{either::Either, task::LocalPoolHandle};
 use tracing::{debug, info, warn};
 
+use crate::client::blobs::BlobStatus;
 use crate::client::{
     blobs::{BlobInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
     tags::TagInfo,
@@ -40,16 +43,18 @@ use crate::client::{
 };
 use crate::node::{docs::DocsEngine, NodeInner};
 use crate::rpc_protocol::{
-    BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
-    BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest,
-    BlobDownloadResponse, BlobExportRequest, BlobExportResponse, BlobListIncompleteRequest,
-    BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
-    DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocSetHashRequest,
-    ListTagsRequest, NodeAddrRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest, NodeRelayRequest,
-    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest,
-    NodeWatchResponse, Request, RpcService, SetTagOption,
+    BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest, BatchAddStreamResponse,
+    BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse, BatchCreateTempTagRequest,
+    BatchUpdate, BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest,
+    BlobAddStreamResponse, BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest,
+    BlobDownloadRequest, BlobDownloadResponse, BlobExportRequest, BlobExportResponse,
+    BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest, BlobReadAtResponse,
+    BlobStatusRequest, BlobStatusResponse, BlobValidateRequest, CreateTagRequest,
+    DocExportFileRequest, DocExportFileResponse, DocImportFileRequest, DocImportFileResponse,
+    DocSetHashRequest, ListTagsRequest, NodeAddrRequest, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest,
+    NodeRelayRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
+    NodeWatchRequest, NodeWatchResponse, Request, RpcService, SetTagOption, SetTagRequest,
 };
 
 mod docs;
@@ -141,14 +146,15 @@ impl<D: BaoStore> Handler<D> {
                     .await
             }
             NodeConnectionInfo(msg) => chan.rpc(msg, self, Self::node_connection_info).await,
+            BlobStatus(msg) => chan.rpc(msg, self, Self::blob_status).await,
             BlobList(msg) => chan.server_streaming(msg, self, Self::blob_list).await,
             BlobListIncomplete(msg) => {
                 chan.server_streaming(msg, self, Self::blob_list_incomplete)
                     .await
             }
-            CreateCollection(msg) => chan.rpc(msg, self, Self::create_collection).await,
-            ListTags(msg) => chan.server_streaming(msg, self, Self::blob_list_tags).await,
-            DeleteTag(msg) => chan.rpc(msg, self, Self::blob_delete_tag).await,
+            SetTag(msg) => chan.rpc(msg, self, Self::tags_set_tag).await,
+            CreateTag(msg) => chan.rpc(msg, self, Self::tags_create_tag).await,
+            ListTags(msg) => chan.server_streaming(msg, self, Self::tags_list_tags).await,
             BlobDeleteBlob(msg) => chan.rpc(msg, self, Self::blob_delete_blob).await,
             BlobAddPath(msg) => {
                 chan.server_streaming(msg, self, Self::blob_add_from_path)
@@ -164,7 +170,15 @@ impl<D: BaoStore> Handler<D> {
             BlobReadAt(msg) => chan.server_streaming(msg, self, Self::blob_read_at).await,
             BlobAddStream(msg) => chan.bidi_streaming(msg, self, Self::blob_add_stream).await,
             BlobAddStreamUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
-
+            BatchCreate(msg) => chan.bidi_streaming(msg, self, Self::batch_create).await,
+            BatchUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
+            BatchCreateTempTag(msg) => chan.rpc(msg, self, Self::batch_create_temp_tag).await,
+            BatchAddStream(msg) => chan.bidi_streaming(msg, self, Self::batch_add_stream).await,
+            BatchAddStreamUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
+            BatchAddPath(msg) => {
+                chan.server_streaming(msg, self, Self::batch_add_from_path)
+                    .await
+            }
             AuthorList(msg) => {
                 chan.server_streaming(msg, self, |handler, req| {
                     handler.with_docs_stream(|docs| docs.author_list(req))
@@ -381,6 +395,22 @@ impl<D: BaoStore> Handler<D> {
         Ok(())
     }
 
+    async fn blob_status(self, msg: BlobStatusRequest) -> RpcResult<BlobStatusResponse> {
+        let entry = self.inner.db.get(&msg.hash).await?;
+        Ok(BlobStatusResponse(match entry {
+            Some(entry) => {
+                if entry.is_complete() {
+                    BlobStatus::Complete {
+                        size: entry.size().value(),
+                    }
+                } else {
+                    BlobStatus::Partial { size: entry.size() }
+                }
+            }
+            None => BlobStatus::NotFound,
+        }))
+    }
+
     fn blob_list(
         self,
         _msg: BlobListRequest,
@@ -403,18 +433,12 @@ impl<D: BaoStore> Handler<D> {
         })
     }
 
-    async fn blob_delete_tag(self, msg: DeleteTagRequest) -> RpcResult<()> {
-        self.inner.db.set_tag(msg.name, None).await?;
-        Ok(())
-    }
-
     async fn blob_delete_blob(self, msg: BlobDeleteBlobRequest) -> RpcResult<()> {
         self.inner.db.delete(vec![msg.hash]).await?;
         Ok(())
     }
 
-    fn blob_list_tags(self, msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
-        tracing::info!("blob_list_tags");
+    fn tags_list_tags(self, msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
         Gen::new(|co| async move {
             let tags = self.inner.db.tags().await.unwrap();
             #[allow(clippy::manual_flatten)]
@@ -426,6 +450,31 @@ impl<D: BaoStore> Handler<D> {
                 }
             }
         })
+    }
+
+    async fn tags_set_tag(self, msg: SetTagRequest) -> RpcResult<()> {
+        if let Some(batch) = msg.batch {
+            if let Some(content) = msg.value.as_ref() {
+                self.inner.blob_batches.lock().await.remove_one(
+                    batch,
+                    content,
+                    self.inner.db.tag_drop(),
+                )?;
+            }
+        }
+        self.inner.db.set_tag(msg.name, msg.value).await?;
+        Ok(())
+    }
+
+    async fn tags_create_tag(self, msg: CreateTagRequest) -> RpcResult<Tag> {
+        if let Some(batch) = msg.batch {
+            self.inner.blob_batches.lock().await.remove_one(
+                batch,
+                &msg.value,
+                self.inner.db.tag_drop(),
+            )?;
+        }
+        Ok(self.inner.db.create_tag(msg.value).await?)
     }
 
     /// Invoke validate on the database and stream out the result
@@ -768,6 +817,46 @@ impl<D: BaoStore> Handler<D> {
         Ok(())
     }
 
+    async fn batch_add_from_path0(
+        self,
+        msg: BatchAddPathRequest,
+        progress: flume::Sender<BatchAddPathProgress>,
+    ) -> anyhow::Result<()> {
+        let progress = FlumeProgressSender::new(progress);
+        // convert import progress to provide progress
+        let import_progress = progress.clone().with_filter_map(move |x| match x {
+            ImportProgress::Size { size, .. } => Some(BatchAddPathProgress::Found { size }),
+            ImportProgress::OutboardProgress { offset, .. } => {
+                Some(BatchAddPathProgress::Progress { offset })
+            }
+            ImportProgress::OutboardDone { hash, .. } => Some(BatchAddPathProgress::Done { hash }),
+            _ => None,
+        });
+        let BatchAddPathRequest {
+            path: root,
+            import_mode,
+            format,
+            batch,
+        } = msg;
+        // Check that the path is absolute and exists.
+        anyhow::ensure!(root.is_absolute(), "path must be absolute");
+        anyhow::ensure!(
+            root.exists(),
+            "trying to add missing path: {}",
+            root.display()
+        );
+        let (tag, _) = self
+            .inner
+            .db
+            .import_file(root, import_mode, format, import_progress)
+            .await?;
+        let hash = *tag.hash();
+        self.inner.blob_batches.lock().await.store(batch, tag);
+
+        progress.send(BatchAddPathProgress::Done { hash }).await?;
+        Ok(())
+    }
+
     #[allow(clippy::unused_async)]
     async fn node_stats(self, _req: NodeStatsRequest) -> RpcResult<NodeStatsResponse> {
         #[cfg(feature = "metrics")]
@@ -831,6 +920,119 @@ impl<D: BaoStore> Handler<D> {
                 (),
             ))
         })
+    }
+
+    fn batch_create(
+        self,
+        _: BatchCreateRequest,
+        mut updates: impl Stream<Item = BatchUpdate> + Send + Unpin + 'static,
+    ) -> impl Stream<Item = BatchCreateResponse> {
+        async move {
+            let batch = self.inner.blob_batches.lock().await.create();
+            tokio::spawn(async move {
+                while let Some(item) = updates.next().await {
+                    match item {
+                        BatchUpdate::Drop(content) => {
+                            // this can not fail, since we keep the batch alive.
+                            // therefore it is safe to ignore the result.
+                            let _ = self.inner.blob_batches.lock().await.remove_one(
+                                batch,
+                                &content,
+                                self.inner.db.tag_drop(),
+                            );
+                        }
+                        BatchUpdate::Ping => {}
+                    }
+                }
+                self.inner
+                    .blob_batches
+                    .lock()
+                    .await
+                    .remove(batch, self.inner.db.tag_drop());
+            });
+            BatchCreateResponse::Id(batch)
+        }
+        .into_stream()
+    }
+
+    #[allow(clippy::unused_async)]
+    async fn batch_create_temp_tag(self, msg: BatchCreateTempTagRequest) -> RpcResult<()> {
+        let tag = self.inner.db.temp_tag(msg.content);
+        self.inner.blob_batches.lock().await.store(msg.batch, tag);
+        Ok(())
+    }
+
+    fn batch_add_stream(
+        self,
+        msg: BatchAddStreamRequest,
+        stream: impl Stream<Item = BatchAddStreamUpdate> + Send + Unpin + 'static,
+    ) -> impl Stream<Item = BatchAddStreamResponse> {
+        let (tx, rx) = flume::bounded(32);
+        let this = self.clone();
+
+        self.rt().spawn_pinned(|| async move {
+            if let Err(err) = this.batch_add_stream0(msg, stream, tx.clone()).await {
+                tx.send_async(BatchAddStreamResponse::Abort(err.into()))
+                    .await
+                    .ok();
+            }
+        });
+        rx.into_stream()
+    }
+
+    fn batch_add_from_path(
+        self,
+        msg: BatchAddPathRequest,
+    ) -> impl Stream<Item = BatchAddPathResponse> {
+        // provide a little buffer so that we don't slow down the sender
+        let (tx, rx) = flume::bounded(32);
+        let tx2 = tx.clone();
+        self.rt().spawn_pinned(|| async move {
+            if let Err(e) = self.batch_add_from_path0(msg, tx).await {
+                tx2.send_async(BatchAddPathProgress::Abort(e.into()))
+                    .await
+                    .ok();
+            }
+        });
+        rx.into_stream().map(BatchAddPathResponse)
+    }
+
+    async fn batch_add_stream0(
+        self,
+        msg: BatchAddStreamRequest,
+        stream: impl Stream<Item = BatchAddStreamUpdate> + Send + Unpin + 'static,
+        progress: flume::Sender<BatchAddStreamResponse>,
+    ) -> anyhow::Result<()> {
+        let progress = FlumeProgressSender::new(progress);
+
+        let stream = stream.map(|item| match item {
+            BatchAddStreamUpdate::Chunk(chunk) => Ok(chunk),
+            BatchAddStreamUpdate::Abort => {
+                Err(io::Error::new(io::ErrorKind::Interrupted, "Remote abort"))
+            }
+        });
+
+        let import_progress = progress.clone().with_filter_map(move |x| match x {
+            ImportProgress::OutboardProgress { offset, .. } => {
+                Some(BatchAddStreamResponse::OutboardProgress { offset })
+            }
+            _ => None,
+        });
+        let (temp_tag, _len) = self
+            .inner
+            .db
+            .import_stream(stream, msg.format, import_progress)
+            .await?;
+        let hash = temp_tag.inner().hash;
+        self.inner
+            .blob_batches
+            .lock()
+            .await
+            .store(msg.batch, temp_tag);
+        progress
+            .send(BatchAddStreamResponse::Result { hash })
+            .await?;
+        Ok(())
     }
 
     fn blob_add_stream(
@@ -994,37 +1196,6 @@ impl<D: BaoStore> Handler<D> {
         let NodeConnectionInfoRequest { node_id } = req;
         let conn_info = self.inner.endpoint.connection_info(node_id);
         Ok(NodeConnectionInfoResponse { conn_info })
-    }
-
-    async fn create_collection(
-        self,
-        req: CreateCollectionRequest,
-    ) -> RpcResult<CreateCollectionResponse> {
-        let CreateCollectionRequest {
-            collection,
-            tag,
-            tags_to_delete,
-        } = req;
-
-        let temp_tag = collection.store(&self.inner.db).await?;
-        let hash_and_format = temp_tag.inner();
-        let HashAndFormat { hash, .. } = *hash_and_format;
-        let tag = match tag {
-            SetTagOption::Named(tag) => {
-                self.inner
-                    .db
-                    .set_tag(tag.clone(), Some(*hash_and_format))
-                    .await?;
-                tag
-            }
-            SetTagOption::Auto => self.inner.db.create_tag(*hash_and_format).await?,
-        };
-
-        for tag in tags_to_delete {
-            self.inner.db.set_tag(tag, None).await?;
-        }
-
-        Ok(CreateCollectionResponse { hash, tag })
     }
 }
 

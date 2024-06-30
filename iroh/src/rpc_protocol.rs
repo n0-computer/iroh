@@ -14,9 +14,10 @@ use derive_more::{From, TryInto};
 use iroh_base::node_addr::AddrInfoOptions;
 pub use iroh_blobs::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_blobs::{
-    format::collection::Collection,
-    store::{BaoBlobSize, ConsistencyCheckProgress},
+    provider::BatchAddPathProgress,
+    store::{BaoBlobSize, ConsistencyCheckProgress, ImportMode},
     util::Tag,
+    HashAndFormat,
 };
 use iroh_net::{
     endpoint::{ConnectionInfo, NodeAddr},
@@ -44,12 +45,41 @@ pub use iroh_blobs::{provider::AddProgress, store::ValidateProgress};
 use iroh_docs::engine::LiveEvent;
 
 use crate::client::{
-    blobs::{BlobInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
+    blobs::{BlobInfo, BlobStatus, DownloadMode, IncompleteBlobInfo, WrapOption},
     docs::{ImportProgress, ShareMode},
     tags::TagInfo,
     NodeStatus,
 };
 pub use iroh_blobs::util::SetTagOption;
+
+/// Request to create a new scope for temp tags
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchCreateRequest;
+
+/// Update to a temp tag scope
+#[derive(Debug, Serialize, Deserialize)]
+pub enum BatchUpdate {
+    /// Drop of a remote temp tag
+    Drop(HashAndFormat),
+    /// Message to check that the connection is still alive
+    Ping,
+}
+
+/// Response to a temp tag scope request
+#[derive(Debug, Serialize, Deserialize)]
+pub enum BatchCreateResponse {
+    /// We got the id of the scope
+    Id(BatchId),
+}
+
+impl Msg<RpcService> for BatchCreateRequest {
+    type Pattern = BidiStreaming;
+}
+
+impl BidiStreamingMsg<RpcService> for BatchCreateRequest {
+    type Update = BatchUpdate;
+    type Response = BatchCreateResponse;
+}
 
 /// A request to the node to provide the data at the given path
 ///
@@ -126,7 +156,7 @@ pub struct BlobExportRequest {
     /// This should be an absolute path valid for the file system on which
     /// the node runs.
     pub path: PathBuf,
-    /// Set to [`ExportFormat::Collection`] if the `hash` refers to a [`Collection`] and you want
+    /// Set to [`ExportFormat::Collection`] if the `hash` refers to a collection and you want
     /// to export all children of the collection into individual files.
     pub format: ExportFormat,
     /// The mode of exporting.
@@ -175,6 +205,21 @@ impl Msg<RpcService> for BlobValidateRequest {
 
 impl ServerStreamingMsg<RpcService> for BlobValidateRequest {
     type Response = ValidateProgress;
+}
+
+/// Get the status of a blob
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobStatusRequest {
+    /// The hash of the blob
+    pub hash: Hash,
+}
+
+/// The response to a status request
+#[derive(Debug, Serialize, Deserialize, derive_more::From, derive_more::Into)]
+pub struct BlobStatusResponse(pub BlobStatus);
+
+impl RpcMsg<RpcService> for BlobStatusRequest {
+    type Response = RpcResult<BlobStatusResponse>;
 }
 
 /// List all blobs, including collections
@@ -259,36 +304,30 @@ impl RpcMsg<RpcService> for BlobDeleteBlobRequest {
 
 /// Delete a tag
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DeleteTagRequest {
+pub struct SetTagRequest {
     /// Name of the tag
     pub name: Tag,
+    /// Value of the tag, None to delete
+    pub value: Option<HashAndFormat>,
+    /// Batch to use, none for global
+    pub batch: Option<BatchId>,
 }
 
-impl RpcMsg<RpcService> for DeleteTagRequest {
+impl RpcMsg<RpcService> for SetTagRequest {
     type Response = RpcResult<()>;
 }
-/// Create a collection.
+
+/// Create a tag
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CreateCollectionRequest {
-    /// The collection
-    pub collection: Collection,
-    /// Tag option.
-    pub tag: SetTagOption,
-    /// Tags that should be deleted after creation.
-    pub tags_to_delete: Vec<Tag>,
+pub struct CreateTagRequest {
+    /// Value of the tag
+    pub value: HashAndFormat,
+    /// Batch to use, none for global
+    pub batch: Option<BatchId>,
 }
 
-/// A response to a create collection request
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CreateCollectionResponse {
-    /// The resulting hash.
-    pub hash: Hash,
-    /// The resulting tag.
-    pub tag: Tag,
-}
-
-impl RpcMsg<RpcService> for CreateCollectionRequest {
-    type Response = RpcResult<CreateCollectionResponse>;
+impl RpcMsg<RpcService> for CreateTagRequest {
+    type Response = RpcResult<Tag>;
 }
 
 /// List connection information about all the nodes we know about
@@ -1011,6 +1050,82 @@ impl BidiStreamingMsg<RpcService> for BlobAddStreamRequest {
 #[derive(Debug, Serialize, Deserialize, derive_more::Into)]
 pub struct BlobAddStreamResponse(pub AddProgress);
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Serialize, Deserialize, Ord, Clone, Copy, Hash)]
+pub struct BatchId(pub(crate) u64);
+
+/// Create a temp tag with a given hash and format
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchCreateTempTagRequest {
+    /// Content to protect
+    pub content: HashAndFormat,
+    /// Batch to create the temp tag in
+    pub batch: BatchId,
+}
+
+impl RpcMsg<RpcService> for BatchCreateTempTagRequest {
+    type Response = RpcResult<()>;
+}
+
+/// Write a blob from a byte stream
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BatchAddStreamRequest {
+    /// What format to use for the blob
+    pub format: BlobFormat,
+    /// Batch to create the temp tag in
+    pub batch: BatchId,
+}
+
+/// Write a blob from a byte stream
+#[derive(Serialize, Deserialize, Debug)]
+pub enum BatchAddStreamUpdate {
+    /// A chunk of stream data
+    Chunk(Bytes),
+    /// Abort the request due to an error on the client side
+    Abort,
+}
+
+impl Msg<RpcService> for BatchAddStreamRequest {
+    type Pattern = BidiStreaming;
+}
+
+impl BidiStreamingMsg<RpcService> for BatchAddStreamRequest {
+    type Update = BatchAddStreamUpdate;
+    type Response = BatchAddStreamResponse;
+}
+
+/// Wrapper around [`AddProgress`].
+#[derive(Debug, Serialize, Deserialize)]
+pub enum BatchAddStreamResponse {
+    Abort(RpcError),
+    OutboardProgress { offset: u64 },
+    Result { hash: Hash },
+}
+
+/// Write a blob from a byte stream
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BatchAddPathRequest {
+    /// The path to the data to provide.
+    pub path: PathBuf,
+    /// Add the data in place
+    pub import_mode: ImportMode,
+    /// What format to use for the blob
+    pub format: BlobFormat,
+    /// Batch to create the temp tag in
+    pub batch: BatchId,
+}
+
+/// Response to a batch add path request
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BatchAddPathResponse(pub BatchAddPathProgress);
+
+impl Msg<RpcService> for BatchAddPathRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<RpcService> for BatchAddPathRequest {
+    type Response = BatchAddPathResponse;
+}
+
 /// Get stats for the running Iroh node
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeStatsRequest {}
@@ -1060,13 +1175,21 @@ pub enum Request {
     BlobDownload(BlobDownloadRequest),
     BlobExport(BlobExportRequest),
     BlobList(BlobListRequest),
+    BlobStatus(BlobStatusRequest),
     BlobListIncomplete(BlobListIncompleteRequest),
     BlobDeleteBlob(BlobDeleteBlobRequest),
     BlobValidate(BlobValidateRequest),
     BlobFsck(BlobConsistencyCheckRequest),
-    CreateCollection(CreateCollectionRequest),
 
-    DeleteTag(DeleteTagRequest),
+    BatchCreate(BatchCreateRequest),
+    BatchUpdate(BatchUpdate),
+    BatchCreateTempTag(BatchCreateTempTagRequest),
+    BatchAddStream(BatchAddStreamRequest),
+    BatchAddStreamUpdate(BatchAddStreamUpdate),
+    BatchAddPath(BatchAddPathRequest),
+
+    SetTag(SetTagRequest),
+    CreateTag(CreateTagRequest),
     ListTags(ListTagsRequest),
 
     DocOpen(DocOpenRequest),
@@ -1118,15 +1241,20 @@ pub enum Response {
     BlobAddStream(BlobAddStreamResponse),
     BlobAddPath(BlobAddPathResponse),
     BlobList(RpcResult<BlobInfo>),
+    BlobStatus(RpcResult<BlobStatusResponse>),
     BlobListIncomplete(RpcResult<IncompleteBlobInfo>),
     BlobDownload(BlobDownloadResponse),
     BlobFsck(ConsistencyCheckProgress),
     BlobExport(BlobExportResponse),
     BlobValidate(ValidateProgress),
-    CreateCollection(RpcResult<CreateCollectionResponse>),
+
+    BatchCreate(BatchCreateResponse),
+    BatchAddStream(BatchAddStreamResponse),
+    BatchAddPath(BatchAddPathResponse),
 
     ListTags(TagInfo),
     DeleteTag(RpcResult<()>),
+    CreateTag(RpcResult<Tag>),
 
     DocOpen(RpcResult<DocOpenResponse>),
     DocClose(RpcResult<DocCloseResponse>),

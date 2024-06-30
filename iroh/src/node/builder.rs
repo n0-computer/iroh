@@ -540,7 +540,6 @@ where
         // so this has zero overhead.
         let controller = quic_rpc::transport::boxed::Connection::new(controller);
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
-
         let inner = Arc::new(NodeInner {
             rpc_port: self.rpc_port,
             db: self.blobs_store,
@@ -551,6 +550,7 @@ where
             cancel_token: CancellationToken::new(),
             rt: lp,
             downloader,
+            blob_batches: Default::default(),
             gossip,
         });
 

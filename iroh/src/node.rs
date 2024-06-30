@@ -3,6 +3,7 @@
 //! A node is a server that serves various protocols.
 //!
 //! To shut down the node, call [`Node::shutdown`].
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::{collections::BTreeSet, net::SocketAddr};
@@ -12,7 +13,9 @@ use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
 use iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store as BaoStore};
+use iroh_blobs::util::TagDrop;
 use iroh_blobs::{downloader::Downloader, protocol::Closed};
+use iroh_blobs::{HashAndFormat, TempTag};
 use iroh_gossip::net::Gossip;
 use iroh_net::key::SecretKey;
 use iroh_net::Endpoint;
@@ -23,6 +26,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, error, info, warn};
 
+use crate::rpc_protocol::BatchId;
 use crate::{
     client::RpcService,
     node::{docs::DocsEngine, protocol::ProtocolMap},
@@ -68,6 +72,77 @@ struct NodeInner<D> {
     #[debug("rt")]
     rt: LocalPoolHandle,
     downloader: Downloader,
+    blob_batches: tokio::sync::Mutex<BlobBatches>,
+}
+
+/// Keeps track of all the currently active batch operations of the blobs api.
+#[derive(Debug, Default)]
+struct BlobBatches {
+    /// Currently active batches
+    batches: BTreeMap<BatchId, BlobBatch>,
+    /// Used to generate new batch ids.
+    max: u64,
+}
+
+/// A single batch of blob operations
+#[derive(Debug, Default)]
+struct BlobBatch {
+    /// Each counter corresponds to the number of temp tags we have sent to the client
+    /// for this hash and format. Counters should never be zero.
+    tags: BTreeMap<HashAndFormat, u64>,
+}
+
+impl BlobBatches {
+    /// Create a new unique batch id.
+    fn create(&mut self) -> BatchId {
+        let id = self.max;
+        self.max += 1;
+        BatchId(id)
+    }
+
+    /// Store a temp tag in a batch identified by a batch id.
+    fn store(&mut self, batch: BatchId, tt: TempTag) {
+        let entry = self.batches.entry(batch).or_default();
+        let count = entry.tags.entry(tt.hash_and_format()).or_default();
+        tt.leak();
+        *count += 1;
+    }
+
+    /// Remove a tag from a batch.
+    fn remove_one(
+        &mut self,
+        batch: BatchId,
+        content: &HashAndFormat,
+        tag_drop: Option<&dyn TagDrop>,
+    ) -> Result<()> {
+        if let Some(scope) = self.batches.get_mut(&batch) {
+            if let Some(counter) = scope.tags.get_mut(content) {
+                *counter -= 1;
+                if let Some(tag_drop) = tag_drop {
+                    tag_drop.on_drop(content);
+                }
+                if *counter == 0 {
+                    scope.tags.remove(content);
+                }
+                return Ok(());
+            }
+        }
+        // this can happen if we try to upgrade a tag from an expired batch
+        anyhow::bail!("tag not found in batch");
+    }
+
+    /// Remove an entire batch.
+    fn remove(&mut self, batch: BatchId, tag_drop: Option<&dyn TagDrop>) {
+        if let Some(scope) = self.batches.remove(&batch) {
+            for (content, count) in scope.tags {
+                if let Some(tag_drop) = tag_drop {
+                    for _ in 0..count {
+                        tag_drop.on_drop(&content);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// In memory node.

@@ -19,7 +19,7 @@ use crate::{
     protocol::RangeSpec,
     util::{
         progress::{BoxedProgressSender, IdGenerator, ProgressSender},
-        Tag,
+        Tag, TagDrop,
     },
     BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
@@ -355,6 +355,12 @@ pub trait Store: ReadableStore + MapMut + std::fmt::Debug {
 
     /// Create a temporary pin for this store
     fn temp_tag(&self, value: HashAndFormat) -> TempTag;
+
+    /// Handle to use to drop tags
+    ///
+    /// Return None for stores that don't keep track of tags, such as read-only
+    /// stores.
+    fn tag_drop(&self) -> Option<&dyn TagDrop>;
 
     /// Notify the store that a new gc phase is about to start.
     ///
@@ -700,7 +706,7 @@ pub enum ImportProgress {
 /// does not make any sense. E.g. an in memory implementation will always have
 /// to copy the file into memory. Also, a disk based implementation might choose
 /// to copy small files even if the mode is `Reference`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ImportMode {
     /// This mode will copy the file into the database before hashing.
     ///

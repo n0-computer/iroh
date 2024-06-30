@@ -222,6 +222,10 @@ impl super::Store for Store {
         self.inner.temp_tag(tag)
     }
 
+    fn tag_drop(&self) -> Option<&dyn TagDrop> {
+        Some(self.inner.as_ref())
+    }
+
     async fn gc_start(&self) -> io::Result<()> {
         Ok(())
     }

@@ -2,12 +2,12 @@
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use iroh_blobs::{BlobFormat, Hash, Tag};
+use iroh_blobs::{BlobFormat, Hash, HashAndFormat, Tag};
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
 use super::RpcClient;
-use crate::rpc_protocol::{DeleteTagRequest, ListTagsRequest};
+use crate::rpc_protocol::{CreateTagRequest, ListTagsRequest, SetTagRequest};
 
 /// Iroh tags client.
 #[derive(Debug, Clone, RefCast)]
@@ -32,9 +32,41 @@ impl Client {
         Ok(stream.map(|res| res.map_err(anyhow::Error::from)))
     }
 
+    /// Create a tag, where the name is automatically generated.
+    ///
+    /// Use this method if you want a new tag with a unique name.
+    pub async fn create(&self, value: HashAndFormat) -> Result<Tag> {
+        Ok(self
+            .rpc
+            .rpc(CreateTagRequest { value, batch: None })
+            .await??)
+    }
+
+    /// Set a tag to a value, overwriting any existing value.
+    ///
+    /// This is a convenience wrapper around `set_opt`.
+    pub async fn set(&self, name: Tag, value: HashAndFormat) -> Result<()> {
+        self.set_with_opts(name, Some(value)).await
+    }
+
     /// Delete a tag.
+    ///
+    /// This is a convenience wrapper around `set_opt`.
     pub async fn delete(&self, name: Tag) -> Result<()> {
-        self.rpc.rpc(DeleteTagRequest { name }).await??;
+        self.set_with_opts(name, None).await
+    }
+
+    /// Set a tag to a value, overwriting any existing value.
+    ///
+    /// Setting the value to `None` deletes the tag. Setting the value to `Some` creates or updates the tag.
+    pub async fn set_with_opts(&self, name: Tag, value: Option<HashAndFormat>) -> Result<()> {
+        self.rpc
+            .rpc(SetTagRequest {
+                name,
+                value,
+                batch: None,
+            })
+            .await??;
         Ok(())
     }
 }
