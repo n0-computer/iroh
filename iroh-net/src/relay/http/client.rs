@@ -178,7 +178,6 @@ struct Actor {
     ping_tasks: JoinSet<()>,
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
-    relay_path: &'static str,
 }
 
 #[derive(Default, Debug)]
@@ -224,8 +223,6 @@ pub struct ClientBuilder {
     insecure_skip_cert_verify: bool,
     /// HTTP Proxy
     proxy_url: Option<Url>,
-    /// Default is "/relay"
-    relay_path: &'static str,
 }
 
 impl ClientBuilder {
@@ -241,7 +238,6 @@ impl ClientBuilder {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: false,
             proxy_url: None,
-            relay_path: RELAY_HTTP_PATH,
         }
     }
 
@@ -299,15 +295,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Set the relay endpoint path used for making connections.
-    ///
-    /// Private for now, as it's only used in tests so far.
-    #[cfg(test)]
-    pub(crate) fn relay_path(mut self, relay_path: &'static str) -> Self {
-        self.relay_path = relay_path;
-        self
-    }
-
     /// Build the [`Client`]
     pub fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> (Client, ClientReceiver) {
         // TODO: review TLS config
@@ -350,7 +337,6 @@ impl ClientBuilder {
             tls_connector,
             dns_resolver,
             proxy_url: self.proxy_url,
-            relay_path: self.relay_path,
         };
 
         let (msg_sender, inbox) = mpsc::channel(64);
@@ -627,7 +613,7 @@ impl Actor {
 
     async fn connect_ws(&self) -> Result<(ConnReader, ConnWriter), ClientError> {
         let mut dial_url = (*self.url).clone();
-        dial_url.set_path(self.relay_path);
+        dial_url.set_path(RELAY_HTTP_PATH);
 
         debug!(%dial_url, "Dialing relay by websocket");
 

@@ -703,9 +703,10 @@ mod tests {
     use std::time::Duration;
 
     use bytes::Bytes;
+    use http::header::UPGRADE;
     use iroh_base::node_addr::RelayUrl;
 
-    use crate::relay::http::ClientBuilder;
+    use crate::relay::http::{ClientBuilder, HTTP_UPGRADE_PROTOCOL};
 
     use self::relay::ReceivedMessage;
 
@@ -797,17 +798,18 @@ mod tests {
     async fn test_relay_client_legacy_route() {
         let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
-        let relay_url = format!("http://{}", server.http_addr().unwrap());
-        let relay_url: RelayUrl = relay_url.parse().unwrap();
+        // We're testing the legacy endpoint at `/derp`
+        let endpoint_url = format!("http://{}/derp", server.http_addr().unwrap());
 
-        // set up client a
-        let secret_key = SecretKey::generate();
-        let resolver = crate::dns::default_resolver().clone();
-        let (client, _) = ClientBuilder::new(relay_url)
-            .relay_path("/derp") // Try the legacy relay path for backwards compatibility
-            .build(secret_key, resolver);
+        let client = reqwest::Client::new();
+        let result = client
+            .get(endpoint_url)
+            .header(UPGRADE, HTTP_UPGRADE_PROTOCOL)
+            .send()
+            .await
+            .unwrap();
 
-        client.ping().await.unwrap();
+        assert_eq!(result.status(), StatusCode::SWITCHING_PROTOCOLS);
     }
 
     #[tokio::test]
