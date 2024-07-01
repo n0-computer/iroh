@@ -93,11 +93,8 @@ jobs:
     - name: Install NDK
       run: echo "NDK_HOME=${ANDROID_HOME}/ndk-bundle" >> $GITHUB_ENV
 
-    - name: Install cross
-      run: cargo install cross
-
     - name: Build
-      run: cross build --target aarch64-linux-android --release
+      run: cargo build --all --target aarch64-linux-android 
 
   cross_test:
     name: Cross Test
