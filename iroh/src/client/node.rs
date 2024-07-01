@@ -6,6 +6,7 @@ use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
 use iroh_base::key::PublicKey;
 use iroh_net::{endpoint::ConnectionInfo, relay::RelayUrl, NodeAddr, NodeId};
+use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::{
@@ -14,9 +15,16 @@ use crate::rpc_protocol::{
     NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
 };
 
-use super::{flatten, Iroh};
+use super::{flatten, RpcClient};
 
-impl Iroh {
+/// Iroh node client.
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
+pub struct Client {
+    pub(super) rpc: RpcClient,
+}
+
+impl Client {
     /// Get statistics of the running node.
     pub async fn stats(&self) -> Result<BTreeMap<String, CounterStats>> {
         let res = self.rpc.rpc(NodeStatsRequest {}).await??;
