@@ -137,7 +137,7 @@ impl PaiFinder {
 
     async fn input(&mut self, input: Input) -> Result<(), Error> {
         match input {
-            Input::SubmitAuthorisation(auth) => self.submit_autorisation(auth).await,
+            Input::SubmitAuthorisation(auth) => self.submit_authorisation(auth).await,
             Input::ReceivedMessage(message) => match message? {
                 IntersectionMessage::BindFragment(message) => self.receive_bind(message).await?,
                 IntersectionMessage::ReplyFragment(message) => self.receive_reply(message).await?,
@@ -156,7 +156,7 @@ impl PaiFinder {
         Ok(())
     }
 
-    async fn submit_autorisation(&mut self, authorisation: ReadAuthorisation) {
+    async fn submit_authorisation(&mut self, authorisation: ReadAuthorisation) {
         trace!(?authorisation, "pai submit auth");
         let read_cap = authorisation.read_cap();
         let fragment_kit = PaiScheme::get_fragment_kit(read_cap);
