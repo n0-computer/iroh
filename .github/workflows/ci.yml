@@ -72,7 +72,7 @@ jobs:
     name: Android Build Only
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
-    runs-on: [self-hosted, linux, ARM64]
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -80,25 +80,24 @@ jobs:
           - aarch64-linux-android
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
+      uses: actions/checkout@v2
 
     - name: Install rust stable
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Setup Android target
-      run: rustup target add ${{ matrix.target }}
-
-    - uses: arqu/setup-ndk@main
-      id: setup-ndk
+      uses: actions-rs/toolchain@v1
       with:
-        ndk-version: r21e
+        profile: minimal
+        toolchain: stable
+        target: aarch64-linux-android
+        override: true
 
-    - name: build
-      run: cargo build --all --target ${{ matrix.target }}
-      env:
-        RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
+    - name: Install NDK
+      run: echo "NDK_HOME=${ANDROID_HOME}/ndk-bundle" >> $GITHUB_ENV
+
+    - name: Install cross
+      run: cargo install cross
+
+    - name: Build
+      run: cross build --target aarch64-linux-android --release
 
   cross_test:
     name: Cross Test
