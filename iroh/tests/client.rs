@@ -40,6 +40,7 @@ fn await_messages(
 ) -> JoinHandle<Vec<Bytes>> {
     tokio::spawn(async move {
         let mut res = Vec::new();
+        #[allow(clippy::single_match)]
         while let Some(msg) = stream.next().await {
             match msg.unwrap() {
                 Event::Gossip(GossipEvent::Received(msg)) => {

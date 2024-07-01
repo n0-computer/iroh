@@ -1052,7 +1052,7 @@ pub struct NodeStatsResponse {
 
 /// A request to the node to subscribe to gossip events.
 ///
-/// This is basically a topic and additional optins
+/// This is basically a topic and additional options
 #[derive(Serialize, Deserialize, Debug)]
 pub struct GossipSubscribeRequest {
     /// The topic to subscribe to
