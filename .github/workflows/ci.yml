@@ -37,7 +37,7 @@ jobs:
            # cross tests are currently broken vor armv7 and aarch64
            # see https://github.com/cross-rs/cross/issues/1311
           - armv7-linux-androideabi
-          - aarch64-linux-android
+          # - aarch64-linux-android
           # Freebsd execution fails in cross
           # - i686-unknown-freebsd # Linking fails :/
           - x86_64-unknown-freebsd
@@ -65,6 +65,33 @@ jobs:
       # see https://github.com/cross-rs/cross/issues/1311.  So on
       # those platforms we only build but do not run tests.
       run: cross build --all --target ${{ matrix.target }}
+      env:
+        RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
+
+  android_build:
+    name: Android Build Only
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    timeout-minutes: 30
+    runs-on: [self-hosted, linux, ARM64]
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-linux-android
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install rust stable
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Setup Android target
+      run: rustup target add ${{ matrix.target }}
+
+    - name: build
+      run: cargo build --all --target ${{ matrix.target }}
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
 
