@@ -997,6 +997,8 @@ impl<D: BaoStore> Handler<D> {
         Ok(NodeConnectionInfoResponse { conn_info })
     }
 
+    // This method is called as an RPC method, which have to be async
+    #[allow(clippy::unused_async)]
     async fn node_add_addr(self, req: NodeAddAddrRequest) -> RpcResult<()> {
         let NodeAddAddrRequest { addr } = req;
         self.inner.endpoint.add_node_addr(addr)?;
