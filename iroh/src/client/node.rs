@@ -57,7 +57,7 @@ impl Iroh {
     }
 
     /// Get the relay server we are connected to.
-    pub async fn my_relay(&self) -> Result<Option<RelayUrl>> {
+    pub async fn home_relay(&self) -> Result<Option<RelayUrl>> {
         let relay = self.rpc.rpc(NodeRelayRequest).await??;
         Ok(relay)
     }
