@@ -90,12 +90,10 @@ jobs:
     - name: Setup Android target
       run: rustup target add ${{ matrix.target }}
 
-    - uses: ravinderjangra/android-ndk-toolchain-setup@0.2
+    - uses: nttld/setup-ndk@v1
+      id: setup-ndk
       with:
-        api: '21'
-        arch: 'aarch64'
-        install-location: 'toolchains'
-        force: true
+        ndk-version: r21e
 
     - name: build
       run: cargo build --all --target ${{ matrix.target }}
