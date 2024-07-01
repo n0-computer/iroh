@@ -366,6 +366,15 @@ impl RpcMsg<RpcService> for NodeAddrRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct NodeAddAddrRequest {
+    pub addr: NodeAddr,
+}
+
+impl RpcMsg<RpcService> for NodeAddAddrRequest {
+    type Response = RpcResult<()>;
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct NodeRelayRequest;
 
 impl RpcMsg<RpcService> for NodeRelayRequest {
@@ -1046,6 +1055,7 @@ pub enum Request {
     NodeStatus(NodeStatusRequest),
     NodeId(NodeIdRequest),
     NodeAddr(NodeAddrRequest),
+    NodeAddAddr(NodeAddAddrRequest),
     NodeRelay(NodeRelayRequest),
     NodeStats(NodeStatsRequest),
     NodeShutdown(NodeShutdownRequest),
