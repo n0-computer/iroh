@@ -44,7 +44,6 @@ use iroh::{
 };
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
-use ratatui::backend::Backend;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
 

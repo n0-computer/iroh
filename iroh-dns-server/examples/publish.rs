@@ -58,7 +58,7 @@ async fn main() -> Result<()> {
             s
         }
         Err(_) => {
-            bail!("Environtment variable IROH_SECRET is not set. To create a new secret, use the --create option.")
+            bail!("Environment variable IROH_SECRET is not set. To create a new secret, use the --create option.")
         }
     };
 

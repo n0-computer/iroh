@@ -143,7 +143,7 @@ impl<D: BaoStore> Node<D> {
         &self.inner.client
     }
 
-    /// Returns a referenc to the used `LocalPoolHandle`.
+    /// Returns a reference to the used `LocalPoolHandle`.
     pub fn local_pool_handle(&self) -> &LocalPoolHandle {
         &self.inner.rt
     }
@@ -476,8 +476,6 @@ async fn handle_connection(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use anyhow::{bail, Context};
     use bytes::Bytes;
     use iroh_base::node_addr::AddrInfoOptions;

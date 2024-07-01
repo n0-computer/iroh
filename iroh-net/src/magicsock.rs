@@ -1556,7 +1556,7 @@ impl Stream for DirectAddrsStream {
                     if discovered.is_empty() {
                         // When we start up we might initially have empty local endpoints as
                         // the magic socket has not yet figured this out.  Later on this set
-                        // should never be emtpy.  However even if it was the magicsock
+                        // should never be empty.  However even if it was the magicsock
                         // would be in a state not very useable so skipping those events is
                         // probably fine.
                         // To make sure we install the right waker we loop rather than
@@ -2646,7 +2646,7 @@ pub enum DirectAddrType {
     ///
     /// When possible an iroh-net node will perform STUN to discover which is the address
     /// from which it sends data on the public internet.  This can be different from locally
-    /// bound addresses when the node is on a local network wich performs NAT or similar.
+    /// bound addresses when the node is on a local network which performs NAT or similar.
     Stun,
     /// An address assigned by the router using port mapping.
     ///
@@ -2747,7 +2747,6 @@ impl NetInfo {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
-    use futures_lite::StreamExt;
     use iroh_test::CallOnDrop;
     use rand::RngCore;
 
@@ -2914,7 +2913,7 @@ mod tests {
         // TODO: ensure panics in this function are reported ok
         assert!(
             stats.path.lost_packets < 10,
-            "[reciever] should not loose many packets",
+            "[receiver] should not loose many packets",
         );
 
         info!("close");
@@ -3495,7 +3494,7 @@ mod tests {
                 mk_transmit(b"hello world", Some(5)),
                 mk_transmit(b"!", None)
             ]),
-            mk_expected(["hello", " worl", "d", "!"])
+            mk_expected(["hello", " worl", "d", "!"]) // spellchecker:disable-line
         );
         // split that results in 1 packet
         assert_eq!(

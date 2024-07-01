@@ -213,6 +213,20 @@ jobs:
     - name: clippy check (default features)
       run: cargo clippy --workspace --all-targets
 
+  check_typos:
+    timeout-minutes: 30
+    name: Checking typos
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+    steps:
+    - uses: actions/checkout@v4
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: typos-cli
+    - run: typos
+
   msrv:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30

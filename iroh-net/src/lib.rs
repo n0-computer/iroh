@@ -98,7 +98,7 @@
 //!
 //! The [`DnsDiscovery`] service is a discovery service which will publish the [`RelayUrl`]
 //! and direct addresses to a service publishing those as DNS records.  To connect it looks
-//! up the [`NodeId`] in the DNS system to find the adressing details.  This enables
+//! up the [`NodeId`] in the DNS system to find the addressing details.  This enables
 //! connecting using only the [`NodeId`] which is often more convenient and resilient.
 //!
 //!
