@@ -51,7 +51,7 @@ impl Iroh {
     }
 
     /// Return the [`NodeAddr`] for this node.
-    pub async fn my_addr(&self) -> Result<NodeAddr> {
+    pub async fn node_addr(&self) -> Result<NodeAddr> {
         let addr = self.rpc.rpc(NodeAddrRequest).await??;
         Ok(addr)
     }
