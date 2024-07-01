@@ -32,6 +32,3 @@ missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
 unused-async = "warn"
-
-[target.aarch64-linux-android]
-linker = "aarch64-linux-android29-clang"

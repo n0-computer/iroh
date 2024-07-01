@@ -93,6 +93,11 @@ jobs:
     - name: Install NDK
       run: echo "NDK_HOME=${ANDROID_HOME}/ndk-bundle" >> $GITHUB_ENV
 
+    - name: Set linker for aarch64-linux-android
+      run: |
+        echo '[target.aarch64-linux-android]' >> .cargo/config
+        echo 'linker = "aarch64-linux-android29-clang"' >> .cargo/config
+
     - name: Build
       run: cargo build --all --target aarch64-linux-android 
 
