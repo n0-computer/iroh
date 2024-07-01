@@ -99,6 +99,13 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v2
 
+    - name: Setup Android NDK
+      uses: nttld/setup-ndk@v1
+      id: setup-ndk
+      with:
+        ndk-version: r23
+        add-to-path: true
+
     - name: Build
       run: | 
         cargo install cargo-ndk
