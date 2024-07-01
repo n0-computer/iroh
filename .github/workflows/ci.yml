@@ -36,7 +36,7 @@ jobs:
         target:
            # cross tests are currently broken vor armv7 and aarch64
            # see https://github.com/cross-rs/cross/issues/1311
-          - armv7-linux-androideabi
+          # - armv7-linux-androideabi
           # - aarch64-linux-android
           # Freebsd execution fails in cross
           # - i686-unknown-freebsd # Linking fails :/
@@ -80,6 +80,7 @@ jobs:
       matrix:
         target:
           - aarch64-linux-android
+          - armv7-linux-androideabi
     steps:
     - name: Checkout
       uses: actions/checkout@v2
@@ -87,9 +88,9 @@ jobs:
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
       with:
-        target: aarch64-linux-android
+        target: ${{ matrix.target }}
     - name: Install rustup target
-      run: rustup target add aarch64-linux-android
+      run: rustup target add ${{ matrix.target }}
 
     - name: Setup Java
       uses: actions/setup-java@v3
@@ -112,7 +113,7 @@ jobs:
         ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       run: | 
         cargo install cargo-ndk
-        cargo ndk --target aarch64-linux-android build 
+        cargo ndk --target ${{ matrix.target }} build
 
   cross_test:
     name: Cross Test
