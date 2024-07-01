@@ -46,10 +46,10 @@ use crate::rpc_protocol::{
     BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
     CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
     DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocSetHashRequest,
-    ListTagsRequest, NodeAddrRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest, NodeRelayRequest,
-    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest,
-    NodeWatchResponse, Request, RpcService, SetTagOption,
+    ListTagsRequest, NodeAddAddrRequest, NodeAddrRequest, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest,
+    NodeRelayRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
+    NodeWatchRequest, NodeWatchResponse, Request, RpcService, SetTagOption,
 };
 
 mod docs;
@@ -141,6 +141,7 @@ impl<D: BaoStore> Handler<D> {
                     .await
             }
             NodeConnectionInfo(msg) => chan.rpc(msg, self, Self::node_connection_info).await,
+            NodeAddAddr(msg) => chan.rpc(msg, self, Self::node_add_addr).await,
             BlobList(msg) => chan.server_streaming(msg, self, Self::blob_list).await,
             BlobListIncomplete(msg) => {
                 chan.server_streaming(msg, self, Self::blob_list_incomplete)
@@ -994,6 +995,12 @@ impl<D: BaoStore> Handler<D> {
         let NodeConnectionInfoRequest { node_id } = req;
         let conn_info = self.inner.endpoint.connection_info(node_id);
         Ok(NodeConnectionInfoResponse { conn_info })
+    }
+
+    async fn node_add_addr(self, req: NodeAddAddrRequest) -> RpcResult<()> {
+        let NodeAddAddrRequest { addr } = req;
+        self.inner.endpoint.add_node_addr(addr)?;
+        Ok(())
     }
 
     async fn create_collection(

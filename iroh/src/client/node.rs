@@ -9,9 +9,9 @@ use iroh_net::{endpoint::ConnectionInfo, relay::RelayUrl, NodeAddr, NodeId};
 use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::{
-    CounterStats, NodeAddrRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeIdRequest, NodeRelayRequest, NodeShutdownRequest, NodeStatsRequest,
-    NodeStatusRequest,
+    CounterStats, NodeAddAddrRequest, NodeAddrRequest, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeIdRequest, NodeRelayRequest,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
 };
 
 use super::{flatten, Iroh};
@@ -54,6 +54,12 @@ impl Iroh {
     pub async fn my_addr(&self) -> Result<NodeAddr> {
         let addr = self.rpc.rpc(NodeAddrRequest).await??;
         Ok(addr)
+    }
+
+    /// Add a known node address to the node.
+    pub async fn add_node_addr(&self, addr: NodeAddr) -> Result<()> {
+        self.rpc.rpc(NodeAddAddrRequest { addr }).await??;
+        Ok(())
     }
 
     /// Get the relay server we are connected to.
