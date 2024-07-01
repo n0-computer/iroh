@@ -149,7 +149,7 @@ impl<D: BaoStore> Node<D> {
     }
 
     /// Get the relay server we are connected to.
-    pub fn my_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
+    pub fn home_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
         self.inner.endpoint.home_relay()
     }
 

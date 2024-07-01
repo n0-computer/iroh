@@ -39,13 +39,13 @@ async fn main() -> Result<()> {
     println!("fetching hash:  {}", ticket.hash());
     println!("node id:        {}", node.node_id());
     println!("node listening addresses:");
-    let addrs = node.my_addr().await?;
+    let addrs = node.node_addr().await?;
     for addr in addrs.direct_addresses() {
         println!("\t{:?}", addr);
     }
     println!(
         "node relay server url: {:?}",
-        node.my_relay()
+        node.home_relay()
             .expect("a default relay url should be provided")
             .to_string()
     );
