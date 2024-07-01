@@ -90,7 +90,7 @@ jobs:
     - name: Setup Android target
       run: rustup target add ${{ matrix.target }}
 
-    - uses: nttld/setup-ndk@v1
+    - uses: arqu/setup-ndk@main
       id: setup-ndk
       with:
         ndk-version: r21e
