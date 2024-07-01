@@ -62,6 +62,8 @@ async fn gossip_smoke() {
     let (addr2, node2) = spawn_node();
     let gossip1 = node1.gossip();
     let gossip2 = node2.gossip();
+    node1.add_node_addr(addr2.clone()).await.unwrap();
+    node2.add_node_addr(addr1.clone()).await.unwrap();
     let topic = TopicId::from([0u8; 32]);
     let (mut sink1, _stream2) = gossip1
         .subscribe_with_opts(
