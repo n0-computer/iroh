@@ -36,12 +36,13 @@ jobs:
         target:
            # cross tests are currently broken vor armv7 and aarch64
            # see https://github.com/cross-rs/cross/issues/1311
-          - armv7-linux-androideabi
-          - aarch64-linux-android
+          # - armv7-linux-androideabi
+          # - aarch64-linux-android
           # Freebsd execution fails in cross
           # - i686-unknown-freebsd # Linking fails :/
           - x86_64-unknown-freebsd
-          - x86_64-unknown-netbsd
+          # Netbsd execution fails to link in cross
+          # - x86_64-unknown-netbsd
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -67,6 +68,52 @@ jobs:
       run: cross build --all --target ${{ matrix.target }}
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
+
+  android_build:
+    name: Android Build Only
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    timeout-minutes: 30
+    # runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-linux-android
+          - armv7-linux-androideabi
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        target: ${{ matrix.target }}
+    - name: Install rustup target
+      run: rustup target add ${{ matrix.target }}
+
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+    
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v2
+
+    - name: Setup Android NDK
+      uses: arqu/setup-ndk@main
+      id: setup-ndk
+      with:
+        ndk-version: r23
+        add-to-path: true
+
+    - name: Build
+      env:
+        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      run: | 
+        cargo install cargo-ndk
+        cargo ndk --target ${{ matrix.target }} build
 
   cross_test:
     name: Cross Test
