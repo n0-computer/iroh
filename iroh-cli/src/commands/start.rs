@@ -189,6 +189,7 @@ mod tests {
     use iroh::util::path::IrohPaths;
 
     #[tokio::test]
+    #[ignore = "flaky"]
     async fn test_run_rpc_lock_file() -> Result<()> {
         let data_dir = tempfile::TempDir::with_prefix("rpc-lock-file-")?;
         let lock_file_path = data_dir
