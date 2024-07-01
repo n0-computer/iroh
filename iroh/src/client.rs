@@ -2,6 +2,7 @@
 
 use futures_lite::{Stream, StreamExt};
 use ref_cast::RefCast;
+use std::ops::Deref;
 
 #[doc(inline)]
 pub use crate::rpc_protocol::RpcService;
@@ -25,9 +26,8 @@ pub mod authors;
 pub mod blobs;
 pub mod docs;
 pub mod gossip;
+pub mod node;
 pub mod tags;
-
-mod node;
 
 /// Iroh rpc client - boxed so that we can have a concrete type.
 pub(crate) type RpcClient =
@@ -37,6 +37,14 @@ pub(crate) type RpcClient =
 #[derive(Debug, Clone)]
 pub struct Iroh {
     rpc: RpcClient,
+}
+
+impl Deref for Iroh {
+    type Target = node::Client;
+
+    fn deref(&self) -> &Self::Target {
+        self.node()
+    }
 }
 
 impl Iroh {
@@ -68,6 +76,11 @@ impl Iroh {
     /// Gossip client
     pub fn gossip(&self) -> &gossip::Client {
         gossip::Client::ref_cast(&self.rpc)
+    }
+
+    /// Node client
+    pub fn node(&self) -> &node::Client {
+        node::Client::ref_cast(&self.rpc)
     }
 }
 
