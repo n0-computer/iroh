@@ -89,8 +89,19 @@ jobs:
     - name: Install rustup target
       run: rustup target add aarch64-linux-android
 
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+    
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v2
+
     - name: Build
-      run: cargo build --all --target aarch64-linux-android 
+      run: | 
+        cargo install cargo-ndk
+        cargo ndk --target aarch64-linux-android build 
 
   cross_test:
     name: Cross Test
