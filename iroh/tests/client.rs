@@ -23,7 +23,7 @@ fn spawn_node() -> (NodeAddr, Iroh) {
                 .secret_key(secret_key)
                 .spawn()
                 .await?;
-            let addr = node.my_addr().await?;
+            let addr = node.node_addr().await?;
             sender.send((addr, node.client().clone()))?;
             node.cancel_token().cancelled().await;
             anyhow::Ok(())
