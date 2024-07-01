@@ -189,7 +189,6 @@ mod tests {
     use iroh::util::path::IrohPaths;
 
     #[tokio::test]
-    #[ignore = "flaky"]
     async fn test_run_rpc_lock_file() -> Result<()> {
         let data_dir = tempfile::TempDir::with_prefix("rpc-lock-file-")?;
         let lock_file_path = data_dir
@@ -257,7 +256,7 @@ mod tests {
         close_s.send(()).unwrap();
 
         // wait for the node to close
-        if tokio::time::timeout(Duration::from_millis(1000), start)
+        if tokio::time::timeout(Duration::from_secs(5), start)
             .await
             .is_err()
         {
