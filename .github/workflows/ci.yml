@@ -41,6 +41,7 @@ jobs:
           # Freebsd execution fails in cross
           # - i686-unknown-freebsd # Linking fails :/
           - x86_64-unknown-freebsd
+          # Netbsd execution fails to link in cross
           # - x86_64-unknown-netbsd
     steps:
     - name: Checkout
