@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use futures_util::SinkExt;
-use iroh::client::{gossip::SubscribeOpts, Iroh};
+use iroh::client::Iroh;
 use iroh_gossip::{
     dispatcher::{Command, Event, GossipEvent},
     proto::TopicId,
@@ -57,39 +57,33 @@ fn await_messages(
 }
 
 #[tokio::test]
-async fn gossip_smoke() {
+async fn gossip_smoke() -> TestResult {
     let _ = tracing_subscriber::fmt::try_init();
     let (addr1, node1) = spawn_node();
     let (addr2, node2) = spawn_node();
     let gossip1 = node1.gossip();
     let gossip2 = node2.gossip();
-    node1.add_node_addr(addr2.clone()).await.unwrap();
-    node2.add_node_addr(addr1.clone()).await.unwrap();
+    node1.add_node_addr(addr2.clone()).await?;
+    node2.add_node_addr(addr1.clone()).await?;
     let topic = TopicId::from([0u8; 32]);
-    let (mut sink1, _stream2) = gossip1
-        .subscribe_with_opts(
-            topic,
-            SubscribeOpts {
-                bootstrap: [addr2.node_id].into_iter().collect(),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    let (_sink2, stream2) = gossip2
-        .subscribe_with_opts(
-            topic,
-            SubscribeOpts {
-                bootstrap: [addr1.node_id].into_iter().collect(),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    sink1
-        .send(Command::Broadcast("hello".into()))
-        .await
-        .unwrap();
-    let msgs = await_messages(stream2, 1).await.unwrap();
+    let (mut sink1, _stream2) = gossip1.subscribe(topic, [addr2.node_id]).await?;
+    let (_sink2, stream2) = gossip2.subscribe(topic, [addr1.node_id]).await?;
+    sink1.send(Command::Broadcast("hello".into())).await?;
+    let msgs = await_messages(stream2, 1).await?;
     assert_eq!(msgs, vec![Bytes::from("hello")]);
+    Ok(())
+}
+
+// An uninhabited error type that allows us to use `?` in tests instead of `unwrap`.
+//
+// Any use of `?` in a test will immediately panic with the error message.
+#[derive(Debug)]
+enum TestError {}
+
+type TestResult<T = ()> = Result<T, TestError>;
+
+impl<E: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static> From<E> for TestError {
+    fn from(error: E) -> Self {
+        panic!("Test failed: {:?}", error);
+    }
 }

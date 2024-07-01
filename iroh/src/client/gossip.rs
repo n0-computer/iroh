@@ -76,4 +76,24 @@ impl Client {
         let sink = sink.sink_map_err(|_| anyhow::anyhow!("send error"));
         Ok((sink, stream))
     }
+
+    /// Subscribe to a gossip topic with default options.
+    pub async fn subscribe(
+        &self,
+        topic: impl Into<TopicId>,
+        bootstrap: impl IntoIterator<Item = impl Into<NodeId>>,
+    ) -> Result<(
+        impl Sink<GossipSubscribeUpdate, Error = anyhow::Error>,
+        impl Stream<Item = Result<GossipSubscribeResponse>>,
+    )> {
+        let bootstrap = bootstrap.into_iter().map(Into::into).collect();
+        self.subscribe_with_opts(
+            topic.into(),
+            SubscribeOpts {
+                bootstrap,
+                ..Default::default()
+            },
+        )
+        .await
+    }
 }
