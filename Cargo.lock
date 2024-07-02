@@ -3154,9 +3154,9 @@ dependencies = [
 
 [[package]]
 name = "netdev"
-version = "0.27.0"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e12d9f49b8d4b9d7f97525ce65f6527079e549e8b2f010f15b921764e73d4baa"
+checksum = "e6b7a18d9c482b774500c660991da545bac1259fe4dfd40981870e5832aedffc"
 dependencies = [
  "dlopen2",
  "libc",
@@ -3166,7 +3166,7 @@ dependencies = [
  "netlink-sys",
  "once_cell",
  "system-configuration 0.6.0",
- "windows 0.54.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6367,16 +6367,6 @@ dependencies = [
 
 [[package]]
 name = "windows"
-version = "0.54.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9252e5725dbed82865af151df558e754e4a3c2c30818359eb17465f1346a1b49"
-dependencies = [
- "windows-core 0.54.0",
- "windows-targets 0.52.5",
-]
-
-[[package]]
-name = "windows"
 version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1de69df01bdf1ead2f4ac895dc77c9351aefff65b2f3db429a343f9cbf05e132"
@@ -6400,16 +6390,6 @@ version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33ab640c8d7e35bf8ba19b884ba838ceb4fba93a4e8c65a9059d08afcfc683d9"
 dependencies = [
- "windows-targets 0.52.5",
-]
-
-[[package]]
-name = "windows-core"
-version = "0.54.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12661b9c89351d684a50a8a643ce5f608e20243b9fb84687800163429f161d65"
-dependencies = [
- "windows-result",
  "windows-targets 0.52.5",
 ]
 
