@@ -30,7 +30,7 @@ use crate::relay::http::{
 use crate::relay::server::{ClientConnHandler, MaybeTlsStream};
 use crate::relay::MaybeTlsStreamServer;
 
-use super::RELAY_HTTP_PATH;
+use super::{LEGACY_RELAY_PATH, RELAY_PATH};
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -552,7 +552,7 @@ impl Service<Request<Incoming>> for RelayService {
         // or /derp for backwards compat
         if matches!(
             (req.method(), req.uri().path()),
-            (&hyper::Method::GET, "/derp" | RELAY_HTTP_PATH)
+            (&hyper::Method::GET, LEGACY_RELAY_PATH | RELAY_PATH)
         ) {
             match &self.0.relay_handler {
                 RelayHandler::Override(f) => {
