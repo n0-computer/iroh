@@ -31,6 +31,7 @@ use crate::key::{PublicKey, SecretKey};
 use crate::relay::client::{ConnReader, ConnWriter};
 use crate::relay::codec::DerpCodec;
 use crate::relay::http::streams::{downcast_upgrade, MaybeTlsStream};
+use crate::relay::http::RELAY_PATH;
 use crate::relay::RelayUrl;
 use crate::relay::{
     client::Client as RelayClient, client::ClientBuilder as RelayClientBuilder,
@@ -202,12 +203,14 @@ impl PingTracker {
 }
 
 /// Build a Client.
+#[derive(derive_more::Debug)]
 pub struct ClientBuilder {
     /// Default is false
     can_ack_pings: bool,
     /// Default is false
     is_preferred: bool,
     /// Default is None
+    #[debug("address family selector callback")]
     address_family_selector: Option<Box<dyn Fn() -> BoxFuture<bool> + Send + Sync + 'static>>,
     /// Default is false
     is_prober: bool,
@@ -220,16 +223,6 @@ pub struct ClientBuilder {
     insecure_skip_cert_verify: bool,
     /// HTTP Proxy
     proxy_url: Option<Url>,
-}
-
-impl std::fmt::Debug for ClientBuilder {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let address_family_selector_txt = match self.address_family_selector {
-            Some(_) => "Some(Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static>)",
-            None => "None",
-        };
-        write!(f, "ClientBuilder {{ can_ack_pings: {}, is_preferred: {}, address_family_selector: {address_family_selector_txt} }}", self.can_ack_pings, self.is_preferred)
-    }
 }
 
 impl ClientBuilder {
@@ -620,7 +613,7 @@ impl Actor {
 
     async fn connect_ws(&self) -> Result<(ConnReader, ConnWriter), ClientError> {
         let mut dial_url = (*self.url).clone();
-        dial_url.set_path("/derp");
+        dial_url.set_path(RELAY_PATH);
 
         debug!(%dial_url, "Dialing relay by websocket");
 
@@ -706,7 +699,7 @@ impl Actor {
         );
         debug!("Sending upgrade request");
         let req = Request::builder()
-            .uri("/derp")
+            .uri(RELAY_PATH)
             .header(UPGRADE, Protocol::Relay.upgrade_header())
             .body(http_body_util::Empty::<hyper::body::Bytes>::new())?;
         request_sender.send_request(req).await.map_err(From::from)
