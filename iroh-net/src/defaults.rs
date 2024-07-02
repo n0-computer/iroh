@@ -63,7 +63,7 @@ pub mod prod {
 
 /// Staging configuration.
 ///
-/// Used by tests and migth have incompatible changes deployed
+/// Used by tests and might have incompatible changes deployed
 pub mod staging {
     use super::*;
 
