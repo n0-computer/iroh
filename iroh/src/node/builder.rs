@@ -185,9 +185,9 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
     fn default() -> Self {
         // Use staging in testing
         #[cfg(not(any(test, feature = "test-utils")))]
-        let relay_mode = RelayMode::DefaultProd;
+        let relay_mode = RelayMode::Default;
         #[cfg(any(test, feature = "test-utils"))]
-        let relay_mode = RelayMode::DefaultStaging;
+        let relay_mode = RelayMode::Staging;
 
         Self {
             storage: StorageConfig::Mem,
@@ -218,9 +218,9 @@ impl<D: Map> Builder<D> {
     ) -> Self {
         // Use staging in testing
         #[cfg(not(any(test, feature = "test-utils")))]
-        let relay_mode = RelayMode::DefaultProd;
+        let relay_mode = RelayMode::Default;
         #[cfg(any(test, feature = "test-utils"))]
-        let relay_mode = RelayMode::DefaultStaging;
+        let relay_mode = RelayMode::Staging;
 
         Self {
             storage,

@@ -15,9 +15,9 @@ pub enum RelayMode {
     /// Disable relay servers completely.
     Disabled,
     /// Use the default relay map, with production relay servers from n0.
-    DefaultProd,
-    /// Use the default relay map, with staging relay servers from n0.
-    DefaultStaging,
+    Default,
+    /// Use the staging relay servers from n0.
+    Staging,
     /// Use a custom relay map.
     Custom(RelayMap),
 }

@@ -87,9 +87,9 @@ impl Default for Builder {
     fn default() -> Self {
         // Use staging in testing
         #[cfg(not(any(test, feature = "test-utils")))]
-        let relay_mode = RelayMode::DefaultProd;
+        let relay_mode = RelayMode::Default;
         #[cfg(any(test, feature = "test-utils"))]
-        let relay_mode = RelayMode::DefaultStaging;
+        let relay_mode = RelayMode::Staging;
 
         Self {
             secret_key: Default::default(),
@@ -124,8 +124,8 @@ impl Builder {
     pub async fn bind(self, bind_port: u16) -> Result<Endpoint> {
         let relay_map = match self.relay_mode {
             RelayMode::Disabled => RelayMap::empty(),
-            RelayMode::DefaultProd => defaults::staging::default_relay_map(),
-            RelayMode::DefaultStaging => defaults::staging::default_relay_map(),
+            RelayMode::Default => defaults::prod::default_relay_map(),
+            RelayMode::Staging => defaults::staging::default_relay_map(),
             RelayMode::Custom(relay_map) => {
                 ensure!(!relay_map.is_empty(), "Empty custom relay server map",);
                 relay_map
