@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     let mut stream = doc.get_many(Query::all()).await?;
     while let Some(entry) = stream.try_next().await? {
         println!("entry {}", fmt_entry(&entry));
-        // You can pass either a `Doc` or the `Iroh client`.
+        // You can pass either `&doc` or the `client`.
         let content = entry.content_bytes(&doc).await?;
         println!("  content {}", std::str::from_utf8(&content)?)
     }
