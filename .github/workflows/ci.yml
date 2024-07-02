@@ -443,8 +443,7 @@ jobs:
           platforms: linux/amd64
           file: docker/Dockerfile
   
-      - name: Run Docker image
-        run: docker run -p 9090:9090 -p 4919:4919/udp -Pd n0computer/iroh-test:latest --rpc-addr 0.0.0.0:4919
-
-      - name: Run iroh node stats
-        run: cargo run --bin iroh -- --rpc-addr 127.0.0.1:4919 node stats
+      - name: Run Docker image & node stats test
+        run: |
+          docker run -p 9090:9090 -p 4919:4919/udp -Pd n0computer/iroh-test:latest --rpc-addr 0.0.0.0:4919
+          cargo run --bin iroh -- --rpc-addr 127.0.0.1:4919 node stats
