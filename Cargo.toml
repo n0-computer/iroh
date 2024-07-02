@@ -10,11 +10,15 @@ members = [
   "iroh-docs",
   "iroh-test",
   "iroh-net/bench",
-  "iroh-cli"
+  "iroh-cli",
+  "iroh-willow",
 ]
 resolver = "2"
 
 [profile.release]
+debug = true
+
+[profile.bench]
 debug = true
 
 [profile.optimized-release]
@@ -26,6 +30,14 @@ opt-level = 3
 panic = 'abort'
 incremental = false
 
+[profile.dev.package.ed25519-dalek]
+opt-level = 3
+
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+
+[profile.dev.package.iroh-blake3]
+opt-level = 3
 
 [workspace.lints.rust]
 missing_debug_implementations = "warn"
