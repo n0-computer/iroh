@@ -28,7 +28,7 @@ use tracing::{debug, info_span, trace, warn};
 use url::Url;
 
 use crate::{
-    defaults::default_relay_map,
+    defaults,
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
@@ -85,9 +85,15 @@ pub struct Builder {
 
 impl Default for Builder {
     fn default() -> Self {
+        // Use staging in testing
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let relay_mode = RelayMode::Default;
+        #[cfg(any(test, feature = "test-utils"))]
+        let relay_mode = RelayMode::Staging;
+
         Self {
             secret_key: Default::default(),
-            relay_mode: RelayMode::Default,
+            relay_mode,
             alpn_protocols: Default::default(),
             transport_config: Default::default(),
             concurrent_connections: Default::default(),
@@ -118,7 +124,8 @@ impl Builder {
     pub async fn bind(self, bind_port: u16) -> Result<Endpoint> {
         let relay_map = match self.relay_mode {
             RelayMode::Disabled => RelayMap::empty(),
-            RelayMode::Default => default_relay_map(),
+            RelayMode::Default => defaults::prod::default_relay_map(),
+            RelayMode::Staging => defaults::staging::default_relay_map(),
             RelayMode::Custom(relay_map) => {
                 ensure!(!relay_map.is_empty(), "Empty custom relay server map",);
                 relay_map
@@ -369,7 +376,7 @@ impl Endpoint {
 
     // # Methods relating to construction.
 
-    /// Returns the builder for an [`Endpoint`].
+    /// Returns the builder for an [`Endpoint`], with a production configuration.
     pub fn builder() -> Builder {
         Builder::default()
     }
@@ -717,7 +724,7 @@ impl Endpoint {
     ///
     /// Then [`Endpoint`] stores some information about all the other iroh-net nodes it has
     /// information about.  This includes information about the relay server in use, any
-    /// known direct addresses, when there was last any conact with this node and what kind
+    /// known direct addresses, when there was last any contact with this node and what kind
     /// of connection this was.
     pub fn connection_info(&self, node_id: NodeId) -> Option<ConnectionInfo> {
         self.msock.connection_info(node_id)
@@ -1038,7 +1045,7 @@ fn try_send_rtt_msg(conn: &quinn::Connection, magic_ep: &Endpoint) {
     }
 }
 
-/// Read a proxy url from the environemnt, in this order
+/// Read a proxy url from the environment, in this order
 ///
 /// - `HTTP_PROXY`
 /// - `http_proxy`

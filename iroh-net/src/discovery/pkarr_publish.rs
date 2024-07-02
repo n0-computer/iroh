@@ -129,20 +129,20 @@ struct PublisherService {
 
 impl PublisherService {
     async fn run(self) {
-        let mut failed_attemps = 0;
+        let mut failed_attempts = 0;
         let republish = tokio::time::sleep(Duration::MAX);
         tokio::pin!(republish);
         loop {
             if let Some(info) = self.watcher.get() {
                 if let Err(err) = self.publish_current(info).await {
                     warn!(?err, url = %self.pkarr_client.pkarr_relay_url , "Failed to publish to pkarr");
-                    failed_attemps += 1;
+                    failed_attempts += 1;
                     // Retry after increasing timeout
                     republish
                         .as_mut()
-                        .reset(Instant::now() + Duration::from_secs(failed_attemps));
+                        .reset(Instant::now() + Duration::from_secs(failed_attempts));
                 } else {
-                    failed_attemps = 0;
+                    failed_attempts = 0;
                     // Republish after fixed interval
                     republish
                         .as_mut()

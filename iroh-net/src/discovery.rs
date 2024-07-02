@@ -60,7 +60,7 @@ pub struct DiscoveryItem {
     ///
     /// Must be microseconds since the unix epoch.
     pub last_updated: Option<u64>,
-    /// The adress info for the node being resolved.
+    /// The address info for the node being resolved.
     pub addr_info: AddrInfo,
 }
 

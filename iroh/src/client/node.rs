@@ -6,17 +6,25 @@ use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
 use iroh_base::key::PublicKey;
 use iroh_net::{endpoint::ConnectionInfo, relay::RelayUrl, NodeAddr, NodeId};
+use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::{
-    CounterStats, NodeAddrRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeIdRequest, NodeRelayRequest, NodeShutdownRequest, NodeStatsRequest,
-    NodeStatusRequest,
+    CounterStats, NodeAddAddrRequest, NodeAddrRequest, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeIdRequest, NodeRelayRequest,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
 };
 
-use super::{flatten, Iroh};
+use super::{flatten, RpcClient};
 
-impl Iroh {
+/// Iroh node client.
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
+pub struct Client {
+    pub(super) rpc: RpcClient,
+}
+
+impl Client {
     /// Get statistics of the running node.
     pub async fn stats(&self) -> Result<BTreeMap<String, CounterStats>> {
         let res = self.rpc.rpc(NodeStatsRequest {}).await??;
@@ -51,13 +59,19 @@ impl Iroh {
     }
 
     /// Return the [`NodeAddr`] for this node.
-    pub async fn my_addr(&self) -> Result<NodeAddr> {
+    pub async fn node_addr(&self) -> Result<NodeAddr> {
         let addr = self.rpc.rpc(NodeAddrRequest).await??;
         Ok(addr)
     }
 
+    /// Add a known node address to the node.
+    pub async fn add_node_addr(&self, addr: NodeAddr) -> Result<()> {
+        self.rpc.rpc(NodeAddAddrRequest { addr }).await??;
+        Ok(())
+    }
+
     /// Get the relay server we are connected to.
-    pub async fn my_relay(&self) -> Result<Option<RelayUrl>> {
+    pub async fn home_relay(&self) -> Result<Option<RelayUrl>> {
         let relay = self.rpc.rpc(NodeRelayRequest).await??;
         Ok(relay)
     }

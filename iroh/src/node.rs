@@ -141,13 +141,13 @@ impl<D: BaoStore> Node<D> {
         &self.inner.client
     }
 
-    /// Returns a referenc to the used `LocalPoolHandle`.
+    /// Returns a reference to the used `LocalPoolHandle`.
     pub fn local_pool_handle(&self) -> &LocalPoolHandle {
         &self.inner.rt
     }
 
     /// Get the relay server we are connected to.
-    pub fn my_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
+    pub fn home_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
         self.inner.endpoint.home_relay()
     }
 
