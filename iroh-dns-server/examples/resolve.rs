@@ -6,7 +6,7 @@ use hickory_resolver::{
     AsyncResolver,
 };
 use iroh_net::{
-    discovery::dns::N0_DNS_NODE_ORIGIN,
+    discovery::dns::N0_DNS_NODE_ORIGIN_PROD,
     dns::{node_info::TxtAttrs, DnsResolver},
     NodeId,
 };
@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
     let (resolver, origin) = match args.env {
         Env::Default => (
             iroh_net::dns::default_resolver().clone(),
-            N0_DNS_NODE_ORIGIN,
+            N0_DNS_NODE_ORIGIN_PROD,
         ),
         Env::Dev => (
             resolver_with_nameserver(LOCALHOST_DNS.parse()?),

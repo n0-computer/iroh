@@ -466,7 +466,7 @@ fn sort_relays<'a>(
 mod tests {
     use pretty_assertions::assert_eq;
 
-    use crate::defaults::default_relay_map;
+    use crate::defaults::staging::default_relay_map;
     use crate::netcheck::RelayLatencies;
 
     use super::*;

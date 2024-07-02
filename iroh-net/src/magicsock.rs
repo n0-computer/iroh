@@ -2750,7 +2750,7 @@ mod tests {
     use iroh_test::CallOnDrop;
     use rand::RngCore;
 
-    use crate::{defaults::EU_RELAY_HOSTNAME, relay::RelayMode, tls, Endpoint};
+    use crate::{defaults::staging::EU_RELAY_HOSTNAME, relay::RelayMode, tls, Endpoint};
 
     use super::*;
 
