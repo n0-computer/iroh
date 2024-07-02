@@ -57,9 +57,8 @@ jobs:
       run: |
         docker kill $(docker ps -q)
 
-    - name: Install cross
       # See https://github.com/cross-rs/cross/issues/1222
-      run: cargo install cross --git https://github.com/cross-rs/cross
+    - uses: taiki-e/install-action@cross
 
     - name: build
       # cross tests are currently broken vor armv7 and aarch64
@@ -139,9 +138,8 @@ jobs:
       run: |
         docker kill $(docker ps -q)
 
-    - name: Install cross
       # See https://github.com/cross-rs/cross/issues/1222
-      run: cargo install cross --git https://github.com/cross-rs/cross
+    - uses: taiki-e/install-action@cross
 
     - name: test
       run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
