@@ -312,11 +312,15 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                         Some(Err(outer)) => {
                             if outer.is_panic() {
                                 error!("Task panicked: {outer:?}");
+                                println!("Task panicked: {outer:?}");
+                                eprintln!("Task panicked: {outer:?}");
                                 break;
                             } else if outer.is_cancelled() {
                                 debug!("Task cancelled: {outer:?}");
                             } else {
                                 error!("Task failed: {outer:?}");
+                                println!("Task failed: {outer:?}");
+                                eprintln!("Task failed: {outer:?}");
                                 break;
                             }
                         }
@@ -326,7 +330,12 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                         _ => {}
                     }
                 },
-                else => break,
+                else => {
+                    error!("Node task ended unexpectedly");
+                    println!("Node task ended unexpectedly");
+                    eprintln!("Node task ended unexpectedly");
+                    break
+                },
             }
         }
 
