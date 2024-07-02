@@ -712,7 +712,7 @@ mod tests {
     use http::header::UPGRADE;
     use iroh_base::node_addr::RelayUrl;
 
-    use crate::relay::http::{ClientBuilder, HTTP_UPGRADE_PROTOCOL};
+    use crate::relay::http::{ClientBuilder, Protocol, HTTP_UPGRADE_PROTOCOL};
 
     use self::relay::ReceivedMessage;
 
@@ -887,16 +887,17 @@ mod tests {
     async fn test_relay_clients_both_websockets() {
         let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
-        // NOTE: Using `ws://` URL scheme to trigger websockets.
-        let relay_url = format!("ws://{}", server.http_addr().unwrap());
+
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();
 
         // set up client a
         let a_secret_key = SecretKey::generate();
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let (client_a, mut client_a_receiver) =
-            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
+        let (client_a, mut client_a_receiver) = ClientBuilder::new(relay_url.clone())
+            .protocol(Protocol::Websocket)
+            .build(a_secret_key, resolver);
         let connect_client = client_a.clone();
 
         // give the relay server some time to accept connections
@@ -920,8 +921,9 @@ mod tests {
         let b_secret_key = SecretKey::generate();
         let b_key = b_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let (client_b, mut client_b_receiver) =
-            ClientBuilder::new(relay_url.clone()).build(b_secret_key, resolver);
+        let (client_b, mut client_b_receiver) = ClientBuilder::new(relay_url.clone())
+            .protocol(Protocol::Websocket) // another websocket client
+            .build(b_secret_key, resolver);
         client_b.connect().await.unwrap();
 
         // send message from a to b
@@ -954,19 +956,15 @@ mod tests {
         let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
 
-        let derp_relay_url = format!("http://{}", server.http_addr().unwrap());
-        let derp_relay_url: RelayUrl = derp_relay_url.parse().unwrap();
-
-        // NOTE: Using `ws://` URL scheme to trigger websockets.
-        let ws_relay_url = format!("ws://{}", server.http_addr().unwrap());
-        let ws_relay_url: RelayUrl = ws_relay_url.parse().unwrap();
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse().unwrap();
 
         // set up client a
         let a_secret_key = SecretKey::generate();
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
         let (client_a, mut client_a_receiver) =
-            ClientBuilder::new(derp_relay_url.clone()).build(a_secret_key, resolver);
+            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
         let connect_client = client_a.clone();
 
         // give the relay server some time to accept connections
@@ -990,8 +988,9 @@ mod tests {
         let b_secret_key = SecretKey::generate();
         let b_key = b_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let (client_b, mut client_b_receiver) =
-            ClientBuilder::new(ws_relay_url.clone()).build(b_secret_key, resolver);
+        let (client_b, mut client_b_receiver) = ClientBuilder::new(relay_url.clone())
+            .protocol(Protocol::Websocket) // Use websockets
+            .build(b_secret_key, resolver);
         client_b.connect().await.unwrap();
 
         // send message from a to b
