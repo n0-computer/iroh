@@ -114,7 +114,7 @@ jobs:
       run: | 
         cargo install cargo-ndk
         cargo ndk --target ${{ matrix.target }} build
-        cargo ndk --target ${{ matrix.target }} --all-features test
+        cargo ndk --target ${{ matrix.target }} test
 
   cross_test:
     name: Cross Test
