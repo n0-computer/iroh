@@ -37,7 +37,7 @@ pub async fn export<D: BaoStore>(
     }
 }
 
-/// Export all entries of a collection, recursively, to files on the local fileystem.
+/// Export all entries of a collection, recursively, to files on the local filesystem.
 pub async fn export_collection<D: BaoStore>(
     db: &D,
     hash: Hash,
@@ -55,7 +55,7 @@ pub async fn export_collection<D: BaoStore>(
     Ok(())
 }
 
-/// Export a single blob to a file on the local fileystem.
+/// Export a single blob to a file on the local filesystem.
 pub async fn export_blob<D: BaoStore>(
     db: &D,
     hash: Hash,
