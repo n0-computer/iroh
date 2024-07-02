@@ -445,5 +445,10 @@ jobs:
   
       - name: Run Docker image & node stats test
         run: |
-          docker run -p 9090:9090 -p 4919:4919/udp -Pd n0computer/iroh-test:latest --rpc-addr 0.0.0.0:4919
+          docker run -p 9090:9090 -p 4919:4919/udp -Pd n0computer/iroh-test:latest --rpc-addr 0.0.0.0:4919 start
           cargo run --bin iroh -- --rpc-addr 127.0.0.1:4919 node stats
+
+      - name: Cleanup Docker
+        continue-on-error: true
+        run: |
+          docker kill $(docker ps -q)
