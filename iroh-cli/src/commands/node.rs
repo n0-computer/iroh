@@ -75,8 +75,8 @@ impl NodeCommands {
                 println!("Listening addresses: {:#?}", response.listen_addrs);
                 println!("Node public key: {}", response.addr.node_id);
                 println!("Version: {}", response.version);
-                if let Some(port) = response.rpc_port {
-                    println!("RPC Port: {}", port);
+                if let Some(addr) = response.rpc_addr {
+                    println!("RPC Addr: {}", addr);
                 }
             }
         }

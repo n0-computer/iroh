@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
@@ -40,6 +41,12 @@ pub(crate) struct Cli {
     /// Port to serve metrics on. Disabled by default.
     #[clap(long)]
     pub(crate) metrics_port: Option<MetricsPort>,
+
+    /// Address to serve RPC on.
+    ///
+    /// This overrides the address found in the IPFS_PATH.
+    #[clap(long)]
+    pub(crate) rpc_addr: Option<SocketAddr>,
 }
 
 #[derive(Debug, Clone)]
@@ -121,6 +128,7 @@ impl Cli {
                     start::run_with_command(
                         &config,
                         data_dir,
+                        self.rpc_addr,
                         RunType::SingleCommandNoAbort,
                         |iroh| async move {
                             let env = ConsoleEnv::for_console(data_dir_owned, &iroh).await?;
@@ -130,7 +138,11 @@ impl Cli {
                     .await
                 } else {
                     crate::logging::init_terminal_logging()?;
-                    let iroh = Iroh::connect_path(data_dir).await.context("rpc connect")?;
+                    let iroh = if let Some(addr) = self.rpc_addr {
+                        Iroh::connect_addr(addr).await.context("rpc connect")?
+                    } else {
+                        Iroh::connect_path(data_dir).await.context("rpc connect")?
+                    };
                     let env = ConsoleEnv::for_console(data_dir_owned, &iroh).await?;
                     console::run(&iroh, &env).await
                 }
@@ -142,6 +154,7 @@ impl Cli {
                     start::run_with_command(
                         &config,
                         data_dir,
+                        self.rpc_addr,
                         RunType::SingleCommandAbortable,
                         move |iroh| async move {
                             let env = ConsoleEnv::for_cli(data_dir_owned, &iroh).await?;
@@ -151,7 +164,11 @@ impl Cli {
                     .await
                 } else {
                     crate::logging::init_terminal_logging()?;
-                    let iroh = Iroh::connect_path(data_dir).await.context("rpc connect")?;
+                    let iroh = if let Some(addr) = self.rpc_addr {
+                        Iroh::connect_addr(addr).await.context("rpc connect")?
+                    } else {
+                        Iroh::connect_path(data_dir).await.context("rpc connect")?
+                    };
                     let env = ConsoleEnv::for_cli(data_dir_owned, &iroh).await?;
                     command.run(&iroh, &env).await
                 }
@@ -181,6 +198,7 @@ impl Cli {
                 start::run_with_command(
                     &config,
                     data_dir,
+                    self.rpc_addr,
                     RunType::UntilStopped,
                     |client| async move {
                         match add_command {
