@@ -25,6 +25,7 @@ pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
 pub mod authors;
 pub mod blobs;
 pub mod docs;
+pub mod gossip;
 pub mod node;
 pub mod tags;
 
@@ -70,6 +71,11 @@ impl Iroh {
     /// Tags client
     pub fn tags(&self) -> &tags::Client {
         tags::Client::ref_cast(&self.rpc)
+    }
+
+    /// Gossip client
+    pub fn gossip(&self) -> &gossip::Client {
+        gossip::Client::ref_cast(&self.rpc)
     }
 
     /// Node client

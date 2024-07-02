@@ -333,6 +333,20 @@ impl<D: BaoStore> Handler<D> {
                 })
                 .await
             }
+            GossipSubscribe(msg) => {
+                chan.bidi_streaming(msg, self, |handler, req, updates| {
+                    handler.inner.gossip_dispatcher.subscribe_with_opts(
+                        req.topic,
+                        iroh_gossip::dispatcher::SubscribeOptions {
+                            bootstrap: req.bootstrap,
+                            subscription_capacity: req.subscription_capacity,
+                        },
+                        Box::new(updates),
+                    )
+                })
+                .await
+            }
+            GossipSubscribeUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
         }
     }
 

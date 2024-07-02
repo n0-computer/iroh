@@ -13,6 +13,7 @@ use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
 use iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store as BaoStore};
 use iroh_blobs::{downloader::Downloader, protocol::Closed};
+use iroh_gossip::dispatcher::GossipDispatcher;
 use iroh_gossip::net::Gossip;
 use iroh_net::key::SecretKey;
 use iroh_net::Endpoint;
@@ -68,6 +69,7 @@ struct NodeInner<D> {
     #[debug("rt")]
     rt: LocalPoolHandle,
     downloader: Downloader,
+    gossip_dispatcher: GossipDispatcher,
 }
 
 /// In memory node.
