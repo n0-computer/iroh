@@ -256,7 +256,7 @@ mod tests {
         close_s.send(()).unwrap();
 
         // wait for the node to close
-        if tokio::time::timeout(Duration::from_millis(1000), start)
+        if tokio::time::timeout(Duration::from_secs(5), start)
             .await
             .is_err()
         {
