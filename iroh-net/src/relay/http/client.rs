@@ -258,7 +258,8 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the protocol used
+    /// Sets whether to connect to the relay via websockets or not.
+    /// Set to use non-websocket, normal relaying by default.
     pub fn protocol(mut self, protocol: Protocol) -> Self {
         self.protocol = protocol;
         self
@@ -628,10 +629,12 @@ impl Actor {
 
     async fn connect_ws(&self) -> Result<(ConnReader, ConnWriter), ClientError> {
         let mut dial_url = (*self.url).clone();
+        dial_url.set_path("/derp");
+        // The relay URL is exchanged with the http(s) scheme in tickets and similar.
+        // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
         dial_url
             .set_scheme(if self.use_tls() { "wss" } else { "ws" })
             .map_err(|()| ClientError::InvalidUrl(self.url.to_string()))?;
-        dial_url.set_path("/derp");
 
         debug!(%dial_url, "Dialing relay by websocket");
 
