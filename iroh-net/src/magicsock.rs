@@ -2959,6 +2959,7 @@ mod tests {
 
         info!("finishing");
         send_bi.finish().context("[receiver] finishing")?;
+        send_bi.stopped().await.context("[receiver] stopped")?;
 
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
@@ -2994,6 +2995,7 @@ mod tests {
 
         info!("finishing");
         send_bi.finish().context("[sender] finish")?;
+        send_bi.stopped().await.context("[sender] stopped")?;
 
         info!("reading_to_end");
         let val = recv_bi.read_to_end(usize::MAX).await.context("[sender]")?;
@@ -3270,71 +3272,79 @@ mod tests {
                 println!("{}: {}, {}: {}", a_name, a_addr, b_name, b_addr);
 
                 let b_task = tokio::task::spawn(async move {
-                    println!("[{}] accepting conn", b_name);
+                    println!("[{b_name}] accepting conn");
                     let conn = b.accept().await.expect("no conn");
                     println!("[{}] connecting", b_name);
                     let conn = conn
                         .await
-                        .with_context(|| format!("[{}] connecting", b_name))?;
+                        .with_context(|| format!("[{b_name}] connecting"))?;
                     println!("[{}] accepting bi", b_name);
                     let (mut send_bi, mut recv_bi) = conn
                         .accept_bi()
                         .await
-                        .with_context(|| format!("[{}] accepting bi", b_name))?;
+                        .with_context(|| format!("[{b_name}] accepting bi"))?;
 
-                    println!("[{}] reading", b_name);
+                    println!("[{b_name}] reading");
                     let val = recv_bi
                         .read_to_end(usize::MAX)
                         .await
-                        .with_context(|| format!("[{}] reading to end", b_name))?;
-                    println!("[{}] finishing", b_name);
+                        .with_context(|| format!("[{b_name}] reading to end"))?;
+                    println!("[{b_name}] finishing");
                     send_bi
                         .finish()
-                        .with_context(|| format!("[{}] finishing", b_name))?;
+                        .with_context(|| format!("[{b_name}] finishing"))?;
+                    send_bi
+                        .stopped()
+                        .await
+                        .with_context(|| format!("[b_name] stopped"))?;
 
-                    println!("[{}] close", b_name);
+                    println!("[{b_name}] close");
                     conn.close(0u32.into(), b"done");
-                    println!("[{}] closed", b_name);
+                    println!("[{b_name}] closed");
 
                     Ok::<_, anyhow::Error>(val)
                 });
 
-                println!("[{}] connecting to {}", a_name, b_addr);
+                println!("[{a_name}] connecting to {b_addr}");
                 let conn = a
                     .connect(b_addr, "localhost")?
                     .await
-                    .with_context(|| format!("[{}] connect", a_name))?;
+                    .with_context(|| format!("[{a_name}] connect"))?;
 
-                println!("[{}] opening bi", a_name);
+                println!("[{a_name}] opening bi");
                 let (mut send_bi, mut recv_bi) = conn
                     .open_bi()
                     .await
-                    .with_context(|| format!("[{}] open bi", a_name))?;
-                println!("[{}] writing message", a_name);
+                    .with_context(|| format!("[{a_name}] open bi"))?;
+                println!("[{a_name}] writing message");
                 send_bi
                     .write_all(&$msg[..])
                     .await
-                    .with_context(|| format!("[{}] write all", a_name))?;
+                    .with_context(|| format!("[{a_name}] write all"))?;
 
-                println!("[{}] finishing", a_name);
+                println!("[{a_name}] finishing");
                 send_bi
                     .finish()
-                    .with_context(|| format!("[{}] finish", a_name))?;
+                    .with_context(|| format!("[{a_name}] finish"))?;
+                send_bi
+                    .stopped()
+                    .await
+                    .with_context(|| format!("[{a_name}] stopped"))?;
 
-                println!("[{}] reading_to_end", a_name);
+                println!("[{a_name}] reading_to_end");
                 let _ = recv_bi
                     .read_to_end(usize::MAX)
                     .await
-                    .with_context(|| format!("[{}]", a_name))?;
-                println!("[{}] close", a_name);
+                    .with_context(|| format!("[{a_name}] reading_to_end"))?;
+                println!("[{a_name}] close");
                 conn.close(0u32.into(), b"done");
-                println!("[{}] wait idle", a_name);
+                println!("[{a_name}] wait idle");
                 a.wait_idle().await;
 
                 drop(send_bi);
 
                 // make sure the right values arrived
-                println!("[{}] waiting for channel", a_name);
+                println!("[{a_name}] waiting for channel");
                 let val = b_task.await??;
                 anyhow::ensure!(
                     val == $msg,
@@ -3439,6 +3449,10 @@ mod tests {
                     send_bi
                         .finish()
                         .with_context(|| format!("[{}] finishing", b_name))?;
+                    send_bi
+                        .stopped()
+                        .await
+                        .with_context(|| format!("[{b_name}] stopped"))?;
 
                     println!("[{}] close", b_name);
                     conn.close(0u32.into(), b"done");
@@ -3468,6 +3482,10 @@ mod tests {
                 send_bi
                     .finish()
                     .with_context(|| format!("[{}] finish", a_name))?;
+                send_bi
+                    .stopped()
+                    .await
+                    .with_context(|| format!("[{a_name}] stopped"))?;
 
                 println!("[{}] reading_to_end", a_name);
                 let _ = recv_bi
