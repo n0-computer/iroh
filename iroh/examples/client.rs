@@ -4,7 +4,7 @@
 //! The iroh node that creates the document is backed by an in-memory database and a random node ID
 //!
 //! run this example from the project root:
-//!     $ cargo run --example client
+//!     $ cargo run --features=examples --example client
 use indicatif::HumanBytes;
 use iroh::{base::base32, client::docs::Entry, docs::store::Query, node::Node};
 use tokio_stream::StreamExt;
