@@ -13,18 +13,20 @@ use crate::rpc_protocol::{
     authors::{
         AuthorCreateRequest, CreateResponse, DeleteRequest, DeleteResponse, ExportRequest,
         ExportResponse, GetDefaultRequest, GetDefaultResponse, ImportRequest, ImportResponse,
-        ListRequest as AuthorListRequest, ListResponse, SetDefaultRequest, SetDefaultResponse,
+        ListRequest as AuthorListRequest, ListResponse as AuthorListResponse, SetDefaultRequest,
+        SetDefaultResponse,
     },
     docs::{
-        DocCloseRequest, DocCloseResponse, DocCreateRequest, DocCreateResponse, DocDelRequest,
-        DocDelResponse, DocDropRequest, DocDropResponse, DocGetDownloadPolicyRequest,
-        DocGetDownloadPolicyResponse, DocGetExactRequest, DocGetExactResponse, DocGetManyRequest,
-        DocGetManyResponse, DocGetSyncPeersRequest, DocGetSyncPeersResponse, DocImportRequest,
-        DocImportResponse, DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse,
-        DocOpenRequest, DocOpenResponse, DocSetDownloadPolicyRequest, DocSetDownloadPolicyResponse,
-        DocSetHashRequest, DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest,
-        DocShareResponse, DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest,
-        DocStatusResponse, DocSubscribeRequest, DocSubscribeResponse,
+        CloseRequest, CloseResponse, CreateRequest, CreateResponse as DocCreateResponse,
+        DelRequest, DelResponse, DocListRequest, DocSubscribeRequest, DocSubscribeResponse,
+        DropRequest, DropResponse, GetDownloadPolicyRequest, GetDownloadPolicyResponse,
+        GetExactRequest, GetExactResponse, GetManyRequest, GetManyResponse, GetSyncPeersRequest,
+        GetSyncPeersResponse, ImportRequest as DocImportRequest,
+        ImportResponse as DocImportResponse, LeaveRequest, LeaveResponse,
+        ListResponse as DocListResponse, OpenRequest, OpenResponse, SetDownloadPolicyRequest,
+        SetDownloadPolicyResponse, SetHashRequest, SetHashResponse, SetRequest, SetResponse,
+        ShareRequest, ShareResponse, StartSyncRequest, StartSyncResponse, StatusRequest,
+        StatusResponse,
     },
 };
 
@@ -58,7 +60,7 @@ impl DocsEngine {
     pub fn author_list(
         &self,
         _req: AuthorListRequest,
-    ) -> impl Stream<Item = RpcResult<ListResponse>> {
+    ) -> impl Stream<Item = RpcResult<AuthorListResponse>> {
         let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
@@ -70,7 +72,7 @@ impl DocsEngine {
             }
         });
         rx.into_stream().map(|r| {
-            r.map(|author_id| ListResponse { author_id })
+            r.map(|author_id| AuthorListResponse { author_id })
                 .map_err(Into::into)
         })
     }
@@ -94,7 +96,7 @@ impl DocsEngine {
         Ok(DeleteResponse)
     }
 
-    pub async fn doc_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {
+    pub async fn doc_create(&self, _req: CreateRequest) -> RpcResult<DocCreateResponse> {
         let namespace = NamespaceSecret::new(&mut rand::rngs::OsRng {});
         let id = namespace.id();
         self.sync.import_namespace(namespace.into()).await?;
@@ -102,11 +104,11 @@ impl DocsEngine {
         Ok(DocCreateResponse { id })
     }
 
-    pub async fn doc_drop(&self, req: DocDropRequest) -> RpcResult<DocDropResponse> {
-        let DocDropRequest { doc_id } = req;
+    pub async fn doc_drop(&self, req: DropRequest) -> RpcResult<DropResponse> {
+        let DropRequest { doc_id } = req;
         self.leave(doc_id, true).await?;
         self.sync.drop_replica(doc_id).await?;
-        Ok(DocDropResponse {})
+        Ok(DropResponse {})
     }
 
     pub fn doc_list(&self, _req: DocListRequest) -> impl Stream<Item = RpcResult<DocListResponse>> {
@@ -126,23 +128,23 @@ impl DocsEngine {
         })
     }
 
-    pub async fn doc_open(&self, req: DocOpenRequest) -> RpcResult<DocOpenResponse> {
+    pub async fn doc_open(&self, req: OpenRequest) -> RpcResult<OpenResponse> {
         self.sync.open(req.doc_id, Default::default()).await?;
-        Ok(DocOpenResponse {})
+        Ok(OpenResponse {})
     }
 
-    pub async fn doc_close(&self, req: DocCloseRequest) -> RpcResult<DocCloseResponse> {
+    pub async fn doc_close(&self, req: CloseRequest) -> RpcResult<CloseResponse> {
         self.sync.close(req.doc_id).await?;
-        Ok(DocCloseResponse {})
+        Ok(CloseResponse {})
     }
 
-    pub async fn doc_status(&self, req: DocStatusRequest) -> RpcResult<DocStatusResponse> {
+    pub async fn doc_status(&self, req: StatusRequest) -> RpcResult<StatusResponse> {
         let status = self.sync.get_state(req.doc_id).await?;
-        Ok(DocStatusResponse { status })
+        Ok(StatusResponse { status })
     }
 
-    pub async fn doc_share(&self, req: DocShareRequest) -> RpcResult<DocShareResponse> {
-        let DocShareRequest {
+    pub async fn doc_share(&self, req: ShareRequest) -> RpcResult<ShareResponse> {
+        let ShareRequest {
             doc_id,
             mode,
             addr_options,
@@ -159,7 +161,7 @@ impl DocsEngine {
         };
         self.start_sync(doc_id, vec![]).await?;
 
-        Ok(DocShareResponse(DocTicket {
+        Ok(ShareResponse(DocTicket {
             capability,
             nodes: vec![me],
         }))
@@ -184,27 +186,24 @@ impl DocsEngine {
         Ok(DocImportResponse { doc_id })
     }
 
-    pub async fn doc_start_sync(
-        &self,
-        req: DocStartSyncRequest,
-    ) -> RpcResult<DocStartSyncResponse> {
-        let DocStartSyncRequest { doc_id, peers } = req;
+    pub async fn doc_start_sync(&self, req: StartSyncRequest) -> RpcResult<StartSyncResponse> {
+        let StartSyncRequest { doc_id, peers } = req;
         self.start_sync(doc_id, peers).await?;
-        Ok(DocStartSyncResponse {})
+        Ok(StartSyncResponse {})
     }
 
-    pub async fn doc_leave(&self, req: DocLeaveRequest) -> RpcResult<DocLeaveResponse> {
-        let DocLeaveRequest { doc_id } = req;
+    pub async fn doc_leave(&self, req: LeaveRequest) -> RpcResult<LeaveResponse> {
+        let LeaveRequest { doc_id } = req;
         self.leave(doc_id, false).await?;
-        Ok(DocLeaveResponse {})
+        Ok(LeaveResponse {})
     }
 
     pub async fn doc_set<B: BaoStore>(
         &self,
         bao_store: &B,
-        req: DocSetRequest,
-    ) -> RpcResult<DocSetResponse> {
-        let DocSetRequest {
+        req: SetRequest,
+    ) -> RpcResult<SetResponse> {
+        let SetRequest {
             doc_id,
             author_id,
             key,
@@ -220,21 +219,21 @@ impl DocsEngine {
             .get_exact(doc_id, author_id, key, false)
             .await?
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
-        Ok(DocSetResponse { entry })
+        Ok(SetResponse { entry })
     }
 
-    pub async fn doc_del(&self, req: DocDelRequest) -> RpcResult<DocDelResponse> {
-        let DocDelRequest {
+    pub async fn doc_del(&self, req: DelRequest) -> RpcResult<DelResponse> {
+        let DelRequest {
             doc_id,
             author_id,
             prefix,
         } = req;
         let removed = self.sync.delete_prefix(doc_id, author_id, prefix).await?;
-        Ok(DocDelResponse { removed })
+        Ok(DelResponse { removed })
     }
 
-    pub async fn doc_set_hash(&self, req: DocSetHashRequest) -> RpcResult<DocSetHashResponse> {
-        let DocSetHashRequest {
+    pub async fn doc_set_hash(&self, req: SetHashRequest) -> RpcResult<SetHashResponse> {
+        let SetHashRequest {
             doc_id,
             author_id,
             key,
@@ -244,14 +243,14 @@ impl DocsEngine {
         self.sync
             .insert_local(doc_id, author_id, key.clone(), hash, size)
             .await?;
-        Ok(DocSetHashResponse {})
+        Ok(SetHashResponse {})
     }
 
     pub fn doc_get_many(
         &self,
-        req: DocGetManyRequest,
-    ) -> impl Stream<Item = RpcResult<DocGetManyResponse>> {
-        let DocGetManyRequest { doc_id, query } = req;
+        req: GetManyRequest,
+    ) -> impl Stream<Item = RpcResult<GetManyResponse>> {
+        let GetManyRequest { doc_id, query } = req;
         let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
@@ -262,14 +261,12 @@ impl DocsEngine {
                 tx2.send_async(Err(err)).await.ok();
             }
         });
-        rx.into_stream().map(|r| {
-            r.map(|entry| DocGetManyResponse { entry })
-                .map_err(Into::into)
-        })
+        rx.into_stream()
+            .map(|r| r.map(|entry| GetManyResponse { entry }).map_err(Into::into))
     }
 
-    pub async fn doc_get_exact(&self, req: DocGetExactRequest) -> RpcResult<DocGetExactResponse> {
-        let DocGetExactRequest {
+    pub async fn doc_get_exact(&self, req: GetExactRequest) -> RpcResult<GetExactResponse> {
+        let GetExactRequest {
             doc_id,
             author,
             key,
@@ -279,31 +276,31 @@ impl DocsEngine {
             .sync
             .get_exact(doc_id, author, key, include_empty)
             .await?;
-        Ok(DocGetExactResponse { entry })
+        Ok(GetExactResponse { entry })
     }
 
     pub async fn doc_set_download_policy(
         &self,
-        req: DocSetDownloadPolicyRequest,
-    ) -> RpcResult<DocSetDownloadPolicyResponse> {
+        req: SetDownloadPolicyRequest,
+    ) -> RpcResult<SetDownloadPolicyResponse> {
         self.sync
             .set_download_policy(req.doc_id, req.policy)
             .await?;
-        Ok(DocSetDownloadPolicyResponse {})
+        Ok(SetDownloadPolicyResponse {})
     }
     pub async fn doc_get_download_policy(
         &self,
-        req: DocGetDownloadPolicyRequest,
-    ) -> RpcResult<DocGetDownloadPolicyResponse> {
+        req: GetDownloadPolicyRequest,
+    ) -> RpcResult<GetDownloadPolicyResponse> {
         let policy = self.sync.get_download_policy(req.doc_id).await?;
-        Ok(DocGetDownloadPolicyResponse { policy })
+        Ok(GetDownloadPolicyResponse { policy })
     }
 
     pub async fn doc_get_sync_peers(
         &self,
-        req: DocGetSyncPeersRequest,
-    ) -> RpcResult<DocGetSyncPeersResponse> {
+        req: GetSyncPeersRequest,
+    ) -> RpcResult<GetSyncPeersResponse> {
         let peers = self.sync.get_sync_peers(req.doc_id).await?;
-        Ok(DocGetSyncPeersResponse { peers })
+        Ok(GetSyncPeersResponse { peers })
     }
 }

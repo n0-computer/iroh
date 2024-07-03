@@ -50,8 +50,8 @@ use crate::rpc_protocol::{
     },
     docs::Request as DocsRequest,
     docs::{
-        DocExportFileRequest, DocExportFileResponse, DocImportFileRequest, DocImportFileResponse,
-        DocSetHashRequest,
+        ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,
+        SetHashRequest,
     },
     node,
     node::{
@@ -210,7 +210,7 @@ impl<D: BaoStore> Handler<D> {
         use authors::Request::*;
         match msg {
             List(msg) => {
-                chan.server_streaming(msg, self, |handler, req| {
+                chan.server_streaming(msg, self, |handler, req: authors::ListRequest| {
                     handler.with_docs_stream(|docs| docs.author_list(req))
                 })
                 .await
@@ -550,10 +550,7 @@ impl<D: BaoStore> Handler<D> {
         rx.into_stream().map(AddPathResponse)
     }
 
-    fn doc_import_file(
-        self,
-        msg: DocImportFileRequest,
-    ) -> impl Stream<Item = DocImportFileResponse> {
+    fn doc_import_file(self, msg: ImportFileRequest) -> impl Stream<Item = ImportFileResponse> {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
         let tx2 = tx.clone();
@@ -564,12 +561,12 @@ impl<D: BaoStore> Handler<D> {
                     .ok();
             }
         });
-        rx.into_stream().map(DocImportFileResponse)
+        rx.into_stream().map(ImportFileResponse)
     }
 
     async fn doc_import_file0(
         self,
-        msg: DocImportFileRequest,
+        msg: ImportFileRequest,
         progress: flume::Sender<crate::client::docs::ImportProgress>,
     ) -> anyhow::Result<()> {
         let docs = self.docs().ok_or_else(|| anyhow!("docs are disabled"))?;
@@ -597,7 +594,7 @@ impl<D: BaoStore> Handler<D> {
             }
             _ => None,
         });
-        let DocImportFileRequest {
+        let ImportFileRequest {
             doc_id,
             author_id,
             key,
@@ -625,7 +622,7 @@ impl<D: BaoStore> Handler<D> {
 
         let hash_and_format = temp_tag.inner();
         let HashAndFormat { hash, .. } = *hash_and_format;
-        docs.doc_set_hash(DocSetHashRequest {
+        docs.doc_set_hash(SetHashRequest {
             doc_id,
             author_id,
             key: key.clone(),
@@ -638,10 +635,7 @@ impl<D: BaoStore> Handler<D> {
         Ok(())
     }
 
-    fn doc_export_file(
-        self,
-        msg: DocExportFileRequest,
-    ) -> impl Stream<Item = DocExportFileResponse> {
+    fn doc_export_file(self, msg: ExportFileRequest) -> impl Stream<Item = ExportFileResponse> {
         let (tx, rx) = flume::bounded(1024);
         let tx2 = tx.clone();
         self.rt().spawn_pinned(|| async move {
@@ -649,17 +643,17 @@ impl<D: BaoStore> Handler<D> {
                 tx2.send_async(ExportProgress::Abort(e.into())).await.ok();
             }
         });
-        rx.into_stream().map(DocExportFileResponse)
+        rx.into_stream().map(ExportFileResponse)
     }
 
     async fn doc_export_file0(
         self,
-        msg: DocExportFileRequest,
+        msg: ExportFileRequest,
         progress: flume::Sender<ExportProgress>,
     ) -> anyhow::Result<()> {
         let _docs = self.docs().ok_or_else(|| anyhow!("docs are disabled"))?;
         let progress = FlumeProgressSender::new(progress);
-        let DocExportFileRequest { entry, path, mode } = msg;
+        let ExportFileRequest { entry, path, mode } = msg;
         let key = bytes::Bytes::from(entry.key().to_vec());
         let export_progress = progress.clone().with_map(move |mut x| {
             // assign the doc key to the `meta` field of the initial progress event

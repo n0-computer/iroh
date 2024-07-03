@@ -26,11 +26,11 @@ use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::docs::{
-    DocCloseRequest, DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest,
-    DocExportFileRequest, DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest,
-    DocGetSyncPeersRequest, DocImportFileRequest, DocImportRequest, DocLeaveRequest,
-    DocListRequest, DocOpenRequest, DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest,
-    DocShareRequest, DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest,
+    CloseRequest, CreateRequest, DelRequest, DelResponse, DocListRequest, DocSubscribeRequest,
+    DropRequest, ExportFileRequest, GetDownloadPolicyRequest, GetExactRequest, GetManyRequest,
+    GetSyncPeersRequest, ImportFileRequest, ImportRequest, LeaveRequest, OpenRequest,
+    SetDownloadPolicyRequest, SetHashRequest, SetRequest, ShareRequest, StartSyncRequest,
+    StatusRequest,
 };
 use crate::rpc_protocol::RpcService;
 
@@ -49,7 +49,7 @@ pub struct Client {
 impl Client {
     /// Create a new document.
     pub async fn create(&self) -> Result<Doc> {
-        let res = self.rpc.rpc(DocCreateRequest {}).await??;
+        let res = self.rpc.rpc(CreateRequest {}).await??;
         let doc = Doc::new(self.rpc.clone(), res.id);
         Ok(doc)
     }
@@ -60,7 +60,7 @@ impl Client {
     /// document will be permanently deleted from the node's storage. Content blobs will be deleted
     /// through garbage collection unless they are referenced from another document or tag.
     pub async fn drop_doc(&self, doc_id: NamespaceId) -> Result<()> {
-        self.rpc.rpc(DocDropRequest { doc_id }).await??;
+        self.rpc.rpc(DropRequest { doc_id }).await??;
         Ok(())
     }
 
@@ -68,7 +68,7 @@ impl Client {
     ///
     /// This does not start sync automatically. Use [`Doc::start_sync`] to start sync.
     pub async fn import_namespace(&self, capability: Capability) -> Result<Doc> {
-        let res = self.rpc.rpc(DocImportRequest { capability }).await??;
+        let res = self.rpc.rpc(ImportRequest { capability }).await??;
         let doc = Doc::new(self.rpc.clone(), res.doc_id);
         Ok(doc)
     }
@@ -92,7 +92,7 @@ impl Client {
         ticket: DocTicket,
     ) -> Result<(Doc, impl Stream<Item = anyhow::Result<LiveEvent>>)> {
         let DocTicket { capability, nodes } = ticket;
-        let res = self.rpc.rpc(DocImportRequest { capability }).await??;
+        let res = self.rpc.rpc(ImportRequest { capability }).await??;
         let doc = Doc::new(self.rpc.clone(), res.doc_id);
         let events = doc.subscribe().await?;
         doc.start_sync(nodes).await?;
@@ -107,7 +107,7 @@ impl Client {
 
     /// Get a [`Doc`] client for a single document. Return None if the document cannot be found.
     pub async fn open(&self, id: NamespaceId) -> Result<Option<Doc>> {
-        self.rpc.rpc(DocOpenRequest { doc_id: id }).await??;
+        self.rpc.rpc(OpenRequest { doc_id: id }).await??;
         let doc = Doc::new(self.rpc.clone(), id);
         Ok(Some(doc))
     }
@@ -139,7 +139,7 @@ impl Drop for DocInner {
         let rpc = self.rpc.clone();
         if !self.closed.swap(true, Ordering::Relaxed) {
             self.rt.spawn(async move {
-                rpc.rpc(DocCloseRequest { doc_id }).await.ok();
+                rpc.rpc(CloseRequest { doc_id }).await.ok();
             });
         }
     }
@@ -171,7 +171,7 @@ impl Doc {
     /// Close the document.
     pub async fn close(&self) -> Result<()> {
         if !self.0.closed.swap(true, Ordering::Relaxed) {
-            self.rpc(DocCloseRequest { doc_id: self.id() }).await??;
+            self.rpc(CloseRequest { doc_id: self.id() }).await??;
         }
         Ok(())
     }
@@ -193,7 +193,7 @@ impl Doc {
     ) -> Result<Hash> {
         self.ensure_open()?;
         let res = self
-            .rpc(DocSetRequest {
+            .rpc(SetRequest {
                 doc_id: self.id(),
                 author_id,
                 key: key.into(),
@@ -212,7 +212,7 @@ impl Doc {
         size: u64,
     ) -> Result<()> {
         self.ensure_open()?;
-        self.rpc(DocSetHashRequest {
+        self.rpc(SetHashRequest {
             doc_id: self.id(),
             author_id,
             key: key.into(),
@@ -235,7 +235,7 @@ impl Doc {
         let stream = self
             .0
             .rpc
-            .server_streaming(DocImportFileRequest {
+            .server_streaming(ImportFileRequest {
                 doc_id: self.id(),
                 author_id: author,
                 path: path.as_ref().into(),
@@ -257,7 +257,7 @@ impl Doc {
         let stream = self
             .0
             .rpc
-            .server_streaming(DocExportFileRequest {
+            .server_streaming(ExportFileRequest {
                 entry: entry.0,
                 path: path.as_ref().into(),
                 mode,
@@ -275,13 +275,13 @@ impl Doc {
     pub async fn del(&self, author_id: AuthorId, prefix: impl Into<Bytes>) -> Result<usize> {
         self.ensure_open()?;
         let res = self
-            .rpc(DocDelRequest {
+            .rpc(DelRequest {
                 doc_id: self.id(),
                 author_id,
                 prefix: prefix.into(),
             })
             .await??;
-        let DocDelResponse { removed } = res;
+        let DelResponse { removed } = res;
         Ok(removed)
     }
 
@@ -296,7 +296,7 @@ impl Doc {
     ) -> Result<Option<Entry>> {
         self.ensure_open()?;
         let res = self
-            .rpc(DocGetExactRequest {
+            .rpc(GetExactRequest {
                 author,
                 key: key.as_ref().to_vec().into(),
                 doc_id: self.id(),
@@ -315,7 +315,7 @@ impl Doc {
         let stream = self
             .0
             .rpc
-            .server_streaming(DocGetManyRequest {
+            .server_streaming(GetManyRequest {
                 doc_id: self.id(),
                 query: query.into(),
             })
@@ -336,7 +336,7 @@ impl Doc {
     ) -> anyhow::Result<DocTicket> {
         self.ensure_open()?;
         let res = self
-            .rpc(DocShareRequest {
+            .rpc(ShareRequest {
                 doc_id: self.id(),
                 mode,
                 addr_options,
@@ -349,7 +349,7 @@ impl Doc {
     pub async fn start_sync(&self, peers: Vec<NodeAddr>) -> Result<()> {
         self.ensure_open()?;
         let _res = self
-            .rpc(DocStartSyncRequest {
+            .rpc(StartSyncRequest {
                 doc_id: self.id(),
                 peers,
             })
@@ -360,7 +360,7 @@ impl Doc {
     /// Stop the live sync for this document.
     pub async fn leave(&self) -> Result<()> {
         self.ensure_open()?;
-        let _res = self.rpc(DocLeaveRequest { doc_id: self.id() }).await??;
+        let _res = self.rpc(LeaveRequest { doc_id: self.id() }).await??;
         Ok(())
     }
 
@@ -381,13 +381,13 @@ impl Doc {
     /// Get status info for this document
     pub async fn status(&self) -> anyhow::Result<OpenState> {
         self.ensure_open()?;
-        let res = self.rpc(DocStatusRequest { doc_id: self.id() }).await??;
+        let res = self.rpc(StatusRequest { doc_id: self.id() }).await??;
         Ok(res.status)
     }
 
     /// Set the download policy for this document
     pub async fn set_download_policy(&self, policy: DownloadPolicy) -> Result<()> {
-        self.rpc(DocSetDownloadPolicyRequest {
+        self.rpc(SetDownloadPolicyRequest {
             doc_id: self.id(),
             policy,
         })
@@ -398,7 +398,7 @@ impl Doc {
     /// Get the download policy for this document
     pub async fn get_download_policy(&self) -> Result<DownloadPolicy> {
         let res = self
-            .rpc(DocGetDownloadPolicyRequest { doc_id: self.id() })
+            .rpc(GetDownloadPolicyRequest { doc_id: self.id() })
             .await??;
         Ok(res.policy)
     }
@@ -406,7 +406,7 @@ impl Doc {
     /// Get sync peers for this document
     pub async fn get_sync_peers(&self) -> Result<Option<Vec<PeerIdBytes>>> {
         let res = self
-            .rpc(DocGetSyncPeersRequest { doc_id: self.id() })
+            .rpc(GetSyncPeersRequest { doc_id: self.id() })
             .await??;
         Ok(res.peers)
     }
