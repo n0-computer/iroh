@@ -81,7 +81,8 @@ impl ProtocolHandler for ExampleProto {
                 .await?;
             // Send the hash over our custom protocol.
             send_stream.write_all(hash.hash.as_bytes()).await?;
-            send_stream.finish().await?;
+            send_stream.finish()?;
+            send_stream.stopped().await?;
             println!("closing connection from {peer}");
             Ok(())
         })

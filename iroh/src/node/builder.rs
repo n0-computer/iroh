@@ -738,7 +738,6 @@ impl Default for GcPolicy {
 }
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
-const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u32 = 1024;
 
 // /// Create a [`quinn::ServerConfig`] with the given secret key and limits.
@@ -768,7 +767,7 @@ fn make_rpc_endpoint(
     transport_config
         .max_concurrent_bidi_streams(MAX_RPC_STREAMS.into())
         .max_concurrent_uni_streams(0u32.into());
-    let mut server_config = iroh_net::endpoint::make_server_config(
+    let server_config = iroh_net::endpoint::make_server_config(
         secret_key,
         vec![RPC_ALPN.to_vec()],
         Arc::new(transport_config),

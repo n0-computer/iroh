@@ -19,7 +19,7 @@ struct Block {
 impl Block {
     async fn store(&self, node: &MemIroh) -> Result<Hash> {
         let encoded_block_data = postcard::to_stdvec(&self.data)?;
-        let res = node.blobs.add_bytes(encoded_block_data).await?;
+        let res = node.blobs().add_bytes(encoded_block_data).await?;
         let block_data_hash = res.hash;
         let block_header = BlockHeader {
             id: self.id,
@@ -28,14 +28,14 @@ impl Block {
         };
 
         let encoded_block_header = postcard::to_stdvec(&block_header)?;
-        let res = node.blobs.add_bytes(encoded_block_header).await?;
+        let res = node.blobs().add_bytes(encoded_block_header).await?;
         Ok(res.hash)
     }
 
     async fn load(hash: Hash, node: &MemIroh) -> Result<Self> {
-        let block_header_raw = node.blobs.read_to_bytes(hash).await?;
+        let block_header_raw = node.blobs().read_to_bytes(hash).await?;
         let block_header: BlockHeader = postcard::from_bytes(&block_header_raw)?;
-        let block_data_raw = node.blobs.read_to_bytes(block_header.data).await?;
+        let block_data_raw = node.blobs().read_to_bytes(block_header.data).await?;
         let block_data: BlockData = postcard::from_bytes(&block_data_raw)?;
 
         Ok(Block {
@@ -46,7 +46,7 @@ impl Block {
     }
 
     async fn add_link(&mut self, node: &MemIroh, name: &str, data: impl Into<Bytes>) -> Result<()> {
-        let res = node.blobs.add_bytes(data).await?;
+        let res = node.blobs().add_bytes(data).await?;
         self.data.links.push((name.to_string(), res.hash));
         Ok(())
     }
@@ -55,7 +55,7 @@ impl Block {
         let mut out = Vec::with_capacity(self.data.links.len());
 
         for (name, hash) in &self.data.links {
-            let data = node.blobs.read_to_bytes(*hash).await?;
+            let data = node.blobs().read_to_bytes(*hash).await?;
             out.push((name.clone(), data));
         }
         Ok(out)
