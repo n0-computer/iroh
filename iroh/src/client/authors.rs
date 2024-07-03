@@ -6,8 +6,8 @@ use iroh_docs::{Author, AuthorId};
 use ref_cast::RefCast;
 
 use crate::rpc_protocol::authors::{
-    AuthorCreateRequest, DeleteRequest, ExportRequest, GetDefaultRequest, ImportRequest,
-    ListRequest, SetDefaultRequest,
+    CreateRequest, DeleteRequest, ExportRequest, GetDefaultRequest, ImportRequest, ListRequest,
+    SetDefaultRequest,
 };
 
 use super::{flatten, RpcClient};
@@ -27,7 +27,7 @@ impl Client {
     ///
     /// If you need only a single author, use [`Self::default`].
     pub async fn create(&self) -> Result<AuthorId> {
-        let res = self.rpc.rpc(AuthorCreateRequest).await??;
+        let res = self.rpc.rpc(CreateRequest).await??;
         Ok(res.author_id)
     }
 

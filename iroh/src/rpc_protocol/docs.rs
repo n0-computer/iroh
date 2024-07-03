@@ -129,7 +129,7 @@ impl RpcMsg<RpcService> for CreateRequest {
     type Response = RpcResult<CreateResponse>;
 }
 
-/// Response to [`DocCreateRequest`]
+/// Response to [`CreateRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CreateResponse {
     /// The document id
@@ -147,7 +147,7 @@ impl RpcMsg<RpcService> for ImportRequest {
     type Response = RpcResult<ImportResponse>;
 }
 
-/// Response to [`DocImportRequest`]
+/// Response to [`ImportRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ImportResponse {
     /// the document id

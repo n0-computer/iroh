@@ -117,7 +117,7 @@ impl ServerStreamingMsg<RpcService> for DownloadRequest {
     type Response = DownloadResponse;
 }
 
-/// Progress response for [`BlobDownloadRequest`]
+/// Progress response for [`DownloadRequest`]
 #[derive(Debug, Clone, Serialize, Deserialize, derive_more::From, derive_more::Into)]
 pub struct DownloadResponse(pub DownloadProgress);
 
@@ -148,7 +148,7 @@ impl ServerStreamingMsg<RpcService> for ExportRequest {
     type Response = ExportResponse;
 }
 
-/// Progress response for [`BlobExportRequest`]
+/// Progress response for [`ExportRequest`]
 #[derive(Debug, Clone, Serialize, Deserialize, derive_more::From, derive_more::Into)]
 pub struct ExportResponse(pub ExportProgress);
 
@@ -225,7 +225,7 @@ impl ServerStreamingMsg<RpcService> for ReadAtRequest {
     type Response = RpcResult<ReadAtResponse>;
 }
 
-/// Response to [`BlobReadAtRequest`]
+/// Response to [`ReadAtRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ReadAtResponse {
     /// The entry header.

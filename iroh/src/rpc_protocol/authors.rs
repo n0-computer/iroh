@@ -10,7 +10,7 @@ use super::RpcService;
 #[nested_enum_utils::enum_conversions(super::Request)]
 pub enum Request {
     List(ListRequest),
-    Create(AuthorCreateRequest),
+    Create(CreateRequest),
     GetDefault(GetDefaultRequest),
     SetDefault(SetDefaultRequest),
     Import(ImportRequest),
@@ -43,7 +43,7 @@ impl ServerStreamingMsg<RpcService> for ListRequest {
     type Response = RpcResult<ListResponse>;
 }
 
-/// Response for [`AuthorListRequest`]
+/// Response for [`ListRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ListResponse {
     /// The author id
@@ -52,13 +52,13 @@ pub struct ListResponse {
 
 /// Create a new document author.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorCreateRequest;
+pub struct CreateRequest;
 
-impl RpcMsg<RpcService> for AuthorCreateRequest {
+impl RpcMsg<RpcService> for CreateRequest {
     type Response = RpcResult<CreateResponse>;
 }
 
-/// Response for [`AuthorCreateRequest`]
+/// Response for [`CreateRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CreateResponse {
     /// The id of the created author
@@ -73,7 +73,7 @@ impl RpcMsg<RpcService> for GetDefaultRequest {
     type Response = RpcResult<GetDefaultResponse>;
 }
 
-/// Response for [`AuthorGetDefaultRequest`]
+/// Response for [`GetDefaultRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct GetDefaultResponse {
     /// The id of the author
@@ -90,7 +90,7 @@ impl RpcMsg<RpcService> for SetDefaultRequest {
     type Response = RpcResult<SetDefaultResponse>;
 }
 
-/// Response for [`AuthorGetDefaultRequest`]
+/// Response for [`GetDefaultRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SetDefaultResponse;
 
@@ -105,7 +105,7 @@ impl RpcMsg<RpcService> for DeleteRequest {
     type Response = RpcResult<DeleteResponse>;
 }
 
-/// Response for [`AuthorDeleteRequest`]
+/// Response for [`DeleteRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DeleteResponse;
 
@@ -120,7 +120,7 @@ impl RpcMsg<RpcService> for ExportRequest {
     type Response = RpcResult<ExportResponse>;
 }
 
-/// Response for [`AuthorExportRequest`]
+/// Response for [`ExportRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ExportResponse {
     /// The author
@@ -138,7 +138,7 @@ impl RpcMsg<RpcService> for ImportRequest {
     type Response = RpcResult<ImportResponse>;
 }
 
-/// Response to [`AuthorImportRequest`]
+/// Response to [`ImportRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ImportResponse {
     /// The author id of the imported author

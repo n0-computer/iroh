@@ -11,22 +11,22 @@ use crate::client::docs::ShareMode;
 use crate::node::DocsEngine;
 use crate::rpc_protocol::{
     authors::{
-        AuthorCreateRequest, CreateResponse, DeleteRequest, DeleteResponse, ExportRequest,
+        CreateRequest, CreateResponse, DeleteRequest, DeleteResponse, ExportRequest,
         ExportResponse, GetDefaultRequest, GetDefaultResponse, ImportRequest, ImportResponse,
         ListRequest as AuthorListRequest, ListResponse as AuthorListResponse, SetDefaultRequest,
         SetDefaultResponse,
     },
     docs::{
-        CloseRequest, CloseResponse, CreateRequest, CreateResponse as DocCreateResponse,
-        DelRequest, DelResponse, DocListRequest, DocSubscribeRequest, DocSubscribeResponse,
-        DropRequest, DropResponse, GetDownloadPolicyRequest, GetDownloadPolicyResponse,
-        GetExactRequest, GetExactResponse, GetManyRequest, GetManyResponse, GetSyncPeersRequest,
-        GetSyncPeersResponse, ImportRequest as DocImportRequest,
-        ImportResponse as DocImportResponse, LeaveRequest, LeaveResponse,
-        ListResponse as DocListResponse, OpenRequest, OpenResponse, SetDownloadPolicyRequest,
-        SetDownloadPolicyResponse, SetHashRequest, SetHashResponse, SetRequest, SetResponse,
-        ShareRequest, ShareResponse, StartSyncRequest, StartSyncResponse, StatusRequest,
-        StatusResponse,
+        CloseRequest, CloseResponse, CreateRequest as DocCreateRequest,
+        CreateResponse as DocCreateResponse, DelRequest, DelResponse, DocListRequest,
+        DocSubscribeRequest, DocSubscribeResponse, DropRequest, DropResponse,
+        GetDownloadPolicyRequest, GetDownloadPolicyResponse, GetExactRequest, GetExactResponse,
+        GetManyRequest, GetManyResponse, GetSyncPeersRequest, GetSyncPeersResponse,
+        ImportRequest as DocImportRequest, ImportResponse as DocImportResponse, LeaveRequest,
+        LeaveResponse, ListResponse as DocListResponse, OpenRequest, OpenResponse,
+        SetDownloadPolicyRequest, SetDownloadPolicyResponse, SetHashRequest, SetHashResponse,
+        SetRequest, SetResponse, ShareRequest, ShareResponse, StartSyncRequest, StartSyncResponse,
+        StatusRequest, StatusResponse,
     },
 };
 
@@ -35,7 +35,7 @@ const ITER_CHANNEL_CAP: usize = 64;
 
 #[allow(missing_docs)]
 impl DocsEngine {
-    pub async fn author_create(&self, _req: AuthorCreateRequest) -> RpcResult<CreateResponse> {
+    pub async fn author_create(&self, _req: CreateRequest) -> RpcResult<CreateResponse> {
         // TODO: pass rng
         let author = Author::new(&mut rand::rngs::OsRng {});
         self.sync.import_author(author.clone()).await?;
@@ -96,7 +96,7 @@ impl DocsEngine {
         Ok(DeleteResponse)
     }
 
-    pub async fn doc_create(&self, _req: CreateRequest) -> RpcResult<DocCreateResponse> {
+    pub async fn doc_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {
         let namespace = NamespaceSecret::new(&mut rand::rngs::OsRng {});
         let id = namespace.id();
         self.sync.import_namespace(namespace.into()).await?;

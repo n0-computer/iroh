@@ -173,7 +173,7 @@ pub struct CounterStats {
     pub description: String,
 }
 
-/// Response to [`NodeStatsRequest`]
+/// Response to [`StatsRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StatsResponse {
     /// Map of statistics
