@@ -958,7 +958,7 @@ mod tests {
         let cli = ConsoleEnv::for_console(data_dir.path().to_owned(), &node)
             .await
             .context("ConsoleEnv")?;
-        let iroh = iroh::client::Iroh::connect(data_dir.path())
+        let iroh = iroh::client::Iroh::connect_path(data_dir.path())
             .await
             .context("rpc connect")?;
 

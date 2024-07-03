@@ -131,7 +131,7 @@ pub trait BaoBatchWriter {
     /// Write a batch of bao content items to the underlying storage.
     ///
     /// The batch is guaranteed to be sorted as data is received from the network.
-    /// So leafs will be sorted by offset, and parents will be sorted by pre order
+    /// So leaves will be sorted by offset, and parents will be sorted by pre order
     /// traversal offset. There is no guarantee that they will be consecutive
     /// though.
     ///

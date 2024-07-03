@@ -726,7 +726,7 @@ impl NodeState {
                 best_addr::State::Empty | best_addr::State::Outdated(_)
             ) {
             // We also need to send a ping to make this path available to us as well.  This
-            // is always sent togehter with a pong.  So in the worst case the pong gets lost
+            // is always sent together with a pong.  So in the worst case the pong gets lost
             // and this ping does not.  In that case we ping-pong until both sides have
             // received at least one pong.  Once both sides have received one pong they both
             // have a best_addr and this ping will stop being sent.
@@ -934,7 +934,7 @@ impl NodeState {
             st.last_ping = None;
             if !call_me_maybe_ipps.contains(ipp) {
                 // TODO: This seems like a weird way to signal that the endpoint no longer
-                // thinks it has this IpPort as an avaialable path.
+                // thinks it has this IpPort as an available path.
                 if st.recent_pong.is_some() {
                     debug!(path=?ipp ,"clearing recent pong");
                     st.recent_pong = None;

@@ -16,16 +16,13 @@ use iroh_docs::engine::DefaultAuthorStorage;
 use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
-    discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
     relay::RelayMode,
     Endpoint,
 };
-use quic_rpc::{
-    transport::{
-        flume::FlumeServerEndpoint, misc::DummyServerEndpoint, quinn::QuinnServerEndpoint,
-    },
-    ServiceEndpoint,
+use quic_rpc::transport::{
+    boxed::BoxableServerEndpoint, flume::FlumeServerEndpoint, quinn::QuinnServerEndpoint,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
@@ -55,6 +52,11 @@ const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 const MAX_STREAMS: u64 = 10;
 
+type BoxedServerEndpoint = quic_rpc::transport::boxed::ServerEndpoint<
+    crate::rpc_protocol::Request,
+    crate::rpc_protocol::Response,
+>;
+
 /// Storage backend for documents.
 #[derive(Debug, Clone)]
 pub enum DocsStorage {
@@ -80,15 +82,15 @@ pub enum DocsStorage {
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(derive_more::Debug)]
-pub struct Builder<D, E = DummyServerEndpoint>
+pub struct Builder<D>
 where
     D: Map,
-    E: ServiceEndpoint<RpcService>,
 {
     storage: StorageConfig,
     bind_port: Option<u16>,
     secret_key: SecretKey,
-    rpc_endpoint: E,
+    rpc_endpoint: BoxedServerEndpoint,
+    rpc_port: Option<u16>,
     blobs_store: D,
     keylog: bool,
     relay_mode: RelayMode,
@@ -144,17 +146,58 @@ impl From<Box<ConcurrentDiscovery>> for DiscoveryConfig {
     }
 }
 
+/// A server endpoint that does nothing. Accept will never resolve.
+///
+/// This is used unless an external rpc endpoint is configured.
+#[derive(Debug, Default)]
+struct DummyServerEndpoint;
+
+impl BoxableServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Response>
+    for DummyServerEndpoint
+{
+    fn clone_box(
+        &self,
+    ) -> Box<dyn BoxableServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Response>>
+    {
+        Box::new(DummyServerEndpoint)
+    }
+
+    fn accept_bi_boxed(
+        &self,
+    ) -> quic_rpc::transport::boxed::AcceptFuture<
+        crate::rpc_protocol::Request,
+        crate::rpc_protocol::Response,
+    > {
+        quic_rpc::transport::boxed::AcceptFuture::boxed(futures_lite::future::pending())
+    }
+
+    fn local_addr(&self) -> &[quic_rpc::transport::LocalAddr] {
+        &[]
+    }
+}
+
+fn mk_external_rpc() -> BoxedServerEndpoint {
+    quic_rpc::transport::boxed::ServerEndpoint::new(DummyServerEndpoint)
+}
+
 impl Default for Builder<iroh_blobs::store::mem::Store> {
     fn default() -> Self {
+        // Use staging in testing
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let relay_mode = RelayMode::Default;
+        #[cfg(any(test, feature = "test-utils"))]
+        let relay_mode = RelayMode::Staging;
+
         Self {
             storage: StorageConfig::Mem,
             bind_port: None,
             secret_key: SecretKey::generate(),
             blobs_store: Default::default(),
             keylog: false,
-            relay_mode: RelayMode::Default,
+            relay_mode,
             dns_resolver: None,
-            rpc_endpoint: Default::default(),
+            rpc_endpoint: mk_external_rpc(),
+            rpc_port: None,
             gc_policy: GcPolicy::Disabled,
             docs_storage: DocsStorage::Memory,
             node_discovery: Default::default(),
@@ -172,15 +215,22 @@ impl<D: Map> Builder<D> {
         docs_storage: DocsStorage,
         storage: StorageConfig,
     ) -> Self {
+        // Use staging in testing
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let relay_mode = RelayMode::Default;
+        #[cfg(any(test, feature = "test-utils"))]
+        let relay_mode = RelayMode::Staging;
+
         Self {
             storage,
             bind_port: None,
             secret_key: SecretKey::generate(),
             blobs_store,
             keylog: false,
-            relay_mode: RelayMode::Default,
+            relay_mode,
             dns_resolver: None,
-            rpc_endpoint: Default::default(),
+            rpc_endpoint: mk_external_rpc(),
+            rpc_port: None,
             gc_policy: GcPolicy::Disabled,
             docs_storage,
             node_discovery: Default::default(),
@@ -191,16 +241,15 @@ impl<D: Map> Builder<D> {
     }
 }
 
-impl<D, E> Builder<D, E>
+impl<D> Builder<D>
 where
     D: BaoStore,
-    E: ServiceEndpoint<RpcService>,
 {
     /// Persist all node data in the provided directory.
     pub async fn persist(
         self,
         root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_blobs::store::fs::Store, E>> {
+    ) -> Result<Builder<iroh_blobs::store::fs::Store>> {
         let root = root.as_ref();
         let blob_dir = IrohPaths::BaoStoreDir.with_root(root);
 
@@ -243,6 +292,7 @@ where
             blobs_store,
             keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
+            rpc_port: self.rpc_port,
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
@@ -255,7 +305,7 @@ where
     }
 
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint<E2: ServiceEndpoint<RpcService>>(self, value: E2) -> Builder<D, E2> {
+    pub fn rpc_endpoint(self, value: BoxedServerEndpoint, port: Option<u16>) -> Builder<D> {
         // we can't use ..self here because the return type is different
         Builder {
             storage: self.storage,
@@ -264,6 +314,7 @@ where
             blobs_store: self.blobs_store,
             keylog: self.keylog,
             rpc_endpoint: value,
+            rpc_port: port,
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
@@ -276,8 +327,9 @@ where
     }
 
     /// Configure the default iroh rpc endpoint.
-    pub async fn enable_rpc(self) -> Result<Builder<D, QuinnServerEndpoint<RpcService>>> {
+    pub async fn enable_rpc(self) -> Result<Builder<D>> {
         let (ep, actual_rpc_port) = make_rpc_endpoint(&self.secret_key, DEFAULT_RPC_PORT)?;
+        let ep = quic_rpc::transport::boxed::ServerEndpoint::new(ep);
         if let StorageConfig::Persistent(ref root) = self.storage {
             // store rpc endpoint
             RpcStatus::store(root, actual_rpc_port).await?;
@@ -290,6 +342,7 @@ where
             blobs_store: self.blobs_store,
             keylog: self.keylog,
             rpc_endpoint: ep,
+            rpc_port: Some(actual_rpc_port),
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
@@ -405,7 +458,7 @@ where
     ///
     /// Returns an [`ProtocolBuilder`], on which custom protocols can be registered with
     /// [`ProtocolBuilder::accept`]. To spawn the node, call [`ProtocolBuilder::spawn`].
-    pub async fn build(self) -> Result<ProtocolBuilder<D, E>> {
+    pub async fn build(self) -> Result<ProtocolBuilder<D>> {
         // Clone the blob store to shutdown in case of error.
         let blobs_store = self.blobs_store.clone();
         match self.build_inner().await {
@@ -417,7 +470,7 @@ where
         }
     }
 
-    async fn build_inner(self) -> Result<ProtocolBuilder<D, E>> {
+    async fn build_inner(self) -> Result<ProtocolBuilder<D>> {
         trace!("building node");
         let lp = LocalPoolHandle::new(num_cpus::get());
         let endpoint = {
@@ -492,13 +545,14 @@ where
         .await?;
 
         // Initialize the internal RPC connection.
-        let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
+        let (internal_rpc, controller) = quic_rpc::transport::flume::connection(32);
         // box the controller. Boxing has a special case for the flume channel that avoids allocations,
         // so this has zero overhead.
         let controller = quic_rpc::transport::boxed::Connection::new(controller);
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
         let inner = Arc::new(NodeInner {
+            rpc_port: self.rpc_port,
             db: self.blobs_store,
             docs,
             endpoint,
@@ -534,17 +588,18 @@ where
 /// Note that RPC calls performed with client returned from [`Self::client`] will not complete
 /// until the node is spawned.
 #[derive(derive_more::Debug)]
-pub struct ProtocolBuilder<D, E> {
+pub struct ProtocolBuilder<D> {
     inner: Arc<NodeInner<D>>,
     internal_rpc: FlumeServerEndpoint<RpcService>,
-    external_rpc: E,
+    #[debug("external rpc")]
+    external_rpc: BoxedServerEndpoint,
     protocols: ProtocolMap,
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
     gc_policy: GcPolicy,
 }
 
-impl<D: iroh_blobs::store::Store, E: ServiceEndpoint<RpcService>> ProtocolBuilder<D, E> {
+impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     /// Registers a protocol handler for incoming connections.
     ///
     /// Use this to register custom protocols onto the iroh node. Whenever a new connection for

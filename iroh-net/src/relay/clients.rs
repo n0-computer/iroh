@@ -260,7 +260,11 @@ mod tests {
 
     use crate::{
         key::SecretKey,
-        relay::codec::{recv_frame, DerpCodec, Frame, FrameType},
+        relay::{
+            codec::{recv_frame, DerpCodec, Frame, FrameType},
+            server::RelayIo,
+            MaybeTlsStreamServer as MaybeTlsStream,
+        },
     };
 
     use anyhow::Result;
@@ -278,7 +282,7 @@ mod tests {
             ClientConnBuilder {
                 key,
                 conn_num,
-                io: Framed::new(crate::relay::server::MaybeTlsStream::Test(io), DerpCodec),
+                io: RelayIo::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,

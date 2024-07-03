@@ -1,9 +1,6 @@
 //! Implementation of [`super::Dialer`] used for testing.
 
-use std::{
-    collections::HashSet,
-    task::{Context, Poll},
-};
+use std::task::{Context, Poll};
 
 use parking_lot::RwLock;
 

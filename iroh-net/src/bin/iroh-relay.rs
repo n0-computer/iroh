@@ -190,7 +190,7 @@ impl Default for Config {
 /// Defaults for fields from [`Config`].
 ///
 /// These are the defaults that serde will fill in.  Other defaults depends on each other
-/// and can not immediately be substituded by serde.
+/// and can not immediately be substituted by serde.
 mod cfg_defaults {
     pub(crate) fn enable_relay() -> bool {
         true

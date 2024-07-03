@@ -1,4 +1,4 @@
-//! IO utilitiy to chain `AsyncRead`s together.
+//! IO utility to chain `AsyncRead`s together.
 
 // Based on tokios chain implementation, that doesn't make the concrete type public.
 

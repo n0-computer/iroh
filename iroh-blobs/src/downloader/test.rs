@@ -10,7 +10,7 @@ use iroh_net::key::SecretKey;
 
 use crate::{
     get::{db::BlobId, progress::TransferState},
-    util::progress::{FlumeProgressSender, IdGenerator, ProgressSender},
+    util::progress::{FlumeProgressSender, IdGenerator},
 };
 
 use super::*;

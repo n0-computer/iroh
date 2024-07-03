@@ -6,9 +6,23 @@ mod server;
 pub(crate) mod streams;
 
 pub use self::client::{Client, ClientBuilder, ClientError, ClientReceiver};
-pub use self::server::{Server, ServerBuilder, ServerHandle, TlsAcceptor, TlsConfig};
+pub use self::server::{Protocol, Server, ServerBuilder, ServerHandle, TlsAcceptor, TlsConfig};
 
 pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
+pub(crate) const WEBSOCKET_UPGRADE_PROTOCOL: &str = "websocket";
+pub(crate) const SUPPORTED_WEBSOCKET_VERSION: &str = "13";
+
+/// The HTTP path under which the relay accepts relaying connections
+/// (over websockets and a custom upgrade protocol).
+pub const RELAY_PATH: &str = "/relay";
+/// The HTTP path under which the relay allows doing latency queries for testing.
+pub const RELAY_PROBE_PATH: &str = "/relay/probe";
+/// The legacy HTTP path under which the relay used to accept relaying connections.
+/// We keep this for backwards compatibility.
+pub(crate) const LEGACY_RELAY_PATH: &str = "/derp";
+/// The legacy HTTP path under which the relay used to allow latency queries.
+/// We keep this for backwards compatibility.
+pub(crate) const LEGACY_RELAY_PROBE_PATH: &str = "/derp/probe";
 
 #[cfg(test)]
 mod tests {

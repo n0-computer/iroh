@@ -8,6 +8,7 @@ use std::time::Duration;
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
 use futures_lite::future::Boxed as BoxFuture;
+use futures_util::StreamExt;
 use http_body_util::Empty;
 use hyper::body::Incoming;
 use hyper::header::UPGRADE;
@@ -21,11 +22,14 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
+use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 use url::Url;
 
 use crate::dns::{DnsResolver, ResolverExt};
 use crate::key::{PublicKey, SecretKey};
+use crate::relay::client::{ConnReader, ConnWriter};
+use crate::relay::codec::DerpCodec;
 use crate::relay::http::streams::{downcast_upgrade, MaybeTlsStream};
 use crate::relay::RelayUrl;
 use crate::relay::{
@@ -35,6 +39,7 @@ use crate::relay::{
 use crate::util::chain;
 use crate::util::AbortingJoinHandle;
 
+use super::server::Protocol;
 use super::streams::ProxyStream;
 
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
@@ -120,6 +125,9 @@ pub enum ClientError {
     /// The inner actor is gone, likely means things are shutdown.
     #[error("actor gone")]
     ActorGone,
+    /// An error related to websockets, either errors with parsing ws messages or the handshake
+    #[error("websocket error: {0}")]
+    WebsocketError(#[from] tokio_tungstenite_wasm::Error),
 }
 
 /// An HTTP Relay client.
@@ -163,6 +171,7 @@ struct Actor {
     address_family_selector: Option<Box<dyn Fn() -> BoxFuture<bool> + Send + Sync + 'static>>,
     conn_gen: usize,
     url: RelayUrl,
+    protocol: Protocol,
     #[debug("TlsConnector")]
     tls_connector: tokio_rustls::TlsConnector,
     pings: PingTracker,
@@ -207,6 +216,8 @@ pub struct ClientBuilder {
     server_public_key: Option<PublicKey>,
     /// Server url.
     url: RelayUrl,
+    /// Relay protocol
+    protocol: Protocol,
     /// Allow self-signed certificates from relay servers
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_cert_verify: bool,
@@ -234,6 +245,7 @@ impl ClientBuilder {
             is_prober: false,
             server_public_key: None,
             url: url.into(),
+            protocol: Protocol::Relay,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: false,
             proxy_url: None,
@@ -243,6 +255,13 @@ impl ClientBuilder {
     /// Sets the server url
     pub fn server_url(mut self, url: impl Into<RelayUrl>) -> Self {
         self.url = url.into();
+        self
+    }
+
+    /// Sets whether to connect to the relay via websockets or not.
+    /// Set to use non-websocket, normal relaying by default.
+    pub fn protocol(mut self, protocol: Protocol) -> Self {
+        self.protocol = protocol;
         self
     }
 
@@ -327,6 +346,7 @@ impl ClientBuilder {
             pings: PingTracker::default(),
             ping_tasks: Default::default(),
             url: self.url,
+            protocol: self.protocol,
             tls_connector,
             dns_resolver,
             proxy_url: self.proxy_url,
@@ -574,6 +594,53 @@ impl Actor {
     }
 
     async fn connect_0(&self) -> Result<(RelayClient, RelayClientReceiver), ClientError> {
+        let (reader, writer, local_addr) = match self.protocol {
+            Protocol::Websocket => {
+                let (reader, writer) = self.connect_ws().await?;
+                let local_addr = None;
+                (reader, writer, local_addr)
+            }
+            Protocol::Relay => {
+                let (reader, writer, local_addr) = self.connect_derp().await?;
+                (reader, writer, Some(local_addr))
+            }
+        };
+
+        let (relay_client, receiver) =
+            RelayClientBuilder::new(self.secret_key.clone(), local_addr, reader, writer)
+                .build()
+                .await
+                .map_err(|e| ClientError::Build(e.to_string()))?;
+
+        if self.is_preferred && relay_client.note_preferred(true).await.is_err() {
+            relay_client.close().await;
+            return Err(ClientError::Send);
+        }
+
+        trace!("connect_0 done");
+        Ok((relay_client, receiver))
+    }
+
+    async fn connect_ws(&self) -> Result<(ConnReader, ConnWriter), ClientError> {
+        let mut dial_url = (*self.url).clone();
+        dial_url.set_path("/derp");
+        // The relay URL is exchanged with the http(s) scheme in tickets and similar.
+        // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
+        dial_url
+            .set_scheme(if self.use_tls() { "wss" } else { "ws" })
+            .map_err(|()| ClientError::InvalidUrl(self.url.to_string()))?;
+
+        debug!(%dial_url, "Dialing relay by websocket");
+
+        let (writer, reader) = tokio_tungstenite_wasm::connect(dial_url).await?.split();
+
+        let reader = ConnReader::Ws(reader);
+        let writer = ConnWriter::Ws(writer);
+
+        Ok((reader, writer))
+    }
+
+    async fn connect_derp(&self) -> Result<(ConnReader, ConnWriter, SocketAddr), ClientError> {
         let tcp_stream = self.dial_url().await?;
 
         let local_addr = tcp_stream
@@ -582,7 +649,7 @@ impl Actor {
 
         debug!(server_addr = ?tcp_stream.peer_addr(), %local_addr, "TCP stream connected");
 
-        let response = if self.use_https() {
+        let response = if self.use_tls() {
             debug!("Starting TLS handshake");
             let hostname = self
                 .tls_servername()
@@ -620,19 +687,10 @@ impl Actor {
         let (reader, writer) =
             downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
 
-        let (relay_client, receiver) =
-            RelayClientBuilder::new(self.secret_key.clone(), local_addr, reader, writer)
-                .build()
-                .await
-                .map_err(|e| ClientError::Build(e.to_string()))?;
+        let reader = ConnReader::Derp(FramedRead::new(reader, DerpCodec));
+        let writer = ConnWriter::Derp(FramedWrite::new(writer, DerpCodec));
 
-        if self.is_preferred && relay_client.note_preferred(true).await.is_err() {
-            relay_client.close().await;
-            return Err(ClientError::Send);
-        }
-
-        trace!("connect_0 done");
-        Ok((relay_client, receiver))
+        Ok((reader, writer, local_addr))
     }
 
     /// Sends the HTTP upgrade request to the relay server.
@@ -658,7 +716,7 @@ impl Actor {
         debug!("Sending upgrade request");
         let req = Request::builder()
             .uri("/derp")
-            .header(UPGRADE, super::HTTP_UPGRADE_PROTOCOL)
+            .header(UPGRADE, Protocol::Relay.upgrade_header())
             .body(http_body_util::Empty::<hyper::body::Bytes>::new())?;
         request_sender.send_request(req).await.map_err(From::from)
     }
@@ -690,12 +748,10 @@ impl Actor {
             return None;
         }
         if let Some((ref client, _)) = self.relay_client {
-            match client.local_addr() {
-                Ok(addr) => return Some(addr),
-                _ => return None,
-            }
+            client.local_addr()
+        } else {
+            None
         }
-        None
     }
 
     async fn ping(&mut self, s: oneshot::Sender<Result<Duration, ClientError>>) {
@@ -777,12 +833,14 @@ impl Actor {
             .and_then(|s| rustls::pki_types::ServerName::try_from(s).ok())
     }
 
-    fn use_https(&self) -> bool {
-        // only disable https if we are explicitly dialing a http url
-        if self.url.scheme() == "http" {
-            return false;
+    fn use_tls(&self) -> bool {
+        // only disable tls if we are explicitly dialing a http url
+        #[allow(clippy::match_like_matches_macro)]
+        match self.url.scheme() {
+            "http" => false,
+            "ws" => false,
+            _ => true,
         }
-        true
     }
 
     async fn dial_url(&self) -> Result<ProxyStream, ClientError> {

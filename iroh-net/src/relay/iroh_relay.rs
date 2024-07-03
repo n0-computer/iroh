@@ -27,7 +27,9 @@ use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument
 
 use crate::key::SecretKey;
 use crate::relay;
-use crate::relay::http::{ServerBuilder as RelayServerBuilder, TlsAcceptor};
+use crate::relay::http::{
+    ServerBuilder as RelayServerBuilder, TlsAcceptor, LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH,
+};
 use crate::stun;
 use crate::util::AbortingJoinHandle;
 
@@ -76,7 +78,7 @@ pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
 
 /// Configuration for the Relay HTTP and HTTPS server.
 ///
-/// This includes the HTTP services hosted by the Relay server, the Relay `/derp` HTTP
+/// This includes the HTTP services hosted by the Relay server, the Relay `/relay` HTTP
 /// endpoint is only one of the services served.
 #[derive(Debug)]
 pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
@@ -235,7 +237,12 @@ impl Server {
                     .relay_override(Box::new(relay_disabled_handler))
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
-                    .request_handler(Method::GET, "/derp/probe", Box::new(probe_handler))
+                    .request_handler(
+                        Method::GET,
+                        LEGACY_RELAY_PROBE_PATH,
+                        Box::new(probe_handler),
+                    ) // backwards compat
+                    .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
                     .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
                 let http_addr = match relay_config.tls {
                     Some(tls_config) => {
@@ -705,13 +712,28 @@ mod tests {
     use std::time::Duration;
 
     use bytes::Bytes;
+    use http::header::UPGRADE;
     use iroh_base::node_addr::RelayUrl;
 
-    use crate::relay::http::ClientBuilder;
+    use crate::relay::http::{ClientBuilder, Protocol, HTTP_UPGRADE_PROTOCOL};
 
     use self::relay::ReceivedMessage;
 
     use super::*;
+
+    async fn spawn_local_relay() -> Result<Server> {
+        Server::spawn(ServerConfig::<(), ()> {
+            relay: Some(RelayConfig {
+                secret_key: SecretKey::generate(),
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                tls: None,
+                limits: Default::default(),
+            }),
+            stun: None,
+            metrics_addr: None,
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_no_services() {
@@ -751,18 +773,7 @@ mod tests {
     #[tokio::test]
     async fn test_root_handler() {
         let _guard = iroh_test::logging::setup();
-        let server = Server::spawn(ServerConfig::<(), ()> {
-            relay: Some(RelayConfig {
-                secret_key: SecretKey::generate(),
-                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-                tls: None,
-                limits: Default::default(),
-            }),
-            stun: None,
-            metrics_addr: None,
-        })
-        .await
-        .unwrap();
+        let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}", server.http_addr().unwrap());
 
         let response = reqwest::get(&url).await.unwrap();
@@ -774,18 +785,7 @@ mod tests {
     #[tokio::test]
     async fn test_captive_portal_service() {
         let _guard = iroh_test::logging::setup();
-        let server = Server::spawn(ServerConfig::<(), ()> {
-            relay: Some(RelayConfig {
-                secret_key: SecretKey::generate(),
-                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-                tls: None,
-                limits: Default::default(),
-            }),
-            stun: None,
-            metrics_addr: None,
-        })
-        .await
-        .unwrap();
+        let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}/generate_204", server.http_addr().unwrap());
         let challenge = "123az__.";
 
@@ -804,20 +804,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_relay_clients() {
+    async fn test_relay_client_legacy_route() {
         let _guard = iroh_test::logging::setup();
-        let server = Server::spawn(ServerConfig::<(), ()> {
-            relay: Some(RelayConfig {
-                secret_key: SecretKey::generate(),
-                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-                tls: None,
-                limits: Default::default(),
-            }),
-            stun: None,
-            metrics_addr: None,
-        })
-        .await
-        .unwrap();
+        let server = spawn_local_relay().await.unwrap();
+        // We're testing the legacy endpoint at `/derp`
+        let endpoint_url = format!("http://{}/derp", server.http_addr().unwrap());
+
+        let client = reqwest::Client::new();
+        let result = client
+            .get(endpoint_url)
+            .header(UPGRADE, HTTP_UPGRADE_PROTOCOL)
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(result.status(), StatusCode::SWITCHING_PROTOCOLS);
+    }
+
+    #[tokio::test]
+    async fn test_relay_clients_both_derp() {
+        let _guard = iroh_test::logging::setup();
+        let server = spawn_local_relay().await.unwrap();
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();
 
@@ -852,6 +859,141 @@ mod tests {
         let resolver = crate::dns::default_resolver().clone();
         let (client_b, mut client_b_receiver) =
             ClientBuilder::new(relay_url.clone()).build(b_secret_key, resolver);
+        client_b.connect().await.unwrap();
+
+        // send message from a to b
+        let msg = Bytes::from("hello, b");
+        client_a.send(b_key, msg.clone()).await.unwrap();
+
+        let (res, _) = client_b_receiver.recv().await.unwrap().unwrap();
+        if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(a_key, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_b received unexpected message {res:?}");
+        }
+
+        // send message from b to a
+        let msg = Bytes::from("howdy, a");
+        client_b.send(a_key, msg.clone()).await.unwrap();
+
+        let (res, _) = client_a_receiver.recv().await.unwrap().unwrap();
+        if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(b_key, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_a received unexpected message {res:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_relay_clients_both_websockets() {
+        let _guard = iroh_test::logging::setup();
+        let server = spawn_local_relay().await.unwrap();
+
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse().unwrap();
+
+        // set up client a
+        let a_secret_key = SecretKey::generate();
+        let a_key = a_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_a, mut client_a_receiver) = ClientBuilder::new(relay_url.clone())
+            .protocol(Protocol::Websocket)
+            .build(a_secret_key, resolver);
+        let connect_client = client_a.clone();
+
+        // give the relay server some time to accept connections
+        if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
+            loop {
+                match connect_client.connect().await {
+                    Ok(_) => break,
+                    Err(err) => {
+                        warn!("client unable to connect to relay server: {err:#}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        })
+        .await
+        {
+            panic!("error connecting to relay server: {err:#}");
+        }
+
+        // set up client b
+        let b_secret_key = SecretKey::generate();
+        let b_key = b_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_b, mut client_b_receiver) = ClientBuilder::new(relay_url.clone())
+            .protocol(Protocol::Websocket) // another websocket client
+            .build(b_secret_key, resolver);
+        client_b.connect().await.unwrap();
+
+        // send message from a to b
+        let msg = Bytes::from("hello, b");
+        client_a.send(b_key, msg.clone()).await.unwrap();
+
+        let (res, _) = client_b_receiver.recv().await.unwrap().unwrap();
+        if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(a_key, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_b received unexpected message {res:?}");
+        }
+
+        // send message from b to a
+        let msg = Bytes::from("howdy, a");
+        client_b.send(a_key, msg.clone()).await.unwrap();
+
+        let (res, _) = client_a_receiver.recv().await.unwrap().unwrap();
+        if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(b_key, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_a received unexpected message {res:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_relay_clients_websocket_and_derp() {
+        let _guard = iroh_test::logging::setup();
+        let server = spawn_local_relay().await.unwrap();
+
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse().unwrap();
+
+        // set up client a
+        let a_secret_key = SecretKey::generate();
+        let a_key = a_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_a, mut client_a_receiver) =
+            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
+        let connect_client = client_a.clone();
+
+        // give the relay server some time to accept connections
+        if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
+            loop {
+                match connect_client.connect().await {
+                    Ok(_) => break,
+                    Err(err) => {
+                        warn!("client unable to connect to relay server: {err:#}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        })
+        .await
+        {
+            panic!("error connecting to relay server: {err:#}");
+        }
+
+        // set up client b
+        let b_secret_key = SecretKey::generate();
+        let b_key = b_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_b, mut client_b_receiver) = ClientBuilder::new(relay_url.clone())
+            .protocol(Protocol::Websocket) // Use websockets
+            .build(b_secret_key, resolver);
         client_b.connect().await.unwrap();
 
         // send message from a to b

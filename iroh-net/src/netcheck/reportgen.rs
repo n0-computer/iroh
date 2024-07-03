@@ -1128,7 +1128,7 @@ mod tests {
 
     use super::*;
 
-    use crate::defaults::{default_eu_relay_node, default_na_relay_node};
+    use crate::defaults::staging::{default_eu_relay_node, default_na_relay_node};
 
     #[test]
     fn test_update_report_stun_working() {
@@ -1321,7 +1321,7 @@ mod tests {
     //    sudo sysctl net.ipv4.ping_group_range="1234 1234"
     //
     // Note that this does not survive a reboot usually, commonly you need to edit
-    // /etc/sysctl.conf or /etc/sysctl.d/* to persist this accross reboots.
+    // /etc/sysctl.conf or /etc/sysctl.d/* to persist this across reboots.
     //
     // TODO: Not sure what about IPv6 pings using sysctl.
     #[tokio::test]

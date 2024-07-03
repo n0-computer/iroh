@@ -81,7 +81,7 @@ pub(crate) mod dns_and_pkarr_servers {
     use super::{create_dns_resolver, CleanupDropGuard};
 
     use crate::{
-        discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery},
+        discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
         dns::DnsResolver,
         test_utils::{
             dns_server::run_dns_server, pkarr_dns_state::State, pkarr_relay::run_pkarr_relay,
@@ -311,7 +311,7 @@ pub(crate) mod pkarr_relay {
         body: Bytes,
     ) -> Result<impl IntoResponse, AppError> {
         let key = pkarr::PublicKey::try_from(key.as_str())?;
-        let signed_packet = pkarr::SignedPacket::from_relay_response(key, body)?;
+        let signed_packet = pkarr::SignedPacket::from_relay_payload(&key, &body)?;
         let _updated = state.upsert(signed_packet)?;
         Ok(http::StatusCode::NO_CONTENT)
     }

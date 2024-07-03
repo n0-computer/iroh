@@ -21,7 +21,7 @@ mod tests {
         AsyncResolver,
     };
     use iroh_net::{
-        discovery::pkarr_publish::PkarrRelayClient,
+        discovery::pkarr::PkarrRelayClient,
         dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
         key::SecretKey,
     };
@@ -93,10 +93,11 @@ mod tests {
             ));
             SignedPacket::from_packet(&keypair, &packet)?
         };
-        let pkarr_client = pkarr::PkarrClient::builder().build();
-        pkarr_client
-            .relay_put(&pkarr_relay_url, &signed_packet)
-            .await?;
+        let pkarr_client = pkarr::PkarrRelayClient::new(pkarr::RelaySettings {
+            relays: vec![pkarr_relay_url.to_string()],
+            ..Default::default()
+        })?;
+        pkarr_client.as_async().publish(&signed_packet).await?;
 
         use hickory_proto::rr::Name;
         let pubkey = signed_packet.public_key().to_z32();
@@ -196,8 +197,13 @@ mod tests {
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         // publish the signed packet to our DHT
-        let pkarr = PkarrClient::builder().bootstrap(&testnet.bootstrap).build();
-        pkarr.publish(&signed_packet).await?;
+        let pkarr = PkarrClient::builder()
+            .dht_settings(mainline::dht::DhtSettings {
+                bootstrap: Some(testnet.bootstrap),
+                ..Default::default()
+            })
+            .build()?;
+        pkarr.publish(&signed_packet)?;
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(nameserver);
@@ -207,8 +213,8 @@ mod tests {
         assert_eq!(res.info.relay_url.map(Url::from), Some(relay_url));
 
         server.shutdown().await?;
-        for node in testnet.nodes {
-            node.shutdown();
+        for mut node in testnet.nodes {
+            node.shutdown()?;
         }
         Ok(())
     }

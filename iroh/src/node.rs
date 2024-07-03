@@ -58,6 +58,7 @@ pub struct Node<D> {
 #[derive(derive_more::Debug)]
 struct NodeInner<D> {
     db: D,
+    rpc_port: Option<u16>,
     docs: Option<DocsEngine>,
     endpoint: Endpoint,
     gossip: Gossip,
@@ -140,14 +141,19 @@ impl<D: BaoStore> Node<D> {
         &self.inner.client
     }
 
-    /// Returns a referenc to the used `LocalPoolHandle`.
+    /// Returns a reference to the used `LocalPoolHandle`.
     pub fn local_pool_handle(&self) -> &LocalPoolHandle {
         &self.inner.rt
     }
 
     /// Get the relay server we are connected to.
-    pub fn my_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
+    pub fn home_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
         self.inner.endpoint.home_relay()
+    }
+
+    /// Returns `Some(port)` if an RPC endpoint is running on this port.
+    pub fn my_rpc_port(&self) -> Option<u16> {
+        self.inner.rpc_port
     }
 
     /// Shutdown the node.
@@ -273,8 +279,8 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 // accept is just a pending future.
                 request = external_rpc.accept() => {
                     match request {
-                        Ok((msg, chan)) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, msg, chan);
+                        Ok(accepting) => {
+                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting);
                         }
                         Err(e) => {
                             info!("rpc request error: {:?}", e);
@@ -284,8 +290,8 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 // handle internal rpc requests.
                 request = internal_rpc.accept() => {
                     match request {
-                        Ok((msg, chan)) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, msg, chan);
+                        Ok(accepting) => {
+                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting);
                         }
                         Err(e) => {
                             info!("internal rpc request error: {:?}", e);
@@ -302,9 +308,22 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 },
                 // handle task terminations and quit on panics.
                 res = join_set.join_next(), if !join_set.is_empty() => {
-                    if let Some(Err(err)) = res {
-                        error!("Task failed: {err:?}");
-                        break;
+                    match res {
+                        Some(Err(outer)) => {
+                            if outer.is_panic() {
+                                error!("Task panicked: {outer:?}");
+                                break;
+                            } else if outer.is_cancelled() {
+                                debug!("Task cancelled: {outer:?}");
+                            } else {
+                                error!("Task failed: {outer:?}");
+                                break;
+                            }
+                        }
+                        Some(Ok(Err(inner))) => {
+                            debug!("Task errored: {inner:?}");
+                        }
+                        _ => {}
                     }
                 },
                 else => break,
@@ -459,8 +478,6 @@ async fn handle_connection(incoming: iroh_net::endpoint::Incoming, protocols: Ar
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use anyhow::{bail, Context};
     use bytes::Bytes;
     use iroh_base::node_addr::AddrInfoOptions;

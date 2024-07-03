@@ -275,7 +275,7 @@ impl Default for BaoFileStorage {
 impl BaoFileStorage {
     /// Take the storage out, leaving an empty storage in its place.
     ///
-    /// Be careful to put somethign back in its place, or you will lose data.
+    /// Be careful to put something back in its place, or you will lose data.
     #[cfg(feature = "fs-store")]
     pub fn take(&mut self) -> Self {
         std::mem::take(self)
@@ -732,7 +732,6 @@ pub mod test_support {
         BlockSize, ChunkRanges,
     };
     use futures_lite::{Stream, StreamExt};
-    use iroh_base::hash::Hash;
     use iroh_io::AsyncStreamReader;
     use rand::RngCore;
     use range_collections::RangeSet2;

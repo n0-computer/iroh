@@ -11,7 +11,7 @@ use tracing::{debug, error_span, warn, Instrument};
 use crate::{AddrInfo, Endpoint, NodeId};
 
 pub mod dns;
-pub mod pkarr_publish;
+pub mod pkarr;
 
 /// Name used for logging when new node addresses are added from discovery.
 const SOURCE_NAME: &str = "discovery";
@@ -60,7 +60,7 @@ pub struct DiscoveryItem {
     ///
     /// Must be microseconds since the unix epoch.
     pub last_updated: Option<u64>,
-    /// The adress info for the node being resolved.
+    /// The address info for the node being resolved.
     pub addr_info: AddrInfo,
 }
 
@@ -564,7 +564,7 @@ mod test_dns_pkarr {
     use iroh_base::key::SecretKey;
 
     use crate::{
-        discovery::pkarr_publish::PkarrPublisher,
+        discovery::pkarr::PkarrPublisher,
         dns::{node_info::NodeInfo, ResolverExt},
         relay::{RelayMap, RelayMode},
         test_utils::{
