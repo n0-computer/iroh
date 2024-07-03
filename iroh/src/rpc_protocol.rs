@@ -10,7 +10,7 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 use bytes::Bytes;
-use derive_more::{From, TryInto};
+use derive_more::From;
 use iroh_base::node_addr::AddrInfoOptions;
 pub use iroh_blobs::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_blobs::{
@@ -50,6 +50,17 @@ use crate::client::{
     NodeStatus,
 };
 pub use iroh_blobs::util::SetTagOption;
+
+mod node;
+pub use node::*;
+mod tags;
+pub use tags::*;
+mod authors;
+pub use authors::*;
+mod docs;
+pub use docs::*;
+mod blobs;
+pub use docs::*;
 
 /// A request to the node to provide the data at the given path
 ///
@@ -1084,6 +1095,73 @@ pub enum BlobsRequest {
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
+#[nested_enum_utils::enum_conversions(Response)]
+pub enum NodeResponse {
+    NodeStatus(RpcResult<NodeStatus>),
+    NodeId(RpcResult<NodeId>),
+    NodeAddr(RpcResult<NodeAddr>),
+    NodeRelay(RpcResult<Option<RelayUrl>>),
+    NodeStats(RpcResult<NodeStatsResponse>),
+    NodeConnections(RpcResult<NodeConnectionsResponse>),
+    NodeConnectionInfo(RpcResult<NodeConnectionInfoResponse>),
+    NodeShutdown(()),
+    NodeWatch(NodeWatchResponse),
+}
+
+#[allow(missing_docs)]
+#[derive(strum::Display, Debug, Serialize, Deserialize)]
+#[nested_enum_utils::enum_conversions(Response)]
+pub enum BlobsResponse {
+    BlobReadAt(RpcResult<BlobReadAtResponse>),
+    BlobAddStream(BlobAddStreamResponse),
+    BlobAddPath(BlobAddPathResponse),
+    BlobList(RpcResult<BlobInfo>),
+    BlobListIncomplete(RpcResult<IncompleteBlobInfo>),
+    BlobDownload(BlobDownloadResponse),
+    BlobFsck(ConsistencyCheckProgress),
+    BlobExport(BlobExportResponse),
+    BlobValidate(ValidateProgress),
+    CreateCollection(RpcResult<CreateCollectionResponse>),
+}
+
+#[allow(missing_docs)]
+#[derive(strum::Display, Debug, Serialize, Deserialize)]
+#[nested_enum_utils::enum_conversions(Response)]
+pub enum TagsResponse {
+    ListTags(TagInfo),
+    DeleteTag(RpcResult<()>),
+}
+
+#[allow(missing_docs)]
+#[derive(strum::Display, Debug, Serialize, Deserialize)]
+#[nested_enum_utils::enum_conversions(Response)]
+pub enum DocsResponse {
+    DocOpen(RpcResult<DocOpenResponse>),
+    DocClose(RpcResult<DocCloseResponse>),
+    DocStatus(RpcResult<DocStatusResponse>),
+    DocList(RpcResult<DocListResponse>),
+    DocCreate(RpcResult<DocCreateResponse>),
+    DocDrop(RpcResult<DocDropResponse>),
+    DocImport(RpcResult<DocImportResponse>),
+    DocSet(RpcResult<DocSetResponse>),
+    DocSetHash(RpcResult<DocSetHashResponse>),
+    DocGet(RpcResult<DocGetManyResponse>),
+    DocGetExact(RpcResult<DocGetExactResponse>),
+    DocImportFile(DocImportFileResponse),
+    DocExportFile(DocExportFileResponse),
+    DocDel(RpcResult<DocDelResponse>),
+    DocShare(RpcResult<DocShareResponse>),
+    DocStartSync(RpcResult<DocStartSyncResponse>),
+    DocLeave(RpcResult<DocLeaveResponse>),
+    DocSubscribe(RpcResult<DocSubscribeResponse>),
+    DocGetDownloadPolicy(RpcResult<DocGetDownloadPolicyResponse>),
+    DocSetDownloadPolicy(RpcResult<DocSetDownloadPolicyResponse>),
+    DocGetSyncPeers(RpcResult<DocGetSyncPeersResponse>),
+    StreamCreated(RpcResult<StreamCreated>),
+}
+
+#[allow(missing_docs)]
+#[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(Request)]
 pub enum TagsRequest {
     DeleteTag(DeleteTagRequest),
@@ -1144,54 +1222,13 @@ pub enum Request {
 
 /// The response enum, listing all possible responses.
 #[allow(missing_docs, clippy::large_enum_variant)]
-#[derive(Debug, Serialize, Deserialize, From, TryInto)]
+#[derive(Debug, Serialize, Deserialize)]
+#[nested_enum_utils::enum_conversions()]
 pub enum Response {
-    NodeStatus(RpcResult<NodeStatus>),
-    NodeId(RpcResult<NodeId>),
-    NodeAddr(RpcResult<NodeAddr>),
-    NodeRelay(RpcResult<Option<RelayUrl>>),
-    NodeStats(RpcResult<NodeStatsResponse>),
-    NodeConnections(RpcResult<NodeConnectionsResponse>),
-    NodeConnectionInfo(RpcResult<NodeConnectionInfoResponse>),
-    NodeShutdown(()),
-    NodeWatch(NodeWatchResponse),
-
-    BlobReadAt(RpcResult<BlobReadAtResponse>),
-    BlobAddStream(BlobAddStreamResponse),
-    BlobAddPath(BlobAddPathResponse),
-    BlobList(RpcResult<BlobInfo>),
-    BlobListIncomplete(RpcResult<IncompleteBlobInfo>),
-    BlobDownload(BlobDownloadResponse),
-    BlobFsck(ConsistencyCheckProgress),
-    BlobExport(BlobExportResponse),
-    BlobValidate(ValidateProgress),
-    CreateCollection(RpcResult<CreateCollectionResponse>),
-
-    ListTags(TagInfo),
-    DeleteTag(RpcResult<()>),
-
-    DocOpen(RpcResult<DocOpenResponse>),
-    DocClose(RpcResult<DocCloseResponse>),
-    DocStatus(RpcResult<DocStatusResponse>),
-    DocList(RpcResult<DocListResponse>),
-    DocCreate(RpcResult<DocCreateResponse>),
-    DocDrop(RpcResult<DocDropResponse>),
-    DocImport(RpcResult<DocImportResponse>),
-    DocSet(RpcResult<DocSetResponse>),
-    DocSetHash(RpcResult<DocSetHashResponse>),
-    DocGet(RpcResult<DocGetManyResponse>),
-    DocGetExact(RpcResult<DocGetExactResponse>),
-    DocImportFile(DocImportFileResponse),
-    DocExportFile(DocExportFileResponse),
-    DocDel(RpcResult<DocDelResponse>),
-    DocShare(RpcResult<DocShareResponse>),
-    DocStartSync(RpcResult<DocStartSyncResponse>),
-    DocLeave(RpcResult<DocLeaveResponse>),
-    DocSubscribe(RpcResult<DocSubscribeResponse>),
-    DocGetDownloadPolicy(RpcResult<DocGetDownloadPolicyResponse>),
-    DocSetDownloadPolicy(RpcResult<DocSetDownloadPolicyResponse>),
-    DocGetSyncPeers(RpcResult<DocGetSyncPeersResponse>),
-    StreamCreated(RpcResult<StreamCreated>),
+    Node(NodeResponse),
+    Blobs(BlobsResponse),
+    Tags(TagsResponse),
+    Docs(DocsResponse),
 
     AuthorList(RpcResult<AuthorListResponse>),
     AuthorCreate(RpcResult<AuthorCreateResponse>),

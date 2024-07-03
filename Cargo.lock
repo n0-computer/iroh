@@ -3179,6 +3179,7 @@ dependencies = [
 [[package]]
 name = "nested_enum_utils"
 version = "0.1.0"
+source = "git+https://github.com/n0-computer/nested-enum-utils#774e2333c9f4d1b402188e364774af93611ed23d"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",

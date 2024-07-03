@@ -50,7 +50,7 @@ tokio-util = { version = "0.7", features = ["codec", "io-util", "io", "time"] }
 tracing = "0.1"
 walkdir = "2"
 
-nested_enum_utils = { path = "../../nested-enum-utils" }
+nested_enum_utils = { git = "https://github.com/n0-computer/nested-enum-utils" }
 
 # Examples
 clap = { version = "4", features = ["derive"], optional = true }
