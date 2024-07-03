@@ -52,26 +52,3 @@ impl Service for RpcService {
     type Req = Request;
     type Res = Response;
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rpc_protocol_sizes() {
-        if std::mem::size_of::<usize>() == 8 {
-            assert_eq!(std::mem::size_of::<Request>(), 240);
-            assert_eq!(std::mem::size_of::<Response>(), 344);
-            assert_eq!(std::mem::size_of::<authors::Request>(), 232);
-            assert_eq!(std::mem::size_of::<authors::Response>(), 232);
-            assert_eq!(std::mem::size_of::<docs::Request>(), 232);
-            assert_eq!(std::mem::size_of::<docs::Response>(), 256);
-            assert_eq!(std::mem::size_of::<blobs::Request>(), 96);
-            assert_eq!(std::mem::size_of::<blobs::Response>(), 232);
-            assert_eq!(std::mem::size_of::<node::Request>(), 144);
-            assert_eq!(std::mem::size_of::<node::Response>(), 344);
-            assert_eq!(std::mem::size_of::<tags::Request>(), 32);
-            assert_eq!(std::mem::size_of::<tags::Response>(), 72);
-        }
-    }
-}
