@@ -100,4 +100,4 @@ Code contributions to Iroh are greatly appreciated. Here is the general workflow
 [forkiroh]: https://github.com/n0-computer/iroh/fork
 [draftprs]: https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-pull-requests#draft-pull-requests
 [rustdoc]: https://doc.rust-lang.org/rustdoc/how-to-write-documentation.html
-[docconventions]: https://github.com/rust-lang/rfcs/blob/master/text/1574-more-api-documentation-conventions.md#appendix-a-full-conventions-text
+[docconventions]: https://rust-lang.github.io/rfcs/1574-more-api-documentation-conventions.html#appendix-a-full-conventions-text
