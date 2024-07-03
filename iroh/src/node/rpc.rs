@@ -43,11 +43,10 @@ use crate::node::{docs::DocsEngine, NodeInner};
 use crate::rpc_protocol::{
     authors, blobs,
     blobs::{
-        BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
-        BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest,
-        BlobDownloadRequest, BlobDownloadResponse, BlobExportRequest, BlobExportResponse,
-        BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest, BlobReadAtResponse,
-        BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse,
+        AddPathRequest, AddPathResponse, AddStreamRequest, AddStreamResponse, AddStreamUpdate,
+        ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse, DeleteRequest,
+        DownloadRequest as BlobDownloadRequest, DownloadResponse, ExportRequest, ExportResponse,
+        ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse, ValidateRequest,
     },
     docs::Request as DocsRequest,
     docs::{
@@ -173,7 +172,7 @@ impl<D: BaoStore> Handler<D> {
                     .await
             }
             CreateCollection(msg) => chan.rpc(msg, self, Self::create_collection).await,
-            DeleteBlob(msg) => chan.rpc(msg, self, Self::blob_delete_blob).await,
+            Delete(msg) => chan.rpc(msg, self, Self::blob_delete_blob).await,
             AddPath(msg) => {
                 chan.server_streaming(msg, self, Self::blob_add_from_path)
                     .await
@@ -455,7 +454,7 @@ impl<D: BaoStore> Handler<D> {
 
     fn blob_list(
         self,
-        _msg: BlobListRequest,
+        _msg: ListRequest,
     ) -> impl Stream<Item = RpcResult<BlobInfo>> + Send + 'static {
         Gen::new(|co| async move {
             if let Err(e) = self.blob_list_impl(&co).await {
@@ -466,7 +465,7 @@ impl<D: BaoStore> Handler<D> {
 
     fn blob_list_incomplete(
         self,
-        _msg: BlobListIncompleteRequest,
+        _msg: ListIncompleteRequest,
     ) -> impl Stream<Item = RpcResult<IncompleteBlobInfo>> + Send + 'static {
         Gen::new(move |co| async move {
             if let Err(e) = self.blob_list_incomplete_impl(&co).await {
@@ -480,7 +479,7 @@ impl<D: BaoStore> Handler<D> {
         Ok(())
     }
 
-    async fn blob_delete_blob(self, msg: BlobDeleteBlobRequest) -> RpcResult<()> {
+    async fn blob_delete_blob(self, msg: DeleteRequest) -> RpcResult<()> {
         self.inner.db.delete(vec![msg.hash]).await?;
         Ok(())
     }
@@ -503,7 +502,7 @@ impl<D: BaoStore> Handler<D> {
     /// Invoke validate on the database and stream out the result
     fn blob_validate(
         self,
-        msg: BlobValidateRequest,
+        msg: ValidateRequest,
     ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
         let (tx, rx) = flume::bounded(1);
         let tx2 = tx.clone();
@@ -522,7 +521,7 @@ impl<D: BaoStore> Handler<D> {
     /// Invoke validate on the database and stream out the result
     fn blob_consistency_check(
         self,
-        msg: BlobConsistencyCheckRequest,
+        msg: ConsistencyCheckRequest,
     ) -> impl Stream<Item = ConsistencyCheckProgress> + Send + 'static {
         let (tx, rx) = flume::bounded(1);
         let tx2 = tx.clone();
@@ -540,10 +539,7 @@ impl<D: BaoStore> Handler<D> {
         rx.into_stream()
     }
 
-    fn blob_add_from_path(
-        self,
-        msg: BlobAddPathRequest,
-    ) -> impl Stream<Item = BlobAddPathResponse> {
+    fn blob_add_from_path(self, msg: AddPathRequest) -> impl Stream<Item = AddPathResponse> {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
         let tx2 = tx.clone();
@@ -552,7 +548,7 @@ impl<D: BaoStore> Handler<D> {
                 tx2.send_async(AddProgress::Abort(e.into())).await.ok();
             }
         });
-        rx.into_stream().map(BlobAddPathResponse)
+        rx.into_stream().map(AddPathResponse)
     }
 
     fn doc_import_file(
@@ -686,7 +682,7 @@ impl<D: BaoStore> Handler<D> {
         Ok(())
     }
 
-    fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = BlobDownloadResponse> {
+    fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = DownloadResponse> {
         let (sender, receiver) = flume::bounded(1024);
         let db = self.inner.db.clone();
         let downloader = self.inner.downloader.clone();
@@ -701,10 +697,10 @@ impl<D: BaoStore> Handler<D> {
             }
         });
 
-        receiver.into_stream().map(BlobDownloadResponse)
+        receiver.into_stream().map(DownloadResponse)
     }
 
-    fn blob_export(self, msg: BlobExportRequest) -> impl Stream<Item = BlobExportResponse> {
+    fn blob_export(self, msg: ExportRequest) -> impl Stream<Item = ExportResponse> {
         let (tx, rx) = flume::bounded(1024);
         let progress = FlumeProgressSender::new(tx);
         self.rt().spawn_pinned(move || async move {
@@ -722,12 +718,12 @@ impl<D: BaoStore> Handler<D> {
                 Err(err) => progress.send(ExportProgress::Abort(err.into())).await.ok(),
             }
         });
-        rx.into_stream().map(BlobExportResponse)
+        rx.into_stream().map(ExportResponse)
     }
 
     async fn blob_add_from_path0(
         self,
-        msg: BlobAddPathRequest,
+        msg: AddPathRequest,
         progress: flume::Sender<AddProgress>,
     ) -> anyhow::Result<()> {
         use iroh_blobs::store::ImportMode;
@@ -751,7 +747,7 @@ impl<D: BaoStore> Handler<D> {
             ImportProgress::OutboardDone { hash, id } => Some(AddProgress::Done { hash, id }),
             _ => None,
         });
-        let BlobAddPathRequest {
+        let AddPathRequest {
             wrap,
             path: root,
             in_place,
@@ -907,9 +903,9 @@ impl<D: BaoStore> Handler<D> {
 
     fn blob_add_stream(
         self,
-        msg: BlobAddStreamRequest,
-        stream: impl Stream<Item = BlobAddStreamUpdate> + Send + Unpin + 'static,
-    ) -> impl Stream<Item = BlobAddStreamResponse> {
+        msg: AddStreamRequest,
+        stream: impl Stream<Item = AddStreamUpdate> + Send + Unpin + 'static,
+    ) -> impl Stream<Item = AddStreamResponse> {
         let (tx, rx) = flume::bounded(32);
         let this = self.clone();
 
@@ -919,20 +915,20 @@ impl<D: BaoStore> Handler<D> {
             }
         });
 
-        rx.into_stream().map(BlobAddStreamResponse)
+        rx.into_stream().map(AddStreamResponse)
     }
 
     async fn blob_add_stream0(
         self,
-        msg: BlobAddStreamRequest,
-        stream: impl Stream<Item = BlobAddStreamUpdate> + Send + Unpin + 'static,
+        msg: AddStreamRequest,
+        stream: impl Stream<Item = AddStreamUpdate> + Send + Unpin + 'static,
         progress: flume::Sender<AddProgress>,
     ) -> anyhow::Result<()> {
         let progress = FlumeProgressSender::new(progress);
 
         let stream = stream.map(|item| match item {
-            BlobAddStreamUpdate::Chunk(chunk) => Ok(chunk),
-            BlobAddStreamUpdate::Abort => {
+            AddStreamUpdate::Chunk(chunk) => Ok(chunk),
+            AddStreamUpdate::Abort => {
                 Err(io::Error::new(io::ErrorKind::Interrupted, "Remote abort"))
             }
         });
@@ -978,8 +974,8 @@ impl<D: BaoStore> Handler<D> {
 
     fn blob_read_at(
         self,
-        req: BlobReadAtRequest,
-    ) -> impl Stream<Item = RpcResult<BlobReadAtResponse>> + Send + 'static {
+        req: ReadAtRequest,
+    ) -> impl Stream<Item = RpcResult<ReadAtResponse>> + Send + 'static {
         let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
         let db = self.inner.db.clone();
         self.inner.rt.spawn_pinned(move || async move {
@@ -989,15 +985,15 @@ impl<D: BaoStore> Handler<D> {
         });
 
         async fn read_loop<D: iroh_blobs::store::Store>(
-            req: BlobReadAtRequest,
+            req: ReadAtRequest,
             db: D,
-            tx: flume::Sender<RpcResult<BlobReadAtResponse>>,
+            tx: flume::Sender<RpcResult<ReadAtResponse>>,
             max_chunk_size: usize,
         ) -> anyhow::Result<()> {
             let entry = db.get(&req.hash).await?;
             let entry = entry.ok_or_else(|| anyhow!("Blob not found"))?;
             let size = entry.size();
-            tx.send_async(Ok(BlobReadAtResponse::Entry {
+            tx.send_async(Ok(ReadAtResponse::Entry {
                 size,
                 is_complete: entry.is_complete(),
             }))
@@ -1024,8 +1020,7 @@ impl<D: BaoStore> Handler<D> {
                 let chunk = reader.read_at(req.offset + read, chunk_size).await?;
                 let chunk_len = chunk.len();
                 if !chunk.is_empty() {
-                    tx.send_async(Ok(BlobReadAtResponse::Data { chunk }))
-                        .await?;
+                    tx.send_async(Ok(ReadAtResponse::Data { chunk })).await?;
                 }
                 if chunk_len < chunk_size {
                     break;

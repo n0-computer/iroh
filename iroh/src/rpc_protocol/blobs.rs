@@ -26,17 +26,17 @@ use super::RpcService;
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(super::Request)]
 pub enum Request {
-    ReadAt(BlobReadAtRequest),
-    AddStream(BlobAddStreamRequest),
-    AddStreamUpdate(BlobAddStreamUpdate),
-    AddPath(BlobAddPathRequest),
-    Download(BlobDownloadRequest),
-    Export(BlobExportRequest),
-    List(BlobListRequest),
-    ListIncomplete(BlobListIncompleteRequest),
-    DeleteBlob(BlobDeleteBlobRequest),
-    Validate(BlobValidateRequest),
-    Fsck(BlobConsistencyCheckRequest),
+    ReadAt(ReadAtRequest),
+    AddStream(AddStreamRequest),
+    AddStreamUpdate(AddStreamUpdate),
+    AddPath(AddPathRequest),
+    Download(DownloadRequest),
+    Export(ExportRequest),
+    List(ListRequest),
+    ListIncomplete(ListIncompleteRequest),
+    Delete(DeleteRequest),
+    Validate(ValidateRequest),
+    Fsck(ConsistencyCheckRequest),
     CreateCollection(CreateCollectionRequest),
 }
 
@@ -44,14 +44,14 @@ pub enum Request {
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(super::Response)]
 pub enum Response {
-    ReadAt(RpcResult<BlobReadAtResponse>),
-    AddStream(BlobAddStreamResponse),
-    AddPath(BlobAddPathResponse),
+    ReadAt(RpcResult<ReadAtResponse>),
+    AddStream(AddStreamResponse),
+    AddPath(AddPathResponse),
     List(RpcResult<BlobInfo>),
     ListIncomplete(RpcResult<IncompleteBlobInfo>),
-    Download(BlobDownloadResponse),
+    Download(DownloadResponse),
     Fsck(ConsistencyCheckProgress),
-    Export(BlobExportResponse),
+    Export(ExportResponse),
     Validate(ValidateProgress),
     CreateCollection(RpcResult<CreateCollectionResponse>),
 }
@@ -60,7 +60,7 @@ pub enum Response {
 ///
 /// Will produce a stream of [`AddProgress`] messages.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlobAddPathRequest {
+pub struct AddPathRequest {
     /// The path to the data to provide.
     ///
     /// This should be an absolute path valid for the file system on which
@@ -76,21 +76,21 @@ pub struct BlobAddPathRequest {
     pub wrap: WrapOption,
 }
 
-impl Msg<RpcService> for BlobAddPathRequest {
+impl Msg<RpcService> for AddPathRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<RpcService> for BlobAddPathRequest {
-    type Response = BlobAddPathResponse;
+impl ServerStreamingMsg<RpcService> for AddPathRequest {
+    type Response = AddPathResponse;
 }
 
 /// Wrapper around [`AddProgress`].
 #[derive(Debug, Serialize, Deserialize, derive_more::Into)]
-pub struct BlobAddPathResponse(pub AddProgress);
+pub struct AddPathResponse(pub AddProgress);
 
 /// A request to the node to download and share the data specified by the hash.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlobDownloadRequest {
+pub struct DownloadRequest {
     /// This mandatory field contains the hash of the data to download and share.
     pub hash: Hash,
     /// If the format is [`BlobFormat::HashSeq`], all children are downloaded and shared as
@@ -109,21 +109,21 @@ pub struct BlobDownloadRequest {
     pub mode: DownloadMode,
 }
 
-impl Msg<RpcService> for BlobDownloadRequest {
+impl Msg<RpcService> for DownloadRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<RpcService> for BlobDownloadRequest {
-    type Response = BlobDownloadResponse;
+impl ServerStreamingMsg<RpcService> for DownloadRequest {
+    type Response = DownloadResponse;
 }
 
 /// Progress response for [`BlobDownloadRequest`]
 #[derive(Debug, Clone, Serialize, Deserialize, derive_more::From, derive_more::Into)]
-pub struct BlobDownloadResponse(pub DownloadProgress);
+pub struct DownloadResponse(pub DownloadProgress);
 
 /// A request to the node to download and share the data specified by the hash.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlobExportRequest {
+pub struct ExportRequest {
     /// The hash of the blob to export.
     pub hash: Hash,
     /// The filepath to where the data should be saved
@@ -140,75 +140,75 @@ pub struct BlobExportRequest {
     pub mode: ExportMode,
 }
 
-impl Msg<RpcService> for BlobExportRequest {
+impl Msg<RpcService> for ExportRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<RpcService> for BlobExportRequest {
-    type Response = BlobExportResponse;
+impl ServerStreamingMsg<RpcService> for ExportRequest {
+    type Response = ExportResponse;
 }
 
 /// Progress response for [`BlobExportRequest`]
 #[derive(Debug, Clone, Serialize, Deserialize, derive_more::From, derive_more::Into)]
-pub struct BlobExportResponse(pub ExportProgress);
+pub struct ExportResponse(pub ExportProgress);
 
 /// A request to the node to validate the integrity of all provided data
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlobConsistencyCheckRequest {
+pub struct ConsistencyCheckRequest {
     /// repair the store by dropping inconsistent blobs
     pub repair: bool,
 }
 
-impl Msg<RpcService> for BlobConsistencyCheckRequest {
+impl Msg<RpcService> for ConsistencyCheckRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<RpcService> for BlobConsistencyCheckRequest {
+impl ServerStreamingMsg<RpcService> for ConsistencyCheckRequest {
     type Response = ConsistencyCheckProgress;
 }
 
 /// A request to the node to validate the integrity of all provided data
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlobValidateRequest {
+pub struct ValidateRequest {
     /// repair the store by downgrading blobs from complete to partial
     pub repair: bool,
 }
 
-impl Msg<RpcService> for BlobValidateRequest {
+impl Msg<RpcService> for ValidateRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<RpcService> for BlobValidateRequest {
+impl ServerStreamingMsg<RpcService> for ValidateRequest {
     type Response = ValidateProgress;
 }
 
 /// List all blobs, including collections
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlobListRequest;
+pub struct ListRequest;
 
-impl Msg<RpcService> for BlobListRequest {
+impl Msg<RpcService> for ListRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<RpcService> for BlobListRequest {
+impl ServerStreamingMsg<RpcService> for ListRequest {
     type Response = RpcResult<BlobInfo>;
 }
 
 /// List all blobs, including collections
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlobListIncompleteRequest;
+pub struct ListIncompleteRequest;
 
-impl Msg<RpcService> for BlobListIncompleteRequest {
+impl Msg<RpcService> for ListIncompleteRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<RpcService> for BlobListIncompleteRequest {
+impl ServerStreamingMsg<RpcService> for ListIncompleteRequest {
     type Response = RpcResult<IncompleteBlobInfo>;
 }
 
 /// Get the bytes for a hash
 #[derive(Serialize, Deserialize, Debug)]
-pub struct BlobReadAtRequest {
+pub struct ReadAtRequest {
     /// Hash to get bytes for
     pub hash: Hash,
     /// Offset to start reading at
@@ -217,17 +217,17 @@ pub struct BlobReadAtRequest {
     pub len: Option<usize>,
 }
 
-impl Msg<RpcService> for BlobReadAtRequest {
+impl Msg<RpcService> for ReadAtRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<RpcService> for BlobReadAtRequest {
-    type Response = RpcResult<BlobReadAtResponse>;
+impl ServerStreamingMsg<RpcService> for ReadAtRequest {
+    type Response = RpcResult<ReadAtResponse>;
 }
 
 /// Response to [`BlobReadAtRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub enum BlobReadAtResponse {
+pub enum ReadAtResponse {
     /// The entry header.
     Entry {
         /// The size of the blob
@@ -244,41 +244,41 @@ pub enum BlobReadAtResponse {
 
 /// Write a blob from a byte stream
 #[derive(Serialize, Deserialize, Debug)]
-pub struct BlobAddStreamRequest {
+pub struct AddStreamRequest {
     /// Tag to tag the data with.
     pub tag: SetTagOption,
 }
 
 /// Write a blob from a byte stream
 #[derive(Serialize, Deserialize, Debug)]
-pub enum BlobAddStreamUpdate {
+pub enum AddStreamUpdate {
     /// A chunk of stream data
     Chunk(Bytes),
     /// Abort the request due to an error on the client side
     Abort,
 }
 
-impl Msg<RpcService> for BlobAddStreamRequest {
+impl Msg<RpcService> for AddStreamRequest {
     type Pattern = BidiStreaming;
 }
 
-impl BidiStreamingMsg<RpcService> for BlobAddStreamRequest {
-    type Update = BlobAddStreamUpdate;
-    type Response = BlobAddStreamResponse;
+impl BidiStreamingMsg<RpcService> for AddStreamRequest {
+    type Update = AddStreamUpdate;
+    type Response = AddStreamResponse;
 }
 
 /// Wrapper around [`AddProgress`].
 #[derive(Debug, Serialize, Deserialize, derive_more::Into)]
-pub struct BlobAddStreamResponse(pub AddProgress);
+pub struct AddStreamResponse(pub AddProgress);
 
 /// Delete a blob
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlobDeleteBlobRequest {
+pub struct DeleteRequest {
     /// Name of the tag
     pub hash: Hash,
 }
 
-impl RpcMsg<RpcService> for BlobDeleteBlobRequest {
+impl RpcMsg<RpcService> for DeleteRequest {
     type Response = RpcResult<()>;
 }
 
