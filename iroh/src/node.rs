@@ -533,7 +533,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "flaky"]
     async fn test_node_add_tagged_blob_event() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
@@ -541,7 +540,7 @@ mod tests {
 
         let _drop_guard = node.cancel_token().drop_guard();
 
-        let _got_hash = tokio::time::timeout(Duration::from_secs(1), async move {
+        let _got_hash = tokio::time::timeout(Duration::from_secs(10), async move {
             let mut stream = node
                 .blobs()
                 .add_from_path(
