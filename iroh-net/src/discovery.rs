@@ -637,7 +637,6 @@ mod test_dns_pkarr {
     const TEST_ALPN: &[u8] = b"TEST";
 
     #[tokio::test]
-    #[ignore = "flaky"]
     async fn pkarr_publish_dns_discover() -> Result<()> {
         let _logging_guard = iroh_test::logging::setup();
 
@@ -659,7 +658,6 @@ mod test_dns_pkarr {
     }
 
     #[tokio::test]
-    #[ignore = "flaky"]
     async fn pkarr_publish_dns_discover_empty_node_addr() -> Result<()> {
         let _logging_guard = iroh_test::logging::setup();
 
