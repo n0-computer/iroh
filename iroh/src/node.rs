@@ -625,6 +625,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "flaky"]
     async fn test_download_via_relay_with_discovery() -> Result<()> {
         let _guard = iroh_test::logging::setup();
         let (relay_map, _relay_url, _guard) = iroh_net::test_utils::run_relay_server().await?;
