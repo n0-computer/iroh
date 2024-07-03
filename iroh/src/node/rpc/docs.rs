@@ -9,19 +9,24 @@ use tokio_stream::StreamExt;
 use crate::client::docs::ShareMode;
 use crate::node::DocsEngine;
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorCreateResponse, AuthorDeleteRequest, AuthorDeleteResponse,
-    AuthorExportRequest, AuthorExportResponse, AuthorGetDefaultRequest, AuthorGetDefaultResponse,
-    AuthorImportRequest, AuthorImportResponse, AuthorListRequest, AuthorListResponse,
-    AuthorSetDefaultRequest, AuthorSetDefaultResponse, DocCloseRequest, DocCloseResponse,
-    DocCreateRequest, DocCreateResponse, DocDelRequest, DocDelResponse, DocDropRequest,
-    DocDropResponse, DocGetDownloadPolicyRequest, DocGetDownloadPolicyResponse, DocGetExactRequest,
-    DocGetExactResponse, DocGetManyRequest, DocGetManyResponse, DocGetSyncPeersRequest,
-    DocGetSyncPeersResponse, DocImportRequest, DocImportResponse, DocLeaveRequest,
-    DocLeaveResponse, DocListRequest, DocListResponse, DocOpenRequest, DocOpenResponse,
-    DocSetDownloadPolicyRequest, DocSetDownloadPolicyResponse, DocSetHashRequest,
-    DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
-    DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest, DocStatusResponse,
-    DocSubscribeRequest, DocSubscribeResponse, RpcResult,
+    authors::{
+        AuthorCreateRequest, AuthorCreateResponse, AuthorDeleteRequest, AuthorDeleteResponse,
+        AuthorExportRequest, AuthorExportResponse, AuthorGetDefaultRequest,
+        AuthorGetDefaultResponse, AuthorImportRequest, AuthorImportResponse, AuthorListRequest,
+        AuthorListResponse, AuthorSetDefaultRequest, AuthorSetDefaultResponse,
+    },
+    docs::{
+        DocCloseRequest, DocCloseResponse, DocCreateRequest, DocCreateResponse, DocDelRequest,
+        DocDelResponse, DocDropRequest, DocDropResponse, DocGetDownloadPolicyRequest,
+        DocGetDownloadPolicyResponse, DocGetExactRequest, DocGetExactResponse, DocGetManyRequest,
+        DocGetManyResponse, DocGetSyncPeersRequest, DocGetSyncPeersResponse, DocImportRequest,
+        DocImportResponse, DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse,
+        DocOpenRequest, DocOpenResponse, DocSetDownloadPolicyRequest, DocSetDownloadPolicyResponse,
+        DocSetHashRequest, DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest,
+        DocShareResponse, DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest,
+        DocStatusResponse, DocSubscribeRequest, DocSubscribeResponse,
+    },
+    RpcResult,
 };
 
 /// Capacity for the flume channels to forward sync store iterators to async RPC streams.

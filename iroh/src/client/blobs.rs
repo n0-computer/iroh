@@ -32,12 +32,13 @@ use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
 
-use crate::rpc_protocol::{
+use crate::rpc_protocol::blobs::{
     BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
     BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobListIncompleteRequest,
     BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest,
+    CreateCollectionRequest, CreateCollectionResponse,
 };
+use crate::rpc_protocol::node::NodeStatusRequest;
 
 use super::{flatten, tags, Iroh, RpcClient};
 

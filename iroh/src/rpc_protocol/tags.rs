@@ -10,7 +10,7 @@ use super::RpcService;
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(super::Request)]
-pub enum TagsRequest {
+pub enum Request {
     DeleteTag(DeleteTagRequest),
     ListTags(ListTagsRequest),
 }
@@ -18,7 +18,7 @@ pub enum TagsRequest {
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(super::Response)]
-pub enum TagsResponse {
+pub enum Response {
     ListTags(TagInfo),
     DeleteTag(RpcResult<()>),
 }

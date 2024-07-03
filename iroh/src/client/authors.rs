@@ -5,7 +5,7 @@ use futures_lite::{stream::StreamExt, Stream};
 use iroh_docs::{Author, AuthorId};
 use ref_cast::RefCast;
 
-use crate::rpc_protocol::{
+use crate::rpc_protocol::authors::{
     AuthorCreateRequest, AuthorDeleteRequest, AuthorExportRequest, AuthorGetDefaultRequest,
     AuthorImportRequest, AuthorListRequest, AuthorSetDefaultRequest,
 };

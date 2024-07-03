@@ -14,16 +14,11 @@ use serde::{Deserialize, Serialize};
 
 pub use iroh_base::rpc::RpcResult;
 
-pub mod node;
-pub use node::*;
-mod tags;
-pub use tags::*;
 pub mod authors;
-pub use authors::*;
-pub mod docs;
-pub use docs::*;
 pub mod blobs;
-pub use blobs::*;
+pub mod docs;
+pub mod node;
+pub mod tags;
 
 /// The RPC service for the iroh provider process.
 #[derive(Debug, Clone)]
@@ -37,7 +32,7 @@ pub enum Request {
     Node(node::Request),
     Blobs(blobs::Request),
     Docs(docs::Request),
-    Tags(TagsRequest),
+    Tags(tags::Request),
     Authors(authors::Request),
 }
 
@@ -48,7 +43,7 @@ pub enum Request {
 pub enum Response {
     Node(node::Response),
     Blobs(blobs::Response),
-    Tags(TagsResponse),
+    Tags(tags::Response),
     Docs(docs::Response),
     Authors(authors::Response),
 }
@@ -75,8 +70,8 @@ mod tests {
             assert_eq!(std::mem::size_of::<blobs::Response>(), 232);
             assert_eq!(std::mem::size_of::<node::Request>(), 144);
             assert_eq!(std::mem::size_of::<node::Response>(), 344);
-            assert_eq!(std::mem::size_of::<TagsRequest>(), 32);
-            assert_eq!(std::mem::size_of::<TagsResponse>(), 72);
+            assert_eq!(std::mem::size_of::<tags::Request>(), 32);
+            assert_eq!(std::mem::size_of::<tags::Response>(), 72);
         }
     }
 }

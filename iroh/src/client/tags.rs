@@ -7,7 +7,7 @@ use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
 use super::RpcClient;
-use crate::rpc_protocol::{DeleteTagRequest, ListTagsRequest};
+use crate::rpc_protocol::tags::{DeleteTagRequest, ListTagsRequest};
 
 /// Iroh tags client.
 #[derive(Debug, Clone, RefCast)]

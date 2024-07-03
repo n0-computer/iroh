@@ -13,7 +13,7 @@ use quic_rpc::transport::{boxed::Connection as BoxedConnection, quinn::QuinnConn
 use super::Iroh;
 use crate::{
     node::RpcStatus,
-    rpc_protocol::{NodeStatusRequest, RpcService},
+    rpc_protocol::{node::NodeStatusRequest, RpcService},
 };
 
 /// ALPN used by irohs RPC mechanism.

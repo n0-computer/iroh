@@ -41,17 +41,29 @@ use crate::client::{
 };
 use crate::node::{docs::DocsEngine, NodeInner};
 use crate::rpc_protocol::{
-    authors, blobs, docs::Request as DocsRequest, node, BlobAddPathRequest, BlobAddPathResponse,
-    BlobAddStreamRequest, BlobAddStreamResponse, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
-    BlobDeleteBlobRequest, BlobDownloadRequest, BlobDownloadResponse, BlobExportRequest,
-    BlobExportResponse, BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest,
-    BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse,
-    DeleteTagRequest, DocExportFileRequest, DocExportFileResponse, DocImportFileRequest,
-    DocImportFileResponse, DocSetHashRequest, ListTagsRequest, NodeAddAddrRequest, NodeAddrRequest,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeConnectionsResponse, NodeIdRequest, NodeRelayRequest, NodeShutdownRequest,
-    NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest, NodeWatchResponse,
-    Request, RpcService, TagsRequest,
+    authors, blobs,
+    blobs::{
+        BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
+        BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest,
+        BlobDownloadRequest, BlobDownloadResponse, BlobExportRequest, BlobExportResponse,
+        BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest, BlobReadAtResponse,
+        BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse,
+    },
+    docs::Request as DocsRequest,
+    docs::{
+        DocExportFileRequest, DocExportFileResponse, DocImportFileRequest, DocImportFileResponse,
+        DocSetHashRequest,
+    },
+    node,
+    node::{
+        NodeAddAddrRequest, NodeAddrRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+        NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest, NodeRelayRequest,
+        NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
+        NodeWatchRequest, NodeWatchResponse,
+    },
+    tags,
+    tags::{DeleteTagRequest, ListTagsRequest},
+    Request, RpcService,
 };
 
 mod docs;
@@ -188,10 +200,10 @@ impl<D: BaoStore> Handler<D> {
                 Err(RpcServerError::UnexpectedUpdateMessage)
             }
 
-            Tags(TagsRequest::ListTags(msg)) => {
+            Tags(tags::Request::ListTags(msg)) => {
                 chan.server_streaming(msg, self, Self::blob_list_tags).await
             }
-            Tags(TagsRequest::DeleteTag(msg)) => chan.rpc(msg, self, Self::blob_delete_tag).await,
+            Tags(tags::Request::DeleteTag(msg)) => chan.rpc(msg, self, Self::blob_delete_tag).await,
 
             Authors(authors::Request::List(msg)) => {
                 chan.server_streaming(msg, self, |handler, req| {

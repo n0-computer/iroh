@@ -25,13 +25,14 @@ use quic_rpc::message::RpcMsg;
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
-use crate::rpc_protocol::{
+use crate::rpc_protocol::docs::{
     DocCloseRequest, DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest,
     DocExportFileRequest, DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest,
     DocGetSyncPeersRequest, DocImportFileRequest, DocImportRequest, DocLeaveRequest,
     DocListRequest, DocOpenRequest, DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest,
-    DocShareRequest, DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, RpcService,
+    DocShareRequest, DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest,
 };
+use crate::rpc_protocol::RpcService;
 
 #[doc(inline)]
 pub use iroh_docs::engine::{Origin, SyncEvent, SyncReason};

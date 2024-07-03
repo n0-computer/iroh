@@ -9,7 +9,7 @@ use iroh_net::{endpoint::ConnectionInfo, relay::RelayUrl, NodeAddr, NodeId};
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
-use crate::rpc_protocol::{
+use crate::rpc_protocol::node::{
     CounterStats, NodeAddAddrRequest, NodeAddrRequest, NodeConnectionInfoRequest,
     NodeConnectionInfoResponse, NodeConnectionsRequest, NodeIdRequest, NodeRelayRequest,
     NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
