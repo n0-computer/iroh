@@ -55,13 +55,12 @@ use crate::rpc_protocol::{
     },
     node,
     node::{
-        NodeAddAddrRequest, NodeAddrRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-        NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest, NodeRelayRequest,
-        NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
-        NodeWatchRequest, NodeWatchResponse,
+        AddAddrRequest, AddrRequest, ConnectionInfoRequest, ConnectionInfoResponse,
+        ConnectionsRequest, ConnectionsResponse, IdRequest, NodeWatchRequest, RelayRequest,
+        ShutdownRequest, StatsRequest, StatsResponse, StatusRequest, WatchResponse,
     },
     tags,
-    tags::{DeleteTagRequest, ListTagsRequest},
+    tags::{DeleteRequest as TagDeleteRequest, ListRequest as ListTagsRequest},
     Request, RpcService,
 };
 
@@ -474,7 +473,7 @@ impl<D: BaoStore> Handler<D> {
         })
     }
 
-    async fn blob_delete_tag(self, msg: DeleteTagRequest) -> RpcResult<()> {
+    async fn blob_delete_tag(self, msg: TagDeleteRequest) -> RpcResult<()> {
         self.inner.db.set_tag(msg.name, None).await?;
         Ok(())
     }
@@ -837,9 +836,9 @@ impl<D: BaoStore> Handler<D> {
     }
 
     #[allow(clippy::unused_async)]
-    async fn node_stats(self, _req: NodeStatsRequest) -> RpcResult<NodeStatsResponse> {
+    async fn node_stats(self, _req: StatsRequest) -> RpcResult<StatsResponse> {
         #[cfg(feature = "metrics")]
-        let res = Ok(NodeStatsResponse {
+        let res = Ok(StatsResponse {
             stats: crate::metrics::get_metrics()?,
         });
 
@@ -849,7 +848,7 @@ impl<D: BaoStore> Handler<D> {
         res
     }
 
-    async fn node_status(self, _: NodeStatusRequest) -> RpcResult<NodeStatus> {
+    async fn node_status(self, _: StatusRequest) -> RpcResult<NodeStatus> {
         Ok(NodeStatus {
             addr: self.inner.endpoint.node_addr().await?,
             listen_addrs: self
@@ -863,22 +862,22 @@ impl<D: BaoStore> Handler<D> {
     }
 
     #[allow(clippy::unused_async)]
-    async fn node_id(self, _: NodeIdRequest) -> RpcResult<NodeId> {
+    async fn node_id(self, _: IdRequest) -> RpcResult<NodeId> {
         Ok(self.inner.secret_key.public())
     }
 
-    async fn node_addr(self, _: NodeAddrRequest) -> RpcResult<NodeAddr> {
+    async fn node_addr(self, _: AddrRequest) -> RpcResult<NodeAddr> {
         let addr = self.inner.endpoint.node_addr().await?;
         Ok(addr)
     }
 
     #[allow(clippy::unused_async)]
-    async fn node_relay(self, _: NodeRelayRequest) -> RpcResult<Option<RelayUrl>> {
+    async fn node_relay(self, _: RelayRequest) -> RpcResult<Option<RelayUrl>> {
         Ok(self.inner.endpoint.home_relay())
     }
 
     #[allow(clippy::unused_async)]
-    async fn node_shutdown(self, request: NodeShutdownRequest) {
+    async fn node_shutdown(self, request: ShutdownRequest) {
         if request.force {
             info!("hard shutdown requested");
             std::process::exit(0);
@@ -889,11 +888,11 @@ impl<D: BaoStore> Handler<D> {
         }
     }
 
-    fn node_watch(self, _: NodeWatchRequest) -> impl Stream<Item = NodeWatchResponse> {
+    fn node_watch(self, _: NodeWatchRequest) -> impl Stream<Item = WatchResponse> {
         futures_lite::stream::unfold((), |()| async move {
             tokio::time::sleep(HEALTH_POLL_WAIT).await;
             Some((
-                NodeWatchResponse {
+                WatchResponse {
                     version: env!("CARGO_PKG_VERSION").to_string(),
                 },
                 (),
@@ -1036,15 +1035,15 @@ impl<D: BaoStore> Handler<D> {
 
     fn node_connections(
         self,
-        _: NodeConnectionsRequest,
-    ) -> impl Stream<Item = RpcResult<NodeConnectionsResponse>> + Send + 'static {
+        _: ConnectionsRequest,
+    ) -> impl Stream<Item = RpcResult<ConnectionsResponse>> + Send + 'static {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
         let mut conn_infos = self.inner.endpoint.connection_infos();
         conn_infos.sort_by_key(|n| n.node_id.to_string());
         self.rt().spawn_pinned(|| async move {
             for conn_info in conn_infos {
-                tx.send_async(Ok(NodeConnectionsResponse { conn_info }))
+                tx.send_async(Ok(ConnectionsResponse { conn_info }))
                     .await
                     .ok();
             }
@@ -1056,17 +1055,17 @@ impl<D: BaoStore> Handler<D> {
     #[allow(clippy::unused_async)]
     async fn node_connection_info(
         self,
-        req: NodeConnectionInfoRequest,
-    ) -> RpcResult<NodeConnectionInfoResponse> {
-        let NodeConnectionInfoRequest { node_id } = req;
+        req: ConnectionInfoRequest,
+    ) -> RpcResult<ConnectionInfoResponse> {
+        let ConnectionInfoRequest { node_id } = req;
         let conn_info = self.inner.endpoint.connection_info(node_id);
-        Ok(NodeConnectionInfoResponse { conn_info })
+        Ok(ConnectionInfoResponse { conn_info })
     }
 
     // This method is called as an RPC method, which have to be async
     #[allow(clippy::unused_async)]
-    async fn node_add_addr(self, req: NodeAddAddrRequest) -> RpcResult<()> {
-        let NodeAddAddrRequest { addr } = req;
+    async fn node_add_addr(self, req: AddAddrRequest) -> RpcResult<()> {
+        let AddAddrRequest { addr } = req;
         self.inner.endpoint.add_node_addr(addr)?;
         Ok(())
     }

@@ -11,10 +11,9 @@ use crate::client::docs::ShareMode;
 use crate::node::DocsEngine;
 use crate::rpc_protocol::{
     authors::{
-        AuthorCreateRequest, AuthorCreateResponse, AuthorDeleteRequest, AuthorDeleteResponse,
-        AuthorExportRequest, AuthorExportResponse, AuthorGetDefaultRequest,
-        AuthorGetDefaultResponse, AuthorImportRequest, AuthorImportResponse, AuthorListRequest,
-        AuthorListResponse, AuthorSetDefaultRequest, AuthorSetDefaultResponse,
+        AuthorCreateRequest, CreateResponse, DeleteRequest, DeleteResponse, ExportRequest,
+        ExportResponse, GetDefaultRequest, GetDefaultResponse, ImportRequest, ImportResponse,
+        ListRequest as AuthorListRequest, ListResponse, SetDefaultRequest, SetDefaultResponse,
     },
     docs::{
         DocCloseRequest, DocCloseResponse, DocCreateRequest, DocCreateResponse, DocDelRequest,
@@ -34,35 +33,32 @@ const ITER_CHANNEL_CAP: usize = 64;
 
 #[allow(missing_docs)]
 impl DocsEngine {
-    pub async fn author_create(
-        &self,
-        _req: AuthorCreateRequest,
-    ) -> RpcResult<AuthorCreateResponse> {
+    pub async fn author_create(&self, _req: AuthorCreateRequest) -> RpcResult<CreateResponse> {
         // TODO: pass rng
         let author = Author::new(&mut rand::rngs::OsRng {});
         self.sync.import_author(author.clone()).await?;
-        Ok(AuthorCreateResponse {
+        Ok(CreateResponse {
             author_id: author.id(),
         })
     }
 
-    pub fn author_default(&self, _req: AuthorGetDefaultRequest) -> AuthorGetDefaultResponse {
+    pub fn author_default(&self, _req: GetDefaultRequest) -> GetDefaultResponse {
         let author_id = self.default_author.get();
-        AuthorGetDefaultResponse { author_id }
+        GetDefaultResponse { author_id }
     }
 
     pub async fn author_set_default(
         &self,
-        req: AuthorSetDefaultRequest,
-    ) -> RpcResult<AuthorSetDefaultResponse> {
+        req: SetDefaultRequest,
+    ) -> RpcResult<SetDefaultResponse> {
         self.default_author.set(req.author_id, &self.sync).await?;
-        Ok(AuthorSetDefaultResponse)
+        Ok(SetDefaultResponse)
     }
 
     pub fn author_list(
         &self,
         _req: AuthorListRequest,
-    ) -> impl Stream<Item = RpcResult<AuthorListResponse>> {
+    ) -> impl Stream<Item = RpcResult<ListResponse>> {
         let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
@@ -74,28 +70,28 @@ impl DocsEngine {
             }
         });
         rx.into_stream().map(|r| {
-            r.map(|author_id| AuthorListResponse { author_id })
+            r.map(|author_id| ListResponse { author_id })
                 .map_err(Into::into)
         })
     }
 
-    pub async fn author_import(&self, req: AuthorImportRequest) -> RpcResult<AuthorImportResponse> {
+    pub async fn author_import(&self, req: ImportRequest) -> RpcResult<ImportResponse> {
         let author_id = self.sync.import_author(req.author).await?;
-        Ok(AuthorImportResponse { author_id })
+        Ok(ImportResponse { author_id })
     }
 
-    pub async fn author_export(&self, req: AuthorExportRequest) -> RpcResult<AuthorExportResponse> {
+    pub async fn author_export(&self, req: ExportRequest) -> RpcResult<ExportResponse> {
         let author = self.sync.export_author(req.author).await?;
 
-        Ok(AuthorExportResponse { author })
+        Ok(ExportResponse { author })
     }
 
-    pub async fn author_delete(&self, req: AuthorDeleteRequest) -> RpcResult<AuthorDeleteResponse> {
+    pub async fn author_delete(&self, req: DeleteRequest) -> RpcResult<DeleteResponse> {
         if req.author == self.default_author.get() {
             return Err(anyhow!("Deleting the default author is not supported").into());
         }
         self.sync.delete_author(req.author).await?;
-        Ok(AuthorDeleteResponse)
+        Ok(DeleteResponse)
     }
 
     pub async fn doc_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {

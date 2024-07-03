@@ -6,8 +6,8 @@ use iroh_docs::{Author, AuthorId};
 use ref_cast::RefCast;
 
 use crate::rpc_protocol::authors::{
-    AuthorCreateRequest, AuthorDeleteRequest, AuthorExportRequest, AuthorGetDefaultRequest,
-    AuthorImportRequest, AuthorListRequest, AuthorSetDefaultRequest,
+    AuthorCreateRequest, DeleteRequest, ExportRequest, GetDefaultRequest, ImportRequest,
+    ListRequest, SetDefaultRequest,
 };
 
 use super::{flatten, RpcClient};
@@ -38,7 +38,7 @@ impl Client {
     ///
     /// The default author can be set with [`Self::set_default`].
     pub async fn default(&self) -> Result<AuthorId> {
-        let res = self.rpc.rpc(AuthorGetDefaultRequest).await??;
+        let res = self.rpc.rpc(GetDefaultRequest).await??;
         Ok(res.author_id)
     }
 
@@ -49,15 +49,13 @@ impl Client {
     /// On a persistent node, the author id will be saved to a file in the data directory and
     /// reloaded after a restart.
     pub async fn set_default(&self, author_id: AuthorId) -> Result<()> {
-        self.rpc
-            .rpc(AuthorSetDefaultRequest { author_id })
-            .await??;
+        self.rpc.rpc(SetDefaultRequest { author_id }).await??;
         Ok(())
     }
 
     /// List document authors for which we have a secret key.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<AuthorId>>> {
-        let stream = self.rpc.server_streaming(AuthorListRequest {}).await?;
+        let stream = self.rpc.server_streaming(ListRequest {}).await?;
         Ok(flatten(stream).map(|res| res.map(|res| res.author_id)))
     }
 
@@ -65,7 +63,7 @@ impl Client {
     ///
     /// Warning: This contains sensitive data.
     pub async fn export(&self, author: AuthorId) -> Result<Option<Author>> {
-        let res = self.rpc.rpc(AuthorExportRequest { author }).await??;
+        let res = self.rpc.rpc(ExportRequest { author }).await??;
         Ok(res.author)
     }
 
@@ -73,7 +71,7 @@ impl Client {
     ///
     /// Warning: This contains sensitive data.
     pub async fn import(&self, author: Author) -> Result<()> {
-        self.rpc.rpc(AuthorImportRequest { author }).await??;
+        self.rpc.rpc(ImportRequest { author }).await??;
         Ok(())
     }
 
@@ -83,7 +81,7 @@ impl Client {
     ///
     /// Returns an error if attempting to delete the default author.
     pub async fn delete(&self, author: AuthorId) -> Result<()> {
-        self.rpc.rpc(AuthorDeleteRequest { author }).await??;
+        self.rpc.rpc(DeleteRequest { author }).await??;
         Ok(())
     }
 }

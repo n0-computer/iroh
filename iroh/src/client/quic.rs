@@ -13,7 +13,7 @@ use quic_rpc::transport::{boxed::Connection as BoxedConnection, quinn::QuinnConn
 use super::Iroh;
 use crate::{
     node::RpcStatus,
-    rpc_protocol::{node::NodeStatusRequest, RpcService},
+    rpc_protocol::{node::StatusRequest, RpcService},
 };
 
 /// ALPN used by irohs RPC mechanism.
@@ -53,7 +53,7 @@ pub(crate) async fn connect_raw(addr: SocketAddr) -> anyhow::Result<RpcClient> {
     let connection = BoxedConnection::new(connection);
     let client = RpcClient::new(connection);
     // Do a status request to check if the server is running.
-    let _version = tokio::time::timeout(Duration::from_secs(1), client.rpc(NodeStatusRequest))
+    let _version = tokio::time::timeout(Duration::from_secs(1), client.rpc(StatusRequest))
         .await
         .context("Iroh node is not running")??;
     Ok(client)

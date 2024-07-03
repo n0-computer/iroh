@@ -11,8 +11,8 @@ use super::RpcService;
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(super::Request)]
 pub enum Request {
-    DeleteTag(DeleteTagRequest),
-    ListTags(ListTagsRequest),
+    DeleteTag(DeleteRequest),
+    ListTags(ListRequest),
 }
 
 #[allow(missing_docs)]
@@ -27,14 +27,14 @@ pub enum Response {
 ///
 /// Lists all collections that have been explicitly added to the database.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ListTagsRequest {
+pub struct ListRequest {
     /// List raw tags
     pub raw: bool,
     /// List hash seq tags
     pub hash_seq: bool,
 }
 
-impl ListTagsRequest {
+impl ListRequest {
     /// List all tags
     pub fn all() -> Self {
         Self {
@@ -60,21 +60,21 @@ impl ListTagsRequest {
     }
 }
 
-impl Msg<RpcService> for ListTagsRequest {
+impl Msg<RpcService> for ListRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<RpcService> for ListTagsRequest {
+impl ServerStreamingMsg<RpcService> for ListRequest {
     type Response = TagInfo;
 }
 
 /// Delete a tag
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DeleteTagRequest {
+pub struct DeleteRequest {
     /// Name of the tag
     pub name: Tag,
 }
 
-impl RpcMsg<RpcService> for DeleteTagRequest {
+impl RpcMsg<RpcService> for DeleteRequest {
     type Response = RpcResult<()>;
 }

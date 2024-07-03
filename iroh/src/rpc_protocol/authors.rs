@@ -9,43 +9,43 @@ use super::RpcService;
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(super::Request)]
 pub enum Request {
-    List(AuthorListRequest),
+    List(ListRequest),
     Create(AuthorCreateRequest),
-    GetDefault(AuthorGetDefaultRequest),
-    SetDefault(AuthorSetDefaultRequest),
-    Import(AuthorImportRequest),
-    Export(AuthorExportRequest),
-    Delete(AuthorDeleteRequest),
+    GetDefault(GetDefaultRequest),
+    SetDefault(SetDefaultRequest),
+    Import(ImportRequest),
+    Export(ExportRequest),
+    Delete(DeleteRequest),
 }
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(super::Response)]
 pub enum Response {
-    List(RpcResult<AuthorListResponse>),
-    Create(RpcResult<AuthorCreateResponse>),
-    GetDefault(RpcResult<AuthorGetDefaultResponse>),
-    SetDefault(RpcResult<AuthorSetDefaultResponse>),
-    Import(RpcResult<AuthorImportResponse>),
-    Export(RpcResult<AuthorExportResponse>),
-    Delete(RpcResult<AuthorDeleteResponse>),
+    List(RpcResult<ListResponse>),
+    Create(RpcResult<CreateResponse>),
+    GetDefault(RpcResult<GetDefaultResponse>),
+    SetDefault(RpcResult<SetDefaultResponse>),
+    Import(RpcResult<ImportResponse>),
+    Export(RpcResult<ExportResponse>),
+    Delete(RpcResult<DeleteResponse>),
 }
 
 /// List document authors for which we have a secret key.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorListRequest {}
+pub struct ListRequest {}
 
-impl Msg<RpcService> for AuthorListRequest {
+impl Msg<RpcService> for ListRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<RpcService> for AuthorListRequest {
-    type Response = RpcResult<AuthorListResponse>;
+impl ServerStreamingMsg<RpcService> for ListRequest {
+    type Response = RpcResult<ListResponse>;
 }
 
 /// Response for [`AuthorListRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorListResponse {
+pub struct ListResponse {
     /// The author id
     pub author_id: AuthorId,
 }
@@ -55,92 +55,92 @@ pub struct AuthorListResponse {
 pub struct AuthorCreateRequest;
 
 impl RpcMsg<RpcService> for AuthorCreateRequest {
-    type Response = RpcResult<AuthorCreateResponse>;
+    type Response = RpcResult<CreateResponse>;
 }
 
 /// Response for [`AuthorCreateRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorCreateResponse {
+pub struct CreateResponse {
     /// The id of the created author
     pub author_id: AuthorId,
 }
 
 /// Get the default author.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorGetDefaultRequest;
+pub struct GetDefaultRequest;
 
-impl RpcMsg<RpcService> for AuthorGetDefaultRequest {
-    type Response = RpcResult<AuthorGetDefaultResponse>;
+impl RpcMsg<RpcService> for GetDefaultRequest {
+    type Response = RpcResult<GetDefaultResponse>;
 }
 
 /// Response for [`AuthorGetDefaultRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorGetDefaultResponse {
+pub struct GetDefaultResponse {
     /// The id of the author
     pub author_id: AuthorId,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorSetDefaultRequest {
+pub struct SetDefaultRequest {
     /// The id of the author
     pub author_id: AuthorId,
 }
 
-impl RpcMsg<RpcService> for AuthorSetDefaultRequest {
-    type Response = RpcResult<AuthorSetDefaultResponse>;
+impl RpcMsg<RpcService> for SetDefaultRequest {
+    type Response = RpcResult<SetDefaultResponse>;
 }
 
 /// Response for [`AuthorGetDefaultRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorSetDefaultResponse;
+pub struct SetDefaultResponse;
 
 /// Delete an author
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorDeleteRequest {
+pub struct DeleteRequest {
     /// The id of the author to delete
     pub author: AuthorId,
 }
 
-impl RpcMsg<RpcService> for AuthorDeleteRequest {
-    type Response = RpcResult<AuthorDeleteResponse>;
+impl RpcMsg<RpcService> for DeleteRequest {
+    type Response = RpcResult<DeleteResponse>;
 }
 
 /// Response for [`AuthorDeleteRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorDeleteResponse;
+pub struct DeleteResponse;
 
 /// Exports an author
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorExportRequest {
+pub struct ExportRequest {
     /// The id of the author to delete
     pub author: AuthorId,
 }
 
-impl RpcMsg<RpcService> for AuthorExportRequest {
-    type Response = RpcResult<AuthorExportResponse>;
+impl RpcMsg<RpcService> for ExportRequest {
+    type Response = RpcResult<ExportResponse>;
 }
 
 /// Response for [`AuthorExportRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorExportResponse {
+pub struct ExportResponse {
     /// The author
     pub author: Option<Author>,
 }
 
 /// Import author from secret key
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorImportRequest {
+pub struct ImportRequest {
     /// The author to import
     pub author: Author,
 }
 
-impl RpcMsg<RpcService> for AuthorImportRequest {
-    type Response = RpcResult<AuthorImportResponse>;
+impl RpcMsg<RpcService> for ImportRequest {
+    type Response = RpcResult<ImportResponse>;
 }
 
 /// Response to [`AuthorImportRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorImportResponse {
+pub struct ImportResponse {
     /// The author id of the imported author
     pub author_id: AuthorId,
 }

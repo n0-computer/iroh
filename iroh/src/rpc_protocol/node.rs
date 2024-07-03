@@ -13,15 +13,15 @@ use super::RpcService;
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(super::Request)]
 pub enum Request {
-    Status(NodeStatusRequest),
-    Id(NodeIdRequest),
-    Addr(NodeAddrRequest),
-    AddAddr(NodeAddAddrRequest),
-    Relay(NodeRelayRequest),
-    Stats(NodeStatsRequest),
-    Shutdown(NodeShutdownRequest),
-    Connections(NodeConnectionsRequest),
-    ConnectionInfo(NodeConnectionInfoRequest),
+    Status(StatusRequest),
+    Id(IdRequest),
+    Addr(AddrRequest),
+    AddAddr(AddAddrRequest),
+    Relay(RelayRequest),
+    Stats(StatsRequest),
+    Shutdown(ShutdownRequest),
+    Connections(ConnectionsRequest),
+    ConnectionInfo(ConnectionInfoRequest),
     Watch(NodeWatchRequest),
 }
 
@@ -33,11 +33,11 @@ pub enum Response {
     Id(RpcResult<NodeId>),
     Addr(RpcResult<NodeAddr>),
     Relay(RpcResult<Option<RelayUrl>>),
-    Stats(RpcResult<NodeStatsResponse>),
-    Connections(RpcResult<NodeConnectionsResponse>),
-    ConnectionInfo(RpcResult<NodeConnectionInfoResponse>),
+    Stats(RpcResult<StatsResponse>),
+    Connections(RpcResult<ConnectionsResponse>),
+    ConnectionInfo(RpcResult<ConnectionInfoResponse>),
     Shutdown(()),
-    Watch(NodeWatchResponse),
+    Watch(WatchResponse),
 }
 
 /// List connection information about all the nodes we know about
@@ -45,88 +45,88 @@ pub enum Response {
 /// These can be nodes that we have explicitly connected to or nodes
 /// that have initiated connections to us.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NodeConnectionsRequest;
+pub struct ConnectionsRequest;
 
 /// A response to a connections request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NodeConnectionsResponse {
+pub struct ConnectionsResponse {
     /// Information about a connection
     pub conn_info: ConnectionInfo,
 }
 
-impl Msg<RpcService> for NodeConnectionsRequest {
+impl Msg<RpcService> for ConnectionsRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<RpcService> for NodeConnectionsRequest {
-    type Response = RpcResult<NodeConnectionsResponse>;
+impl ServerStreamingMsg<RpcService> for ConnectionsRequest {
+    type Response = RpcResult<ConnectionsResponse>;
 }
 
 /// Get connection information about a specific node
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NodeConnectionInfoRequest {
+pub struct ConnectionInfoRequest {
     /// The node identifier
     pub node_id: PublicKey,
 }
 
 /// A response to a connection request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NodeConnectionInfoResponse {
+pub struct ConnectionInfoResponse {
     /// Information about a connection to a node
     pub conn_info: Option<ConnectionInfo>,
 }
 
-impl RpcMsg<RpcService> for NodeConnectionInfoRequest {
-    type Response = RpcResult<NodeConnectionInfoResponse>;
+impl RpcMsg<RpcService> for ConnectionInfoRequest {
+    type Response = RpcResult<ConnectionInfoResponse>;
 }
 
 /// A request to shutdown the node
 #[derive(Serialize, Deserialize, Debug)]
-pub struct NodeShutdownRequest {
+pub struct ShutdownRequest {
     /// Force shutdown
     pub force: bool,
 }
 
-impl RpcMsg<RpcService> for NodeShutdownRequest {
+impl RpcMsg<RpcService> for ShutdownRequest {
     type Response = ();
 }
 
 /// A request to get information about the status of the node.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct NodeStatusRequest;
+pub struct StatusRequest;
 
-impl RpcMsg<RpcService> for NodeStatusRequest {
+impl RpcMsg<RpcService> for StatusRequest {
     type Response = RpcResult<NodeStatus>;
 }
 
 /// A request to get information the identity of the node.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct NodeIdRequest;
+pub struct IdRequest;
 
-impl RpcMsg<RpcService> for NodeIdRequest {
+impl RpcMsg<RpcService> for IdRequest {
     type Response = RpcResult<NodeId>;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct NodeAddrRequest;
+pub struct AddrRequest;
 
-impl RpcMsg<RpcService> for NodeAddrRequest {
+impl RpcMsg<RpcService> for AddrRequest {
     type Response = RpcResult<NodeAddr>;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct NodeAddAddrRequest {
+pub struct AddAddrRequest {
     pub addr: NodeAddr,
 }
 
-impl RpcMsg<RpcService> for NodeAddAddrRequest {
+impl RpcMsg<RpcService> for AddAddrRequest {
     type Response = RpcResult<()>;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct NodeRelayRequest;
+pub struct RelayRequest;
 
-impl RpcMsg<RpcService> for NodeRelayRequest {
+impl RpcMsg<RpcService> for RelayRequest {
     type Response = RpcResult<Option<RelayUrl>>;
 }
 
@@ -139,12 +139,12 @@ impl Msg<RpcService> for NodeWatchRequest {
 }
 
 impl ServerStreamingMsg<RpcService> for NodeWatchRequest {
-    type Response = NodeWatchResponse;
+    type Response = WatchResponse;
 }
 
 /// The response to a watch request
 #[derive(Serialize, Deserialize, Debug)]
-pub struct NodeWatchResponse {
+pub struct WatchResponse {
     /// The version of the node
     pub version: String,
 }
@@ -158,10 +158,10 @@ pub struct VersionResponse {
 
 /// Get stats for the running Iroh node
 #[derive(Serialize, Deserialize, Debug)]
-pub struct NodeStatsRequest {}
+pub struct StatsRequest {}
 
-impl RpcMsg<RpcService> for NodeStatsRequest {
-    type Response = RpcResult<NodeStatsResponse>;
+impl RpcMsg<RpcService> for StatsRequest {
+    type Response = RpcResult<StatsResponse>;
 }
 
 /// Counter stats
@@ -175,7 +175,7 @@ pub struct CounterStats {
 
 /// Response to [`NodeStatsRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct NodeStatsResponse {
+pub struct StatsResponse {
     /// Map of statistics
     pub stats: BTreeMap<String, CounterStats>,
 }

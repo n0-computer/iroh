@@ -38,7 +38,7 @@ use crate::rpc_protocol::blobs::{
     ExportRequest, ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse,
     ValidateRequest,
 };
-use crate::rpc_protocol::node::NodeStatusRequest;
+use crate::rpc_protocol::node::StatusRequest;
 
 use super::{flatten, tags, Iroh, RpcClient};
 
@@ -367,7 +367,7 @@ impl Client {
         blob_format: BlobFormat,
         addr_options: AddrInfoOptions,
     ) -> Result<BlobTicket> {
-        let mut addr = self.rpc.rpc(NodeStatusRequest).await??.addr;
+        let mut addr = self.rpc.rpc(StatusRequest).await??.addr;
         addr.apply_options(addr_options);
         let ticket = BlobTicket::new(addr, hash, blob_format).expect("correct ticket");
 
