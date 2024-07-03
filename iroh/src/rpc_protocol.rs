@@ -52,15 +52,15 @@ use crate::client::{
 pub use iroh_blobs::util::SetTagOption;
 
 mod node;
-pub use node::*;
+// pub use node::*;
 mod tags;
-pub use tags::*;
+// pub use tags::*;
 mod authors;
-pub use authors::*;
+// pub use authors::*;
 mod docs;
-pub use docs::*;
+// pub use docs::*;
 mod blobs;
-pub use docs::*;
+// pub use docs::*;
 
 /// A request to the node to provide the data at the given path
 ///
