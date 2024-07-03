@@ -1048,10 +1048,10 @@ pub struct NodeStatsResponse {
 #[derive(Debug, Clone)]
 pub struct RpcService;
 
-/// The request enum, listing all possible requests.
 #[allow(missing_docs)]
-#[derive(strum::Display, Debug, Serialize, Deserialize, From, TryInto)]
-pub enum Request {
+#[derive(strum::Display, Debug, Serialize, Deserialize)]
+#[nested_enum_utils::enum_conversions(Request)]
+pub enum NodeRequest {
     NodeStatus(NodeStatusRequest),
     NodeId(NodeIdRequest),
     NodeAddr(NodeAddrRequest),
@@ -1062,7 +1062,12 @@ pub enum Request {
     NodeConnections(NodeConnectionsRequest),
     NodeConnectionInfo(NodeConnectionInfoRequest),
     NodeWatch(NodeWatchRequest),
+}
 
+#[allow(missing_docs)]
+#[derive(strum::Display, Debug, Serialize, Deserialize)]
+#[nested_enum_utils::enum_conversions(Request)]
+pub enum BlobsRequest {
     BlobReadAt(BlobReadAtRequest),
     BlobAddStream(BlobAddStreamRequest),
     BlobAddStreamUpdate(BlobAddStreamUpdate),
@@ -1075,10 +1080,20 @@ pub enum Request {
     BlobValidate(BlobValidateRequest),
     BlobFsck(BlobConsistencyCheckRequest),
     CreateCollection(CreateCollectionRequest),
+}
 
+#[allow(missing_docs)]
+#[derive(strum::Display, Debug, Serialize, Deserialize)]
+#[nested_enum_utils::enum_conversions(Request)]
+pub enum TagsRequest {
     DeleteTag(DeleteTagRequest),
     ListTags(ListTagsRequest),
+}
 
+#[allow(missing_docs)]
+#[derive(strum::Display, Debug, Serialize, Deserialize)]
+#[nested_enum_utils::enum_conversions(Request)]
+pub enum DocsRequest {
     DocOpen(DocOpenRequest),
     DocClose(DocCloseRequest),
     DocStatus(DocStatusRequest),
@@ -1100,7 +1115,12 @@ pub enum Request {
     DocGetDownloadPolicy(DocGetDownloadPolicyRequest),
     DocSetDownloadPolicy(DocSetDownloadPolicyRequest),
     DocGetSyncPeers(DocGetSyncPeersRequest),
+}
 
+#[allow(missing_docs)]
+#[derive(strum::Display, Debug, Serialize, Deserialize)]
+#[nested_enum_utils::enum_conversions(Request)]
+pub enum AuthorsRequest {
     AuthorList(AuthorListRequest),
     AuthorCreate(AuthorCreateRequest),
     AuthorGetDefault(AuthorGetDefaultRequest),
@@ -1108,6 +1128,18 @@ pub enum Request {
     AuthorImport(AuthorImportRequest),
     AuthorExport(AuthorExportRequest),
     AuthorDelete(AuthorDeleteRequest),
+}
+
+/// The request enum, listing all possible requests.
+#[allow(missing_docs)]
+#[derive(strum::Display, Debug, Serialize, Deserialize)]
+#[nested_enum_utils::enum_conversions()]
+pub enum Request {
+    Node(NodeRequest),
+    Blobs(BlobsRequest),
+    Docs(DocsRequest),
+    Tags(TagsRequest),
+    Authors(AuthorsRequest),
 }
 
 /// The response enum, listing all possible responses.

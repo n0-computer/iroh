@@ -40,16 +40,17 @@ use crate::client::{
 };
 use crate::node::{docs::DocsEngine, NodeInner};
 use crate::rpc_protocol::{
-    BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
-    BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest,
-    BlobDownloadResponse, BlobExportRequest, BlobExportResponse, BlobListIncompleteRequest,
-    BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
-    DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocSetHashRequest,
-    ListTagsRequest, NodeAddAddrRequest, NodeAddrRequest, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest,
-    NodeRelayRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
-    NodeWatchRequest, NodeWatchResponse, Request, RpcService, SetTagOption,
+    AuthorsRequest, BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest,
+    BlobAddStreamResponse, BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest,
+    BlobDownloadRequest, BlobDownloadResponse, BlobExportRequest, BlobExportResponse,
+    BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest, BlobReadAtResponse,
+    BlobValidateRequest, BlobsRequest, CreateCollectionRequest, CreateCollectionResponse,
+    DeleteTagRequest, DocExportFileRequest, DocExportFileResponse, DocImportFileRequest,
+    DocImportFileResponse, DocSetHashRequest, DocsRequest, ListTagsRequest, NodeAddAddrRequest,
+    NodeAddrRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
+    NodeConnectionsResponse, NodeIdRequest, NodeRelayRequest, NodeRequest, NodeShutdownRequest,
+    NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest, NodeWatchResponse,
+    Request, RpcService, SetTagOption, TagsRequest,
 };
 
 mod docs;
@@ -129,185 +130,211 @@ impl<D: BaoStore> Handler<D> {
         use Request::*;
         debug!("handling rpc request: {msg}");
         match msg {
-            NodeWatch(msg) => chan.server_streaming(msg, self, Self::node_watch).await,
-            NodeStatus(msg) => chan.rpc(msg, self, Self::node_status).await,
-            NodeId(msg) => chan.rpc(msg, self, Self::node_id).await,
-            NodeAddr(msg) => chan.rpc(msg, self, Self::node_addr).await,
-            NodeRelay(msg) => chan.rpc(msg, self, Self::node_relay).await,
-            NodeShutdown(msg) => chan.rpc(msg, self, Self::node_shutdown).await,
-            NodeStats(msg) => chan.rpc(msg, self, Self::node_stats).await,
-            NodeConnections(msg) => {
+            Node(NodeRequest::NodeWatch(msg)) => {
+                chan.server_streaming(msg, self, Self::node_watch).await
+            }
+            Node(NodeRequest::NodeStatus(msg)) => chan.rpc(msg, self, Self::node_status).await,
+            Node(NodeRequest::NodeId(msg)) => chan.rpc(msg, self, Self::node_id).await,
+            Node(NodeRequest::NodeAddr(msg)) => chan.rpc(msg, self, Self::node_addr).await,
+            Node(NodeRequest::NodeRelay(msg)) => chan.rpc(msg, self, Self::node_relay).await,
+            Node(NodeRequest::NodeShutdown(msg)) => chan.rpc(msg, self, Self::node_shutdown).await,
+            Node(NodeRequest::NodeStats(msg)) => chan.rpc(msg, self, Self::node_stats).await,
+            Node(NodeRequest::NodeConnections(msg)) => {
                 chan.server_streaming(msg, self, Self::node_connections)
                     .await
             }
-            NodeConnectionInfo(msg) => chan.rpc(msg, self, Self::node_connection_info).await,
-            NodeAddAddr(msg) => chan.rpc(msg, self, Self::node_add_addr).await,
-            BlobList(msg) => chan.server_streaming(msg, self, Self::blob_list).await,
-            BlobListIncomplete(msg) => {
+            Node(NodeRequest::NodeConnectionInfo(msg)) => {
+                chan.rpc(msg, self, Self::node_connection_info).await
+            }
+            Node(NodeRequest::NodeAddAddr(msg)) => chan.rpc(msg, self, Self::node_add_addr).await,
+            Blobs(BlobsRequest::BlobList(msg)) => {
+                chan.server_streaming(msg, self, Self::blob_list).await
+            }
+            Blobs(BlobsRequest::BlobListIncomplete(msg)) => {
                 chan.server_streaming(msg, self, Self::blob_list_incomplete)
                     .await
             }
-            CreateCollection(msg) => chan.rpc(msg, self, Self::create_collection).await,
-            ListTags(msg) => chan.server_streaming(msg, self, Self::blob_list_tags).await,
-            DeleteTag(msg) => chan.rpc(msg, self, Self::blob_delete_tag).await,
-            BlobDeleteBlob(msg) => chan.rpc(msg, self, Self::blob_delete_blob).await,
-            BlobAddPath(msg) => {
+            Blobs(BlobsRequest::CreateCollection(msg)) => {
+                chan.rpc(msg, self, Self::create_collection).await
+            }
+            Blobs(BlobsRequest::BlobDeleteBlob(msg)) => {
+                chan.rpc(msg, self, Self::blob_delete_blob).await
+            }
+            Blobs(BlobsRequest::BlobAddPath(msg)) => {
                 chan.server_streaming(msg, self, Self::blob_add_from_path)
                     .await
             }
-            BlobDownload(msg) => chan.server_streaming(msg, self, Self::blob_download).await,
-            BlobExport(msg) => chan.server_streaming(msg, self, Self::blob_export).await,
-            BlobValidate(msg) => chan.server_streaming(msg, self, Self::blob_validate).await,
-            BlobFsck(msg) => {
+            Blobs(BlobsRequest::BlobDownload(msg)) => {
+                chan.server_streaming(msg, self, Self::blob_download).await
+            }
+            Blobs(BlobsRequest::BlobExport(msg)) => {
+                chan.server_streaming(msg, self, Self::blob_export).await
+            }
+            Blobs(BlobsRequest::BlobValidate(msg)) => {
+                chan.server_streaming(msg, self, Self::blob_validate).await
+            }
+            Blobs(BlobsRequest::BlobFsck(msg)) => {
                 chan.server_streaming(msg, self, Self::blob_consistency_check)
                     .await
             }
-            BlobReadAt(msg) => chan.server_streaming(msg, self, Self::blob_read_at).await,
-            BlobAddStream(msg) => chan.bidi_streaming(msg, self, Self::blob_add_stream).await,
-            BlobAddStreamUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
+            Blobs(BlobsRequest::BlobReadAt(msg)) => {
+                chan.server_streaming(msg, self, Self::blob_read_at).await
+            }
+            Blobs(BlobsRequest::BlobAddStream(msg)) => {
+                chan.bidi_streaming(msg, self, Self::blob_add_stream).await
+            }
+            Blobs(BlobsRequest::BlobAddStreamUpdate(_msg)) => {
+                Err(RpcServerError::UnexpectedUpdateMessage)
+            }
 
-            AuthorList(msg) => {
+            Tags(TagsRequest::ListTags(msg)) => {
+                chan.server_streaming(msg, self, Self::blob_list_tags).await
+            }
+            Tags(TagsRequest::DeleteTag(msg)) => chan.rpc(msg, self, Self::blob_delete_tag).await,
+
+            Authors(AuthorsRequest::AuthorList(msg)) => {
                 chan.server_streaming(msg, self, |handler, req| {
                     handler.with_docs_stream(|docs| docs.author_list(req))
                 })
                 .await
             }
-            AuthorCreate(msg) => {
+            Authors(AuthorsRequest::AuthorCreate(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.author_create(req).await })
                 })
                 .await
             }
-            AuthorImport(msg) => {
+            Authors(AuthorsRequest::AuthorImport(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.author_import(req).await })
                 })
                 .await
             }
-            AuthorExport(msg) => {
+            Authors(AuthorsRequest::AuthorExport(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.author_export(req).await })
                 })
                 .await
             }
-            AuthorDelete(msg) => {
+            Authors(AuthorsRequest::AuthorDelete(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.author_delete(req).await })
                 })
                 .await
             }
-            AuthorGetDefault(msg) => {
+            Authors(AuthorsRequest::AuthorGetDefault(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { Ok(docs.author_default(req)) })
                 })
                 .await
             }
-            AuthorSetDefault(msg) => {
+            Authors(AuthorsRequest::AuthorSetDefault(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.author_set_default(req).await })
                 })
                 .await
             }
-            DocOpen(msg) => {
+
+            Docs(DocsRequest::DocOpen(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_open(req).await })
                 })
                 .await
             }
-            DocClose(msg) => {
+            Docs(DocsRequest::DocClose(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_close(req).await })
                 })
                 .await
             }
-            DocStatus(msg) => {
+            Docs(DocsRequest::DocStatus(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_status(req).await })
                 })
                 .await
             }
-            DocList(msg) => {
+            Docs(DocsRequest::DocList(msg)) => {
                 chan.server_streaming(msg, self, |handler, req| {
                     handler.with_docs_stream(|docs| docs.doc_list(req))
                 })
                 .await
             }
-            DocCreate(msg) => {
+            Docs(DocsRequest::DocCreate(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_create(req).await })
                 })
                 .await
             }
-            DocDrop(msg) => {
+            Docs(DocsRequest::DocDrop(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_drop(req).await })
                 })
                 .await
             }
-            DocImport(msg) => {
+            Docs(DocsRequest::DocImport(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_import(req).await })
                 })
                 .await
             }
-            DocSet(msg) => {
+            Docs(DocsRequest::DocSet(msg)) => {
                 let blobs_store = self.inner.db.clone();
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_set(&blobs_store, req).await })
                 })
                 .await
             }
-            DocImportFile(msg) => {
+            Docs(DocsRequest::DocImportFile(msg)) => {
                 chan.server_streaming(msg, self, Self::doc_import_file)
                     .await
             }
-            DocExportFile(msg) => {
+            Docs(DocsRequest::DocExportFile(msg)) => {
                 chan.server_streaming(msg, self, Self::doc_export_file)
                     .await
             }
-            DocDel(msg) => {
+            Docs(DocsRequest::DocDel(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_del(req).await })
                 })
                 .await
             }
-            DocSetHash(msg) => {
+            Docs(DocsRequest::DocSetHash(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_set_hash(req).await })
                 })
                 .await
             }
-            DocGet(msg) => {
+            Docs(DocsRequest::DocGet(msg)) => {
                 chan.server_streaming(msg, self, |handler, req| {
                     handler.with_docs_stream(|docs| docs.doc_get_many(req))
                 })
                 .await
             }
-            DocGetExact(msg) => {
+            Docs(DocsRequest::DocGetExact(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_get_exact(req).await })
                 })
                 .await
             }
-            DocStartSync(msg) => {
+            Docs(DocsRequest::DocStartSync(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_start_sync(req).await })
                 })
                 .await
             }
-            DocLeave(msg) => {
+            Docs(DocsRequest::DocLeave(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_leave(req).await })
                 })
                 .await
             }
-            DocShare(msg) => {
+            Docs(DocsRequest::DocShare(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_share(req).await })
                 })
                 .await
             }
-            DocSubscribe(msg) => {
+            Docs(DocsRequest::DocSubscribe(msg)) => {
                 chan.try_server_streaming(msg, self, |handler, req| async move {
                     handler
                         .with_docs(|docs| async move { docs.doc_subscribe(req).await })
@@ -315,19 +342,19 @@ impl<D: BaoStore> Handler<D> {
                 })
                 .await
             }
-            DocSetDownloadPolicy(msg) => {
+            Docs(DocsRequest::DocSetDownloadPolicy(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_set_download_policy(req).await })
                 })
                 .await
             }
-            DocGetDownloadPolicy(msg) => {
+            Docs(DocsRequest::DocGetDownloadPolicy(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_get_download_policy(req).await })
                 })
                 .await
             }
-            DocGetSyncPeers(msg) => {
+            Docs(DocsRequest::DocGetSyncPeers(msg)) => {
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_get_sync_peers(req).await })
                 })
