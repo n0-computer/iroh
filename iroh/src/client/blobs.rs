@@ -20,6 +20,7 @@ use iroh_blobs::{
     format::collection::{Collection, SimpleStore},
     get::db::DownloadProgress as BytesDownloadProgress,
     store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
+    util::SetTagOption,
     BlobFormat, Hash, Tag,
 };
 use iroh_net::NodeAddr;
@@ -35,7 +36,7 @@ use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
     BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobListIncompleteRequest,
     BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, SetTagOption,
+    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest,
 };
 
 use super::{flatten, tags, Iroh, RpcClient};
