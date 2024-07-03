@@ -7,12 +7,7 @@
 //! response, while others like provide have a stream of responses.
 //!
 //! Note that this is subject to change. The RPC protocol is not yet stable.
-use derive_more::From;
-
-use quic_rpc::Service;
 use serde::{Deserialize, Serialize};
-
-pub use iroh_base::rpc::RpcResult;
 
 pub mod authors;
 pub mod blobs;
@@ -48,7 +43,7 @@ pub enum Response {
     Authors(authors::Response),
 }
 
-impl Service for RpcService {
+impl quic_rpc::Service for RpcService {
     type Req = Request;
     type Res = Response;
 }

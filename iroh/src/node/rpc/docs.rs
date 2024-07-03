@@ -2,6 +2,7 @@
 
 use anyhow::anyhow;
 use futures_lite::Stream;
+use iroh_base::rpc::RpcResult;
 use iroh_blobs::{store::Store as BaoStore, BlobFormat};
 use iroh_docs::{Author, DocTicket, NamespaceSecret};
 use tokio_stream::StreamExt;
@@ -26,7 +27,6 @@ use crate::rpc_protocol::{
         DocShareResponse, DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest,
         DocStatusResponse, DocSubscribeRequest, DocSubscribeResponse,
     },
-    RpcResult,
 };
 
 /// Capacity for the flume channels to forward sync store iterators to async RPC streams.
