@@ -1063,33 +1063,33 @@ pub struct RpcService;
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(Request)]
 pub enum NodeRequest {
-    NodeStatus(NodeStatusRequest),
-    NodeId(NodeIdRequest),
-    NodeAddr(NodeAddrRequest),
-    NodeAddAddr(NodeAddAddrRequest),
-    NodeRelay(NodeRelayRequest),
-    NodeStats(NodeStatsRequest),
-    NodeShutdown(NodeShutdownRequest),
-    NodeConnections(NodeConnectionsRequest),
-    NodeConnectionInfo(NodeConnectionInfoRequest),
-    NodeWatch(NodeWatchRequest),
+    Status(NodeStatusRequest),
+    Id(NodeIdRequest),
+    Addr(NodeAddrRequest),
+    AddAddr(NodeAddAddrRequest),
+    Relay(NodeRelayRequest),
+    Stats(NodeStatsRequest),
+    Shutdown(NodeShutdownRequest),
+    Connections(NodeConnectionsRequest),
+    ConnectionInfo(NodeConnectionInfoRequest),
+    Watch(NodeWatchRequest),
 }
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(Request)]
 pub enum BlobsRequest {
-    BlobReadAt(BlobReadAtRequest),
-    BlobAddStream(BlobAddStreamRequest),
-    BlobAddStreamUpdate(BlobAddStreamUpdate),
-    BlobAddPath(BlobAddPathRequest),
-    BlobDownload(BlobDownloadRequest),
-    BlobExport(BlobExportRequest),
-    BlobList(BlobListRequest),
-    BlobListIncomplete(BlobListIncompleteRequest),
-    BlobDeleteBlob(BlobDeleteBlobRequest),
-    BlobValidate(BlobValidateRequest),
-    BlobFsck(BlobConsistencyCheckRequest),
+    ReadAt(BlobReadAtRequest),
+    AddStream(BlobAddStreamRequest),
+    AddStreamUpdate(BlobAddStreamUpdate),
+    AddPath(BlobAddPathRequest),
+    Download(BlobDownloadRequest),
+    Export(BlobExportRequest),
+    List(BlobListRequest),
+    ListIncomplete(BlobListIncompleteRequest),
+    DeleteBlob(BlobDeleteBlobRequest),
+    Validate(BlobValidateRequest),
+    Fsck(BlobConsistencyCheckRequest),
     CreateCollection(CreateCollectionRequest),
 }
 
@@ -1097,30 +1097,30 @@ pub enum BlobsRequest {
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(Response)]
 pub enum NodeResponse {
-    NodeStatus(RpcResult<NodeStatus>),
-    NodeId(RpcResult<NodeId>),
-    NodeAddr(RpcResult<NodeAddr>),
-    NodeRelay(RpcResult<Option<RelayUrl>>),
-    NodeStats(RpcResult<NodeStatsResponse>),
-    NodeConnections(RpcResult<NodeConnectionsResponse>),
-    NodeConnectionInfo(RpcResult<NodeConnectionInfoResponse>),
-    NodeShutdown(()),
-    NodeWatch(NodeWatchResponse),
+    Status(RpcResult<NodeStatus>),
+    Id(RpcResult<NodeId>),
+    Addr(RpcResult<NodeAddr>),
+    Relay(RpcResult<Option<RelayUrl>>),
+    Stats(RpcResult<NodeStatsResponse>),
+    Connections(RpcResult<NodeConnectionsResponse>),
+    ConnectionInfo(RpcResult<NodeConnectionInfoResponse>),
+    Shutdown(()),
+    Watch(NodeWatchResponse),
 }
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(Response)]
 pub enum BlobsResponse {
-    BlobReadAt(RpcResult<BlobReadAtResponse>),
-    BlobAddStream(BlobAddStreamResponse),
-    BlobAddPath(BlobAddPathResponse),
-    BlobList(RpcResult<BlobInfo>),
-    BlobListIncomplete(RpcResult<IncompleteBlobInfo>),
-    BlobDownload(BlobDownloadResponse),
-    BlobFsck(ConsistencyCheckProgress),
-    BlobExport(BlobExportResponse),
-    BlobValidate(ValidateProgress),
+    ReadAt(RpcResult<BlobReadAtResponse>),
+    AddStream(BlobAddStreamResponse),
+    AddPath(BlobAddPathResponse),
+    List(RpcResult<BlobInfo>),
+    ListIncomplete(RpcResult<IncompleteBlobInfo>),
+    Download(BlobDownloadResponse),
+    Fsck(ConsistencyCheckProgress),
+    Export(BlobExportResponse),
+    Validate(ValidateProgress),
     CreateCollection(RpcResult<CreateCollectionResponse>),
 }
 
@@ -1136,27 +1136,27 @@ pub enum TagsResponse {
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(Response)]
 pub enum DocsResponse {
-    DocOpen(RpcResult<DocOpenResponse>),
-    DocClose(RpcResult<DocCloseResponse>),
-    DocStatus(RpcResult<DocStatusResponse>),
-    DocList(RpcResult<DocListResponse>),
-    DocCreate(RpcResult<DocCreateResponse>),
-    DocDrop(RpcResult<DocDropResponse>),
-    DocImport(RpcResult<DocImportResponse>),
-    DocSet(RpcResult<DocSetResponse>),
-    DocSetHash(RpcResult<DocSetHashResponse>),
-    DocGet(RpcResult<DocGetManyResponse>),
-    DocGetExact(RpcResult<DocGetExactResponse>),
-    DocImportFile(DocImportFileResponse),
-    DocExportFile(DocExportFileResponse),
-    DocDel(RpcResult<DocDelResponse>),
-    DocShare(RpcResult<DocShareResponse>),
-    DocStartSync(RpcResult<DocStartSyncResponse>),
-    DocLeave(RpcResult<DocLeaveResponse>),
-    DocSubscribe(RpcResult<DocSubscribeResponse>),
-    DocGetDownloadPolicy(RpcResult<DocGetDownloadPolicyResponse>),
-    DocSetDownloadPolicy(RpcResult<DocSetDownloadPolicyResponse>),
-    DocGetSyncPeers(RpcResult<DocGetSyncPeersResponse>),
+    Open(RpcResult<DocOpenResponse>),
+    Close(RpcResult<DocCloseResponse>),
+    Status(RpcResult<DocStatusResponse>),
+    List(RpcResult<DocListResponse>),
+    Create(RpcResult<DocCreateResponse>),
+    Drop(RpcResult<DocDropResponse>),
+    Import(RpcResult<DocImportResponse>),
+    Set(RpcResult<DocSetResponse>),
+    SetHash(RpcResult<DocSetHashResponse>),
+    Get(RpcResult<DocGetManyResponse>),
+    GetExact(RpcResult<DocGetExactResponse>),
+    ImportFile(DocImportFileResponse),
+    ExportFile(DocExportFileResponse),
+    Del(RpcResult<DocDelResponse>),
+    Share(RpcResult<DocShareResponse>),
+    StartSync(RpcResult<DocStartSyncResponse>),
+    Leave(RpcResult<DocLeaveResponse>),
+    Subscribe(RpcResult<DocSubscribeResponse>),
+    GetDownloadPolicy(RpcResult<DocGetDownloadPolicyResponse>),
+    SetDownloadPolicy(RpcResult<DocSetDownloadPolicyResponse>),
+    GetSyncPeers(RpcResult<DocGetSyncPeersResponse>),
     StreamCreated(RpcResult<StreamCreated>),
 }
 
@@ -1172,44 +1172,57 @@ pub enum TagsRequest {
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(Request)]
 pub enum DocsRequest {
-    DocOpen(DocOpenRequest),
-    DocClose(DocCloseRequest),
-    DocStatus(DocStatusRequest),
-    DocList(DocListRequest),
-    DocCreate(DocCreateRequest),
-    DocDrop(DocDropRequest),
-    DocImport(DocImportRequest),
-    DocSet(DocSetRequest),
-    DocSetHash(DocSetHashRequest),
-    DocGet(DocGetManyRequest),
-    DocGetExact(DocGetExactRequest),
-    DocImportFile(DocImportFileRequest),
-    DocExportFile(DocExportFileRequest),
-    DocDel(DocDelRequest),
-    DocStartSync(DocStartSyncRequest),
-    DocLeave(DocLeaveRequest),
-    DocShare(DocShareRequest),
-    DocSubscribe(DocSubscribeRequest),
-    DocGetDownloadPolicy(DocGetDownloadPolicyRequest),
-    DocSetDownloadPolicy(DocSetDownloadPolicyRequest),
-    DocGetSyncPeers(DocGetSyncPeersRequest),
+    Open(DocOpenRequest),
+    Close(DocCloseRequest),
+    Status(DocStatusRequest),
+    List(DocListRequest),
+    Create(DocCreateRequest),
+    Drop(DocDropRequest),
+    Import(DocImportRequest),
+    Set(DocSetRequest),
+    SetHash(DocSetHashRequest),
+    Get(DocGetManyRequest),
+    GetExact(DocGetExactRequest),
+    ImportFile(DocImportFileRequest),
+    ExportFile(DocExportFileRequest),
+    Del(DocDelRequest),
+    StartSync(DocStartSyncRequest),
+    Leave(DocLeaveRequest),
+    Share(DocShareRequest),
+    Subscribe(DocSubscribeRequest),
+    GetDownloadPolicy(DocGetDownloadPolicyRequest),
+    SetDownloadPolicy(DocSetDownloadPolicyRequest),
+    GetSyncPeers(DocGetSyncPeersRequest),
 }
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(Request)]
 pub enum AuthorsRequest {
-    AuthorList(AuthorListRequest),
-    AuthorCreate(AuthorCreateRequest),
-    AuthorGetDefault(AuthorGetDefaultRequest),
-    AuthorSetDefault(AuthorSetDefaultRequest),
-    AuthorImport(AuthorImportRequest),
-    AuthorExport(AuthorExportRequest),
-    AuthorDelete(AuthorDeleteRequest),
+    List(AuthorListRequest),
+    Create(AuthorCreateRequest),
+    GetDefault(AuthorGetDefaultRequest),
+    SetDefault(AuthorSetDefaultRequest),
+    Import(AuthorImportRequest),
+    Export(AuthorExportRequest),
+    Delete(AuthorDeleteRequest),
+}
+
+#[allow(missing_docs)]
+#[derive(strum::Display, Debug, Serialize, Deserialize)]
+#[nested_enum_utils::enum_conversions(Response)]
+pub enum AuthorsResponse {
+    List(RpcResult<AuthorListResponse>),
+    Create(RpcResult<AuthorCreateResponse>),
+    GetDefault(RpcResult<AuthorGetDefaultResponse>),
+    SetDefault(RpcResult<AuthorSetDefaultResponse>),
+    Import(RpcResult<AuthorImportResponse>),
+    Export(RpcResult<AuthorExportResponse>),
+    Delete(RpcResult<AuthorDeleteResponse>),
 }
 
 /// The request enum, listing all possible requests.
-#[allow(missing_docs)]
+#[allow(missing_docs, clippy::large_enum_variant)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions()]
 pub enum Request {
@@ -1229,17 +1242,33 @@ pub enum Response {
     Blobs(BlobsResponse),
     Tags(TagsResponse),
     Docs(DocsResponse),
-
-    AuthorList(RpcResult<AuthorListResponse>),
-    AuthorCreate(RpcResult<AuthorCreateResponse>),
-    AuthorGetDefault(RpcResult<AuthorGetDefaultResponse>),
-    AuthorSetDefault(RpcResult<AuthorSetDefaultResponse>),
-    AuthorImport(RpcResult<AuthorImportResponse>),
-    AuthorExport(RpcResult<AuthorExportResponse>),
-    AuthorDelete(RpcResult<AuthorDeleteResponse>),
+    Authors(AuthorsResponse),
 }
 
 impl Service for RpcService {
     type Req = Request;
     type Res = Response;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rpc_protocol_sizes() {
+        if std::mem::size_of::<usize>() == 8 {
+            assert_eq!(std::mem::size_of::<Request>(), 240);
+            assert_eq!(std::mem::size_of::<Response>(), 344);
+            assert_eq!(std::mem::size_of::<AuthorsRequest>(), 232);
+            assert_eq!(std::mem::size_of::<AuthorsResponse>(), 232);
+            assert_eq!(std::mem::size_of::<DocsRequest>(), 232);
+            assert_eq!(std::mem::size_of::<DocsResponse>(), 256);
+            assert_eq!(std::mem::size_of::<BlobsRequest>(), 96);
+            assert_eq!(std::mem::size_of::<BlobsResponse>(), 232);
+            assert_eq!(std::mem::size_of::<NodeRequest>(), 144);
+            assert_eq!(std::mem::size_of::<NodeResponse>(), 344);
+            assert_eq!(std::mem::size_of::<TagsRequest>(), 32);
+            assert_eq!(std::mem::size_of::<TagsResponse>(), 72);
+        }
+    }
 }
