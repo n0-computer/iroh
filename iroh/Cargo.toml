@@ -31,6 +31,7 @@ iroh-base = { version = "0.19.0", path = "../iroh-base", features = ["key"] }
 iroh-io = { version = "0.6.0", features = ["stats"] }
 iroh-metrics = { version = "0.19.0", path = "../iroh-metrics", optional = true }
 iroh-net = { version = "0.19.0", path = "../iroh-net" }
+nested_enum_utils = "0.1.0"
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
 iroh-docs = { version = "0.19.0", path = "../iroh-docs" }
@@ -49,8 +50,6 @@ tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["codec", "io-util", "io", "time"] }
 tracing = "0.1"
 walkdir = "2"
-
-nested_enum_utils = { git = "https://github.com/n0-computer/nested-enum-utils" }
 
 # Examples
 clap = { version = "4", features = ["derive"], optional = true }

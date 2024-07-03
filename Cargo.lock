@@ -3179,7 +3179,8 @@ dependencies = [
 [[package]]
 name = "nested_enum_utils"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/nested-enum-utils#b751e82a6e8c4c27e3a91200e970ead13ac4fbce"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f256ef99e7ac37428ef98c89bef9d84b590172de4bbfbe81b68a4cd3abadb32"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
