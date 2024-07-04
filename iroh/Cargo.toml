@@ -55,7 +55,7 @@ walkdir = "2"
 clap = { version = "4", features = ["derive"], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 ref-cast = "1.0.23"
-iroh-progress = { version = "0.18.0", path = "../iroh-progress", optional = true }
+iroh-progress = { version = "0.19.0", path = "../iroh-progress", optional = true }
 
 [features]
 default = ["metrics", "fs-store"]

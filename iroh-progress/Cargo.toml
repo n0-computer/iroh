@@ -1,6 +1,6 @@
 [package]
 name = "iroh-progress"
-version = "0.18.0"
+version = "0.19.0"
 edition = "2021"
 readme = "README.md"
 description = "utilities for printing progress to the console"
@@ -16,4 +16,4 @@ anyhow = "1.0.81"
 console = "0.15.5"
 futures-lite = "2.3"
 indicatif = { version = "0.17", features = ["tokio"] }
-iroh-blobs = { version = "0.18.0", path = "../iroh-blobs"}
+iroh-blobs = { version = "0.19.0", path = "../iroh-blobs"}

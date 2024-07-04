@@ -7,6 +7,7 @@ use std::{
 use anyhow::Result;
 use derive_more::FromStr;
 use futures_lite::{stream::Boxed as BoxStream, StreamExt};
+use tracing::{debug, error, trace, warn};
 
 use flume::Sender;
 use iroh_base::key::PublicKey;
@@ -18,25 +19,23 @@ use crate::{
     AddrInfo, Endpoint, NodeId,
 };
 
-/// The n0 local node discovery name
-// TODO(ramfox): bikeshed
-const N0_MDNS_SWARM: &str = "iroh.local.node.discovery";
+/// The n0 local swarm node discovery name
+const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
 
 /// Provenance string
-// TODO(ramfox): bikeshed
-const PROVENANCE: &str = "local.node.discovery";
+const PROVENANCE: &str = "local.swarm.discovery";
 
 /// How long we will wait before we stop sending discovery items
 const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
 
 /// Discovery using `swarm-discovery`, a variation on mdns
 #[derive(Debug)]
-pub struct LocalNodeDiscovery {
+pub struct LocalSwarmDiscovery {
     handle: JoinHandle<()>,
     sender: Sender<Message>,
 }
 
-impl Drop for LocalNodeDiscovery {
+impl Drop for LocalSwarmDiscovery {
     fn drop(&mut self) {
         self.handle.abort();
     }
@@ -44,59 +43,57 @@ impl Drop for LocalNodeDiscovery {
 
 #[derive(Debug)]
 enum Message {
-    Discovery((String, Peer)),
-    SendAddrs((NodeId, Sender<Result<DiscoveryItem>>)),
+    Discovery(String, Peer),
+    SendAddrs(NodeId, Sender<Result<DiscoveryItem>>),
     ChangeLocalAddrs(AddrInfo),
     Timeout(NodeId),
 }
 
-impl LocalNodeDiscovery {
-    /// Create a new LocalNodeDiscovery Service.
+impl LocalSwarmDiscovery {
+    /// Create a new [`LocalSwarmDiscovery`] Service.
     ///
-    /// This starts a `Discoverer` that broadcasts your addresses and receives addresses from other nodes in your local network.
-    pub fn new(node_id: NodeId) -> Self {
-        tracing::debug!("Creating new LocalNodeDiscovery service");
+    /// This starts a [`Discoverer`] that broadcasts your addresses and receives addresses from other nodes in your local network.
+    ///
+    /// # Panics
+    /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
+    pub fn new(node_id: NodeId) -> Result<Self> {
+        debug!("Creating new LocalSwarmDiscovery service");
         let (send, recv) = flume::bounded(64);
         let task_sender = send.clone();
         let rt = tokio::runtime::Handle::current();
+        let mut guard = Some(LocalSwarmDiscovery::spawn_discoverer(
+            node_id,
+            task_sender.clone(),
+            BTreeSet::new(),
+            &rt,
+        )?);
+
         let handle = tokio::spawn(async move {
-            let mut guard = match LocalNodeDiscovery::spawn_discoverer(
-                node_id,
-                task_sender.clone(),
-                BTreeSet::new(),
-                &rt,
-            ) {
-                Ok(guard) => Some(guard),
-                Err(e) => {
-                    tracing::error!("LocalNodeDiscovery error creating discovery service: {e}");
-                    return;
-                }
-            };
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
             let mut senders: HashMap<PublicKey, Sender<Result<DiscoveryItem>>> = HashMap::default();
             let mut timeouts = JoinSet::new();
             loop {
-                tracing::trace!(?node_addrs, "LocalNodeDiscovery Service loop tick");
+                trace!(?node_addrs, "LocalSwarmDiscovery Service loop tick");
                 let msg = match recv.recv_async().await {
                     Err(err) => {
-                        tracing::error!("LocalNodeDiscovery service error: {err:?}");
-                        tracing::error!("closing LocalNodeDiscovery");
+                        error!("LocalSwarmDiscovery service error: {err:?}");
+                        error!("closing LocalSwarmDiscovery");
                         timeouts.abort_all();
                         return;
                     }
                     Ok(msg) => msg,
                 };
                 match msg {
-                    Message::Discovery((discovered_node_id, peer_info)) => {
-                        tracing::trace!(
+                    Message::Discovery(discovered_node_id, peer_info) => {
+                        trace!(
                             ?discovered_node_id,
                             ?peer_info,
-                            "LocalNodeDiscovery Message::Discovery"
+                            "LocalSwarmDiscovery Message::Discovery"
                         );
                         let discovered_node_id = match PublicKey::from_str(&discovered_node_id) {
                             Ok(node_id) => node_id,
                             Err(e) => {
-                                tracing::warn!(
+                                warn!(
                                     discovered_node_id,
                                     "couldn't parse node_id from mdns discovery service: {e:?}"
                                 );
@@ -109,9 +106,9 @@ impl LocalNodeDiscovery {
                         }
 
                         if peer_info.is_expiry() {
-                            tracing::trace!(
+                            trace!(
                                 ?discovered_node_id,
-                                "removing node from LocalNodeDiscovery address book"
+                                "removing node from LocalSwarmDiscovery address book"
                             );
                             node_addrs.remove(&discovered_node_id);
                             continue;
@@ -119,28 +116,28 @@ impl LocalNodeDiscovery {
 
                         if let Some(sender) = senders.get(&discovered_node_id) {
                             let item: DiscoveryItem = (&peer_info).into();
-                            tracing::trace!(?item, "sending DiscoveryItem");
+                            trace!(?item, "sending DiscoveryItem");
                             sender.send_async(Ok(item)).await.ok();
                         }
-                        tracing::trace!(
+                        trace!(
                             ?discovered_node_id,
                             ?peer_info,
-                            "adding node to LocalNodeDiscovery address book"
+                            "adding node to LocalSwarmDiscovery address book"
                         );
                         node_addrs.insert(discovered_node_id, peer_info);
                     }
-                    Message::SendAddrs((node_id, sender)) => {
-                        tracing::trace!(?node_id, "LocalNodeDiscovery Message::SendAddrs");
+                    Message::SendAddrs(node_id, sender) => {
+                        trace!(?node_id, "LocalSwarmDiscovery Message::SendAddrs");
                         if let Some(peer_info) = node_addrs.get(&node_id) {
                             let item: DiscoveryItem = peer_info.into();
-                            tracing::debug!(?item, "sending DiscoveryItem");
+                            debug!(?item, "sending DiscoveryItem");
                             sender.send_async(Ok(item)).await.ok();
                         }
                         senders.insert(node_id, sender);
                         let timeout_sender = task_sender.clone();
                         timeouts.spawn(async move {
                             tokio::time::sleep(DISCOVERY_DURATION).await;
-                            tracing::trace!(?node_id, "discovery timeout");
+                            trace!(?node_id, "discovery timeout");
                             timeout_sender
                                 .send_async(Message::Timeout(node_id))
                                 .await
@@ -148,15 +145,15 @@ impl LocalNodeDiscovery {
                         });
                     }
                     Message::Timeout(node_id) => {
-                        tracing::trace!(?node_id, "LocalNodeDiscovery Message::Timeout");
+                        trace!(?node_id, "LocalSwarmDiscovery Message::Timeout");
                         senders.remove(&node_id);
                     }
                     Message::ChangeLocalAddrs(addrs) => {
-                        tracing::trace!(?addrs, "LocalNodeDiscovery Message::ChangeLocalAddrs");
+                        trace!(?addrs, "LocalSwarmDiscovery Message::ChangeLocalAddrs");
                         let callback_send = task_sender.clone();
                         let g = guard.take();
                         drop(g);
-                        guard = match LocalNodeDiscovery::spawn_discoverer(
+                        guard = match LocalSwarmDiscovery::spawn_discoverer(
                             node_id,
                             callback_send.clone(),
                             addrs.direct_addresses,
@@ -164,9 +161,7 @@ impl LocalNodeDiscovery {
                         ) {
                             Ok(guard) => Some(guard),
                             Err(e) => {
-                                tracing::error!(
-                                    "LocalNodeDiscovery error creating discovery service: {e}"
-                                );
+                                error!("LocalSwarmDiscovery error creating discovery service: {e}");
                                 return;
                             }
                         };
@@ -174,10 +169,10 @@ impl LocalNodeDiscovery {
                 }
             }
         });
-        Self {
+        Ok(Self {
             handle,
-            sender: send.clone(),
-        }
+            sender: send,
+        })
     }
 
     fn spawn_discoverer(
@@ -187,13 +182,13 @@ impl LocalNodeDiscovery {
         rt: &tokio::runtime::Handle,
     ) -> Result<DropGuard> {
         let callback = move |node_id: &str, peer: &Peer| {
-            tracing::trace!(
+            trace!(
                 node_id,
                 ?peer,
-                "Received peer information from LocalNodeDiscovery"
+                "Received peer information from LocalSwarmDiscovery"
             );
             sender
-                .send(Message::Discovery((node_id.to_string(), peer.clone())))
+                .send(Message::Discovery(node_id.to_string(), peer.clone()))
                 .ok();
         };
 
@@ -210,13 +205,11 @@ impl LocalNodeDiscovery {
         }
 
         let mut discoverer =
-            Discoverer::new_interactive(N0_MDNS_SWARM.to_string(), node_id.to_string())
+            Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id.to_string())
                 .with_callback(callback)
                 .with_ip_class(IpClass::V4Only);
-        if !addrs.is_empty() {
-            for addr in addrs {
-                discoverer = discoverer.with_addrs(addr.0, addr.1);
-            }
+        for addr in addrs {
+            discoverer = discoverer.with_addrs(addr.0, addr.1);
         }
         discoverer.spawn(rt)
     }
@@ -240,10 +233,10 @@ impl From<&Peer> for DiscoveryItem {
     }
 }
 
-impl Discovery for LocalNodeDiscovery {
+impl Discovery for LocalSwarmDiscovery {
     fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let (send, recv) = flume::bounded(20);
-        self.sender.send(Message::SendAddrs((node_id, send))).ok();
+        self.sender.send(Message::SendAddrs(node_id, send)).ok();
         Some(recv.into_stream().boxed())
     }
 

@@ -11,7 +11,7 @@ use anyhow::ensure;
 use clap::{Parser, Subcommand};
 use iroh::base::key::SecretKey;
 use iroh::client::blobs::WrapOption;
-use iroh::net::discovery::local_node_discovery::LocalNodeDiscovery;
+use iroh::net::discovery::local_node_discovery::LocalSwarmDiscovery;
 use iroh::node::{DiscoveryConfig, Node};
 use iroh_blobs::Hash;
 use iroh_net::key::PublicKey;
@@ -61,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     let key = SecretKey::generate();
-    let discovery = LocalNodeDiscovery::new(key.public());
+    let discovery = LocalSwarmDiscovery::new(key.public());
     let cfg = DiscoveryConfig::Custom(Box::new(discovery));
 
     println!("Starting iroh node with local node discovery...");
