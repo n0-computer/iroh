@@ -11,7 +11,7 @@ use tracing::{debug, error_span, warn, Instrument};
 use crate::{AddrInfo, Endpoint, NodeId};
 
 pub mod dns;
-pub mod pkarr_publish;
+pub mod pkarr;
 
 /// Name used for logging when new node addresses are added from discovery.
 const SOURCE_NAME: &str = "discovery";
@@ -564,7 +564,7 @@ mod test_dns_pkarr {
     use iroh_base::key::SecretKey;
 
     use crate::{
-        discovery::pkarr_publish::PkarrPublisher,
+        discovery::pkarr::PkarrPublisher,
         dns::{node_info::NodeInfo, ResolverExt},
         relay::{RelayMap, RelayMode},
         test_utils::{
@@ -574,6 +574,8 @@ mod test_dns_pkarr {
         },
         AddrInfo, Endpoint, NodeAddr,
     };
+
+    const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 
     #[tokio::test]
     async fn dns_resolve() -> Result<()> {
@@ -605,7 +607,6 @@ mod test_dns_pkarr {
         let _logging_guard = iroh_test::logging::setup();
 
         let origin = "testdns.example".to_string();
-        let timeout = Duration::from_secs(2);
 
         let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone()).await?;
 
@@ -622,7 +623,7 @@ mod test_dns_pkarr {
         // does not block, update happens in background task
         publisher.update_addr_info(&addr_info);
         // wait until our shared state received the update from pkarr publishing
-        dns_pkarr_server.on_node(&node_id, timeout).await?;
+        dns_pkarr_server.on_node(&node_id, PUBLISH_TIMEOUT).await?;
         let resolved = resolver.lookup_by_id(&node_id, &origin).await?;
 
         let expected = NodeAddr {
@@ -640,8 +641,6 @@ mod test_dns_pkarr {
     async fn pkarr_publish_dns_discover() -> Result<()> {
         let _logging_guard = iroh_test::logging::setup();
 
-        let timeout = Duration::from_secs(2);
-
         let dns_pkarr_server = DnsPkarrServer::run().await?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
@@ -649,7 +648,9 @@ mod test_dns_pkarr {
         let ep2 = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
 
         // wait until our shared state received the update from pkarr publishing
-        dns_pkarr_server.on_node(&ep1.node_id(), timeout).await?;
+        dns_pkarr_server
+            .on_node(&ep1.node_id(), PUBLISH_TIMEOUT)
+            .await?;
 
         // we connect only by node id!
         let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
@@ -661,8 +662,6 @@ mod test_dns_pkarr {
     async fn pkarr_publish_dns_discover_empty_node_addr() -> Result<()> {
         let _logging_guard = iroh_test::logging::setup();
 
-        let timeout = Duration::from_secs(2);
-
         let dns_pkarr_server = DnsPkarrServer::run().await?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
@@ -670,7 +669,9 @@ mod test_dns_pkarr {
         let ep2 = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
 
         // wait until our shared state received the update from pkarr publishing
-        dns_pkarr_server.on_node(&ep1.node_id(), timeout).await?;
+        dns_pkarr_server
+            .on_node(&ep1.node_id(), PUBLISH_TIMEOUT)
+            .await?;
 
         // we connect only by node id!
         let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;

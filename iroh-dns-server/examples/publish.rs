@@ -4,8 +4,8 @@ use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
 use iroh_net::{
     discovery::{
-        dns::N0_DNS_NODE_ORIGIN,
-        pkarr_publish::{PkarrRelayClient, N0_DNS_PKARR_RELAY},
+        dns::N0_DNS_NODE_ORIGIN_PROD,
+        pkarr::{PkarrRelayClient, N0_DNS_PKARR_RELAY},
     },
     dns::node_info::{to_z32, NodeInfo, IROH_TXT_NAME},
     key::SecretKey,
@@ -85,7 +85,10 @@ async fn main() -> Result<()> {
     match args.env {
         Env::Default => {
             println!("   cargo run --example resolve -- node {}", node_id);
-            println!("   dig {} TXT", fmt_domain(&node_id, N0_DNS_NODE_ORIGIN))
+            println!(
+                "   dig {} TXT",
+                fmt_domain(&node_id, N0_DNS_NODE_ORIGIN_PROD)
+            )
         }
         Env::Dev => {
             println!(

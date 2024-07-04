@@ -2750,7 +2750,7 @@ mod tests {
     use iroh_test::CallOnDrop;
     use rand::RngCore;
 
-    use crate::{defaults::EU_RELAY_HOSTNAME, relay::RelayMode, tls, Endpoint};
+    use crate::{defaults::staging::EU_RELAY_HOSTNAME, relay::RelayMode, tls, Endpoint};
 
     use super::*;
 
@@ -3027,7 +3027,6 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    #[ignore = "flaky"]
     async fn test_two_devices_roundtrip_network_change() -> Result<()> {
         time::timeout(
             Duration::from_secs(50),

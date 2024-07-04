@@ -1128,7 +1128,7 @@ mod tests {
 
     use super::*;
 
-    use crate::defaults::{default_eu_relay_node, default_na_relay_node};
+    use crate::defaults::staging::{default_eu_relay_node, default_na_relay_node};
 
     #[test]
     fn test_update_report_stun_working() {

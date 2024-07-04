@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use iroh::net::{
-    defaults::{default_eu_relay_node, default_na_relay_node},
+    defaults,
     relay::{RelayMap, RelayNode},
 };
 use iroh::node::GcPolicy;
@@ -62,6 +62,10 @@ pub(crate) struct NodeConfig {
 
 impl Default for NodeConfig {
     fn default() -> Self {
+        #[cfg(not(test))]
+        use defaults::prod::{default_eu_relay_node, default_na_relay_node};
+        #[cfg(test)]
+        use defaults::staging::{default_eu_relay_node, default_na_relay_node};
         Self {
             // TODO(ramfox): this should probably just be a relay map
             relay_nodes: [default_na_relay_node(), default_eu_relay_node()].into(),
