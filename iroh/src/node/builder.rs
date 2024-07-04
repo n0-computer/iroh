@@ -331,9 +331,13 @@ where
         }
     }
 
+    /// Configure the default iroh rpc endpoint, on the default address.
+    pub async fn enable_rpc(self) -> Result<Builder<D>> {
+        self.enable_rpc_with_addr(DEFAULT_RPC_ADDR).await
+    }
+
     /// Configure the default iroh rpc endpoint.
-    pub async fn enable_rpc(self, rpc_addr: Option<SocketAddr>) -> Result<Builder<D>> {
-        let mut rpc_addr = rpc_addr.unwrap_or(DEFAULT_RPC_ADDR);
+    pub async fn enable_rpc_with_addr(self, mut rpc_addr: SocketAddr) -> Result<Builder<D>> {
         let (ep, actual_rpc_port) = make_rpc_endpoint(&self.secret_key, rpc_addr)?;
         rpc_addr.set_port(actual_rpc_port);
         let ep = quic_rpc::transport::boxed::ServerEndpoint::new(ep);
@@ -804,7 +808,8 @@ const DEFAULT_RPC_PORT: u16 = 0x1337;
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u32 = 1024;
 
-const DEFAULT_RPC_ADDR: SocketAddr =
+/// The default bind addr of the RPC .
+pub const DEFAULT_RPC_ADDR: SocketAddr =
     SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, DEFAULT_RPC_PORT));
 
 /// Makes a an RPC endpoint that uses a QUIC transport
@@ -830,8 +835,8 @@ fn make_rpc_endpoint(
         Err(err) => {
             if err.kind() == std::io::ErrorKind::AddrInUse {
                 tracing::warn!(
-                    "RPC port {} already in use, switching to random port",
-                    rpc_addr.port(),
+                    "RPC port: {} already in use, switching to random port",
+                    rpc_addr,
                 );
                 // Use a random port
                 rpc_addr.set_port(0);

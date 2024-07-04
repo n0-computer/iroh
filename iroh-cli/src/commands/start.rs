@@ -4,7 +4,7 @@ use crate::config::NodeConfig;
 use anyhow::Result;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use iroh::node::Node;
+use iroh::node::{Node, DEFAULT_RPC_ADDR};
 use iroh::{
     net::relay::{RelayMap, RelayMode},
     node::RpcStatus,
@@ -135,10 +135,11 @@ pub(crate) async fn start_node(
         Some(relay_map) => RelayMode::Custom(relay_map),
     };
 
+    let rpc_addr = rpc_addr.unwrap_or(DEFAULT_RPC_ADDR);
     Node::persistent(iroh_data_root)
         .await?
         .relay_mode(relay_mode)
-        .enable_rpc(rpc_addr)
+        .enable_rpc_with_addr(rpc_addr)
         .await?
         .spawn()
         .await

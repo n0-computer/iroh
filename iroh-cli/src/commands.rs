@@ -43,8 +43,6 @@ pub(crate) struct Cli {
     pub(crate) metrics_port: Option<MetricsPort>,
 
     /// Address to serve RPC on.
-    ///
-    /// This overrides the address found in the IPFS_PATH.
     #[clap(long)]
     pub(crate) rpc_addr: Option<SocketAddr>,
 }
