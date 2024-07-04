@@ -7,6 +7,7 @@ use iroh_gossip::{
     proto::TopicId,
 };
 use iroh_net::{key::SecretKey, NodeAddr};
+use testresult::TestResult;
 use tokio::task::JoinHandle;
 
 /// Spawn an iroh node in a separate thread and tokio runtime, and return
@@ -72,18 +73,4 @@ async fn gossip_smoke() -> TestResult {
     let msgs = await_messages(stream2, 1).await?;
     assert_eq!(msgs, vec![Bytes::from("hello")]);
     Ok(())
-}
-
-// An uninhabited error type that allows us to use `?` in tests instead of `unwrap`.
-//
-// Any use of `?` in a test will immediately panic with the error message.
-#[derive(Debug)]
-enum TestError {}
-
-type TestResult<T = ()> = Result<T, TestError>;
-
-impl<E: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static> From<E> for TestError {
-    fn from(error: E) -> Self {
-        panic!("Test failed: {:?}", error);
-    }
 }
