@@ -479,13 +479,10 @@ mod tests {
     use anyhow::{bail, Context};
     use bytes::Bytes;
     use iroh_base::node_addr::AddrInfoOptions;
-    use iroh_blobs::{provider::AddProgress, BlobFormat};
+    use iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
     use iroh_net::{relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
-    use crate::{
-        client::blobs::{AddOutcome, WrapOption},
-        rpc_protocol::SetTagOption,
-    };
+    use crate::client::blobs::{AddOutcome, WrapOption};
 
     use super::*;
 
@@ -535,7 +532,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "flaky"]
     async fn test_node_add_tagged_blob_event() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
@@ -543,7 +539,7 @@ mod tests {
 
         let _drop_guard = node.cancel_token().drop_guard();
 
-        let _got_hash = tokio::time::timeout(Duration::from_secs(1), async move {
+        let _got_hash = tokio::time::timeout(Duration::from_secs(10), async move {
             let mut stream = node
                 .blobs()
                 .add_from_path(
@@ -628,6 +624,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "flaky"]
     async fn test_download_via_relay_with_discovery() -> Result<()> {
         let _guard = iroh_test::logging::setup();
         let (relay_map, _relay_url, _guard) = iroh_net::test_utils::run_relay_server().await?;

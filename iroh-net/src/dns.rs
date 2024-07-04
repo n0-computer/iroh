@@ -381,7 +381,7 @@ async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
 pub(crate) mod tests {
     use std::sync::atomic::AtomicUsize;
 
-    use crate::defaults::NA_RELAY_HOSTNAME;
+    use crate::defaults::staging::NA_RELAY_HOSTNAME;
 
     use super::*;
     const TIMEOUT: Duration = Duration::from_secs(5);

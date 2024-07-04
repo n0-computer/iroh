@@ -19,7 +19,7 @@ use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
 };
 use iroh_net::{
-    discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
     relay::RelayMode,
     Endpoint,
@@ -186,13 +186,19 @@ fn mk_external_rpc() -> BoxedServerEndpoint {
 
 impl Default for Builder<iroh_blobs::store::mem::Store> {
     fn default() -> Self {
+        // Use staging in testing
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let relay_mode = RelayMode::Default;
+        #[cfg(any(test, feature = "test-utils"))]
+        let relay_mode = RelayMode::Staging;
+
         Self {
             storage: StorageConfig::Mem,
             bind_port: None,
             secret_key: SecretKey::generate(),
             blobs_store: Default::default(),
             keylog: false,
-            relay_mode: RelayMode::Default,
+            relay_mode,
             dns_resolver: None,
             rpc_endpoint: mk_external_rpc(),
             rpc_port: None,
@@ -213,13 +219,19 @@ impl<D: Map> Builder<D> {
         docs_storage: DocsStorage,
         storage: StorageConfig,
     ) -> Self {
+        // Use staging in testing
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let relay_mode = RelayMode::Default;
+        #[cfg(any(test, feature = "test-utils"))]
+        let relay_mode = RelayMode::Staging;
+
         Self {
             storage,
             bind_port: None,
             secret_key: SecretKey::generate(),
             blobs_store,
             keylog: false,
-            relay_mode: RelayMode::Default,
+            relay_mode,
             dns_resolver: None,
             rpc_endpoint: mk_external_rpc(),
             rpc_port: None,

@@ -28,7 +28,7 @@ use tracing::{debug, info_span, trace, warn};
 use url::Url;
 
 use crate::{
-    defaults::default_relay_map,
+    defaults,
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
@@ -85,9 +85,15 @@ pub struct Builder {
 
 impl Default for Builder {
     fn default() -> Self {
+        // Use staging in testing
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let relay_mode = RelayMode::Default;
+        #[cfg(any(test, feature = "test-utils"))]
+        let relay_mode = RelayMode::Staging;
+
         Self {
             secret_key: Default::default(),
-            relay_mode: RelayMode::Default,
+            relay_mode,
             alpn_protocols: Default::default(),
             transport_config: Default::default(),
             concurrent_connections: Default::default(),
@@ -118,7 +124,8 @@ impl Builder {
     pub async fn bind(self, bind_port: u16) -> Result<Endpoint> {
         let relay_map = match self.relay_mode {
             RelayMode::Disabled => RelayMap::empty(),
-            RelayMode::Default => default_relay_map(),
+            RelayMode::Default => defaults::prod::default_relay_map(),
+            RelayMode::Staging => defaults::staging::default_relay_map(),
             RelayMode::Custom(relay_map) => {
                 ensure!(!relay_map.is_empty(), "Empty custom relay server map",);
                 relay_map
@@ -369,7 +376,7 @@ impl Endpoint {
 
     // # Methods relating to construction.
 
-    /// Returns the builder for an [`Endpoint`].
+    /// Returns the builder for an [`Endpoint`], with a production configuration.
     pub fn builder() -> Builder {
         Builder::default()
     }
@@ -1230,13 +1237,12 @@ mod tests {
 
     /// Test that peers saved on shutdown are correctly loaded
     #[tokio::test]
-    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn save_load_peers() {
         let _guard = iroh_test::logging::setup();
 
         let secret_key = SecretKey::generate();
         let root = testdir::testdir!();
-        let path = root.join("peers");
+        let peers_path = root.join("peers");
 
         /// Create an endpoint for the test.
         async fn new_endpoint(secret_key: SecretKey, peers_path: PathBuf) -> Endpoint {
@@ -1262,7 +1268,7 @@ mod tests {
         info!("setting up first endpoint");
         // first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
-        let endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
+        let endpoint = new_endpoint(secret_key.clone(), peers_path.clone()).await;
         assert!(endpoint.connection_infos().is_empty());
         endpoint.add_node_addr(node_addr).unwrap();
 
@@ -1270,9 +1276,29 @@ mod tests {
         // close the endpoint and restart it
         endpoint.close(0u32.into(), b"done").await.unwrap();
 
+        // Give the destructors some time to create the file.  We use sync code to read the
+        // file here, it's just a test.
+        let now = Instant::now();
+        let mut previous_size = None;
+        while now.elapsed() < Duration::from_secs(10) {
+            if peers_path.is_file() {
+                let size = peers_path.metadata().unwrap().len();
+                match previous_size {
+                    None => previous_size = Some(size),
+                    Some(previous_size) => {
+                        if previous_size == size {
+                            // File is fully written
+                            break;
+                        }
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
         info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
-        let endpoint = new_endpoint(secret_key, path).await;
+        let endpoint = new_endpoint(secret_key, peers_path).await;
         let ConnectionInfo { mut addrs, .. } = endpoint.connection_info(peer_id).unwrap();
         let conn_addr = addrs.pop().unwrap().addr;
         assert_eq!(conn_addr, direct_addr);

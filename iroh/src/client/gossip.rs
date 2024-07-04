@@ -8,7 +8,7 @@ use iroh_gossip::proto::TopicId;
 use iroh_net::NodeId;
 use ref_cast::RefCast;
 
-use crate::rpc_protocol::{GossipSubscribeRequest, GossipSubscribeResponse, GossipSubscribeUpdate};
+use crate::rpc_protocol::gossip::{SubscribeRequest, SubscribeResponse, SubscribeUpdate};
 
 use super::RpcClient;
 
@@ -61,12 +61,12 @@ impl Client {
         topic: TopicId,
         opts: SubscribeOpts,
     ) -> Result<(
-        impl Sink<GossipSubscribeUpdate, Error = anyhow::Error>,
-        impl Stream<Item = Result<GossipSubscribeResponse>>,
+        impl Sink<SubscribeUpdate, Error = anyhow::Error>,
+        impl Stream<Item = Result<SubscribeResponse>>,
     )> {
         let (sink, stream) = self
             .rpc
-            .bidi(GossipSubscribeRequest {
+            .bidi(SubscribeRequest {
                 topic,
                 bootstrap: opts.bootstrap,
                 subscription_capacity: opts.subscription_capacity,
@@ -83,8 +83,8 @@ impl Client {
         topic: impl Into<TopicId>,
         bootstrap: impl IntoIterator<Item = impl Into<NodeId>>,
     ) -> Result<(
-        impl Sink<GossipSubscribeUpdate, Error = anyhow::Error>,
-        impl Stream<Item = Result<GossipSubscribeResponse>>,
+        impl Sink<SubscribeUpdate, Error = anyhow::Error>,
+        impl Stream<Item = Result<SubscribeResponse>>,
     )> {
         let bootstrap = bootstrap.into_iter().map(Into::into).collect();
         self.subscribe_with_opts(

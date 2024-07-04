@@ -15,7 +15,6 @@ use hyper::header::{HeaderValue, UPGRADE};
 use hyper::service::Service;
 use hyper::upgrade::Upgraded;
 use hyper::{HeaderMap, Method, Request, Response, StatusCode};
-use iroh_base::node_addr::RelayUrl;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 use tokio_rustls_acme::AcmeAcceptor;
@@ -78,20 +77,6 @@ impl Protocol {
         match self {
             Protocol::Relay => HTTP_UPGRADE_PROTOCOL,
             Protocol::Websocket => WEBSOCKET_UPGRADE_PROTOCOL,
-        }
-    }
-
-    /// Determines which protocol to use depending on a URL.
-    ///
-    /// `ws(s)` parses as websockets, `http(s)` parses to the custom relay protocol.
-    pub fn from_url_scheme(url: &RelayUrl) -> Self {
-        match url.scheme() {
-            "ws" => Protocol::Websocket,
-            "wss" => Protocol::Websocket,
-            "http" => Protocol::Relay,
-            "https" => Protocol::Relay,
-            // We default to relay in case of weird URLs.
-            _ => Protocol::Relay,
         }
     }
 
