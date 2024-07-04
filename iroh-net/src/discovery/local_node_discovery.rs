@@ -46,7 +46,7 @@ enum Message {
     Discovery(String, Peer),
     SendAddrs(NodeId, Sender<Result<DiscoveryItem>>),
     ChangeLocalAddrs(AddrInfo),
-    Timeout(NodeId),
+    Timeout(NodeId, usize),
 }
 
 impl LocalSwarmDiscovery {
@@ -70,7 +70,9 @@ impl LocalSwarmDiscovery {
 
         let handle = tokio::spawn(async move {
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
-            let mut senders: HashMap<PublicKey, Sender<Result<DiscoveryItem>>> = HashMap::default();
+            let mut last_id = 0;
+            let mut senders: HashMap<PublicKey, HashMap<usize, Sender<Result<DiscoveryItem>>>> =
+                HashMap::default();
             let mut timeouts = JoinSet::new();
             loop {
                 trace!(?node_addrs, "LocalSwarmDiscovery Service loop tick");
@@ -114,10 +116,12 @@ impl LocalSwarmDiscovery {
                             continue;
                         }
 
-                        if let Some(sender) = senders.get(&discovered_node_id) {
-                            let item: DiscoveryItem = (&peer_info).into();
-                            trace!(?item, "sending DiscoveryItem");
-                            sender.send_async(Ok(item)).await.ok();
+                        if let Some(senders) = senders.get(&discovered_node_id) {
+                            for sender in senders.values() {
+                                let item: DiscoveryItem = (&peer_info).into();
+                                trace!(?item, "sending DiscoveryItem");
+                                sender.send_async(Ok(item)).await.ok();
+                            }
                         }
                         trace!(
                             ?discovered_node_id,
@@ -127,26 +131,39 @@ impl LocalSwarmDiscovery {
                         node_addrs.insert(discovered_node_id, peer_info);
                     }
                     Message::SendAddrs(node_id, sender) => {
+                        let id = last_id + 1;
+                        last_id = id;
                         trace!(?node_id, "LocalSwarmDiscovery Message::SendAddrs");
                         if let Some(peer_info) = node_addrs.get(&node_id) {
                             let item: DiscoveryItem = peer_info.into();
                             debug!(?item, "sending DiscoveryItem");
                             sender.send_async(Ok(item)).await.ok();
                         }
-                        senders.insert(node_id, sender);
+                        if let Some(senders_for_node_id) = senders.get_mut(&node_id) {
+                            senders_for_node_id.insert(id, sender);
+                        } else {
+                            let mut senders_for_node_id = HashMap::new();
+                            senders_for_node_id.insert(id, sender);
+                            senders.insert(node_id, senders_for_node_id);
+                        }
                         let timeout_sender = task_sender.clone();
                         timeouts.spawn(async move {
                             tokio::time::sleep(DISCOVERY_DURATION).await;
                             trace!(?node_id, "discovery timeout");
                             timeout_sender
-                                .send_async(Message::Timeout(node_id))
+                                .send_async(Message::Timeout(node_id, id))
                                 .await
                                 .ok();
                         });
                     }
-                    Message::Timeout(node_id) => {
+                    Message::Timeout(node_id, id) => {
                         trace!(?node_id, "LocalSwarmDiscovery Message::Timeout");
-                        senders.remove(&node_id);
+                        if let Some(senders_for_node_id) = senders.get_mut(&node_id) {
+                            senders_for_node_id.remove(&id);
+                            if senders_for_node_id.is_empty() {
+                                senders.remove(&node_id);
+                            }
+                        }
                     }
                     Message::ChangeLocalAddrs(addrs) => {
                         trace!(?addrs, "LocalSwarmDiscovery Message::ChangeLocalAddrs");
@@ -187,27 +204,41 @@ impl LocalSwarmDiscovery {
                 ?peer,
                 "Received peer information from LocalSwarmDiscovery"
             );
+
             sender
                 .send(Message::Discovery(node_id.to_string(), peer.clone()))
                 .ok();
         };
 
         let mut addrs: HashMap<u16, Vec<IpAddr>> = HashMap::default();
-        let socketaddrs: BTreeSet<SocketAddr> = socketaddrs
-            .into_iter()
-            .filter(|socketaddr| socketaddr.is_ipv4())
-            .collect();
+        let mut has_ipv4 = false;
+        let mut has_ipv6 = false;
         for socketaddr in socketaddrs {
             addrs
                 .entry(socketaddr.port())
-                .and_modify(|a| a.push(socketaddr.ip()))
+                .and_modify(|a| {
+                    if socketaddr.is_ipv6() {
+                        has_ipv6 = true;
+                    };
+                    if socketaddr.is_ipv4() {
+                        has_ipv4 = true;
+                    };
+                    a.push(socketaddr.ip())
+                })
                 .or_insert(vec![socketaddr.ip()]);
         }
 
+        let ip_class = match (has_ipv4, has_ipv6) {
+            (true, true) => IpClass::V4AndV6,
+            (true, false) => IpClass::V4Only,
+            (false, true) => IpClass::V6Only,
+            // this case indicates no ip addresses were supplied, in which case, default to ipv4
+            (false, false) => IpClass::V4Only,
+        };
         let mut discoverer =
             Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id.to_string())
                 .with_callback(callback)
-                .with_ip_class(IpClass::V4Only);
+                .with_ip_class(ip_class);
         for addr in addrs {
             discoverer = discoverer.with_addrs(addr.0, addr.1);
         }
