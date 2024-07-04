@@ -195,7 +195,6 @@ impl<D: BaoStore> Handler<D> {
         chan: RpcChannel<RpcService, E>,
     ) -> Result<(), RpcServerError<E>> {
         use tags::Request::*;
-        debug!("handling tags request: {msg}");
         match msg {
             ListTags(msg) => chan.server_streaming(msg, self, Self::blob_list_tags).await,
             DeleteTag(msg) => chan.rpc(msg, self, Self::blob_delete_tag).await,
