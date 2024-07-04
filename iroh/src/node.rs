@@ -477,13 +477,10 @@ mod tests {
     use anyhow::{bail, Context};
     use bytes::Bytes;
     use iroh_base::node_addr::AddrInfoOptions;
-    use iroh_blobs::{provider::AddProgress, BlobFormat};
+    use iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
     use iroh_net::{relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
-    use crate::{
-        client::blobs::{AddOutcome, WrapOption},
-        rpc_protocol::SetTagOption,
-    };
+    use crate::client::blobs::{AddOutcome, WrapOption};
 
     use super::*;
 

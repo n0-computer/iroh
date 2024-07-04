@@ -20,6 +20,7 @@ use iroh_blobs::{
     format::collection::{Collection, SimpleStore},
     get::db::DownloadProgress as BytesDownloadProgress,
     store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
+    util::SetTagOption,
     BlobFormat, Hash, Tag,
 };
 use iroh_net::NodeAddr;
@@ -31,12 +32,13 @@ use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
 
-use crate::rpc_protocol::{
-    BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
-    BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobListIncompleteRequest,
-    BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, SetTagOption,
+use crate::rpc_protocol::blobs::{
+    AddPathRequest, AddStreamRequest, AddStreamUpdate, ConsistencyCheckRequest,
+    CreateCollectionRequest, CreateCollectionResponse, DeleteRequest, DownloadRequest,
+    ExportRequest, ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse,
+    ValidateRequest,
 };
+use crate::rpc_protocol::node::StatusRequest;
 
 use super::{flatten, tags, Iroh, RpcClient};
 
@@ -110,7 +112,7 @@ impl Client {
     ) -> Result<AddProgress> {
         let stream = self
             .rpc
-            .server_streaming(BlobAddPathRequest {
+            .server_streaming(AddPathRequest {
                 path,
                 in_place,
                 tag,
@@ -158,12 +160,12 @@ impl Client {
         input: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
         tag: SetTagOption,
     ) -> anyhow::Result<AddProgress> {
-        let (mut sink, progress) = self.rpc.bidi(BlobAddStreamRequest { tag }).await?;
+        let (mut sink, progress) = self.rpc.bidi(AddStreamRequest { tag }).await?;
         let mut input = input.map(|chunk| match chunk {
-            Ok(chunk) => Ok(BlobAddStreamUpdate::Chunk(chunk)),
+            Ok(chunk) => Ok(AddStreamUpdate::Chunk(chunk)),
             Err(err) => {
                 warn!("Abort send, reason: failed to read from source stream: {err:?}");
-                Ok(BlobAddStreamUpdate::Abort)
+                Ok(AddStreamUpdate::Abort)
             }
         });
         tokio::spawn(async move {
@@ -205,7 +207,7 @@ impl Client {
     ) -> Result<impl Stream<Item = Result<ValidateProgress>>> {
         let stream = self
             .rpc
-            .server_streaming(BlobValidateRequest { repair })
+            .server_streaming(ValidateRequest { repair })
             .await?;
         Ok(stream.map(|res| res.map_err(anyhow::Error::from)))
     }
@@ -219,7 +221,7 @@ impl Client {
     ) -> Result<impl Stream<Item = Result<ConsistencyCheckProgress>>> {
         let stream = self
             .rpc
-            .server_streaming(BlobConsistencyCheckRequest { repair })
+            .server_streaming(ConsistencyCheckRequest { repair })
             .await?;
         Ok(stream.map(|r| r.map_err(anyhow::Error::from)))
     }
@@ -266,7 +268,7 @@ impl Client {
         } = opts;
         let stream = self
             .rpc
-            .server_streaming(BlobDownloadRequest {
+            .server_streaming(DownloadRequest {
                 hash,
                 format,
                 nodes,
@@ -295,7 +297,7 @@ impl Client {
         format: ExportFormat,
         mode: ExportMode,
     ) -> Result<ExportProgress> {
-        let req = BlobExportRequest {
+        let req = ExportRequest {
             hash,
             path: destination,
             format,
@@ -309,13 +311,13 @@ impl Client {
 
     /// List all complete blobs.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<BlobInfo>>> {
-        let stream = self.rpc.server_streaming(BlobListRequest).await?;
+        let stream = self.rpc.server_streaming(ListRequest).await?;
         Ok(flatten(stream))
     }
 
     /// List all incomplete (partial) blobs.
     pub async fn list_incomplete(&self) -> Result<impl Stream<Item = Result<IncompleteBlobInfo>>> {
-        let stream = self.rpc.server_streaming(BlobListIncompleteRequest).await?;
+        let stream = self.rpc.server_streaming(ListIncompleteRequest).await?;
         Ok(flatten(stream))
     }
 
@@ -354,7 +356,7 @@ impl Client {
 
     /// Delete a blob.
     pub async fn delete_blob(&self, hash: Hash) -> Result<()> {
-        self.rpc.rpc(BlobDeleteBlobRequest { hash }).await??;
+        self.rpc.rpc(DeleteRequest { hash }).await??;
         Ok(())
     }
 
@@ -365,7 +367,7 @@ impl Client {
         blob_format: BlobFormat,
         addr_options: AddrInfoOptions,
     ) -> Result<BlobTicket> {
-        let mut addr = self.rpc.rpc(NodeStatusRequest).await??.addr;
+        let mut addr = self.rpc.rpc(StatusRequest).await??.addr;
         addr.apply_options(addr_options);
         let ticket = BlobTicket::new(addr, hash, blob_format).expect("correct ticket");
 
@@ -791,19 +793,19 @@ impl Reader {
         len: Option<usize>,
     ) -> anyhow::Result<Self> {
         let stream = rpc
-            .server_streaming(BlobReadAtRequest { hash, offset, len })
+            .server_streaming(ReadAtRequest { hash, offset, len })
             .await?;
         let mut stream = flatten(stream);
 
         let (size, is_complete) = match stream.next().await {
-            Some(Ok(BlobReadAtResponse::Entry { size, is_complete })) => (size, is_complete),
+            Some(Ok(ReadAtResponse::Entry { size, is_complete })) => (size, is_complete),
             Some(Err(err)) => return Err(err),
             Some(Ok(_)) => return Err(anyhow!("Expected header frame, but got data frame")),
             None => return Err(anyhow!("Expected header frame, but RPC stream was dropped")),
         };
 
         let stream = stream.map(|item| match item {
-            Ok(BlobReadAtResponse::Data { chunk }) => Ok(chunk),
+            Ok(ReadAtResponse::Data { chunk }) => Ok(chunk),
             Ok(_) => Err(io::Error::new(io::ErrorKind::Other, "Expected data frame")),
             Err(err) => Err(io::Error::new(io::ErrorKind::Other, format!("{err}"))),
         });
