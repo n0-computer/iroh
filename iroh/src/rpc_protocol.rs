@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 pub mod authors;
 pub mod blobs;
 pub mod docs;
+pub mod gossip;
 pub mod node;
 pub mod tags;
 
@@ -29,6 +30,7 @@ pub enum Request {
     Docs(docs::Request),
     Tags(tags::Request),
     Authors(authors::Request),
+    Gossip(gossip::Request),
 }
 
 /// The response enum, listing all possible responses.
@@ -41,6 +43,7 @@ pub enum Response {
     Tags(tags::Response),
     Docs(docs::Response),
     Authors(authors::Response),
+    Gossip(gossip::Response),
 }
 
 impl quic_rpc::Service for RpcService {

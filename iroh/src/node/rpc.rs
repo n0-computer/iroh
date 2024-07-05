@@ -53,7 +53,7 @@ use crate::rpc_protocol::{
         ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,
         SetHashRequest,
     },
-    node,
+    gossip, node,
     node::{
         AddAddrRequest, AddrRequest, ConnectionInfoRequest, ConnectionInfoResponse,
         ConnectionsRequest, ConnectionsResponse, IdRequest, NodeWatchRequest, RelayRequest,
@@ -198,6 +198,30 @@ impl<D: BaoStore> Handler<D> {
         match msg {
             ListTags(msg) => chan.server_streaming(msg, self, Self::blob_list_tags).await,
             DeleteTag(msg) => chan.rpc(msg, self, Self::blob_delete_tag).await,
+        }
+    }
+
+    async fn handle_gossip_request<E: ServiceEndpoint<RpcService>>(
+        self,
+        msg: gossip::Request,
+        chan: RpcChannel<RpcService, E>,
+    ) -> Result<(), RpcServerError<E>> {
+        use gossip::Request::*;
+        match msg {
+            Subscribe(msg) => {
+                chan.bidi_streaming(msg, self, |handler, req, updates| {
+                    handler.inner.gossip_dispatcher.subscribe_with_opts(
+                        req.topic,
+                        iroh_gossip::dispatcher::SubscribeOptions {
+                            bootstrap: req.bootstrap,
+                            subscription_capacity: req.subscription_capacity,
+                        },
+                        Box::new(updates),
+                    )
+                })
+                .await
+            }
+            Update(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
         }
     }
 
@@ -401,6 +425,7 @@ impl<D: BaoStore> Handler<D> {
             Tags(msg) => self.handle_tags_request(msg, chan).await,
             Authors(msg) => self.handle_authors_request(msg, chan).await,
             Docs(msg) => self.handle_docs_request(msg, chan).await,
+            Gossip(msg) => self.handle_gossip_request(msg, chan).await,
         }
     }
 

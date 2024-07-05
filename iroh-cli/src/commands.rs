@@ -16,6 +16,7 @@ pub(crate) mod blob;
 pub(crate) mod console;
 pub(crate) mod doc;
 pub(crate) mod doctor;
+pub(crate) mod gossip;
 pub(crate) mod node;
 pub(crate) mod rpc;
 pub(crate) mod start;

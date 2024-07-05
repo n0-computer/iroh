@@ -2468,6 +2468,7 @@ dependencies = [
  "strum 0.25.0",
  "tempfile",
  "testdir",
+ "testresult",
  "thiserror",
  "tokio",
  "tokio-stream",
@@ -2589,10 +2590,12 @@ dependencies = [
  "flume",
  "futures-buffered",
  "futures-lite 2.3.0",
+ "futures-util",
  "hex",
  "human-time",
  "indicatif",
  "iroh",
+ "iroh-gossip",
  "iroh-metrics",
  "nix 0.27.1",
  "parking_lot",
@@ -2721,7 +2724,9 @@ dependencies = [
  "clap",
  "derive_more",
  "ed25519-dalek",
+ "flume",
  "futures-lite 2.3.0",
+ "futures-util",
  "genawaiter",
  "indexmap 2.2.6",
  "iroh-base",
@@ -5667,6 +5672,12 @@ dependencies = [
  "sysinfo",
  "whoami",
 ]
+
+[[package]]
+name = "testresult"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d72e255c0541f86589b0287139b70bd941a197ea4cea8fd8f87afe9c965a99e4"
 
 [[package]]
 name = "thiserror"

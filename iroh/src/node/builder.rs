@@ -14,7 +14,10 @@ use iroh_blobs::{
 };
 use iroh_docs::engine::DefaultAuthorStorage;
 use iroh_docs::net::DOCS_ALPN;
-use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
+use iroh_gossip::{
+    dispatcher::GossipDispatcher,
+    net::{Gossip, GOSSIP_ALPN},
+};
 use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
@@ -545,6 +548,7 @@ where
             downloader.clone(),
         )
         .await?;
+        let gossip_dispatcher = GossipDispatcher::new(gossip.clone());
 
         // Initialize the internal RPC connection.
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(32);
@@ -564,6 +568,7 @@ where
             rt: lp,
             downloader,
             gossip,
+            gossip_dispatcher,
         });
 
         let protocol_builder = ProtocolBuilder {
