@@ -6,19 +6,22 @@ use iroh_blobs::{
     TempTag,
 };
 
-use crate::proto::{
-    sync::Message,
-    willow::{Entry, PayloadDigest},
+use crate::{
+    proto::{
+        sync::Message,
+        willow::{Entry, PayloadDigest},
+    },
+    session::channels::ChannelSenders,
 };
 
-use super::{Error, Session};
+use super::{Error};
 
 pub const DEFAULT_CHUNK_SIZE: usize = 1024 * 64;
 
 pub async fn send_payload_chunked<P: PayloadStore>(
     digest: PayloadDigest,
     payload_store: &P,
-    session: &Session,
+    senders: &ChannelSenders,
     chunk_size: usize,
     map: impl Fn(Bytes) -> Message,
 ) -> Result<bool, Error> {
@@ -37,7 +40,7 @@ pub async fn send_payload_chunked<P: PayloadStore>(
                 .map_err(Error::PayloadStore)?;
             pos += bytes.len() as u64;
             let msg = map(bytes);
-            session.send(msg).await?;
+            senders.send(msg).await?;
         }
         Ok(true)
     } else {
@@ -64,9 +67,9 @@ struct PayloadWriter {
 }
 
 impl CurrentPayload {
-    pub fn new() -> Self {
-        Self::default()
-    }
+    // pub fn new() -> Self {
+    //     Self::default()
+    // }
 
     pub fn set(&mut self, entry: Entry, expected_length: Option<u64>) -> Result<(), Error> {
         if self.0.is_some() {

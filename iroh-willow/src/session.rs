@@ -9,6 +9,8 @@ use crate::{
     },
 };
 
+mod aoi_finder;
+mod capabilities;
 pub mod channels;
 mod data;
 mod error;
@@ -17,13 +19,15 @@ mod payload;
 mod reconciler;
 mod resource;
 mod run;
-mod state;
+mod static_tokens;
 
 pub use self::channels::Channels;
 pub use self::error::Error;
-pub use self::state::Session;
 
 pub type SessionId = u64;
+
+#[derive(Debug)]
+pub struct Session;
 
 /// Data from the initial transmission
 ///

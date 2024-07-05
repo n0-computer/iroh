@@ -96,6 +96,7 @@ impl SessionHandle {
     /// Previously queued messages will still be sent out. The session will only be closed
     /// once the other peer closes their senders as well.
     pub fn close(&self) {
+        debug!("trigger user close");
         self.handle.close()
     }
 
@@ -299,7 +300,10 @@ async fn join_all(join_set: &mut JoinSet<anyhow::Result<()>>) -> anyhow::Result<
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, time::Instant};
+    use std::{
+        collections::BTreeSet,
+        time::{Duration, Instant},
+    };
 
     use futures_lite::StreamExt;
     use iroh_base::key::SecretKey;
@@ -542,6 +546,8 @@ mod tests {
 
         let live_entries = done_rx.await?;
         expected_entries.extend(live_entries);
+        // TODO: replace with event
+        tokio::time::sleep(Duration::from_secs(1)).await;
         session_alfie.close();
 
         let (res_alfie, res_betty) = tokio::join!(session_alfie.join(), session_betty.join());

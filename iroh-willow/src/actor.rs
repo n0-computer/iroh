@@ -387,21 +387,31 @@ impl<S: Storage> Actor<S> {
                 init,
                 reply,
             } => {
-                let Channels { send, recv } = channels;
+                // let Channels { send, recv } = channels;
                 let id = self.next_session_id();
-                let session =
-                    Session::new(&self.store, id, our_role, send, init, initial_transmission);
-                let session = match session {
-                    Ok(session) => session,
-                    Err(err) => return send_reply(reply, Err(err.into())),
-                };
+                // let session =
+                //     Session::new(&self.store, id, our_role, send, init, initial_transmission);
+                // let session = match session {
+                //     Ok(session) => session,
+                //     Err(err) => return send_reply(reply, Err(err.into())),
+                // };
 
                 let store = self.store.clone();
                 let cancel_token = CancellationToken::new();
 
-                let future = session
-                    .run(store, recv, cancel_token.clone())
-                    .instrument(error_span!("session", peer = %peer.fmt_short()));
+                let future = Session::run(
+                    store,
+                    channels,
+                    cancel_token.clone(),
+                    id,
+                    our_role,
+                    init,
+                    initial_transmission,
+                )
+                .instrument(error_span!("session", peer = %peer.fmt_short()));
+                // let future = session
+                //     .run(store, recv, cancel_token.clone())
+                //     .instrument(error_span!("session", peer = %peer.fmt_short()));
                 let task_key = self.session_tasks.spawn_local(id, future);
 
                 let (on_finish_tx, on_finish_rx) = oneshot::channel();

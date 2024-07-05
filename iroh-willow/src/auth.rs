@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap},
     sync::{Arc, RwLock},
 };
 
@@ -19,7 +19,7 @@ use crate::{
     store::traits::{SecretStorage, SecretStoreError, Storage},
 };
 
-pub type InterestMap = BTreeMap<ReadAuthorisation, BTreeSet<AreaOfInterest>>;
+pub type InterestMap = HashMap<ReadAuthorisation, BTreeSet<AreaOfInterest>>;
 
 #[derive(Debug, Clone)]
 pub struct DelegateTo {
@@ -232,12 +232,11 @@ impl<S: Storage> Auth<S> {
                         let aoi = AreaOfInterest::new(area);
                         (auth, BTreeSet::from_iter([aoi]))
                     })
-                    .collect::<BTreeMap<_, _>>();
+                    .collect::<HashMap<_, _>>();
                 Ok(out)
             }
             Interests::Some(interests) => {
-                let mut out: BTreeMap<ReadAuthorisation, BTreeSet<AreaOfInterest>> =
-                    BTreeMap::new();
+                let mut out: HashMap<ReadAuthorisation, BTreeSet<AreaOfInterest>> = HashMap::new();
                 for (cap_selector, aoi_selector) in interests {
                     let cap = self.get_read_cap(&cap_selector)?;
                     if let Some(cap) = cap {

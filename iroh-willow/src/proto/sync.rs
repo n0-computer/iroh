@@ -176,28 +176,18 @@ impl Channel {
 pub enum LogicalChannel {
     /// Logical channel for controlling the binding of new IntersectionHandles.
     Intersection,
-    /// Logical channel for performing 3d range-based set reconciliation.
-    Reconciliation,
-    // TODO: use all the channels
-    // right now everything but reconciliation goes into the control channel
-    //
-    /// Logical channel for transmitting Entries and Payloads outside of 3d range-based set reconciliation.
-    Data,
-    //
-    // /// Logical channel for controlling the binding of new IntersectionHandles.
-    // Intersection,
-    //
     /// Logical channel for controlling the binding of new CapabilityHandles.
     Capability,
-    //
     /// Logical channel for controlling the binding of new AreaOfInterestHandles.
     AreaOfInterest,
-    //
-    // /// Logical channel for controlling the binding of new PayloadRequestHandles.
-    // PayloadRequest,
-    //
     /// Logical channel for controlling the binding of new StaticTokenHandles.
     StaticToken,
+    /// Logical channel for performing 3d range-based set reconciliation.
+    Reconciliation,
+    /// Logical channel for transmitting Entries and Payloads outside of 3d range-based set reconciliation.
+    Data,
+    // /// Logical channel for controlling the binding of new PayloadRequestHandles.
+    // PayloadRequest,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use genawaiter::GeneratorState;
+use genawaiter::rc::Gen;
 use tracing::{debug, trace};
 
 use crate::{
@@ -27,9 +27,8 @@ use crate::{
     },
     session::{
         resource::{MissingResource, ResourceMap},
-        Error, Scope, Session,
+        Error, Scope,
     },
-    store::{traits::Storage, Store},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -76,28 +75,10 @@ pub struct PaiFinder {
 }
 
 impl PaiFinder {
-    pub async fn run_with_session<S: Storage>(
-        session: Session,
-        store: Store<S>,
+    pub fn run_gen(
         inbox: impl Stream<Item = Input> + Unpin,
-    ) -> Result<(), Error> {
-        let mut gen = genawaiter::rc::Gen::new(|co| PaiFinder::new(co).run(inbox));
-        loop {
-            match gen.async_resume().await {
-                GeneratorState::Yielded(output) => match output {
-                    Output::SendMessage(message) => session.send(message).await?,
-                    Output::NewIntersection(intersection) => {
-                        session.push_pai_intersection(intersection)
-                    }
-                    Output::SignAndSendSubspaceCap(handle, cap) => {
-                        let message =
-                            session.sign_subspace_capabiltiy(store.secrets(), &cap, handle)?;
-                        session.send(Box::new(message)).await?;
-                    }
-                },
-                GeneratorState::Complete(res) => break res,
-            }
-        }
+    ) -> Gen<Output, (), impl std::future::Future<Output = Result<(), Error>>> {
+        Gen::new(|co| PaiFinder::new(co).run(inbox))
     }
 
     #[cfg(test)]
@@ -106,7 +87,9 @@ impl PaiFinder {
         mut outbox: impl futures_util::Sink<Output, Error = Error> + Unpin,
     ) -> Result<(), Error> {
         use futures_util::SinkExt;
-        let mut gen = genawaiter::rc::Gen::new(|co| PaiFinder::new(co).run(inbox));
+        use genawaiter::GeneratorState;
+
+        let mut gen = Gen::new(|co| PaiFinder::new(co).run(inbox));
         loop {
             let y = gen.async_resume().await;
             match y {
