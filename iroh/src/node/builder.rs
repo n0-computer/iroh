@@ -20,7 +20,7 @@ use iroh_gossip::{
 };
 use iroh_net::{
     discovery::{
-        dns::DnsDiscovery, local_node_discovery::LocalSwarmDiscovery, pkarr::PkarrPublisher,
+        dns::DnsDiscovery, local_swarm_discovery::LocalSwarmDiscovery, pkarr::PkarrPublisher,
         ConcurrentDiscovery, Discovery,
     },
     dns::DnsResolver,

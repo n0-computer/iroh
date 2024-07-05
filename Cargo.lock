@@ -2448,6 +2448,7 @@ dependencies = [
  "bao-tree",
  "bytes",
  "clap",
+ "console",
  "derive_more",
  "flume",
  "futures-buffered",
@@ -2464,7 +2465,6 @@ dependencies = [
  "iroh-io",
  "iroh-metrics",
  "iroh-net",
- "iroh-progress",
  "iroh-quinn",
  "iroh-test",
  "nested_enum_utils",
@@ -2612,7 +2612,6 @@ dependencies = [
  "iroh",
  "iroh-gossip",
  "iroh-metrics",
- "iroh-progress",
  "nix 0.27.1",
  "parking_lot",
  "pkarr 1.1.5",
@@ -2904,17 +2903,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "iroh-progress"
-version = "0.19.0"
-dependencies = [
- "anyhow",
- "console",
- "futures-lite 2.3.0",
- "indicatif",
- "iroh-blobs",
 ]
 
 [[package]]

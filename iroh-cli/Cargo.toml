@@ -43,7 +43,6 @@ indicatif = { version = "0.17", features = ["tokio"] }
 iroh = { version = "0.19.0", path = "../iroh", features = ["metrics"] }
 iroh-gossip = { version = "0.19.0", path = "../iroh-gossip" }
 iroh-metrics = { version = "0.19.0", path = "../iroh-metrics" }
-iroh-progress = { version = "0.19.0", path = "../iroh-progress" }
 parking_lot = "0.12.1"
 pkarr = { version = "1.1.5", default-features = false }
 portable-atomic = "1"
