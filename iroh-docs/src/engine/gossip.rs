@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use futures_lite::StreamExt;
 use futures_util::FutureExt;
 use iroh_gossip::net::{Event, Gossip};
+use iroh_metrics::inc;
 use iroh_net::key::PublicKey;
 use tokio::{
     sync::{broadcast, mpsc},
@@ -16,6 +17,7 @@ use tokio_stream::{
 use tracing::{debug, error, trace, warn};
 
 use crate::{actor::SyncHandle, ContentStatus, NamespaceId};
+use crate::metrics::Metrics;
 
 use super::live::{Op, ToLiveActor};
 
@@ -67,9 +69,11 @@ impl GossipActor {
         loop {
             i += 1;
             trace!(?i, "tick wait");
+            inc!(Metrics, doc_gossip_tick_main);
             tokio::select! {
                 next = self.gossip_events.next(), if !self.gossip_events.is_empty() => {
                     trace!(?i, "tick: gossip_event");
+                    inc!(Metrics, doc_gossip_tick_event);
                     if let Err(err) = self.on_gossip_event(next).await {
                         error!("gossip actor died: {err:?}");
                         return Err(err);
@@ -78,12 +82,14 @@ impl GossipActor {
                 msg = self.inbox.recv() => {
                     let msg = msg.context("to_actor closed")?;
                     trace!(%msg, ?i, "tick: to_actor");
+                    inc!(Metrics, doc_gossip_tick_actor);
                     if !self.on_actor_message(msg).await.context("on_actor_message")? {
                         break;
                     }
                 }
                 Some(res) = self.pending_joins.join_next(), if !self.pending_joins.is_empty() => {
                     trace!(?i, "tick: pending_joins");
+                    inc!(Metrics, doc_gossip_tick_pending_join);
                     let (namespace, res) = res.context("pending_joins closed")?;
                     match res {
                         Ok(stream) => {

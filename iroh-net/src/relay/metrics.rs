@@ -36,11 +36,10 @@ pub struct Metrics {
     /// Packets of other `FrameType`s dropped
     pub other_packets_dropped: Counter,
 
-    /// Number of packets we have forwarded out to another packet forwarder
-    pub packets_forwarded_out: Counter,
-    /// Number of packets we have been asked to forward
-    pub packets_forwarded_in: Counter,
-
+    // /// Number of packets we have forwarded out to another packet forwarder
+    // pub packets_forwarded_out: Counter,
+    // /// Number of packets we have been asked to forward
+    // pub packets_forwarded_in: Counter,
     /// Number of `FrameType::Ping`s received
     pub got_ping: Counter,
     /// Number of `FrameType::Pong`s sent
@@ -48,14 +47,13 @@ pub struct Metrics {
     /// Number of `FrameType::Unknown` received
     pub unknown_frames: Counter,
 
-    /*
-     * Metrics about peers
-     */
-    /// Number of packet forwarders added
-    pub added_pkt_fwder: Counter,
-    /// Number of packet forwarders removed
-    pub removed_pkt_fwder: Counter,
-
+    // /*
+    //  * Metrics about peers
+    //  */
+    // /// Number of packet forwarders added
+    // pub added_pkt_fwder: Counter,
+    // /// Number of packet forwarders removed
+    // pub removed_pkt_fwder: Counter,
     /// Number of connections we have accepted
     pub accepts: Counter,
     /// Number of connections we have removed because of an error
@@ -97,27 +95,25 @@ impl Default for Metrics {
                 "Number of times a non-disco, non-'send; packet was dropped.",
             ),
 
-            packets_forwarded_out: Counter::new(
-                "Number of times the server has sent a forwarded packet",
-            ),
-            packets_forwarded_in: Counter::new(
-                "Number of times the server has received a forwarded packet.",
-            ),
-
+            // packets_forwarded_out: Counter::new(
+            //     "Number of times the server has sent a forwarded packet",
+            // ),
+            // packets_forwarded_in: Counter::new(
+            //     "Number of times the server has received a forwarded packet.",
+            // ),
             got_ping: Counter::new("Number of times the server has received a Ping from a client."),
             sent_pong: Counter::new("Number of times the server has sent a Pong to a client."),
             unknown_frames: Counter::new("Number of unknown frames sent to this server."),
 
-            /*
-             * Metrics about peers
-             */
-            added_pkt_fwder: Counter::new(
-                "Number of times a packeted forwarded was added to this server.",
-            ),
-            removed_pkt_fwder: Counter::new(
-                "Number of times a packet forwarded was removed to this server.",
-            ),
-
+            // /*
+            //  * Metrics about peers
+            //  */
+            // added_pkt_fwder: Counter::new(
+            //     "Number of times a packeted forwarded was added to this server.",
+            // ),
+            // removed_pkt_fwder: Counter::new(
+            //     "Number of times a packet forwarded was removed to this server.",
+            // ),
             accepts: Counter::new("Number of times this server has accepted a connection."),
             disconnects: Counter::new("Number of clients that have then disconnected."),
 

@@ -14,7 +14,7 @@ pub struct Metrics {
     pub stun_packets_recv_ipv6: Counter,
     pub reports: Counter,
     pub reports_full: Counter,
-    pub reports_error: Counter,
+    // pub reports_error: Counter,
 }
 
 impl Default for Metrics {
@@ -29,7 +29,7 @@ impl Default for Metrics {
             stun_packets_recv_ipv6: Counter::new("Number of IPv6 STUN packets received"),
             reports: Counter::new("Number of reports executed by netcheck, including full reports"),
             reports_full: Counter::new("Number of full reports executed by netcheck"),
-            reports_error: Counter::new("Number of executed reports resulting in an error"),
+            // reports_error: Counter::new("Number of executed reports resulting in an error"),
         }
     }
 }

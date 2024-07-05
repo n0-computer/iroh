@@ -1789,19 +1789,23 @@ impl Actor {
         };
 
         loop {
+            inc!(Metrics, actor_tick_main);
             tokio::select! {
                 Some(msg) = self.msg_receiver.recv() => {
                     trace!(?msg, "tick: msg");
+                    inc!(Metrics, actor_tick_msg);
                     if self.handle_actor_message(msg).await {
                         return Ok(());
                     }
                 }
                 tick = self.periodic_re_stun_timer.tick() => {
                     trace!("tick: re_stun {:?}", tick);
+                    inc!(Metrics, actor_tick_re_stun);
                     self.msock.re_stun("periodic");
                 }
                 Ok(()) = portmap_watcher.changed() => {
                     trace!("tick: portmap changed");
+                    inc!(Metrics, actor_tick_portmap_changed);
                     let new_external_address = *portmap_watcher.borrow();
                     debug!("external address updated: {new_external_address:?}");
                     self.msock.re_stun("portmap_updated");
@@ -1811,6 +1815,7 @@ impl Actor {
                         "tick: direct addr heartbeat {} direct addrs",
                         self.msock.node_map.node_count(),
                     );
+		    inc!(Metrics, actor_tick_endpoint_heartbeat);
                     // TODO: this might trigger too many packets at once, pace this
 
                     self.msock.node_map.prune_inactive();
@@ -1820,12 +1825,14 @@ impl Actor {
                 _ = direct_addr_update_receiver.changed() => {
                     let reason = *direct_addr_update_receiver.borrow();
                     trace!("tick: direct addr update receiver {:?}", reason);
+		    inc!(Metrics, actor_tick_endpoints_update_receiver);
                     if let Some(reason) = reason {
                         self.update_direct_addrs(reason).await;
                     }
                 }
                 _ = save_nodes_timer.tick(), if self.nodes_path.is_some() => {
                     trace!("tick: nodes_timer");
+                    inc!(Metrics, actor_tick_nodes_timer);
                     let path = self.nodes_path.as_ref().expect("precondition: `is_some()`");
 
                     self.msock.node_map.prune_inactive();
@@ -1836,10 +1843,12 @@ impl Actor {
                 }
                 Some(is_major) = link_change_r.recv() => {
                     trace!("tick: link change {}", is_major);
+                    inc!(Metrics, actor_link_change);
                     self.handle_network_change(is_major).await;
                 }
                 else => {
                     trace!("tick: other");
+                    inc!(Metrics, actor_tick_other);
                 }
             }
         }

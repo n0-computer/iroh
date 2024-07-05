@@ -4,6 +4,7 @@ use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use futures_lite::stream::Stream;
 use genawaiter::sync::{Co, Gen};
+use iroh_metrics::inc;
 use iroh_net::{
     dialer::Dialer,
     endpoint::{get_remote_node_id, Connection},
@@ -20,7 +21,10 @@ use tokio::{
 use tracing::{debug, error_span, trace, warn, Instrument};
 
 use self::util::{read_message, write_message, Timers};
-use crate::proto::{self, PeerData, Scope, TopicId};
+use crate::{
+    metrics::Metrics,
+    proto::{self, PeerData, Scope, TopicId},
+};
 
 pub mod util;
 
@@ -368,10 +372,12 @@ impl Actor {
         loop {
             i += 1;
             trace!(?i, "tick");
+            inc!(Metrics, actor_tick_main);
             tokio::select! {
                 biased;
                 msg = self.to_actor_rx.recv() => {
                     trace!(?i, "tick: to_actor_rx");
+                    inc!(Metrics, actor_tick_rx);
                     match msg {
                         Some(msg) => self.handle_to_actor_msg(msg, Instant::now()).await?,
                         None => {
@@ -383,6 +389,7 @@ impl Actor {
                 new_endpoints = self.on_direct_addr_rx.recv() => {
                     match new_endpoints {
                         Some(endpoints) => {
+                            inc!(Metrics, actor_tick_endpoint);
                             let addr = NodeAddr::from_parts(
                                 self.endpoint.node_id(),
                                 self.endpoint.home_relay(),
@@ -399,18 +406,22 @@ impl Actor {
                 }
                 (peer_id, res) = self.dialer.next_conn() => {
                     trace!(?i, "tick: dialer");
+                    inc!(Metrics, actor_tick_dialer);
                     match res {
                         Ok(conn) => {
                             debug!(peer = ?peer_id, "dial successful");
+                            inc!(Metrics, actor_tick_dialer_success);
                             self.handle_to_actor_msg(ToActor::ConnIncoming(peer_id, ConnOrigin::Dial, conn), Instant::now()).await.context("dialer.next -> conn -> handle_to_actor_msg")?;
                         }
                         Err(err) => {
                             warn!(peer = ?peer_id, "dial failed: {err}");
+                            inc!(Metrics, actor_tick_dialer_failure);
                         }
                     }
                 }
                 event = self.in_event_rx.recv() => {
                     trace!(?i, "tick: in_event_rx");
+                    inc!(Metrics, actor_tick_in_event_rx);
                     match event {
                         Some(event) => {
                             self.handle_in_event(event, Instant::now()).await.context("in_event_rx.recv -> handle_in_event")?;
@@ -420,6 +431,7 @@ impl Actor {
                 }
                 drain = self.timers.wait_and_drain() => {
                     trace!(?i, "tick: timers");
+                    inc!(Metrics, actor_tick_timers);
                     let now = Instant::now();
                     for (_instant, timer) in drain {
                         self.handle_in_event(InEvent::TimerExpired(timer), now).await.context("timers.drain_expired -> handle_in_event")?;

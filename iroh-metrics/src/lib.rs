@@ -11,6 +11,7 @@ pub mod core;
 mod service;
 
 use core::UsageStatsReport;
+use std::collections::HashMap;
 
 /// Reexport to make matching versions easier.
 pub use struct_iterable;
@@ -45,4 +46,25 @@ pub async fn report_usage_stats(report: &UsageStatsReport) {
                 });
         }
     }
+}
+
+/// Parse Prometheus metrics from a string.
+pub fn parse_prometheus_metrics(data: &str) -> anyhow::Result<HashMap<String, f64>> {
+    let mut metrics = HashMap::new();
+    for line in data.lines() {
+        if line.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let metric = parts[0];
+        let value = parts[1].parse::<f64>();
+        if value.is_err() {
+            continue;
+        }
+        metrics.insert(metric.to_string(), value.unwrap());
+    }
+    Ok(metrics)
 }

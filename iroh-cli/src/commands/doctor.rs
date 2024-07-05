@@ -1397,7 +1397,7 @@ impl PlotterApp {
             return;
         }
         let data = req.unwrap().text().await.unwrap();
-        let metrics_response = parse_prometheus_metrics(&data);
+        let metrics_response = iroh_metrics::parse_prometheus_metrics(&data);
         if metrics_response.is_err() {
             return;
         }
@@ -1422,24 +1422,4 @@ impl PlotterApp {
             }
         }
     }
-}
-
-fn parse_prometheus_metrics(data: &str) -> anyhow::Result<HashMap<String, f64>> {
-    let mut metrics = HashMap::new();
-    for line in data.lines() {
-        if line.starts_with('#') {
-            continue;
-        }
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 2 {
-            continue;
-        }
-        let metric = parts[0];
-        let value = parts[1].parse::<f64>();
-        if value.is_err() {
-            continue;
-        }
-        metrics.insert(metric.to_string(), value.unwrap());
-    }
-    Ok(metrics)
 }
