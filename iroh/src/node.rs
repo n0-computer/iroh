@@ -37,7 +37,10 @@ pub use self::builder::{Builder, DiscoveryConfig, DocsStorage, GcPolicy, Storage
 pub use self::rpc_status::RpcStatus;
 pub use protocol::ProtocolHandler;
 
-type IrohServerEndpoint = quic_rpc::transport::boxed::ServerEndpoint<
+/// The quic-rpc server endpoint for the iroh node.
+///
+/// We use a boxed endpoint here to allow having a concrete type for the server endpoint.
+pub type IrohServerEndpoint = quic_rpc::transport::boxed::ServerEndpoint<
     crate::rpc_protocol::Request,
     crate::rpc_protocol::Response,
 >;

@@ -301,30 +301,17 @@ where
         })
     }
 
-    /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint(self, value: IrohServerEndpoint, port: Option<u16>) -> Builder<D> {
-        // we can't use ..self here because the return type is different
-        Builder {
-            storage: self.storage,
-            bind_port: self.bind_port,
-            secret_key: self.secret_key,
-            blobs_store: self.blobs_store,
-            keylog: self.keylog,
+    /// Configure rpc endpoint.
+    pub fn rpc_endpoint(self, value: IrohServerEndpoint, port: Option<u16>) -> Self {
+        Self {
             rpc_endpoint: value,
             rpc_port: port,
-            relay_mode: self.relay_mode,
-            dns_resolver: self.dns_resolver,
-            gc_policy: self.gc_policy,
-            docs_storage: self.docs_storage,
-            node_discovery: self.node_discovery,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
-            gc_done_callback: self.gc_done_callback,
+            ..self
         }
     }
 
     /// Configure the default iroh rpc endpoint.
-    pub async fn enable_rpc(self) -> Result<Builder<D>> {
+    pub async fn enable_rpc(self) -> Result<Self> {
         let (ep, actual_rpc_port) = make_rpc_endpoint(&self.secret_key, DEFAULT_RPC_PORT)?;
         let ep = quic_rpc::transport::boxed::ServerEndpoint::new(ep);
         if let StorageConfig::Persistent(ref root) = self.storage {
@@ -332,22 +319,10 @@ where
             RpcStatus::store(root, actual_rpc_port).await?;
         }
 
-        Ok(Builder {
-            storage: self.storage,
-            bind_port: self.bind_port,
-            secret_key: self.secret_key,
-            blobs_store: self.blobs_store,
-            keylog: self.keylog,
+        Ok(Self {
             rpc_endpoint: ep,
             rpc_port: Some(actual_rpc_port),
-            relay_mode: self.relay_mode,
-            dns_resolver: self.dns_resolver,
-            gc_policy: self.gc_policy,
-            docs_storage: self.docs_storage,
-            node_discovery: self.node_discovery,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
-            gc_done_callback: self.gc_done_callback,
+            ..self
         })
     }
 
