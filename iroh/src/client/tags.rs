@@ -1,5 +1,14 @@
 //! API for tag management.
-
+//!
+//! The purpose of tags is to mark information as important. Currently this is
+//! used for blobs.
+//!
+//! The main entry point is the [Client].
+//!
+//! [Client::list] can be used to list all tags.
+//! [Client::list_hash_seq] can be used to list all tags with a hash_seq format.
+//!
+//! [Client::delete] can be used to delete a tag.
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
 use iroh_blobs::{BlobFormat, Hash, Tag};
