@@ -460,7 +460,7 @@ where
 
     /// Builds a node without spawning it.
     ///
-    /// Returns an [`ProtocolBuilder`], on which custom protocols can be registered with
+    /// Returns a [`ProtocolBuilder`], on which custom protocols can be registered with
     /// [`ProtocolBuilder::accept`]. To spawn the node, call [`ProtocolBuilder::spawn`].
     pub async fn build(self) -> Result<ProtocolBuilder<D>> {
         // Clone the blob store to shutdown in case of error.

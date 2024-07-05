@@ -35,7 +35,7 @@ mod protocol;
 mod rpc;
 mod rpc_status;
 
-pub use self::builder::{Builder, DiscoveryConfig, DocsStorage, GcPolicy, StorageConfig};
+pub use self::builder::{Builder, ProtocolBuilder, DiscoveryConfig, DocsStorage, GcPolicy, StorageConfig};
 pub use self::rpc_status::RpcStatus;
 pub use protocol::ProtocolHandler;
 
