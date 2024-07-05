@@ -18,11 +18,10 @@ use iroh_gossip::{
     dispatcher::GossipDispatcher,
     net::{Gossip, GOSSIP_ALPN},
 };
+#[cfg(not(test))]
+use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 use iroh_net::{
-    discovery::{
-        dns::DnsDiscovery, local_swarm_discovery::LocalSwarmDiscovery, pkarr::PkarrPublisher,
-        ConcurrentDiscovery, Discovery,
-    },
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
     relay::RelayMode,
     Endpoint,
@@ -458,6 +457,7 @@ where
                 DiscoveryConfig::None => None,
                 DiscoveryConfig::Custom(discovery) => Some(discovery),
                 DiscoveryConfig::Default => {
+                    #[cfg(not(test))]
                     let discovery = ConcurrentDiscovery::from_services(vec![
                         // Enable DNS discovery by default
                         Box::new(DnsDiscovery::n0_dns()),
@@ -465,6 +465,13 @@ where
                         Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
                         // Enable local swarm discovery by default
                         Box::new(LocalSwarmDiscovery::new(self.secret_key.public())?),
+                    ]);
+                    #[cfg(test)]
+                    let discovery = ConcurrentDiscovery::from_services(vec![
+                        // Enable DNS discovery by default
+                        Box::new(DnsDiscovery::n0_dns()),
+                        // Enable pkarr publishing by default
+                        Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
                     ]);
                     Some(Box::new(discovery))
                 }
