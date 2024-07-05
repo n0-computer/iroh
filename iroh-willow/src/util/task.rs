@@ -1,9 +1,11 @@
 //! Utilities for working with tokio tasks.
 
 use std::{
+    cell::RefCell,
     collections::HashMap,
-    future::Future,
+    future::{poll_fn, Future},
     pin::Pin,
+    rc::Rc,
     task::{Context, Poll},
 };
 
@@ -11,6 +13,7 @@ use futures_concurrency::future::{future_group, FutureGroup};
 use futures_lite::{Stream, StreamExt};
 use tokio::task::AbortHandle;
 use tokio::task::JoinError;
+use tracing::{Instrument, Span};
 
 #[derive(derive_more::Debug, Clone, Copy, Hash, Eq, PartialEq)]
 #[debug("{:?}", _0)]
@@ -118,5 +121,73 @@ impl<K: Unpin, T: 'static> Stream for JoinMap<K, T> {
     /// See [`Self::poll_join_next`] for details.
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Self::poll_join_next(self.get_mut(), cx)
+    }
+}
+
+#[derive(Debug)]
+pub struct SharedJoinMap<K, T>(Rc<RefCell<JoinMap<K, T>>>);
+
+impl<K, T> Clone for SharedJoinMap<K, T> {
+    fn clone(&self) -> Self {
+        Self(Rc::clone(&self.0))
+    }
+}
+
+impl<K, T> Default for SharedJoinMap<K, T> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl<K, T> SharedJoinMap<K, T>
+where
+    K: Unpin,
+    T: 'static,
+{
+    pub async fn join_next(&self) -> Option<(K, Result<T, JoinError>)> {
+        poll_fn(|cx| {
+            let mut tasks = self.0.borrow_mut();
+            let res = std::task::ready!(Pin::new(&mut tasks).poll_join_next(cx));
+            Poll::Ready(res)
+        })
+        .await
+    }
+
+    pub fn abort_all(&self) {
+        self.0.borrow_mut().abort_all();
+    }
+
+    pub async fn shutdown(&self) {
+        self.abort_all();
+        while let Some(_) = self.join_next().await {}
+    }
+}
+
+impl<T: 'static> SharedJoinMap<Span, T> {
+    pub fn spawn<Fut>(&self, span: Span, fut: Fut)
+    where
+        Fut: std::future::Future<Output = T> + 'static,
+    {
+        let fut = fut.instrument(span.clone());
+        self.0.borrow_mut().spawn_local(span, fut);
+    }
+
+    pub fn remaining_tasks(&self) -> String {
+        let tasks = self.0.borrow();
+        let mut out = vec![];
+        for (span, _k) in tasks.iter() {
+            let name = span.metadata().unwrap().name();
+            out.push(name.to_string());
+        }
+        out.join(",")
+    }
+
+    pub fn log_remaining_tasks(&self) {
+        let tasks = self.0.borrow();
+        let names = tasks
+            .iter()
+            .map(|t| t.0.metadata().unwrap().name())
+            .collect::<Vec<_>>();
+        tracing::debug!(tasks=?names, "active_tasks");
     }
 }

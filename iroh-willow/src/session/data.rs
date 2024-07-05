@@ -5,25 +5,39 @@ use crate::{
         sync::{DataMessage, DataSendEntry, DataSendPayload},
         willow::AuthorisedEntry,
     },
-    session::{payload::DEFAULT_CHUNK_SIZE, Error},
+    session::{
+        channels::ChannelSenders, payload::DEFAULT_CHUNK_SIZE, static_tokens::StaticTokens, Error,
+        SessionId,
+    },
     store::{traits::Storage, Origin, Store},
 };
 
 use super::payload::{send_payload_chunked, CurrentPayload};
-use super::Session;
 
 #[derive(derive_more::Debug)]
 pub struct DataSender<S: Storage> {
-    session: Session,
     store: Store<S>,
+    send: ChannelSenders,
+    static_tokens: StaticTokens,
+    session_id: SessionId,
 }
 
 impl<S: Storage> DataSender<S> {
-    pub fn new(session: Session, store: Store<S>) -> Self {
-        Self { session, store }
+    pub fn new(
+        store: Store<S>,
+        send: ChannelSenders,
+        static_tokens: StaticTokens,
+        session_id: SessionId,
+    ) -> Self {
+        Self {
+            store,
+            send,
+            static_tokens,
+            session_id,
+        }
     }
     pub async fn run(mut self) -> Result<(), Error> {
-        let mut stream = self.store.entries().subscribe(*self.session.id());
+        let mut stream = self.store.entries().subscribe(self.session_id);
         loop {
             match stream.recv().await {
                 Ok(entry) => {
@@ -43,11 +57,10 @@ impl<S: Storage> DataSender<S> {
         let (static_token, dynamic_token) = token.into_parts();
         // TODO: partial payloads
         // let available = entry.payload_length;
-        let (static_token_handle, static_token_bind_msg) =
-            self.session.bind_our_static_token(static_token);
-        if let Some(msg) = static_token_bind_msg {
-            self.session.send(msg).await?;
-        }
+        let static_token_handle = self
+            .static_tokens
+            .bind_and_send_ours(static_token, &self.send)
+            .await?;
         let digest = entry.payload_digest;
         let msg = DataSendEntry {
             entry,
@@ -55,7 +68,7 @@ impl<S: Storage> DataSender<S> {
             dynamic_token,
             offset: 0,
         };
-        self.session.send(msg).await?;
+        self.send.send(msg).await?;
 
         // TODO: only send payload if configured to do so and/or under size limit.
         let send_payloads = true;
@@ -63,7 +76,7 @@ impl<S: Storage> DataSender<S> {
             send_payload_chunked(
                 digest,
                 self.store.payloads(),
-                &self.session,
+                &self.send,
                 DEFAULT_CHUNK_SIZE,
                 |bytes| DataSendPayload { bytes }.into(),
             )
@@ -75,16 +88,18 @@ impl<S: Storage> DataSender<S> {
 
 #[derive(derive_more::Debug)]
 pub struct DataReceiver<S: Storage> {
-    session: Session,
     store: Store<S>,
     current_payload: CurrentPayload,
+    static_tokens: StaticTokens,
+    session_id: SessionId,
 }
 
 impl<S: Storage> DataReceiver<S> {
-    pub fn new(session: Session, store: Store<S>) -> Self {
+    pub fn new(store: Store<S>, static_tokens: StaticTokens, session_id: SessionId) -> Self {
         Self {
-            session,
             store,
+            static_tokens,
+            session_id,
             current_payload: Default::default(),
         }
     }
@@ -101,8 +116,8 @@ impl<S: Storage> DataReceiver<S> {
     async fn on_send_entry(&mut self, message: DataSendEntry) -> Result<(), Error> {
         self.current_payload.assert_inactive()?;
         let authorised_entry = self
-            .session
-            .authorise_sent_entry(
+            .static_tokens
+            .authorise_entry_eventually(
                 message.entry,
                 message.static_token_handle,
                 message.dynamic_token,
@@ -110,7 +125,7 @@ impl<S: Storage> DataReceiver<S> {
             .await?;
         self.store
             .entries()
-            .ingest(&authorised_entry, Origin::Remote(*self.session.id()))?;
+            .ingest(&authorised_entry, Origin::Remote(self.session_id))?;
         self.current_payload
             .set(authorised_entry.into_entry(), None)?;
         Ok(())
