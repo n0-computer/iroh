@@ -24,9 +24,7 @@ use iroh_net::{
     relay::RelayMode,
     Endpoint,
 };
-use quic_rpc::transport::{
-    boxed::BoxableServerEndpoint, flume::FlumeServerEndpoint, quinn::QuinnServerEndpoint,
-};
+use quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
 use tracing::{debug, error_span, trace, Instrument};
@@ -41,7 +39,7 @@ use crate::{
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-use super::{docs::DocsEngine, rpc_status::RpcStatus, Node, NodeInner};
+use super::{docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, Node, NodeInner};
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
@@ -55,11 +53,6 @@ const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
-
-type BoxedServerEndpoint = quic_rpc::transport::boxed::ServerEndpoint<
-    crate::rpc_protocol::Request,
-    crate::rpc_protocol::Response,
->;
 
 /// Storage backend for documents.
 #[derive(Debug, Clone)]
@@ -93,7 +86,7 @@ where
     storage: StorageConfig,
     bind_port: Option<u16>,
     secret_key: SecretKey,
-    rpc_endpoint: BoxedServerEndpoint,
+    rpc_endpoint: IrohServerEndpoint,
     rpc_port: Option<u16>,
     blobs_store: D,
     keylog: bool,
@@ -180,7 +173,7 @@ impl BoxableServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Re
     }
 }
 
-fn mk_external_rpc() -> BoxedServerEndpoint {
+fn mk_external_rpc() -> IrohServerEndpoint {
     quic_rpc::transport::boxed::ServerEndpoint::new(DummyServerEndpoint)
 }
 
@@ -309,7 +302,7 @@ where
     }
 
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint(self, value: BoxedServerEndpoint, port: Option<u16>) -> Builder<D> {
+    pub fn rpc_endpoint(self, value: IrohServerEndpoint, port: Option<u16>) -> Builder<D> {
         // we can't use ..self here because the return type is different
         Builder {
             storage: self.storage,
@@ -551,7 +544,8 @@ where
         let gossip_dispatcher = GossipDispatcher::new(gossip.clone());
 
         // Initialize the internal RPC connection.
-        let (internal_rpc, controller) = quic_rpc::transport::flume::connection(32);
+        let (internal_rpc, controller) = quic_rpc::transport::flume::connection::<RpcService>(32);
+        let internal_rpc = quic_rpc::transport::boxed::ServerEndpoint::new(internal_rpc);
         // box the controller. Boxing has a special case for the flume channel that avoids allocations,
         // so this has zero overhead.
         let controller = quic_rpc::transport::boxed::Connection::new(controller);
@@ -597,9 +591,9 @@ where
 #[derive(derive_more::Debug)]
 pub struct ProtocolBuilder<D> {
     inner: Arc<NodeInner<D>>,
-    internal_rpc: FlumeServerEndpoint<RpcService>,
+    internal_rpc: IrohServerEndpoint,
     #[debug("external rpc")]
-    external_rpc: BoxedServerEndpoint,
+    external_rpc: IrohServerEndpoint,
     protocols: ProtocolMap,
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,

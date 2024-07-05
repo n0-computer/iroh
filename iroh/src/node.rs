@@ -18,16 +18,14 @@ use iroh_gossip::net::Gossip;
 use iroh_net::key::SecretKey;
 use iroh_net::Endpoint;
 use iroh_net::{endpoint::DirectAddrsStream, util::SharedAbortingJoinHandle};
-use quic_rpc::{RpcServer, ServiceEndpoint};
+use quic_rpc::transport::ServerEndpoint as _;
+use quic_rpc::RpcServer;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    client::RpcService,
-    node::{docs::DocsEngine, protocol::ProtocolMap},
-};
+use crate::node::{docs::DocsEngine, protocol::ProtocolMap};
 
 mod builder;
 mod docs;
@@ -38,6 +36,11 @@ mod rpc_status;
 pub use self::builder::{Builder, DiscoveryConfig, DocsStorage, GcPolicy, StorageConfig};
 pub use self::rpc_status::RpcStatus;
 pub use protocol::ProtocolHandler;
+
+type IrohServerEndpoint = quic_rpc::transport::boxed::ServerEndpoint<
+    crate::rpc_protocol::Request,
+    crate::rpc_protocol::Response,
+>;
 
 /// A server which implements the iroh node.
 ///
@@ -211,8 +214,8 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
 
     async fn run(
         self: Arc<Self>,
-        external_rpc: impl ServiceEndpoint<RpcService>,
-        internal_rpc: impl ServiceEndpoint<RpcService>,
+        external_rpc: IrohServerEndpoint,
+        internal_rpc: IrohServerEndpoint,
         protocols: Arc<ProtocolMap>,
         gc_policy: GcPolicy,
         gc_done_callback: Option<Box<dyn Fn() + Send>>,
