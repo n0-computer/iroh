@@ -58,6 +58,19 @@ pub type SyncSignature = meadowcap::UserSignature;
 
 pub type Receiver = meadowcap::UserPublicKey;
 
+/// Data from the initial transmission
+///
+/// This happens before the session is initialized.
+#[derive(Debug)]
+pub struct InitialTransmission {
+    /// The [`AccessChallenge`] nonce, whose hash we sent to the remote.
+    pub our_nonce: AccessChallenge,
+    /// The [`ChallengeHash`] we received from the remote.
+    pub received_commitment: ChallengeHash,
+    /// The maximum payload size we received from the remote.
+    pub their_max_payload_size: u64,
+}
+
 /// Represents an authorisation to read an area of data in a Namespace.
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ReadAuthorisation(ReadCapability, Option<SubspaceCapability>);

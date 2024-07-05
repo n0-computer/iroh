@@ -3,56 +3,9 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use crate::proto::{
-    sync::{
-        IsHandle, ResourceHandle,
-    },
-};
+use crate::proto::sync::{IsHandle, ResourceHandle};
 
 use super::Error;
-
-// #[derive(Debug, Default)]
-// pub struct ResourceMaps {
-//     pub capabilities: ResourceMap<CapabilityHandle, ReadCapability>,
-//     // pub areas_of_interest: ResourceMap<AreaOfInterestHandle, SetupBindAreaOfInterest>,
-//     // pub static_tokens: ResourceMap<StaticTokenHandle, StaticToken>,
-// }
-// impl ResourceMaps {
-//     // pub fn register_waker(&mut self, handle: ResourceHandle, waker: Waker) {
-//     //     tracing::trace!(?handle, "register_notify");
-//     //     match handle {
-//     //         ResourceHandle::AreaOfInterest(h) => self.areas_of_interest.register_waker(h, waker),
-//     //         ResourceHandle::Capability(h) => self.capabilities.register_waker(h, waker),
-//     //         ResourceHandle::StaticToken(h) => self.static_tokens.register_waker(h, waker),
-//     //         ResourceHandle::Intersection(_h) => unimplemented!(),
-//     //     }
-//     // }
-//
-//     pub fn get<F, H, R>(&self, selector: F, handle: H) -> Result<R, Error>
-//     where
-//         H: IsHandle,
-//         F: for<'a> Fn(&'a Self) -> &'a ResourceMap<H, R>,
-//         R: Eq + PartialEq + Clone,
-//     {
-//         let store = selector(self);
-//         let res = store.try_get(&handle).cloned()?;
-//         Ok(res)
-//     }
-//
-//     pub fn poll_get_eventually<F, H: IsHandle, R: Eq + PartialEq + Clone>(
-//         &mut self,
-//         selector: F,
-//         handle: H,
-//         cx: &mut Context<'_>,
-//     ) -> Poll<R>
-//     where
-//         F: for<'a> Fn(&'a mut Self) -> &'a mut ResourceMap<H, R>,
-//     {
-//         let res = selector(self);
-//         let r = std::task::ready!(res.poll_get_eventually(handle, cx));
-//         Poll::Ready(r.clone())
-//     }
-// }
 
 #[derive(Debug)]
 pub struct ResourceMap<H, R> {
@@ -94,10 +47,6 @@ where
         handle
     }
 
-    // fn register_waker(&mut self, handle: H, notifier: Waker) {
-    //     self.wakers.entry(handle).or_default().push_back(notifier)
-    // }
-
     pub fn try_get(&self, handle: &H) -> Result<&R, MissingResource> {
         self.map
             .get(handle)
@@ -105,26 +54,6 @@ where
             .map(|r| &r.value)
             .ok_or_else(|| MissingResource((*handle).into()))
     }
-
-    // pub fn get(&self, handle: &H) -> Option<&R> {
-    //     self.map.get(handle).as_ref().map(|r| &r.value)
-    // }
-    //
-    // pub async fn get_eventually(&mut self, handle: H) -> &R {
-    //     std::future::poll_fn(|ctx| {
-    //         // cannot use self.get() and self.register_waker() here due to borrow checker.
-    //         if let Some(resource) = self.map.get(&handle).as_ref().map(|r| &r.value) {
-    //             Poll::Ready(resource)
-    //         } else {
-    //             self.wakers
-    //                 .entry(handle)
-    //                 .or_default()
-    //                 .push_back(ctx.waker().to_owned());
-    //             Poll::Pending
-    //         }
-    //     })
-    //     .await
-    // }
 
     pub fn poll_get_eventually(&mut self, handle: H, cx: &mut Context<'_>) -> Poll<&R> {
         // cannot use self.get() and self.register_waker() here due to borrow checker.
@@ -168,28 +97,6 @@ where
         }
     }
 }
-
-// #[derive(Debug, Clone)]
-// pub struct SharedResourceMap<H, R>(Rc<RefCell<ResourceMap<H, R>>>);
-//
-// impl<H, R> SharedResourceMap<H, R>
-// where
-//     H: IsHandle,
-// {
-//     pub fn bind(&mut self, resource: R) -> H {
-//         self.0.borrow_mut().bind(resource)
-//     }
-// }
-//
-// impl<H, R> SharedResourceMap<H, R>
-// where
-//     H: IsHandle,
-//     R: Eq + PartialEq,
-// {
-//     pub fn bind_if_new(&mut self, resource: R) -> (H, bool) {
-//         self.0.borrow_mut().bind_if_new(resource)
-//     }
-// }
 
 #[derive(Debug, thiserror::Error)]
 #[error("missing resource {0:?}")]

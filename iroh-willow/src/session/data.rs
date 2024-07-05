@@ -6,8 +6,8 @@ use crate::{
         willow::AuthorisedEntry,
     },
     session::{
-        channels::ChannelSenders, payload::DEFAULT_CHUNK_SIZE, static_tokens::StaticTokens, Error,
-        SessionId,
+        aoi_finder::AoiIntersectionQueue, channels::ChannelSenders, payload::DEFAULT_CHUNK_SIZE,
+        static_tokens::StaticTokens, Error, SessionId,
     },
     store::{traits::Storage, Origin, Store},
 };
@@ -18,6 +18,7 @@ use super::payload::{send_payload_chunked, CurrentPayload};
 pub struct DataSender<S: Storage> {
     store: Store<S>,
     send: ChannelSenders,
+    aoi_queue: AoiIntersectionQueue,
     static_tokens: StaticTokens,
     session_id: SessionId,
 }
@@ -26,26 +27,41 @@ impl<S: Storage> DataSender<S> {
     pub fn new(
         store: Store<S>,
         send: ChannelSenders,
+        aoi_queue: AoiIntersectionQueue,
         static_tokens: StaticTokens,
         session_id: SessionId,
     ) -> Self {
         Self {
             store,
             send,
+            aoi_queue,
             static_tokens,
             session_id,
         }
     }
     pub async fn run(mut self) -> Result<(), Error> {
-        let mut stream = self.store.entries().subscribe(self.session_id);
+        let mut entry_stream = self.store.entries().subscribe(self.session_id);
         loop {
-            match stream.recv().await {
-                Ok(entry) => {
-                    self.send_entry(entry).await?;
-                }
-                Err(broadcast::error::RecvError::Closed) => break,
-                Err(broadcast::error::RecvError::Lagged(_count)) => {
-                    // TODO: Queue another reconciliation
+            tokio::select! {
+                intersection = self.aoi_queue.recv_async() => {
+                    let Ok(intersection) = intersection else {
+                        break;
+                    };
+                    self.store.entries().watch_area(
+                        self.session_id,
+                        intersection.namespace,
+                        intersection.intersection.clone(),
+                    );
+                },
+                entry = entry_stream.recv() => {
+                    match entry {
+                        Ok(entry) => self.send_entry(entry).await?,
+                        Err(broadcast::error::RecvError::Closed) => break,
+                        Err(broadcast::error::RecvError::Lagged(_count)) => {
+                            // TODO: Queue another reconciliation
+                        }
+                    }
+
                 }
             }
         }
