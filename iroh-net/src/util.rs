@@ -14,6 +14,7 @@ pub mod chain;
 
 /// A join handle that owns the task it is running, and aborts it when dropped.
 #[derive(Debug, derive_more::Deref)]
+#[must_use = "Aborting join handles abort the task when dropped"]
 pub struct AbortingJoinHandle<T> {
     handle: tokio::task::JoinHandle<T>,
 }
