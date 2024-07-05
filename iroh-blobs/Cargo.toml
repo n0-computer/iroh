@@ -74,7 +74,7 @@ package = "iroh-quinn"
 version = "0.10"
 
 [features]
-default = ["fs-store"]
+default = ["fs-store", "metrics"]
 downloader = ["dep:parking_lot", "tokio-util/time", "dep:hashlink"]
 fs-store = ["dep:reflink-copy", "redb", "dep:redb_v1", "dep:tempfile"]
 metrics = ["dep:iroh-metrics"]
