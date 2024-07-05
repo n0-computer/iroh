@@ -8,10 +8,13 @@
 //! available over the network.
 //!
 //! ```rust
+//! # async fn run() -> anyhow::Result<()> {
 //! let node = iroh::node::Node::memory().spawn().await?;
 //! let client = node.client();
 //! let hash = client.blobs().add_bytes(b"some data".to_vec()).await?.hash;
 //! println!("hash: {}", hash);
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ## Explanation
