@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use iroh::net::{
-    defaults::{self},
+    defaults,
     relay::{RelayMap, RelayNode},
 };
 use iroh::node::GcPolicy;
