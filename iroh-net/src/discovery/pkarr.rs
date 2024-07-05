@@ -212,9 +212,15 @@ impl PkarrResolver {
         }
     }
 
-    /// Create a config that resolves using the n0 dns server through [`N0_DNS_PKARR_RELAY`].
+    /// Create a pkarr resolver which uses the [`N0_DNS_PKARR_RELAY_PROD`] pkarr relay and in testing
+    /// uses [`N0_DNS_PKARR_RELAY_STAGING`].
     pub fn n0_dns() -> Self {
-        let pkarr_relay: Url = N0_DNS_PKARR_RELAY_PROD.parse().expect("url is valid");
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let pkarr_relay = N0_DNS_PKARR_RELAY_PROD;
+        #[cfg(any(test, feature = "test-utils"))]
+        let pkarr_relay = N0_DNS_PKARR_RELAY_STAGING;
+
+        let pkarr_relay: Url = pkarr_relay.parse().expect("url is valid");
         Self::new(pkarr_relay)
     }
 }
