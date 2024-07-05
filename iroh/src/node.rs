@@ -27,8 +27,12 @@
 //! Once created, a node offers a small number of methods to interact with it,
 //! most notably the iroh-net [endpoint](Node::endpoint) it is bound to.
 //!
-//! But the main way to interact with a node is through the
+//! The main way to interact with a node is through the
 //! [`client`](crate::client::Iroh).
+//!
+//! (The Node implements [Deref](std::ops::Deref) for client, which means that
+//! methods defined on [Client](crate::client::Iroh) can be called on Node as
+//! well, without going through [`client`](crate::client::Iroh))
 //!
 //! To shut down the node, call [`Node::shutdown`].
 use std::path::Path;

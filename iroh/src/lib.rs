@@ -46,7 +46,7 @@
 //! - [node](crate::client::node):
 //!   information and control of the iroh node itself
 //! - [blobs](crate::client::blobs):
-//!   content-addressed blobs
+//!   manage and share content-addressed blobs of data
 //! - [tags](crate::client::tags):
 //!   tags to tell iroh what data is important
 //! - [gossip](crate::client::gossip):
@@ -71,8 +71,8 @@
 //! [connect_addr](crate::client::Iroh::connect_addr) to connect to a node at a
 //! known address.
 //!
-//! **Important**: the protocol to a remote node is not stable will frequently
-//! change. So the client and server must be running the same version of iroh.
+//! **Important**: the protocol to a remote node is not stable and will
+//! frequently change. So the client and server must be running the same version of iroh.
 //!
 //! ## Feature Flags
 //!
