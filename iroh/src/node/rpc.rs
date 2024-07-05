@@ -26,10 +26,7 @@ use iroh_blobs::{
 use iroh_io::AsyncSliceReader;
 use iroh_net::relay::RelayUrl;
 use iroh_net::{Endpoint, NodeAddr, NodeId};
-use quic_rpc::{
-    server::{RpcChannel, RpcServerError},
-    ServiceEndpoint,
-};
+use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::task::JoinSet;
 use tokio_util::{either::Either, task::LocalPoolHandle};
 use tracing::{debug, info, warn};
@@ -63,6 +60,8 @@ use crate::rpc_protocol::{
     tags::{DeleteRequest as TagDeleteRequest, ListRequest as ListTagsRequest},
     Request, RpcService,
 };
+
+use super::IrohServerEndpoint;
 
 mod docs;
 
@@ -118,10 +117,10 @@ impl<D: BaoStore> Handler<D> {
         }
     }
 
-    pub(crate) fn spawn_rpc_request<E: ServiceEndpoint<RpcService>>(
+    pub(crate) fn spawn_rpc_request(
         inner: Arc<NodeInner<D>>,
         join_set: &mut JoinSet<anyhow::Result<()>>,
-        accepting: quic_rpc::server::Accepting<RpcService, E>,
+        accepting: quic_rpc::server::Accepting<RpcService, IrohServerEndpoint>,
     ) {
         let handler = Self::new(inner);
         join_set.spawn(async move {
@@ -133,11 +132,11 @@ impl<D: BaoStore> Handler<D> {
         });
     }
 
-    async fn handle_node_request<E: ServiceEndpoint<RpcService>>(
+    async fn handle_node_request(
         self,
         msg: node::Request,
-        chan: RpcChannel<RpcService, E>,
-    ) -> Result<(), RpcServerError<E>> {
+        chan: RpcChannel<RpcService, IrohServerEndpoint>,
+    ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         use node::Request::*;
         debug!("handling node request: {msg}");
         match msg {
@@ -157,11 +156,11 @@ impl<D: BaoStore> Handler<D> {
         }
     }
 
-    async fn handle_blobs_request<E: ServiceEndpoint<RpcService>>(
+    async fn handle_blobs_request(
         self,
         msg: blobs::Request,
-        chan: RpcChannel<RpcService, E>,
-    ) -> Result<(), RpcServerError<E>> {
+        chan: RpcChannel<RpcService, IrohServerEndpoint>,
+    ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         use blobs::Request::*;
         debug!("handling blob request: {msg}");
         match msg {
@@ -189,11 +188,11 @@ impl<D: BaoStore> Handler<D> {
         }
     }
 
-    async fn handle_tags_request<E: ServiceEndpoint<RpcService>>(
+    async fn handle_tags_request(
         self,
         msg: tags::Request,
-        chan: RpcChannel<RpcService, E>,
-    ) -> Result<(), RpcServerError<E>> {
+        chan: RpcChannel<RpcService, IrohServerEndpoint>,
+    ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         use tags::Request::*;
         match msg {
             ListTags(msg) => chan.server_streaming(msg, self, Self::blob_list_tags).await,
@@ -201,11 +200,11 @@ impl<D: BaoStore> Handler<D> {
         }
     }
 
-    async fn handle_gossip_request<E: ServiceEndpoint<RpcService>>(
+    async fn handle_gossip_request(
         self,
         msg: gossip::Request,
-        chan: RpcChannel<RpcService, E>,
-    ) -> Result<(), RpcServerError<E>> {
+        chan: RpcChannel<RpcService, IrohServerEndpoint>,
+    ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         use gossip::Request::*;
         match msg {
             Subscribe(msg) => {
@@ -225,11 +224,11 @@ impl<D: BaoStore> Handler<D> {
         }
     }
 
-    async fn handle_authors_request<E: ServiceEndpoint<RpcService>>(
+    async fn handle_authors_request(
         self,
         msg: authors::Request,
-        chan: RpcChannel<RpcService, E>,
-    ) -> Result<(), RpcServerError<E>> {
+        chan: RpcChannel<RpcService, IrohServerEndpoint>,
+    ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         use authors::Request::*;
         match msg {
             List(msg) => {
@@ -277,11 +276,11 @@ impl<D: BaoStore> Handler<D> {
         }
     }
 
-    async fn handle_docs_request<E: ServiceEndpoint<RpcService>>(
+    async fn handle_docs_request(
         self,
         msg: DocsRequest,
-        chan: RpcChannel<RpcService, E>,
-    ) -> Result<(), RpcServerError<E>> {
+        chan: RpcChannel<RpcService, IrohServerEndpoint>,
+    ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         use DocsRequest::*;
         match msg {
             Open(msg) => {
@@ -412,11 +411,11 @@ impl<D: BaoStore> Handler<D> {
         }
     }
 
-    pub(crate) async fn handle_rpc_request<E: ServiceEndpoint<RpcService>>(
+    pub(crate) async fn handle_rpc_request(
         self,
         msg: Request,
-        chan: RpcChannel<RpcService, E>,
-    ) -> Result<(), RpcServerError<E>> {
+        chan: RpcChannel<RpcService, IrohServerEndpoint>,
+    ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         use Request::*;
         debug!("handling rpc request: {msg}");
         match msg {

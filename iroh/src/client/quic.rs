@@ -10,7 +10,7 @@ use std::{
 use anyhow::{bail, Context};
 use quic_rpc::transport::{boxed::Connection as BoxedConnection, quinn::QuinnConnection};
 
-use super::Iroh;
+use super::{Iroh, RpcClient};
 use crate::{
     node::RpcStatus,
     rpc_protocol::{node::StatusRequest, RpcService},
@@ -19,9 +19,6 @@ use crate::{
 /// ALPN used by irohs RPC mechanism.
 // TODO: Change to "/iroh-rpc/1"
 pub(crate) const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
-
-/// RPC client to an iroh node running in a separate process.
-pub type RpcClient = quic_rpc::RpcClient<RpcService, BoxedConnection<RpcService>>;
 
 impl Iroh {
     /// Connect to an iroh node running on the same computer, but in a different process.
