@@ -592,7 +592,6 @@ where
 pub struct ProtocolBuilder<D> {
     inner: Arc<NodeInner<D>>,
     internal_rpc: IrohServerEndpoint,
-    #[debug("external rpc")]
     external_rpc: IrohServerEndpoint,
     protocols: ProtocolMap,
     #[debug("callback")]
