@@ -1,6 +1,34 @@
 //! Node API
 //!
-//! A node is a server that serves various protocols.
+//! An iroh node is a server that is identified by an Ed25519 keypair and is
+//! globally reachable via the [node id](crate::net::NodeId), which is the
+//! public key of the keypair.
+//!
+//! By default, an iroh node speaks a number of built-in protocols. You can
+//! *extend* the node with custom protocols or *disable* built-in protocols.
+//!
+//! # Building a node
+//!
+//! Nodes get created using the [`Builder`] which provides a very powerful API
+//! to configure every aspect of the node.
+//!
+//! When using the default set of protocols, use [spawn](Builder::spawn)
+//! to spawn a node directly from the builder.
+//!
+//! When adding custom protocols, use [build](Builder::build) to get a
+//! [`ProtocolBuilder`] that allows to add custom protocols, then call
+//! [spawn](ProtocolBuilder::spawn) to spawn the fully configured node.
+//!
+//! To implement a custom protocol, implement the [`ProtocolHandler`] trait
+//! and use [`ProtocolBuilder::accept`] to add it to the node.
+//!
+//! # Using a node
+//!
+//! Once created, a node offers a small number of methods to interact with it,
+//! most notably the iroh-net [endpoint](Node::endpoint) it is bound to.
+//!
+//! But the main way to interact with a node is through the
+//! [`client`](crate::client::Iroh).
 //!
 //! To shut down the node, call [`Node::shutdown`].
 use std::path::Path;
