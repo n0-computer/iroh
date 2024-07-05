@@ -9,8 +9,16 @@ pub use crate::rpc_protocol::RpcService;
 
 mod quic;
 
+#[deprecated]
+pub use self::docs::Doc as MemDoc;
+#[deprecated]
+pub use self::docs::Doc as QuicDoc;
 pub use self::docs::Doc;
 pub use self::node::NodeStatus;
+#[deprecated]
+pub use self::Iroh as MemIroh;
+#[deprecated]
+pub use self::Iroh as QuicIroh;
 
 pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
 
