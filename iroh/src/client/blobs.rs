@@ -1,5 +1,56 @@
 //! API for blobs management.
-
+//!
+//! The main entry point is the [`Client`].
+//!
+//! It can be used to interact with the local blob store, e.g. to import
+//! and export data.
+//!
+//! It can also be used to interact with remote nodes, e.g. to download
+//! data from them.
+//!
+//! ## Interacting with the local blob store
+//!
+//! ### Importing data
+//!
+//! There are several ways to import data into the local blob store:
+//!
+//! - [`add_bytes`](Client::add_bytes)
+//!   allows importing in memory data.
+//! - [`add_stream`](Client::add_stream)
+//!   allows importing data from a stream of bytes.
+//! - [`add_reader`](Client::add_reader)
+//!   allows importing data from an async reader.
+//! - [`add_from_path`](Client::add_from_path)
+//!   allows importing data from a file.
+//!
+//! The last method allows importing data from a file on the local filesystem.
+//! This is the most efficient way to import large amounts of data.
+//!
+//! ### Exporting data
+//!
+//! There are several ways to export data from the local blob store:
+//!
+//! - [`read_to_bytes`](Client::read_to_bytes) reads data into memory.
+//! - [`read`](Client::read) creates a reader to read data from.
+//! - [`export`](Client::export)
+//!   allows exporting data to a file on the local filesystem.
+//!
+//! ## Interacting with remote nodes
+//!
+//! - [`download`](Client::download) downloads data from a remote node.
+//! - [`share`](Client::share)
+//!   allows creating a ticket to share data with a remote node.
+//!
+//! ## Interacting with the blob store itself
+//!
+//! These are more advanced operations that are usually not needed in normal
+//! operation.
+//!
+//! - [`consistency_check`](Client::consistency_check) checks the internal
+//!   consistency of the local blob store.
+//! - [`validate`](Client::validate) validates the locally stored data against
+//!   their BLAKE3 hashes.
+//! - [`delete_blob`](Client::delete_blob) deletes a blob from the local store.
 use std::{
     future::Future,
     io,
@@ -355,6 +406,10 @@ impl Client {
     }
 
     /// Delete a blob.
+    ///
+    /// **Warning**: this operation deletes the blob from the local store even
+    /// if it is tagged. You should usually not do this manually, but rely on the
+    /// node to remove data that is not tagged.
     pub async fn delete_blob(&self, hash: Hash) -> Result<()> {
         self.rpc.rpc(DeleteRequest { hash }).await??;
         Ok(())
