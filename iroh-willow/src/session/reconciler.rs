@@ -11,14 +11,13 @@ use crate::{
         grouping::{Area, ThreeDRange},
         keys::NamespaceId,
         sync::{
-            AreaOfInterestHandle, Fingerprint, LengthyEntry, Message,
-            ReconciliationAnnounceEntries, ReconciliationMessage, ReconciliationSendEntry,
-            ReconciliationSendFingerprint, ReconciliationSendPayload,
-            ReconciliationTerminatePayload,
+            AreaOfInterestHandle, Fingerprint, LengthyEntry, ReconciliationAnnounceEntries,
+            ReconciliationMessage, ReconciliationSendEntry, ReconciliationSendFingerprint,
+            ReconciliationSendPayload, ReconciliationTerminatePayload,
         },
     },
     session::{
-        aoi_finder::{AoiIntersection},
+        aoi_finder::{AoiIntersection, AoiIntersectionQueue},
         channels::{ChannelSenders, MessageReceiver},
         payload::{send_payload_chunked, CurrentPayload},
         static_tokens::StaticTokens,
@@ -28,7 +27,7 @@ use crate::{
         traits::{EntryReader, EntryStorage, SplitAction, SplitOpts, Storage},
         Origin, Store,
     },
-    util::{stream::Cancelable},
+    util::stream::Cancelable,
 };
 
 #[derive(derive_more::Debug)]
@@ -54,15 +53,15 @@ type TargetId = (AreaOfInterestHandle, AreaOfInterestHandle);
 
 #[derive(Debug)]
 struct Targets {
-    aoi_intersection_rx: flume::Receiver<AoiIntersection>,
+    intersection_queue: AoiIntersectionQueue,
     targets: HashMap<TargetId, State>,
     init_queue: VecDeque<TargetId>,
 }
 
 impl Targets {
-    fn new(aoi_intersection_rx: flume::Receiver<AoiIntersection>) -> Self {
+    fn new(intersection_queue: AoiIntersectionQueue) -> Self {
         Self {
-            aoi_intersection_rx,
+            intersection_queue,
             targets: Default::default(),
             init_queue: Default::default(),
         }
@@ -88,8 +87,6 @@ impl Targets {
         } else {
             self.recv_next().await
         }
-        // let target_id = self.recv_next().await?;
-        // Some(target_id)
     }
 
     async fn get_eventually(&mut self, target_id: TargetId) -> Result<&mut State, Error> {
@@ -107,18 +104,11 @@ impl Targets {
     }
 
     async fn recv_next(&mut self) -> Option<TargetId> {
-        let intersection = self.aoi_intersection_rx.recv_async().await.ok()?;
+        let intersection = self.intersection_queue.recv_async().await.ok()?;
         let (target_id, state) = State::new(intersection);
         self.targets.insert(target_id, state);
         Some(target_id)
     }
-
-    // fn init(&mut self, intersection: AoiIntersection) -> TargetId {
-    //     let (target_id, state) = State::new(intersection);
-    //     self.targets.insert(target_id, state);
-    //     self.init_queue.push_back(target_id);
-    //     target_id
-    // }
 }
 
 #[derive(Debug)]
@@ -167,7 +157,7 @@ impl<S: Storage> Reconciler<S> {
     pub fn new(
         store: Store<S>,
         recv: Cancelable<MessageReceiver<ReconciliationMessage>>,
-        aoi_intersections: flume::Receiver<AoiIntersection>,
+        aoi_intersection_queue: AoiIntersectionQueue,
         static_tokens: StaticTokens,
         session_id: SessionId,
         send: ChannelSenders,
@@ -184,7 +174,7 @@ impl<S: Storage> Reconciler<S> {
             current_payload: Default::default(),
             our_range_counter: 0,
             their_range_counter: 0,
-            targets: Targets::new(aoi_intersections),
+            targets: Targets::new(aoi_intersection_queue),
             pending_announced_entries: Default::default(),
             static_tokens,
         })
@@ -200,10 +190,6 @@ impl<S: Storage> Reconciler<S> {
                     }
                 }
                 Some(target_id) = self.targets.init_next() => {
-                    // // TODO: Move to another place.
-                    // if self.session.mode().is_live() {
-                        // self.store.entries().watch_area(*self.session.id(), intersection.namespace, intersection.intersection.clone());
-                    // }
                     if self.our_role.is_alfie() {
                         self.initiate(target_id).await?;
                     }
@@ -256,8 +242,6 @@ impl<S: Storage> Reconciler<S> {
             .await?;
         Ok(())
     }
-
-    // fn mark_our_range_covered(&mut self, handle: )
 
     async fn received_send_fingerprint(
         &mut self,
@@ -358,9 +342,6 @@ impl<S: Storage> Reconciler<S> {
         if let Some(c) = NonZeroU64::new(message.count) {
             self.pending_announced_entries = Some(c);
         }
-        // if message.count != 0 {
-        //     self.pending_announced_entries = Some(message.count);
-        // }
 
         if message.want_response {
             let range_count = self.next_range_count_theirs();
@@ -505,13 +486,13 @@ impl<S: Storage> Reconciler<S> {
         Ok(())
     }
 
-    async fn send(&mut self, message: impl Into<Message>) -> Result<(), Error> {
-        let message: Message = message.into();
+    async fn send(&mut self, message: impl Into<ReconciliationMessage>) -> Result<(), Error> {
+        let message: ReconciliationMessage = message.into();
         let want_response = match &message {
-            Message::ReconciliationSendFingerprint(msg) => {
+            ReconciliationMessage::SendFingerprint(msg) => {
                 Some((msg.sender_handle, msg.receiver_handle))
             }
-            Message::ReconciliationAnnounceEntries(msg) if msg.want_response => {
+            ReconciliationMessage::AnnounceEntries(msg) if msg.want_response => {
                 Some((msg.sender_handle, msg.receiver_handle))
             }
             _ => None,

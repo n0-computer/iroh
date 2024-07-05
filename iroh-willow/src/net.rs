@@ -12,15 +12,15 @@ use tracing::{debug, error_span, field::Empty, instrument, trace, warn, Instrume
 use crate::{
     actor::{self, ActorHandle},
     proto::sync::{
-        AccessChallenge, Channel, LogicalChannel, Message, CHALLENGE_HASH_LENGTH,
-        MAX_PAYLOAD_SIZE_POWER,
+        AccessChallenge, Channel, InitialTransmission, LogicalChannel, Message,
+        CHALLENGE_HASH_LENGTH, MAX_PAYLOAD_SIZE_POWER,
     },
     session::{
         channels::{
             ChannelReceivers, ChannelSenders, Channels, LogicalChannelReceivers,
             LogicalChannelSenders,
         },
-        InitialTransmission, Role, SessionInit,
+        Role, SessionInit,
     },
     util::channel::{
         inbound_channel, outbound_channel, Guarantees, Reader, Receiver, Sender, Writer,

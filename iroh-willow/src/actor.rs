@@ -15,9 +15,10 @@ use crate::{
         grouping::ThreeDRange,
         keys::{NamespaceId, NamespaceKind, UserId, UserSecretKey},
         meadowcap::{self, AccessMode},
+        sync::InitialTransmission,
         willow::{AuthorisedEntry, Entry},
     },
-    session::{Channels, Error, InitialTransmission, Role, Session, SessionId, SessionInit},
+    session::{run_session, Channels, Error, Role, SessionId, SessionInit},
     store::{
         traits::{EntryReader, SecretStorage, Storage},
         Origin, Store,
@@ -399,7 +400,7 @@ impl<S: Storage> Actor<S> {
                 let store = self.store.clone();
                 let cancel_token = CancellationToken::new();
 
-                let future = Session::run(
+                let future = run_session(
                     store,
                     channels,
                     cancel_token.clone(),

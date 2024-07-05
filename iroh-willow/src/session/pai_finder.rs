@@ -487,7 +487,7 @@ mod tests {
             },
             willow::Path,
         },
-        session::{pai::PaiIntersection, Error},
+        session::{pai_finder::PaiIntersection, Error},
     };
 
     use super::{Input, Output, PaiFinder};

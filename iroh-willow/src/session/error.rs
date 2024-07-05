@@ -6,7 +6,7 @@ use crate::{
         sync::ResourceHandle,
         willow::Unauthorised,
     },
-    session::{pai::PaiError, resource::MissingResource},
+    session::{pai_finder::PaiError, resource::MissingResource},
     store::traits::SecretStoreError,
     util::channel::{ReadError, WriteError},
 };

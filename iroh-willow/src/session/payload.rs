@@ -14,7 +14,7 @@ use crate::{
     session::channels::ChannelSenders,
 };
 
-use super::{Error};
+use super::Error;
 
 pub const DEFAULT_CHUNK_SIZE: usize = 1024 * 64;
 

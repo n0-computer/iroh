@@ -10,9 +10,8 @@ use crate::{
         challenge::ChallengeState,
         keys::UserSignature,
         sync::{
-            AccessChallenge, CapabilityHandle, ChallengeHash, CommitmentReveal,
-            IntersectionHandle, PaiReplySubspaceCapability, ReadCapability,
-            SetupBindReadCapability,
+            AccessChallenge, CapabilityHandle, ChallengeHash, CommitmentReveal, IntersectionHandle,
+            PaiReplySubspaceCapability, ReadCapability, SetupBindReadCapability,
             SubspaceCapability,
         },
     },
@@ -47,26 +46,40 @@ impl Capabilities {
         &self,
         secret_store: &S,
         sender: &ChannelSenders,
-        our_intersection_handle: IntersectionHandle,
+        intersection_handle: IntersectionHandle,
         capability: ReadCapability,
     ) -> Result<CapabilityHandle, Error> {
-        let mut inner = self.0.borrow_mut();
-        let signable = inner.challenge.signable()?;
-        let signature = secret_store.sign_user(&capability.receiver().id(), &signable)?;
-
-        let (our_handle, is_new) = inner.ours.bind_if_new(capability.clone());
-        if is_new {
-            let msg = SetupBindReadCapability {
-                capability,
-                handle: our_intersection_handle,
-                signature,
-            };
-            sender.send(msg).await?;
+        let (handle, message) =
+            self.bind_and_sign_ours(secret_store, intersection_handle, capability)?;
+        if let Some(message) = message {
+            sender.send(message).await?;
         }
-        Ok(our_handle)
+        Ok(handle)
     }
 
-    pub fn bind_and_validate_theirs(
+    pub fn bind_and_sign_ours<S: SecretStorage>(
+        &self,
+        secret_store: &S,
+        intersection_handle: IntersectionHandle,
+        capability: ReadCapability,
+    ) -> Result<(CapabilityHandle, Option<SetupBindReadCapability>), Error> {
+        let mut inner = self.0.borrow_mut();
+        let (handle, is_new) = inner.ours.bind_if_new(capability.clone());
+        let message = if is_new {
+            let signable = inner.challenge.signable()?;
+            let signature = secret_store.sign_user(&capability.receiver().id(), &signable)?;
+            Some(SetupBindReadCapability {
+                capability,
+                handle: intersection_handle,
+                signature,
+            })
+        } else {
+            None
+        };
+        Ok((handle, message))
+    }
+
+    pub fn validate_and_bind_theirs(
         &self,
         capability: ReadCapability,
         signature: UserSignature,
@@ -87,7 +100,7 @@ impl Capabilities {
         .await
     }
 
-    pub fn verify_subspace_capability(
+    pub fn verify_subspace_cap(
         &self,
         capability: &SubspaceCapability,
         signature: &UserSignature,
@@ -96,7 +109,7 @@ impl Capabilities {
         self.0
             .borrow_mut()
             .challenge
-            .verify(capability.receiver(), &signature)?;
+            .verify(capability.receiver(), signature)?;
         Ok(())
     }
 
@@ -109,7 +122,7 @@ impl Capabilities {
         }
     }
 
-    pub fn on_commitment_reveal(
+    pub fn received_commitment_reveal(
         &self,
         our_role: Role,
         their_nonce: AccessChallenge,
@@ -117,15 +130,15 @@ impl Capabilities {
         self.0.borrow_mut().challenge.reveal(our_role, their_nonce)
     }
 
-    pub fn sign_subspace_capabiltiy<K: SecretStorage>(
+    pub fn sign_subspace_capabiltiy<S: SecretStorage>(
         &self,
-        key_store: &K,
-        cap: &SubspaceCapability,
+        secrets: &S,
+        cap: SubspaceCapability,
         handle: IntersectionHandle,
     ) -> Result<PaiReplySubspaceCapability, Error> {
         let inner = self.0.borrow();
         let signable = inner.challenge.signable()?;
-        let signature = key_store.sign_user(&cap.receiver().id(), &signable)?;
+        let signature = secrets.sign_user(&cap.receiver().id(), &signable)?;
         let message = PaiReplySubspaceCapability {
             handle,
             capability: cap.clone(),

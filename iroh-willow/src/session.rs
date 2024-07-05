@@ -1,20 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{
-    auth::CapSelector,
-    proto::{
-        grouping::{Area, AreaOfInterest},
-        keys::NamespaceId,
-        sync::{AccessChallenge, AreaOfInterestHandle, ChallengeHash},
-    },
-};
+use crate::{auth::CapSelector, proto::grouping::AreaOfInterest};
 
 mod aoi_finder;
 mod capabilities;
 pub mod channels;
 mod data;
 mod error;
-mod pai;
+mod pai_finder;
 mod payload;
 mod reconciler;
 mod resource;
@@ -23,24 +16,9 @@ mod static_tokens;
 
 pub use self::channels::Channels;
 pub use self::error::Error;
+pub use self::run::run_session;
 
 pub type SessionId = u64;
-
-#[derive(Debug)]
-pub struct Session;
-
-/// Data from the initial transmission
-///
-/// This happens before the session is initialized.
-#[derive(Debug)]
-pub struct InitialTransmission {
-    /// The [`AccessChallenge`] nonce, whose hash we sent to the remote.
-    pub our_nonce: AccessChallenge,
-    /// The [`ChallengeHash`] we received from the remote.
-    pub received_commitment: ChallengeHash,
-    /// The maximum payload size we received from the remote.
-    pub their_max_payload_size: u64,
-}
 
 /// To break symmetry, we refer to the peer that initiated the synchronisation session as Alfie,
 /// and the other peer as Betty.
@@ -73,7 +51,7 @@ pub enum SessionMode {
 
 impl SessionMode {
     pub fn is_live(&self) -> bool {
-        *self == Self::Live
+        matches!(self, Self::Live)
     }
 }
 
@@ -114,13 +92,4 @@ pub enum Scope {
     Ours,
     /// Resources bound by the other peer.
     Theirs,
-}
-
-/// Intersection between two areas of interest.
-#[derive(Debug, Clone)]
-pub struct AoiIntersection {
-    pub our_handle: AreaOfInterestHandle,
-    pub their_handle: AreaOfInterestHandle,
-    pub intersection: Area,
-    pub namespace: NamespaceId,
 }
