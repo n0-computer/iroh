@@ -2,12 +2,6 @@
 //!
 //! The main entry point is the [`Client`].
 //!
-//! It can be used to interact with the local blob store, e.g. to import
-//! and export data.
-//!
-//! It can also be used to interact with remote nodes, e.g. to download
-//! data from them.
-//!
 //! ## Interacting with the local blob store
 //!
 //! ### Importing data

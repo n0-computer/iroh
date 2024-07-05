@@ -1,4 +1,15 @@
 //! Gossip client.
+//!
+//! The gossip client allows you to subscribe to gossip topics and send updates to them.
+//!
+//! The main entry point is the [`Client`].
+//!
+//! The gossip API is extremely simple. You use [`subscribe`](Client::subscribe)
+//! to subscribe to a topic. This returns a sink to send updates to the topic
+//! and a stream of responses.
+//!
+//! [`Client::subscribe_with_opts`] allows you to specify advanced options
+//! such as the buffer size.
 use std::collections::BTreeSet;
 
 use anyhow::Result;
