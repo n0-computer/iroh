@@ -12,7 +12,6 @@ use crate::{AddrInfo, Endpoint, NodeId};
 
 pub mod dns;
 
-/// enable local swarm discovery
 #[cfg(feature = "local_swarm_discovery")]
 pub mod local_swarm_discovery;
 pub mod pkarr;

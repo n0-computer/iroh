@@ -1,3 +1,8 @@
+//! A discovery service that uses an mdns-like service to discover local nodes.
+//!
+//! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
+//! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
+
 use std::{
     collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
@@ -210,51 +215,34 @@ impl LocalSwarmDiscovery {
                 .ok();
         };
 
-        // let mut addrs: HashMap<u16, Vec<IpAddr>> = HashMap::default();
-        // let mut has_ipv4 = false;
-        // let mut has_ipv6 = false;
-        // for socketaddr in socketaddrs {
-        //     addrs
-        //         .entry(socketaddr.port())
-        //         .and_modify(|a| {
-        //             if socketaddr.is_ipv6() {
-        //                 has_ipv6 = true;
-        //             };
-        //             if socketaddr.is_ipv4() {
-        //                 has_ipv4 = true;
-        //             };
-        //             a.push(socketaddr.ip())
-        //         })
-        //         .or_insert(vec![socketaddr.ip()]);
-        // }
-
-        // let ip_class = match (has_ipv4, has_ipv6) {
-        //     (true, true) => IpClass::V4AndV6,
-        //     (true, false) => IpClass::V4Only,
-        //     (false, true) => IpClass::V6Only,
-        //     // this case indicates no ip addresses were supplied, in which case, default to ipv4
-        //     (false, false) => IpClass::V4Only,
-        // };
-        // let mut discoverer =
-        //     Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id.to_string())
-        //         .with_callback(callback)
-        //         .with_ip_class(ip_class);
         let mut addrs: HashMap<u16, Vec<IpAddr>> = HashMap::default();
-        let socketaddrs: BTreeSet<SocketAddr> = socketaddrs
-            .into_iter()
-            .filter(|socketaddr| socketaddr.is_ipv4())
-            .collect();
+        let mut has_ipv4 = false;
+        let mut has_ipv6 = false;
         for socketaddr in socketaddrs {
+            if !has_ipv6 && socketaddr.is_ipv6() {
+                has_ipv6 = true;
+            };
+            if !has_ipv4 && socketaddr.is_ipv4() {
+                has_ipv4 = true;
+            };
             addrs
                 .entry(socketaddr.port())
                 .and_modify(|a| a.push(socketaddr.ip()))
                 .or_insert(vec![socketaddr.ip()]);
         }
 
+        let ip_class = match (has_ipv4, has_ipv6) {
+            (true, true) => IpClass::V4AndV6,
+            (true, false) => IpClass::V4Only,
+            (false, true) => IpClass::V6Only,
+            // this case indicates no ip addresses were supplied, in which case, default to ipv4
+            (false, false) => IpClass::V4Only,
+        };
+        debug!(?addrs, ?ip_class, "creating discoverer");
         let mut discoverer =
             Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id.to_string())
                 .with_callback(callback)
-                .with_ip_class(IpClass::V4Only);
+                .with_ip_class(ip_class);
         for addr in addrs {
             discoverer = discoverer.with_addrs(addr.0, addr.1);
         }
@@ -283,14 +271,25 @@ impl From<&Peer> for DiscoveryItem {
 impl Discovery for LocalSwarmDiscovery {
     fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let (send, recv) = flume::bounded(20);
-        self.sender.send(Message::SendAddrs(node_id, send)).ok();
+        let discovery_sender = self.sender.clone();
+        tokio::spawn(async move {
+            discovery_sender
+                .send_async(Message::SendAddrs(node_id, send))
+                .await
+                .ok();
+        });
         Some(recv.into_stream().boxed())
     }
 
     fn publish(&self, info: &AddrInfo) {
-        self.sender
-            .send(Message::ChangeLocalAddrs(info.clone()))
-            .ok();
+        let discovery_sender = self.sender.clone();
+        let info = info.clone();
+        tokio::spawn(async move {
+            discovery_sender
+                .send_async(Message::ChangeLocalAddrs(info))
+                .await
+                .ok();
+        });
     }
 }
 
