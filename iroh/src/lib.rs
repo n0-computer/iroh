@@ -74,6 +74,14 @@
 //! **Important**: the protocol to a remote node is not stable and will
 //! frequently change. So the client and server must be running the same version of iroh.
 //!
+//! ## Reexports
+//!
+//! The iroh crate re-exports the following crates:
+//! - [iroh_base](iroh_base) as [`base`]
+//! - [iroh_blobs](iroh_blobs) as [`blobs`]
+//! - [iroh_docs](iroh_docs) as [`docs`]
+//! - [iroh_net](iroh_net) as [`net`]
+//!
 //! ## Feature Flags
 //!
 //! - `metrics`: Enable metrics collection. Enabled by default.
@@ -82,7 +90,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
-// re-export the iroh crates
+/// re-export the iroh crates
 #[doc(inline)]
 pub use iroh_base as base;
 #[doc(inline)]
