@@ -18,12 +18,15 @@ use iroh_gossip::{
     dispatcher::GossipDispatcher,
     net::{Gossip, GOSSIP_ALPN},
 };
+#[cfg(not(test))]
+use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
     relay::RelayMode,
     Endpoint,
 };
+
 use quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
@@ -462,6 +465,26 @@ where
                 DiscoveryConfig::None => None,
                 DiscoveryConfig::Custom(discovery) => Some(discovery),
                 DiscoveryConfig::Default => {
+                    #[cfg(not(test))]
+                    let discovery = {
+                        let mut discovery_services: Vec<Box<dyn Discovery>> = vec![
+                            // Enable DNS discovery by default
+                            Box::new(DnsDiscovery::n0_dns()),
+                            // Enable pkarr publishing by default
+                            Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
+                        ];
+                        // Enable local swarm discovery by default, but fail silently if it errors
+                        match LocalSwarmDiscovery::new(self.secret_key.public()) {
+                            Err(e) => {
+                                tracing::error!("unable to start LocalSwarmDiscoveryService: {e:?}")
+                            }
+                            Ok(service) => {
+                                discovery_services.push(Box::new(service));
+                            }
+                        }
+                        ConcurrentDiscovery::from_services(discovery_services)
+                    };
+                    #[cfg(test)]
                     let discovery = ConcurrentDiscovery::from_services(vec![
                         // Enable DNS discovery by default
                         Box::new(DnsDiscovery::n0_dns()),
