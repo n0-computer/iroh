@@ -1,2 +1,0 @@
-docker buildx build -f docker/Dockerfile --target iroh --platform linux/arm64/v8 --tag n0computer/iroh:latest .
-# docker buildx build -f docker/Dockerfile --target iroh --platform linux/amd64 --tag n0computer/iroh:latest .
