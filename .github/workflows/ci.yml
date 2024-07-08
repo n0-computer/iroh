@@ -409,3 +409,44 @@ jobs:
         d=$(cat report_metro_integration.txt)
         metro_data=$(printf "%s\n " "$d")
         echo "$metro_data"
+
+  docker_build_and_test:
+    name: Docker Test
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    timeout-minutes: 30
+    runs-on: [self-hosted, linux, X64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: n0computer/iroh-test:latest
+          target: iroh
+          platforms: linux/amd64
+          file: docker/Dockerfile
+  
+      - name: Run Docker image & node stats test
+        run: |
+          docker run -p 9090:9090 -p 4919:4919/udp -Pd n0computer/iroh-test:latest --rpc-addr 0.0.0.0:4919 start
+          cargo run --bin iroh -- --rpc-addr 127.0.0.1:4919 node stats
+
+      - name: Cleanup Docker
+        continue-on-error: true
+        run: |
+          docker kill $(docker ps -q)
