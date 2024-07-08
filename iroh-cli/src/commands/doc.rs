@@ -949,7 +949,7 @@ mod tests {
 
         let data_dir = tempfile::tempdir()?;
 
-        let node = crate::commands::start::start_node(data_dir.path(), None).await?;
+        let node = crate::commands::start::start_node(data_dir.path(), None, None).await?;
         let client = node.client();
         let doc = client.docs().create().await.context("doc create")?;
         let author = client.authors().create().await.context("author create")?;

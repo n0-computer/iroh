@@ -874,7 +874,7 @@ impl<D: BaoStore> Handler<D> {
                 .await
                 .unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            rpc_port: self.inner.rpc_port,
+            rpc_addr: self.inner.rpc_addr,
         })
     }
 
