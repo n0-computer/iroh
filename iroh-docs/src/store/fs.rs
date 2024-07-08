@@ -224,7 +224,16 @@ impl Store {
                 let tx = self.db.begin_write()?;
                 TransactionAndTables::new(tx)?
             }
-            CurrentTransaction::Write(w) => w,
+            CurrentTransaction::Write(w) => {
+                if w.since.elapsed() > Duration::from_millis(500) {
+                    tracing::debug!("committing transaction because it's too old");
+                    w.commit()?;
+                    let tx = self.db.begin_write()?;
+                    TransactionAndTables::new(tx)?
+                } else {
+                    w
+                }
+            }
             CurrentTransaction::Read(_) => {
                 let tx = self.db.begin_write()?;
                 TransactionAndTables::new(tx)?
