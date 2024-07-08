@@ -28,7 +28,7 @@ use crate::{
 };
 
 const ACTION_CAP: usize = 1024;
-const MAX_COMMIT_DELAY: Duration = Duration::from_millis(500);
+pub(crate) const MAX_COMMIT_DELAY: Duration = Duration::from_millis(500);
 
 #[derive(derive_more::Debug, derive_more::Display)]
 enum Action {
