@@ -117,6 +117,7 @@ tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macr
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 iroh-test = { path = "../iroh-test" }
 serde_json = "1.0.107"
+testresult = "0.4.0"
 
 [[bench]]
 name = "key"

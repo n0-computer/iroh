@@ -2866,6 +2866,7 @@ dependencies = [
  "surge-ping",
  "swarm-discovery",
  "testdir",
+ "testresult",
  "thiserror",
  "time",
  "tokio",

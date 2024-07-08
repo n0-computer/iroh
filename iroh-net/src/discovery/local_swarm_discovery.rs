@@ -16,11 +16,12 @@ use tracing::{debug, error, trace, warn};
 
 use flume::Sender;
 use iroh_base::key::PublicKey;
-use swarm_discovery::{Discoverer, DropGuard, Peer};
-use tokio::task::{JoinHandle, JoinSet};
+use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
+use tokio::task::JoinSet;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
+    util::AbortingJoinHandle,
     AddrInfo, Endpoint, NodeId,
 };
 
@@ -36,14 +37,9 @@ const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
 /// Discovery using `swarm-discovery`, a variation on mdns
 #[derive(Debug)]
 pub struct LocalSwarmDiscovery {
-    handle: JoinHandle<()>,
+    #[allow(dead_code)]
+    handle: AbortingJoinHandle<()>,
     sender: Sender<Message>,
-}
-
-impl Drop for LocalSwarmDiscovery {
-    fn drop(&mut self) {
-        self.handle.abort();
-    }
 }
 
 #[derive(Debug)]
@@ -195,7 +191,7 @@ impl LocalSwarmDiscovery {
             }
         });
         Ok(Self {
-            handle,
+            handle: handle.into(),
             sender: send,
         })
     }
@@ -217,17 +213,33 @@ impl LocalSwarmDiscovery {
                 .send(Message::Discovery(node_id.to_string(), peer.clone()))
                 .ok();
         };
-
         let mut addrs: HashMap<u16, Vec<IpAddr>> = HashMap::default();
+        let mut has_ipv4 = false;
+        let mut has_ipv6 = false;
         for socketaddr in socketaddrs {
+            if !has_ipv6 && socketaddr.is_ipv6() {
+                has_ipv6 = true;
+            };
+            if !has_ipv4 && socketaddr.is_ipv4() {
+                has_ipv4 = true;
+            };
             addrs
                 .entry(socketaddr.port())
                 .and_modify(|a| a.push(socketaddr.ip()))
                 .or_insert(vec![socketaddr.ip()]);
         }
+
+        let ip_class = match (has_ipv4, has_ipv6) {
+            (true, true) => IpClass::V4AndV6,
+            (true, false) => IpClass::V4Only,
+            (false, true) => IpClass::V6Only,
+            // this case indicates no ip addresses were supplied, in which case, default to ipv4
+            (false, false) => IpClass::V4Only,
+        };
         let mut discoverer =
             Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id.to_string())
-                .with_callback(callback);
+                .with_callback(callback)
+                .with_ip_class(ip_class);
         for addr in addrs {
             discoverer = discoverer.with_addrs(addr.0, addr.1);
         }
@@ -281,47 +293,39 @@ impl Discovery for LocalSwarmDiscovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use testresult::TestResult;
 
     #[tokio::test]
-    async fn test_local_swarm_discovery() {
-        let (node_id_a, discovery_a) = make_discoverer();
-        let (_, discovery_b) = make_discoverer();
+    async fn test_local_swarm_discovery() -> TestResult {
+        let (node_id_a, discovery_a) = make_discoverer()?;
+        let (_, discovery_b) = make_discoverer()?;
 
         // make addr info for discoverer a
         let addr_info = AddrInfo {
             relay_url: None,
-            direct_addresses: BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]),
+            direct_addresses: BTreeSet::from(["0.0.0.0:11111".parse()?]),
         };
 
         // pass in endpoint, this is never used
-        let ep = crate::endpoint::Builder::default().bind(0).await.unwrap();
+        let ep = crate::endpoint::Builder::default().bind(0).await?;
         // resolve twice to ensure we can create separate streams for the same node_id
         let mut s1 = discovery_b.resolve(ep.clone(), node_id_a).unwrap();
         let mut s2 = discovery_b.resolve(ep, node_id_a).unwrap();
         // publish discovery_a's address
         discovery_a.publish(&addr_info);
         let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
-            .await
-            // timeout result
-            .unwrap()
-            // `next` option
-            .unwrap()
-            // stream result
-            .unwrap();
+            .await?
+            .unwrap()?;
         let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
-            .await
-            // timeout result
-            .unwrap()
-            // `next` option
-            .unwrap()
-            // stream result
-            .unwrap();
+            .await?
+            .unwrap()?;
         assert_eq!(s1_res.addr_info, addr_info);
         assert_eq!(s2_res.addr_info, addr_info);
+        Ok(())
     }
 
-    fn make_discoverer() -> (PublicKey, LocalSwarmDiscovery) {
+    fn make_discoverer() -> Result<(PublicKey, LocalSwarmDiscovery)> {
         let node_id = crate::key::SecretKey::generate().public();
-        (node_id, LocalSwarmDiscovery::new(node_id).unwrap())
+        Ok((node_id, LocalSwarmDiscovery::new(node_id)?))
     }
 }
