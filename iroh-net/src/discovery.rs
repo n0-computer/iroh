@@ -14,9 +14,11 @@
 //! information.  Usually this means publishing which [`RelayUrl`] to use for their
 //! [`NodeId`], but they could also publish direct addresses.
 //!
-//! The [`Discovery`] trait is used to define node discover.  This allows multiple
-//! implementations to co-exist because there are many possible ways to implement this.  The
-//! [`Builder::discovery`] method is used to add a discovery mechanism to an [`Endpoint`].
+//! The [`Discovery`] trait is used to define node discovery.  This allows multiple
+//! implementations to co-exist because there are many possible ways to implement this.
+//! Each [`Endpoint`] can use the discovery mechanisms most suitable to the application.
+//! The [`Builder::discovery`] method is used to add a discovery mechanism to an
+//! [`Endpoint`].
 //!
 //! Some generally useful discovery implementations are provided:
 //!
