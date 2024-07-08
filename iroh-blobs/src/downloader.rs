@@ -79,7 +79,7 @@ pub trait Dialer: Stream<Item = (NodeId, anyhow::Result<Self::Connection>)> + Un
     /// Get the number of dialing nodes.
     fn pending_count(&self) -> usize;
     /// Check if a node is being dialed.
-    fn is_pending(&self, node: &NodeId) -> bool;
+    fn is_pending(&self, node: NodeId) -> bool;
 }
 
 /// Signals what should be done with the request when it fails.
@@ -996,7 +996,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                     } else {
                         best_connected = Some(match best_connected.take() {
                             Some(old) if old.1 <= active_requests => old,
-                            _ => (*node, active_requests),
+                            _ => (node, active_requests),
                         });
                     }
                 }
@@ -1036,7 +1036,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
 
             // All slots are free: We can dial our candidate.
             if !at_connections_capacity && !at_dial_capacity {
-                NextStep::Dial(*node)
+                NextStep::Dial(node)
             }
             // The hash has free dial capacity, but the global connection capacity is reached.
             // But if we have idle nodes, we will disconnect the longest idling node, and then dial our
@@ -1046,7 +1046,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 && !self.goodbye_nodes_queue.is_empty()
             {
                 let key = self.goodbye_nodes_queue.peek().expect("just checked");
-                NextStep::DialQueuedDisconnect(*node, key)
+                NextStep::DialQueuedDisconnect(node, key)
             }
             // No dial capacity, and no idling nodes: We have to wait until capacity is freed up.
             else {
@@ -1147,13 +1147,13 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         }
     }
 
-    fn node_state<'a>(&'a self, node: &NodeId) -> NodeState<'a, D::Connection> {
-        if let Some(info) = self.connected_nodes.get(node) {
+    fn node_state(&self, node: NodeId) -> NodeState<'_, D::Connection> {
+        if let Some(info) = self.connected_nodes.get(&node) {
             NodeState::Connected(info)
         } else if self.dialer.is_pending(node) {
             NodeState::Dialing
         } else {
-            match self.retry_node_state.get(node) {
+            match self.retry_node_state.get(&node) {
                 Some(state) if state.retry_is_queued => NodeState::WaitForRetry,
                 _ => NodeState::Disconnected,
             }
@@ -1221,12 +1221,13 @@ struct ProviderMap {
 
 impl ProviderMap {
     /// Get candidates to download this hash.
-    pub fn get_candidates(&self, hash: &Hash) -> impl Iterator<Item = &NodeId> {
+    pub fn get_candidates<'a>(&'a self, hash: &Hash) -> impl Iterator<Item = NodeId> + 'a {
         self.hash_node
             .get(hash)
             .map(|nodes| nodes.iter())
             .into_iter()
             .flatten()
+            .copied()
     }
 
     /// Whether we have any candidates to download this hash.
@@ -1420,7 +1421,7 @@ impl Dialer for iroh_net::dialer::Dialer {
         self.pending_count()
     }
 
-    fn is_pending(&self, node: &NodeId) -> bool {
+    fn is_pending(&self, node: NodeId) -> bool {
         self.is_pending(node)
     }
 }

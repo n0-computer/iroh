@@ -98,7 +98,7 @@ impl ExampleProto {
         println!("connecting to {remote_node_id}");
         let conn = self
             .endpoint
-            .connect_by_node_id(&remote_node_id, EXAMPLE_ALPN)
+            .connect_by_node_id(remote_node_id, EXAMPLE_ALPN)
             .await?;
         let mut recv_stream = conn.accept_uni().await?;
         let hash_bytes = recv_stream.read_to_end(32).await?;

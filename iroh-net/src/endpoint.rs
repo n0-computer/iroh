@@ -483,7 +483,7 @@ impl Endpoint {
 
         // Start connecting via quinn. This will time out after 10 seconds if no reachable address
         // is available.
-        let conn = self.connect_quinn(&node_id, alpn, addr).await;
+        let conn = self.connect_quinn(node_id, alpn, addr).await;
 
         // Cancel the node discovery task (if still running).
         if let Some(discovery) = discovery {
@@ -501,16 +501,16 @@ impl Endpoint {
     /// uses the discovery service to establish a connection to a remote node.
     pub async fn connect_by_node_id(
         &self,
-        node_id: &NodeId,
+        node_id: NodeId,
         alpn: &[u8],
     ) -> Result<quinn::Connection> {
-        let addr = NodeAddr::new(*node_id);
+        let addr = NodeAddr::new(node_id);
         self.connect(addr, alpn).await
     }
 
     async fn connect_quinn(
         &self,
-        node_id: &PublicKey,
+        node_id: NodeId,
         alpn: &[u8],
         addr: SocketAddr,
     ) -> Result<quinn::Connection> {
@@ -518,7 +518,7 @@ impl Endpoint {
             let alpn_protocols = vec![alpn.to_vec()];
             let tls_client_config = tls::make_client_config(
                 &self.static_config.secret_key,
-                Some(*node_id),
+                Some(node_id),
                 alpn_protocols,
                 self.static_config.keylog,
             )?;
@@ -538,8 +538,8 @@ impl Endpoint {
 
         let rtt_msg = RttMessage::NewConnection {
             connection: connection.weak_handle(),
-            conn_type_changes: self.conn_type_stream(*node_id)?,
-            node_id: *node_id,
+            conn_type_changes: self.conn_type_stream(node_id)?,
+            node_id,
         };
         if let Err(err) = self.rtt_actor.msg_tx.send(rtt_msg).await {
             // If this actor is dead, that's not great but we can still function.
