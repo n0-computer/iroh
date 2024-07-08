@@ -16,7 +16,7 @@ use tracing::{debug, error, trace, warn};
 
 use flume::Sender;
 use iroh_base::key::PublicKey;
-use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
+use swarm_discovery::{Discoverer, DropGuard, Peer};
 use tokio::task::{JoinHandle, JoinSet};
 
 use crate::{
@@ -58,6 +58,9 @@ impl LocalSwarmDiscovery {
     /// Create a new [`LocalSwarmDiscovery`] Service.
     ///
     /// This starts a [`Discoverer`] that broadcasts your addresses and receives addresses from other nodes in your local network.
+    ///
+    /// # Errors
+    /// Returns an error if the network does not allow ipv4 OR ipv6.
     ///
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
@@ -216,33 +219,15 @@ impl LocalSwarmDiscovery {
         };
 
         let mut addrs: HashMap<u16, Vec<IpAddr>> = HashMap::default();
-        let mut has_ipv4 = false;
-        let mut has_ipv6 = false;
         for socketaddr in socketaddrs {
-            if !has_ipv6 && socketaddr.is_ipv6() {
-                has_ipv6 = true;
-            };
-            if !has_ipv4 && socketaddr.is_ipv4() {
-                has_ipv4 = true;
-            };
             addrs
                 .entry(socketaddr.port())
                 .and_modify(|a| a.push(socketaddr.ip()))
                 .or_insert(vec![socketaddr.ip()]);
         }
-
-        let ip_class = match (has_ipv4, has_ipv6) {
-            (true, true) => IpClass::V4AndV6,
-            (true, false) => IpClass::V4Only,
-            (false, true) => IpClass::V6Only,
-            // this case indicates no ip addresses were supplied, in which case, default to ipv4
-            (false, false) => IpClass::V4Only,
-        };
-        debug!(?addrs, ?ip_class, "creating discoverer");
         let mut discoverer =
             Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id.to_string())
-                .with_callback(callback)
-                .with_ip_class(ip_class);
+                .with_callback(callback);
         for addr in addrs {
             discoverer = discoverer.with_addrs(addr.0, addr.1);
         }

@@ -458,14 +458,24 @@ where
                 DiscoveryConfig::Custom(discovery) => Some(discovery),
                 DiscoveryConfig::Default => {
                     #[cfg(not(test))]
-                    let discovery = ConcurrentDiscovery::from_services(vec![
-                        // Enable DNS discovery by default
-                        Box::new(DnsDiscovery::n0_dns()),
-                        // Enable pkarr publishing by default
-                        Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
-                        // Enable local swarm discovery by default
-                        Box::new(LocalSwarmDiscovery::new(self.secret_key.public())?),
-                    ]);
+                    let discovery = {
+                        let mut discovery_services: Vec<Box<dyn Discovery>> = vec![
+                            // Enable DNS discovery by default
+                            Box::new(DnsDiscovery::n0_dns()),
+                            // Enable pkarr publishing by default
+                            Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
+                        ];
+                        // Enable local swarm discovery by default, but fail silently if it errors
+                        match LocalSwarmDiscovery::new(self.secret_key.public()) {
+                            Err(e) => {
+                                tracing::error!("unable to start LocalSwarmDiscoveryService: {e:?}")
+                            }
+                            Ok(service) => {
+                                discovery_services.push(Box::new(service));
+                            }
+                        }
+                        ConcurrentDiscovery::from_services(discovery_services)
+                    };
                     #[cfg(test)]
                     let discovery = ConcurrentDiscovery::from_services(vec![
                         // Enable DNS discovery by default
