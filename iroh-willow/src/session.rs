@@ -7,6 +7,7 @@ mod capabilities;
 pub mod channels;
 mod data;
 mod error;
+mod events;
 mod pai_finder;
 mod payload;
 mod reconciler;

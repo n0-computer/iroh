@@ -7,10 +7,7 @@ use iroh_blobs::{
 };
 
 use crate::{
-    proto::{
-        sync::Message,
-        willow::{Entry, PayloadDigest},
-    },
+    proto::{sync::Message, willow::PayloadDigest},
     session::channels::ChannelSenders,
 };
 
@@ -53,7 +50,7 @@ pub struct CurrentPayload(Option<CurrentPayloadInner>);
 
 #[derive(Debug)]
 struct CurrentPayloadInner {
-    entry: Entry,
+    payload_digest: PayloadDigest,
     expected_length: u64,
     received_length: u64,
     writer: Option<PayloadWriter>,
@@ -71,13 +68,16 @@ impl CurrentPayload {
     //     Self::default()
     // }
 
-    pub fn set(&mut self, entry: Entry, expected_length: Option<u64>) -> Result<(), Error> {
+    pub fn set(
+        &mut self,
+        payload_digest: PayloadDigest,
+        expected_length: u64,
+    ) -> Result<(), Error> {
         if self.0.is_some() {
             return Err(Error::InvalidMessageInCurrentState);
         }
-        let expected_length = expected_length.unwrap_or(entry.payload_length);
         self.0 = Some(CurrentPayloadInner {
-            entry,
+            payload_digest,
             writer: None,
             expected_length,
             received_length: 0,
@@ -129,10 +129,10 @@ impl CurrentPayload {
             .ok_or_else(|| Error::InvalidMessageInCurrentState)?;
         drop(writer.sender);
         let (tag, len) = writer.fut.await.map_err(Error::PayloadStore)?;
-        if *tag.hash() != state.entry.payload_digest {
+        if *tag.hash() != state.payload_digest {
             return Err(Error::PayloadDigestMismatch);
         }
-        if len != state.entry.payload_length {
+        if len != state.expected_length {
             return Err(Error::PayloadDigestMismatch);
         }
         // TODO: protect from gc
@@ -148,7 +148,7 @@ impl CurrentPayload {
     pub fn is_active(&self) -> bool {
         self.0.as_ref().map(|s| s.writer.is_some()).unwrap_or(false)
     }
-    pub fn assert_inactive(&self) -> Result<(), Error> {
+    pub fn ensure_none(&self) -> Result<(), Error> {
         if self.is_active() {
             Err(Error::InvalidMessageInCurrentState)
         } else {

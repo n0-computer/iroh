@@ -1,9 +1,12 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     num::NonZeroU64,
+    ops::ControlFlow,
 };
 
+use bytes::Bytes;
 use futures_lite::StreamExt;
+use iroh_blobs::store::Store as PayloadStore;
 use tracing::{debug, trace};
 
 use crate::{
@@ -15,10 +18,12 @@ use crate::{
             ReconciliationMessage, ReconciliationSendEntry, ReconciliationSendFingerprint,
             ReconciliationSendPayload, ReconciliationTerminatePayload,
         },
+        willow::PayloadDigest,
     },
     session::{
         aoi_finder::{AoiIntersection, AoiIntersectionQueue},
         channels::{ChannelSenders, MessageReceiver},
+        events::{Event, EventEmitter},
         payload::{send_payload_chunked, CurrentPayload},
         static_tokens::StaticTokens,
         Error, Role, SessionId,
@@ -32,126 +37,14 @@ use crate::{
 
 #[derive(derive_more::Debug)]
 pub struct Reconciler<S: Storage> {
-    session_id: SessionId,
-    our_role: Role,
-
-    store: Store<S>,
-    snapshot: <S::Entries as EntryStorage>::Snapshot,
-    send: ChannelSenders,
+    shared: Shared<S>,
     recv: Cancelable<MessageReceiver<ReconciliationMessage>>,
-
-    static_tokens: StaticTokens,
-    targets: Targets,
-    current_payload: CurrentPayload,
-
-    our_range_counter: u64,
-    their_range_counter: u64,
-    pending_announced_entries: Option<NonZeroU64>,
+    events: EventEmitter,
+    targets: TargetMap<S>,
+    current_entry: CurrentEntry,
 }
 
 type TargetId = (AreaOfInterestHandle, AreaOfInterestHandle);
-
-#[derive(Debug)]
-struct Targets {
-    intersection_queue: AoiIntersectionQueue,
-    targets: HashMap<TargetId, State>,
-    init_queue: VecDeque<TargetId>,
-}
-
-impl Targets {
-    fn new(intersection_queue: AoiIntersectionQueue) -> Self {
-        Self {
-            intersection_queue,
-            targets: Default::default(),
-            init_queue: Default::default(),
-        }
-    }
-    fn iter(&self) -> impl Iterator<Item = &State> {
-        self.targets.values()
-    }
-
-    fn get(&self, target: &TargetId) -> Result<&State, Error> {
-        self.targets
-            .get(target)
-            .ok_or(Error::MissingResource(target.1.into()))
-    }
-    fn get_mut(&mut self, target: &TargetId) -> Result<&mut State, Error> {
-        self.targets
-            .get_mut(target)
-            .ok_or(Error::MissingResource(target.1.into()))
-    }
-
-    async fn init_next(&mut self) -> Option<TargetId> {
-        if let Some(target_id) = self.init_queue.pop_front() {
-            Some(target_id)
-        } else {
-            self.recv_next().await
-        }
-    }
-
-    async fn get_eventually(&mut self, target_id: TargetId) -> Result<&mut State, Error> {
-        if self.targets.contains_key(&target_id) {
-            return Ok(self.targets.get_mut(&target_id).unwrap());
-        }
-
-        while let Some(next_target_id) = self.recv_next().await {
-            self.init_queue.push_back(next_target_id);
-            if next_target_id == target_id {
-                return Ok(self.targets.get_mut(&target_id).unwrap());
-            }
-        }
-        Err(Error::InvalidState("aoi finder closed"))
-    }
-
-    async fn recv_next(&mut self) -> Option<TargetId> {
-        let intersection = self.intersection_queue.recv_async().await.ok()?;
-        let (target_id, state) = State::new(intersection);
-        self.targets.insert(target_id, state);
-        Some(target_id)
-    }
-}
-
-#[derive(Debug)]
-struct State {
-    namespace: NamespaceId,
-    area: Area,
-    our_uncovered_ranges: HashSet<u64>,
-    started: bool,
-}
-
-impl State {
-    pub fn new(intersection: AoiIntersection) -> (TargetId, Self) {
-        let target_id = (intersection.our_handle, intersection.their_handle);
-        let state = Self {
-            namespace: intersection.namespace,
-            area: intersection.intersection,
-            our_uncovered_ranges: Default::default(),
-            started: false,
-        };
-        (target_id, state)
-    }
-
-    pub fn is_complete(&self) -> bool {
-        self.started && self.our_uncovered_ranges.is_empty()
-    }
-
-    pub fn mark_our_range_pending(&mut self, range_count: u64) {
-        tracing::warn!("mark ours pending: {range_count}");
-        self.started = true;
-        self.our_uncovered_ranges.insert(range_count);
-    }
-
-    pub fn mark_our_range_covered(&mut self, range_count: u64) -> Result<(), Error> {
-        tracing::warn!(?self, "mark ours covered: {range_count}");
-        if !self.our_uncovered_ranges.remove(&range_count) {
-            Err(Error::InvalidState(
-                "attempted to mark an unknown range as covered",
-            ))
-        } else {
-            Ok(())
-        }
-    }
-}
 
 impl<S: Storage> Reconciler<S> {
     pub fn new(
@@ -162,21 +55,22 @@ impl<S: Storage> Reconciler<S> {
         session_id: SessionId,
         send: ChannelSenders,
         our_role: Role,
+        events: EventEmitter,
     ) -> Result<Self, Error> {
-        let snapshot = store.entries().snapshot()?;
-        Ok(Self {
-            session_id,
-            send,
-            our_role,
+        let shared = Shared {
             store,
-            recv,
-            snapshot,
-            current_payload: Default::default(),
-            our_range_counter: 0,
-            their_range_counter: 0,
-            targets: Targets::new(aoi_intersection_queue),
-            pending_announced_entries: Default::default(),
+            our_role,
+            send,
             static_tokens,
+            session_id,
+        };
+        Ok(Self {
+            shared,
+            recv,
+            targets: TargetMap::new(aoi_intersection_queue),
+            current_entry: Default::default(),
+
+            events,
         })
     }
 
@@ -186,78 +80,321 @@ impl<S: Storage> Reconciler<S> {
                 message = self.recv.try_next() => {
                     match message? {
                         None => break,
-                        Some(message) => self.on_message(message).await?,
+                        Some(message) => match self.received_message(message).await? {
+                            ControlFlow::Continue(_) => {}
+                            ControlFlow::Break(_) => {
+                                debug!("reconciliation complete");
+                                break;
+                            }
+                        }
                     }
                 }
-                Some(target_id) = self.targets.init_next() => {
-                    if self.our_role.is_alfie() {
-                        self.initiate(target_id).await?;
-                    }
+                Ok(intersection) = self.targets.aoi_intersection_queue.recv_async() => {
+                    let intersection = intersection;
+                    let area = intersection.intersection.clone();
+                    self.targets.init_target(&self.shared, intersection).await?;
+                    self.events.send(Event::AreaIntersection(area)).await?;
                 }
-            }
-            if self.is_complete() {
-                debug!("reconciliation complete");
-                break;
             }
         }
         Ok(())
     }
 
-    fn is_complete(&self) -> bool {
-        if self.current_payload.is_active() {
-            return false;
-        }
-        if self.pending_announced_entries.is_some() {
-            return false;
-        }
-        self.targets.iter().all(|t| t.is_complete())
-    }
-
-    async fn on_message(&mut self, message: ReconciliationMessage) -> Result<(), Error> {
+    async fn received_message(
+        &mut self,
+        message: ReconciliationMessage,
+    ) -> Result<ControlFlow<(), ()>, Error> {
         match message {
             ReconciliationMessage::SendFingerprint(message) => {
-                self.received_send_fingerprint(message).await?
+                self.targets
+                    .get_eventually(&self.shared, &message.handles())
+                    .await?
+                    .received_send_fingerprint(&self.shared, message)
+                    .await?;
             }
             ReconciliationMessage::AnnounceEntries(message) => {
-                let res = self.received_announce_entries(message).await;
-                tracing::warn!("received_announce_entries DONE: {res:?}");
-                res?;
+                let target_id = message.handles();
+                self.current_entry
+                    .received_announce_entries(target_id, message.count)?;
+                let target = self
+                    .targets
+                    .get_eventually(&self.shared, &target_id)
+                    .await?;
+                target
+                    .received_announce_entries(&self.shared, message)
+                    .await?;
+                if target.is_complete() && self.current_entry.is_none() {
+                    return self.complete_target(target_id).await;
+                }
             }
-            ReconciliationMessage::SendEntry(message) => self.received_send_entry(message).await?,
+            ReconciliationMessage::SendEntry(message) => {
+                let authorised_entry = self
+                    .shared
+                    .static_tokens
+                    .authorise_entry_eventually(
+                        message.entry.entry,
+                        message.static_token_handle,
+                        message.dynamic_token,
+                    )
+                    .await?;
+                self.current_entry.received_entry(
+                    authorised_entry.entry().payload_digest,
+                    message.entry.available,
+                )?;
+                self.shared
+                    .store
+                    .entries()
+                    .ingest(&authorised_entry, Origin::Remote(self.shared.session_id))?;
+            }
             ReconciliationMessage::SendPayload(message) => {
-                self.received_send_payload(message).await?
+                self.current_entry
+                    .received_send_payload(self.shared.store.payloads(), message.bytes)
+                    .await?;
             }
-            ReconciliationMessage::TerminatePayload(message) => {
-                self.received_terminate_payload(message).await?
+            ReconciliationMessage::TerminatePayload(_message) => {
+                if let Some(completed_target) =
+                    self.current_entry.received_terminate_payload().await?
+                {
+                    let target = self
+                        .targets
+                        .map
+                        .get(&completed_target)
+                        .expect("target to exist");
+                    if target.is_complete() {
+                        return self.complete_target(target.id()).await;
+                    }
+                }
             }
         };
+        Ok(ControlFlow::Continue(()))
+    }
+
+    pub async fn complete_target(&mut self, id: TargetId) -> Result<ControlFlow<(), ()>, Error> {
+        let target = self
+            .targets
+            .map
+            .remove(&id)
+            .ok_or(Error::InvalidMessageInCurrentState)?;
+        let event = Event::Reconciled(target.area);
+        self.events.send(event).await?;
+        if self.targets.map.is_empty() {
+            Ok(ControlFlow::Break(()))
+        } else {
+            Ok(ControlFlow::Continue(()))
+        }
+    }
+}
+
+#[derive(Debug)]
+struct TargetMap<S: Storage> {
+    map: HashMap<TargetId, Target<S>>,
+    aoi_intersection_queue: AoiIntersectionQueue,
+}
+
+impl<S: Storage> TargetMap<S> {
+    pub fn new(aoi_intersection_queue: AoiIntersectionQueue) -> Self {
+        Self {
+            map: Default::default(),
+            aoi_intersection_queue,
+        }
+    }
+    pub async fn get_eventually(
+        &mut self,
+        shared: &Shared<S>,
+        requested_id: &TargetId,
+    ) -> Result<&mut Target<S>, Error> {
+        tracing::info!("aoi wait: {requested_id:?}");
+        if !self.map.contains_key(requested_id) {
+            self.wait_for_target(shared, requested_id).await?;
+        }
+        return Ok(self.map.get_mut(requested_id).unwrap());
+    }
+
+    async fn wait_for_target(
+        &mut self,
+        shared: &Shared<S>,
+        requested_id: &TargetId,
+    ) -> Result<(), Error> {
+        loop {
+            let intersection = self
+                .aoi_intersection_queue
+                .recv_async()
+                .await
+                .map_err(|_| Error::InvalidState("aoi finder closed"))?;
+            let id = self.init_target(shared, intersection).await?;
+            if id == *requested_id {
+                break Ok(());
+            }
+        }
+    }
+
+    async fn init_target(
+        &mut self,
+        shared: &Shared<S>,
+        intersection: AoiIntersection,
+    ) -> Result<TargetId, Error> {
+        let snapshot = shared.store.entries().snapshot()?;
+        let target = Target::init(snapshot, shared, intersection).await?;
+        let id = target.id();
+        tracing::info!("init {id:?}");
+        self.map.insert(id, target);
+        Ok(id)
+    }
+}
+
+#[derive(Debug, Default)]
+struct CurrentEntry(Option<EntryState>);
+
+impl CurrentEntry {
+    pub fn is_none(&self) -> bool {
+        self.0.is_none()
+    }
+
+    pub fn received_announce_entries(
+        &mut self,
+        target: TargetId,
+        count: u64,
+    ) -> Result<Option<TargetId>, Error> {
+        if self.0.is_some() {
+            return Err(Error::InvalidMessageInCurrentState);
+        }
+        if let Some(count) = NonZeroU64::new(count) {
+            self.0 = Some(EntryState {
+                target,
+                remaining: Some(count),
+                payload: CurrentPayload::default(),
+            });
+            Ok(None)
+        } else {
+            Ok(Some(target))
+        }
+    }
+
+    pub fn received_entry(
+        &mut self,
+        payload_digest: PayloadDigest,
+        expected_length: u64,
+    ) -> Result<(), Error> {
+        let state = self.get_mut()?;
+        state.payload.ensure_none()?;
+        state.remaining = match state.remaining.take() {
+            None => return Err(Error::InvalidMessageInCurrentState),
+            Some(c) => NonZeroU64::new(c.get().saturating_sub(1)),
+        };
+        state.payload.set(payload_digest, expected_length)?;
         Ok(())
     }
 
-    async fn initiate(&mut self, target_id: TargetId) -> Result<(), Error> {
-        let target = self.targets.get(&target_id)?;
-        let range = target.area.into_range();
-        let fingerprint = self.snapshot.fingerprint(target.namespace, &range)?;
-        self.send_fingerprint(target_id, range, fingerprint, None)
+    pub async fn received_send_payload<P: PayloadStore>(
+        &mut self,
+        store: &P,
+        bytes: Bytes,
+    ) -> Result<(), Error> {
+        self.get_mut()?.payload.recv_chunk(store, bytes).await?;
+        Ok(())
+    }
+
+    pub async fn received_terminate_payload(&mut self) -> Result<Option<TargetId>, Error> {
+        let s = self.get_mut()?;
+        s.payload.finalize().await?;
+        if s.remaining.is_none() {
+            let target_id = s.target;
+            self.0 = None;
+            Ok(Some(target_id))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_mut(&mut self) -> Result<&mut EntryState, Error> {
+        match self.0.as_mut() {
+            Some(s) => Ok(s),
+            None => Err(Error::InvalidMessageInCurrentState),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct EntryState {
+    target: TargetId,
+    remaining: Option<NonZeroU64>,
+    payload: CurrentPayload,
+}
+
+#[derive(Debug)]
+struct Shared<S: Storage> {
+    store: Store<S>,
+    our_role: Role,
+    send: ChannelSenders,
+    static_tokens: StaticTokens,
+    session_id: SessionId,
+}
+
+#[derive(Debug)]
+struct Target<S: Storage> {
+    snapshot: <S::Entries as EntryStorage>::Snapshot,
+
+    our_handle: AreaOfInterestHandle,
+    their_handle: AreaOfInterestHandle,
+    namespace: NamespaceId,
+    area: Area,
+
+    our_uncovered_ranges: HashSet<u64>,
+    started: bool,
+
+    our_range_counter: u64,
+    their_range_counter: u64,
+}
+
+impl<S: Storage> Target<S> {
+    fn id(&self) -> TargetId {
+        (self.our_handle, self.their_handle)
+    }
+    async fn init(
+        snapshot: <S::Entries as EntryStorage>::Snapshot,
+        shared: &Shared<S>,
+        intersection: AoiIntersection,
+    ) -> Result<Self, Error> {
+        let mut this = Target {
+            snapshot,
+            our_handle: intersection.our_handle,
+            their_handle: intersection.their_handle,
+            namespace: intersection.namespace,
+            area: intersection.intersection,
+            our_uncovered_ranges: Default::default(),
+            started: false,
+            our_range_counter: 0,
+            their_range_counter: 0,
+        };
+        if shared.our_role == Role::Alfie {
+            this.initiate(shared).await?;
+        }
+        Ok(this)
+    }
+
+    async fn initiate(&mut self, shared: &Shared<S>) -> Result<(), Error> {
+        let range = self.area.into_range();
+        let fingerprint = self.snapshot.fingerprint(self.namespace, &range)?;
+        self.send_fingerprint(shared, range, fingerprint, None)
             .await?;
         Ok(())
     }
 
+    pub fn is_complete(&self) -> bool {
+        self.started && self.our_uncovered_ranges.is_empty()
+    }
+
     async fn received_send_fingerprint(
         &mut self,
+        shared: &Shared<S>,
         message: ReconciliationSendFingerprint,
     ) -> Result<(), Error> {
+        if let Some(range_count) = message.covers {
+            self.mark_our_range_covered(range_count)?;
+        }
         let range_count = self.next_range_count_theirs();
 
-        let target_id = (message.receiver_handle, message.sender_handle);
-        let target = self.targets.get_eventually(target_id).await?;
-        let namespace = target.namespace;
-
-        if let Some(range_count) = message.covers {
-            target.mark_our_range_covered(range_count)?;
-        }
-
-        let our_fingerprint = self.snapshot.fingerprint(namespace, &message.range)?;
+        let our_fingerprint = self.snapshot.fingerprint(self.namespace, &message.range)?;
 
         // case 1: fingerprint match.
         if our_fingerprint == message.fingerprint {
@@ -270,30 +407,21 @@ impl<S: Storage> Reconciler<S> {
                 receiver_handle: message.sender_handle,
                 covers: Some(range_count),
             };
-            self.send(reply).await?;
+            shared.send.send(reply).await?;
         }
         // case 2: fingerprint is empty
         else if message.fingerprint.is_empty() {
-            self.announce_and_send_entries(
-                target_id,
-                namespace,
-                &message.range,
-                true,
-                Some(range_count),
-                None,
-            )
-            .await?;
+            self.announce_and_send_entries(shared, &message.range, true, Some(range_count), None)
+                .await?;
         }
         // case 3: fingerprint doesn't match and is non-empty
         else {
             // reply by splitting the range into parts unless it is very short
-            // self.split_range_and_send_parts(target_id, namespace, &message.range, range_count)
-            //     .await?;
             // TODO: Expose
             let split_opts = SplitOpts::default();
             let snapshot = self.snapshot.clone();
             let mut iter = snapshot
-                .split_range(namespace, &message.range, &split_opts)?
+                .split_range(self.namespace, &message.range, &split_opts)?
                 .peekable();
             while let Some(res) = iter.next() {
                 let (subrange, action) = res?;
@@ -302,8 +430,7 @@ impl<S: Storage> Reconciler<S> {
                 match action {
                     SplitAction::SendEntries(count) => {
                         self.announce_and_send_entries(
-                            target_id,
-                            namespace,
+                            shared,
                             &subrange,
                             true,
                             covers,
@@ -312,7 +439,7 @@ impl<S: Storage> Reconciler<S> {
                         .await?;
                     }
                     SplitAction::SendFingerprint(fingerprint) => {
-                        self.send_fingerprint(target_id, subrange, fingerprint, covers)
+                        self.send_fingerprint(shared, subrange, fingerprint, covers)
                             .await?;
                     }
                 }
@@ -321,112 +448,47 @@ impl<S: Storage> Reconciler<S> {
 
         Ok(())
     }
+
     async fn received_announce_entries(
         &mut self,
+        shared: &Shared<S>,
         message: ReconciliationAnnounceEntries,
     ) -> Result<(), Error> {
-        trace!("received_announce_entries start");
-        self.current_payload.assert_inactive()?;
-        if self.pending_announced_entries.is_some() {
-            return Err(Error::InvalidMessageInCurrentState);
-        }
-
-        let target_id = (message.receiver_handle, message.sender_handle);
-        let target = self.targets.get_eventually(target_id).await?;
-        let namespace = target.namespace;
-
         if let Some(range_count) = message.covers {
-            target.mark_our_range_covered(range_count)?;
-        }
-
-        if let Some(c) = NonZeroU64::new(message.count) {
-            self.pending_announced_entries = Some(c);
+            self.mark_our_range_covered(range_count)?;
         }
 
         if message.want_response {
             let range_count = self.next_range_count_theirs();
-            self.announce_and_send_entries(
-                target_id,
-                namespace,
-                &message.range,
-                false,
-                Some(range_count),
-                None,
-            )
-            .await?;
+            self.announce_and_send_entries(shared, &message.range, false, Some(range_count), None)
+                .await?;
         }
         trace!("received_announce_entries done");
         Ok(())
     }
 
-    fn decrement_pending_announced_entries(&mut self) -> Result<(), Error> {
-        self.pending_announced_entries = match self.pending_announced_entries.take() {
-            None => return Err(Error::InvalidMessageInCurrentState),
-            Some(c) => NonZeroU64::new(c.get().saturating_sub(1)),
-        };
-        Ok(())
-    }
-
-    async fn received_send_entry(&mut self, message: ReconciliationSendEntry) -> Result<(), Error> {
-        self.current_payload.assert_inactive()?;
-        self.decrement_pending_announced_entries()?;
-        let authorised_entry = self
-            .static_tokens
-            .authorise_entry_eventually(
-                message.entry.entry.clone(),
-                message.static_token_handle,
-                message.dynamic_token,
-            )
-            .await?;
-        self.store
-            .entries()
-            .ingest(&authorised_entry, Origin::Remote(self.session_id))?;
-        self.current_payload
-            .set(message.entry.entry, Some(message.entry.available))?;
-        Ok(())
-    }
-
-    async fn received_send_payload(
-        &mut self,
-        message: ReconciliationSendPayload,
-    ) -> Result<(), Error> {
-        self.current_payload
-            .recv_chunk(self.store.payloads(), message.bytes)
-            .await?;
-        Ok(())
-    }
-
-    async fn received_terminate_payload(
-        &mut self,
-        _message: ReconciliationTerminatePayload,
-    ) -> Result<(), Error> {
-        self.current_payload.finalize().await?;
-        Ok(())
-    }
-
     async fn send_fingerprint(
         &mut self,
-        target_id: TargetId,
+        shared: &Shared<S>,
         range: ThreeDRange,
         fingerprint: Fingerprint,
         covers: Option<u64>,
     ) -> anyhow::Result<()> {
+        self.mark_our_next_range_pending();
         let msg = ReconciliationSendFingerprint {
             range,
             fingerprint,
-            sender_handle: target_id.0,
-            receiver_handle: target_id.1,
+            sender_handle: self.our_handle,
+            receiver_handle: self.their_handle,
             covers,
         };
-        self.send(msg).await?;
+        shared.send.send(msg).await?;
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn announce_and_send_entries(
         &mut self,
-        target_id: TargetId,
-        namespace: NamespaceId,
+        shared: &Shared<S>,
         range: &ThreeDRange,
         want_response: bool,
         covers: Option<u64>,
@@ -434,29 +496,34 @@ impl<S: Storage> Reconciler<S> {
     ) -> Result<(), Error> {
         let our_entry_count = match our_entry_count {
             Some(count) => count,
-            None => self.snapshot.count(namespace, range)?,
+            None => self.snapshot.count(self.namespace, range)?,
         };
         let msg = ReconciliationAnnounceEntries {
             range: range.clone(),
             count: our_entry_count,
             want_response,
             will_sort: false, // todo: sorted?
-            sender_handle: target_id.0,
-            receiver_handle: target_id.1,
+            sender_handle: self.our_handle,
+            receiver_handle: self.their_handle,
             covers,
         };
+        if want_response {
+            self.mark_our_next_range_pending();
+        }
+        shared.send.send(msg).await?;
 
-        self.send(msg).await?;
-        let snapshot = self.snapshot.clone();
-        for authorised_entry in snapshot.get_entries_with_authorisation(namespace, range) {
+        for authorised_entry in self
+            .snapshot
+            .get_entries_with_authorisation(self.namespace, range)
+        {
             let authorised_entry = authorised_entry?;
             let (entry, token) = authorised_entry.into_parts();
             let (static_token, dynamic_token) = token.into_parts();
             // TODO: partial payloads
             let available = entry.payload_length;
-            let static_token_handle = self
+            let static_token_handle = shared
                 .static_tokens
-                .bind_and_send_ours(static_token, &self.send)
+                .bind_and_send_ours(static_token, &shared.send)
                 .await?;
             let digest = entry.payload_digest;
             let msg = ReconciliationSendEntry {
@@ -464,7 +531,7 @@ impl<S: Storage> Reconciler<S> {
                 static_token_handle,
                 dynamic_token,
             };
-            self.send(msg).await?;
+            shared.send.send(msg).await?;
 
             // TODO: only send payload if configured to do so and/or under size limit.
             let send_payloads = true;
@@ -472,38 +539,34 @@ impl<S: Storage> Reconciler<S> {
             if send_payloads
                 && send_payload_chunked(
                     digest,
-                    self.store.payloads(),
-                    &self.send,
+                    shared.store.payloads(),
+                    &shared.send,
                     chunk_size,
                     |bytes| ReconciliationSendPayload { bytes }.into(),
                 )
                 .await?
             {
                 let msg = ReconciliationTerminatePayload;
-                self.send(msg).await?;
+                shared.send.send(msg).await?;
             }
         }
         Ok(())
     }
 
-    async fn send(&mut self, message: impl Into<ReconciliationMessage>) -> Result<(), Error> {
-        let message: ReconciliationMessage = message.into();
-        let want_response = match &message {
-            ReconciliationMessage::SendFingerprint(msg) => {
-                Some((msg.sender_handle, msg.receiver_handle))
-            }
-            ReconciliationMessage::AnnounceEntries(msg) if msg.want_response => {
-                Some((msg.sender_handle, msg.receiver_handle))
-            }
-            _ => None,
-        };
-        if let Some(target_id) = want_response {
-            let range_count = self.next_range_count_ours();
-            let target = self.targets.get_mut(&target_id)?;
-            target.mark_our_range_pending(range_count);
+    fn mark_our_next_range_pending(&mut self) {
+        let range_count = self.next_range_count_ours();
+        self.started = true;
+        self.our_uncovered_ranges.insert(range_count);
+    }
+
+    fn mark_our_range_covered(&mut self, range_count: u64) -> Result<(), Error> {
+        if !self.our_uncovered_ranges.remove(&range_count) {
+            Err(Error::InvalidState(
+                "attempted to mark an unknown range as covered",
+            ))
+        } else {
+            Ok(())
         }
-        self.send.send(message).await?;
-        Ok(())
     }
 
     fn next_range_count_ours(&mut self) -> u64 {
