@@ -2620,6 +2620,7 @@ dependencies = [
  "postcard",
  "quic-rpc",
  "rand",
+ "rand_xorshift",
  "ratatui",
  "regex",
  "reqwest 0.12.5",
