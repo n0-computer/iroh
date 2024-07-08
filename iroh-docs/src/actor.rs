@@ -547,6 +547,15 @@ impl SyncHandle {
         rx.await?
     }
 
+    /// Makes sure that all pending database operations are persisted to disk.
+    ///
+    /// Otherwise, database operations are batched into bigger transactions for speed.
+    /// Use this if you need to make sure something is written to the database
+    /// before another operation, e.g. to make sure sudden process exits don't corrupt
+    /// your application state.
+    ///
+    /// It's not necessary to call this function before shutdown, as `shutdown` will
+    /// trigger a flush on its own.
     pub async fn flush_store(&self) -> Result<()> {
         let (reply, rx) = oneshot::channel();
         self.send(Action::FlushStore { reply }).await?;
