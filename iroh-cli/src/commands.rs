@@ -17,6 +17,7 @@ pub(crate) mod blob;
 pub(crate) mod console;
 pub(crate) mod doc;
 pub(crate) mod doctor;
+pub(crate) mod gossip;
 pub(crate) mod node;
 pub(crate) mod rpc;
 pub(crate) mod start;
@@ -122,7 +123,7 @@ impl Cli {
             Commands::Console => {
                 let data_dir_owned = data_dir.to_owned();
                 if self.start {
-                    let config = NodeConfig::load(self.config.as_deref()).await?;
+                    let config = Self::load_config(self.config, self.metrics_port).await?;
                     start::run_with_command(
                         &config,
                         data_dir,
@@ -148,7 +149,7 @@ impl Cli {
             Commands::Rpc(command) => {
                 let data_dir_owned = data_dir.to_owned();
                 if self.start {
-                    let config = NodeConfig::load(self.config.as_deref()).await?;
+                    let config = Self::load_config(self.config, self.metrics_port).await?;
                     start::run_with_command(
                         &config,
                         data_dir,
@@ -180,13 +181,7 @@ impl Cli {
                         path.display()
                     );
                 }
-                let mut config = NodeConfig::load(self.config.as_deref()).await?;
-                if let Some(metrics_port) = self.metrics_port {
-                    config.metrics_addr = match metrics_port {
-                        MetricsPort::Disabled => None,
-                        MetricsPort::Port(port) => Some(([127, 0, 0, 1], port).into()),
-                    };
-                }
+                let config = Self::load_config(self.config, self.metrics_port).await?;
 
                 let add_command = add.map(|source| blob::BlobCommands::Add {
                     source,
@@ -208,15 +203,23 @@ impl Cli {
                 .await
             }
             Commands::Doctor { command } => {
-                let mut config = NodeConfig::load(self.config.as_deref()).await?;
-                if let Some(metrics_port) = self.metrics_port {
-                    config.metrics_addr = match metrics_port {
-                        MetricsPort::Disabled => None,
-                        MetricsPort::Port(port) => Some(([127, 0, 0, 1], port).into()),
-                    };
-                }
+                let config = Self::load_config(self.config, self.metrics_port).await?;
                 self::doctor::run(command, &config).await
             }
         }
+    }
+
+    async fn load_config(
+        config: Option<PathBuf>,
+        metrics_port: Option<MetricsPort>,
+    ) -> Result<NodeConfig> {
+        let mut config = NodeConfig::load(config.as_deref()).await?;
+        if let Some(metrics_port) = metrics_port {
+            config.metrics_addr = match metrics_port {
+                MetricsPort::Disabled => None,
+                MetricsPort::Port(port) => Some(([127, 0, 0, 1], port).into()),
+            };
+        }
+        Ok(config)
     }
 }

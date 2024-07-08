@@ -1,6 +1,38 @@
 //! Node API
 //!
-//! A node is a server that serves various protocols.
+//! An iroh node is a server that is identified by an Ed25519 keypair and is
+//! globally reachable via the [node id](crate::net::NodeId), which is the
+//! public key of the keypair.
+//!
+//! By default, an iroh node speaks a number of built-in protocols. You can
+//! *extend* the node with custom protocols or *disable* built-in protocols.
+//!
+//! # Building a node
+//!
+//! Nodes get created using the [`Builder`] which provides a very powerful API
+//! to configure every aspect of the node.
+//!
+//! When using the default set of protocols, use [spawn](Builder::spawn)
+//! to spawn a node directly from the builder.
+//!
+//! When adding custom protocols, use [build](Builder::build) to get a
+//! [`ProtocolBuilder`] that allows to add custom protocols, then call
+//! [spawn](ProtocolBuilder::spawn) to spawn the fully configured node.
+//!
+//! To implement a custom protocol, implement the [`ProtocolHandler`] trait
+//! and use [`ProtocolBuilder::accept`] to add it to the node.
+//!
+//! # Using a node
+//!
+//! Once created, a node offers a small number of methods to interact with it,
+//! most notably the iroh-net [endpoint](Node::endpoint) it is bound to.
+//!
+//! The main way to interact with a node is through the
+//! [`client`](crate::client::Iroh).
+//!
+//! (The Node implements [Deref](std::ops::Deref) for client, which means that
+//! methods defined on [Client](crate::client::Iroh) can be called on Node as
+//! well, without going through [`client`](crate::client::Iroh))
 //!
 //! To shut down the node, call [`Node::shutdown`].
 use std::path::Path;
@@ -13,20 +45,19 @@ use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
 use iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store as BaoStore};
 use iroh_blobs::{downloader::Downloader, protocol::Closed};
+use iroh_gossip::dispatcher::GossipDispatcher;
 use iroh_gossip::net::Gossip;
 use iroh_net::key::SecretKey;
 use iroh_net::Endpoint;
 use iroh_net::{endpoint::DirectAddrsStream, util::SharedAbortingJoinHandle};
-use quic_rpc::{RpcServer, ServiceEndpoint};
+use quic_rpc::transport::ServerEndpoint as _;
+use quic_rpc::RpcServer;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    client::RpcService,
-    node::{docs::DocsEngine, protocol::ProtocolMap},
-};
+use crate::node::{docs::DocsEngine, protocol::ProtocolMap};
 
 mod builder;
 mod docs;
@@ -35,10 +66,19 @@ mod rpc;
 mod rpc_status;
 
 pub use self::builder::{
-    Builder, DiscoveryConfig, DocsStorage, GcPolicy, StorageConfig, DEFAULT_RPC_ADDR,
+    Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,
+    DEFAULT_RPC_ADDR,
 };
 pub use self::rpc_status::RpcStatus;
 pub use protocol::ProtocolHandler;
+
+/// The quic-rpc server endpoint for the iroh node.
+///
+/// We use a boxed endpoint here to allow having a concrete type for the server endpoint.
+pub type IrohServerEndpoint = quic_rpc::transport::boxed::ServerEndpoint<
+    crate::rpc_protocol::Request,
+    crate::rpc_protocol::Response,
+>;
 
 /// A server which implements the iroh node.
 ///
@@ -70,6 +110,7 @@ struct NodeInner<D> {
     #[debug("rt")]
     rt: LocalPoolHandle,
     downloader: Downloader,
+    gossip_dispatcher: GossipDispatcher,
 }
 
 /// In memory node.
@@ -211,8 +252,8 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
 
     async fn run(
         self: Arc<Self>,
-        external_rpc: impl ServiceEndpoint<RpcService>,
-        internal_rpc: impl ServiceEndpoint<RpcService>,
+        external_rpc: IrohServerEndpoint,
+        internal_rpc: IrohServerEndpoint,
         protocols: Arc<ProtocolMap>,
         gc_policy: GcPolicy,
         gc_done_callback: Option<Box<dyn Fn() + Send>>,

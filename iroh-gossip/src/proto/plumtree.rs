@@ -84,7 +84,7 @@ pub enum Event<PI> {
     Received(GossipEvent<PI>),
 }
 
-#[derive(Clone, derive_more::Debug, PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Clone, derive_more::Debug, PartialEq, Eq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct GossipEvent<PI> {
     /// The content of the gossip message.
     #[debug("<{}b>", content.len())]
