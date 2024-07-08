@@ -4,7 +4,7 @@ use crate::config::NodeConfig;
 use anyhow::Result;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use iroh::node::Node;
+use iroh::node::{Node, DEFAULT_RPC_ADDR};
 use iroh::{
     net::relay::{RelayMap, RelayMode},
     node::RpcStatus,
@@ -29,6 +29,7 @@ pub struct AlreadyRunningError(u16);
 pub async fn run_with_command<F, T>(
     config: &NodeConfig,
     iroh_data_root: &Path,
+    rpc_addr: Option<SocketAddr>,
     run_type: RunType,
     command: F,
 ) -> Result<()>
@@ -39,7 +40,7 @@ where
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, iroh_data_root)?;
     let metrics_fut = start_metrics_server(config.metrics_addr);
 
-    let res = run_with_command_inner(config, iroh_data_root, run_type, command).await;
+    let res = run_with_command_inner(config, iroh_data_root, rpc_addr, run_type, command).await;
 
     if let Some(metrics_fut) = metrics_fut {
         metrics_fut.abort();
@@ -64,6 +65,7 @@ where
 async fn run_with_command_inner<F, T>(
     config: &NodeConfig,
     iroh_data_root: &Path,
+    rpc_addr: Option<SocketAddr>,
     run_type: RunType,
     command: F,
 ) -> Result<()>
@@ -74,7 +76,7 @@ where
     let relay_map = config.relay_map()?;
 
     let spinner = create_spinner("Iroh booting...");
-    let node = start_node(iroh_data_root, relay_map).await?;
+    let node = start_node(iroh_data_root, rpc_addr, relay_map).await?;
     drop(spinner);
 
     eprintln!("{}", welcome_message(&node)?);
@@ -115,6 +117,7 @@ where
 
 pub(crate) async fn start_node(
     iroh_data_root: &Path,
+    rpc_addr: Option<SocketAddr>,
     relay_map: Option<RelayMap>,
 ) -> Result<Node<iroh::blobs::store::fs::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root).await?;
@@ -132,10 +135,11 @@ pub(crate) async fn start_node(
         Some(relay_map) => RelayMode::Custom(relay_map),
     };
 
+    let rpc_addr = rpc_addr.unwrap_or(DEFAULT_RPC_ADDR);
     Node::persistent(iroh_data_root)
         .await?
         .relay_mode(relay_mode)
-        .enable_rpc()
+        .enable_rpc_with_addr(rpc_addr)
         .await?
         .spawn()
         .await
@@ -204,6 +208,7 @@ mod tests {
             run_with_command(
                 &NodeConfig::default(),
                 &data_dir_path,
+                None,
                 RunType::SingleCommandAbortable,
                 |_| async move {
                     // inform the test the node is booted up
@@ -236,6 +241,7 @@ mod tests {
         if run_with_command(
             &NodeConfig::default(),
             data_dir.path(),
+            None,
             RunType::SingleCommandAbortable,
             |_| async move { Ok(()) },
         )
