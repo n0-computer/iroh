@@ -7,7 +7,6 @@ use std::{
     num::NonZeroU64,
     ops::Bound,
     path::Path,
-    time::Duration,
 };
 
 use anyhow::{anyhow, Result};
@@ -17,6 +16,7 @@ use rand_core::CryptoRngCore;
 use redb::{Database, DatabaseError, ReadableMultimapTable, ReadableTable, ReadableTableMetadata};
 
 use crate::{
+    actor::MAX_COMMIT_DELAY,
     keys::Author,
     ranger::{Fingerprint, Range, RangeEntry},
     sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
@@ -188,7 +188,7 @@ impl Store {
                 TransactionAndTables::new(tx)?
             }
             CurrentTransaction::Write(w) => {
-                if w.since.elapsed() > Duration::from_millis(500) {
+                if w.since.elapsed() > MAX_COMMIT_DELAY {
                     tracing::debug!("committing transaction because it's too old");
                     w.commit()?;
                     let tx = self.db.begin_write()?;
@@ -225,7 +225,7 @@ impl Store {
                 TransactionAndTables::new(tx)?
             }
             CurrentTransaction::Write(w) => {
-                if w.since.elapsed() > Duration::from_millis(500) {
+                if w.since.elapsed() > MAX_COMMIT_DELAY {
                     tracing::debug!("committing transaction because it's too old");
                     w.commit()?;
                     let tx = self.db.begin_write()?;
