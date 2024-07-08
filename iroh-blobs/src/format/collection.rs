@@ -177,7 +177,7 @@ impl Collection {
             meta.names.len() + 1 == hs.len(),
             "names and links length mismatch"
         );
-        Ok(Self::from_parts(hs.into_iter(), meta))
+        Ok(Self::from_parts(hs.into_iter().skip(1), meta))
     }
 
     /// Load a collection from a store given a root hash
