@@ -15,17 +15,27 @@ use iroh::{
     blobs::{Hash, HashAndFormat},
     util::path::IrohPaths,
 };
-use rand::distributions::{Alphanumeric, DistString};
-use rand::SeedableRng;
+use rand::{RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
 use walkdir::WalkDir;
 
 fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(1);
-    let content = Alphanumeric.sample_string(&mut rng, size);
+    // 64 chars makes for easy random sampling
+    const CHARS_LUT: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
+        abcdefghijklmnopqrstuvwxyz\
+        0123456789 .";
 
-    let hash = blake3::hash(content.as_bytes());
+    // We do something custom to eek out a little bit more performance
+    // over just a simple `rand::distributions::Alphanumeric.sample_string`.
+    let mut rng = rand_xorshift::XorShiftRng::seed_from_u64(1);
+    let content = std::iter::from_fn(move || Some(rng.next_u32()))
+        .flat_map(u32::to_le_bytes)
+        .map(|num| CHARS_LUT[(num >> (8 - 6)) as usize])
+        .take(size)
+        .collect::<Vec<_>>();
+
+    let hash = blake3::hash(&content);
     std::fs::write(path, content)?;
     Ok(hash.into())
 }
