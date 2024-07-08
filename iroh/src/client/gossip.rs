@@ -19,7 +19,7 @@ use iroh_gossip::proto::TopicId;
 use iroh_net::NodeId;
 use ref_cast::RefCast;
 
-use crate::rpc_protocol::gossip::{SubscribeRequest, SubscribeResponse, SubscribeUpdate};
+pub use crate::rpc_protocol::gossip::{SubscribeRequest, SubscribeResponse, SubscribeUpdate};
 
 use super::RpcClient;
 
