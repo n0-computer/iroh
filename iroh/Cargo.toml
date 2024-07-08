@@ -30,7 +30,7 @@ iroh-blobs = { version = "0.19.0", path = "../iroh-blobs", features = ["download
 iroh-base = { version = "0.19.0", path = "../iroh-base", features = ["key"] }
 iroh-io = { version = "0.6.0", features = ["stats"] }
 iroh-metrics = { version = "0.19.0", path = "../iroh-metrics", optional = true }
-iroh-net = { version = "0.19.0", path = "../iroh-net" }
+iroh-net = { version = "0.19.0", path = "../iroh-net", features = ["local_swarm_discovery"] }
 nested_enum_utils = "0.1.0"
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
@@ -55,6 +55,7 @@ walkdir = "2"
 clap = { version = "4", features = ["derive"], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 ref-cast = "1.0.23"
+console = { version = "0.15.5", optional = true }
 
 [features]
 default = ["metrics", "fs-store"]
@@ -62,6 +63,7 @@ metrics = ["iroh-metrics", "iroh-blobs/metrics"]
 fs-store = ["iroh-blobs/fs-store"]
 test = []
 examples = ["dep:clap", "dep:indicatif"]
+local_swarm_discovery = ["iroh-net/local_swarm_discovery", "examples", "dep:console"]
 test-utils = ["iroh-net/test-utils"]
 
 [dev-dependencies]
@@ -108,3 +110,7 @@ required-features = ["examples"]
 [[example]]
 name = "custom-protocol"
 required-features = ["examples"]
+
+[[example]]
+name = "local_swarm_discovery"
+required-features = ["local_swarm_discovery"]

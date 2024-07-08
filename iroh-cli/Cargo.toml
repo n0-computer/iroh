@@ -69,6 +69,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 duct = "0.13.6"
 nix = { version = "0.27", features = ["signal", "process"] }
+rand_xorshift = "0.3.0"
 regex = "1.10.3"
 testdir = "0.9.1"
 walkdir = "2"
