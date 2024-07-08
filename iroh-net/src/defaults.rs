@@ -27,11 +27,17 @@ pub mod prod {
     pub const NA_RELAY_HOSTNAME: &str = "use1-1.relay.iroh.network.";
     /// Hostname of the default EU relay.
     pub const EU_RELAY_HOSTNAME: &str = "euw1-1.relay.iroh.network.";
+    /// Hostname of the default Asia-Pacific relay.
+    pub const AP_RELAY_HOSTNAME: &str = "aps1-1.relay.iroh.network.";
 
     /// Get the default [`RelayMap`].
     pub fn default_relay_map() -> RelayMap {
-        RelayMap::from_nodes([default_na_relay_node(), default_eu_relay_node()])
-            .expect("default nodes invalid")
+        RelayMap::from_nodes([
+            default_na_relay_node(),
+            default_eu_relay_node(),
+            default_ap_relay_node(),
+        ])
+        .expect("default nodes invalid")
     }
 
     /// Get the default [`RelayNode`] for NA.
@@ -59,11 +65,26 @@ pub mod prod {
             stun_port: DEFAULT_STUN_PORT,
         }
     }
+
+    /// Get the default [`RelayNode`] for Asia-Pacific
+    pub fn default_ap_relay_node() -> RelayNode {
+        // The default Asia-Pacific relay server run by number0.
+        let url: Url = format!("https://{AP_RELAY_HOSTNAME}")
+            .parse()
+            .expect("default_url");
+        RelayNode {
+            url: url.into(),
+            stun_only: false,
+            stun_port: DEFAULT_STUN_PORT,
+        }
+    }
 }
 
 /// Staging configuration.
 ///
 /// Used by tests and might have incompatible changes deployed
+///
+/// Note: we have staging servers in EU and NA, but no corresponding staging server for AP at this time.
 pub mod staging {
     use super::*;
 

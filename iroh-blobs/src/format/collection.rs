@@ -177,7 +177,7 @@ impl Collection {
             meta.names.len() + 1 == hs.len(),
             "names and links length mismatch"
         );
-        Ok(Self::from_parts(hs.into_iter(), meta))
+        Ok(Self::from_parts(hs.into_iter().skip(1), meta))
     }
 
     /// Load a collection from a store given a root hash
@@ -304,5 +304,44 @@ mod tests {
         postcard::to_slice(&expected, &mut buf).unwrap();
         let actual: CollectionMeta = postcard::from_bytes(&buf).unwrap();
         assert_eq!(expected, actual);
+    }
+
+    #[tokio::test]
+    async fn collection_store_load() -> testresult::TestResult {
+        let collection = (0..3)
+            .map(|i| {
+                (
+                    format!("blob{}", i),
+                    crate::Hash::from(blake3::hash(&[i as u8])),
+                )
+            })
+            .collect::<Collection>();
+        let mut root = None;
+        let store = collection
+            .to_blobs()
+            .map(|data| {
+                let hash = crate::Hash::from(blake3::hash(&data));
+                root = Some(hash);
+                (hash, data)
+            })
+            .collect::<TestStore>();
+        let collection2 = Collection::load(root.unwrap(), &store).await?;
+        assert_eq!(collection, collection2);
+        Ok(())
+    }
+
+    /// An implementation of a [SimpleStore] for testing
+    struct TestStore(BTreeMap<Hash, Bytes>);
+
+    impl FromIterator<(Hash, Bytes)> for TestStore {
+        fn from_iter<T: IntoIterator<Item = (Hash, Bytes)>>(iter: T) -> Self {
+            Self(iter.into_iter().collect())
+        }
+    }
+
+    impl SimpleStore for TestStore {
+        async fn load(&self, hash: Hash) -> anyhow::Result<Bytes> {
+            self.0.get(&hash).cloned().context("not found")
+        }
     }
 }

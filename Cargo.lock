@@ -2578,6 +2578,7 @@ dependencies = [
  "serde_test",
  "smallvec",
  "tempfile",
+ "testresult",
  "thiserror",
  "tokio",
  "tokio-util",

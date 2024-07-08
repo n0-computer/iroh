@@ -22,8 +22,10 @@ use crate::{
     AddrInfo, Endpoint, NodeId,
 };
 
-/// The pkarr relay run by n0.
-pub const N0_DNS_PKARR_RELAY: &str = "https://dns.iroh.link/pkarr";
+/// The pkarr relay run by n0, for production.
+pub const N0_DNS_PKARR_RELAY_PROD: &str = "https://dns.iroh.link/pkarr";
+/// The pkarr relay run by n0, for testing.
+pub const N0_DNS_PKARR_RELAY_STAGING: &str = "https://staging-dns.iroh.link/pkarr";
 
 /// Default TTL for the records in the pkarr signed packet. TTL tells DNS caches
 /// how long to store a record. It is ignored by the iroh-dns-server as the home
@@ -67,6 +69,7 @@ impl PkarrPublisher {
         ttl: u32,
         republish_interval: std::time::Duration,
     ) -> Self {
+        debug!("creating pkarr publisher that publishes to {pkarr_relay}");
         let node_id = secret_key.public();
         let pkarr_client = PkarrRelayClient::new(pkarr_relay);
         let watchable = Watchable::default();
@@ -89,9 +92,15 @@ impl PkarrPublisher {
         }
     }
 
-    /// Create a config that publishes to the n0 dns server through [`N0_DNS_PKARR_RELAY`].
+    /// Create a pkarr publisher which uses the [`N0_DNS_PKARR_RELAY_PROD`] pkarr relay and in testing
+    /// uses [`N0_DNS_PKARR_RELAY_STAGING`].
     pub fn n0_dns(secret_key: SecretKey) -> Self {
-        let pkarr_relay: Url = N0_DNS_PKARR_RELAY.parse().expect("url is valid");
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let pkarr_relay = N0_DNS_PKARR_RELAY_PROD;
+        #[cfg(any(test, feature = "test-utils"))]
+        let pkarr_relay = N0_DNS_PKARR_RELAY_STAGING;
+
+        let pkarr_relay: Url = pkarr_relay.parse().expect("url is valid");
         Self::new(secret_key, pkarr_relay)
     }
 
@@ -203,9 +212,15 @@ impl PkarrResolver {
         }
     }
 
-    /// Create a config that resolves using the n0 dns server through [`N0_DNS_PKARR_RELAY`].
+    /// Create a pkarr resolver which uses the [`N0_DNS_PKARR_RELAY_PROD`] pkarr relay and in testing
+    /// uses [`N0_DNS_PKARR_RELAY_STAGING`].
     pub fn n0_dns() -> Self {
-        let pkarr_relay: Url = N0_DNS_PKARR_RELAY.parse().expect("url is valid");
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let pkarr_relay = N0_DNS_PKARR_RELAY_PROD;
+        #[cfg(any(test, feature = "test-utils"))]
+        let pkarr_relay = N0_DNS_PKARR_RELAY_STAGING;
+
+        let pkarr_relay: Url = pkarr_relay.parse().expect("url is valid");
         Self::new(pkarr_relay)
     }
 }
