@@ -904,7 +904,7 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<Vec<(usize, Vec<String>)>> {
             (r"", 1),
             (r"Fetching: [\da-z]{52}", 1),
             (
-                r"Transferred (\d*.?\d*? ?[BKMGT]i?B?) in \d* seconds?, \d*.?\d* ?(?:B|KiB|MiB|GiB|TiB)/s",
+                r"Transferred (\d*.?\d*? ?[BKMGT]i?B?) in \d* (second|minute)s?, \d*.?\d* ?(?:B|KiB|MiB|GiB|TiB)/s",
                 1,
             ),
         ],
