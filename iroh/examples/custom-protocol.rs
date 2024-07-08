@@ -25,8 +25,10 @@
 //!
 //! Replace <node-id> with the node id from above. This will connect to the listening node with our
 //! custom protocol and query for the string `hello`. The listening node will return a list of
-//! hashes that contain `hello`. We will then download all these hashes with iroh-blobs, and then
-//! print a list of the hashes with their content. For this example, this will print
+//! blob hashes that contain `hello`. We will then download all these blobs with iroh-blobs,
+//! and then print a list of the hashes with their content.
+//!
+//! For this example, this will print:
 //!
 //!     moobakc6gao3ufmk: hello moon
 //!     25eyd35hbigiqc4n: hello world
@@ -90,7 +92,7 @@ async fn main() -> Result<()> {
 
     // Build our custom protocol handler. The `builder` exposes access to various subsystems in the
     // iroh node. In our case, we need a blobs client and the endpoint.
-    let proto = TextSearch::new(builder.client().blobs().clone(), builder.endpoint().clone());
+    let proto = BlobSearch::new(builder.client().blobs().clone(), builder.endpoint().clone());
 
     // Add our protocol, identified by our ALPN, to the node, and spawn the node.
     let node = builder.accept(ALPN, proto.clone()).spawn().await?;
@@ -100,9 +102,9 @@ async fn main() -> Result<()> {
             let node_id = node.node_id();
             println!("our node id: {node_id}");
 
-            // Insert each text argument into our database.
+            // Insert the text strings as blobs and index them.
             for text in text.into_iter() {
-                proto.insert_text(text).await?;
+                proto.insert_and_index(text).await?;
             }
 
             // Wait for Ctrl-C to be pressed.
@@ -127,13 +129,13 @@ async fn main() -> Result<()> {
 }
 
 #[derive(Debug, Clone)]
-struct TextSearch {
+struct BlobSearch {
     blobs: blobs::Client,
     endpoint: Endpoint,
-    db: Arc<Mutex<HashMap<String, Hash>>>,
+    index: Arc<Mutex<HashMap<String, Hash>>>,
 }
 
-impl ProtocolHandler for TextSearch {
+impl ProtocolHandler for BlobSearch {
     /// The `accept` method is called for each incoming connection for our ALPN.
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
@@ -173,13 +175,13 @@ impl ProtocolHandler for TextSearch {
     }
 }
 
-impl TextSearch {
+impl BlobSearch {
     /// Create a new protocol handler.
     pub fn new(blobs: blobs::Client, endpoint: Endpoint) -> Arc<Self> {
         Arc::new(Self {
             blobs,
             endpoint,
-            db: Default::default(),
+            index: Default::default(),
         })
     }
 
@@ -222,7 +224,7 @@ impl TextSearch {
             // Download the content via iroh-blobs.
             self.blobs.download(hash, node_id.into()).await?.await?;
             // Add the blob to our local database.
-            self.index(hash).await?;
+            self.add_to_index(hash).await?;
             out.push(hash);
         }
         Ok(out)
@@ -230,9 +232,9 @@ impl TextSearch {
 
     /// Query the local database.
     ///
-    /// Returns the list of hashes to blobs which contains `query` literally.
-    pub fn query_local(&self, query: &str) -> Vec<Hash> {
-        let db = self.db.lock().unwrap();
+    /// Returns the list of hashes of blobs which contain `query` literally.
+    pub async fn query_local(&self, query: &str) -> Result<Vec<Hash>> {
+        let db = self.index.lock().unwrap();
         db.iter()
             .filter_map(|(text, hash)| text.contains(query).then_some(*hash))
             .collect::<Vec<_>>()
@@ -242,26 +244,27 @@ impl TextSearch {
     ///
     /// This first imports the text as a blob into the iroh blob store, and then inserts a
     /// reference to that hash in our (primitive) text database.
-    pub async fn insert_text(&self, text: String) -> Result<Hash> {
+    pub async fn insert_and_index(&self, text: String) -> Result<Hash> {
         let hash = self.blobs.add_bytes(text.into_bytes()).await?.hash;
-        self.index(hash).await?;
+        self.add_to_index(hash).await?;
         Ok(hash)
     }
 
-    /// Index a hash which is already in our blob store.
+    /// Index a blob which is already in our blob store.
     ///
     /// This only indexes complete blobs that are smaller than 1KiB.
     ///
     /// Returns `true` if the blob was indexed.
-    pub async fn index(&self, hash: Hash) -> Result<bool> {
+    async fn add_to_index(&self, hash: Hash) -> Result<bool> {
         let mut reader = self.blobs.read(hash).await?;
+        // Skip blobs larger than 1KiB.
         if reader.size() > 1024 * 1024 {
             return Ok(false);
         }
         let bytes = reader.read_to_bytes().await?;
         match String::from_utf8(bytes.to_vec()) {
             Ok(text) => {
-                let mut db = self.db.lock().unwrap();
+                let mut db = self.index.lock().unwrap();
                 db.insert(text, hash);
                 Ok(true)
             }
