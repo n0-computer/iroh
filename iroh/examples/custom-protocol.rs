@@ -158,13 +158,13 @@ impl ProtocolHandler for BlobSearch {
 
             // Now, we can perform the actual query on our local database.
             let query = String::from_utf8(query_bytes)?;
-            let results = self.query_local(&query);
+            let hashes = self.query_local(&query);
 
             // We want to return a list of hashes. We do the simplest thing possible, and just send
             // one hash after the other. Because the hashes have a fixed size of 32 bytes, this is
             // very easy to parse on the other end.
-            for result in results {
-                send.write_all(result.as_bytes()).await?;
+            for hash in hashes {
+                send.write_all(hash.as_bytes()).await?;
             }
 
             // By calling `finish` on the send stream we signal that we will not send anything
@@ -233,7 +233,7 @@ impl BlobSearch {
     /// Query the local database.
     ///
     /// Returns the list of hashes of blobs which contain `query` literally.
-    pub async fn query_local(&self, query: &str) -> Result<Vec<Hash>> {
+    pub fn query_local(&self, query: &str) -> Vec<Hash> {
         let db = self.index.lock().unwrap();
         db.iter()
             .filter_map(|(text, hash)| text.contains(query).then_some(*hash))
