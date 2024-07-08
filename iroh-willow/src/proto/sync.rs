@@ -704,6 +704,12 @@ pub struct ReconciliationSendFingerprint {
     pub covers: Option<u64>,
 }
 
+impl ReconciliationSendFingerprint {
+    pub fn handles(&self) -> (AreaOfInterestHandle, AreaOfInterestHandle) {
+        (self.receiver_handle, self.sender_handle)
+    }
+}
+
 /// Prepare transmission of the LengthyEntries a peer has in a 3dRange as part of 3d range-based set reconciliation.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ReconciliationAnnounceEntries {
@@ -723,6 +729,12 @@ pub struct ReconciliationAnnounceEntries {
     /// [`ReconciliationSendFingerprint`] message, then this field contains the range_count of that
     /// [`ReconciliationSendFingerprint`] message. Otherwise, none.
     pub covers: Option<u64>,
+}
+
+impl ReconciliationAnnounceEntries {
+    pub fn handles(&self) -> (AreaOfInterestHandle, AreaOfInterestHandle) {
+        (self.receiver_handle, self.sender_handle)
+    }
 }
 
 /// Transmit a [`LengthyEntry`] as part of 3d range-based set reconciliation.

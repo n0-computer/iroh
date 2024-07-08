@@ -130,7 +130,7 @@ impl<S: Storage> DataReceiver<S> {
     }
 
     async fn on_send_entry(&mut self, message: DataSendEntry) -> Result<(), Error> {
-        self.current_payload.assert_inactive()?;
+        self.current_payload.ensure_none()?;
         let authorised_entry = self
             .static_tokens
             .authorise_entry_eventually(
@@ -142,8 +142,10 @@ impl<S: Storage> DataReceiver<S> {
         self.store
             .entries()
             .ingest(&authorised_entry, Origin::Remote(self.session_id))?;
+        let entry = authorised_entry.into_entry();
+        // TODO: handle offset
         self.current_payload
-            .set(authorised_entry.into_entry(), None)?;
+            .set(entry.payload_digest, entry.payload_length)?;
         Ok(())
     }
 

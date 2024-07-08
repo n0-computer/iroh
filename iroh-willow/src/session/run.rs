@@ -14,6 +14,7 @@ use crate::{
         aoi_finder::AoiFinder,
         capabilities::Capabilities,
         channels::{ChannelSenders, LogicalChannelReceivers},
+        events::{Event, EventEmitter},
         pai_finder::{self as pai, PaiFinder, PaiIntersection},
         static_tokens::StaticTokens,
         Channels, Error, Role, SessionId, SessionInit,
@@ -66,6 +67,8 @@ pub async fn run_session<S: Storage>(
     let mut aoi_recv = Cancelable::new(aoi_recv, cancel_token.clone());
     let mut data_recv = Cancelable::new(data_recv, cancel_token.clone());
 
+    let events = EventEmitter::default();
+
     let caps = Capabilities::new(
         initial_transmission.our_nonce,
         initial_transmission.received_commitment,
@@ -89,6 +92,7 @@ pub async fn run_session<S: Storage>(
             .merge(intersection_recv.map(pai::Input::ReceivedMessage));
         let interests = Rc::clone(&interests);
         let aoi_finder = aoi_finder.clone();
+        let events = events.clone();
         async move {
             let mut gen = PaiFinder::run_gen(inbox);
             loop {
@@ -96,6 +100,11 @@ pub async fn run_session<S: Storage>(
                     GeneratorState::Yielded(output) => match output {
                         pai::Output::SendMessage(message) => send.send(message).await?,
                         pai::Output::NewIntersection(intersection) => {
+                            events
+                                .send(Event::CapabilityIntersection(
+                                    intersection.authorisation.clone(),
+                                ))
+                                .await?;
                             on_pai_intersection(
                                 &interests,
                                 store.secrets(),
@@ -201,6 +210,7 @@ pub async fn run_session<S: Storage>(
             session_id,
             send.clone(),
             our_role,
+            events,
         )?;
         async move {
             let res = reconciler.run().await;

@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use anyhow::Result;
 
 use crate::proto::{
@@ -8,7 +10,7 @@ use crate::proto::{
     willow::{AuthorisedEntry, Entry, NamespaceId},
 };
 
-pub trait Storage: Clone + 'static {
+pub trait Storage: Debug + Clone + 'static {
     type Entries: EntryStorage;
     type Secrets: SecretStorage;
     type Payloads: iroh_blobs::store::Store;
@@ -17,7 +19,7 @@ pub trait Storage: Clone + 'static {
     fn payloads(&self) -> &Self::Payloads;
 }
 
-pub trait SecretStorage: std::fmt::Debug + Clone + 'static {
+pub trait SecretStorage: Debug + Clone + 'static {
     fn insert(&self, secret: meadowcap::SecretKey) -> Result<(), SecretStoreError>;
     fn get_user(&self, id: &UserId) -> Option<UserSecretKey>;
     fn get_namespace(&self, id: &NamespaceId) -> Option<NamespaceSecretKey>;
@@ -62,7 +64,7 @@ pub trait SecretStorage: std::fmt::Debug + Clone + 'static {
     }
 }
 
-pub trait EntryStorage: EntryReader + Clone + std::fmt::Debug + 'static {
+pub trait EntryStorage: EntryReader + Clone + Debug + 'static {
     type Reader: EntryReader;
     type Snapshot: EntryReader + Clone;
 
@@ -71,7 +73,7 @@ pub trait EntryStorage: EntryReader + Clone + std::fmt::Debug + 'static {
     fn ingest_entry(&self, entry: &AuthorisedEntry) -> Result<bool>;
 }
 
-pub trait EntryReader: 'static {
+pub trait EntryReader: Debug + 'static {
     fn fingerprint(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<Fingerprint>;
 
     fn split_range(
