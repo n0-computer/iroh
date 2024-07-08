@@ -63,12 +63,23 @@ pub(crate) struct NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         #[cfg(not(test))]
-        use defaults::prod::{default_eu_relay_node, default_na_relay_node};
+        let relay_nodes = {
+            use defaults::prod::{
+                default_ap_relay_node, default_eu_relay_node, default_na_relay_node,
+            };
+            [
+                default_na_relay_node(),
+                default_eu_relay_node(),
+                default_ap_relay_node(),
+            ]
+        };
         #[cfg(test)]
-        use defaults::staging::{default_eu_relay_node, default_na_relay_node};
+        let relay_nodes = {
+            use defaults::staging::{default_eu_relay_node, default_na_relay_node};
+            [default_na_relay_node(), default_eu_relay_node()]
+        };
         Self {
-            // TODO(ramfox): this should probably just be a relay map
-            relay_nodes: [default_na_relay_node(), default_eu_relay_node()].into(),
+            relay_nodes: relay_nodes.into(),
             gc_policy: GcPolicy::Disabled,
             metrics_addr: Some(([127, 0, 0, 1], 9090).into()),
             file_logs: Default::default(),
