@@ -4,9 +4,9 @@
 //! [`RelayUrl`] or one or more *direct addresses*.  However it is often more desirable to
 //! be able to connect with only the [`NodeId`], as [`Endpoint::connect_by_node_id`] does.
 //!
-//! For connecting by [`NodeId`] to work however the endpoint has to get the addressing
+//! For connecting by [`NodeId`] to work however, the endpoint has to get the addressing
 //! information by other means.  This can be done by manually calling
-//! [`Endpoint::add_node_addr`] but that still requires knowing the other addressing
+//! [`Endpoint::add_node_addr`], but that still requires knowing the other addressing
 //! information.
 //!
 //! Node discovery is an automated system for an [`Endpoint`] to retrieve this addressing
