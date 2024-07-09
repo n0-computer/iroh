@@ -452,12 +452,18 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         // add addresses of peers to our endpoint address book
         for peer in peers.into_iter() {
             let peer_id = peer.node_id;
-            match self.endpoint.add_node_addr_with_source(peer, SOURCE_NAME) {
-                Ok(()) => {
-                    peer_ids.push(peer_id);
-                }
-                Err(err) => {
-                    warn!(peer = %peer_id.fmt_short(), "failed to add known addrs: {err:?}");
+            // adding a node address without any addressing info fails with an error,
+            // but we still want to include those peers because node discovery might find addresses for them
+            if peer.info.is_empty() {
+                peer_ids.push(peer_id)
+            } else {
+                match self.endpoint.add_node_addr_with_source(peer, SOURCE_NAME) {
+                    Ok(()) => {
+                        peer_ids.push(peer_id);
+                    }
+                    Err(err) => {
+                        warn!(peer = %peer_id.fmt_short(), "failed to add known addrs: {err:?}");
+                    }
                 }
             }
         }
