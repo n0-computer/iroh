@@ -462,15 +462,15 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             }
         }
 
-        if !peer_ids.is_empty() {
-            // tell gossip to join
-            self.gossip_actor_tx
-                .send(ToGossipActor::Join {
-                    namespace,
-                    peers: peer_ids.clone(),
-                })
-                .await?;
+        // tell gossip to join
+        self.gossip_actor_tx
+            .send(ToGossipActor::Join {
+                namespace,
+                peers: peer_ids.clone(),
+            })
+            .await?;
 
+        if !peer_ids.is_empty() {
             // trigger initial sync with initial peers
             for peer in peer_ids {
                 self.sync_with_peer(namespace, peer, SyncReason::DirectJoin);
