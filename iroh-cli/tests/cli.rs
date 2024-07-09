@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{ensure, Context, Result};
 use bao_tree::blake3;
 use duct::{cmd, ReaderHandle};
 use iroh::{
@@ -361,9 +361,10 @@ fn run_cli(
     println!("STDOUT: {}", String::from_utf8_lossy(&output.stdout));
     println!("STDERR: {}", String::from_utf8_lossy(&output.stderr));
 
-    if !output.status.success() {
-        bail!("iroh command failed. See STDERR output above.");
-    }
+    ensure!(
+        output.status.success(),
+        "iroh command failed. See STDERR output above."
+    );
 
     let text = String::from_utf8(output.stdout)?;
     Ok(text)
