@@ -124,9 +124,8 @@ enum TopicState {
     /// The topic is currently live.
     /// New subscriptions can be immediately added.
     Live {
-        /// Task/sink pairs that are currently live.
-        /// The task is the task that is sending broadcast messages to the topic.
-        live: Vec<(AbortingJoinHandle<()>, EventSink)>,
+        update_tasks: Vec<AbortingJoinHandle<()>>,
+        event_sinks: Vec<EventSink>,
     },
     /// The topic is currently quitting.
     /// We can't make new subscriptions without waiting for the quit to finish.
@@ -152,7 +151,7 @@ impl TopicState {
             TopicState::Joining { waiting, .. } | TopicState::Quitting { waiting, .. } => {
                 waiting.into_iter().map(|(_, send)| send).collect()
             }
-            TopicState::Live { live } => live.into_iter().map(|(_, send)| send).collect(),
+            TopicState::Live { event_sinks, .. } => event_sinks,
         }
     }
 }
@@ -213,12 +212,7 @@ impl GossipDispatcher {
     /// Try to send an event to a sink.
     ///
     /// This will not wait until the sink is full, but send a `Lagged` response if the sink is almost full.
-    fn try_send(entry: &(AbortingJoinHandle<()>, EventSink), event: &IrohGossipEvent) -> bool {
-        let (task, send) = entry;
-        // This means that we stop sending to the stream when the update side is finished.
-        if task.is_finished() {
-            return false;
-        }
+    fn try_send(send: &EventSink, event: &IrohGossipEvent) -> bool {
         // If the stream is disconnected, we don't need to send to it.
         if send.is_disconnected() {
             return false;
@@ -239,28 +233,53 @@ impl GossipDispatcher {
     /// Dispatch gossip events to all subscribed streams.
     ///
     /// This should not fail unless the gossip instance is faulty.
-    async fn dispatch_loop(self) -> anyhow::Result<()> {
+    async fn dispatch_loop(mut self) -> anyhow::Result<()> {
         use futures_lite::stream::StreamExt;
         let stream = self.gossip.clone().subscribe_all();
         tokio::pin!(stream);
         while let Some(item) = stream.next().await {
             let (topic, event) = item?;
-            let mut inner = self.inner.lock().unwrap();
-            if let Some(TopicState::Live { live }) = inner.current_subscriptions.get_mut(&topic) {
-                live.retain(|entry| Self::try_send(entry, &event));
-                if live.is_empty() {
-                    let quit_task = tokio::task::spawn(self.clone().quit_task(topic));
-                    inner.current_subscriptions.insert(
-                        topic,
-                        TopicState::Quitting {
-                            waiting: vec![],
-                            bootstrap: BTreeSet::new(),
-                            quit_task: quit_task.into(),
-                        },
-                    );
+            // The loop is only for the case that the topic is still in joining state,
+            // where we switch it to live here and have to re-lock the mutex afterwards.
+            loop {
+                let mut inner = self.inner.lock().unwrap();
+                let Some(state) = inner.current_subscriptions.get_mut(&topic) else {
+                    tracing::trace!("Received event for unknown topic, possibly sync {topic}",);
+                    break;
+                };
+                match state {
+                    // The topic is in joining state. It can happen that we receive an event before
+                    // our join task completed. In this case, we switch the topic to live here.
+                    TopicState::Joining { .. } => {
+                        drop(inner);
+                        self.on_join(topic, Ok(()));
+                        continue;
+                    }
+                    TopicState::Live {
+                        update_tasks,
+                        event_sinks,
+                    } => {
+                        // Send the message to all our senders, and remove disconnected senders.
+                        event_sinks.retain(|sink| Self::try_send(sink, &event));
+                        // If no senders are left, and all update tasks are finished, we can quit
+                        // the topic.
+                        if event_sinks.is_empty()
+                            && update_tasks.iter().all(|task| task.is_finished())
+                        {
+                            let quit_task = tokio::task::spawn(self.clone().quit_task(topic));
+                            inner.current_subscriptions.insert(
+                                topic,
+                                TopicState::Quitting {
+                                    waiting: vec![],
+                                    bootstrap: BTreeSet::new(),
+                                    quit_task: quit_task.into(),
+                                },
+                            );
+                        }
+                    }
+                    _ => {}
                 }
-            } else {
-                tracing::trace!("Received event for unknown topic, possibly sync {topic}",);
+                break;
             }
         }
         Ok(())
@@ -303,16 +322,41 @@ impl GossipDispatcher {
 
     /// Handle updates from the client, and handle update loop failure.
     async fn update_task(self, topic: TopicId, updates: CommandStream) {
-        let Err(e) = Self::update_loop(self.gossip.clone(), topic, updates).await else {
-            return;
-        };
+        let res = Self::update_loop(self.gossip.clone(), topic, updates).await;
         let mut inner = self.inner.lock().unwrap();
-        // we got an error while sending to the topic
-        if let Some(TopicState::Live { live }) = inner.current_subscriptions.remove(&topic) {
-            let error = RpcError::from(e);
-            // notify all live streams that sending to the topic failed
-            for (_, send) in live {
-                send.try_send(Err(error.clone())).ok();
+
+        match res {
+            Err(err) => {
+                // we got an error while sending to the topic
+                if let Some(TopicState::Live { event_sinks, .. }) =
+                    inner.current_subscriptions.remove(&topic)
+                {
+                    let error = RpcError::from(err);
+                    // notify all live streams that sending to the topic failed
+                    for send in event_sinks {
+                        send.try_send(Err(error.clone())).ok();
+                    }
+                }
+            }
+            Ok(()) => {
+                // check if we should quit the topic.
+                if let Some(TopicState::Live {
+                    event_sinks,
+                    update_tasks,
+                }) = inner.current_subscriptions.get(&topic)
+                {
+                    if event_sinks.is_empty() && update_tasks.iter().all(|t| t.is_finished()) {
+                        let quit_task = tokio::task::spawn(self.clone().quit_task(topic));
+                        inner.current_subscriptions.insert(
+                            topic,
+                            TopicState::Quitting {
+                                waiting: vec![],
+                                bootstrap: BTreeSet::new(),
+                                quit_task: quit_task.into(),
+                            },
+                        );
+                    }
+                }
             }
         }
     }
@@ -327,35 +371,64 @@ impl GossipDispatcher {
     }
 
     /// Join a gossip topic and handle turning waiting streams into live streams.
-    async fn join_task(self, topic: TopicId, bootstrap: BTreeSet<NodeId>) {
+    async fn join_task(mut self, topic: TopicId, bootstrap: BTreeSet<NodeId>) {
         let res = Self::join(self.gossip.clone(), topic, bootstrap.into_iter().collect()).await;
+        self.on_join(topic, res);
+    }
+
+    /// Switch the state of a topic to live.
+    ///
+    /// If the topic is already live, this is a noop.
+    fn on_join(&mut self, topic: TopicId, res: anyhow::Result<()>) {
         let mut inner = self.inner.lock().unwrap();
-        if let Some(TopicState::Joining { waiting, .. }) =
-            inner.current_subscriptions.remove(&topic)
-        {
-            match res {
-                Ok(()) => {
-                    let mut live = vec![];
-                    for (updates, send) in waiting {
-                        // if the stream is disconnected, we don't need to keep it and start the update task
-                        if send.is_disconnected() {
-                            continue;
+        let Some(state) = inner.current_subscriptions.remove(&topic) else {
+            return;
+        };
+        match state {
+            TopicState::Live {
+                update_tasks,
+                event_sinks,
+            } => {
+                inner.current_subscriptions.insert(
+                    topic,
+                    TopicState::Live {
+                        update_tasks,
+                        event_sinks,
+                    },
+                );
+            }
+            TopicState::Joining { waiting, .. } => {
+                match res {
+                    Ok(()) => {
+                        let mut event_sinks = vec![];
+                        let mut update_tasks = vec![];
+                        for (updates, event_sink) in waiting {
+                            // if the stream is disconnected, we don't need to keep it and start the update task
+                            if event_sink.is_disconnected() {
+                                continue;
+                            }
+                            event_sinks.push(event_sink);
+                            let task = spawn_owned(self.clone().update_task(topic, updates));
+                            update_tasks.push(task);
                         }
-                        let task = spawn_owned(self.clone().update_task(topic, updates));
-                        live.push((task, send));
+                        inner.current_subscriptions.insert(
+                            topic,
+                            TopicState::Live {
+                                event_sinks,
+                                update_tasks,
+                            },
+                        );
                     }
-                    inner
-                        .current_subscriptions
-                        .insert(topic, TopicState::Live { live });
-                }
-                Err(e) => {
-                    // notify all waiting streams that the subscription failed
-                    let error = RpcError::from(e);
-                    for (_, send) in waiting {
-                        send.try_send(Err(error.clone())).ok();
+                    Err(e) => {
+                        // notify all waiting streams that the subscription failed
+                        let error = RpcError::from(e);
+                        for (_, send) in waiting {
+                            send.try_send(Err(error.clone())).ok();
+                        }
                     }
                 }
             }
+            TopicState::Quitting { .. } => {}
         }
     }
 
@@ -405,10 +478,14 @@ impl GossipDispatcher {
                         peers.extend(options.bootstrap);
                         waiting.push((updates, send));
                     }
-                    TopicState::Live { live } => {
+                    TopicState::Live {
+                        event_sinks,
+                        update_tasks,
+                    } => {
                         // There is already a live subscription, so we can immediately start the update task.
                         let task = spawn_owned(self.clone().update_task(topic, updates));
-                        live.push((task, send));
+                        event_sinks.push(send);
+                        update_tasks.push(task);
                     }
                 }
             }
