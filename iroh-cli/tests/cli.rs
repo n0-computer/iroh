@@ -358,8 +358,8 @@ fn run_cli(
         .run()?;
 
     // checking the output first, so you can still view any logging
-    println!("STDOUT: {:?}", std::str::from_utf8(&output.stdout),);
-    println!("STDERR: {}", std::str::from_utf8(&output.stderr).unwrap());
+    println!("STDOUT: {}", String::from_utf8_lossy(&output.stdout));
+    println!("STDERR: {}", String::from_utf8_lossy(&output.stderr));
 
     if !output.status.success() {
         bail!("iroh command failed. See STDERR output above.");
@@ -756,11 +756,9 @@ fn test_provide_get_loop(input: Input, output: Output) -> Result<()> {
     drop(provider);
 
     // checking the output first, so you can still view any logging
-    println!("STDOUT: {:?}", std::str::from_utf8(&get_output.stdout),);
-    println!(
-        "STDERR: {}",
-        std::str::from_utf8(&get_output.stderr).unwrap()
-    );
+    println!("STDOUT: {}", String::from_utf8_lossy(&get_output.stdout));
+    println!("STDERR: {}", String::from_utf8_lossy(&get_output.stderr));
+
     match_get_stderr(get_output.stderr)?;
     assert!(get_output.status.success());
 
