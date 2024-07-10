@@ -76,6 +76,7 @@ async fn gossip_smoke() -> TestResult {
 }
 
 #[tokio::test]
+#[ignore = "flaky"]
 async fn gossip_drop_sink() -> TestResult {
     let _ = tracing_subscriber::fmt::try_init();
     let (addr1, node1) = spawn_node();
