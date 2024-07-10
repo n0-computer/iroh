@@ -330,15 +330,15 @@ impl NodeState {
                 IpAddr::V6(_) => have_ipv6,
             })
         };
-        let candidate_len = dbg!(candidate_iter().count());
-        let candidate_idx = match dbg!(self.guess_direct_addr_index) {
-            Some(idx) if Some(candidate_len) == dbg!(self.guess_direct_addr_len) => dbg!(idx),
+        let candidate_len = candidate_iter().count();
+        let candidate_idx = match self.guess_direct_addr_index {
+            Some(idx) if Some(candidate_len) == self.guess_direct_addr_len => idx,
             _ => {
                 self.guess_direct_addr_len = Some(candidate_len);
                 match candidate_len {
                     0 => return None,
                     _ => {
-                        let idx = dbg!(rand::thread_rng().gen_range(0..candidate_len));
+                        let idx = rand::thread_rng().gen_range(0..candidate_len);
                         self.guess_direct_addr_index = Some(idx);
                         idx
                     }
