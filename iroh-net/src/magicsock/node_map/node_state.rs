@@ -2004,7 +2004,7 @@ mod tests {
                     break;
                 }
                 // Didn't select a different one, that's possible since we still use a
-                // random one out of the possiblities.  Let's try again.
+                // random one out of the possibilities.  Let's try again.
             }
         }
     }
