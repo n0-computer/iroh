@@ -6,7 +6,7 @@ use std::{
 };
 
 use iroh_metrics::inc;
-use rand::seq::IteratorRandom;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, trace, warn};
@@ -121,6 +121,17 @@ pub(super) struct NodeState {
     best_addr: BestAddr,
     /// State for each of this node's direct paths.
     direct_addr_state: BTreeMap<IpPort, PathState>,
+    /// The index into `direct_addr_state` to use as a guess.
+    ///
+    /// When we do not have a `best_addr` but *do* have direct addresses a random direct
+    /// address is chosen to send to anyway.  The index of this direct address into
+    /// `direct_addr_state` is stored here.
+    ///
+    /// See [`NodeState::stable_random_candidate_addr`].
+    guess_direct_addr_index: Option<usize>,
+    /// The length of the candidate addresses for [`NodeState::stable_random_candidate_addr`].
+    guess_direct_addr_len: Option<usize>,
+    /// The DISCO pings we sent to this node.
     sent_pings: HashMap<stun::TransactionId, SentPing>,
     /// Last time this node was used.
     ///
@@ -166,6 +177,8 @@ impl NodeState {
             last_full_ping: None,
             relay_url: options.relay_url.map(|url| (url, PathState::default())),
             best_addr: Default::default(),
+            guess_direct_addr_len: None,
+            guess_direct_addr_index: None,
             sent_pings: HashMap::new(),
             direct_addr_state: BTreeMap::new(),
             last_used: options.active.then(Instant::now),
@@ -282,18 +295,9 @@ impl NodeState {
                 (Some(best_addr.addr), self.relay_url())
             }
             best_addr::State::Empty => {
-                // No direct connection has been used before.  If we know of any possible
-                // candidate addresses, randomly try to use one while also sending via relay
-                // at the same time.
-                let addr = self
-                    .direct_addr_state
-                    .keys()
-                    .filter(|ipp| match ipp.ip() {
-                        IpAddr::V4(_) => true,
-                        IpAddr::V6(_) => have_ipv6,
-                    })
-                    .choose_stable(&mut rand::thread_rng())
-                    .map(|ipp| SocketAddr::from(*ipp));
+                // No direct connection has been used before.  If we can select a randomly
+                // chose direct address though.
+                let addr = self.stable_random_candidate_addr(have_ipv6);
                 trace!(udp_addr = ?addr, "best_addr is unset, use candidate addr and relay");
                 (addr, self.relay_url())
             }
@@ -309,6 +313,41 @@ impl NodeState {
             info!(%typ, "new connection type");
         }
         (best_addr, relay_url)
+    }
+
+    /// Returns a random candidate addr from the known list of direct addrs.
+    ///
+    /// When there is no known [`BestAddr`] but there is are direct addresses we would like
+    /// to try a direct address.  Maybe the user added just a single direct address that
+    /// works, or maybe we can Get Lucky.
+    ///
+    /// When we pick a random address however, we want this to remain stable and always pick
+    /// the same one as long the candidate addresses did not change.
+    fn stable_random_candidate_addr(&mut self, have_ipv6: bool) -> Option<SocketAddr> {
+        let candidate_iter = || {
+            self.direct_addr_state.keys().filter(|ipp| match ipp.ip() {
+                IpAddr::V4(_) => true,
+                IpAddr::V6(_) => have_ipv6,
+            })
+        };
+        let candidate_len = dbg!(candidate_iter().count());
+        let candidate_idx = match dbg!(self.guess_direct_addr_index) {
+            Some(idx) if Some(candidate_len) == dbg!(self.guess_direct_addr_len) => dbg!(idx),
+            _ => {
+                self.guess_direct_addr_len = Some(candidate_len);
+                match candidate_len {
+                    0 => return None,
+                    _ => {
+                        let idx = dbg!(rand::thread_rng().gen_range(0..candidate_len));
+                        self.guess_direct_addr_index = Some(idx);
+                        idx
+                    }
+                }
+            }
+        };
+        candidate_iter()
+            .nth(candidate_idx)
+            .map(|ipp| SocketAddr::from(*ipp))
     }
 
     /// Removes a direct address for this node.
@@ -953,7 +992,7 @@ impl NodeState {
         }
         debug!(
             paths = %summarize_node_paths(&self.direct_addr_state),
-            "updated endpoint paths from call-me-maybe",
+            "updated node paths from call-me-maybe",
         );
         self.send_pings(now)
     }
@@ -1530,6 +1569,8 @@ mod tests {
                         now,
                         now + Duration::from_secs(100),
                     ),
+                    guess_direct_addr_len: None,
+                    guess_direct_addr_index: None,
                     direct_addr_state: endpoint_state,
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
@@ -1551,6 +1592,8 @@ mod tests {
                 relay_url: relay_and_state(send_addr.clone()),
                 best_addr: BestAddr::default(),
                 direct_addr_state: BTreeMap::default(),
+                guess_direct_addr_index: None,
+                guess_direct_addr_len: None,
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
@@ -1571,6 +1614,8 @@ mod tests {
                 relay_url: new_relay_and_state(send_addr.clone()),
                 best_addr: BestAddr::default(),
                 direct_addr_state: endpoint_state,
+                guess_direct_addr_index: None,
+                guess_direct_addr_len: None,
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
@@ -1606,6 +1651,8 @@ mod tests {
                         expired,
                     ),
                     direct_addr_state: endpoint_state,
+                    guess_direct_addr_index: None,
+                    guess_direct_addr_len: None,
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
                     last_call_me_maybe: None,
@@ -1742,5 +1789,223 @@ mod tests {
         // We have no relay server and no previous direct addresses, so we should get the same
         // number of pings as direct addresses in the call-me-maybe.
         assert_eq!(ping_messages.len(), my_numbers_count as usize);
+    }
+
+    mod stable_random_candidate_addr {
+        use std::net::Ipv6Addr;
+
+        use super::*;
+
+        /// An empty but valid NodeState.
+        fn node_state_fixture() -> NodeState {
+            let key = SecretKey::generate();
+            let opts = Options {
+                node_id: key.public(),
+                relay_url: None,
+                active: true,
+                source: crate::magicsock::Source::NamedApp { name: "test" },
+            };
+            NodeState::new(0, opts)
+        }
+
+        #[test]
+        fn test_empty() {
+            let mut ns = node_state_fixture();
+
+            let addr = ns.stable_random_candidate_addr(false);
+            assert!(addr.is_none());
+        }
+
+        #[test]
+        fn test_ipv4() {
+            let mut ns = node_state_fixture();
+
+            // Insert some IPv4 addresses.
+            ns.direct_addr_state.insert(
+                IpPort {
+                    ip: Ipv4Addr::LOCALHOST.into(),
+                    port: 1,
+                },
+                PathState::default(),
+            );
+            ns.direct_addr_state.insert(
+                IpPort {
+                    ip: Ipv4Addr::LOCALHOST.into(),
+                    port: 2,
+                },
+                PathState::default(),
+            );
+            ns.direct_addr_state.insert(
+                IpPort {
+                    ip: Ipv4Addr::LOCALHOST.into(),
+                    port: 3,
+                },
+                PathState::default(),
+            );
+
+            // We should keep getting the same address out.
+            let addr = ns.stable_random_candidate_addr(false);
+            for i in 0..100 {
+                println!("iteration {i}");
+                assert_eq!(addr, ns.stable_random_candidate_addr(false));
+            }
+        }
+
+        #[test]
+        fn test_ipv6_but_host_no_ipv6() {
+            let mut ns = node_state_fixture();
+            ns.direct_addr_state.insert(
+                IpPort {
+                    ip: Ipv4Addr::LOCALHOST.into(),
+                    port: 1,
+                },
+                PathState::default(),
+            );
+            ns.direct_addr_state.insert(
+                IpPort {
+                    ip: Ipv6Addr::LOCALHOST.into(),
+                    port: 2,
+                },
+                PathState::default(),
+            );
+
+            for i in 0..100 {
+                println!("iteration: {i}");
+                assert_eq!(
+                    Some(SocketAddr::from((Ipv4Addr::LOCALHOST, 1))),
+                    ns.stable_random_candidate_addr(false),
+                );
+            }
+        }
+
+        #[test]
+        fn test_ipv6_only_but_host_no_ipv6() {
+            let mut ns = node_state_fixture();
+            ns.direct_addr_state.insert(
+                IpPort {
+                    ip: Ipv6Addr::LOCALHOST.into(),
+                    port: 1,
+                },
+                PathState::default(),
+            );
+            ns.direct_addr_state.insert(
+                IpPort {
+                    ip: Ipv6Addr::LOCALHOST.into(),
+                    port: 2,
+                },
+                PathState::default(),
+            );
+
+            let addr = dbg!(ns.stable_random_candidate_addr(false));
+            assert!(addr.is_none());
+        }
+
+        #[test]
+        fn test_ipv6_mixed_stable() {
+            let mut ns = node_state_fixture();
+            ns.direct_addr_state.insert(
+                IpPort {
+                    ip: Ipv4Addr::LOCALHOST.into(),
+                    port: 1,
+                },
+                PathState::default(),
+            );
+            ns.direct_addr_state.insert(
+                IpPort {
+                    ip: Ipv6Addr::LOCALHOST.into(),
+                    port: 2,
+                },
+                PathState::default(),
+            );
+
+            let addr = ns.stable_random_candidate_addr(true);
+            for i in 0..100 {
+                println!("iteration: {i}");
+                assert_eq!(addr, ns.stable_random_candidate_addr(true));
+            }
+        }
+
+        #[test]
+        fn test_ipv6_mixed_ipv6_chosen() {
+            fn create_ns() -> NodeState {
+                let mut ns = node_state_fixture();
+
+                ns.direct_addr_state.insert(
+                    IpPort {
+                        ip: Ipv4Addr::LOCALHOST.into(),
+                        port: 1,
+                    },
+                    PathState::default(),
+                );
+                ns.direct_addr_state.insert(
+                    IpPort {
+                        ip: Ipv6Addr::LOCALHOST.into(),
+                        port: 2,
+                    },
+                    PathState::default(),
+                );
+                ns
+            }
+
+            let mut ipv4_seen = false;
+            let mut ipv6_seen = false;
+            for i in 0..100 {
+                println!("iteration: {i}");
+                let mut ns = create_ns();
+                let addr = ns.stable_random_candidate_addr(true);
+                if addr.map(|a| a.is_ipv4()).unwrap() {
+                    ipv4_seen = true;
+                }
+                if addr.map(|a| a.is_ipv6()).unwrap() {
+                    ipv6_seen = true;
+                }
+
+                if ipv4_seen && ipv6_seen {
+                    break; // success
+                }
+
+                if i == 100 {
+                    panic!("failed to get both IPv4 and IPv6 results");
+                }
+            }
+        }
+
+        #[test]
+        fn test_len_changes_detected() {
+            for i in 0..100 {
+                println!("iteration: {i}");
+                let mut ns = node_state_fixture();
+                ns.direct_addr_state.insert(
+                    IpPort {
+                        ip: Ipv4Addr::LOCALHOST.into(),
+                        port: 1,
+                    },
+                    PathState::default(),
+                );
+                ns.direct_addr_state.insert(
+                    IpPort {
+                        ip: Ipv4Addr::LOCALHOST.into(),
+                        port: 2,
+                    },
+                    PathState::default(),
+                );
+                let addr0 = ns.stable_random_candidate_addr(false);
+
+                ns.direct_addr_state.insert(
+                    IpPort {
+                        ip: Ipv4Addr::LOCALHOST.into(),
+                        port: 3,
+                    },
+                    PathState::default(),
+                );
+                let addr1 = ns.stable_random_candidate_addr(false);
+                if addr0 != addr1 {
+                    // Selected a different one, success
+                    break;
+                }
+                // Didn't select a different one, that's possible since we still use a
+                // random one out of the possiblities.  Let's try again.
+            }
+        }
     }
 }
