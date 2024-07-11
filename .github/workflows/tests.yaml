@@ -112,9 +112,12 @@ jobs:
 
     - name: run tests
       run: |
-        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ${{ inputs.flaky && 'all' || 'default' }} --no-fail-fast
+        $outputName = ${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ${{ inputs.flaky && 'all' || 'default' }} --no-fail-fast --message-format ${{ inputs.flaky && 'libtest-json' || 'human' }} >> outputs/$outputName
+        cat outputs/$outputName
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
+        NEXTEST_EXPERIMENTAL_LIBTEST_JSON: 1
 
     - name: doctests
       if: ${{ (! inputs.flaky) &&  matrix.features == 'all' }}
