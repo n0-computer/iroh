@@ -65,6 +65,7 @@ jobs:
         run: |
           for report in nextest-results/*.json; do
             echo $report
+            cat $report
             jq '.[] | select(.type == "test" and .event == "failed" ) | .name' $report
           done
       - name: Notify discord on failure
