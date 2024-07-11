@@ -2933,6 +2933,7 @@ dependencies = [
  "derive_more",
  "ed25519-dalek",
  "flume",
+ "futures-buffered",
  "futures-concurrency",
  "futures-lite 2.3.0",
  "futures-util",

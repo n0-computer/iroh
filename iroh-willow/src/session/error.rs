@@ -69,6 +69,8 @@ pub enum Error {
     NoKnownInterestsForCapability,
     #[error("private area intersection error: {0}")]
     Pai(#[from] PaiError),
+    #[error("net failed: {0}")]
+    Net(anyhow::Error),
 }
 
 impl From<Unauthorised> for Error {

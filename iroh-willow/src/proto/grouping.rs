@@ -269,6 +269,12 @@ pub struct AreaOfInterest {
     pub max_size: u64,
 }
 
+impl From<Area> for AreaOfInterest {
+    fn from(value: Area) -> Self {
+        Self::new(value)
+    }
+}
+
 impl AreaOfInterest {
     pub fn new(area: Area) -> Self {
         Self {
@@ -284,6 +290,25 @@ impl AreaOfInterest {
             max_count: 0,
             max_size: 0,
         }
+    }
+
+    pub fn intersection(&self, other: &AreaOfInterest) -> Option<AreaOfInterest> {
+        let area = self.area.intersection(&other.area)?;
+        let max_count = match (self.max_count, other.max_count) {
+            (0, count) => count,
+            (count, 0) => count,
+            (a, b) => a.min(b),
+        };
+        let max_size = match (self.max_size, other.max_size) {
+            (0, size) => size,
+            (size, 0) => size,
+            (a, b) => a.min(b),
+        };
+        Some(Self {
+            area,
+            max_count,
+            max_size,
+        })
     }
 }
 
@@ -315,6 +340,10 @@ impl Area {
         Self::new(SubspaceArea::Any, Path::empty(), Range::<Timestamp>::EMPTY)
     }
 
+    pub fn path(path: Path) -> Self {
+        Self::new(SubspaceArea::Any, path, Default::default())
+    }
+
     pub fn subspace(subspace_id: SubspaceId) -> Self {
         Self::new(
             SubspaceArea::Id(subspace_id),
@@ -341,6 +370,10 @@ impl Area {
         self.subspace.includes(&other.subspace)
             && self.path.is_prefix_of(&other.path)
             && self.times.includes_range(&other.times)
+    }
+
+    pub fn has_intersection(&self, other: &Area) -> bool {
+        self.includes_area(other) || other.includes_area(self)
     }
 
     pub fn includes_range(&self, range: &ThreeDRange) -> bool {
@@ -399,8 +432,7 @@ pub fn path_range_end(path: &Path) -> RangeEnd<Path> {
         for component in path.iter().rev() {
             // component can be incremented
             if out.is_empty() && component.iter().any(|x| *x != 0xff) {
-                let mut bytes = Vec::with_capacity(component.len());
-                bytes.copy_from_slice(component);
+                let mut bytes = component.to_vec();
                 let incremented = increment_by_one(&mut bytes);
                 debug_assert!(incremented, "checked above");
                 out.push(Bytes::from(bytes));
@@ -496,7 +528,7 @@ impl SubspaceArea {
 /// A single point in the 3D range space.
 ///
 /// I.e. an entry.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct Point {
     pub path: Path,
     pub timestamp: Timestamp,
@@ -635,5 +667,19 @@ impl<'a> Encoder for AreaInArea<'a> {
             CompactWidth(end_diff).encode_into(out)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::proto::{grouping::Area, willow::Path};
+
+    #[test]
+    fn area_eq() {
+        let p1 = Path::new(&[b"foo", b"bar"]).unwrap();
+        let a1 = Area::path(p1);
+        let p2 = Path::new(&[b"foo", b"bar"]).unwrap();
+        let a2 = Area::path(p2);
+        assert_eq!(a1, a2);
     }
 }

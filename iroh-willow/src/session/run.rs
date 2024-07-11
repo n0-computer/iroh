@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use futures_concurrency::stream::StreamExt as _;
 use futures_lite::StreamExt as _;
@@ -14,10 +14,10 @@ use crate::{
         aoi_finder::AoiFinder,
         capabilities::Capabilities,
         channels::{ChannelSenders, LogicalChannelReceivers},
-        events::{Event, EventEmitter},
+        events::{EventKind, EventSender, SessionEvent},
         pai_finder::{self as pai, PaiFinder, PaiIntersection},
         static_tokens::StaticTokens,
-        Channels, Error, Role, SessionId, SessionInit,
+        Channels, Error, Role, SessionId, SessionInit, SessionUpdate,
     },
     store::{
         traits::{SecretStorage, Storage},
@@ -43,6 +43,8 @@ pub async fn run_session<S: Storage>(
     our_role: Role,
     init: SessionInit,
     initial_transmission: InitialTransmission,
+    event_sender: EventSender,
+    update_receiver: flume::Receiver<SessionUpdate>,
 ) -> Result<(), Error> {
     let Channels { send, recv } = channels;
     let ChannelReceivers {
@@ -66,8 +68,7 @@ pub async fn run_session<S: Storage>(
     let mut capability_recv = Cancelable::new(capability_recv, cancel_token.clone());
     let mut aoi_recv = Cancelable::new(aoi_recv, cancel_token.clone());
     let mut data_recv = Cancelable::new(data_recv, cancel_token.clone());
-
-    let events = EventEmitter::default();
+    let mut update_receiver = Cancelable::new(update_receiver.into_stream(), cancel_token.clone());
 
     let caps = Capabilities::new(
         initial_transmission.our_nonce,
@@ -78,11 +79,63 @@ pub async fn run_session<S: Storage>(
 
     let tasks = Tasks::default();
 
-    let interests = store.auth().find_read_caps_for_interests(init.interests)?;
-    let interests = Rc::new(interests);
+    let initial_interests = store.auth().resolve_interests(init.interests)?;
+    tracing::warn!("INIT INTEREST {initial_interests:?}");
+    let all_interests = Rc::new(RefCell::new(initial_interests.clone()));
+    let initial_interests = Rc::new(initial_interests);
 
-    // Setup the private area intersection finder.
+    // Setup a channel for the private area intersection finder.
     let (pai_inbox_tx, pai_inbox_rx) = flume::bounded(128);
+
+    // Spawn a task to handle session updates.
+    tasks.spawn(error_span!("upd"), {
+        // let tokens = tokens.clone();
+        let store = store.clone();
+        let caps = caps.clone();
+        let to_pai = pai_inbox_tx.clone();
+        let all_interests = all_interests.clone();
+        async move {
+            while let Some(update) = update_receiver.next().await {
+                match update {
+                    SessionUpdate::AddInterests(interests) => {
+                        caps.revealed().await;
+                        let interests = store.auth().resolve_interests(interests)?;
+                        tracing::warn!("UPDATE INTEREST {interests:?}");
+                        for (authorisation, aois) in interests.into_iter() {
+                            all_interests
+                                .borrow_mut()
+                                .entry(authorisation.clone())
+                                .or_default()
+                                .extend(aois);
+                            to_pai
+                                .send_async(pai::Input::SubmitAuthorisation(authorisation))
+                                .await
+                                .map_err(|_| Error::InvalidState("PAI actor dead"))?;
+                        }
+                    }
+                }
+                // tokens.bind_theirs(message.static_token);
+            }
+            Ok(())
+        }
+    });
+
+    // Spawn a task to setup the initial interests
+    tasks.spawn(error_span!("setup-pai"), {
+        let caps = caps.clone();
+        let to_pai = pai_inbox_tx.clone();
+        async move {
+            caps.revealed().await;
+            for authorisation in initial_interests.keys() {
+                to_pai
+                    .send_async(pai::Input::SubmitAuthorisation(authorisation.clone()))
+                    .await
+                    .map_err(|_| Error::InvalidState("PAI actor dead"))?;
+            }
+            Ok(())
+        }
+    });
+
     tasks.spawn(error_span!("pai"), {
         let store = store.clone();
         let send = send.clone();
@@ -90,9 +143,9 @@ pub async fn run_session<S: Storage>(
         let inbox = pai_inbox_rx
             .into_stream()
             .merge(intersection_recv.map(pai::Input::ReceivedMessage));
-        let interests = Rc::clone(&interests);
+        let interests = Rc::clone(&all_interests);
         let aoi_finder = aoi_finder.clone();
-        let events = events.clone();
+        let event_sender = event_sender.clone();
         async move {
             let mut gen = PaiFinder::run_gen(inbox);
             loop {
@@ -100,11 +153,10 @@ pub async fn run_session<S: Storage>(
                     GeneratorState::Yielded(output) => match output {
                         pai::Output::SendMessage(message) => send.send(message).await?,
                         pai::Output::NewIntersection(intersection) => {
-                            events
-                                .send(Event::CapabilityIntersection(
-                                    intersection.authorisation.clone(),
-                                ))
-                                .await?;
+                            let event = EventKind::CapabilityIntersection {
+                                capability: intersection.authorisation.read_cap().clone(),
+                            };
+                            event_sender.send(event).await?;
                             on_pai_intersection(
                                 &interests,
                                 store.secrets(),
@@ -210,7 +262,7 @@ pub async fn run_session<S: Storage>(
             session_id,
             send.clone(),
             our_role,
-            events,
+            event_sender.clone(),
         )?;
         async move {
             let res = reconciler.run().await;
@@ -225,15 +277,7 @@ pub async fn run_session<S: Storage>(
     // Spawn a task to handle control messages
     tasks.spawn(error_span!("ctl-recv"), {
         let cancel_token = cancel_token.clone();
-        let fut = control_loop(
-            our_role,
-            interests,
-            caps,
-            send.clone(),
-            tasks.clone(),
-            control_recv,
-            pai_inbox_tx,
-        );
+        let fut = control_loop(our_role, caps, send.clone(), control_recv, pai_inbox_tx);
         async move {
             let res = fut.await;
             if res.is_ok() {
@@ -308,10 +352,8 @@ pub type Tasks = SharedJoinMap<Span, Result<(), Error>>;
 
 async fn control_loop(
     our_role: Role,
-    our_interests: Rc<InterestMap>,
     caps: Capabilities,
     sender: ChannelSenders,
-    tasks: Tasks,
     mut control_recv: Cancelable<Receiver<Message>>,
     to_pai: flume::Sender<pai::Input>,
 ) -> Result<(), Error> {
@@ -334,21 +376,6 @@ async fn control_loop(
         match message {
             Message::CommitmentReveal(msg) => {
                 caps.received_commitment_reveal(our_role, msg.nonce)?;
-
-                let submit_interests_fut = {
-                    let to_pai = to_pai.clone();
-                    let our_interests = Rc::clone(&our_interests);
-                    async move {
-                        for authorisation in our_interests.keys() {
-                            to_pai
-                                .send_async(pai::Input::SubmitAuthorisation(authorisation.clone()))
-                                .await
-                                .map_err(|_| Error::InvalidState("PAI actor dead"))?;
-                        }
-                        Ok(())
-                    }
-                };
-                tasks.spawn(error_span!("setup-pai"), submit_interests_fut);
             }
             Message::ControlIssueGuarantee(msg) => {
                 let ControlIssueGuarantee { amount, channel } = msg;
@@ -379,7 +406,7 @@ async fn control_loop(
 }
 
 async fn on_pai_intersection<S: SecretStorage>(
-    interests: &InterestMap,
+    interests: &Rc<RefCell<InterestMap>>,
     secrets: &S,
     aoi_finder: &AoiFinder,
     capabilities: &Capabilities,
@@ -390,15 +417,19 @@ async fn on_pai_intersection<S: SecretStorage>(
         authorisation,
         handle,
     } = intersection;
-    let aois = interests
-        .get(&authorisation)
-        .ok_or(Error::NoKnownInterestsForCapability)?;
+    let aois = {
+        let interests = interests.borrow();
+        interests
+            .get(&authorisation)
+            .ok_or(Error::NoKnownInterestsForCapability)?
+            .clone()
+    };
     let namespace = authorisation.namespace();
     let capability_handle = capabilities
         .bind_and_send_ours(secrets, sender, handle, authorisation.read_cap().clone())
         .await?;
 
-    for aoi in aois.iter().cloned() {
+    for aoi in aois.into_iter() {
         aoi_finder
             .bind_and_send_ours(sender, namespace, aoi, capability_handle)
             .await?;

@@ -94,6 +94,15 @@ pub struct EntryForm {
 }
 
 impl EntryForm {
+    pub fn new_bytes(namespace_id: NamespaceId, path: Path, payload: impl Into<Bytes>) -> Self {
+        EntryForm {
+            namespace_id,
+            subspace_id: SubspaceForm::User,
+            path,
+            timestamp: TimestampForm::Now,
+            payload: PayloadForm::Bytes(payload.into()),
+        }
+    }
     pub async fn into_entry<S: Storage>(
         self,
         store: &Store<S>,

@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, trace, warn, Instrument};
 
 use crate::{
-    auth::{CapSelector, CapabilityPack, DelegateTo},
+    auth::{CapSelector, CapabilityPack, DelegateTo, InterestMap},
     form::{AuthForm, EntryForm, EntryOrForm},
     proto::{
         grouping::ThreeDRange,
@@ -18,15 +18,20 @@ use crate::{
         sync::InitialTransmission,
         willow::{AuthorisedEntry, Entry},
     },
-    session::{run_session, Channels, Error, Role, SessionId, SessionInit},
+    session::{
+        events::{EventKind, EventSender, SessionEvent},
+        run_session, Channels, Error, Interests, Role, SessionId, SessionInit, SessionUpdate,
+    },
     store::{
+        entry::EntryOrigin,
         traits::{EntryReader, SecretStorage, Storage},
-        Origin, Store,
+        Store,
     },
     util::task::{JoinMap, TaskKey},
 };
 
 pub const INBOX_CAP: usize = 1024;
+pub const SESSION_EVENT_CAP: usize = 1024;
 
 #[derive(Debug, Clone)]
 pub struct ActorHandle {
@@ -43,7 +48,18 @@ impl ActorHandle {
         create_store: impl 'static + Send + FnOnce() -> S,
         me: NodeId,
     ) -> ActorHandle {
+        let (handle, events_rx) = Self::spawn_with_events(create_store, me);
+        // drop all events
+        tokio::task::spawn(async move { while events_rx.recv_async().await.is_ok() {} });
+        handle
+    }
+
+    pub fn spawn_with_events<S: Storage>(
+        create_store: impl 'static + Send + FnOnce() -> S,
+        me: NodeId,
+    ) -> (ActorHandle, flume::Receiver<SessionEvent>) {
         let (tx, rx) = flume::bounded(INBOX_CAP);
+        let (session_event_tx, session_event_rx) = flume::bounded(SESSION_EVENT_CAP);
         let join_handle = std::thread::Builder::new()
             .name("willow-actor".to_string())
             .spawn(move || {
@@ -59,6 +75,7 @@ impl ActorHandle {
                     next_session_id: 0,
                     session_tasks: Default::default(),
                     tasks: Default::default(),
+                    session_event_tx,
                 };
                 if let Err(error) = actor.run() {
                     error!(?error, "storage thread failed");
@@ -66,7 +83,7 @@ impl ActorHandle {
             })
             .expect("failed to spawn thread");
         let join_handle = Arc::new(Some(join_handle));
-        ActorHandle { tx, join_handle }
+        (ActorHandle { tx, join_handle }, session_event_rx)
     }
     pub async fn send(&self, action: ToActor) -> Result<()> {
         self.tx.send_async(action).await?;
@@ -80,7 +97,7 @@ impl ActorHandle {
         let (reply, reply_rx) = oneshot::channel();
         self.send(ToActor::IngestEntry {
             authorised_entry,
-            origin: Origin::Local,
+            origin: EntryOrigin::Local,
             reply,
         })
         .await?;
@@ -99,7 +116,7 @@ impl ActorHandle {
         Ok(())
     }
 
-    pub async fn insert_form(
+    pub async fn insert(
         &self,
         form: EntryForm,
         authorisation: impl Into<AuthForm>,
@@ -158,6 +175,9 @@ impl ActorHandle {
         .await?;
         reply_rx.await?
     }
+
+    // pub async fn subscribe_namespace(&self, namespace: NamespaceId) -> Result<Subscriber> {}
+
     pub async fn create_namespace(
         &self,
         kind: NamespaceKind,
@@ -198,6 +218,13 @@ impl ActorHandle {
         self.send(ToActor::ImportCaps { caps, reply }).await?;
         reply_rx.await?
     }
+
+    pub async fn resolve_interests(&self, interests: Interests) -> Result<InterestMap> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.send(ToActor::ResolveInterests { interests, reply })
+            .await?;
+        reply_rx.await?
+    }
 }
 
 impl Drop for ActorHandle {
@@ -215,33 +242,47 @@ impl Drop for ActorHandle {
 
 #[derive(Debug)]
 pub struct SessionHandle {
+    session_id: SessionId,
     on_finish: future::Shared<BoxFuture<Result<(), Arc<Error>>>>,
     cancel_token: CancellationToken,
+    update_tx: flume::Sender<SessionUpdate>,
 }
 
 impl SessionHandle {
     fn new(
+        session_id: SessionId,
         cancel_token: CancellationToken,
-        on_finish: oneshot::Receiver<Result<(), Error>>,
+        on_finish: oneshot::Receiver<Result<(), Arc<Error>>>,
+        update_tx: flume::Sender<SessionUpdate>,
     ) -> Self {
         let on_finish = on_finish
             .map(|r| match r {
-                Ok(Ok(())) => Ok(()),
-                Ok(Err(err)) => Err(Arc::new(err)),
+                Ok(res) => res,
                 Err(_) => Err(Arc::new(Error::ActorFailed)),
             })
             .boxed()
             .shared();
         SessionHandle {
+            session_id,
             on_finish,
             cancel_token,
+            update_tx,
         }
+    }
+
+    pub fn session_id(&self) -> SessionId {
+        self.session_id
     }
     /// Wait for the session to finish.
     ///
     /// Returns an error if the session failed to complete.
     pub async fn on_finish(&self) -> Result<(), Arc<Error>> {
         self.on_finish.clone().await
+    }
+
+    pub async fn send_update(&self, update: SessionUpdate) -> Result<()> {
+        self.update_tx.send_async(update).await?;
+        Ok(())
     }
 
     /// Finish the session gracefully.
@@ -265,6 +306,11 @@ pub enum ToActor {
         init: SessionInit,
         reply: oneshot::Sender<Result<SessionHandle>>,
     },
+    // UpdateSession {
+    //     session_id: SessionId,
+    //     interests: Interests,
+    //     reply: oneshot::Sender<Result<()>>,
+    // },
     GetEntries {
         namespace: NamespaceId,
         range: ThreeDRange,
@@ -273,7 +319,7 @@ pub enum ToActor {
     },
     IngestEntry {
         authorised_entry: AuthorisedEntry,
-        origin: Origin,
+        origin: EntryOrigin,
         reply: oneshot::Sender<Result<bool>>,
     },
     InsertEntry {
@@ -297,6 +343,10 @@ pub enum ToActor {
         caps: Vec<CapabilityPack>,
         reply: oneshot::Sender<Result<()>>,
     },
+    ResolveInterests {
+        interests: Interests,
+        reply: oneshot::Sender<Result<InterestMap>>,
+    },
     DelegateCaps {
         from: CapSelector,
         access_mode: AccessMode,
@@ -314,7 +364,7 @@ pub enum ToActor {
 struct ActiveSession {
     #[allow(unused)]
     peer: NodeId,
-    on_finish: oneshot::Sender<Result<(), Error>>,
+    on_finish: oneshot::Sender<Result<(), Arc<Error>>>,
     task_key: TaskKey, // state: SharedSessionState<S>
 }
 
@@ -326,6 +376,7 @@ pub struct Actor<S: Storage> {
     sessions: HashMap<SessionId, ActiveSession>,
     session_tasks: JoinMap<SessionId, Result<(), Error>>,
     tasks: JoinSet<()>,
+    session_event_tx: flume::Sender<SessionEvent>,
 }
 
 impl<S: Storage> Actor<S> {
@@ -363,7 +414,7 @@ impl<S: Storage> Actor<S> {
                         Ok(res) => res,
                         Err(err) => Err(err.into())
                     };
-                    self.complete_session(&id, res);
+                    self.complete_session(&id, res).await;
                 }
             };
         }
@@ -388,17 +439,11 @@ impl<S: Storage> Actor<S> {
                 init,
                 reply,
             } => {
-                // let Channels { send, recv } = channels;
                 let id = self.next_session_id();
-                // let session =
-                //     Session::new(&self.store, id, our_role, send, init, initial_transmission);
-                // let session = match session {
-                //     Ok(session) => session,
-                //     Err(err) => return send_reply(reply, Err(err.into())),
-                // };
-
                 let store = self.store.clone();
                 let cancel_token = CancellationToken::new();
+                let event_sender = EventSender::new(id, self.session_event_tx.clone());
+                let (update_tx, update_rx) = flume::bounded(16);
 
                 let future = run_session(
                     store,
@@ -408,11 +453,11 @@ impl<S: Storage> Actor<S> {
                     our_role,
                     init,
                     initial_transmission,
+                    event_sender,
+                    update_rx,
                 )
                 .instrument(error_span!("session", peer = %peer.fmt_short()));
-                // let future = session
-                //     .run(store, recv, cancel_token.clone())
-                //     .instrument(error_span!("session", peer = %peer.fmt_short()));
+
                 let task_key = self.session_tasks.spawn_local(id, future);
 
                 let (on_finish_tx, on_finish_rx) = oneshot::channel();
@@ -422,7 +467,7 @@ impl<S: Storage> Actor<S> {
                     peer,
                 };
                 self.sessions.insert(id, active_session);
-                let handle = SessionHandle::new(cancel_token, on_finish_rx);
+                let handle = SessionHandle::new(id, cancel_token, on_finish_rx, update_tx);
                 send_reply(reply, Ok(handle))
             }
             ToActor::GetEntries {
@@ -491,14 +536,28 @@ impl<S: Storage> Actor<S> {
                     .delegate_full_caps(from, access_mode, to, store);
                 send_reply(reply, res.map_err(anyhow::Error::from))
             }
+            ToActor::ResolveInterests { interests, reply } => {
+                let res = self.store.auth().resolve_interests(interests);
+                send_reply(reply, res.map_err(anyhow::Error::from))
+            }
         }
     }
 
-    fn complete_session(&mut self, session_id: &SessionId, result: Result<(), Error>) {
+    async fn complete_session(&mut self, session_id: &SessionId, result: Result<(), Error>) {
         let session = self.sessions.remove(session_id);
         if let Some(session) = session {
             debug!(?session, ?result, "complete session");
-            session.on_finish.send(result).ok();
+            let result = match result {
+                Ok(()) => Ok(()),
+                Err(err) => Err(Arc::new(err)),
+            };
+            // TODO: remove
+            session.on_finish.send(result.clone()).ok();
+            self.session_event_tx
+                .send_async(SessionEvent::new(*session_id, EventKind::Closed { result }))
+                .await
+                .ok();
+
             self.session_tasks.remove(&session.task_key);
         } else {
             warn!("remove_session called for unknown session");

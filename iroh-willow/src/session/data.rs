@@ -9,7 +9,11 @@ use crate::{
         aoi_finder::AoiIntersectionQueue, channels::ChannelSenders, payload::DEFAULT_CHUNK_SIZE,
         static_tokens::StaticTokens, Error, SessionId,
     },
-    store::{traits::Storage, Origin, Store},
+    store::{
+        entry::{EntryChannel, EntryOrigin},
+        traits::Storage,
+        Store,
+    },
 };
 
 use super::payload::{send_payload_chunked, CurrentPayload};
@@ -50,7 +54,7 @@ impl<S: Storage> DataSender<S> {
                     self.store.entries().watch_area(
                         self.session_id,
                         intersection.namespace,
-                        intersection.intersection.clone(),
+                        intersection.intersection.area.clone(),
                     );
                 },
                 entry = entry_stream.recv() => {
@@ -139,9 +143,13 @@ impl<S: Storage> DataReceiver<S> {
                 message.dynamic_token,
             )
             .await?;
-        self.store
-            .entries()
-            .ingest(&authorised_entry, Origin::Remote(self.session_id))?;
+        self.store.entries().ingest(
+            &authorised_entry,
+            EntryOrigin::Remote {
+                session: self.session_id,
+                channel: EntryChannel::Data,
+            },
+        )?;
         let entry = authorised_entry.into_entry();
         // TODO: handle offset
         self.current_payload

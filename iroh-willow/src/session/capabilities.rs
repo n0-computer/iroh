@@ -1,9 +1,11 @@
 use std::{
     cell::RefCell,
-    future::poll_fn,
+    future::{poll_fn, Future},
     rc::Rc,
-    task::{ready, Poll},
+    task::{ready, Poll, Waker},
 };
+
+use tokio::sync::Notify;
 
 use crate::{
     proto::{
@@ -27,6 +29,7 @@ struct Inner {
     challenge: ChallengeState,
     ours: ResourceMap<CapabilityHandle, ReadCapability>,
     theirs: ResourceMap<CapabilityHandle, ReadCapability>,
+    on_reveal_wakers: Vec<Waker>,
 }
 
 impl Capabilities {
@@ -39,7 +42,20 @@ impl Capabilities {
             challenge,
             ours: Default::default(),
             theirs: Default::default(),
+            on_reveal_wakers: Default::default(),
         })))
+    }
+
+    pub fn revealed(&self) -> impl Future<Output = ()> + '_ {
+        std::future::poll_fn(|cx| {
+            let mut inner = self.0.borrow_mut();
+            if inner.challenge.is_revealed() {
+                Poll::Ready(())
+            } else {
+                inner.on_reveal_wakers.push(cx.waker().to_owned());
+                Poll::Pending
+            }
+        })
     }
 
     pub async fn bind_and_send_ours<S: SecretStorage>(
@@ -127,8 +143,17 @@ impl Capabilities {
         our_role: Role,
         their_nonce: AccessChallenge,
     ) -> Result<(), Error> {
-        self.0.borrow_mut().challenge.reveal(our_role, their_nonce)
+        let mut inner = self.0.borrow_mut();
+        inner.challenge.reveal(our_role, their_nonce)?;
+        for waker in inner.on_reveal_wakers.drain(..) {
+            waker.wake();
+        }
+        Ok(())
     }
+
+    // pub fn is_revealed(&self) -> bool {
+    //     self.0.borrow().challenge.is_revealed()
+    // }
 
     pub fn sign_subspace_capabiltiy<S: SecretStorage>(
         &self,

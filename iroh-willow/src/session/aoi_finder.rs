@@ -14,8 +14,18 @@ use crate::{
 pub struct AoiIntersection {
     pub our_handle: AreaOfInterestHandle,
     pub their_handle: AreaOfInterestHandle,
-    pub intersection: Area,
+    pub intersection: AreaOfInterest,
     pub namespace: NamespaceId,
+}
+
+impl AoiIntersection {
+    pub fn id(&self) -> (AreaOfInterestHandle, AreaOfInterestHandle) {
+        (self.our_handle, self.their_handle)
+    }
+
+    pub fn area(&self) -> &Area {
+        &self.intersection.area
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -81,8 +91,11 @@ impl Inner {
         namespace: NamespaceId,
         aoi: AreaOfInterest,
     ) -> Result<(), Error> {
-        let area = aoi.area.clone();
-        let info = AoiInfo { aoi, namespace };
+        // let area = aoi.area.clone();
+        let info = AoiInfo {
+            aoi: aoi.clone(),
+            namespace,
+        };
         let handle = match scope {
             Scope::Ours => self.our_handles.bind(info),
             Scope::Theirs => self.their_handles.bind(info),
@@ -95,12 +108,13 @@ impl Inner {
 
         // TODO: If we stored the AoIs by namespace we would need to iterate less.
         for (candidate_handle, candidate) in other_resources.iter() {
-            let candidate_handle = *candidate_handle;
             if candidate.namespace != namespace {
                 continue;
             }
+            let candidate_handle = *candidate_handle;
             // Check if we have an intersection.
-            if let Some(intersection) = candidate.area().intersection(&area) {
+            if let Some(intersection) = candidate.aoi.intersection(&aoi) {
+                tracing::warn!(a=?aoi, b=?candidate.aoi, ?intersection, "AOI INTERSECTION");
                 // We found an intersection!
                 let (our_handle, their_handle) = match scope {
                     Scope::Ours => (handle, candidate_handle),
@@ -112,6 +126,7 @@ impl Inner {
                     intersection,
                     namespace,
                 };
+                // TODO: This can block...
                 self.subscribers
                     .retain(|sender| sender.send(intersection.clone()).is_ok());
             }
@@ -127,7 +142,7 @@ struct AoiInfo {
 }
 
 impl AoiInfo {
-    fn area(&self) -> &Area {
-        &self.aoi.area
-    }
+    // fn area(&self) -> &Area {
+    //     &self.aoi.area
+    // }
 }

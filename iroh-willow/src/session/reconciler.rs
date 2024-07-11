@@ -11,7 +11,7 @@ use tracing::{debug, trace};
 
 use crate::{
     proto::{
-        grouping::{Area, ThreeDRange},
+        grouping::ThreeDRange,
         keys::NamespaceId,
         sync::{
             AreaOfInterestHandle, Fingerprint, LengthyEntry, ReconciliationAnnounceEntries,
@@ -23,14 +23,15 @@ use crate::{
     session::{
         aoi_finder::{AoiIntersection, AoiIntersectionQueue},
         channels::{ChannelSenders, MessageReceiver},
-        events::{Event, EventEmitter},
+        events::{EventKind, EventSender},
         payload::{send_payload_chunked, CurrentPayload},
         static_tokens::StaticTokens,
         Error, Role, SessionId,
     },
     store::{
+        entry::{EntryChannel, EntryOrigin},
         traits::{EntryReader, EntryStorage, SplitAction, SplitOpts, Storage},
-        Origin, Store,
+        Store,
     },
     util::stream::Cancelable,
 };
@@ -39,7 +40,7 @@ use crate::{
 pub struct Reconciler<S: Storage> {
     shared: Shared<S>,
     recv: Cancelable<MessageReceiver<ReconciliationMessage>>,
-    events: EventEmitter,
+    events: EventSender,
     targets: TargetMap<S>,
     current_entry: CurrentEntry,
 }
@@ -47,6 +48,7 @@ pub struct Reconciler<S: Storage> {
 type TargetId = (AreaOfInterestHandle, AreaOfInterestHandle);
 
 impl<S: Storage> Reconciler<S> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         store: Store<S>,
         recv: Cancelable<MessageReceiver<ReconciliationMessage>>,
@@ -55,7 +57,7 @@ impl<S: Storage> Reconciler<S> {
         session_id: SessionId,
         send: ChannelSenders,
         our_role: Role,
-        events: EventEmitter,
+        events: EventSender,
     ) -> Result<Self, Error> {
         let shared = Shared {
             store,
@@ -78,6 +80,7 @@ impl<S: Storage> Reconciler<S> {
         loop {
             tokio::select! {
                 message = self.recv.try_next() => {
+                    tracing::trace!(?message, "tick: recv");
                     match message? {
                         None => break,
                         Some(message) => match self.received_message(message).await? {
@@ -90,10 +93,12 @@ impl<S: Storage> Reconciler<S> {
                     }
                 }
                 Ok(intersection) = self.targets.aoi_intersection_queue.recv_async() => {
+                    tracing::trace!(?intersection, "tick: interesection");
                     let intersection = intersection;
                     let area = intersection.intersection.clone();
+                    let namespace = intersection.namespace;
                     self.targets.init_target(&self.shared, intersection).await?;
-                    self.events.send(Event::AreaIntersection(area)).await?;
+                    self.events.send(EventKind::AoiIntersection { namespace, area }).await?;
                 }
             }
         }
@@ -141,10 +146,13 @@ impl<S: Storage> Reconciler<S> {
                     authorised_entry.entry().payload_digest,
                     message.entry.available,
                 )?;
-                self.shared
-                    .store
-                    .entries()
-                    .ingest(&authorised_entry, Origin::Remote(self.shared.session_id))?;
+                self.shared.store.entries().ingest(
+                    &authorised_entry,
+                    EntryOrigin::Remote {
+                        session: self.shared.session_id,
+                        channel: EntryChannel::Reconciliation,
+                    },
+                )?;
             }
             ReconciliationMessage::SendPayload(message) => {
                 self.current_entry
@@ -175,7 +183,10 @@ impl<S: Storage> Reconciler<S> {
             .map
             .remove(&id)
             .ok_or(Error::InvalidMessageInCurrentState)?;
-        let event = Event::Reconciled(target.area);
+        let event = EventKind::Reconciled {
+            area: target.intersection.intersection.clone(),
+            namespace: target.namespace(),
+        };
         self.events.send(event).await?;
         if self.targets.map.is_empty() {
             Ok(ControlFlow::Break(()))
@@ -206,6 +217,7 @@ impl<S: Storage> TargetMap<S> {
         tracing::info!("aoi wait: {requested_id:?}");
         if !self.map.contains_key(requested_id) {
             self.wait_for_target(shared, requested_id).await?;
+            tracing::info!("aoi resolved: {requested_id:?}");
         }
         return Ok(self.map.get_mut(requested_id).unwrap());
     }
@@ -334,10 +346,7 @@ struct Shared<S: Storage> {
 struct Target<S: Storage> {
     snapshot: <S::Entries as EntryStorage>::Snapshot,
 
-    our_handle: AreaOfInterestHandle,
-    their_handle: AreaOfInterestHandle,
-    namespace: NamespaceId,
-    area: Area,
+    intersection: AoiIntersection,
 
     our_uncovered_ranges: HashSet<u64>,
     started: bool,
@@ -348,7 +357,7 @@ struct Target<S: Storage> {
 
 impl<S: Storage> Target<S> {
     fn id(&self) -> TargetId {
-        (self.our_handle, self.their_handle)
+        self.intersection.id()
     }
     async fn init(
         snapshot: <S::Entries as EntryStorage>::Snapshot,
@@ -357,10 +366,7 @@ impl<S: Storage> Target<S> {
     ) -> Result<Self, Error> {
         let mut this = Target {
             snapshot,
-            our_handle: intersection.our_handle,
-            their_handle: intersection.their_handle,
-            namespace: intersection.namespace,
-            area: intersection.intersection,
+            intersection,
             our_uncovered_ranges: Default::default(),
             started: false,
             our_range_counter: 0,
@@ -372,9 +378,13 @@ impl<S: Storage> Target<S> {
         Ok(this)
     }
 
+    fn namespace(&self) -> NamespaceId {
+        self.intersection.namespace
+    }
+
     async fn initiate(&mut self, shared: &Shared<S>) -> Result<(), Error> {
-        let range = self.area.into_range();
-        let fingerprint = self.snapshot.fingerprint(self.namespace, &range)?;
+        let range = self.intersection.area().into_range();
+        let fingerprint = self.snapshot.fingerprint(self.namespace(), &range)?;
         self.send_fingerprint(shared, range, fingerprint, None)
             .await?;
         Ok(())
@@ -394,7 +404,9 @@ impl<S: Storage> Target<S> {
         }
         let range_count = self.next_range_count_theirs();
 
-        let our_fingerprint = self.snapshot.fingerprint(self.namespace, &message.range)?;
+        let our_fingerprint = self
+            .snapshot
+            .fingerprint(self.namespace(), &message.range)?;
 
         // case 1: fingerprint match.
         if our_fingerprint == message.fingerprint {
@@ -421,7 +433,7 @@ impl<S: Storage> Target<S> {
             let split_opts = SplitOpts::default();
             let snapshot = self.snapshot.clone();
             let mut iter = snapshot
-                .split_range(self.namespace, &message.range, &split_opts)?
+                .split_range(self.namespace(), &message.range, &split_opts)?
                 .peekable();
             while let Some(res) = iter.next() {
                 let (subrange, action) = res?;
@@ -478,8 +490,8 @@ impl<S: Storage> Target<S> {
         let msg = ReconciliationSendFingerprint {
             range,
             fingerprint,
-            sender_handle: self.our_handle,
-            receiver_handle: self.their_handle,
+            sender_handle: self.intersection.our_handle,
+            receiver_handle: self.intersection.their_handle,
             covers,
         };
         shared.send.send(msg).await?;
@@ -496,15 +508,15 @@ impl<S: Storage> Target<S> {
     ) -> Result<(), Error> {
         let our_entry_count = match our_entry_count {
             Some(count) => count,
-            None => self.snapshot.count(self.namespace, range)?,
+            None => self.snapshot.count(self.namespace(), range)?,
         };
         let msg = ReconciliationAnnounceEntries {
             range: range.clone(),
             count: our_entry_count,
             want_response,
             will_sort: false, // todo: sorted?
-            sender_handle: self.our_handle,
-            receiver_handle: self.their_handle,
+            sender_handle: self.intersection.our_handle,
+            receiver_handle: self.intersection.their_handle,
             covers,
         };
         if want_response {
@@ -514,7 +526,7 @@ impl<S: Storage> Target<S> {
 
         for authorised_entry in self
             .snapshot
-            .get_entries_with_authorisation(self.namespace, range)
+            .get_entries_with_authorisation(self.namespace(), range)
         {
             let authorised_entry = authorised_entry?;
             let (entry, token) = authorised_entry.into_parts();

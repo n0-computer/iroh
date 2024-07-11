@@ -1,3 +1,4 @@
+use iroh_net::NodeId;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -17,11 +18,33 @@ use super::traits::EntryStorage;
 const BROADCAST_CAP: usize = 1024;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum Origin {
+pub enum EntryOrigin {
     /// The entry is inserted locally.
     Local,
-    /// The entry is synced in a sync session.
-    Remote(SessionId),
+    /// The entry was received from a peer.
+    Remote {
+        session: SessionId,
+        channel: EntryChannel,
+    }, // TODO: Add details.
+       // Remote {
+       //     peer: NodeId,
+       //     channel: EntryChannel,
+       // },
+}
+
+impl EntryOrigin {
+    // pub fn peer(&self) -> Option<NodeId> {
+    //     match self {
+    //         EntryOrigin::Local => None,
+    //         EntryOrigin::Remote { peer, .. } => Some(peer)
+    //     }
+    // }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum EntryChannel {
+    Reconciliation,
+    Data,
 }
 
 #[derive(Debug, Clone)]
@@ -52,7 +75,7 @@ impl<ES: EntryStorage> WatchableEntryStore<ES> {
     ///
     /// Returns `true` if the entry was stored, and `false` if the entry already exists or is
     /// obsoleted by an existing entry.
-    pub fn ingest(&self, entry: &AuthorisedEntry, origin: Origin) -> anyhow::Result<bool> {
+    pub fn ingest(&self, entry: &AuthorisedEntry, origin: EntryOrigin) -> anyhow::Result<bool> {
         if self.storage.ingest_entry(entry)? {
             self.broadcast.lock().unwrap().broadcast(entry, origin);
             Ok(true)
@@ -126,14 +149,14 @@ impl Broadcaster {
             .push(area)
     }
 
-    fn broadcast(&mut self, entry: &AuthorisedEntry, origin: Origin) {
+    fn broadcast(&mut self, entry: &AuthorisedEntry, origin: EntryOrigin) {
         let Some(sessions) = self.watched_areas.get_mut(&entry.namespace_id()) else {
             return;
         };
         let mut dropped_receivers = vec![];
         for (session_id, areas) in sessions {
             // Do not broadcast back into sessions where the entry came from.
-            if origin == Origin::Remote(*session_id) {
+            if matches!(origin, EntryOrigin::Remote { session, ..} if session == *session_id) {
                 continue;
             }
             // Check if the session is watching an area where the entry falls into.

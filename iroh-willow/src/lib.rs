@@ -1,6 +1,6 @@
 //! Implementation of willow
 
-#![allow(missing_docs)]
+#![allow(missing_docs, unused_imports)]
 
 pub mod actor;
 pub mod auth;
