@@ -120,14 +120,6 @@ jobs:
         outputName: ${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
         NEXTEST_EXPERIMENTAL_LIBTEST_JSON: 1
 
-
-    - name: Upload results
-          uses: actions/upload-artifact@v4
-          with:
-            name: outputs/${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
-            path: outputs
-            retention-days: 1
-
     - name: doctests
       if: ${{ (! inputs.flaky) &&  matrix.features == 'all' }}
       run: |
