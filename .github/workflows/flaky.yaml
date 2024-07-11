@@ -58,7 +58,7 @@ jobs:
       - name: download nextest reports
         uses: actions/download-artifact@v4
         with:
-          pattern: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-.*
+          pattern: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-*
           merge-multiple: true
       - name: read results
         run: |
