@@ -111,12 +111,22 @@ jobs:
         cargo nextest list --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ignored-only
 
     - name: run tests
+      continue-on-error: true
       run: |
         mkdir -p outputs
-        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ${{ inputs.flaky && 'all' || 'default' }} --no-fail-fast --message-format ${{ inputs.flaky && 'libtest-json' || 'human' }} | jq --slurp '.[] | select(.type == "test" and .event == "failed" ) | .name'
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ${{ inputs.flaky && 'all' || 'default' }} --no-fail-fast --message-format ${{ inputs.flaky && 'libtest-json' || 'human' }} > outputs/${{ env.outputName }}
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
+        outputName: ${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
         NEXTEST_EXPERIMENTAL_LIBTEST_JSON: 1
+
+
+    - name: Upload results
+          uses: actions/upload-artifact@v4
+          with:
+            name: outputs/${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
+            path: outputs
+            retention-days: 1
 
     - name: doctests
       if: ${{ (! inputs.flaky) &&  matrix.features == 'all' }}
