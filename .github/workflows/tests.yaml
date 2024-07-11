@@ -113,8 +113,7 @@ jobs:
     - name: run tests
       continue-on-error: true
       run: |
-        mkdir -p outputs
-        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ${{ inputs.flaky && 'all' || 'default' }} --no-fail-fast --message-format ${{ inputs.flaky && 'libtest-json' || 'human' }} > outputs/${{ env.outputName }}
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ${{ inputs.flaky && 'all' || 'default' }} --no-fail-fast --message-format ${{ inputs.flaky && 'libtest-json' || 'human' }} > ${{ env.outputName }}
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
         outputName: ${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
@@ -123,7 +122,7 @@ jobs:
     - name: Upload results
       uses: actions/upload-artifact@v4
       with:
-        name: outputs/${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
+        name: ${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
         path: outputs
         retention-days: 1
 
