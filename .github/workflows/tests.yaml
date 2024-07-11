@@ -119,13 +119,18 @@ jobs:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
         NEXTEST_EXPERIMENTAL_LIBTEST_JSON: 1
 
-    - name: Upload results
-      if: always()
+    - name: Filter and upload results
+      if: always() && {{ inputs.flaky }}
       uses: actions/upload-artifact@v4
+      run: |
+        echo "this should only run if the previous one failed, but if: failure() does not work for some reason"
+        jq --slurp '.[] | select(.type == "test" and .event == "failed" ) | .name ' output/libtest.json > output/failures.json
+        rm output/libtest.json
       with:
-        name: ${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
+        name: run_${{ github.run_number }}-${{ github.run_attempt }}-${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
         path: output
         retention-days: 1
+        compression-level: 0
 
     - name: doctests
       if: ${{ (! inputs.flaky) &&  matrix.features == 'all' }}
