@@ -122,10 +122,6 @@ jobs:
     - name: Filter and upload results
       if: always() && {{ inputs.flaky }}
       uses: actions/upload-artifact@v4
-      run: |
-        echo "this should only run if the previous one failed, but if: failure() does not work for some reason"
-        jq --slurp '.[] | select(.type == "test" and .event == "failed" ) | .name ' output/libtest.json > output/failures.json
-        rm output/libtest.json
       with:
         name: run_${{ github.run_number }}-${{ github.run_attempt }}-${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
         path: output
