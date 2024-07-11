@@ -53,11 +53,12 @@ fn cli_provide_one_file_basic() -> Result<()> {
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_one_file_large() -> Result<()> {
-    let dir = testdir!();
-    let path = dir.join("foo");
-    make_rand_file(1024 * 1024 * 1024, &path)?;
-    // provide a path to a file, do not pipe from stdin, do not pipe to stdout
-    test_provide_get_loop(Input::Path(path), Output::Path)
+    panic!("need something failing quickly")
+    // let dir = testdir!();
+    // let path = dir.join("foo");
+    // make_rand_file(1024 * 1024 * 1024, &path)?;
+    // // provide a path to a file, do not pipe from stdin, do not pipe to stdout
+    // test_provide_get_loop(Input::Path(path), Output::Path)
 }
 
 /// Test single file download to a path

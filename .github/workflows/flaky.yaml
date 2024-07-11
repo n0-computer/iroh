@@ -64,7 +64,7 @@ jobs:
       - name: read results
         run: |
           ls nextest-results
-          for result in nextest-results/*.json; do
+          for result in nextest-results/libtest_run_${{ github.run_number }}-${{ github.run_attempt }}*.json; do
             echo "$result"
             jq --slurp '.[] | select(.type == "test" and .event == "failed" ) | .name' $result
           done
