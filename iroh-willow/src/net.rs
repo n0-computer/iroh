@@ -28,15 +28,14 @@ use crate::{
 };
 
 pub const CHANNEL_CAP: usize = 1024 * 64;
+pub const ALPN: &[u8] = b"iroh-willow/0";
 
 #[instrument(skip_all, name = "willow_net", fields(me=%me.fmt_short(), peer=Empty))]
-pub async fn run(
-    me: NodeId,
-    actor: ActorHandle,
+pub async fn setup(
     conn: Connection,
+    me: NodeId,
     our_role: Role,
-    init: SessionInit,
-) -> anyhow::Result<SessionHandle> {
+) -> anyhow::Result<(InitialTransmission, Channels, JoinSet<anyhow::Result<()>>)> {
     let peer = iroh_net::endpoint::get_remote_node_id(&conn)?;
     Span::current().record("peer", tracing::field::display(peer.fmt_short()));
     debug!(?our_role, "connected");
@@ -76,6 +75,19 @@ pub async fn run(
             logical_recv,
         },
     };
+    Ok((initial_transmission, channels, tasks))
+}
+
+#[instrument(skip_all, name = "willow_net", fields(me=%me.fmt_short(), peer=Empty))]
+pub async fn run(
+    me: NodeId,
+    actor: ActorHandle,
+    conn: Connection,
+    our_role: Role,
+    init: SessionInit,
+) -> anyhow::Result<SessionHandle> {
+    let peer = iroh_net::endpoint::get_remote_node_id(&conn)?;
+    let (initial_transmission, channels, tasks) = setup(conn, me, our_role).await?;
     let handle = actor
         .init_session(peer, our_role, initial_transmission, channels, init)
         .await?;
@@ -612,7 +624,7 @@ mod tests {
                 timestamp: TimestampForm::Now,
                 payload: PayloadForm::Bytes(payload.into()),
             };
-            let (entry, inserted) = handle.insert_form(entry, AuthForm::Any(user_id)).await?;
+            let (entry, inserted) = handle.insert(entry, AuthForm::Any(user_id)).await?;
             assert!(inserted);
             track_entries.extend([entry]);
         }

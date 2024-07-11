@@ -36,11 +36,17 @@ impl DelegateTo {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct CapSelector {
     pub namespace_id: NamespaceId,
     pub user: UserSelector,
     pub area: AreaSelector,
+}
+
+impl From<NamespaceId> for CapSelector {
+    fn from(value: NamespaceId) -> Self {
+        Self::widest(value)
+    }
 }
 
 impl CapSelector {
@@ -71,7 +77,9 @@ impl CapSelector {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, Eq, PartialEq, derive_more::From, Serialize, Deserialize)]
+#[derive(
+    Debug, Default, Clone, Copy, Eq, PartialEq, derive_more::From, Serialize, Deserialize, Hash,
+)]
 pub enum UserSelector {
     #[default]
     Any,
@@ -87,7 +95,7 @@ impl UserSelector {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Hash, Eq, PartialEq)]
 pub enum AreaSelector {
     #[default]
     Widest,
@@ -219,10 +227,7 @@ impl<S: Storage> Auth<S> {
         }
     }
 
-    pub fn find_read_caps_for_interests(
-        &self,
-        interests: Interests,
-    ) -> Result<InterestMap, AuthError> {
+    pub fn resolve_interests(&self, interests: Interests) -> Result<InterestMap, AuthError> {
         match interests {
             Interests::All => {
                 let out = self
@@ -235,7 +240,7 @@ impl<S: Storage> Auth<S> {
                     .collect::<HashMap<_, _>>();
                 Ok(out)
             }
-            Interests::Some(interests) => {
+            Interests::Select(interests) => {
                 let mut out: HashMap<ReadAuthorisation, BTreeSet<AreaOfInterest>> = HashMap::new();
                 for (cap_selector, aoi_selector) in interests {
                     let cap = self.get_read_cap(&cap_selector)?;
@@ -257,6 +262,7 @@ impl<S: Storage> Auth<S> {
                 }
                 Ok(out)
             }
+            Interests::Exact(interests) => Ok(interests),
         }
     }
 

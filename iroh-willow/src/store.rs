@@ -14,7 +14,7 @@ use crate::{
 
 use self::traits::Storage;
 
-pub use self::entry::{Origin, WatchableEntryStore};
+pub use self::entry::{EntryOrigin, WatchableEntryStore};
 
 pub mod auth;
 pub mod entry;
@@ -75,7 +75,9 @@ impl<S: Storage> Store<S> {
             .get_user(&user_id)
             .ok_or(Error::MissingUserKey(user_id))?;
         let authorised_entry = entry.attach_authorisation(capability, &secret_key)?;
-        let inserted = self.entries().ingest(&authorised_entry, Origin::Local)?;
+        let inserted = self
+            .entries()
+            .ingest(&authorised_entry, EntryOrigin::Local)?;
         Ok((authorised_entry.into_entry(), inserted))
     }
 

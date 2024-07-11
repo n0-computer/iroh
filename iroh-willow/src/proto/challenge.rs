@@ -41,6 +41,10 @@ impl ChallengeState {
         }
     }
 
+    pub fn is_revealed(&self) -> bool {
+        matches!(self, Self::Revealed { .. })
+    }
+
     pub fn sign(&self, secret_key: &UserSecretKey) -> Result<UserSignature, Error> {
         let signable = self.signable()?;
         let signature = secret_key.sign(&signable);

@@ -128,12 +128,19 @@ impl Path {
 
     pub fn intersection(&self, other: &Path) -> Option<Path> {
         if self.is_prefix_of(other) {
-            Some(self.clone())
-        } else if other.is_prefix_of(self) {
             Some(other.clone())
+        } else if other.is_prefix_of(self) {
+            Some(self.clone())
         } else {
             None
         }
+        // if self.is_prefix_of(other) {
+        //     Some(self.clone())
+        // } else if other.is_prefix_of(self) {
+        //     Some(other.clone())
+        // } else {
+        //     None
+        // }
     }
 
     pub fn common_prefix(&self, other: &Path) -> &[Component] {

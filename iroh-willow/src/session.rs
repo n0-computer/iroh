@@ -1,13 +1,16 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{hash_map, BTreeMap, BTreeSet, HashMap};
 
-use crate::{auth::CapSelector, proto::grouping::AreaOfInterest};
+use crate::{
+    auth::CapSelector,
+    proto::{grouping::AreaOfInterest, sync::ReadAuthorisation},
+};
 
 mod aoi_finder;
 mod capabilities;
 pub mod channels;
 mod data;
 mod error;
-mod events;
+pub mod events;
 mod pai_finder;
 mod payload;
 mod reconciler;
@@ -60,8 +63,74 @@ impl SessionMode {
 pub enum Interests {
     #[default]
     All,
-    Some(BTreeMap<CapSelector, AreaOfInterestSelector>),
+    Select(HashMap<CapSelector, AreaOfInterestSelector>),
+    Exact(HashMap<ReadAuthorisation, BTreeSet<AreaOfInterest>>),
 }
+
+impl Interests {
+    pub fn select() -> SelectBuilder {
+        SelectBuilder::default()
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct SelectBuilder(HashMap<CapSelector, AreaOfInterestSelector>);
+
+impl SelectBuilder {
+    pub fn add_full(mut self, cap: impl Into<CapSelector>) -> Self {
+        let cap = cap.into();
+        self.0.insert(cap, AreaOfInterestSelector::Widest);
+        self
+    }
+
+    pub fn area(
+        mut self,
+        cap: impl Into<CapSelector>,
+        aois: impl IntoIterator<Item = impl Into<AreaOfInterest>>,
+    ) -> Self {
+        let cap = cap.into();
+        let aois = aois.into_iter();
+        let aois = aois.map(|aoi| aoi.into());
+        match self.0.entry(cap) {
+            hash_map::Entry::Vacant(entry) => {
+                entry.insert(AreaOfInterestSelector::Exact(aois.collect()));
+            }
+            hash_map::Entry::Occupied(mut entry) => match entry.get_mut() {
+                AreaOfInterestSelector::Widest => {}
+                AreaOfInterestSelector::Exact(existing) => existing.extend(aois),
+            },
+        }
+        self
+    }
+
+    pub fn build(self) -> Interests {
+        Interests::Select(self.0)
+    }
+}
+
+impl From<SelectBuilder> for Interests {
+    fn from(builder: SelectBuilder) -> Self {
+        builder.build()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SessionUpdate {
+    AddInterests(Interests),
+}
+
+// impl Interest {
+//     pub fn merge(&self, other: &Interests) -> Self {
+//         match (self, other) {
+//             (Self::All, _) => Self::All,
+//             (_, Self::All) => Self::All,
+//             (Self::Some(a), Self::Some(b)) => {
+//
+//             }
+//
+//         }
+//     }
+// }
 
 #[derive(Debug, Default, Clone)]
 pub enum AreaOfInterestSelector {
@@ -79,7 +148,8 @@ pub struct SessionInit {
 }
 
 impl SessionInit {
-    pub fn new(interests: Interests, mode: SessionMode) -> Self {
+    pub fn new(interests: impl Into<Interests>, mode: SessionMode) -> Self {
+        let interests = interests.into();
         Self { interests, mode }
     }
 }
