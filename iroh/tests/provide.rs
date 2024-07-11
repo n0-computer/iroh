@@ -10,7 +10,7 @@ use bytes::Bytes;
 use futures_lite::FutureExt;
 use iroh::node::{Builder, DocsStorage};
 use iroh_base::node_addr::AddrInfoOptions;
-use iroh_net::{defaults::default_relay_map, key::SecretKey, NodeAddr, NodeId};
+use iroh_net::{defaults::staging::default_relay_map, key::SecretKey, NodeAddr, NodeId};
 use rand::RngCore;
 
 use bao_tree::{blake3, ChunkNum, ChunkRanges};

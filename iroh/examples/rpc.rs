@@ -1,7 +1,7 @@
 //! An example that runs an iroh node that can be controlled via RPC.
 //!
 //! Run this example with
-//!   $ cargo run --example rpc
+//!   $ cargo run --features=examples --example rpc
 //! Then in another terminal, run any of the normal iroh CLI commands, which you can run from
 //! cargo as well:
 //!   $ cargo run node stats

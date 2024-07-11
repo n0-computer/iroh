@@ -785,7 +785,7 @@ mod tests {
     use tokio::time;
     use tracing::info;
 
-    use crate::defaults::{DEFAULT_STUN_PORT, EU_RELAY_HOSTNAME};
+    use crate::defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT};
     use crate::ping::Pinger;
     use crate::relay::RelayNode;
 

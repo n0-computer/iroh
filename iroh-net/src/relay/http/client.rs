@@ -172,6 +172,7 @@ struct Actor {
     address_family_selector: Option<Box<dyn Fn() -> BoxFuture<bool> + Send + Sync + 'static>>,
     conn_gen: usize,
     url: RelayUrl,
+    protocol: Protocol,
     #[debug("TlsConnector")]
     tls_connector: tokio_rustls::TlsConnector,
     pings: PingTracker,
@@ -218,6 +219,8 @@ pub struct ClientBuilder {
     server_public_key: Option<PublicKey>,
     /// Server url.
     url: RelayUrl,
+    /// Relay protocol
+    protocol: Protocol,
     /// Allow self-signed certificates from relay servers
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_cert_verify: bool,
@@ -235,6 +238,7 @@ impl ClientBuilder {
             is_prober: false,
             server_public_key: None,
             url: url.into(),
+            protocol: Protocol::Relay,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: false,
             proxy_url: None,
@@ -244,6 +248,13 @@ impl ClientBuilder {
     /// Sets the server url
     pub fn server_url(mut self, url: impl Into<RelayUrl>) -> Self {
         self.url = url.into();
+        self
+    }
+
+    /// Sets whether to connect to the relay via websockets or not.
+    /// Set to use non-websocket, normal relaying by default.
+    pub fn protocol(mut self, protocol: Protocol) -> Self {
+        self.protocol = protocol;
         self
     }
 
@@ -334,6 +345,7 @@ impl ClientBuilder {
             pings: PingTracker::default(),
             ping_tasks: Default::default(),
             url: self.url,
+            protocol: self.protocol,
             tls_connector,
             dns_resolver,
             proxy_url: self.proxy_url,
@@ -581,10 +593,7 @@ impl Actor {
     }
 
     async fn connect_0(&self) -> Result<(RelayClient, RelayClientReceiver), ClientError> {
-        // We determine which protocol to use for relays via the URL scheme: ws(s) vs. http(s)
-        let protocol = Protocol::from_url_scheme(&self.url);
-
-        let (reader, writer, local_addr) = match &protocol {
+        let (reader, writer, local_addr) = match self.protocol {
             Protocol::Websocket => {
                 let (reader, writer) = self.connect_ws().await?;
                 let local_addr = None;
@@ -614,6 +623,11 @@ impl Actor {
     async fn connect_ws(&self) -> Result<(ConnReader, ConnWriter), ClientError> {
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
+        // The relay URL is exchanged with the http(s) scheme in tickets and similar.
+        // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
+        dial_url
+            .set_scheme(if self.use_tls() { "wss" } else { "ws" })
+            .map_err(|()| ClientError::InvalidUrl(self.url.to_string()))?;
 
         debug!(%dial_url, "Dialing relay by websocket");
 

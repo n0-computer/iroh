@@ -6,7 +6,7 @@ use hickory_resolver::{
     AsyncResolver,
 };
 use iroh_net::{
-    discovery::dns::N0_DNS_NODE_ORIGIN,
+    discovery::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
     dns::{node_info::TxtAttrs, DnsResolver},
     NodeId,
 };
@@ -16,16 +16,18 @@ const EXAMPLE_ORIGIN: &str = "irohdns.example";
 
 #[derive(ValueEnum, Clone, Debug, Default)]
 pub enum Env {
-    /// Use the system's nameservers with origin domain dns.iroh.link
+    /// Use the system's nameservers with origin domain of the n0 staging DNS server
     #[default]
-    Default,
+    Staging,
+    /// Use the system's nameservers with origin domain of the n0 production DNS server
+    Prod,
     /// Use a localhost DNS server listening on port 5300
     Dev,
 }
 
 #[derive(Debug, Parser)]
 struct Cli {
-    #[clap(value_enum, short, long, default_value_t = Env::Default)]
+    #[clap(value_enum, short, long, default_value_t = Env::Staging)]
     env: Env,
     #[clap(subcommand)]
     command: Command,
@@ -43,9 +45,13 @@ enum Command {
 async fn main() -> anyhow::Result<()> {
     let args = Cli::parse();
     let (resolver, origin) = match args.env {
-        Env::Default => (
+        Env::Staging => (
             iroh_net::dns::default_resolver().clone(),
-            N0_DNS_NODE_ORIGIN,
+            N0_DNS_NODE_ORIGIN_STAGING,
+        ),
+        Env::Prod => (
+            iroh_net::dns::default_resolver().clone(),
+            N0_DNS_NODE_ORIGIN_PROD,
         ),
         Env::Dev => (
             resolver_with_nameserver(LOCALHOST_DNS.parse()?),

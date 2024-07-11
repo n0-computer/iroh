@@ -1,5 +1,5 @@
 use std::{
-    net::{Ipv4Addr, SocketAddrV4},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -14,16 +14,20 @@ use iroh_blobs::{
 };
 use iroh_docs::engine::DefaultAuthorStorage;
 use iroh_docs::net::DOCS_ALPN;
-use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
+use iroh_gossip::{
+    dispatcher::GossipDispatcher,
+    net::{Gossip, GOSSIP_ALPN},
+};
+#[cfg(not(test))]
+use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 use iroh_net::{
-    discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
     relay::RelayMode,
     Endpoint,
 };
-use quic_rpc::transport::{
-    boxed::BoxableServerEndpoint, flume::FlumeServerEndpoint, quinn::QuinnServerEndpoint,
-};
+
+use quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
 use tracing::{debug, error_span, trace, Instrument};
@@ -38,7 +42,7 @@ use crate::{
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-use super::{docs::DocsEngine, rpc_status::RpcStatus, Node, NodeInner};
+use super::{docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, Node, NodeInner};
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
@@ -52,11 +56,6 @@ const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
-
-type BoxedServerEndpoint = quic_rpc::transport::boxed::ServerEndpoint<
-    crate::rpc_protocol::Request,
-    crate::rpc_protocol::Response,
->;
 
 /// Storage backend for documents.
 #[derive(Debug, Clone)]
@@ -90,8 +89,8 @@ where
     storage: StorageConfig,
     bind_port: Option<u16>,
     secret_key: SecretKey,
-    rpc_endpoint: BoxedServerEndpoint,
-    rpc_port: Option<u16>,
+    rpc_endpoint: IrohServerEndpoint,
+    rpc_addr: Option<SocketAddr>,
     blobs_store: D,
     keylog: bool,
     relay_mode: RelayMode,
@@ -177,22 +176,28 @@ impl BoxableServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Re
     }
 }
 
-fn mk_external_rpc() -> BoxedServerEndpoint {
+fn mk_external_rpc() -> IrohServerEndpoint {
     quic_rpc::transport::boxed::ServerEndpoint::new(DummyServerEndpoint)
 }
 
 impl Default for Builder<iroh_blobs::store::mem::Store> {
     fn default() -> Self {
+        // Use staging in testing
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let relay_mode = RelayMode::Default;
+        #[cfg(any(test, feature = "test-utils"))]
+        let relay_mode = RelayMode::Staging;
+
         Self {
             storage: StorageConfig::Mem,
             bind_port: None,
             secret_key: SecretKey::generate(),
             blobs_store: Default::default(),
             keylog: false,
-            relay_mode: RelayMode::Default,
+            relay_mode,
             dns_resolver: None,
             rpc_endpoint: mk_external_rpc(),
-            rpc_port: None,
+            rpc_addr: None,
             gc_policy: GcPolicy::Disabled,
             docs_storage: DocsStorage::Memory,
             node_discovery: Default::default(),
@@ -210,16 +215,22 @@ impl<D: Map> Builder<D> {
         docs_storage: DocsStorage,
         storage: StorageConfig,
     ) -> Self {
+        // Use staging in testing
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let relay_mode = RelayMode::Default;
+        #[cfg(any(test, feature = "test-utils"))]
+        let relay_mode = RelayMode::Staging;
+
         Self {
             storage,
             bind_port: None,
             secret_key: SecretKey::generate(),
             blobs_store,
             keylog: false,
-            relay_mode: RelayMode::Default,
+            relay_mode,
             dns_resolver: None,
             rpc_endpoint: mk_external_rpc(),
-            rpc_port: None,
+            rpc_addr: None,
             gc_policy: GcPolicy::Disabled,
             docs_storage,
             node_discovery: Default::default(),
@@ -281,7 +292,7 @@ where
             blobs_store,
             keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
-            rpc_port: self.rpc_port,
+            rpc_addr: self.rpc_addr,
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
@@ -293,53 +304,35 @@ where
         })
     }
 
-    /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint(self, value: BoxedServerEndpoint, port: Option<u16>) -> Builder<D> {
-        // we can't use ..self here because the return type is different
-        Builder {
-            storage: self.storage,
-            bind_port: self.bind_port,
-            secret_key: self.secret_key,
-            blobs_store: self.blobs_store,
-            keylog: self.keylog,
+    /// Configure rpc endpoint.
+    pub fn rpc_endpoint(self, value: IrohServerEndpoint, rpc_addr: Option<SocketAddr>) -> Self {
+        Self {
             rpc_endpoint: value,
-            rpc_port: port,
-            relay_mode: self.relay_mode,
-            dns_resolver: self.dns_resolver,
-            gc_policy: self.gc_policy,
-            docs_storage: self.docs_storage,
-            node_discovery: self.node_discovery,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
-            gc_done_callback: self.gc_done_callback,
+            rpc_addr,
+            ..self
         }
     }
 
-    /// Configure the default iroh rpc endpoint.
+    /// Configure the default iroh rpc endpoint, on the default address.
     pub async fn enable_rpc(self) -> Result<Builder<D>> {
-        let (ep, actual_rpc_port) = make_rpc_endpoint(&self.secret_key, DEFAULT_RPC_PORT)?;
+        self.enable_rpc_with_addr(DEFAULT_RPC_ADDR).await
+    }
+
+    /// Configure the default iroh rpc endpoint.
+    pub async fn enable_rpc_with_addr(self, mut rpc_addr: SocketAddr) -> Result<Builder<D>> {
+        let (ep, actual_rpc_port) = make_rpc_endpoint(&self.secret_key, rpc_addr)?;
+        rpc_addr.set_port(actual_rpc_port);
+
         let ep = quic_rpc::transport::boxed::ServerEndpoint::new(ep);
         if let StorageConfig::Persistent(ref root) = self.storage {
             // store rpc endpoint
             RpcStatus::store(root, actual_rpc_port).await?;
         }
 
-        Ok(Builder {
-            storage: self.storage,
-            bind_port: self.bind_port,
-            secret_key: self.secret_key,
-            blobs_store: self.blobs_store,
-            keylog: self.keylog,
+        Ok(Self {
             rpc_endpoint: ep,
-            rpc_port: Some(actual_rpc_port),
-            relay_mode: self.relay_mode,
-            dns_resolver: self.dns_resolver,
-            gc_policy: self.gc_policy,
-            docs_storage: self.docs_storage,
-            node_discovery: self.node_discovery,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
-            gc_done_callback: self.gc_done_callback,
+            rpc_addr: Some(rpc_addr),
+            ..self
         })
     }
 
@@ -445,7 +438,7 @@ where
 
     /// Builds a node without spawning it.
     ///
-    /// Returns an [`ProtocolBuilder`], on which custom protocols can be registered with
+    /// Returns a [`ProtocolBuilder`], on which custom protocols can be registered with
     /// [`ProtocolBuilder::accept`]. To spawn the node, call [`ProtocolBuilder::spawn`].
     pub async fn build(self) -> Result<ProtocolBuilder<D>> {
         // Clone the blob store to shutdown in case of error.
@@ -472,6 +465,26 @@ where
                 DiscoveryConfig::None => None,
                 DiscoveryConfig::Custom(discovery) => Some(discovery),
                 DiscoveryConfig::Default => {
+                    #[cfg(not(test))]
+                    let discovery = {
+                        let mut discovery_services: Vec<Box<dyn Discovery>> = vec![
+                            // Enable DNS discovery by default
+                            Box::new(DnsDiscovery::n0_dns()),
+                            // Enable pkarr publishing by default
+                            Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
+                        ];
+                        // Enable local swarm discovery by default, but fail silently if it errors
+                        match LocalSwarmDiscovery::new(self.secret_key.public()) {
+                            Err(e) => {
+                                tracing::error!("unable to start LocalSwarmDiscoveryService: {e:?}")
+                            }
+                            Ok(service) => {
+                                discovery_services.push(Box::new(service));
+                            }
+                        }
+                        ConcurrentDiscovery::from_services(discovery_services)
+                    };
+                    #[cfg(test)]
                     let discovery = ConcurrentDiscovery::from_services(vec![
                         // Enable DNS discovery by default
                         Box::new(DnsDiscovery::n0_dns()),
@@ -533,16 +546,18 @@ where
             downloader.clone(),
         )
         .await?;
+        let gossip_dispatcher = GossipDispatcher::new(gossip.clone());
 
         // Initialize the internal RPC connection.
-        let (internal_rpc, controller) = quic_rpc::transport::flume::connection(32);
+        let (internal_rpc, controller) = quic_rpc::transport::flume::connection::<RpcService>(32);
+        let internal_rpc = quic_rpc::transport::boxed::ServerEndpoint::new(internal_rpc);
         // box the controller. Boxing has a special case for the flume channel that avoids allocations,
         // so this has zero overhead.
         let controller = quic_rpc::transport::boxed::Connection::new(controller);
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
         let inner = Arc::new(NodeInner {
-            rpc_port: self.rpc_port,
+            rpc_addr: self.rpc_addr,
             db: self.blobs_store,
             docs,
             endpoint,
@@ -552,6 +567,7 @@ where
             rt: lp,
             downloader,
             gossip,
+            gossip_dispatcher,
         });
 
         let protocol_builder = ProtocolBuilder {
@@ -580,9 +596,8 @@ where
 #[derive(derive_more::Debug)]
 pub struct ProtocolBuilder<D> {
     inner: Arc<NodeInner<D>>,
-    internal_rpc: FlumeServerEndpoint<RpcService>,
-    #[debug("external rpc")]
-    external_rpc: BoxedServerEndpoint,
+    internal_rpc: IrohServerEndpoint,
+    external_rpc: IrohServerEndpoint,
     protocols: ProtocolMap,
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
@@ -786,12 +801,15 @@ const DEFAULT_RPC_PORT: u16 = 0x1337;
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u32 = 1024;
 
+/// The default bind addr of the RPC .
+pub const DEFAULT_RPC_ADDR: SocketAddr =
+    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, DEFAULT_RPC_PORT));
+
 /// Makes a an RPC endpoint that uses a QUIC transport
 fn make_rpc_endpoint(
     secret_key: &SecretKey,
-    rpc_port: u16,
+    mut rpc_addr: SocketAddr,
 ) -> Result<(QuinnServerEndpoint<RpcService>, u16)> {
-    let rpc_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port);
     let mut transport_config = quinn::TransportConfig::default();
     transport_config
         .max_concurrent_bidi_streams(MAX_RPC_STREAMS.into())
@@ -804,20 +822,18 @@ fn make_rpc_endpoint(
     )?;
     server_config.concurrent_connections(MAX_RPC_CONNECTIONS);
 
-    let rpc_quinn_endpoint = quinn::Endpoint::server(server_config.clone(), rpc_addr.into());
+    let rpc_quinn_endpoint = quinn::Endpoint::server(server_config.clone(), rpc_addr);
     let rpc_quinn_endpoint = match rpc_quinn_endpoint {
         Ok(ep) => ep,
         Err(err) => {
             if err.kind() == std::io::ErrorKind::AddrInUse {
                 tracing::warn!(
-                    "RPC port {} already in use, switching to random port",
-                    rpc_port
+                    "RPC port: {} already in use, switching to random port",
+                    rpc_addr,
                 );
                 // Use a random port
-                quinn::Endpoint::server(
-                    server_config,
-                    SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0).into(),
-                )?
+                rpc_addr.set_port(0);
+                quinn::Endpoint::server(server_config, rpc_addr)?
             } else {
                 return Err(err.into());
             }

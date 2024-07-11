@@ -351,6 +351,10 @@ impl DefaultAuthorStorage {
                     let author = Author::new(&mut rand::thread_rng());
                     let author_id = author.id();
                     docs_store.import_author(author).await?;
+                    // Make sure to write the default author to the store
+                    // *before* we write the default author ID file.
+                    // Otherwise the default author ID file is effectively a dangling reference.
+                    docs_store.flush_store().await?;
                     self.persist(author_id).await?;
                     Ok(author_id)
                 }
