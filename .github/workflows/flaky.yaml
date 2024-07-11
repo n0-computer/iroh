@@ -60,9 +60,13 @@ jobs:
         with:
           pattern: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-*
           merge-multiple: true
+          path: nextest-results
       - name: read results
         run: |
-          ls -R
+          for report in nextest-results/*.json; do
+            echo $report
+            jq '.[] | select(.type == "test" and .event == "failed" ) | .name' $report
+          done
       - name: Notify discord on failure
         uses: n0-computer/discord-webhook-notify@v1
         if: ${{ env.TESTS_RESULT == 'failure' }}
