@@ -554,6 +554,9 @@ impl Endpoint {
     /// Only connections with the ALPNs configured in [`Builder::alpns`] will be accepted.
     /// If multiple ALPNs have been configured the ALPN can be inspected before accepting
     /// the connection using [`Connecting::alpn`].
+    ///
+    /// The returned future will yield `None` if the endpoint is closed by calling
+    /// [`Endpoint::close`].
     pub fn accept(&self) -> Accept<'_> {
         Accept {
             inner: self.endpoint.accept(),
