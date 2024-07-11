@@ -55,6 +55,14 @@ jobs:
           result=$(echo '${{ toJSON(needs) }}' | jq -r .tests.result)
           echo TESTS_RESULT=$result
           echo "TESTS_RESULT=$result" >>"$GITHUB_ENV"
+      - name: download nextest reports
+        uses: actions/download-artifact@v4
+        with:
+          path: nextest-results
+          pattern: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-*
+          merge-multiple: true
+        # run: ls nextest-results
+
       - name: Notify discord on failure
         uses: n0-computer/discord-webhook-notify@v1
         if: ${{ env.TESTS_RESULT == 'failure' }}

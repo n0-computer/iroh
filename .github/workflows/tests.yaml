@@ -123,7 +123,7 @@ jobs:
       if: always() && ${{ inputs.flaky }}
       uses: actions/upload-artifact@v4
       with:
-        name: run_${{ github.run_number }}-${{ github.run_attempt }}-${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
+        name: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
         path: output
         retention-days: 1
         compression-level: 0
