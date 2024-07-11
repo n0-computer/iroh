@@ -58,16 +58,11 @@ jobs:
       - name: download nextest reports
         uses: actions/download-artifact@v4
         with:
-          path: nextest-results
-          pattern: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-*
+          pattern: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-.*
           merge-multiple: true
       - name: read results
         run: |
-          ls nextest-results
-          for result in nextest-results/libtest_run_${{ github.run_number }}-${{ github.run_attempt }}.*.json; do
-            echo "$result"
-            jq --slurp '.[] | select(.type == "test" and .event == "failed" ) | .name' $result
-          done
+          ls -R
       - name: Notify discord on failure
         uses: n0-computer/discord-webhook-notify@v1
         if: ${{ env.TESTS_RESULT == 'failure' }}
