@@ -64,10 +64,13 @@ jobs:
       - name: create summary report
         id: make_summary
         run: |
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "summary<<$EOF" >> $GITHUB_OUTPUT
           for report in nextest-results/*.json; do
             echo $report | cut -c 17-44 | tr _ ' ' >> $GITHUB_OUTPUT
             jq --slurp '.[] | select(.["type"] == "test" and .["event"] == "failed" ) | .["name"]' $report >> $GITHUB_OUTPUT
           done
+          echo "$EOF" >> $GITHUB_OUTPUT
       - name: Notify discord on failure
         uses: n0-computer/discord-webhook-notify@v1
         if: ${{ env.TESTS_RESULT == 'failure' }}
@@ -75,6 +78,6 @@ jobs:
           severity: warn
           details: |
             Falky tests failure:
-            ${{ join(steps.make_summary.outputs.*, '\n') }}
+            ${{ steps.make_summary.outputs.summary }}
             See https://github.com/n0-computer/iroh/actions/workflows/flaky.yaml
           webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
