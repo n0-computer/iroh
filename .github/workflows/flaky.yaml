@@ -64,15 +64,20 @@ jobs:
       - name: read results
         run: |
           for report in nextest-results/*.json; do
-            echo $report
-            jq --slurp '.[] | select(.["type"] == "test" and .["event"] == "failed" ) | .["name"]' $report
+            echo $report | cut -c 17-44 | tr _ ' ' >> summary.txt
+            jq --slurp '.[] | select(.["type"] == "test" and .["event"] == "failed" ) | .["name"]' $report >> summary.txt
           done
+          cat summary.txt
+          summary=$(cat summary.txt)
+          echo FAILURE_SUMMARY=$summary
+          echo "FAILURE_SUMMARY=$summary" >>"$GITHUB_ENV"
       - name: Notify discord on failure
         uses: n0-computer/discord-webhook-notify@v1
         if: ${{ env.TESTS_RESULT == 'failure' }}
         with:
           severity: warn
           details: |
-            Flaky tests failed again, why don't you go fix them?
+            Falky tests failure:
+            ${{ env.FAILURE_SUMMARY }}
             See https://github.com/n0-computer/iroh/actions/workflows/flaky.yaml
           webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
