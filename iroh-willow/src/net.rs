@@ -290,7 +290,7 @@ async fn exchange_commitments(
     })
 }
 
-async fn join_all(join_set: &mut JoinSet<anyhow::Result<()>>) -> anyhow::Result<()> {
+pub async fn join_all(join_set: &mut JoinSet<anyhow::Result<()>>) -> anyhow::Result<()> {
     let mut final_result = Ok(());
     let mut joined = 0;
     while let Some(res) = join_set.join_next().await {

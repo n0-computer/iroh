@@ -26,7 +26,7 @@ use crate::{
         events::{EventKind, EventSender},
         payload::{send_payload_chunked, CurrentPayload},
         static_tokens::StaticTokens,
-        Error, Role, SessionId,
+        Error, Role, SessionId, SessionMode,
     },
     store::{
         entry::{EntryChannel, EntryOrigin},
@@ -56,8 +56,9 @@ impl<S: Storage> Reconciler<S> {
         static_tokens: StaticTokens,
         session_id: SessionId,
         send: ChannelSenders,
-        our_role: Role,
         events: EventSender,
+        our_role: Role,
+        mode: SessionMode,
     ) -> Result<Self, Error> {
         let shared = Shared {
             store,
@@ -65,6 +66,7 @@ impl<S: Storage> Reconciler<S> {
             send,
             static_tokens,
             session_id,
+            mode,
         };
         Ok(Self {
             shared,
@@ -87,7 +89,9 @@ impl<S: Storage> Reconciler<S> {
                             ControlFlow::Continue(_) => {}
                             ControlFlow::Break(_) => {
                                 debug!("reconciliation complete");
-                                break;
+                                if self.shared.mode == SessionMode::ReconcileOnce {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -98,7 +102,7 @@ impl<S: Storage> Reconciler<S> {
                     let area = intersection.intersection.clone();
                     let namespace = intersection.namespace;
                     self.targets.init_target(&self.shared, intersection).await?;
-                    self.events.send(EventKind::AoiIntersection { namespace, area }).await?;
+                    self.events.send(EventKind::InterestIntersection { namespace, area }).await?;
                 }
             }
         }
@@ -214,10 +218,8 @@ impl<S: Storage> TargetMap<S> {
         shared: &Shared<S>,
         requested_id: &TargetId,
     ) -> Result<&mut Target<S>, Error> {
-        tracing::info!("aoi wait: {requested_id:?}");
         if !self.map.contains_key(requested_id) {
             self.wait_for_target(shared, requested_id).await?;
-            tracing::info!("aoi resolved: {requested_id:?}");
         }
         return Ok(self.map.get_mut(requested_id).unwrap());
     }
@@ -340,6 +342,7 @@ struct Shared<S: Storage> {
     send: ChannelSenders,
     static_tokens: StaticTokens,
     session_id: SessionId,
+    mode: SessionMode,
 }
 
 #[derive(Debug)]

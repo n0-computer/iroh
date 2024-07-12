@@ -114,7 +114,6 @@ impl Inner {
             let candidate_handle = *candidate_handle;
             // Check if we have an intersection.
             if let Some(intersection) = candidate.aoi.intersection(&aoi) {
-                tracing::warn!(a=?aoi, b=?candidate.aoi, ?intersection, "AOI INTERSECTION");
                 // We found an intersection!
                 let (our_handle, their_handle) = match scope {
                     Scope::Ours => (handle, candidate_handle),

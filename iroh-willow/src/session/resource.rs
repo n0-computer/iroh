@@ -96,6 +96,12 @@ where
             (handle, true)
         }
     }
+
+    pub fn find(&self, resource: &R) -> Option<H> {
+        self.map
+            .iter()
+            .find_map(|(handle, r)| (r.value == *resource).then_some(*handle))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -73,6 +73,32 @@ pub enum Error {
     Net(anyhow::Error),
 }
 
+// TODO: Remove likely?
+// Added this to be able to implement PartialEq on EventKind for tests
+// but many errors are not PartialEq, so we just return false for them, always
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Store(_), Self::Store(_)) => false,
+            (Self::Auth(_), Self::Auth(_)) => false,
+            (Self::PayloadStore(_), Self::PayloadStore(_)) => false,
+            (Self::KeyStore(_), Self::KeyStore(_)) => false,
+            (Self::Receive(_), Self::Receive(_)) => false,
+            (Self::Write(_), Self::Write(_)) => false,
+            (Self::TaskFailed(_), Self::TaskFailed(_)) => false,
+            (Self::Pai(_), Self::Pai(_)) => false,
+            (Self::Net(_), Self::Net(_)) => false,
+            (Self::MissingResource(l0), Self::MissingResource(r0)) => l0 == r0,
+            (Self::InvalidParameters(l0), Self::InvalidParameters(r0)) => l0 == r0,
+            (Self::InvalidState(l0), Self::InvalidState(r0)) => l0 == r0,
+            (Self::MissingUserKey(l0), Self::MissingUserKey(r0)) => l0 == r0,
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
+}
+
+impl Eq for Error {}
+
 impl From<Unauthorised> for Error {
     fn from(_value: Unauthorised) -> Self {
         Self::UnauthorisedEntryReceived

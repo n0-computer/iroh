@@ -672,6 +672,8 @@ impl<'a> Encoder for AreaInArea<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeSet, HashSet};
+
     use crate::proto::{grouping::Area, willow::Path};
 
     #[test]
@@ -681,5 +683,9 @@ mod tests {
         let p2 = Path::new(&[b"foo", b"bar"]).unwrap();
         let a2 = Area::path(p2);
         assert_eq!(a1, a2);
+        let mut set = HashSet::new();
+        set.insert(a1.clone());
+        set.insert(a2.clone());
+        assert_eq!(set.len(), 1);
     }
 }
