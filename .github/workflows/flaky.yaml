@@ -61,16 +61,13 @@ jobs:
           pattern: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-*
           merge-multiple: true
           path: nextest-results
-      - name: read results
+      - name: create summary report
+        id: make_summary
         run: |
           for report in nextest-results/*.json; do
-            echo $report | cut -c 17-44 | tr _ ' ' >> summary.txt
-            jq --slurp '.[] | select(.["type"] == "test" and .["event"] == "failed" ) | .["name"]' $report >> summary.txt
+            echo $report | cut -c 17-44 | tr _ ' ' >> $GITHUB_OUTPUT
+            jq --slurp '.[] | select(.["type"] == "test" and .["event"] == "failed" ) | .["name"]' $report >> $GITHUB_OUTPUT
           done
-          cat summary.txt
-          summary=$(cat summary.txt)
-          echo FAILURE_SUMMARY=$summary
-          echo "FAILURE_SUMMARY=$summary" >>"$GITHUB_ENV"
       - name: Notify discord on failure
         uses: n0-computer/discord-webhook-notify@v1
         if: ${{ env.TESTS_RESULT == 'failure' }}
@@ -78,6 +75,6 @@ jobs:
           severity: warn
           details: |
             Falky tests failure:
-            ${{ env.FAILURE_SUMMARY }}
+            ${{join(steps.make_summary.outputs.*, '\n')}
             See https://github.com/n0-computer/iroh/actions/workflows/flaky.yaml
           webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
