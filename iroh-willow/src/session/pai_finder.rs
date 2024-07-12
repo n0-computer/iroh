@@ -72,6 +72,7 @@ pub struct PaiFinder {
     our_intersection_handles: ResourceMap<IntersectionHandle, GroupState>,
     their_intersection_handles: ResourceMap<IntersectionHandle, GroupState>,
     requested_subspace_cap_handles: HashSet<IntersectionHandle>,
+    submitted: HashSet<ReadAuthorisation>,
 }
 
 impl PaiFinder {
@@ -107,6 +108,7 @@ impl PaiFinder {
             their_intersection_handles: Default::default(),
             fragments_info: Default::default(),
             requested_subspace_cap_handles: Default::default(),
+            submitted: Default::default(),
         }
     }
 
@@ -140,6 +142,9 @@ impl PaiFinder {
     }
 
     async fn submit_authorisation(&mut self, authorisation: ReadAuthorisation) {
+        if !self.submitted.insert(authorisation.clone()) {
+            return;
+        }
         trace!(?authorisation, "pai submit auth");
         let read_cap = authorisation.read_cap();
         let fragment_kit = PaiScheme::get_fragment_kit(read_cap);

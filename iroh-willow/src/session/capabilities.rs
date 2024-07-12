@@ -73,6 +73,10 @@ impl Capabilities {
         Ok(handle)
     }
 
+    pub fn find_ours(&self, cap: &ReadCapability) -> Option<CapabilityHandle> {
+        self.0.borrow().ours.find(cap)
+    }
+
     pub fn bind_and_sign_ours<S: SecretStorage>(
         &self,
         secret_store: &S,

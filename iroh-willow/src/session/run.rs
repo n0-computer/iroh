@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::hash_map, rc::Rc};
 
 use futures_concurrency::stream::StreamExt as _;
 use futures_lite::StreamExt as _;
@@ -46,6 +46,7 @@ pub async fn run_session<S: Storage>(
     event_sender: EventSender,
     update_receiver: flume::Receiver<SessionUpdate>,
 ) -> Result<(), Error> {
+    debug!(role = ?our_role, mode = ?init.mode, "start session");
     let Channels { send, recv } = channels;
     let ChannelReceivers {
         control_recv,
@@ -80,7 +81,6 @@ pub async fn run_session<S: Storage>(
     let tasks = Tasks::default();
 
     let initial_interests = store.auth().resolve_interests(init.interests)?;
-    tracing::warn!("INIT INTEREST {initial_interests:?}");
     let all_interests = Rc::new(RefCell::new(initial_interests.clone()));
     let initial_interests = Rc::new(initial_interests);
 
@@ -89,28 +89,53 @@ pub async fn run_session<S: Storage>(
 
     // Spawn a task to handle session updates.
     tasks.spawn(error_span!("upd"), {
-        // let tokens = tokens.clone();
         let store = store.clone();
         let caps = caps.clone();
         let to_pai = pai_inbox_tx.clone();
         let all_interests = all_interests.clone();
+        let sender = send.clone();
+        let aoi_finder = aoi_finder.clone();
         async move {
             while let Some(update) = update_receiver.next().await {
                 match update {
                     SessionUpdate::AddInterests(interests) => {
                         caps.revealed().await;
                         let interests = store.auth().resolve_interests(interests)?;
-                        tracing::warn!("UPDATE INTEREST {interests:?}");
                         for (authorisation, aois) in interests.into_iter() {
-                            all_interests
-                                .borrow_mut()
-                                .entry(authorisation.clone())
-                                .or_default()
-                                .extend(aois);
-                            to_pai
-                                .send_async(pai::Input::SubmitAuthorisation(authorisation))
-                                .await
-                                .map_err(|_| Error::InvalidState("PAI actor dead"))?;
+                            let mut all_interests = all_interests.borrow_mut();
+                            let is_new_cap;
+                            match all_interests.entry(authorisation.clone()) {
+                                hash_map::Entry::Occupied(mut entry) => {
+                                    is_new_cap = false;
+                                    entry.get_mut().extend(aois.clone());
+                                }
+                                hash_map::Entry::Vacant(entry) => {
+                                    is_new_cap = true;
+                                    entry.insert(aois.clone());
+                                }
+                            }
+                            drop(all_interests);
+                            if let Some(capability_handle) =
+                                caps.find_ours(authorisation.read_cap())
+                            {
+                                let namespace = authorisation.namespace();
+                                for aoi in aois.into_iter() {
+                                    aoi_finder
+                                        .bind_and_send_ours(
+                                            &sender,
+                                            namespace,
+                                            aoi,
+                                            capability_handle,
+                                        )
+                                        .await?;
+                                }
+                            }
+                            if is_new_cap {
+                                to_pai
+                                    .send_async(pai::Input::SubmitAuthorisation(authorisation))
+                                    .await
+                                    .map_err(|_| Error::InvalidState("PAI actor dead"))?;
+                            }
                         }
                     }
                 }
@@ -154,7 +179,8 @@ pub async fn run_session<S: Storage>(
                         pai::Output::SendMessage(message) => send.send(message).await?,
                         pai::Output::NewIntersection(intersection) => {
                             let event = EventKind::CapabilityIntersection {
-                                capability: intersection.authorisation.read_cap().clone(),
+                                namespace: intersection.authorisation.namespace(),
+                                area: intersection.authorisation.read_cap().granted_area().clone(),
                             };
                             event_sender.send(event).await?;
                             on_pai_intersection(
@@ -261,8 +287,9 @@ pub async fn run_session<S: Storage>(
             tokens.clone(),
             session_id,
             send.clone(),
-            our_role,
             event_sender.clone(),
+            our_role,
+            init.mode,
         )?;
         async move {
             let res = reconciler.run().await;
@@ -357,7 +384,6 @@ async fn control_loop(
     mut control_recv: Cancelable<Receiver<Message>>,
     to_pai: flume::Sender<pai::Input>,
 ) -> Result<(), Error> {
-    debug!(role = ?our_role, "start session");
     // Reveal our nonce.
     let reveal_message = caps.reveal_commitment()?;
     sender.send(reveal_message).await?;

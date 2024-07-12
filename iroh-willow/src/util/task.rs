@@ -159,7 +159,7 @@ where
 
     pub async fn shutdown(&self) {
         self.abort_all();
-        while let Some(_) = self.join_next().await {}
+        while self.join_next().await.is_some() {}
     }
 }
 

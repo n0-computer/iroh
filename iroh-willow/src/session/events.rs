@@ -35,22 +35,6 @@ type NamespaceInterests = HashMap<NamespaceId, BTreeSet<AreaOfInterest>>;
 
 const COMMAND_CHANNEL_CAP: usize = 128;
 
-// type Names
-// type NamespaceAuthInterests = HashMap<NamespaceId, InterestsByNamespace>;
-//
-// #[derive(Debug, Clone, Default)]
-// struct InterestsByNamespace {
-//     auths: BTreeSet<ReadAuthorisation>,
-//     aois: BTreeSet<AreaOfInterest>,
-// }
-
-// impl InterestsByNamespace {
-//     fn add(&mut self, other: &InterestsByNamespace) {
-//         self.auths.extend(other.auths);
-//         self.aois.extend(other.aois);
-//     }
-// }
-
 #[derive(Debug, Clone)]
 pub struct EventSender {
     session_id: SessionId,
@@ -82,17 +66,16 @@ impl SessionEvent {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum EventKind {
     CapabilityIntersection {
-        capability: ReadCapability,
+        namespace: NamespaceId,
+        area: Area,
     },
-    // TODO: AoI
-    AoiIntersection {
+    InterestIntersection {
         namespace: NamespaceId,
         area: AreaOfInterest,
     },
-    // TODO: AoI
     Reconciled {
         namespace: NamespaceId,
         area: AreaOfInterest,
@@ -100,16 +83,14 @@ pub enum EventKind {
     ReconciledAll,
     Closed {
         result: Result<(), Arc<Error>>,
-    }, // ReconciledAll,
+    },
 }
 
 impl EventKind {
     pub fn namespace(&self) -> Option<NamespaceId> {
         match self {
-            EventKind::CapabilityIntersection { capability } => {
-                Some(capability.granted_namespace().id())
-            }
-            EventKind::AoiIntersection { namespace, .. } => Some(*namespace),
+            EventKind::CapabilityIntersection { namespace, .. } => Some(*namespace),
+            EventKind::InterestIntersection { namespace, .. } => Some(*namespace),
             EventKind::Reconciled { namespace, .. } => Some(*namespace),
             _ => None,
         }
@@ -164,6 +145,7 @@ impl ManagedHandle {
             command_rx,
             command_tx: command_tx.clone(),
             establish_tasks: Default::default(),
+            net_tasks: Default::default(),
             actor: actor.clone(),
             peers: Default::default(),
             sessions: Default::default(),
@@ -214,9 +196,10 @@ pub struct PeerManager {
     command_rx: flume::Receiver<Command>,
     command_tx: flume::Sender<Command>,
     establish_tasks: JoinSet<EstablishRes>,
+    net_tasks: JoinSet<(NodeId, Result<()>)>,
 
     actor: ActorHandle,
-    peers: HashMap<NodeId, PeerInfo>,
+    peers: HashMap<NodeId, PeerState>,
     // auth: Auth<S>,
     sessions: HashMap<SessionId, SessionInfo>,
     // intents: HashMap<IntentId, IntentInfo>,
@@ -233,6 +216,7 @@ struct SessionInfo {
     submitted_interests: InterestMap,
     intents: Vec<IntentInfo>,
     handle: SessionHandle,
+    net_error: Option<anyhow::Error>,
 }
 
 impl SessionInfo {
@@ -327,34 +311,18 @@ impl IntentHandle {
         }
     }
 
-    pub async fn add_interests(&self, interests: Interests) -> Result<()> {
+    pub async fn add_interests(&self, interests: impl Into<Interests>) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
         self.sender
             .send_async(Command::UpdateIntent {
                 peer: self.peer,
                 intent_id: self.intent_id,
-                add_interests: interests,
+                add_interests: interests.into(),
                 reply,
             })
             .await?;
         reply_rx.await?
     }
-}
-
-// #[derive(Debug, Clone)]
-// pub enum SyncEvent {
-//     Progress(EventKind),
-//     ReconciledAll,
-// }
-
-// struct InterestInfo {
-//     aoi: AreaOfInterest,
-//     reconciled: bool,
-// }
-
-#[derive(Debug)]
-struct PeerInfo {
-    state: PeerState,
 }
 
 #[derive(Debug)]
@@ -368,16 +336,24 @@ enum PeerState {
         intents: Vec<IntentInfo>,
         submitted_interests: InterestMap,
         pending_interests: InterestMap,
-        task_handle: AbortHandle,
     },
     Active {
         session_id: SessionId,
-        net_tasks: JoinSet<Result<()>>,
     },
     // Closing {
     //     session_id: SessionId,
     // },
     Placeholder,
+}
+
+impl PeerState {
+    pub fn into_intents(self) -> Option<Vec<IntentInfo>> {
+        match self {
+            PeerState::Connecting { intents, .. } => Some(intents),
+            PeerState::Establishing { intents, .. } => Some(intents),
+            _ => None,
+        }
+    }
 }
 
 impl IntentInfo {
@@ -389,50 +365,6 @@ impl IntentInfo {
                 .extend(aois.clone());
         }
     }
-    // fn handle_event(&mut self, event: &EventKind) -> (bool, Continuation) {
-    //     match event {
-    //         EventKind::CapabilityIntersection { capability } => {
-    //             if self
-    //                 .interests
-    //                 .contains_key(&capability.granted_namespace().id())
-    //             {
-    //                 (true, Continuation::Continue)
-    //             } else {
-    //                 (false, Continuation::Continue)
-    //             }
-    //         }
-    //         EventKind::AoiIntersection { area, namespace } => match self.interests.get(namespace) {
-    //             None => (false, Continuation::Continue),
-    //             Some(interests) => {
-    //                 let matches = interests
-    //                     .iter()
-    //                     .any(|x| x.area.has_intersection(&area.area));
-    //                 (matches, Continuation::Continue)
-    //             }
-    //         },
-    //         EventKind::Reconciled { area, namespace } => {
-    //             let Some(interests) = self.interests.get_mut(namespace) else {
-    //                 return (false, Continuation::Continue);
-    //             };
-    //             let matches = interests
-    //                 .iter()
-    //                 .any(|x| x.area.has_intersection(&area.area));
-    //             let cont = if matches {
-    //                 interests.retain(|x| area.area.includes_area(&x.area));
-    //                 if interests.is_empty() {
-    //                     Continuation::Complete
-    //                 } else {
-    //                     Continuation::Continue
-    //                 }
-    //             } else {
-    //                 Continuation::Continue
-    //             };
-    //             (matches, cont)
-    //         }
-    //         EventKind::Closed { .. } => (true, Continuation::Complete),
-    //         EventKind::ReconciledAll => (false, Continuation::Complete),
-    //     }
-    // }
 
     async fn handle_event(&mut self, event: &EventKind) -> Result<bool, ReceiverDropped> {
         let send = |event: EventKind| async {
@@ -441,79 +373,53 @@ impl IntentInfo {
                 .await
                 .map_err(|_| ReceiverDropped)
         };
-        match &event {
-            EventKind::CapabilityIntersection { capability } => {
-                if self
-                    .interests
-                    .contains_key(&capability.granted_namespace().id())
-                {
+
+        let stay_alive = match &event {
+            EventKind::CapabilityIntersection { namespace, .. } => {
+                if self.interests.contains_key(namespace) {
                     send(event.clone()).await?;
-                    Ok(true)
-                } else {
-                    Ok(true)
                 }
+                true
             }
-            EventKind::AoiIntersection { area, namespace } => match self.interests.get(namespace) {
-                None => Ok(true),
-                Some(interests) => {
+            EventKind::InterestIntersection { area, namespace } => {
+                if let Some(interests) = self.interests.get(namespace) {
                     let matches = interests
                         .iter()
                         .any(|x| x.area.has_intersection(&area.area));
                     if matches {
                         send(event.clone()).await?;
                     }
-                    Ok(true)
                 }
-            },
+                true
+            }
             EventKind::Reconciled { area, namespace } => {
-                let Some(interests) = self.interests.get_mut(namespace) else {
-                    return Ok(true);
-                };
-                let matches = interests
-                    .iter()
-                    .any(|x| x.area.has_intersection(&area.area));
-                tracing::info!(?interests, ?matches, ?area, "reconciled pre");
-                if matches {
-                    interests.retain(|x| !area.area.includes_area(&x.area));
-                    tracing::info!(?interests, ?matches, "reconciled post");
-                    send(event.clone()).await?;
-                    if interests.is_empty() {
-                        send(EventKind::ReconciledAll).await?;
-                        Ok(true)
-                    } else {
-                        Ok(true)
+                if let Some(interests) = self.interests.get_mut(namespace) {
+                    let matches = interests
+                        .iter()
+                        .any(|x| x.area.has_intersection(&area.area));
+                    if matches {
+                        send(event.clone()).await?;
+                        interests.retain(|x| !area.area.includes_area(&x.area));
+                        if interests.is_empty() {
+                            send(EventKind::ReconciledAll).await?;
+                        }
                     }
-                } else {
-                    Ok(true)
                 }
+                true
             }
             EventKind::Closed { .. } => {
                 send(event.clone()).await?;
-                Ok(false)
+                false
             }
-            EventKind::ReconciledAll => Ok(true),
-        }
-
-        // let (should_sent, cont) = self.handle_event(event);
-        // if should_sent {
-        //     self.sender
-        //         .send_async(event.clone())
-        //         .await
-        //         .map_err(|_| ReceiverDropped)?;
-        // }
-        // Ok(cont)
-        // let event = Ok(SyncEvent::Progress(event.clone()));
+            EventKind::ReconciledAll => true,
+        };
+        Ok(stay_alive)
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("receiver dropped")]
 pub struct ReceiverDropped;
-
-enum Continuation {
-    Continue,
-    Complete,
-}
 
 impl PeerManager {
     pub async fn run(mut self) -> Result<(), Error> {
@@ -536,9 +442,22 @@ impl PeerManager {
                     self.on_established(res).await?;
 
                 }
+                Some(res) = self.net_tasks.join_next(), if !self.net_tasks.is_empty() => {
+                    match res {
+                        Err(err) if err.is_cancelled() => {
+                            continue;
+                        },
+                        Err(err) => Err(err).context("net task paniced")?,
+                        Ok((peer, res)) => {
+                            if let Err(err) = res {
+                                self.on_conn_fail(peer, err);
+                            }
+                        }
+                    }
+                },
                 Some((peer, conn)) = self.dialer.next() => {
                     match conn {
-                        Ok(conn) => self.handle_connection(conn, Role::Alfie).await?,
+                        Ok(conn) => self.handle_connection(conn, Role::Alfie).await,
                         Err(err) => self.on_dial_fail(peer, err).await,
                     }
 
@@ -550,11 +469,11 @@ impl PeerManager {
     }
 
     async fn on_dial_fail(&mut self, peer: NodeId, err: anyhow::Error) {
-        let Some(peer_info) = self.peers.remove(&peer) else {
+        let Some(peer_state) = self.peers.remove(&peer) else {
             tracing::warn!(?peer, "dialer returned connection error for unknown peer");
             return;
         };
-        let PeerState::Connecting { intents, .. } = peer_info.state else {
+        let PeerState::Connecting { intents, .. } = peer_state else {
             tracing::warn!(
                 ?peer,
                 "dialer returned connection error for peer in wrong state"
@@ -572,57 +491,67 @@ impl PeerManager {
         }
     }
 
+    fn session_mut(&mut self, peer: &NodeId) -> Option<&mut SessionInfo> {
+        let peer_state = self.peers.get(peer)?;
+        match peer_state {
+            PeerState::Active { session_id } => self.sessions.get_mut(session_id),
+            _ => None,
+        }
+    }
+
+    fn on_conn_fail(&mut self, peer: NodeId, err: anyhow::Error) {
+        if let Some(session) = self.session_mut(&peer) {
+            if session.net_error.is_none() {
+                session.net_error = Some(err);
+            }
+        }
+    }
+
     async fn on_established(&mut self, res: EstablishRes) -> anyhow::Result<()> {
         let (peer, res) = res;
-        let peer_info = self
+        let peer_state = self
             .peers
             .get_mut(&peer)
             .ok_or_else(|| anyhow!("unreachable: on_established called for unknown peer"))?;
-        let peer_state = std::mem::replace(&mut peer_info.state, PeerState::Placeholder);
+        let current_state = std::mem::replace(peer_state, PeerState::Placeholder);
         let PeerState::Establishing {
             our_role,
             intents,
             submitted_interests,
             pending_interests,
-            task_handle: _,
-        } = peer_state
+        } = current_state
         else {
             anyhow::bail!("unreachable: on_established called for peer in wrong state")
         };
         match res {
-            Ok((net_tasks, session_handle)) => {
+            Ok((mut net_tasks, session_handle)) => {
                 if our_role.is_alfie() && intents.is_empty() {
                     session_handle.close();
                 }
                 let session_id = session_handle.session_id();
+                self.net_tasks.spawn(
+                    async move { crate::net::join_all(&mut net_tasks).await }
+                        .map(move |r| (peer, r)),
+                );
                 let mut session_info = SessionInfo {
                     our_role,
-                    // peer,
                     complete_areas: Default::default(),
                     submitted_interests,
                     intents,
                     handle: session_handle,
+                    net_error: None,
                 };
                 if !pending_interests.is_empty() {
                     session_info.push_interests(pending_interests).await?;
                 }
                 self.sessions.insert(session_id, session_info);
-                peer_info.state = PeerState::Active {
-                    session_id,
-                    net_tasks,
-                };
+                *peer_state = PeerState::Active { session_id };
             }
             Err(err) => {
                 tracing::warn!(?peer, ?err, "establishing session failed");
                 let result = Err(Arc::new(Error::Net(err)));
-                for intent in intents {
-                    let result = result.clone();
-                    intent
-                        .sender
-                        .send_async(EventKind::Closed { result })
-                        .await
-                        .ok();
-                }
+                let senders = intents.into_iter().map(|intent| intent.sender);
+                send_all(senders, EventKind::Closed { result }).await;
                 self.peers.remove(&peer);
             }
         }
@@ -643,25 +572,22 @@ impl PeerManager {
             intent_id
         };
         let intent_info = IntentInfo {
-            // peer,
             intent_id,
             interests: flatten_interests(&intent_interests),
             mode: init.mode,
             sender,
         };
-        // self.intents.insert(intent_id, intent_info);
         match self.peers.get_mut(&peer) {
             None => {
                 self.dialer.queue_dial(peer, ALPN);
                 let intents = vec![intent_info];
-                let state = PeerState::Connecting {
+                let peer_state = PeerState::Connecting {
                     intents,
                     interests: intent_interests,
                 };
-                let peer_info = PeerInfo { state };
-                self.peers.insert(peer, peer_info);
+                self.peers.insert(peer, peer_state);
             }
-            Some(info) => match &mut info.state {
+            Some(state) => match state {
                 PeerState::Connecting { intents, interests } => {
                     intents.push(intent_info);
                     merge_interests(interests, intent_interests);
@@ -700,7 +626,7 @@ impl PeerManager {
         let add_interests = self.actor.resolve_interests(add_interests).await?;
         match self.peers.get_mut(&peer) {
             None => anyhow::bail!("invalid node id"),
-            Some(peer_info) => match &mut peer_info.state {
+            Some(peer_state) => match peer_state {
                 PeerState::Connecting { intents, interests } => {
                     let Some(intent_info) = intents.iter_mut().find(|i| i.intent_id == intent_id)
                     else {
@@ -714,10 +640,10 @@ impl PeerManager {
                     pending_interests,
                     ..
                 } => {
-                    let Some(intent_info) = intents.iter_mut().find(|i| i.intent_id == intent_id)
-                    else {
-                        anyhow::bail!("invalid intent id");
-                    };
+                    let intent_info = intents
+                        .iter_mut()
+                        .find(|i| i.intent_id == intent_id)
+                        .ok_or_else(|| anyhow!("invalid intent id"))?;
                     intent_info.merge_interests(&add_interests);
                     merge_interests(pending_interests, add_interests);
                 }
@@ -740,11 +666,11 @@ impl PeerManager {
     }
 
     pub fn cancel_intent(&mut self, peer: NodeId, intent_id: u64) {
-        let Some(peer_info) = self.peers.get_mut(&peer) else {
+        let Some(peer_state) = self.peers.get_mut(&peer) else {
             return;
         };
 
-        match &mut peer_info.state {
+        match peer_state {
             PeerState::Connecting { intents, .. } => {
                 intents.retain(|intent_info| intent_info.intent_id != intent_id);
                 if intents.is_empty() {
@@ -762,7 +688,6 @@ impl PeerManager {
                     .retain(|intent| intent.intent_id != intent_id);
                 if session.intents.is_empty() {
                     session.handle.close();
-                    // TODO: Abort session
                 }
             }
             PeerState::Placeholder => unreachable!(),
@@ -791,22 +716,20 @@ impl PeerManager {
                 self.cancel_intent(peer, intent_id);
             }
             Command::HandleConnection { conn } => {
-                if let Err(err) = self.handle_connection(conn, Role::Betty).await {
-                    tracing::warn!("failed to handle connection: {err:?}");
-                }
+                self.handle_connection(conn, Role::Betty).await;
             }
         }
     }
 
-    pub async fn received_event(&mut self, event: SessionEvent) {
-        tracing::info!(?event, "command");
+    pub async fn received_event(&mut self, mut event: SessionEvent) {
+        tracing::info!(?event, "event");
         let Some(session) = self.sessions.get_mut(&event.session_id) else {
             tracing::warn!(?event, "Got event for unknown session");
             return;
         };
 
         let mut is_closed = false;
-        match &event.event {
+        match &mut event.event {
             EventKind::Reconciled { namespace, area } => {
                 session
                     .complete_areas
@@ -814,8 +737,14 @@ impl PeerManager {
                     .or_default()
                     .insert(area.clone());
             }
-            EventKind::Closed { .. } => {
+            EventKind::Closed { result } => {
                 is_closed = true;
+                if result.is_ok() {
+                    // Inject error from networking tasks.
+                    if let Some(net_error) = session.net_error.take() {
+                        *result = Err(Arc::new(Error::Net(net_error)));
+                    }
+                }
             }
             _ => {}
         }
@@ -847,14 +776,37 @@ impl PeerManager {
         }
     }
 
-    async fn handle_connection(&mut self, conn: Connection, our_role: Role) -> Result<()> {
-        let peer = iroh_net::endpoint::get_remote_node_id(&conn)?;
-        let peer_info = self.peers.get_mut(&peer);
+    async fn handle_connection(&mut self, conn: Connection, our_role: Role) {
+        let peer = match iroh_net::endpoint::get_remote_node_id(&conn) {
+            Ok(node_id) => node_id,
+            Err(err) => {
+                tracing::warn!(?err, "skip connection: failed to get node id");
+                return;
+            }
+        };
+        if let Err(err) = self.handle_connection_inner(peer, conn, our_role).await {
+            tracing::warn!(?peer, ?err, "failed to establish connection");
+            if let Some(peer_state) = self.peers.remove(&peer) {
+                if let Some(intents) = peer_state.into_intents() {
+                    let result = Err(Arc::new(Error::Net(err)));
+                    let senders = intents.into_iter().map(|intent| intent.sender);
+                    send_all(senders, EventKind::Closed { result }).await;
+                }
+            }
+        }
+    }
+    async fn handle_connection_inner(
+        &mut self,
+        peer: NodeId,
+        conn: Connection,
+        our_role: Role,
+    ) -> Result<()> {
+        let peer_state = self.peers.get_mut(&peer);
         let (interests, mode, intents) = match our_role {
             Role::Alfie => {
-                let peer = peer_info
+                let peer_state = peer_state
                     .ok_or_else(|| anyhow!("got connection for peer without any intents"))?;
-                let peer_state = std::mem::replace(&mut peer.state, PeerState::Placeholder);
+                let peer_state = std::mem::replace(peer_state, PeerState::Placeholder);
                 match peer_state {
                     PeerState::Placeholder => unreachable!(),
                     PeerState::Active { .. } => {
@@ -874,8 +826,8 @@ impl PeerManager {
                 }
             }
             Role::Betty => {
-                let intents = if let Some(peer) = peer_info {
-                    let peer_state = std::mem::replace(&mut peer.state, PeerState::Placeholder);
+                let intents = if let Some(peer_state) = peer_state {
+                    let peer_state = std::mem::replace(peer_state, PeerState::Placeholder);
                     match peer_state {
                         PeerState::Placeholder => unreachable!(),
                         PeerState::Active { .. } => {
@@ -912,18 +864,14 @@ impl PeerManager {
             Ok::<_, anyhow::Error>((tasks, session_handle))
         };
         let establish_fut = establish_fut.map(move |res| (peer, res));
-        let task_handle = self.establish_tasks.spawn(establish_fut);
+        let _task_handle = self.establish_tasks.spawn(establish_fut);
         let peer_state = PeerState::Establishing {
             our_role,
             intents,
             submitted_interests,
             pending_interests: Default::default(),
-            task_handle,
         };
-        let peer_info = PeerInfo { state: peer_state };
-        self.peers.insert(peer, peer_info);
-        // peer.
-        // crate::net::run(me, self.actor.clone(), conn, our_role, init)
+        self.peers.insert(peer, peer_state);
         Ok(())
     }
 }
@@ -942,8 +890,20 @@ fn flatten_interests(interests: &InterestMap) -> NamespaceInterests {
     out
 }
 
+async fn send_all<T: Clone>(
+    senders: impl IntoIterator<Item = flume::Sender<T>>,
+    message: T,
+) -> Vec<Result<(), flume::SendError<T>>> {
+    let futs = senders.into_iter().map(|sender| {
+        let message = message.clone();
+        async move { sender.send_async(message).await }
+    });
+    futures_buffered::join_all(futs).await
+}
+
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
     use iroh_net::{Endpoint, NodeAddr, NodeId};
     use rand::SeedableRng;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -964,122 +924,212 @@ mod tests {
     };
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn peer_manager_simple() -> anyhow::Result<()> {
+    async fn peer_manager_two_intents() -> anyhow::Result<()> {
         iroh_test::logging::setup_multithreaded();
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
-        let (alfie, alfie_ep, alfie_addr, alfie_task) = create(&mut rng).await?;
-        let (betty, betty_ep, betty_addr, betty_task) = create(&mut rng).await?;
+        let (
+            shutdown,
+            namespace,
+            (alfie, _alfie_node_id, _alfie_user),
+            (betty, betty_node_id, betty_user),
+        ) = create_and_setup_two(&mut rng).await?;
 
-        let betty_node_id = betty_addr.node_id;
-        alfie_ep.add_node_addr(betty_addr)?;
+        insert(&betty, namespace, betty_user, &[b"foo", b"1"], "foo 1").await?;
+        insert(&betty, namespace, betty_user, &[b"bar", b"2"], "bar 2").await?;
+        insert(&betty, namespace, betty_user, &[b"bar", b"3"], "bar 3").await?;
 
-        let user_alfie = alfie.create_user().await?;
-        let user_betty = betty.create_user().await?;
-
-        let namespace_id = alfie
-            .create_namespace(NamespaceKind::Owned, user_alfie)
-            .await?;
-
-        let cap_for_betty = alfie
-            .delegate_caps(
-                CapSelector::widest(namespace_id),
-                AccessMode::Write,
-                DelegateTo::new(user_betty, None),
-            )
-            .await?;
-
-        betty.import_caps(cap_for_betty).await?;
-
-        let path = Path::new(&[b"foo", b"1"])?;
-        let entry = EntryForm::new_bytes(namespace_id, path, "foo 1");
-        let (_, inserted) = betty.insert(entry, user_betty).await?;
-        assert!(inserted);
-
-        let path = Path::new(&[b"bar", b"2"])?;
-        let entry = EntryForm::new_bytes(namespace_id, path, "bar 1");
-        let (_, inserted) = betty.insert(entry, user_betty).await?;
-        assert!(inserted);
-
-        let path = Path::new(&[b"bar", b"3"])?;
-        let entry = EntryForm::new_bytes(namespace_id, path, "bar 2");
-        let (_, inserted) = betty.insert(entry, user_betty).await?;
-        assert!(inserted);
-
-        let t1 = tokio::task::spawn({
+        let task_foo = tokio::task::spawn({
             let alfie = alfie.clone();
             async move {
                 let path = Path::new(&[b"foo"]).unwrap();
-                let target_area = Area::path(path);
-                let interests = Interests::select().area(namespace_id, [target_area.clone()]);
+
+                let interests = Interests::select().area(namespace, [Area::path(path.clone())]);
                 let init = SessionInit::new(interests, SessionMode::ReconcileOnce);
-                let intent_handle = alfie.sync_with_peer(betty_node_id, init).await.unwrap();
+                let handle = alfie.sync_with_peer(betty_node_id, init).await.unwrap();
 
-                let event = intent_handle.next().await.unwrap();
-                assert!(matches!(event, EventKind::CapabilityIntersection { .. }));
-
-                let event = intent_handle.next().await.unwrap();
-                assert!(
-                    matches!(event, EventKind::AoiIntersection { namespace, area } if namespace == namespace_id && area.area == target_area)
+                assert_eq!(
+                    handle.next().await.unwrap(),
+                    EventKind::CapabilityIntersection {
+                        namespace,
+                        area: Area::full(),
+                    }
                 );
 
-                let event = intent_handle.next().await.unwrap();
-                let EventKind::Reconciled { namespace, area } = event else {
-                    panic!("expected Reconciled");
-                };
-                assert_eq!(namespace, namespace_id);
-                assert_eq!(area.area, target_area);
+                assert_eq!(
+                    handle.next().await.unwrap(),
+                    EventKind::InterestIntersection {
+                        namespace,
+                        area: Area::path(path.clone()).into()
+                    }
+                );
 
-                let event = intent_handle.next().await.unwrap();
-                assert!(matches!(event, EventKind::ReconciledAll));
+                assert_eq!(
+                    handle.next().await.unwrap(),
+                    EventKind::Reconciled {
+                        namespace,
+                        area: Area::path(path.clone()).into()
+                    }
+                );
 
-                let event = intent_handle.next().await.unwrap();
-                assert!(matches!(event, EventKind::Closed { result } if result.is_ok()));
+                assert_eq!(handle.next().await.unwrap(), EventKind::ReconciledAll);
 
-                let event = intent_handle.next().await;
-                assert!(event.is_none());
+                assert_eq!(
+                    handle.next().await.unwrap(),
+                    EventKind::Closed { result: Ok(()) }
+                );
+
+                assert!(handle.next().await.is_none());
             }
         });
 
-        let t2 = tokio::task::spawn({
+        let task_bar = tokio::task::spawn({
             let alfie = alfie.clone();
             async move {
                 let path = Path::new(&[b"bar"]).unwrap();
-                let target_area = Area::path(path);
-                let interests = Interests::select().area(namespace_id, [target_area.clone()]);
+
+                let interests = Interests::select().area(namespace, [Area::path(path.clone())]);
                 let init = SessionInit::new(interests, SessionMode::ReconcileOnce);
-                let intent_handle = alfie.sync_with_peer(betty_node_id, init).await.unwrap();
 
-                let event = intent_handle.next().await.unwrap();
-                assert!(matches!(event, EventKind::CapabilityIntersection { .. }));
+                let handle = alfie.sync_with_peer(betty_node_id, init).await.unwrap();
 
-                let event = intent_handle.next().await.unwrap();
-                assert!(
-                    matches!(event, EventKind::AoiIntersection { namespace, area } if namespace == namespace_id && area.area == target_area)
+                assert_eq!(
+                    handle.next().await.unwrap(),
+                    EventKind::CapabilityIntersection {
+                        namespace,
+                        area: Area::full(),
+                    }
                 );
 
-                let event = intent_handle.next().await.unwrap();
-                let EventKind::Reconciled { namespace, area } = event else {
-                    panic!("expected Reconciled");
-                };
-                assert_eq!(namespace, namespace_id);
-                assert_eq!(area.area, target_area);
+                assert_eq!(
+                    handle.next().await.unwrap(),
+                    EventKind::InterestIntersection {
+                        namespace,
+                        area: Area::path(path.clone()).into()
+                    }
+                );
 
-                let event = intent_handle.next().await.unwrap();
-                assert!(matches!(event, EventKind::ReconciledAll));
+                assert_eq!(
+                    handle.next().await.unwrap(),
+                    EventKind::Reconciled {
+                        namespace,
+                        area: Area::path(path.clone()).into()
+                    }
+                );
 
-                let event = intent_handle.next().await.unwrap();
-                assert!(matches!(event, EventKind::Closed { result } if result.is_ok()));
+                assert_eq!(handle.next().await.unwrap(), EventKind::ReconciledAll);
 
-                let event = intent_handle.next().await;
-                assert!(event.is_none());
+                assert_eq!(
+                    handle.next().await.unwrap(),
+                    EventKind::Closed { result: Ok(()) }
+                );
+
+                assert!(handle.next().await.is_none());
             }
         });
 
-        t1.await.unwrap();
-        t2.await.unwrap();
-        betty_task.abort();
-        alfie_task.abort();
+        task_foo.await.unwrap();
+        task_bar.await.unwrap();
+        shutdown();
         Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn peer_manager_update_intent() -> anyhow::Result<()> {
+        iroh_test::logging::setup_multithreaded();
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let (
+            shutdown,
+            namespace,
+            (alfie, _alfie_node_id, _alfie_user),
+            (betty, betty_node_id, betty_user),
+        ) = create_and_setup_two(&mut rng).await?;
+
+        insert(&betty, namespace, betty_user, &[b"foo"], "foo 1").await?;
+        insert(&betty, namespace, betty_user, &[b"bar"], "bar 1").await?;
+
+        let path = Path::new(&[b"foo"]).unwrap();
+
+        let interests = Interests::select().area(namespace, [Area::path(path.clone())]);
+        let init = SessionInit::new(interests, SessionMode::Live);
+        let handle = alfie.sync_with_peer(betty_node_id, init).await.unwrap();
+
+        assert_eq!(
+            handle.next().await.unwrap(),
+            EventKind::CapabilityIntersection {
+                namespace,
+                area: Area::full(),
+            }
+        );
+
+        assert_eq!(
+            handle.next().await.unwrap(),
+            EventKind::InterestIntersection {
+                namespace,
+                area: Area::path(path.clone()).into()
+            }
+        );
+        assert_eq!(
+            handle.next().await.unwrap(),
+            EventKind::Reconciled {
+                namespace,
+                area: Area::path(path.clone()).into()
+            }
+        );
+        assert_eq!(handle.next().await.unwrap(), EventKind::ReconciledAll);
+
+        let path = Path::new(&[b"bar"]).unwrap();
+        let interests = Interests::select().area(namespace, [Area::path(path.clone())]);
+        handle.add_interests(interests).await?;
+
+        assert_eq!(
+            handle.next().await.unwrap(),
+            EventKind::InterestIntersection {
+                namespace,
+                area: Area::path(path.clone()).into()
+            }
+        );
+        assert_eq!(
+            handle.next().await.unwrap(),
+            EventKind::Reconciled {
+                namespace,
+                area: Area::path(path.clone()).into()
+            }
+        );
+
+        assert_eq!(handle.next().await.unwrap(), EventKind::ReconciledAll);
+
+        shutdown();
+        Ok(())
+    }
+
+    pub async fn create_and_setup_two(
+        rng: &mut rand_chacha::ChaCha12Rng,
+    ) -> anyhow::Result<(
+        impl Fn(),
+        NamespaceId,
+        (ManagedHandle, NodeId, UserId),
+        (ManagedHandle, NodeId, UserId),
+    )> {
+        let (alfie, alfie_ep, alfie_addr, alfie_task) = create(rng).await?;
+        let (betty, betty_ep, betty_addr, betty_task) = create(rng).await?;
+
+        let betty_node_id = betty_addr.node_id;
+        let alfie_node_id = alfie_addr.node_id;
+        alfie_ep.add_node_addr(betty_addr)?;
+        betty_ep.add_node_addr(alfie_addr)?;
+
+        let (namespace_id, alfie_user, betty_user) = setup_and_delegate(&alfie, &betty).await?;
+
+        let shutdown = move || {
+            betty_task.abort();
+            alfie_task.abort();
+        };
+        Ok((
+            shutdown,
+            namespace_id,
+            (alfie, alfie_node_id, alfie_user),
+            (betty, betty_node_id, betty_user),
+        ))
     }
 
     pub async fn create(
@@ -1115,5 +1165,41 @@ mod tests {
             }
         });
         Ok((handle, endpoint, node_addr, accept_task))
+    }
+
+    async fn setup_and_delegate(
+        alfie: &ManagedHandle,
+        betty: &ManagedHandle,
+    ) -> anyhow::Result<(NamespaceId, UserId, UserId)> {
+        let user_alfie = alfie.create_user().await?;
+        let user_betty = betty.create_user().await?;
+
+        let namespace_id = alfie
+            .create_namespace(NamespaceKind::Owned, user_alfie)
+            .await?;
+
+        let cap_for_betty = alfie
+            .delegate_caps(
+                CapSelector::widest(namespace_id),
+                AccessMode::Write,
+                DelegateTo::new(user_betty, None),
+            )
+            .await?;
+
+        betty.import_caps(cap_for_betty).await?;
+        Ok((namespace_id, user_alfie, user_betty))
+    }
+
+    async fn insert(
+        handle: &ManagedHandle,
+        namespace_id: NamespaceId,
+        user: UserId,
+        path: &[&[u8]],
+        bytes: impl Into<Bytes>,
+    ) -> anyhow::Result<()> {
+        let path = Path::new(path)?;
+        let entry = EntryForm::new_bytes(namespace_id, path, bytes);
+        handle.insert(entry, user).await?;
+        Ok(())
     }
 }

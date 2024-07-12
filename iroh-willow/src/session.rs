@@ -1,4 +1,4 @@
-use std::collections::{hash_map, BTreeMap, BTreeSet, HashMap};
+use std::collections::{hash_map, BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::{
     auth::CapSelector,
@@ -64,7 +64,7 @@ pub enum Interests {
     #[default]
     All,
     Select(HashMap<CapSelector, AreaOfInterestSelector>),
-    Exact(HashMap<ReadAuthorisation, BTreeSet<AreaOfInterest>>),
+    Exact(HashMap<ReadAuthorisation, HashSet<AreaOfInterest>>),
 }
 
 impl Interests {
