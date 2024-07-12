@@ -65,7 +65,7 @@ jobs:
         run: |
           for report in nextest-results/*.json; do
             echo $report
-            jq --slurp '.[] | select(.["type"] == "test" and .["event"] == "failed" ) | .["name"]'
+            jq --slurp '.[] | select(.["type"] == "test" and .["event"] == "failed" ) | .["name"]' $report
           done
       - name: Notify discord on failure
         uses: n0-computer/discord-webhook-notify@v1
