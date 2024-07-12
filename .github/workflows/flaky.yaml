@@ -75,6 +75,6 @@ jobs:
           severity: warn
           details: |
             Falky tests failure:
-            ${{join(steps.make_summary.outputs.*, '\n')}
+            ${{ join(steps.make_summary.outputs.*, '\n') }}
             See https://github.com/n0-computer/iroh/actions/workflows/flaky.yaml
           webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
