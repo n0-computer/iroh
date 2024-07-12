@@ -65,8 +65,7 @@ jobs:
         run: |
           for report in nextest-results/*.json; do
             echo $report
-            cat $report
-            jq '.[]' $report
+            jq --slurp '.[]' $report
           done
       - name: Notify discord on failure
         uses: n0-computer/discord-webhook-notify@v1
