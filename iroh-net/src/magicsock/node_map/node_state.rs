@@ -9,7 +9,7 @@ use iroh_metrics::inc;
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{debug, info, instrument, trace, warn};
+use tracing::{debug, event, info, instrument, trace, warn, Level};
 use watchable::{Watchable, WatcherStream};
 
 use crate::{
@@ -93,7 +93,7 @@ pub enum PingRole {
     Duplicate,
     NewPath,
     LikelyHeartbeat,
-    Reactivate,
+    Activate,
 }
 
 /// An iroh node, which we can have connections with.
@@ -164,7 +164,12 @@ impl NodeState {
             quic_mapped_addr,
             node_id: options.node_id,
             last_full_ping: None,
-            relay_url: options.relay_url.map(|url| (url, PathState::default())),
+            relay_url: options.relay_url.map(|url| {
+                (
+                    url.clone(),
+                    PathState::new(options.node_id, SendAddr::Relay(url)),
+                )
+            }),
             best_addr: Default::default(),
             sent_pings: HashMap::new(),
             direct_addr_state: BTreeMap::new(),
@@ -306,6 +311,12 @@ impl NodeState {
         };
         if self.conn_type.update(typ).is_ok() {
             let typ = self.conn_type.get();
+            event!(
+                target: "holepunch.conn_type.changed",
+                Level::DEBUG,
+                node = %self.node_id.fmt_short(),
+                conn_type = ?typ,
+            );
             info!(%typ, "new connection type");
         }
         (best_addr, relay_url)
@@ -468,6 +479,14 @@ impl NodeState {
         let tx_id = stun::TransactionId::default();
         trace!(tx = %hex::encode(tx_id), %dst, ?purpose,
                dst = %self.node_id.fmt_short(), "start ping");
+        event!(
+            target: "holepunch.ping.sent",
+            Level::DEBUG,
+            dst_node = %self.node_id.fmt_short(),
+            ?dst,
+            txn = ?tx_id,
+            ?purpose,
+        );
         Some(SendPing {
             id: self.id,
             dst,
@@ -576,9 +595,9 @@ impl NodeState {
         msgs
     }
 
-    /// Send DISCO Pings to all the paths of this endpoint.
+    /// Send DISCO Pings to all the paths of this node.
     ///
-    /// Any paths to the endpoint which have not been recently pinged will be sent a disco
+    /// Any paths to the node which have not been recently pinged will be sent a disco
     /// ping.
     ///
     /// The caller is responsible for sending the messages.
@@ -621,7 +640,7 @@ impl NodeState {
             %ping_dsts,
             dst = %self.node_id.fmt_short(),
             paths = %summarize_node_paths(&self.direct_addr_state),
-            "sending pings to endpoint",
+            "sending pings to node",
         );
         self.last_full_ping.replace(now);
         ping_msgs
@@ -645,15 +664,18 @@ impl NodeState {
                 "Changing relay node from {:?} to {:?}",
                 self.relay_url, n.relay_url
             );
-            self.relay_url = n
-                .relay_url
-                .as_ref()
-                .map(|url| (url.clone(), PathState::default()));
+            self.relay_url = n.relay_url.as_ref().map(|url| {
+                (
+                    url.clone(),
+                    PathState::new(self.node_id, url.clone().into()),
+                )
+            });
         }
 
         for &addr in n.direct_addresses.iter() {
-            //TODOFRZ
-            self.direct_addr_state.entry(addr.into()).or_default();
+            self.direct_addr_state
+                .entry(addr.into())
+                .or_insert_with(|| PathState::new(self.node_id, SendAddr::from(addr)));
         }
         let paths = summarize_node_paths(&self.direct_addr_state);
         debug!(new = ?n.direct_addresses , %paths, "added new direct paths for endpoint");
@@ -685,6 +707,13 @@ impl NodeState {
         path: SendAddr,
         tx_id: stun::TransactionId,
     ) -> PingHandled {
+        event!(
+            target: "holepunch.ping.recv",
+            Level::DEBUG,
+            src_node = %self.node_id.fmt_short(),
+            src = ?path,
+            txn = ?tx_id,
+        );
         let now = Instant::now();
 
         let role = match path {
@@ -692,7 +721,7 @@ impl NodeState {
                 Entry::Occupied(mut occupied) => occupied.get_mut().handle_ping(tx_id, now),
                 Entry::Vacant(vacant) => {
                     info!(%addr, "new direct addr for node");
-                    vacant.insert(PathState::with_ping(tx_id, now));
+                    vacant.insert(PathState::with_ping(self.node_id, path.clone(), tx_id, now));
                     PingRole::NewPath
                 }
             },
@@ -702,13 +731,19 @@ impl NodeState {
                         // either the node changed relays or we didn't have a relay address for the
                         // node. In both cases, trust the new confirmed url
                         info!(%url, "new relay addr for node");
-                        self.relay_url = Some((url.clone(), PathState::with_ping(tx_id, now)));
+                        self.relay_url = Some((
+                            url.clone(),
+                            PathState::with_ping(self.node_id, path.clone(), tx_id, now),
+                        ));
                         PingRole::NewPath
                     }
                     Some((_home_url, state)) => state.handle_ping(tx_id, now),
                     None => {
                         info!(%url, "new relay addr for node");
-                        self.relay_url = Some((url.clone(), PathState::with_ping(tx_id, now)));
+                        self.relay_url = Some((
+                            url.clone(),
+                            PathState::with_ping(self.node_id, path.clone(), tx_id, now),
+                        ));
                         PingRole::NewPath
                     }
                 }
@@ -730,7 +765,7 @@ impl NodeState {
             // and this ping does not.  In that case we ping-pong until both sides have
             // received at least one pong.  Once both sides have received one pong they both
             // have a best_addr and this ping will stop being sent.
-            self.start_ping(path, DiscoPingPurpose::Discovery)
+            self.start_ping(path, DiscoPingPurpose::PingBack)
         } else {
             None
         };
@@ -807,6 +842,13 @@ impl NodeState {
         m: &disco::Pong,
         src: SendAddr,
     ) -> Option<(SocketAddr, PublicKey)> {
+        event!(
+            target: "holepunch.pong.recv",
+            Level::DEBUG,
+            src_node = self.node_id.fmt_short(),
+            ?src,
+            txn = ?m.tx_id,
+        );
         let is_relay = src.is_relay();
         match self.sent_pings.remove(&m.tx_id) {
             None => {
@@ -836,7 +878,7 @@ impl NodeState {
                     SendAddr::Udp(addr) => {
                         match self.direct_addr_state.get_mut(&addr.into()) {
                             None => {
-                                info!("ignoring pong: no state for src addr");
+                                warn!("ignoring pong: no state for src addr");
                                 // This is no longer an endpoint we care about.
                                 return node_map_insert;
                             }
@@ -922,14 +964,14 @@ impl NodeState {
             call_me_maybe_ipps.insert(ipp);
             self.direct_addr_state
                 .entry(ipp)
-                .or_default()
+                .or_insert_with(|| PathState::new(self.node_id, SendAddr::from(*peer_sockaddr)))
                 .call_me_maybe_time
                 .replace(now);
         }
 
-        // Zero out all the last_ping times to force send_pings to send new ones,
-        // even if it's been less than 5 seconds ago.
-        // Also clear pongs for endpoints not included in the updated set.
+        // Zero out all the last_ping times to force send_pings to send new ones, even if
+        // it's been less than 5 seconds ago.  Also clear pongs for direct addresses not
+        // included in the updated set.
         for (ipp, st) in self.direct_addr_state.iter_mut() {
             st.last_ping = None;
             if !call_me_maybe_ipps.contains(ipp) {
@@ -970,7 +1012,7 @@ impl NodeState {
             .reconfirm_if_used(addr.into(), Source::Udp, now);
     }
 
-    pub(super) fn receive_relay(&mut self, url: &RelayUrl, _src: NodeId, now: Instant) {
+    pub(super) fn receive_relay(&mut self, url: &RelayUrl, src: NodeId, now: Instant) {
         match self.relay_url.as_mut() {
             Some((current_home, state)) if current_home == url => {
                 // We received on the expected url. update state.
@@ -980,7 +1022,10 @@ impl NodeState {
                 // we have a different url. we only update on ping, not on receive_relay.
             }
             None => {
-                self.relay_url = Some((url.clone(), PathState::with_last_payload(now)));
+                self.relay_url = Some((
+                    url.clone(),
+                    PathState::with_last_payload(src, SendAddr::from(url.clone()), now),
+                ));
             }
         }
         self.last_used = Some(now);
@@ -1130,8 +1175,12 @@ impl NodeState {
 /// State about a particular path to another [`NodeState`].
 ///
 /// This state is used for both the relay path and any direct UDP paths.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct PathState {
+    /// The node for which this path exists.
+    node_id: NodeId,
+    /// The path this applies for.
+    path: SendAddr,
     /// The last (outgoing) ping time.
     last_ping: Option<Instant>,
 
@@ -1150,29 +1199,66 @@ pub(super) struct PathState {
 }
 
 impl PathState {
-    pub(super) fn with_last_payload(now: Instant) -> Self {
-        PathState {
-            last_payload_msg: Some(now),
-            ..Default::default()
+    fn new(node_id: NodeId, path: SendAddr) -> Self {
+        Self {
+            node_id,
+            path,
+            last_ping: None,
+            last_got_ping: None,
+            call_me_maybe_time: None,
+            recent_pong: None,
+            last_payload_msg: None,
         }
     }
 
-    pub(super) fn with_ping(tx_id: stun::TransactionId, now: Instant) -> Self {
+    pub(super) fn with_last_payload(node_id: NodeId, path: SendAddr, now: Instant) -> Self {
         PathState {
-            last_got_ping: Some((now, tx_id)),
-            ..Default::default()
+            node_id,
+            path,
+            last_ping: None,
+            last_got_ping: None,
+            call_me_maybe_time: None,
+            recent_pong: None,
+            last_payload_msg: Some(now),
         }
+    }
+
+    pub(super) fn with_ping(
+        node_id: NodeId,
+        path: SendAddr,
+        tx_id: stun::TransactionId,
+        now: Instant,
+    ) -> Self {
+        let mut new = PathState::new(node_id, path);
+        new.handle_ping(tx_id, now);
+        new
     }
 
     pub(super) fn add_pong_reply(&mut self, r: PongReply) {
+        if let SendAddr::Udp(ref path) = self.path {
+            if self.recent_pong.is_none() {
+                event!(
+                    target: "holepunch.holepunched",
+                    Level::DEBUG,
+                    node = %self.node_id.fmt_short(),
+                    path = ?path,
+                    direction = "outgoing",
+                );
+            }
+        }
         self.recent_pong = Some(r);
     }
 
     #[cfg(test)]
-    pub(super) fn with_pong_reply(r: PongReply) -> Self {
+    pub(super) fn with_pong_reply(node_id: NodeId, r: PongReply) -> Self {
         PathState {
+            node_id,
+            path: r.from.clone(),
+            last_ping: None,
+            last_got_ping: None,
+            call_me_maybe_time: None,
             recent_pong: Some(r),
-            ..Default::default()
+            last_payload_msg: None,
         }
     }
 
@@ -1203,7 +1289,7 @@ impl PathState {
     ///
     /// This is the most recent instant between:
     /// - when last pong was received.
-    /// - when the last CallMeMaybe was received.
+    /// - when the last CallMeMaybe was received.  WRONG
     /// - When the last payload transmission occurred.
     /// - when the last ping from them was received.
     pub(super) fn last_alive(&self) -> Option<Instant> {
@@ -1274,7 +1360,18 @@ impl PathState {
                 Some((prev_time, _tx)) if now.duration_since(prev_time) <= HEARTBEAT_INTERVAL => {
                     PingRole::LikelyHeartbeat
                 }
-                _ => PingRole::Reactivate,
+                _ => {
+                    if let SendAddr::Udp(ref addr) = self.path {
+                        event!(
+                            target: "holepunch.holepunched",
+                            Level::DEBUG,
+                            node = %self.node_id.fmt_short(),
+                            path = ?addr,
+                            direction = "incoming",
+                        );
+                    }
+                    PingRole::Activate
+                }
             }
         }
     }
@@ -1358,6 +1455,11 @@ pub enum DiscoPingPurpose {
     Discovery,
     /// Ping to ensure the current route is still valid.
     StayinAlive,
+    /// When a ping was received and no direct connection exists yet.
+    ///
+    /// When a ping was received we suspect a direct connection is possible.  If we do not
+    /// yet have one that triggers a ping, indicated with this reason.
+    PingBack,
 }
 
 /// The type of control message we have received.
@@ -1489,34 +1591,39 @@ mod tests {
         let pong_src = SendAddr::Udp("0.0.0.0:1".parse().unwrap());
         let latency = Duration::from_millis(50);
 
-        let new_relay_and_state = |url: RelayUrl| Some((url, PathState::default()));
-
-        let relay_and_state = |url: RelayUrl| {
-            let relay_state = PathState::with_pong_reply(PongReply {
-                latency,
-                pong_at: now,
-                from: SendAddr::Relay(send_addr.clone()),
-                pong_src: pong_src.clone(),
-            });
+        let relay_and_state = |node_id: NodeId, url: RelayUrl| {
+            let relay_state = PathState::with_pong_reply(
+                node_id,
+                PongReply {
+                    latency,
+                    pong_at: now,
+                    from: SendAddr::Relay(send_addr.clone()),
+                    pong_src: pong_src.clone(),
+                },
+            );
             Some((url, relay_state))
         };
 
         // endpoint with a `best_addr` that has a latency but no relay
         let (a_endpoint, a_socket_addr) = {
+            let key = SecretKey::generate();
+            let node_id = key.public();
             let ip_port = IpPort {
                 ip: Ipv4Addr::UNSPECIFIED.into(),
                 port: 10,
             };
             let endpoint_state = BTreeMap::from([(
                 ip_port,
-                PathState::with_pong_reply(PongReply {
-                    latency,
-                    pong_at: now,
-                    from: SendAddr::Udp(ip_port.into()),
-                    pong_src: pong_src.clone(),
-                }),
+                PathState::with_pong_reply(
+                    node_id,
+                    PongReply {
+                        latency,
+                        pong_at: now,
+                        from: SendAddr::Udp(ip_port.into()),
+                        pong_src: pong_src.clone(),
+                    },
+                ),
             )]);
-            let key = SecretKey::generate();
             (
                 NodeState {
                     id: 0,
@@ -1548,7 +1655,7 @@ mod tests {
                 quic_mapped_addr: QuicMappedAddr::generate(),
                 node_id: key.public(),
                 last_full_ping: None,
-                relay_url: relay_and_state(send_addr.clone()),
+                relay_url: relay_and_state(key.public(), send_addr.clone()),
                 best_addr: BestAddr::default(),
                 direct_addr_state: BTreeMap::default(),
                 sent_pings: HashMap::new(),
@@ -1568,7 +1675,10 @@ mod tests {
                 quic_mapped_addr: QuicMappedAddr::generate(),
                 node_id: key.public(),
                 last_full_ping: None,
-                relay_url: new_relay_and_state(send_addr.clone()),
+                relay_url: Some((
+                    send_addr.clone(),
+                    PathState::new(key.public(), SendAddr::from(send_addr.clone())),
+                )),
                 best_addr: BestAddr::default(),
                 direct_addr_state: endpoint_state,
                 sent_pings: HashMap::new(),
@@ -1582,23 +1692,27 @@ mod tests {
         let (d_endpoint, d_socket_addr) = {
             let socket_addr: SocketAddr = "0.0.0.0:7".parse().unwrap();
             let expired = now.checked_sub(Duration::from_secs(100)).unwrap();
+            let key = SecretKey::generate();
+            let node_id = key.public();
             let endpoint_state = BTreeMap::from([(
                 IpPort::from(socket_addr),
-                PathState::with_pong_reply(PongReply {
-                    latency,
-                    pong_at: now,
-                    from: SendAddr::Udp(socket_addr),
-                    pong_src: pong_src.clone(),
-                }),
+                PathState::with_pong_reply(
+                    node_id,
+                    PongReply {
+                        latency,
+                        pong_at: now,
+                        from: SendAddr::Udp(socket_addr),
+                        pong_src: pong_src.clone(),
+                    },
+                ),
             )]);
-            let key = SecretKey::generate();
             (
                 NodeState {
                     id: 3,
                     quic_mapped_addr: QuicMappedAddr::generate(),
                     node_id: key.public(),
                     last_full_ping: None,
-                    relay_url: relay_and_state(send_addr.clone()),
+                    relay_url: relay_and_state(key.public(), send_addr.clone()),
                     best_addr: BestAddr::from_parts(
                         socket_addr,
                         Duration::from_millis(80),
