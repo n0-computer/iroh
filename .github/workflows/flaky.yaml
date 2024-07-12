@@ -64,6 +64,7 @@ jobs:
       - name: create summary report
         id: make_summary
         run: |
+          shopt -s nullglob
           EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
           echo "summary<<$EOF" >> $GITHUB_OUTPUT
           for report in nextest-results/*.json; do
@@ -77,7 +78,7 @@ jobs:
         with:
           severity: warn
           details: |
-            Falky tests failure:
+            Flaky tests failure:
             ${{ steps.make_summary.outputs.summary }}
             See https://github.com/n0-computer/iroh/actions/workflows/flaky.yaml
           webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
