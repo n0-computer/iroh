@@ -707,13 +707,6 @@ impl NodeState {
         path: SendAddr,
         tx_id: stun::TransactionId,
     ) -> PingHandled {
-        event!(
-            target: "holepunch.ping.recv",
-            Level::DEBUG,
-            src_node = %self.node_id.fmt_short(),
-            src = ?path,
-            txn = ?tx_id,
-        );
         let now = Instant::now();
 
         let role = match path {
@@ -749,6 +742,14 @@ impl NodeState {
                 }
             }
         };
+        event!(
+            target: "holepunch.ping.recv",
+            Level::DEBUG,
+            src_node = %self.node_id.fmt_short(),
+            src = ?path,
+            txn = ?tx_id,
+            ?role,
+        );
 
         if matches!(path, SendAddr::Udp(_)) && matches!(role, PingRole::NewPath) {
             self.prune_direct_addresses();
@@ -1356,11 +1357,19 @@ impl PathState {
             PingRole::Duplicate
         } else {
             let prev = self.last_got_ping.replace((now, tx_id));
+            let heartbeat_deadline = HEARTBEAT_INTERVAL + (HEARTBEAT_INTERVAL / 2);
             match prev {
-                Some((prev_time, _tx)) if now.duration_since(prev_time) <= HEARTBEAT_INTERVAL => {
+                Some((prev_time, _tx)) if now.duration_since(prev_time) <= heartbeat_deadline => {
                     PingRole::LikelyHeartbeat
                 }
-                _ => {
+                Some((prev_time, _tx)) => {
+                    debug!(
+                        elapsed = ?now.duration_since(prev_time),
+                        "heartbeat missed, reactivating",
+                    );
+                    PingRole::Activate
+                }
+                None => {
                     if let SendAddr::Udp(ref addr) = self.path {
                         event!(
                             target: "holepunch.holepunched",
