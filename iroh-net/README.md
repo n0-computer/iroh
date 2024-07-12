@@ -12,6 +12,58 @@ Peers can also connect directly without using a relay server. For this, however 
 
 Examples for `iroh-net` are in `iroh-net/examples`, run them with `cargo run --example $NAME`. Details for each example are in the file/directory itself.
 
+## Structured Events
+
+The library uses [tracing](https://docs.rs/tracing) to for logging as
+well as for **structured events**.  Events are different from normal
+logging by convention:
+
+- The [target] has a prefix of `events` and target names are dot-separated.
+
+  For this library the target will always start with `events.net.`.
+
+- There is **no message**.
+
+  Each event has a unique [target] which indicates the meaning.
+
+- The event [fields] are exclusively used for structured data.
+
+- The [Level] is always `DEBUG`.
+
+[target]: https://docs.rs/tracing/latest/tracing/struct.Metadata.html#method.target
+[fields]: https://docs.rs/tracing/latest/tracing/#recording-fields
+[Level]: https://docs.rs/tracing/latest/tracing/struct.Level.html
+
+### Using events
+
+If desired an application can use the `events.*` target to handle
+events by a different subscriber.  However with the default file
+logging it is already easy to search for all events, e.g. using
+ripgrep:
+
+`rg 'events\.[a-z_\-.]+' path/to/iroh/logs/iroh.YYYY-MM-DD-NN.log`
+
+Which will also highlight the full target name by default on a colour
+supporting terminal.
+
+### Development
+
+Be cautious about adding new events.  Events aim for a high
+signal-to-noise ratio.  Events should be designed to be able to
+extract in an automated way.  If multiple events need to be related,
+fields with special values can be used.
+
+To make events distinct from normal logging in the code it is
+recommended to write them using the `event!()` macro:
+
+```rust
+event!(
+    target: "event.net.subject",
+    Level::DEBUG,
+    field = value,
+);
+```
+
 # License
 
 This project is licensed under either of

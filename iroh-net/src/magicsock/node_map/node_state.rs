@@ -312,7 +312,7 @@ impl NodeState {
         if self.conn_type.update(typ).is_ok() {
             let typ = self.conn_type.get();
             event!(
-                target: "holepunch.conn_type.changed",
+                target: "events.net.conn_type.changed",
                 Level::DEBUG,
                 node = %self.node_id.fmt_short(),
                 conn_type = ?typ,
@@ -480,7 +480,7 @@ impl NodeState {
         trace!(tx = %hex::encode(tx_id), %dst, ?purpose,
                dst = %self.node_id.fmt_short(), "start ping");
         event!(
-            target: "holepunch.ping.sent",
+            target: "events.net.ping.sent",
             Level::DEBUG,
             dst_node = %self.node_id.fmt_short(),
             ?dst,
@@ -743,7 +743,7 @@ impl NodeState {
             }
         };
         event!(
-            target: "holepunch.ping.recv",
+            target: "events.net.ping.recv",
             Level::DEBUG,
             src_node = %self.node_id.fmt_short(),
             src = ?path,
@@ -844,7 +844,7 @@ impl NodeState {
         src: SendAddr,
     ) -> Option<(SocketAddr, PublicKey)> {
         event!(
-            target: "holepunch.pong.recv",
+            target: "events.net.pong.recv",
             Level::DEBUG,
             src_node = self.node_id.fmt_short(),
             ?src,
@@ -1239,7 +1239,7 @@ impl PathState {
         if let SendAddr::Udp(ref path) = self.path {
             if self.recent_pong.is_none() {
                 event!(
-                    target: "holepunch.holepunched",
+                    target: "events.net.holepunched",
                     Level::DEBUG,
                     node = %self.node_id.fmt_short(),
                     path = ?path,
@@ -1372,7 +1372,7 @@ impl PathState {
                 None => {
                     if let SendAddr::Udp(ref addr) = self.path {
                         event!(
-                            target: "holepunch.holepunched",
+                            target: "events.net.holepunched",
                             Level::DEBUG,
                             node = %self.node_id.fmt_short(),
                             path = ?addr,

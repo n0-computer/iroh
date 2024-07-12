@@ -877,7 +877,7 @@ impl MagicSock {
                 match src {
                     DiscoMessageSource::Relay { url, .. } => {
                         event!(
-                            target: "holepunch.call-me-maybe.recv",
+                            target: "events.net.call-me-maybe.recv",
                             Level::DEBUG,
                             src_node = sender.fmt_short(),
                             via = ?url,
@@ -933,7 +933,7 @@ impl MagicSock {
             ping_observed_addr: addr.clone(),
         });
         event!(
-            target: "holepunch.pong.sent",
+            target: "events.net.pong.sent",
             Level::DEBUG,
             dst_node = %sender.fmt_short(),
             dst = ?addr,
@@ -1205,7 +1205,7 @@ impl MagicSock {
         if endpoints.fresh_enough() {
             let addrs: Vec<_> = endpoints.iter().collect();
             event!(
-                target: "holepunch.call-me-maybe.sent",
+                target: "events.net.call-me-maybe.sent",
                 Level::DEBUG,
                 dst_node = %node_id.fmt_short(),
                 via = ?url,
@@ -2511,7 +2511,7 @@ impl DiscoveredEndpoints {
 
     fn log_endpoint_change(&self) {
         event!(
-            target: "holepunch.direct_addrs",
+            target: "events.net.direct_addrs",
             Level::DEBUG,
             addrs = ?self.last_endpoints,
         );

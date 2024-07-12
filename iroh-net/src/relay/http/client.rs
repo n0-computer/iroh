@@ -624,7 +624,7 @@ impl Actor {
         }
 
         event!(
-            target: "holepunch.relay.connected",
+            target: "events.net.relay.connected",
             // parent: &span!(Level::TRACE, "events"),
             Level::DEBUG,
             home = self.is_preferred,
