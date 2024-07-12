@@ -79,6 +79,8 @@ jobs:
           severity: warn
           details: |
             Flaky tests failure:
+
             ${{ steps.make_summary.outputs.summary }}
+
             See https://github.com/n0-computer/iroh/actions/workflows/flaky.yaml
           webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
