@@ -71,7 +71,7 @@ jobs:
             name=$(echo ${report:16:-5} | tr _ ' ')
             echo $name
             echo "- **$name**" >> $GITHUB_OUTPUT
-            failure=$(jq --slurp '.[] | select(.["type"] == "test" and .["event"] == "failed" ) | ("`" + .["name"]) + "`"' $report | sed -e 's/"//g' -e 's/\$/::/')
+            failure=$(jq --slurp '.[] | select(.["type"] == "test" and .["event"] == "failed" ) | ("`" + .["name"]) + "`\n"' $report | sed -e 's/"//g' -e 's/\$/::/')
             echo $failure
             echo $failure >> $GITHUB_OUTPUT
           done
