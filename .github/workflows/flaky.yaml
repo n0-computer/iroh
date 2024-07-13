@@ -77,7 +77,7 @@ jobs:
             echo "- **$name**" >> $GITHUB_OUTPUT
             # select the failed tests
             # the tests have this format "crate::module$test_name", the sed expressions remove the quotes and replace $ for ::
-            failure=$(jq --slurp '.[] | select(.["type"] == "test" and .["event"] == "failed" ) | .["name"]' $report | sed -e 's/^"/\t- /g' -e 's/\$/::/' -e 's/"//')
+            failure=$(jq --slurp '.[] | select(.["type"] == "test" and .["event"] == "failed" ) | .["name"]' $report | sed -e 's/^"//g' -e 's/\$/::/' -e 's/"//')
             echo "$failure"
             echo "$failure" >> $GITHUB_OUTPUT
           done
