@@ -68,10 +68,10 @@ jobs:
           EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
           echo "summary<<$EOF" >> $GITHUB_OUTPUT
           for report in nextest-results/*.json; do
-            name=$(echo ${report:35:-5} | tr _ ' ')
+            name=$(echo ${report:17:-5} | tr _ ' ')
             echo $name
             echo "- **$name**" >> $GITHUB_OUTPUT
-            failure=$(jq --slurp '.[] | select(.["type"] == "test" and .["event"] == "failed" ) | ("\t- " + .["name"])' $report | sed -e 's/"//g' -e 's/\$/::/')
+            failure=$(jq --slurp '.[] | select(.["type"] == "test" and .["event"] == "failed" ) | ("`" + .["name"]) + "`"' $report | sed -e 's/"//g' -e 's/\$/::/')
             echo $failure
             echo $failure >> $GITHUB_OUTPUT
           done
