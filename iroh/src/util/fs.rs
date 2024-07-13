@@ -215,19 +215,14 @@ fn path_content_info0(path: impl AsRef<Path>) -> anyhow::Result<PathContent> {
 ///
 /// If `prefix` exists, it will be stripped before converting back to a path
 /// If `root` exists, will add the root as a parent to the created path
-/// Removes any null byte that has been appended to the key
 pub fn key_to_path(
     key: impl AsRef<[u8]>,
     prefix: Option<String>,
     root: Option<PathBuf>,
 ) -> anyhow::Result<PathBuf> {
-    let mut key = key.as_ref();
+    let key = key.as_ref();
     if key.is_empty() {
         return Ok(PathBuf::new());
-    }
-    // if the last element is the null byte, remove it
-    if b'\0' == key[key.len() - 1] {
-        key = &key[..key.len() - 1]
     }
 
     let key = if let Some(prefix) = prefix {
@@ -265,8 +260,6 @@ pub fn key_to_path(
 }
 
 /// Helper function that creates a document key from a canonicalized path, removing the `root` and adding the `prefix`, if they exist
-///
-/// Appends the null byte to the end of the key.
 pub fn path_to_key(
     path: impl AsRef<Path>,
     prefix: Option<String>,
@@ -285,7 +278,6 @@ pub fn path_to_key(
         Vec::new()
     };
     key.extend(suffix);
-    key.push(b'\0');
     Ok(key.into())
 }
 
@@ -342,7 +334,7 @@ mod tests {
     fn test_path_to_key_roundtrip() {
         let path = PathBuf::from("/foo/bar");
         let expect_path = PathBuf::from("/foo/bar");
-        let key = b"/foo/bar\0";
+        let key = b"/foo/bar";
         let expect_key = Bytes::from(&key[..]);
 
         let got_key = path_to_key(path.clone(), None, None).unwrap();
@@ -353,7 +345,7 @@ mod tests {
 
         // including prefix
         let prefix = String::from("prefix:");
-        let key = b"prefix:/foo/bar\0";
+        let key = b"prefix:/foo/bar";
         let expect_key = Bytes::from(&key[..]);
         let got_key = path_to_key(path.clone(), Some(prefix.clone()), None).unwrap();
         assert_eq!(expect_key, got_key);
@@ -362,7 +354,7 @@ mod tests {
 
         // including root
         let root = PathBuf::from("/foo");
-        let key = b"prefix:bar\0";
+        let key = b"prefix:bar";
         let expect_key = Bytes::from(&key[..]);
         let got_key = path_to_key(path, Some(prefix.clone()), Some(root.clone())).unwrap();
         assert_eq!(expect_key, got_key);
