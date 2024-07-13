@@ -43,11 +43,7 @@ fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_one_file_basic() -> Result<()> {
-    let dir = testdir!();
-    let path = dir.join("foo");
-    make_rand_file(1000, &path)?;
-    // provide a path to a file, do not pipe from stdin, do not pipe to stdout
-    test_provide_get_loop(Input::Path(path), Output::Path)
+    panic!("quick failures")
 }
 
 #[test]
