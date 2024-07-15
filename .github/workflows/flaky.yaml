@@ -66,8 +66,8 @@ jobs:
         run: |
           # prevent the glob expression in the loop to match on itself when the dir is empty
           shopt -s nullglob
-          # to deal with multiline outputs it's recommended to use a random EOF
-          # EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          # to deal with multiline outputs it's recommended to use a random EOF, the syntax is based on
+          # https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#multiline-strings
           EOF=aP51VriWCxNJ1JjvmO9i
           echo "summary<<$EOF" >> $GITHUB_OUTPUT
           for report in nextest-results/*.json; do
