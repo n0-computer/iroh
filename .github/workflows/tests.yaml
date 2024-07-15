@@ -124,7 +124,7 @@ jobs:
       with:
         name: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
         path: output
-        retention-days: 1
+        retention-days: 45
         compression-level: 0
 
     - name: doctests
