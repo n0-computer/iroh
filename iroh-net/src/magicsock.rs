@@ -1200,29 +1200,29 @@ impl MagicSock {
         }
     }
 
-    fn send_or_queue_call_me_maybe(&self, url: &RelayUrl, node_id: NodeId) {
+    fn send_or_queue_call_me_maybe(&self, url: &RelayUrl, dst_node: NodeId) {
         let endpoints = self.endpoints.read();
         if endpoints.fresh_enough() {
             let addrs: Vec<_> = endpoints.iter().collect();
             event!(
                 target: "events.net.call-me-maybe.sent",
                 Level::DEBUG,
-                dst_node = %node_id.fmt_short(),
+                dst_node = %dst_node.fmt_short(),
                 via = ?url,
                 ?addrs,
             );
             let msg = endpoints.to_call_me_maybe_message();
             let msg = disco::Message::CallMeMaybe(msg);
-            if !self.send_disco_message_relay(url, node_id, msg) {
-                warn!(dstkey = %node_id.fmt_short(), relayurl = ?url,
+            if !self.send_disco_message_relay(url, dst_node, msg) {
+                warn!(dstkey = %dst_node.fmt_short(), relayurl = ?url,
                       "relay channel full, dropping call-me-maybe");
             } else {
-                debug!(dstkey = %node_id.fmt_short(), relayurl = ?url, "call-me-maybe sent");
+                debug!(dstkey = %dst_node.fmt_short(), relayurl = ?url, "call-me-maybe sent");
             }
         } else {
             self.pending_call_me_maybes
                 .lock()
-                .insert(node_id, url.clone());
+                .insert(dst_node, url.clone());
             debug!(
                 last_refresh_ago = ?endpoints.last_endpoints_time.map(|x| x.elapsed()),
                 "want call-me-maybe but endpoints stale; queuing after restun",
