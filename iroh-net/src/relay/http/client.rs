@@ -23,7 +23,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio_util::codec::{FramedRead, FramedWrite};
-use tracing::{debug, error, info_span, trace, warn, Instrument};
+use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 use url::Url;
 
 use crate::dns::{DnsResolver, ResolverExt};
@@ -622,6 +622,13 @@ impl Actor {
             relay_client.close().await;
             return Err(ClientError::Send);
         }
+
+        event!(
+            target: "events.net.relay.connected",
+            Level::DEBUG,
+            home = self.is_preferred,
+            url = %self.url,
+        );
 
         trace!("connect_0 done");
         Ok((relay_client, receiver))
