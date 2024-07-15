@@ -625,7 +625,6 @@ impl Actor {
 
         event!(
             target: "events.net.relay.connected",
-            // parent: &span!(Level::TRACE, "events"),
             Level::DEBUG,
             home = self.is_preferred,
             url = %self.url,
