@@ -15,17 +15,27 @@ use iroh::{
     blobs::{Hash, HashAndFormat},
     util::path::IrohPaths,
 };
-use rand::distributions::{Alphanumeric, DistString};
-use rand::SeedableRng;
+use rand::{RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
 use walkdir::WalkDir;
 
 fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(1);
-    let content = Alphanumeric.sample_string(&mut rng, size);
+    // 64 chars makes for easy random sampling
+    const CHARS_LUT: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
+        abcdefghijklmnopqrstuvwxyz\
+        0123456789 .";
 
-    let hash = blake3::hash(content.as_bytes());
+    // We do something custom to eek out a little bit more performance
+    // over just a simple `rand::distributions::Alphanumeric.sample_string`.
+    let mut rng = rand_xorshift::XorShiftRng::seed_from_u64(1);
+    let content = std::iter::from_fn(move || Some(rng.next_u32()))
+        .flat_map(u32::to_le_bytes)
+        .map(|num| CHARS_LUT[(num >> (8 - 6)) as usize])
+        .take(size)
+        .collect::<Vec<_>>();
+
+    let hash = blake3::hash(&content);
     std::fs::write(path, content)?;
     Ok(hash.into())
 }
@@ -108,11 +118,10 @@ fn cli_provide_tree() -> Result<()> {
     test_provide_get_loop(Input::Path(path), Output::Path)
 }
 
-#[cfg(feature = "fs-store")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_tree_resume() -> Result<()> {
-    use iroh_blobs::store::file::test_support::{make_partial, MakePartialResult};
+    use iroh::blobs::store::fs::test_support::{make_partial, MakePartialResult};
 
     /// Get all matches for match group 1 (an explicitly defined match group)
     fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {
@@ -214,11 +223,10 @@ fn cli_provide_tree_resume() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "fs-store")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_file_resume() -> Result<()> {
-    use iroh_blobs::store::file::test_support::{make_partial, MakePartialResult};
+    use iroh::blobs::store::fs::test_support::{make_partial, MakePartialResult};
 
     /// Get all matches for match group 1 (an explicitly defined match group)
     fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {
@@ -904,7 +912,7 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<Vec<(usize, Vec<String>)>> {
             (r"", 1),
             (r"Fetching: [\da-z]{52}", 1),
             (
-                r"Transferred (\d*.?\d*? ?[BKMGT]i?B?) in \d* seconds?, \d*.?\d* ?(?:B|KiB|MiB|GiB|TiB)/s",
+                r"Transferred (\d*.?\d*? ?[BKMGT]i?B?) in \d* (second|minute)s?, \d*.?\d* ?(?:B|KiB|MiB|GiB|TiB)/s",
                 1,
             ),
         ],
@@ -1033,4 +1041,52 @@ where
     }
 
     caps
+}
+
+fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<usize> {
+    let src = src.as_ref();
+    let dst = dst.as_ref();
+    std::fs::create_dir_all(dst)?;
+    let mut len = 0;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry.with_context(|| {
+            format!(
+                "failed to read directory entry in `{}`",
+                src.to_string_lossy()
+            )
+        })?;
+        let ty = entry.file_type().with_context(|| {
+            format!(
+                "failed to get file type for file `{}`",
+                entry.path().to_string_lossy()
+            )
+        })?;
+        let src = entry.path();
+        let dst = dst.join(entry.file_name());
+        if ty.is_dir() {
+            len += copy_dir_all(&src, &dst).with_context(|| {
+                format!(
+                    "failed to copy directory `{}` to `{}`",
+                    src.to_string_lossy(),
+                    dst.to_string_lossy()
+                )
+            })?;
+        } else {
+            std::fs::copy(&src, &dst).with_context(|| {
+                format!(
+                    "failed to copy file `{}` to `{}`",
+                    src.to_string_lossy(),
+                    dst.to_string_lossy()
+                )
+            })?;
+            len += 1;
+        }
+    }
+    Ok(len)
+}
+
+fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {
+    let dir = &IrohPaths::BaoStoreDir;
+    copy_dir_all(dir.with_root(src), dir.with_root(tgt))?;
+    Ok(())
 }

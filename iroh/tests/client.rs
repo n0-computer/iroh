@@ -58,7 +58,6 @@ fn await_messages(
 }
 
 #[tokio::test]
-#[ignore = "flaky"]
 async fn gossip_smoke() -> TestResult {
     let _ = tracing_subscriber::fmt::try_init();
     let (addr1, node1) = spawn_node();
@@ -68,8 +67,33 @@ async fn gossip_smoke() -> TestResult {
     node1.add_node_addr(addr2.clone()).await?;
     node2.add_node_addr(addr1.clone()).await?;
     let topic = TopicId::from([0u8; 32]);
-    let (mut sink1, _stream2) = gossip1.subscribe(topic, [addr2.node_id]).await?;
+    let (mut sink1, _stream1) = gossip1.subscribe(topic, [addr2.node_id]).await?;
     let (_sink2, stream2) = gossip2.subscribe(topic, [addr1.node_id]).await?;
+    sink1.send(Command::Broadcast("hello".into())).await?;
+    let msgs = await_messages(stream2, 1).await?;
+    assert_eq!(msgs, vec![Bytes::from("hello")]);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "flaky"]
+async fn gossip_drop_sink() -> TestResult {
+    let _ = tracing_subscriber::fmt::try_init();
+    let (addr1, node1) = spawn_node();
+    let (addr2, node2) = spawn_node();
+    let gossip1 = node1.gossip();
+    let gossip2 = node2.gossip();
+    node1.add_node_addr(addr2.clone()).await?;
+    node2.add_node_addr(addr1.clone()).await?;
+
+    let topic = TopicId::from([0u8; 32]);
+
+    let (mut sink1, stream1) = gossip1.subscribe(topic, [addr2.node_id]).await?;
+    let (sink2, stream2) = gossip2.subscribe(topic, [addr1.node_id]).await?;
+
+    drop(stream1);
+    drop(sink2);
+
     sink1.send(Command::Broadcast("hello".into())).await?;
     let msgs = await_messages(stream2, 1).await?;
     assert_eq!(msgs, vec![Bytes::from("hello")]);

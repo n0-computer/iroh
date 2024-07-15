@@ -436,7 +436,7 @@ impl Actor {
         match msg {
             ToActor::ConnIncoming(peer_id, origin, conn) => {
                 self.conns.insert(peer_id, conn.clone());
-                self.dialer.abort_dial(&peer_id);
+                self.dialer.abort_dial(peer_id);
                 let (send_tx, send_rx) = mpsc::channel(SEND_QUEUE_CAP);
                 self.conn_send_tx.insert(peer_id, send_tx.clone());
 
@@ -573,7 +573,7 @@ impl Actor {
                     }
                     self.conn_send_tx.remove(&peer);
                     self.pending_sends.remove(&peer);
-                    self.dialer.abort_dial(&peer);
+                    self.dialer.abort_dial(peer);
                 }
                 OutEvent::PeerData(node_id, data) => match decode_peer_data(&data) {
                     Err(err) => warn!("Failed to decode {data:?} from {node_id}: {err}"),

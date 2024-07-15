@@ -52,8 +52,8 @@ impl Dialer for TestingDialer {
         self.0.read().dialing.len()
     }
 
-    fn is_pending(&self, node: &NodeId) -> bool {
-        self.0.read().dialing.contains(node)
+    fn is_pending(&self, node: NodeId) -> bool {
+        self.0.read().dialing.contains(&node)
     }
 }
 
