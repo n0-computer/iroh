@@ -1290,7 +1290,7 @@ impl PathState {
     ///
     /// This is the most recent instant between:
     /// - when last pong was received.
-    /// - when the last CallMeMaybe was received.  WRONG
+    /// - when this path was last advertised in a received CallMeMaybe message.
     /// - When the last payload transmission occurred.
     /// - when the last ping from them was received.
     pub(super) fn last_alive(&self) -> Option<Instant> {
