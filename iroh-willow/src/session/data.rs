@@ -6,7 +6,7 @@ use crate::{
         willow::AuthorisedEntry,
     },
     session::{
-        aoi_finder::AoiIntersectionQueue, channels::ChannelSenders, payload::DEFAULT_CHUNK_SIZE,
+        aoi_finder::AoiIntersectionReceiver, channels::ChannelSenders, payload::DEFAULT_CHUNK_SIZE,
         static_tokens::StaticTokens, Error, SessionId,
     },
     store::{
@@ -22,7 +22,7 @@ use super::payload::{send_payload_chunked, CurrentPayload};
 pub struct DataSender<S: Storage> {
     store: Store<S>,
     send: ChannelSenders,
-    aoi_queue: AoiIntersectionQueue,
+    aoi_queue: AoiIntersectionReceiver,
     static_tokens: StaticTokens,
     session_id: SessionId,
 }
@@ -31,7 +31,7 @@ impl<S: Storage> DataSender<S> {
     pub fn new(
         store: Store<S>,
         send: ChannelSenders,
-        aoi_queue: AoiIntersectionQueue,
+        aoi_queue: AoiIntersectionReceiver,
         static_tokens: StaticTokens,
         session_id: SessionId,
     ) -> Self {

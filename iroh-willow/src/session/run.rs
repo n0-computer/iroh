@@ -1,9 +1,10 @@
 use std::{cell::RefCell, collections::hash_map, rc::Rc};
 
 use futures_concurrency::stream::StreamExt as _;
-use futures_lite::StreamExt as _;
+use futures_lite::{Stream, StreamExt as _};
 use genawaiter::GeneratorState;
 use strum::IntoEnumIterator;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error_span, trace, warn, Span};
 
@@ -44,7 +45,7 @@ pub async fn run_session<S: Storage>(
     init: SessionInit,
     initial_transmission: InitialTransmission,
     event_sender: EventSender,
-    update_receiver: flume::Receiver<SessionUpdate>,
+    update_receiver: impl Stream<Item = SessionUpdate> + Unpin + 'static,
 ) -> Result<(), Error> {
     debug!(role = ?our_role, mode = ?init.mode, "start session");
     let Channels { send, recv } = channels;
@@ -69,7 +70,7 @@ pub async fn run_session<S: Storage>(
     let mut capability_recv = Cancelable::new(capability_recv, cancel_token.clone());
     let mut aoi_recv = Cancelable::new(aoi_recv, cancel_token.clone());
     let mut data_recv = Cancelable::new(data_recv, cancel_token.clone());
-    let mut update_receiver = Cancelable::new(update_receiver.into_stream(), cancel_token.clone());
+    let mut update_receiver = Cancelable::new(update_receiver, cancel_token.clone());
 
     let caps = Capabilities::new(
         initial_transmission.our_nonce,
@@ -82,7 +83,6 @@ pub async fn run_session<S: Storage>(
 
     let initial_interests = store.auth().resolve_interests(init.interests)?;
     let all_interests = Rc::new(RefCell::new(initial_interests.clone()));
-    let initial_interests = Rc::new(initial_interests);
 
     // Setup a channel for the private area intersection finder.
     let (pai_inbox_tx, pai_inbox_rx) = flume::bounded(128);
@@ -102,19 +102,19 @@ pub async fn run_session<S: Storage>(
                         caps.revealed().await;
                         let interests = store.auth().resolve_interests(interests)?;
                         for (authorisation, aois) in interests.into_iter() {
-                            let mut all_interests = all_interests.borrow_mut();
-                            let is_new_cap;
-                            match all_interests.entry(authorisation.clone()) {
-                                hash_map::Entry::Occupied(mut entry) => {
-                                    is_new_cap = false;
-                                    entry.get_mut().extend(aois.clone());
+                            let is_new_cap = {
+                                let mut all_interests = all_interests.borrow_mut();
+                                match all_interests.entry(authorisation.clone()) {
+                                    hash_map::Entry::Occupied(mut entry) => {
+                                        entry.get_mut().extend(aois.clone());
+                                        false
+                                    }
+                                    hash_map::Entry::Vacant(entry) => {
+                                        entry.insert(aois.clone());
+                                        true
+                                    }
                                 }
-                                hash_map::Entry::Vacant(entry) => {
-                                    is_new_cap = true;
-                                    entry.insert(aois.clone());
-                                }
-                            }
-                            drop(all_interests);
+                            };
                             if let Some(capability_handle) =
                                 caps.find_ours(authorisation.read_cap())
                             {
@@ -139,7 +139,6 @@ pub async fn run_session<S: Storage>(
                         }
                     }
                 }
-                // tokens.bind_theirs(message.static_token);
             }
             Ok(())
         }
@@ -182,7 +181,8 @@ pub async fn run_session<S: Storage>(
                                 namespace: intersection.authorisation.namespace(),
                                 area: intersection.authorisation.read_cap().granted_area().clone(),
                             };
-                            event_sender.send(event).await?;
+                            // TODO: break if error?
+                            event_sender.send(event).await.ok();
                             on_pai_intersection(
                                 &interests,
                                 store.secrets(),

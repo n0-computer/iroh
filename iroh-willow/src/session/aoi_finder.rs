@@ -31,7 +31,7 @@ impl AoiIntersection {
 #[derive(Debug, Default, Clone)]
 pub struct AoiFinder(Rc<RefCell<Inner>>);
 
-pub type AoiIntersectionQueue = flume::Receiver<AoiIntersection>;
+pub type AoiIntersectionReceiver = flume::Receiver<AoiIntersection>;
 
 #[derive(Debug, Default)]
 struct Inner {
@@ -68,7 +68,7 @@ impl AoiFinder {
     }
 
     pub fn subscribe(&self) -> flume::Receiver<AoiIntersection> {
-        let (tx, rx) = flume::bounded(128);
+        let (tx, rx) = flume::bounded(2);
         self.0.borrow_mut().subscribers.push(tx);
         rx
     }

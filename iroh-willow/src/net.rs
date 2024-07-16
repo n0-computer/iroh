@@ -321,6 +321,7 @@ mod tests {
     use iroh_base::key::SecretKey;
     use iroh_net::{Endpoint, NodeAddr, NodeId};
     use rand::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
     use tracing::info;
 
     use crate::{
@@ -339,10 +340,15 @@ mod tests {
 
     const ALPN: &[u8] = b"iroh-willow/0";
 
+    fn create_rng(seed: &str) -> ChaCha12Rng {
+        let seed = iroh_base::hash::Hash::new(seed);
+        rand_chacha::ChaCha12Rng::from_seed(*(seed.as_bytes()))
+    }
+
     #[tokio::test(flavor = "multi_thread")]
-    async fn smoke() -> anyhow::Result<()> {
+    async fn net_smoke() -> anyhow::Result<()> {
         iroh_test::logging::setup_multithreaded();
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let mut rng = create_rng("net_smoke");
         let n_betty = parse_env_var("N_BETTY", 100);
         let n_alfie = parse_env_var("N_ALFIE", 100);
 
@@ -444,9 +450,9 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn live_data() -> anyhow::Result<()> {
+    async fn net_live_data() -> anyhow::Result<()> {
         iroh_test::logging::setup_multithreaded();
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let mut rng = create_rng("net_live_data");
 
         let (ep_alfie, node_id_alfie, _) = create_endpoint(&mut rng).await?;
         let (ep_betty, node_id_betty, addr_betty) = create_endpoint(&mut rng).await?;
