@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use bytes::Bytes;
 use iroh_base::{
     node_addr::AddrInfoOptions,
-    rpc::{self, RpcError, RpcResult},
+    rpc::{RpcError, RpcResult},
 };
 use iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 use iroh_docs::{
@@ -70,7 +70,7 @@ pub enum Request {
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
-#[nested_enum_utils::enum_conversions(super::Response)]
+#[enum_conversions(super::Response)]
 pub enum Response {
     Open(RpcResult<OpenResponse>),
     Close(RpcResult<CloseResponse>),

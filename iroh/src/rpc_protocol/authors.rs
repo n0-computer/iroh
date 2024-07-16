@@ -1,5 +1,6 @@
 use iroh_base::rpc::RpcResult;
 use iroh_docs::{Author, AuthorId};
+use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +8,7 @@ use super::RpcService;
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
-#[nested_enum_utils::enum_conversions(super::Request)]
+#[enum_conversions(super::Request)]
 #[rpc_requests(RpcService)]
 pub enum Request {
     #[server_streaming(response = RpcResult<ListResponse>)]
@@ -28,7 +29,7 @@ pub enum Request {
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
-#[nested_enum_utils::enum_conversions(super::Response)]
+#[enum_conversions(super::Response)]
 pub enum Response {
     List(RpcResult<ListResponse>),
     Create(RpcResult<CreateResponse>),

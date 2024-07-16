@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use bytes::Bytes;
+use iroh_base::hash::Hash;
 use iroh_base::rpc::RpcResult;
-use iroh_base::{hash::Hash, rpc};
 use iroh_blobs::{
     export::ExportProgress,
     format::collection::Collection,

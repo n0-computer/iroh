@@ -34,5 +34,4 @@ missing_debug_implementations = "warn"
 unused-async = "warn"
 
 [patch.crates-io]
-quic-rpc = { path = "../quic-rpc" }
-quic-rpc-derive = { path = "../quic-rpc/quic-rpc-derive" }
+quic-rpc-derive = { git = "https://github.com/n0-computer/quic-rpc.git", branch = "more-macros" }

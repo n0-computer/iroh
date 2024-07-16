@@ -2473,7 +2473,7 @@ dependencies = [
  "portable-atomic",
  "postcard",
  "proptest",
- "quic-rpc",
+ "quic-rpc 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "quic-rpc-derive",
  "rand",
  "rand_chacha",
@@ -2619,7 +2619,7 @@ dependencies = [
  "pkarr 1.1.5",
  "portable-atomic",
  "postcard",
- "quic-rpc",
+ "quic-rpc 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand",
  "rand_xorshift",
  "ratatui",
@@ -4131,6 +4131,8 @@ dependencies = [
 [[package]]
 name = "quic-rpc"
 version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "110f0fbbf7c4a694902e11d890157245801d89a18d8e9b8d9d2afd91358a6a7c"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4151,11 +4153,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "quic-rpc"
+version = "0.11.0"
+source = "git+https://github.com/n0-computer/quic-rpc.git?branch=more-macros#0dc47683ca2fc47f3b91e4f767a285d494bee956"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "educe",
+ "flume",
+ "futures-lite 2.3.0",
+ "futures-sink",
+ "futures-util",
+ "hex",
+ "pin-project",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "quic-rpc-derive"
 version = "0.1.0"
+source = "git+https://github.com/n0-computer/quic-rpc.git?branch=more-macros#0dc47683ca2fc47f3b91e4f767a285d494bee956"
 dependencies = [
  "proc-macro2",
- "quic-rpc",
+ "quic-rpc 0.11.0 (git+https://github.com/n0-computer/quic-rpc.git?branch=more-macros)",
  "quote",
  "syn 1.0.109",
 ]

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use iroh_base::rpc::RpcResult;
 use iroh_net::{endpoint::ConnectionInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
+use nested_enum_utils::enum_conversions;
 use quic_rpc::message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg};
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,7 @@ use super::RpcService;
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
-#[nested_enum_utils::enum_conversions(super::Request)]
+#[enum_conversions(super::Request)]
 #[rpc_requests(RpcService)]
 pub enum Request {
     #[rpc(response = RpcResult<NodeStatus>)]
@@ -34,7 +35,7 @@ pub enum Request {
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
-#[nested_enum_utils::enum_conversions(super::Response)]
+#[enum_conversions(super::Response)]
 pub enum Response {
     Status(RpcResult<NodeStatus>),
     Id(RpcResult<NodeId>),
