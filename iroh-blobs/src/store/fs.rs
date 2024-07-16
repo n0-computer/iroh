@@ -1173,7 +1173,12 @@ impl Drop for StoreInner {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
             self.tx.send(ActorMessage::Shutdown { tx: None }).ok();
-            handle.join().ok();
+            let current_thread = std::thread::current();
+            let name = current_thread.name().unwrap_or("unknown");
+            tracing::info!("calling join on the actor thread from thread '{name}'");
+            let h = handle.join();
+            tracing::info!("actor thread joined: {}", h.is_ok());
+            h.ok();
         }
     }
 }
@@ -1522,12 +1527,18 @@ impl Actor {
                     let timeout = self.state.options.batch.max_write_duration;
                     for msg in msgs.batch_iter(count, timeout) {
                         if let Err(msg) = self.state.handle_readwrite(&mut tables, msg)? {
+                            tracing::info!(
+                                "receiving msg that can not be handled in handle_readwrite: {:?}",
+                                msg
+                            );
                             msgs.push_back(msg).expect("just recv'd");
                             break;
                         }
                     }
                     drop(tables);
+                    tracing::info!("committing write transaction");
                     txn.commit()?;
+                    tracing::info!("write transaction committed");
                     delete_after_commit.apply_and_clear(&self.state.options.path);
                     tracing::debug!("write transaction committed");
                 }

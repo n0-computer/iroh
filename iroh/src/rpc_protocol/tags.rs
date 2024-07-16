@@ -1,6 +1,6 @@
 use iroh_base::rpc::RpcResult;
 use iroh_blobs::Tag;
-use quic_rpc::message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg};
+use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
 use crate::client::tags::TagInfo;
@@ -10,8 +10,11 @@ use super::RpcService;
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(super::Request)]
+#[rpc_requests(RpcService)]
 pub enum Request {
+    #[rpc(response = RpcResult<()>)]
     DeleteTag(DeleteRequest),
+    #[server_streaming(response = TagInfo)]
     ListTags(ListRequest),
 }
 
@@ -60,21 +63,9 @@ impl ListRequest {
     }
 }
 
-impl Msg<RpcService> for ListRequest {
-    type Pattern = ServerStreaming;
-}
-
-impl ServerStreamingMsg<RpcService> for ListRequest {
-    type Response = TagInfo;
-}
-
 /// Delete a tag
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DeleteRequest {
     /// Name of the tag
     pub name: Tag,
-}
-
-impl RpcMsg<RpcService> for DeleteRequest {
-    type Response = RpcResult<()>;
 }

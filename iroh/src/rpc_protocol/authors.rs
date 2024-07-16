@@ -1,6 +1,6 @@
 use iroh_base::rpc::RpcResult;
 use iroh_docs::{Author, AuthorId};
-use quic_rpc::message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg};
+use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
 use super::RpcService;
@@ -8,13 +8,21 @@ use super::RpcService;
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(super::Request)]
+#[rpc_requests(RpcService)]
 pub enum Request {
+    #[server_streaming(response = RpcResult<ListResponse>)]
     List(ListRequest),
+    #[rpc(response = RpcResult<CreateResponse>)]
     Create(CreateRequest),
+    #[rpc(response = RpcResult<GetDefaultResponse>)]
     GetDefault(GetDefaultRequest),
+    #[rpc(response = RpcResult<SetDefaultResponse>)]
     SetDefault(SetDefaultRequest),
+    #[rpc(response = RpcResult<ImportResponse>)]
     Import(ImportRequest),
+    #[rpc(response = RpcResult<ExportResponse>)]
     Export(ExportRequest),
+    #[rpc(response = RpcResult<DeleteResponse>)]
     Delete(DeleteRequest),
 }
 
@@ -35,14 +43,6 @@ pub enum Response {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ListRequest {}
 
-impl Msg<RpcService> for ListRequest {
-    type Pattern = ServerStreaming;
-}
-
-impl ServerStreamingMsg<RpcService> for ListRequest {
-    type Response = RpcResult<ListResponse>;
-}
-
 /// Response for [`ListRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ListResponse {
@@ -54,10 +54,6 @@ pub struct ListResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CreateRequest;
 
-impl RpcMsg<RpcService> for CreateRequest {
-    type Response = RpcResult<CreateResponse>;
-}
-
 /// Response for [`CreateRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CreateResponse {
@@ -68,10 +64,6 @@ pub struct CreateResponse {
 /// Get the default author.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct GetDefaultRequest;
-
-impl RpcMsg<RpcService> for GetDefaultRequest {
-    type Response = RpcResult<GetDefaultResponse>;
-}
 
 /// Response for [`GetDefaultRequest`]
 #[derive(Serialize, Deserialize, Debug)]
@@ -86,10 +78,6 @@ pub struct SetDefaultRequest {
     pub author_id: AuthorId,
 }
 
-impl RpcMsg<RpcService> for SetDefaultRequest {
-    type Response = RpcResult<SetDefaultResponse>;
-}
-
 /// Response for [`GetDefaultRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SetDefaultResponse;
@@ -101,10 +89,6 @@ pub struct DeleteRequest {
     pub author: AuthorId,
 }
 
-impl RpcMsg<RpcService> for DeleteRequest {
-    type Response = RpcResult<DeleteResponse>;
-}
-
 /// Response for [`DeleteRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DeleteResponse;
@@ -114,10 +98,6 @@ pub struct DeleteResponse;
 pub struct ExportRequest {
     /// The id of the author to delete
     pub author: AuthorId,
-}
-
-impl RpcMsg<RpcService> for ExportRequest {
-    type Response = RpcResult<ExportResponse>;
 }
 
 /// Response for [`ExportRequest`]
@@ -132,10 +112,6 @@ pub struct ExportResponse {
 pub struct ImportRequest {
     /// The author to import
     pub author: Author,
-}
-
-impl RpcMsg<RpcService> for ImportRequest {
-    type Response = RpcResult<ImportResponse>;
 }
 
 /// Response to [`ImportRequest`]

@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use iroh_base::rpc::RpcResult;
 use iroh_net::{endpoint::ConnectionInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
 use quic_rpc::message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg};
+use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
 use crate::client::NodeStatus;
@@ -12,11 +13,17 @@ use super::RpcService;
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions(super::Request)]
+#[rpc_requests(RpcService)]
 pub enum Request {
+    #[rpc(response = RpcResult<NodeStatus>)]
     Status(StatusRequest),
+    #[rpc(response = RpcResult<NodeId>)]
     Id(IdRequest),
+    #[rpc(response = RpcResult<NodeAddr>)]
     Addr(AddrRequest),
+    #[rpc(response = RpcResult<()>)]
     AddAddr(AddAddrRequest),
+    #[rpc(response = RpcResult<Option<RelayUrl>>)]
     Relay(RelayRequest),
     Stats(StatsRequest),
     Shutdown(ShutdownRequest),
@@ -95,40 +102,20 @@ impl RpcMsg<RpcService> for ShutdownRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StatusRequest;
 
-impl RpcMsg<RpcService> for StatusRequest {
-    type Response = RpcResult<NodeStatus>;
-}
-
 /// A request to get information the identity of the node.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct IdRequest;
 
-impl RpcMsg<RpcService> for IdRequest {
-    type Response = RpcResult<NodeId>;
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AddrRequest;
-
-impl RpcMsg<RpcService> for AddrRequest {
-    type Response = RpcResult<NodeAddr>;
-}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AddAddrRequest {
     pub addr: NodeAddr,
 }
 
-impl RpcMsg<RpcService> for AddAddrRequest {
-    type Response = RpcResult<()>;
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RelayRequest;
-
-impl RpcMsg<RpcService> for RelayRequest {
-    type Response = RpcResult<Option<RelayUrl>>;
-}
 
 /// A request to watch for the node status
 #[derive(Serialize, Deserialize, Debug)]

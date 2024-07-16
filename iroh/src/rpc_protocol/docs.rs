@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use bytes::Bytes;
 use iroh_base::{
     node_addr::AddrInfoOptions,
-    rpc::{RpcError, RpcResult},
+    rpc::{self, RpcError, RpcResult},
 };
 use iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 use iroh_docs::{
@@ -11,11 +11,9 @@ use iroh_docs::{
     CapabilityKind, DocTicket, Entry, NamespaceId, PeerIdBytes, SignedEntry,
 };
 use iroh_net::NodeAddr;
-use quic_rpc::{
-    message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
-    pattern::try_server_streaming::StreamCreated,
-    pattern::try_server_streaming::{TryServerStreaming, TryServerStreamingMsg},
-};
+use nested_enum_utils::enum_conversions;
+use quic_rpc::pattern::try_server_streaming::StreamCreated;
+use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
 use super::RpcService;
@@ -23,28 +21,50 @@ use crate::client::docs::{ImportProgress, ShareMode};
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
-#[nested_enum_utils::enum_conversions(super::Request)]
+#[enum_conversions(super::Request)]
+#[rpc_requests(RpcService)]
 pub enum Request {
+    #[rpc(response = RpcResult<OpenResponse>)]
     Open(OpenRequest),
+    #[rpc(response = RpcResult<CloseResponse>)]
     Close(CloseRequest),
+    #[rpc(response = RpcResult<StatusResponse>)]
     Status(StatusRequest),
+    #[server_streaming(response = RpcResult<ListResponse>)]
     List(DocListRequest),
+    #[rpc(response = RpcResult<CreateResponse>)]
     Create(CreateRequest),
+    #[rpc(response = RpcResult<DropResponse>)]
     Drop(DropRequest),
+    #[rpc(response = RpcResult<ImportResponse>)]
     Import(ImportRequest),
+    #[rpc(response = RpcResult<SetResponse>)]
     Set(SetRequest),
+    #[rpc(response = RpcResult<SetHashResponse>)]
     SetHash(SetHashRequest),
+    #[server_streaming(response = RpcResult<GetManyResponse>)]
     Get(GetManyRequest),
+    #[rpc(response = RpcResult<GetExactResponse>)]
     GetExact(GetExactRequest),
+    #[server_streaming(response = ImportFileResponse)]
     ImportFile(ImportFileRequest),
+    #[server_streaming(response = ExportFileResponse)]
     ExportFile(ExportFileRequest),
+    #[rpc(response = RpcResult<DelResponse>)]
     Del(DelRequest),
+    #[rpc(response = RpcResult<StartSyncResponse>)]
     StartSync(StartSyncRequest),
+    #[rpc(response = RpcResult<LeaveResponse>)]
     Leave(LeaveRequest),
+    #[rpc(response = RpcResult<ShareResponse>)]
     Share(ShareRequest),
+    #[try_server_streaming(create_error = RpcError, item_error = RpcError, item = DocSubscribeResponse)]
     Subscribe(DocSubscribeRequest),
+    #[rpc(response = RpcResult<GetDownloadPolicyResponse>)]
     GetDownloadPolicy(GetDownloadPolicyRequest),
+    #[rpc(response = RpcResult<SetDownloadPolicyResponse>)]
     SetDownloadPolicy(SetDownloadPolicyRequest),
+    #[rpc(response = RpcResult<GetSyncPeersResponse>)]
     GetSyncPeers(GetSyncPeersRequest),
 }
 
@@ -83,16 +103,6 @@ pub struct DocSubscribeRequest {
     pub doc_id: NamespaceId,
 }
 
-impl Msg<RpcService> for DocSubscribeRequest {
-    type Pattern = TryServerStreaming;
-}
-
-impl TryServerStreamingMsg<RpcService> for DocSubscribeRequest {
-    type Item = DocSubscribeResponse;
-    type ItemError = RpcError;
-    type CreateError = RpcError;
-}
-
 /// Response to [`DocSubscribeRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocSubscribeResponse {
@@ -103,14 +113,6 @@ pub struct DocSubscribeResponse {
 /// List all documents
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocListRequest {}
-
-impl Msg<RpcService> for DocListRequest {
-    type Pattern = ServerStreaming;
-}
-
-impl ServerStreamingMsg<RpcService> for DocListRequest {
-    type Response = RpcResult<ListResponse>;
-}
 
 /// Response to [`DocListRequest`]
 #[derive(Serialize, Deserialize, Debug)]
@@ -125,10 +127,6 @@ pub struct ListResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CreateRequest {}
 
-impl RpcMsg<RpcService> for CreateRequest {
-    type Response = RpcResult<CreateResponse>;
-}
-
 /// Response to [`CreateRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CreateResponse {
@@ -141,10 +139,6 @@ pub struct CreateResponse {
 pub struct ImportRequest {
     /// The namespace capability.
     pub capability: Capability,
-}
-
-impl RpcMsg<RpcService> for ImportRequest {
-    type Response = RpcResult<ImportResponse>;
 }
 
 /// Response to [`ImportRequest`]
@@ -165,10 +159,6 @@ pub struct ShareRequest {
     pub addr_options: AddrInfoOptions,
 }
 
-impl RpcMsg<RpcService> for ShareRequest {
-    type Response = RpcResult<ShareResponse>;
-}
-
 /// The response to [`ShareRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ShareResponse(pub DocTicket);
@@ -178,10 +168,6 @@ pub struct ShareResponse(pub DocTicket);
 pub struct StatusRequest {
     /// The document id
     pub doc_id: NamespaceId,
-}
-
-impl RpcMsg<RpcService> for StatusRequest {
-    type Response = RpcResult<StatusResponse>;
 }
 
 /// Response to [`StatusRequest`]
@@ -199,10 +185,6 @@ pub struct OpenRequest {
     pub doc_id: NamespaceId,
 }
 
-impl RpcMsg<RpcService> for OpenRequest {
-    type Response = RpcResult<OpenResponse>;
-}
-
 /// Response to [`OpenRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct OpenResponse {}
@@ -212,10 +194,6 @@ pub struct OpenResponse {}
 pub struct CloseRequest {
     /// The document id
     pub doc_id: NamespaceId,
-}
-
-impl RpcMsg<RpcService> for CloseRequest {
-    type Response = RpcResult<CloseResponse>;
 }
 
 /// Response to [`CloseRequest`]
@@ -231,10 +209,6 @@ pub struct StartSyncRequest {
     pub peers: Vec<NodeAddr>,
 }
 
-impl RpcMsg<RpcService> for StartSyncRequest {
-    type Response = RpcResult<StartSyncResponse>;
-}
-
 /// Response to [`StartSyncRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StartSyncResponse {}
@@ -246,10 +220,6 @@ pub struct LeaveRequest {
     pub doc_id: NamespaceId,
 }
 
-impl RpcMsg<RpcService> for LeaveRequest {
-    type Response = RpcResult<LeaveResponse>;
-}
-
 /// Response to [`LeaveRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LeaveResponse {}
@@ -259,10 +229,6 @@ pub struct LeaveResponse {}
 pub struct DropRequest {
     /// The document id
     pub doc_id: NamespaceId,
-}
-
-impl RpcMsg<RpcService> for DropRequest {
-    type Response = RpcResult<DropResponse>;
 }
 
 /// Response to [`DropRequest`]
@@ -282,10 +248,6 @@ pub struct SetRequest {
     // TODO: Allow to provide the hash directly
     // TODO: Add a way to provide content as stream
     pub value: Bytes,
-}
-
-impl RpcMsg<RpcService> for SetRequest {
-    type Response = RpcResult<SetResponse>;
 }
 
 /// Response to [`SetRequest`]
@@ -317,14 +279,6 @@ pub struct ImportFileRequest {
     pub in_place: bool,
 }
 
-impl Msg<RpcService> for ImportFileRequest {
-    type Pattern = ServerStreaming;
-}
-
-impl ServerStreamingMsg<RpcService> for ImportFileRequest {
-    type Response = ImportFileResponse;
-}
-
 /// Wrapper around [`ImportProgress`].
 #[derive(Debug, Serialize, Deserialize, derive_more::Into)]
 pub struct ImportFileResponse(pub ImportProgress);
@@ -347,14 +301,6 @@ pub struct ExportFileRequest {
     pub mode: ExportMode,
 }
 
-impl Msg<RpcService> for ExportFileRequest {
-    type Pattern = ServerStreaming;
-}
-
-impl ServerStreamingMsg<RpcService> for ExportFileRequest {
-    type Response = ExportFileResponse;
-}
-
 /// Progress messages for an doc export operation
 ///
 /// An export operation involves reading the entry from the database ans saving the entry to the
@@ -371,10 +317,6 @@ pub struct DelRequest {
     pub author_id: AuthorId,
     /// Prefix to delete.
     pub prefix: Bytes,
-}
-
-impl RpcMsg<RpcService> for DelRequest {
-    type Response = RpcResult<DelResponse>;
 }
 
 /// Response to [`DelRequest`]
@@ -399,10 +341,6 @@ pub struct SetHashRequest {
     pub size: u64,
 }
 
-impl RpcMsg<RpcService> for SetHashRequest {
-    type Response = RpcResult<SetHashResponse>;
-}
-
 /// Response to [`SetHashRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SetHashResponse {}
@@ -414,14 +352,6 @@ pub struct GetManyRequest {
     pub doc_id: NamespaceId,
     /// Query to run
     pub query: Query,
-}
-
-impl Msg<RpcService> for GetManyRequest {
-    type Pattern = ServerStreaming;
-}
-
-impl ServerStreamingMsg<RpcService> for GetManyRequest {
-    type Response = RpcResult<GetManyResponse>;
 }
 
 /// Response to [`GetManyRequest`]
@@ -444,10 +374,6 @@ pub struct GetExactRequest {
     pub include_empty: bool,
 }
 
-impl RpcMsg<RpcService> for GetExactRequest {
-    type Response = RpcResult<GetExactResponse>;
-}
-
 /// Response to [`GetExactRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct GetExactResponse {
@@ -464,10 +390,6 @@ pub struct SetDownloadPolicyRequest {
     pub policy: DownloadPolicy,
 }
 
-impl RpcMsg<RpcService> for SetDownloadPolicyRequest {
-    type Response = RpcResult<SetDownloadPolicyResponse>;
-}
-
 /// Response to [`SetDownloadPolicyRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SetDownloadPolicyResponse {}
@@ -477,10 +399,6 @@ pub struct SetDownloadPolicyResponse {}
 pub struct GetDownloadPolicyRequest {
     /// The document id
     pub doc_id: NamespaceId,
-}
-
-impl RpcMsg<RpcService> for GetDownloadPolicyRequest {
-    type Response = RpcResult<GetDownloadPolicyResponse>;
 }
 
 /// Response to [`GetDownloadPolicyRequest`]
@@ -495,10 +413,6 @@ pub struct GetDownloadPolicyResponse {
 pub struct GetSyncPeersRequest {
     /// The document id
     pub doc_id: NamespaceId,
-}
-
-impl RpcMsg<RpcService> for GetSyncPeersRequest {
-    type Response = RpcResult<GetSyncPeersResponse>;
 }
 
 /// Response to [`GetSyncPeersRequest`]
