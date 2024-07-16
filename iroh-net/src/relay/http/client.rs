@@ -39,8 +39,8 @@ use crate::relay::{
 use crate::util::chain;
 use crate::util::AbortingJoinHandle;
 
-use super::server::Protocol;
 use super::streams::ProxyStream;
+use super::Protocol;
 
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
