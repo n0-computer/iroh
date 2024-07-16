@@ -32,6 +32,3 @@ missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
 unused-async = "warn"
-
-[patch.crates-io]
-quic-rpc-derive = { git = "https://github.com/n0-computer/quic-rpc.git", branch = "more-macros" }
