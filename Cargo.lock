@@ -3,6 +3,20 @@
 version = 3
 
 [[package]]
+name = "acto"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31c372578ce4215ccf94ec3f3585fbb6a902e47d07b064ff8a55d850ffb5025e"
+dependencies = [
+ "parking_lot",
+ "pin-project-lite",
+ "rustc_version",
+ "smol_str",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2514,12 +2528,13 @@ checksum = "8f518f335dce6725a761382244631d86cf0ccb2863413590b31338feb467f9c3"
 
 [[package]]
 name = "iroh"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "bao-tree",
  "bytes",
  "clap",
+ "console",
  "derive_more",
  "flume",
  "futures-buffered",
@@ -2538,12 +2553,14 @@ dependencies = [
  "iroh-net",
  "iroh-quinn",
  "iroh-test",
+ "nested_enum_utils",
  "num_cpus",
  "parking_lot",
  "portable-atomic",
  "postcard",
  "proptest",
  "quic-rpc",
+ "quic-rpc-derive",
  "rand",
  "rand_chacha",
  "ref-cast",
@@ -2554,6 +2571,7 @@ dependencies = [
  "strum 0.25.0",
  "tempfile",
  "testdir",
+ "testresult",
  "thiserror",
  "tokio",
  "tokio-stream",
@@ -2565,7 +2583,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2609,7 +2627,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-blobs"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2648,6 +2666,7 @@ dependencies = [
  "serde_test",
  "smallvec",
  "tempfile",
+ "testresult",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -2658,7 +2677,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-cli"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2675,10 +2694,12 @@ dependencies = [
  "flume",
  "futures-buffered",
  "futures-lite 2.3.0",
+ "futures-util",
  "hex",
  "human-time",
  "indicatif",
  "iroh",
+ "iroh-gossip",
  "iroh-metrics",
  "iroh-quinn",
  "nix 0.27.1",
@@ -2688,6 +2709,7 @@ dependencies = [
  "postcard",
  "quic-rpc",
  "rand",
+ "rand_xorshift",
  "ratatui",
  "regex",
  "reqwest",
@@ -2711,7 +2733,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2760,7 +2782,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-docs"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2801,14 +2823,16 @@ dependencies = [
 
 [[package]]
 name = "iroh-gossip"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "bytes",
  "clap",
  "derive_more",
  "ed25519-dalek",
+ "flume",
  "futures-lite 2.3.0",
+ "futures-util",
  "genawaiter",
  "indexmap 2.2.6",
  "iroh-base",
@@ -2844,7 +2868,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "erased_set",
@@ -2863,7 +2887,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2932,7 +2956,9 @@ dependencies = [
  "strum 0.26.2",
  "stun-rs",
  "surge-ping",
+ "swarm-discovery",
  "testdir",
+ "testresult",
  "thiserror",
  "time",
  "tokio",
@@ -2956,7 +2982,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-bench"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3019,7 +3045,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-test"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "tokio",
@@ -3310,6 +3336,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a51313c5820b0b02bd422f4b44776fbf47961755c74ce64afc73bfad10226c3"
 dependencies = [
  "getrandom",
+]
+
+[[package]]
+name = "nested_enum_utils"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f256ef99e7ac37428ef98c89bef9d84b590172de4bbfbe81b68a4cd3abadb32"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -4258,6 +4296,18 @@ dependencies = [
  "tokio-serde",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "quic-rpc-derive"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b02c2d3637609d07aa2560f178588dce09cf2f4f5cdcc9b0caac0063a188a898"
+dependencies = [
+ "proc-macro2",
+ "quic-rpc",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -5273,6 +5323,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "smol_str"
+version = "0.1.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fad6c857cbab2627dcf01ec85a623ca4e7dcb5691cbaa3d7fb7653671f0d09c9"
+
+[[package]]
 name = "socket2"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5535,6 +5591,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "swarm-discovery"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0685d4eda80e2dfee7fc413ba861ef11411ca813d836a77ab8f0d3a00286488"
+dependencies = [
+ "acto",
+ "anyhow",
+ "hickory-proto",
+ "rand",
+ "socket2",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5680,6 +5751,12 @@ dependencies = [
  "sysinfo",
  "whoami",
 ]
+
+[[package]]
+name = "testresult"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d72e255c0541f86589b0287139b70bd941a197ea4cea8fd8f87afe9c965a99e4"
 
 [[package]]
 name = "thiserror"

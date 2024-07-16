@@ -10,7 +10,7 @@ members = [
   "iroh-docs",
   "iroh-test",
   "iroh-net/bench",
-  "iroh-cli"
+  "iroh-cli",
 ]
 resolver = "2"
 

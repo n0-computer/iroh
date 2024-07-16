@@ -45,7 +45,8 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{
-    debug, error, error_span, info, info_span, instrument, trace, trace_span, warn, Instrument,
+    debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
+    Instrument, Level, Span,
 };
 use url::Url;
 use watchable::Watchable;
@@ -879,7 +880,7 @@ impl MagicSock {
         match dm {
             disco::Message::Ping(ping) => {
                 inc!(MagicsockMetrics, recv_disco_ping);
-                self.handle_ping(ping, &sender, src);
+                self.handle_ping(ping, sender, src);
             }
             disco::Message::Pong(pong) => {
                 inc!(MagicsockMetrics, recv_disco_pong);
@@ -887,10 +888,21 @@ impl MagicSock {
             }
             disco::Message::CallMeMaybe(cm) => {
                 inc!(MagicsockMetrics, recv_disco_call_me_maybe);
-                if !matches!(src, DiscoMessageSource::Relay { .. }) {
-                    warn!("call-me-maybe packets should only come via relay");
-                    return;
-                };
+                match src {
+                    DiscoMessageSource::Relay { url, .. } => {
+                        event!(
+                            target: "events.net.call-me-maybe.recv",
+                            Level::DEBUG,
+                            src_node = sender.fmt_short(),
+                            via = ?url,
+                            their_addrs = ?cm.my_numbers,
+                        );
+                    }
+                    _ => {
+                        warn!("call-me-maybe packets should only come via relay");
+                        return;
+                    }
+                }
                 let ping_actions = self.node_map.handle_call_me_maybe(sender, cm);
                 for action in ping_actions {
                     match action {
@@ -908,11 +920,11 @@ impl MagicSock {
     }
 
     /// Handle a ping message.
-    fn handle_ping(&self, dm: disco::Ping, sender: &PublicKey, src: DiscoMessageSource) {
+    fn handle_ping(&self, dm: disco::Ping, sender: NodeId, src: DiscoMessageSource) {
         // Insert the ping into the node map, and return whether a ping with this tx_id was already
         // received.
         let addr: SendAddr = src.clone().into();
-        let handled = self.node_map.handle_ping(*sender, addr.clone(), dm.tx_id);
+        let handled = self.node_map.handle_ping(sender, addr.clone(), dm.tx_id);
         match handled.role {
             PingRole::Duplicate => {
                 debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: path already confirmed, skip");
@@ -922,7 +934,7 @@ impl MagicSock {
             PingRole::NewPath => {
                 debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: new path");
             }
-            PingRole::Reactivate => {
+            PingRole::Activate => {
                 debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: path active");
             }
         }
@@ -934,8 +946,15 @@ impl MagicSock {
             tx_id: dm.tx_id,
             ping_observed_addr: addr.clone(),
         });
+        event!(
+            target: "events.net.pong.sent",
+            Level::DEBUG,
+            dst_node = %sender.fmt_short(),
+            dst = ?addr,
+            txn = ?dm.tx_id,
+        );
 
-        if !self.send_disco_message_queued(addr.clone(), *sender, pong) {
+        if !self.send_disco_message_queued(addr.clone(), sender, pong) {
             warn!(%addr, "failed to queue pong");
         }
 
@@ -1202,21 +1221,29 @@ impl MagicSock {
         }
     }
 
-    fn send_or_queue_call_me_maybe(&self, url: &RelayUrl, dst_key: PublicKey) {
+    fn send_or_queue_call_me_maybe(&self, url: &RelayUrl, dst_node: NodeId) {
         let endpoints = self.endpoints.read();
         if endpoints.fresh_enough() {
+            let addrs: Vec<_> = endpoints.iter().collect();
+            event!(
+                target: "events.net.call-me-maybe.sent",
+                Level::DEBUG,
+                dst_node = %dst_node.fmt_short(),
+                via = ?url,
+                ?addrs,
+            );
             let msg = endpoints.to_call_me_maybe_message();
             let msg = disco::Message::CallMeMaybe(msg);
-            if !self.send_disco_message_relay(url, dst_key, msg) {
-                warn!(dstkey = %dst_key.fmt_short(), relayurl = ?url,
+            if !self.send_disco_message_relay(url, dst_node, msg) {
+                warn!(dstkey = %dst_node.fmt_short(), relayurl = ?url,
                       "relay channel full, dropping call-me-maybe");
             } else {
-                debug!(dstkey = %dst_key.fmt_short(), relayurl = ?url, "call-me-maybe sent");
+                debug!(dstkey = %dst_node.fmt_short(), relayurl = ?url, "call-me-maybe sent");
             }
         } else {
             self.pending_call_me_maybes
                 .lock()
-                .insert(dst_key, url.clone());
+                .insert(dst_node, url.clone());
             debug!(
                 last_refresh_ago = ?endpoints.last_endpoints_time.map(|x| x.elapsed()),
                 "want call-me-maybe but endpoints stale; queuing after restun",
@@ -2098,99 +2125,102 @@ impl Actor {
 
         let msock = self.msock.clone();
 
-        tokio::spawn(async move {
-            // Depending on the OS and network interfaces attached and their state enumerating
-            // the local interfaces can take a long time.  Especially Windows is very slow.
-            let LocalAddresses {
-                regular: mut ips,
-                loopback,
-            } = tokio::task::spawn_blocking(LocalAddresses::new)
-                .await
-                .unwrap();
+        tokio::spawn(
+            async move {
+                // Depending on the OS and network interfaces attached and their state enumerating
+                // the local interfaces can take a long time.  Especially Windows is very slow.
+                let LocalAddresses {
+                    regular: mut ips,
+                    loopback,
+                } = tokio::task::spawn_blocking(LocalAddresses::new)
+                    .await
+                    .unwrap();
 
-            if is_unspecified_v4 || is_unspecified_v6 {
-                if ips.is_empty() && eps.is_empty() {
-                    // Only include loopback addresses if we have no
-                    // interfaces at all to use as endpoints and don't
-                    // have a public IPv4 or IPv6 address. This allows
-                    // for localhost testing when you're on a plane and
-                    // offline, for example.
-                    ips = loopback;
-                }
-                let v4_port = local_addr_v4.and_then(|addr| {
-                    if addr.ip().is_unspecified() {
-                        Some(addr.port())
-                    } else {
-                        None
+                if is_unspecified_v4 || is_unspecified_v6 {
+                    if ips.is_empty() && eps.is_empty() {
+                        // Only include loopback addresses if we have no
+                        // interfaces at all to use as endpoints and don't
+                        // have a public IPv4 or IPv6 address. This allows
+                        // for localhost testing when you're on a plane and
+                        // offline, for example.
+                        ips = loopback;
                     }
-                });
+                    let v4_port = local_addr_v4.and_then(|addr| {
+                        if addr.ip().is_unspecified() {
+                            Some(addr.port())
+                        } else {
+                            None
+                        }
+                    });
 
-                let v6_port = local_addr_v6.and_then(|addr| {
-                    if addr.ip().is_unspecified() {
-                        Some(addr.port())
-                    } else {
-                        None
-                    }
-                });
+                    let v6_port = local_addr_v6.and_then(|addr| {
+                        if addr.ip().is_unspecified() {
+                            Some(addr.port())
+                        } else {
+                            None
+                        }
+                    });
 
-                for ip in ips {
-                    match ip {
-                        IpAddr::V4(_) => {
-                            if let Some(port) = v4_port {
-                                add_addr!(
-                                    already,
-                                    eps,
-                                    SocketAddr::new(ip, port),
-                                    DirectAddrType::Local
-                                );
+                    for ip in ips {
+                        match ip {
+                            IpAddr::V4(_) => {
+                                if let Some(port) = v4_port {
+                                    add_addr!(
+                                        already,
+                                        eps,
+                                        SocketAddr::new(ip, port),
+                                        DirectAddrType::Local
+                                    );
+                                }
+                            }
+                            IpAddr::V6(_) => {
+                                if let Some(port) = v6_port {
+                                    add_addr!(
+                                        already,
+                                        eps,
+                                        SocketAddr::new(ip, port),
+                                        DirectAddrType::Local
+                                    );
+                                }
                             }
                         }
-                        IpAddr::V6(_) => {
-                            if let Some(port) = v6_port {
-                                add_addr!(
-                                    already,
-                                    eps,
-                                    SocketAddr::new(ip, port),
-                                    DirectAddrType::Local
-                                );
-                            }
-                        }
                     }
                 }
-            }
 
-            if !is_unspecified_v4 {
-                if let Some(addr) = local_addr_v4 {
-                    // Our local endpoint is bound to a particular address.
-                    // Do not offer addresses on other local interfaces.
-                    add_addr!(already, eps, addr, DirectAddrType::Local);
+                if !is_unspecified_v4 {
+                    if let Some(addr) = local_addr_v4 {
+                        // Our local endpoint is bound to a particular address.
+                        // Do not offer addresses on other local interfaces.
+                        add_addr!(already, eps, addr, DirectAddrType::Local);
+                    }
                 }
-            }
 
-            if !is_unspecified_v6 {
-                if let Some(addr) = local_addr_v6 {
-                    // Our local endpoint is bound to a particular address.
-                    // Do not offer addresses on other local interfaces.
-                    add_addr!(already, eps, addr, DirectAddrType::Local);
+                if !is_unspecified_v6 {
+                    if let Some(addr) = local_addr_v6 {
+                        // Our local endpoint is bound to a particular address.
+                        // Do not offer addresses on other local interfaces.
+                        add_addr!(already, eps, addr, DirectAddrType::Local);
+                    }
                 }
+
+                // Note: the endpoints are intentionally returned in priority order,
+                // from "farthest but most reliable" to "closest but least
+                // reliable." Addresses returned from STUN should be globally
+                // addressable, but might go farther on the network than necessary.
+                // Local interface addresses might have lower latency, but not be
+                // globally addressable.
+                //
+                // The STUN address(es) are always first.
+                // Despite this sorting, clients are not relying on this sorting for decisions;
+
+                msock.update_direct_addresses(eps);
+
+                // Regardless of whether our local endpoints changed, we now want to send any queued
+                // call-me-maybe messages.
+                msock.send_queued_call_me_maybes();
             }
-
-            // Note: the endpoints are intentionally returned in priority order,
-            // from "farthest but most reliable" to "closest but least
-            // reliable." Addresses returned from STUN should be globally
-            // addressable, but might go farther on the network than necessary.
-            // Local interface addresses might have lower latency, but not be
-            // globally addressable.
-            //
-            // The STUN address(es) are always first.
-            // Despite this sorting, clients are not relying on this sorting for decisions;
-
-            msock.update_direct_addresses(eps);
-
-            // Regardless of whether our local endpoints changed, we now want to send any queued
-            // call-me-maybe messages.
-            msock.send_queued_call_me_maybes();
-        });
+            .instrument(Span::current()),
+        );
     }
 
     /// Called when an endpoints update is done, no matter if it was successful or not.
@@ -2529,16 +2559,11 @@ impl DiscoveredEndpoints {
     }
 
     fn log_endpoint_change(&self) {
-        debug!("endpoints changed: {}", {
-            let mut s = String::new();
-            for (i, ep) in self.last_endpoints.iter().enumerate() {
-                if i > 0 {
-                    s += ", ";
-                }
-                s += &format!("{} ({})", ep.addr, ep.typ);
-            }
-            s
-        });
+        event!(
+            target: "events.net.direct_addrs",
+            Level::DEBUG,
+            addrs = ?self.last_endpoints,
+        );
     }
 }
 
@@ -3081,7 +3106,6 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    #[ignore = "flaky"]
     async fn test_two_devices_roundtrip_network_change() -> Result<()> {
         time::timeout(
             Duration::from_secs(50),

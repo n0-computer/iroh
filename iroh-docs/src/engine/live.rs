@@ -447,13 +447,24 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         namespace: NamespaceId,
         peers: Vec<NodeAddr>,
     ) -> anyhow::Result<()> {
-        let peer_ids: Vec<PublicKey> = peers.iter().map(|p| p.node_id).collect();
+        let mut peer_ids = Vec::new();
 
         // add addresses of peers to our endpoint address book
         for peer in peers.into_iter() {
             let peer_id = peer.node_id;
-            if let Err(err) = self.endpoint.add_node_addr_with_source(peer, SOURCE_NAME) {
-                warn!(peer = %peer_id.fmt_short(), "failed to add known addrs: {err:?}");
+            // adding a node address without any addressing info fails with an error,
+            // but we still want to include those peers because node discovery might find addresses for them
+            if peer.info.is_empty() {
+                peer_ids.push(peer_id)
+            } else {
+                match self.endpoint.add_node_addr_with_source(peer, SOURCE_NAME) {
+                    Ok(()) => {
+                        peer_ids.push(peer_id);
+                    }
+                    Err(err) => {
+                        warn!(peer = %peer_id.fmt_short(), "failed to add known addrs: {err:?}");
+                    }
+                }
             }
         }
 
@@ -465,9 +476,11 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             })
             .await?;
 
-        // trigger initial sync with initial peers
-        for peer in peer_ids {
-            self.sync_with_peer(namespace, peer, SyncReason::DirectJoin);
+        if !peer_ids.is_empty() {
+            // trigger initial sync with initial peers
+            for peer in peer_ids {
+                self.sync_with_peer(namespace, peer, SyncReason::DirectJoin);
+            }
         }
         Ok(())
     }

@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use tokio::net::TcpListener;
@@ -13,7 +13,9 @@ type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 /// Start a HTTP server to report metrics.
 pub async fn run(metrics_addr: SocketAddr) -> Result<()> {
     info!("Starting metrics server on {metrics_addr}");
-    let listener = TcpListener::bind(metrics_addr).await?;
+    let listener = TcpListener::bind(metrics_addr)
+        .await
+        .with_context(|| format!("failed to bind metrics on {metrics_addr}"))?;
     loop {
         let (stream, _addr) = listener.accept().await?;
         let io = hyper_util::rt::TokioIo::new(stream);

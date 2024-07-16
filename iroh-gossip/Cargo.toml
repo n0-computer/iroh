@@ -1,6 +1,6 @@
 [package]
 name = "iroh-gossip"
-version = "0.19.0"
+version = "0.20.0"
 edition = "2021"
 readme = "README.md"
 description = "gossip messages over broadcast trees"
@@ -27,16 +27,20 @@ rand = { version = "0.8.5", features = ["std_rng"] }
 rand_core = "0.6.4"
 serde = { version = "1.0.164", features = ["derive"] }
 tracing = "0.1"
-iroh-metrics = { version = "0.19.0", path = "../iroh-metrics" }
-iroh-base = { version = "0.19.0", path = "../iroh-base" }
+iroh-metrics = { version = "0.20.0", path = "../iroh-metrics" }
+iroh-base = { version = "0.20.0", path = "../iroh-base" }
 
 # net dependencies (optional)
 quinn = { package = "iroh-quinn", version = "0.11", optional = true }
 futures-lite = { version = "2.3", optional = true }
-iroh-net = { path = "../iroh-net", version = "0.19.0", optional = true, default-features = false, features = ["test-utils"] }
+iroh-net = { path = "../iroh-net", version = "0.20.0", optional = true, default-features = false, features = ["test-utils"] }
 tokio = { version = "1", optional = true, features = ["io-util", "sync", "rt", "macros", "net", "fs"] }
 tokio-util = { version = "0.7.8", optional = true, features = ["codec"] }
 genawaiter = { version = "0.99.1", default-features = false, features = ["futures03"] }
+
+# dispatcher dependencies (optional)
+futures-util = { version = "0.3.30", optional = true }
+flume = { version = "0.11", optional = true }
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -46,8 +50,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2.4.0"
 
 [features]
-default = ["net"]
+default = ["net", "dispatcher"]
 net = ["dep:futures-lite", "dep:iroh-net", "dep:tokio", "dep:tokio-util"]
+dispatcher = ["dep:flume", "dep:futures-util"]
 
 [[example]]
 name = "chat"

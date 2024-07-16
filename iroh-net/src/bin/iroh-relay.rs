@@ -62,7 +62,9 @@ fn load_certs(
 fn load_secret_key(
     filename: impl AsRef<Path>,
 ) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
-    let keyfile = std::fs::File::open(filename.as_ref()).context("cannot open secret key file")?;
+    let filename = filename.as_ref();
+    let keyfile = std::fs::File::open(filename)
+        .with_context(|| format!("cannot open secret key file {}", filename.display()))?;
     let mut reader = std::io::BufReader::new(keyfile);
 
     loop {
@@ -83,7 +85,7 @@ fn load_secret_key(
 
     bail!(
         "no keys found in {} (encrypted keys not supported)",
-        filename.as_ref().display()
+        filename.display()
     );
 }
 

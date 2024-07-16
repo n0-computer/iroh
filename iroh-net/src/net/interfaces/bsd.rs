@@ -374,9 +374,9 @@ impl WireFormat {
                     return Err(RouteError::InvalidMessage);
                 }
 
-                #[cfg(target_arch = "netbsd")]
+                #[cfg(target_os = "netbsd")]
                 let index = u16_from_ne_range(data, 16..18)?;
-                #[cfg(not(target_arch = "netbsd"))]
+                #[cfg(not(target_os = "netbsd"))]
                 let index = u16_from_ne_range(data, 12..14)?;
 
                 let addrs = parse_addrs(
