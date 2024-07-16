@@ -14,7 +14,6 @@
 use std::any::Any;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
@@ -76,8 +75,8 @@ pub struct Builder {
     keylog: bool,
     discovery: Option<Box<dyn Discovery>>,
     proxy_url: Option<Url>,
-    /// Path for known peers. See [`Builder::peers_data_path`].
-    peers_path: Option<PathBuf>,
+    /// List of known nodes. See [`Builder::know_nodes`].
+    node_map: Option<Vec<NodeAddr>>,
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
@@ -100,7 +99,7 @@ impl Default for Builder {
             keylog: Default::default(),
             discovery: Default::default(),
             proxy_url: None,
-            peers_path: None,
+            node_map: None,
             dns_resolver: None,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -146,7 +145,7 @@ impl Builder {
             port: bind_port,
             secret_key,
             relay_map,
-            nodes_path: self.peers_path,
+            node_map: self.node_map,
             discovery: self.discovery,
             proxy_url: self.proxy_url,
             dns_resolver,
@@ -215,12 +214,9 @@ impl Builder {
         self
     }
 
-    /// Optionally sets the path where peer info should be stored.
-    ///
-    /// If the file exists, it will be used to populate an initial set of peers. Peers will
-    /// be saved periodically and on shutdown to this path.
-    pub fn peers_data_path(mut self, path: PathBuf) -> Self {
-        self.peers_path = Some(path);
+    /// Optionally set a list of known nodes.
+    pub fn known_nodes(mut self, nodes: Vec<NodeAddr>) -> Self {
+        self.node_map = Some(nodes);
         self
     }
 
@@ -771,6 +767,11 @@ impl Endpoint {
         self.msock.conn_type_stream(node_id)
     }
 
+    /// Get the known node addresses which should be persisted.
+    pub fn node_addresses_for_storage(&self) -> Vec<NodeAddr> {
+        self.msock.node_addresses_for_storage()
+    }
+
     /// Returns the DNS resolver used in this [`Endpoint`].
     ///
     /// See [`Builder::discovery`].
@@ -1238,24 +1239,25 @@ mod tests {
         client.unwrap();
     }
 
-    /// Test that peers saved on shutdown are correctly loaded
+    /// Test that peers are properly restored
     #[tokio::test]
-    async fn save_load_peers() {
+    async fn restore_peers() {
         let _guard = iroh_test::logging::setup();
 
         let secret_key = SecretKey::generate();
-        let root = testdir::testdir!();
-        let peers_path = root.join("peers");
 
         /// Create an endpoint for the test.
-        async fn new_endpoint(secret_key: SecretKey, peers_path: PathBuf) -> Endpoint {
+        async fn new_endpoint(secret_key: SecretKey, nodes: Option<Vec<NodeAddr>>) -> Endpoint {
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
-            Endpoint::builder()
+            let mut builder = Endpoint::builder()
                 .secret_key(secret_key.clone())
-                .transport_config(transport_config)
-                .peers_data_path(peers_path)
+                .transport_config(transport_config);
+            if let Some(nodes) = nodes {
+                builder = builder.known_nodes(nodes);
+            }
+            builder
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .bind(0)
                 .await
@@ -1271,37 +1273,22 @@ mod tests {
         info!("setting up first endpoint");
         // first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
-        let endpoint = new_endpoint(secret_key.clone(), peers_path.clone()).await;
+        let endpoint = new_endpoint(secret_key.clone(), None).await;
         assert!(endpoint.connection_infos().is_empty());
-        endpoint.add_node_addr(node_addr).unwrap();
+        endpoint.add_node_addr(node_addr.clone()).unwrap();
+
+        // Grab the current addrs
+        let node_addrs = endpoint.node_addresses_for_storage();
+        assert_eq!(node_addrs.len(), 1);
+        assert_eq!(node_addrs[0], node_addr);
 
         info!("closing endpoint");
         // close the endpoint and restart it
         endpoint.close(0u32.into(), b"done").await.unwrap();
 
-        // Give the destructors some time to create the file.  We use sync code to read the
-        // file here, it's just a test.
-        let now = Instant::now();
-        let mut previous_size = None;
-        while now.elapsed() < Duration::from_secs(10) {
-            if peers_path.is_file() {
-                let size = peers_path.metadata().unwrap().len();
-                match previous_size {
-                    None => previous_size = Some(size),
-                    Some(previous_size) => {
-                        if previous_size == size {
-                            // File is fully written
-                            break;
-                        }
-                    }
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-
         info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
-        let endpoint = new_endpoint(secret_key, peers_path).await;
+        let endpoint = new_endpoint(secret_key, Some(node_addrs)).await;
         let ConnectionInfo { mut addrs, .. } = endpoint.connection_info(peer_id).unwrap();
         let conn_addr = addrs.pop().unwrap().addr;
         assert_eq!(conn_addr, direct_addr);

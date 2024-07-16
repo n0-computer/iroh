@@ -2,19 +2,16 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
-    path::Path,
     pin::Pin,
     task::{Context, Poll},
     time::Instant,
 };
 
-use anyhow::{ensure, Context as _};
 use futures_lite::stream::Stream;
 use iroh_base::key::NodeId;
 use iroh_metrics::inc;
 use parking_lot::Mutex;
 use stun_rs::TransactionId;
-use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, trace, warn};
 
 use self::{
@@ -103,9 +100,9 @@ pub(crate) enum Source {
 }
 
 impl NodeMap {
-    /// Create a new [`NodeMap`] from data stored in `path`.
-    pub(super) fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        Ok(Self::from_inner(NodeMapInner::load_from_file(path)?))
+    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
+    pub(super) fn load_from_vec(nodes: Vec<NodeAddr>) -> Self {
+        Self::from_inner(NodeMapInner::load_from_vec(nodes))
     }
 
     fn from_inner(inner: NodeMapInner) -> Self {
@@ -252,56 +249,6 @@ impl NodeMap {
         self.inner.lock().node_info(node_id)
     }
 
-    /// Saves the known node info to the given path, returning the number of nodes persisted.
-    pub(super) async fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
-        ensure!(!path.is_dir(), "{} must be a file", path.display());
-
-        // always prune inactive addresses first
-        self.prune_inactive();
-
-        // persist only the nodes which were
-        // * not used at all (so we don't forget everything we loaded)
-        // * were attempted to be used, and have at least one usable path
-        let mut known_nodes = self.node_addresses_for_storage().into_iter().peekable();
-        if known_nodes.peek().is_none() {
-            // prevent file handling if unnecessary
-            return Ok(0);
-        }
-
-        let mut ext = path.extension().map(|s| s.to_owned()).unwrap_or_default();
-        ext.push(".tmp");
-        let tmp_path = path.with_extension(ext);
-
-        if tokio::fs::try_exists(&tmp_path).await.unwrap_or(false) {
-            tokio::fs::remove_file(&tmp_path)
-                .await
-                .context("failed deleting existing tmp file")?;
-        }
-        if let Some(parent) = tmp_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        let mut tmp = tokio::fs::File::create(&tmp_path)
-            .await
-            .context("failed creating tmp file")?;
-
-        let mut count = 0;
-        for node_addr in known_nodes {
-            let ser = postcard::to_stdvec(&node_addr).context("failed to serialize node data")?;
-            tmp.write_all(&ser)
-                .await
-                .context("failed to persist node data")?;
-            count += 1;
-        }
-        tmp.flush().await.context("failed to flush node data")?;
-        drop(tmp);
-
-        // move the file
-        tokio::fs::rename(tmp_path, path)
-            .await
-            .context("failed renaming node data file")?;
-        Ok(count)
-    }
-
     /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
     pub(super) fn prune_inactive(&self) {
         self.inner.lock().prune_inactive();
@@ -320,26 +267,19 @@ impl NodeMapInner {
     ///
     /// This filters out all addresses which were neither loaded from storage nor used.
     /// For node addresses which were used, only the used paths will be included.
-    fn node_addresses_for_storage(&self) -> impl Iterator<Item = NodeAddr> + '_ {
+    pub(super) fn node_addresses_for_storage(&self) -> impl Iterator<Item = NodeAddr> + '_ {
         self.by_id
             .values()
             .filter_map(|endpoint| endpoint.node_addr_for_storage())
     }
 
-    /// Create a new [`NodeMap`] from data stored in `path`.
-    fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let path = path.as_ref();
-        ensure!(path.is_file(), "{} is not a file", path.display());
-        let mut me = NodeMapInner::default();
-        let contents = std::fs::read(path)?;
-        let mut slice: &[u8] = &contents;
-        while !slice.is_empty() {
-            let (node_addr, next_contents) =
-                postcard::take_from_bytes(slice).context("failed to load node data")?;
+    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
+    fn load_from_vec(nodes: Vec<NodeAddr>) -> Self {
+        let mut me = Self::default();
+        for node_addr in nodes {
             me.add_node_addr(node_addr, Source::Saved);
-            slice = next_contents;
         }
-        Ok(me)
+        me
     }
 
     /// Add the contact information for a node.
@@ -697,7 +637,7 @@ impl IpPort {
 mod tests {
     use super::node_state::MAX_INACTIVE_DIRECT_ADDRESSES;
     use super::*;
-    use crate::{endpoint::AddrInfo, key::SecretKey};
+    use crate::key::SecretKey;
     use std::net::Ipv4Addr;
 
     impl NodeMap {
@@ -709,7 +649,7 @@ mod tests {
 
     /// Test persisting and loading of known nodes.
     #[tokio::test]
-    async fn load_save_node_data() {
+    async fn restore_from_vec() {
         let _guard = iroh_test::logging::setup();
 
         let node_map = NodeMap::default();
@@ -737,22 +677,14 @@ mod tests {
         node_map.add_test_addr(node_addr_c);
         node_map.add_test_addr(node_addr_d);
 
-        let root = testdir::testdir!();
-        let path = root.join("nodes.postcard");
-        node_map.save_to_file(&path).await.unwrap();
+        let addrs = node_map.node_addresses_for_storage();
+        let loaded_node_map = NodeMap::load_from_vec(addrs);
 
-        let loaded_node_map = NodeMap::load_from_file(&path).unwrap();
-        let loaded: HashMap<PublicKey, AddrInfo> = loaded_node_map
-            .node_addresses_for_storage()
-            .into_iter()
-            .map(|NodeAddr { node_id, info }| (node_id, info))
-            .collect();
+        let mut loaded = loaded_node_map.node_addresses_for_storage();
+        loaded.sort_unstable();
+        let mut og = node_map.node_addresses_for_storage();
+        og.sort_unstable();
 
-        let og: HashMap<PublicKey, AddrInfo> = node_map
-            .node_addresses_for_storage()
-            .into_iter()
-            .map(|NodeAddr { node_id, info }| (node_id, info))
-            .collect();
         // compare the node maps via their known nodes
         assert_eq!(og, loaded);
     }

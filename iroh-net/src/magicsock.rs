@@ -20,7 +20,6 @@ use std::{
     fmt::Display,
     io,
     net::{IpAddr, Ipv6Addr, SocketAddr},
-    path::PathBuf,
     pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
@@ -89,9 +88,6 @@ const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
-/// How often to save node data.
-const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
-
 /// Maximum duration to wait for a netcheck report.
 const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -108,8 +104,8 @@ pub(crate) struct Options {
     /// The [`RelayMap`] to use, leave empty to not use a relay server.
     pub(crate) relay_map: RelayMap,
 
-    /// Path to store known nodes.
-    pub(crate) nodes_path: Option<std::path::PathBuf>,
+    /// An optional [`NodeMap`], to restore information about nodes.
+    pub(crate) node_map: Option<Vec<NodeAddr>>,
 
     /// Optional node discovery mechanism.
     pub(crate) discovery: Option<Box<dyn Discovery>>,
@@ -136,7 +132,7 @@ impl Default for Options {
             port: 0,
             secret_key: SecretKey::generate(),
             relay_map: RelayMap::empty(),
-            nodes_path: None,
+            node_map: None,
             discovery: None,
             proxy_url: None,
             dns_resolver: crate::dns::default_resolver().clone(),
@@ -262,6 +258,11 @@ impl MagicSock {
     /// Get the current proxy configuration.
     pub(crate) fn proxy_url(&self) -> Option<&Url> {
         self.proxy_url.as_ref()
+    }
+
+    /// Get the known node addresses which should be persisted.
+    pub(crate) fn node_addresses_for_storage(&self) -> Vec<NodeAddr> {
+        self.node_map.node_addresses_for_storage()
     }
 
     /// Sets the relay node with the best latency.
@@ -1371,25 +1372,13 @@ impl Handle {
             port,
             secret_key,
             relay_map,
+            node_map,
             discovery,
-            nodes_path,
             dns_resolver,
             proxy_url,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
         } = opts;
-
-        let nodes_path = match nodes_path {
-            Some(path) => {
-                let path = path.canonicalize().unwrap_or(path);
-                let parent = path.parent().ok_or_else(|| {
-                    anyhow::anyhow!("no parent directory found for '{}'", path.display())
-                })?;
-                tokio::fs::create_dir_all(&parent).await?;
-                Some(path)
-            }
-            None => None,
-        };
 
         let (relay_recv_sender, relay_recv_receiver) = flume::bounded(128);
 
@@ -1413,20 +1402,8 @@ impl Handle {
         let (udp_disco_sender, mut udp_disco_receiver) = mpsc::channel(256);
 
         // load the node data
-        let node_map = match nodes_path.as_ref() {
-            Some(path) if path.exists() => match NodeMap::load_from_file(path) {
-                Ok(node_map) => {
-                    let count = node_map.node_count();
-                    debug!(count, "loaded node map");
-                    node_map
-                }
-                Err(e) => {
-                    debug!(%e, "failed to load node map: using default");
-                    NodeMap::default()
-                }
-            },
-            _ => NodeMap::default(),
-        };
+        let node_map = node_map.unwrap_or_default();
+        let node_map = NodeMap::load_from_vec(node_map);
 
         let udp_state = quinn_udp::UdpState::default();
         let inner = Arc::new(MagicSock {
@@ -1495,7 +1472,6 @@ impl Handle {
                     relay_recv_sender,
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
-                    nodes_path,
                     port_mapper,
                     pconn4,
                     pconn6,
@@ -1735,8 +1711,6 @@ struct Actor {
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
     net_info_last: Option<NetInfo>,
-    /// Path where connection info from [`MagicSock::node_map`] is persisted.
-    nodes_path: Option<PathBuf>,
 
     // The underlying UDP sockets used to send/rcv packets.
     pconn4: UdpConn,
@@ -1779,14 +1753,6 @@ impl Actor {
         let mut direct_addr_update_receiver =
             self.msock.direct_addr_update_state.running.subscribe();
         let mut portmap_watcher = self.port_mapper.watch_external_address();
-        let mut save_nodes_timer = if self.nodes_path.is_some() {
-            tokio::time::interval_at(
-                time::Instant::now() + SAVE_NODES_INTERVAL,
-                SAVE_NODES_INTERVAL,
-            )
-        } else {
-            tokio::time::interval(Duration::MAX)
-        };
 
         loop {
             tokio::select! {
@@ -1822,16 +1788,6 @@ impl Actor {
                     trace!("tick: direct addr update receiver {:?}", reason);
                     if let Some(reason) = reason {
                         self.update_direct_addrs(reason).await;
-                    }
-                }
-                _ = save_nodes_timer.tick(), if self.nodes_path.is_some() => {
-                    trace!("tick: nodes_timer");
-                    let path = self.nodes_path.as_ref().expect("precondition: `is_some()`");
-
-                    self.msock.node_map.prune_inactive();
-                    match self.msock.node_map.save_to_file(path).await {
-                        Ok(count) => debug!(count, "nodes persisted"),
-                        Err(e) => debug!(%e, "failed to persist known nodes"),
                     }
                 }
                 Some(is_major) = link_change_r.recv() => {
@@ -1878,14 +1834,6 @@ impl Actor {
                 debug!("shutting down");
 
                 self.msock.node_map.notify_shutdown();
-                if let Some(path) = self.nodes_path.as_ref() {
-                    match self.msock.node_map.save_to_file(path).await {
-                        Ok(count) => {
-                            debug!(count, "known nodes persisted")
-                        }
-                        Err(e) => debug!(%e, "failed to persist known nodes"),
-                    }
-                }
                 self.port_mapper.deactivate();
                 self.relay_actor_cancel_token.cancel();
 

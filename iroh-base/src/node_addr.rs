@@ -46,6 +46,18 @@ pub struct NodeAddr {
     pub info: AddrInfo,
 }
 
+impl PartialOrd for NodeAddr {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.node_id.partial_cmp(&other.node_id)
+    }
+}
+
+impl Ord for NodeAddr {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.node_id.cmp(&other.node_id)
+    }
+}
+
 impl NodeAddr {
     /// Creates a new [`NodeAddr`] with empty [`AddrInfo`].
     pub fn new(node_id: PublicKey) -> Self {
