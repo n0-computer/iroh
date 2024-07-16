@@ -38,24 +38,12 @@ use crate::key::{NodeId, PublicKey};
 /// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
 /// [home relay]: https://docs.rs/iroh_net/*/iroh_net/relay/index.html
 /// [Relay server]: https://docs.rs/iroh_net/*/iroh_net/index.html#relay-servers
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct NodeAddr {
     /// The node's identifier.
     pub node_id: NodeId,
     /// Addressing information to connect to [`Self::node_id`].
     pub info: AddrInfo,
-}
-
-impl PartialOrd for NodeAddr {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.node_id.partial_cmp(&other.node_id)
-    }
-}
-
-impl Ord for NodeAddr {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.node_id.cmp(&other.node_id)
-    }
 }
 
 impl NodeAddr {
@@ -145,7 +133,7 @@ impl From<NodeId> for NodeAddr {
 /// other node, see [`NodeAddr`] for details.
 ///
 /// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, PartialOrd, Ord)]
 pub struct AddrInfo {
     /// The node's home relay url.
     pub relay_url: Option<RelayUrl>,
