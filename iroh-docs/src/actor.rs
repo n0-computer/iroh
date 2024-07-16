@@ -646,8 +646,6 @@ impl Actor {
         }
         self.close_all();
         self.tasks.abort_all();
-        debug!("docs actor shutdown");
-        tracing::info!("docs actor shutdown");
         if let Some(reply) = reply {
             reply.send(self.store).ok();
         }
