@@ -507,14 +507,16 @@ where
                 Some(discovery) => endpoint.discovery(discovery),
                 None => endpoint,
             };
-            let endpoint = match self.dns_resolver {
+            let mut endpoint = match self.dns_resolver {
                 Some(resolver) => endpoint.dns_resolver(resolver),
                 None => endpoint,
             };
 
             #[cfg(any(test, feature = "test-utils"))]
-            let mut endpoint =
-                endpoint.insecure_skip_relay_cert_verify(self.insecure_skip_relay_cert_verify);
+            {
+                endpoint =
+                    endpoint.insecure_skip_relay_cert_verify(self.insecure_skip_relay_cert_verify);
+            }
 
             let nodes_data_path = match self.storage {
                 StorageConfig::Persistent(ref root) => {
