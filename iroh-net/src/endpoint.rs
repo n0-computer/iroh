@@ -75,7 +75,7 @@ pub struct Builder {
     keylog: bool,
     discovery: Option<Box<dyn Discovery>>,
     proxy_url: Option<Url>,
-    /// List of known nodes. See [`Builder::know_nodes`].
+    /// List of known nodes. See [`Builder::known_nodes`].
     node_map: Option<Vec<NodeAddr>>,
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
