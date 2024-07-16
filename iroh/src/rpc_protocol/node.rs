@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use iroh_base::rpc::RpcResult;
 use iroh_net::{endpoint::ConnectionInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
 use nested_enum_utils::enum_conversions;
-use quic_rpc::message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg};
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
@@ -26,10 +25,15 @@ pub enum Request {
     AddAddr(AddAddrRequest),
     #[rpc(response = RpcResult<Option<RelayUrl>>)]
     Relay(RelayRequest),
+    #[rpc(response = RpcResult<StatsResponse>)]
     Stats(StatsRequest),
+    #[rpc(response = ())]
     Shutdown(ShutdownRequest),
+    #[server_streaming(response = RpcResult<ConnectionsResponse>)]
     Connections(ConnectionsRequest),
+    #[rpc(response = RpcResult<ConnectionInfoResponse>)]
     ConnectionInfo(ConnectionInfoRequest),
+    #[server_streaming(response = WatchResponse)]
     Watch(NodeWatchRequest),
 }
 
@@ -62,14 +66,6 @@ pub struct ConnectionsResponse {
     pub conn_info: ConnectionInfo,
 }
 
-impl Msg<RpcService> for ConnectionsRequest {
-    type Pattern = ServerStreaming;
-}
-
-impl ServerStreamingMsg<RpcService> for ConnectionsRequest {
-    type Response = RpcResult<ConnectionsResponse>;
-}
-
 /// Get connection information about a specific node
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionInfoRequest {
@@ -84,19 +80,11 @@ pub struct ConnectionInfoResponse {
     pub conn_info: Option<ConnectionInfo>,
 }
 
-impl RpcMsg<RpcService> for ConnectionInfoRequest {
-    type Response = RpcResult<ConnectionInfoResponse>;
-}
-
 /// A request to shutdown the node
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ShutdownRequest {
     /// Force shutdown
     pub force: bool,
-}
-
-impl RpcMsg<RpcService> for ShutdownRequest {
-    type Response = ();
 }
 
 /// A request to get information about the status of the node.
@@ -122,14 +110,6 @@ pub struct RelayRequest;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeWatchRequest;
 
-impl Msg<RpcService> for NodeWatchRequest {
-    type Pattern = ServerStreaming;
-}
-
-impl ServerStreamingMsg<RpcService> for NodeWatchRequest {
-    type Response = WatchResponse;
-}
-
 /// The response to a watch request
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WatchResponse {
@@ -147,10 +127,6 @@ pub struct VersionResponse {
 /// Get stats for the running Iroh node
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StatsRequest {}
-
-impl RpcMsg<RpcService> for StatsRequest {
-    type Response = RpcResult<StatsResponse>;
-}
 
 /// Counter stats
 #[derive(Serialize, Deserialize, Debug)]
