@@ -6,7 +6,6 @@ use std::{
 };
 
 use iroh_metrics::inc;
-use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
@@ -259,11 +258,7 @@ impl NodeState {
     /// Returns the address(es) that should be used for sending the next packet.
     ///
     /// Any or all of the UDP and relay addrs may be non-zero.
-    fn addr_for_send(
-        &mut self,
-        now: &Instant,
-        have_ipv6: bool,
-    ) -> (Option<SocketAddr>, Option<RelayUrl>) {
+    fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<RelayUrl>) {
         if relay_only_mode() {
             debug!("in `DEV_relay_ONLY` mode, giving the relay address as the only viable address for this endpoint");
             return (None, self.relay_url());
@@ -287,20 +282,8 @@ impl NodeState {
                 (Some(best_addr.addr), self.relay_url())
             }
             best_addr::State::Empty => {
-                // No direct connection has been used before.  If we know of any possible
-                // candidate addresses, randomly try to use one while also sending via relay
-                // at the same time.
-                let addr = self
-                    .direct_addr_state
-                    .keys()
-                    .filter(|ipp| match ipp.ip() {
-                        IpAddr::V4(_) => true,
-                        IpAddr::V6(_) => have_ipv6,
-                    })
-                    .choose_stable(&mut rand::thread_rng())
-                    .map(|ipp| SocketAddr::from(*ipp));
-                trace!(udp_addr = ?addr, "best_addr is unset, use candidate addr and relay");
-                (addr, self.relay_url())
+                trace!("best_addr is unset, use relay");
+                (None, self.relay_url())
             }
         };
         let typ = match (best_addr, relay_url.clone()) {
@@ -1103,11 +1086,10 @@ impl NodeState {
     #[instrument("get_send_addrs", skip_all, fields(node = %self.node_id.fmt_short()))]
     pub(crate) fn get_send_addrs(
         &mut self,
-        have_ipv6: bool,
     ) -> (Option<SocketAddr>, Option<RelayUrl>, Vec<PingAction>) {
         let now = Instant::now();
         self.last_used.replace(now);
-        let (udp_addr, relay_url) = self.addr_for_send(&now, have_ipv6);
+        let (udp_addr, relay_url) = self.addr_for_send(&now);
         let mut ping_msgs = Vec::new();
 
         if self.want_call_me_maybe(&now) {
