@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use bao_tree::blake3;
 use duct::{cmd, ReaderHandle};
 use iroh::{
@@ -352,9 +352,20 @@ fn run_cli(
     let output = cmd(iroh_bin(), args)
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", iroh_data_dir)
-        // .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
+        .stderr_capture()
         .stdout_capture()
+        .unchecked()
         .run()?;
+
+    // checking the output first, so you can still view any logging
+    println!("STDOUT: {}", String::from_utf8_lossy(&output.stdout));
+    println!("STDERR: {}", String::from_utf8_lossy(&output.stderr));
+
+    ensure!(
+        output.status.success(),
+        "iroh command failed. See STDERR output above."
+    );
+
     let text = String::from_utf8(output.stdout)?;
     Ok(text)
 }
@@ -746,11 +757,9 @@ fn test_provide_get_loop(input: Input, output: Output) -> Result<()> {
     drop(provider);
 
     // checking the output first, so you can still view any logging
-    println!("STDOUT: {:?}", std::str::from_utf8(&get_output.stdout),);
-    println!(
-        "STDERR: {}",
-        std::str::from_utf8(&get_output.stderr).unwrap()
-    );
+    println!("STDOUT: {}", String::from_utf8_lossy(&get_output.stdout));
+    println!("STDERR: {}", String::from_utf8_lossy(&get_output.stderr));
+
     match_get_stderr(get_output.stderr)?;
     assert!(get_output.status.success());
 
@@ -1049,16 +1058,12 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<
     std::fs::create_dir_all(dst)?;
     let mut len = 0;
     for entry in std::fs::read_dir(src)? {
-        let entry = entry.with_context(|| {
-            format!(
-                "failed to read directory entry in `{}`",
-                src.to_string_lossy()
-            )
-        })?;
+        let entry = entry
+            .with_context(|| format!("failed to read directory entry in `{}`", src.display()))?;
         let ty = entry.file_type().with_context(|| {
             format!(
                 "failed to get file type for file `{}`",
-                entry.path().to_string_lossy()
+                entry.path().display()
             )
         })?;
         let src = entry.path();
@@ -1067,16 +1072,16 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<
             len += copy_dir_all(&src, &dst).with_context(|| {
                 format!(
                     "failed to copy directory `{}` to `{}`",
-                    src.to_string_lossy(),
-                    dst.to_string_lossy()
+                    src.display(),
+                    dst.display()
                 )
             })?;
         } else {
             std::fs::copy(&src, &dst).with_context(|| {
                 format!(
                     "failed to copy file `{}` to `{}`",
-                    src.to_string_lossy(),
-                    dst.to_string_lossy()
+                    src.display(),
+                    dst.display()
                 )
             })?;
             len += 1;
