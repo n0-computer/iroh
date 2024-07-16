@@ -1,4 +1,6 @@
+use futures_lite::StreamExt;
 use tokio::sync::broadcast;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
     proto::{
@@ -6,39 +8,48 @@ use crate::{
         willow::AuthorisedEntry,
     },
     session::{
-        aoi_finder::AoiIntersectionReceiver, channels::ChannelSenders, payload::DEFAULT_CHUNK_SIZE,
-        static_tokens::StaticTokens, Error, SessionId,
+        channels::ChannelSenders, payload::DEFAULT_CHUNK_SIZE, static_tokens::StaticTokens, Error,
+        SessionId,
     },
     store::{
         entry::{EntryChannel, EntryOrigin},
         traits::Storage,
         Store,
     },
+    util::stream::Cancelable,
 };
 
-use super::payload::{send_payload_chunked, CurrentPayload};
+use super::{
+    aoi_finder::AoiIntersection,
+    payload::{send_payload_chunked, CurrentPayload},
+};
+
+#[derive(Debug)]
+pub enum Input {
+    AoiIntersection(AoiIntersection),
+}
 
 #[derive(derive_more::Debug)]
 pub struct DataSender<S: Storage> {
+    inbox: Cancelable<ReceiverStream<Input>>,
     store: Store<S>,
     send: ChannelSenders,
-    aoi_queue: AoiIntersectionReceiver,
     static_tokens: StaticTokens,
     session_id: SessionId,
 }
 
 impl<S: Storage> DataSender<S> {
     pub fn new(
+        inbox: Cancelable<ReceiverStream<Input>>,
         store: Store<S>,
         send: ChannelSenders,
-        aoi_queue: AoiIntersectionReceiver,
         static_tokens: StaticTokens,
         session_id: SessionId,
     ) -> Self {
         Self {
+            inbox,
             store,
             send,
-            aoi_queue,
             static_tokens,
             session_id,
         }
@@ -47,10 +58,11 @@ impl<S: Storage> DataSender<S> {
         let mut entry_stream = self.store.entries().subscribe(self.session_id);
         loop {
             tokio::select! {
-                intersection = self.aoi_queue.recv_async() => {
-                    let Ok(intersection) = intersection else {
+                input = self.inbox.next() => {
+                    let Some(input) = input else {
                         break;
                     };
+                    let Input::AoiIntersection(intersection) = input;
                     self.store.entries().watch_area(
                         self.session_id,
                         intersection.namespace,
@@ -69,6 +81,7 @@ impl<S: Storage> DataSender<S> {
                 }
             }
         }
+        tracing::debug!("data sender done");
         Ok(())
     }
 

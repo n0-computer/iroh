@@ -27,7 +27,10 @@ use crate::{
         keys::NamespaceId,
         sync::{ReadAuthorisation, ReadCapability},
     },
-    session::{Error, Interests, Role, SessionId, SessionInit, SessionMode, SessionUpdate},
+    session::{
+        error::ChannelReceiverDropped, Error, Interests, Role, SessionId, SessionInit, SessionMode,
+        SessionUpdate,
+    },
     store::traits::Storage,
 };
 
@@ -43,11 +46,8 @@ const INTENT_EVENT_CAP: usize = 64;
 pub struct EventSender(pub mpsc::Sender<EventKind>);
 
 impl EventSender {
-    pub async fn send(&self, event: EventKind) -> Result<(), Error> {
-        self.0
-            .send(event)
-            .await
-            .map_err(|_| Error::InvalidState("session event receiver dropped"))
+    pub async fn send(&self, event: EventKind) -> Result<(), ChannelReceiverDropped> {
+        self.0.send(event).await.map_err(|_| ChannelReceiverDropped)
     }
 }
 

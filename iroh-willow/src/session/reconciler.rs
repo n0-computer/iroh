@@ -6,8 +6,24 @@ use std::{
 
 use bytes::Bytes;
 use futures_lite::StreamExt;
+use genawaiter::rc::Co;
 use iroh_blobs::store::Store as PayloadStore;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, trace};
+
+#[derive(Debug)]
+pub enum Input {
+    AoiIntersection(AoiIntersection),
+}
+
+#[derive(Debug)]
+pub enum Output {
+    ReconciledArea {
+        namespace: NamespaceId,
+        area: AreaOfInterest,
+    },
+    ReconciledAll,
+}
 
 use crate::{
     proto::{
@@ -21,7 +37,7 @@ use crate::{
         willow::PayloadDigest,
     },
     session::{
-        aoi_finder::{AoiIntersection, AoiIntersectionReceiver},
+        aoi_finder::AoiIntersection,
         channels::{ChannelSenders, MessageReceiver},
         events::{EventKind, EventSender},
         payload::{send_payload_chunked, CurrentPayload},
@@ -33,26 +49,13 @@ use crate::{
         traits::{EntryReader, EntryStorage, SplitAction, SplitOpts, Storage},
         Store,
     },
-    util::stream::Cancelable,
+    util::{gen_stream::GenStream, stream::Cancelable},
 };
-
-// pub enum Input {
-//     Received(ReconciliationMessage),
-//     Intersection(AoiIntersection),
-// }
-//
-// pub enum Output {
-//     Reconciled {
-//         namespace: NamespaceId,
-//         area: AreaOfInterest,
-//     },
-// }
 
 #[derive(derive_more::Debug)]
 pub struct Reconciler<S: Storage> {
     shared: Shared<S>,
     recv: Cancelable<MessageReceiver<ReconciliationMessage>>,
-    events: EventSender,
     targets: TargetMap<S>,
     current_entry: CurrentEntry,
 }
@@ -60,69 +63,59 @@ pub struct Reconciler<S: Storage> {
 type TargetId = (AreaOfInterestHandle, AreaOfInterestHandle);
 
 impl<S: Storage> Reconciler<S> {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    /// Run the [`Reconciler`].
+    ///
+    /// The returned stream is a generator, so it must be polled repeatedly to progress.
+    pub fn run_gen(
+        inbox: Cancelable<ReceiverStream<Input>>,
         store: Store<S>,
         recv: Cancelable<MessageReceiver<ReconciliationMessage>>,
-        aoi_intersection_receiver: AoiIntersectionReceiver,
         static_tokens: StaticTokens,
         session_id: SessionId,
         send: ChannelSenders,
-        events: EventSender,
         our_role: Role,
-        mode: SessionMode,
-    ) -> Result<Self, Error> {
-        let shared = Shared {
-            store,
-            our_role,
-            send,
-            static_tokens,
-            session_id,
-            mode,
-        };
-        Ok(Self {
-            shared,
-            recv,
-            targets: TargetMap::new(aoi_intersection_receiver),
-            current_entry: Default::default(),
-            events,
+    ) -> impl futures_lite::Stream<Item = Result<Output, Error>> {
+        GenStream::new(|co| {
+            let shared = Shared {
+                co,
+                store,
+                our_role,
+                send,
+                static_tokens,
+                session_id,
+            };
+            Self {
+                shared,
+                recv,
+                targets: TargetMap::new(inbox),
+                current_entry: Default::default(),
+            }
+            .run()
         })
     }
 
     pub async fn run(mut self) -> Result<(), Error> {
         loop {
             tokio::select! {
-                message = self.recv.try_next() => {
+                Some(message) = self.recv.next() => {
                     tracing::trace!(?message, "tick: recv");
-                    match message? {
-                        None => break,
-                        Some(message) => match self.received_message(message).await? {
-                            ControlFlow::Continue(_) => {}
-                            ControlFlow::Break(_) => {
-                                debug!("reconciliation complete");
-                                if self.shared.mode == SessionMode::ReconcileOnce {
-                                    break;
-                                }
-                            }
+                    self.received_message(message?).await?;
+                }
+                Some(input) = self.targets.inbox.next() => {
+                    tracing::trace!(?input, "tick: input");
+                    match input {
+                        Input::AoiIntersection(intersection) => {
+                            self.targets.init_target(&self.shared, intersection).await?;
                         }
                     }
                 }
-                Ok(intersection) = self.targets.aoi_intersection_receiver.recv_async() => {
-                    tracing::trace!(?intersection, "tick: interesection");
-                    let area = intersection.intersection.clone();
-                    let namespace = intersection.namespace;
-                    self.targets.init_target(&self.shared, intersection).await?;
-                    self.events.send(EventKind::InterestIntersection { namespace, area }).await?;
-                }
+                else => break,
             }
         }
         Ok(())
     }
 
-    async fn received_message(
-        &mut self,
-        message: ReconciliationMessage,
-    ) -> Result<ControlFlow<(), ()>, Error> {
+    async fn received_message(&mut self, message: ReconciliationMessage) -> Result<(), Error> {
         match message {
             ReconciliationMessage::SendFingerprint(message) => {
                 self.targets
@@ -143,7 +136,7 @@ impl<S: Storage> Reconciler<S> {
                     .received_announce_entries(&self.shared, message)
                     .await?;
                 if target.is_complete() && self.current_entry.is_none() {
-                    return self.complete_target(target_id).await;
+                    self.complete_target(target_id).await?;
                 }
             }
             ReconciliationMessage::SendEntry(message) => {
@@ -183,44 +176,48 @@ impl<S: Storage> Reconciler<S> {
                         .get(&completed_target)
                         .expect("target to exist");
                     if target.is_complete() {
-                        return self.complete_target(target.id()).await;
+                        self.complete_target(target.id()).await?;
                     }
                 }
             }
         };
-        Ok(ControlFlow::Continue(()))
+        Ok(())
     }
 
-    pub async fn complete_target(&mut self, id: TargetId) -> Result<ControlFlow<(), ()>, Error> {
+    pub async fn complete_target(&mut self, id: TargetId) -> Result<(), Error> {
         let target = self
             .targets
             .map
             .remove(&id)
             .ok_or(Error::InvalidMessageInCurrentState)?;
-        let event = EventKind::Reconciled {
+        self.out(Output::ReconciledArea {
             area: target.intersection.intersection.clone(),
             namespace: target.namespace(),
-        };
-        self.events.send(event).await?;
+        })
+        .await;
         if self.targets.map.is_empty() {
-            Ok(ControlFlow::Break(()))
-        } else {
-            Ok(ControlFlow::Continue(()))
+            debug!("reconciliation complete");
+            self.out(Output::ReconciledAll).await;
         }
+        Ok(())
+    }
+
+    async fn out(&self, output: Output) {
+        self.shared.co.yield_(output).await;
     }
 }
 
 #[derive(Debug)]
 struct TargetMap<S: Storage> {
     map: HashMap<TargetId, Target<S>>,
-    aoi_intersection_receiver: AoiIntersectionReceiver,
+    inbox: Cancelable<ReceiverStream<Input>>,
 }
 
 impl<S: Storage> TargetMap<S> {
-    pub fn new(aoi_intersection_receiver: AoiIntersectionReceiver) -> Self {
+    pub fn new(inbox: Cancelable<ReceiverStream<Input>>) -> Self {
         Self {
             map: Default::default(),
-            aoi_intersection_receiver,
+            inbox,
         }
     }
     pub async fn get_eventually(
@@ -239,17 +236,18 @@ impl<S: Storage> TargetMap<S> {
         shared: &Shared<S>,
         requested_id: &TargetId,
     ) -> Result<(), Error> {
-        loop {
-            let intersection = self
-                .aoi_intersection_receiver
-                .recv_async()
-                .await
-                .map_err(|_| Error::InvalidState("aoi finder closed"))?;
-            let id = self.init_target(shared, intersection).await?;
-            if id == *requested_id {
-                break Ok(());
+        while let Some(input) = self.inbox.next().await {
+            match input {
+                Input::AoiIntersection(intersection) => {
+                    let id = self.init_target(shared, intersection).await?;
+                    if id == *requested_id {
+                        return Ok(());
+                    }
+                }
             }
         }
+        // TODO: Error?
+        Ok(())
     }
 
     async fn init_target(
@@ -345,14 +343,15 @@ struct EntryState {
     payload: CurrentPayload,
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 struct Shared<S: Storage> {
+    #[debug("Co")]
+    co: Co<Output>,
     store: Store<S>,
     our_role: Role,
     send: ChannelSenders,
     static_tokens: StaticTokens,
     session_id: SessionId,
-    mode: SessionMode,
 }
 
 #[derive(Debug)]

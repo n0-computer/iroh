@@ -58,45 +58,28 @@ impl Capabilities {
         })
     }
 
-    pub async fn bind_and_send_ours<S: SecretStorage>(
-        &self,
-        secret_store: &S,
-        sender: &ChannelSenders,
-        intersection_handle: IntersectionHandle,
-        capability: ReadCapability,
-    ) -> Result<CapabilityHandle, Error> {
-        let (handle, message) =
-            self.bind_and_sign_ours(secret_store, intersection_handle, capability)?;
-        if let Some(message) = message {
-            sender.send(message).await?;
-        }
-        Ok(handle)
-    }
-
     pub fn find_ours(&self, cap: &ReadCapability) -> Option<CapabilityHandle> {
         self.0.borrow().ours.find(cap)
     }
 
-    pub fn bind_and_sign_ours<S: SecretStorage>(
+    pub fn sign_capability<S: SecretStorage>(
         &self,
         secret_store: &S,
         intersection_handle: IntersectionHandle,
         capability: ReadCapability,
-    ) -> Result<(CapabilityHandle, Option<SetupBindReadCapability>), Error> {
-        let mut inner = self.0.borrow_mut();
-        let (handle, is_new) = inner.ours.bind_if_new(capability.clone());
-        let message = if is_new {
-            let signable = inner.challenge.signable()?;
-            let signature = secret_store.sign_user(&capability.receiver().id(), &signable)?;
-            Some(SetupBindReadCapability {
-                capability,
-                handle: intersection_handle,
-                signature,
-            })
-        } else {
-            None
-        };
-        Ok((handle, message))
+    ) -> Result<SetupBindReadCapability, Error> {
+        let inner = self.0.borrow();
+        let signable = inner.challenge.signable()?;
+        let signature = secret_store.sign_user(&capability.receiver().id(), &signable)?;
+        Ok(SetupBindReadCapability {
+            capability,
+            handle: intersection_handle,
+            signature,
+        })
+    }
+
+    pub fn bind_ours(&self, capability: ReadCapability) -> (CapabilityHandle, bool) {
+        self.0.borrow_mut().ours.bind_if_new(capability)
     }
 
     pub fn validate_and_bind_theirs(
