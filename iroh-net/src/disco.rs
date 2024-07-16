@@ -159,6 +159,18 @@ impl SendAddr {
     }
 }
 
+impl From<SocketAddr> for SendAddr {
+    fn from(source: SocketAddr) -> Self {
+        SendAddr::Udp(source)
+    }
+}
+
+impl From<RelayUrl> for SendAddr {
+    fn from(source: RelayUrl) -> Self {
+        SendAddr::Relay(source)
+    }
+}
+
 impl PartialEq<SocketAddr> for SendAddr {
     fn eq(&self, other: &SocketAddr) -> bool {
         match self {

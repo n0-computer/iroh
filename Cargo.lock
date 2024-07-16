@@ -2474,6 +2474,7 @@ dependencies = [
  "postcard",
  "proptest",
  "quic-rpc",
+ "quic-rpc-derive",
  "rand",
  "rand_chacha",
  "ref-cast",
@@ -4149,6 +4150,18 @@ dependencies = [
  "tokio-serde",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "quic-rpc-derive"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b02c2d3637609d07aa2560f178588dce09cf2f4f5cdcc9b0caac0063a188a898"
+dependencies = [
+ "proc-macro2",
+ "quic-rpc",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]

@@ -60,7 +60,9 @@ fn load_certs(filename: impl AsRef<Path>) -> Result<Vec<rustls::Certificate>> {
 }
 
 fn load_secret_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
-    let keyfile = std::fs::File::open(filename.as_ref()).context("cannot open secret key file")?;
+    let filename = filename.as_ref();
+    let keyfile = std::fs::File::open(filename)
+        .with_context(|| format!("cannot open secret key file {}", filename.display()))?;
     let mut reader = std::io::BufReader::new(keyfile);
 
     loop {
@@ -75,7 +77,7 @@ fn load_secret_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
 
     bail!(
         "no keys found in {} (encrypted keys not supported)",
-        filename.as_ref().display()
+        filename.display()
     );
 }
 
