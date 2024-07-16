@@ -68,9 +68,8 @@ pub async fn connect_client(
     opt: Opt,
 ) -> Result<(::quinn::Endpoint, Connection)> {
     let secret_key = iroh_net::key::SecretKey::generate();
-    let tls_client_config =
+    let quic_client_config =
         iroh_net::tls::make_client_config(&secret_key, None, vec![ALPN.to_vec()], false)?;
-    let quic_client_config = quinn::crypto::rustls::QuicClientConfig::try_from(tls_client_config)?;
     let mut config = quinn::ClientConfig::new(Arc::new(quic_client_config));
 
     let transport = transport_config(opt.max_streams, opt.initial_mtu);

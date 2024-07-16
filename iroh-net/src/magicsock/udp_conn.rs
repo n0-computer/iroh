@@ -192,16 +192,13 @@ mod tests {
 
     use super::*;
     use anyhow::Result;
-    use quinn_proto::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 
     const ALPN: &[u8] = b"n0/test/1";
 
     fn wrap_socket(conn: impl AsyncUdpSocket) -> Result<(quinn::Endpoint, key::SecretKey)> {
         let key = key::SecretKey::generate();
-        let tls_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
-        let server_config = quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(
-            tls_server_config,
-        )?));
+        let quic_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
+        let server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
         let mut quic_ep = quinn::Endpoint::new_with_abstract_socket(
             quinn::EndpointConfig::default(),
             Some(server_config),
@@ -209,9 +206,8 @@ mod tests {
             Arc::new(quinn::TokioRuntime),
         )?;
 
-        let tls_client_config = tls::make_client_config(&key, None, vec![ALPN.to_vec()], false)?;
-        let client_config =
-            quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls_client_config)?));
+        let quic_client_config = tls::make_client_config(&key, None, vec![ALPN.to_vec()], false)?;
+        let client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         quic_ep.set_default_client_config(client_config);
         Ok((quic_ep, key))
     }

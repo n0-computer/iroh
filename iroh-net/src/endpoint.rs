@@ -24,7 +24,6 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
 use pin_project::pin_project;
-use quinn_proto::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, info_span, trace, warn};
 use url::Url;
@@ -318,9 +317,8 @@ pub fn make_server_config(
     transport_config: Arc<quinn::TransportConfig>,
     keylog: bool,
 ) -> Result<quinn::ServerConfig> {
-    let tls_server_config = tls::make_server_config(secret_key, alpn_protocols, keylog)?;
-    let mut server_config =
-        quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls_server_config)?));
+    let quic_server_config = tls::make_server_config(secret_key, alpn_protocols, keylog)?;
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
     server_config.transport_config(transport_config);
 
     Ok(server_config)
@@ -504,14 +502,13 @@ impl Endpoint {
     ) -> Result<quinn::Connection> {
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
-            let tls_client_config = tls::make_client_config(
+            let quic_client_config = tls::make_client_config(
                 &self.static_config.secret_key,
                 Some(node_id),
                 alpn_protocols,
                 self.static_config.keylog,
             )?;
-            let mut client_config =
-                quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls_client_config)?));
+            let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
             client_config.transport_config(Arc::new(transport_config));

@@ -317,7 +317,7 @@ impl ClientBuilder {
     pub fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> (Client, ClientReceiver) {
         // TODO: review TLS config
         let roots = rustls::RootCertStore {
-            roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
         };
         let mut config = rustls::client::ClientConfig::builder()
             .with_root_certificates(roots)

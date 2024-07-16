@@ -74,9 +74,9 @@ pub fn generate(
 ///
 /// For this to succeed, the certificate must contain the specified extension and the signature must
 /// match the embedded public key.
-pub fn parse<'a, 'b>(
-    certificate: &'b rustls::pki_types::CertificateDer<'a>,
-) -> Result<P2pCertificate<'b>, ParseError> {
+pub fn parse<'a>(
+    certificate: &'a rustls::pki_types::CertificateDer<'_>,
+) -> Result<P2pCertificate<'a>, ParseError> {
     let certificate = parse_unverified(certificate.as_ref())?;
 
     certificate.verify()?;
