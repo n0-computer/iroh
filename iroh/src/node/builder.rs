@@ -11,6 +11,7 @@ use iroh_base::key::SecretKey;
 use iroh_blobs::{
     downloader::Downloader,
     store::{Map, Store as BaoStore},
+    util::local_pool::{LocalPool, LocalPoolHandle},
 };
 use iroh_docs::engine::DefaultAuthorStorage;
 use iroh_docs::net::DOCS_ALPN;
@@ -29,7 +30,7 @@ use iroh_net::{
 
 use quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 use serde::{Deserialize, Serialize};
-use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error_span, trace, Instrument};
 
 use crate::{
@@ -454,7 +455,7 @@ where
 
     async fn build_inner(self) -> Result<ProtocolBuilder<D>> {
         trace!("building node");
-        let lp = LocalPoolHandle::new(num_cpus::get());
+        let lp = LocalPool::new(Default::default());
         let endpoint = {
             let mut transport_config = quinn::TransportConfig::default();
             transport_config
@@ -678,7 +679,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
 
     /// Returns a reference to the used [`LocalPoolHandle`].
     pub fn local_pool_handle(&self) -> &LocalPoolHandle {
-        &self.inner.rt
+        self.inner.rt.handle()
     }
 
     /// Returns a reference to the [`Downloader`] used by the node.

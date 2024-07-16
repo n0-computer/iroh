@@ -10,11 +10,14 @@
 //!    cargo run --example provide-bytes collection
 //! To provide a collection (multiple blobs)
 use anyhow::Result;
-use tokio_util::task::LocalPoolHandle;
 use tracing::warn;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh_blobs::{format::collection::Collection, Hash};
+use iroh_blobs::{
+    format::collection::Collection,
+    util::local_pool::{self, LocalPool},
+    Hash,
+};
 
 mod connect;
 use connect::{make_and_write_certs, make_server_endpoint, CERT_PATH};
@@ -82,7 +85,7 @@ async fn main() -> Result<()> {
     println!("\nfetch the content using a stream by running the following example:\n\ncargo run --example fetch-stream {hash} \"{addr}\" {format}\n");
 
     // create a new local pool handle with 1 worker thread
-    let lp = LocalPoolHandle::new(1);
+    let lp = LocalPool::new(local_pool::Config::default());
 
     let accept_task = tokio::spawn(async move {
         while let Some(incoming) = endpoint.accept().await {

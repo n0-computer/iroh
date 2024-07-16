@@ -878,7 +878,8 @@ mod tests {
         decode_response_into_batch, local, make_wire_data, random_test_data, trickle, validate,
     };
     use tokio::task::JoinSet;
-    use tokio_util::task::LocalPoolHandle;
+
+    use crate::util::local_pool::LocalPool;
 
     use super::*;
 
@@ -957,7 +958,7 @@ mod tests {
             )),
             hash.into(),
         );
-        let local = LocalPoolHandle::new(4);
+        let local = LocalPool::new(Default::default());
         let mut tasks = Vec::new();
         for i in 0..4 {
             let file = handle.writer();

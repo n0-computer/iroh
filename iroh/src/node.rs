@@ -44,6 +44,7 @@ use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
 use iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store as BaoStore};
+use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
 use iroh_blobs::{downloader::Downloader, protocol::Closed};
 use iroh_gossip::dispatcher::GossipDispatcher;
 use iroh_gossip::net::Gossip;
@@ -54,7 +55,6 @@ use quic_rpc::transport::ServerEndpoint as _;
 use quic_rpc::RpcServer;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::node::{docs::DocsEngine, protocol::ProtocolMap};
@@ -108,7 +108,7 @@ struct NodeInner<D> {
     cancel_token: CancellationToken,
     client: crate::client::Iroh,
     #[debug("rt")]
-    rt: LocalPoolHandle,
+    rt: LocalPool,
     downloader: Downloader,
     gossip_dispatcher: GossipDispatcher,
 }
@@ -186,7 +186,7 @@ impl<D: BaoStore> Node<D> {
 
     /// Returns a reference to the used `LocalPoolHandle`.
     pub fn local_pool_handle(&self) -> &LocalPoolHandle {
-        &self.inner.rt
+        self.inner.rt.handle()
     }
 
     /// Get the relay server we are connected to.

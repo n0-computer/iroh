@@ -13,13 +13,13 @@ use iroh_io::stats::{
 use iroh_io::{AsyncSliceReader, AsyncStreamWriter, TokioStreamWriter};
 use iroh_net::endpoint::{self, RecvStream, SendStream};
 use serde::{Deserialize, Serialize};
-use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, debug_span, info, trace, warn};
 use tracing_futures::Instrument;
 
 use crate::hashseq::parse_hash_seq;
 use crate::protocol::{GetRequest, RangeSpec, Request};
 use crate::store::*;
+use crate::util::local_pool::LocalPoolHandle;
 use crate::util::Tag;
 use crate::{BlobFormat, Hash};
 
@@ -302,14 +302,19 @@ pub async fn handle_connection<D: Map, E: EventSender>(
             };
             events.send(Event::ClientConnected { connection_id }).await;
             let db = db.clone();
-            rt.spawn_pinned(|| {
-                async move {
-                    if let Err(err) = handle_stream(db, reader, writer).await {
-                        warn!("error: {err:#?}",);
+            let res = rt
+                .spawn_pinned_detached(|| {
+                    async move {
+                        if let Err(err) = handle_stream(db, reader, writer).await {
+                            warn!("error: {err:#?}",);
+                        }
                     }
-                }
-                .instrument(span)
-            });
+                    .instrument(span)
+                })
+                .await;
+            if res.is_err() {
+                break;
+            }
         }
     }
     .instrument(span)
