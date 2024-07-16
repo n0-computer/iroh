@@ -1,12 +1,20 @@
 //! This defines the RPC protocol used for communication between a CLI and an iroh node.
 //!
-//! RPC using the [`quic-rpc`](https://docs.rs/quic-rpc) crate.
+//! RPC is done using the [`quic-rpc`](https://docs.rs/quic-rpc) crate.
 //!
-//! This file contains request messages, response messages and definitions of
-//! the interaction pattern. Some requests like version and shutdown have a single
-//! response, while others like provide have a stream of responses.
+//! The RPC protocol is split into subsystems. In each subsystem, there is an
+//! enum for the requests and an enum for the responses. The top level request
+//! and response enums have a variant for each subsystem.
 //!
-//! Note that this is subject to change. The RPC protocol is not yet stable.
+//! Request and response enums for each subsystem derive conversions to the
+//! top level enums using the
+//! [`enum_conversions``](https://docs.rs/nested_enum_utils/0.1.0/nested_enum_utils/attr.enum_conversions.html)
+//! macro.
+//!
+//! For each rpc request, the quic-rpc interaction pattern is defined using
+//! attributes provided by the
+//! [`rpc_requests`](https://docs.rs/quic-rpc-derive/latest/quic_rpc_derive/attr.rpc_requests.html)
+//! macro.
 use serde::{Deserialize, Serialize};
 
 pub mod authors;

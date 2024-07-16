@@ -4,7 +4,7 @@ use iroh_base::rpc::RpcResult;
 use iroh_gossip::proto::TopicId;
 use iroh_net::NodeId;
 use nested_enum_utils::enum_conversions;
-use quic_rpc::message::{BidiStreaming, BidiStreamingMsg, Msg};
+use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
 use super::RpcService;
@@ -15,7 +15,9 @@ pub use iroh_gossip::dispatcher::Event as SubscribeResponse;
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[enum_conversions(super::Request)]
+#[rpc_requests(RpcService)]
 pub enum Request {
+    #[bidi_streaming(update = SubscribeUpdate, response = RpcResult<SubscribeResponse>)]
     Subscribe(SubscribeRequest),
     Update(SubscribeUpdate),
 }
@@ -38,13 +40,4 @@ pub struct SubscribeRequest {
     pub bootstrap: BTreeSet<NodeId>,
     /// The capacity of the subscription
     pub subscription_capacity: usize,
-}
-
-impl Msg<RpcService> for SubscribeRequest {
-    type Pattern = BidiStreaming;
-}
-
-impl BidiStreamingMsg<RpcService> for SubscribeRequest {
-    type Update = SubscribeUpdate;
-    type Response = RpcResult<SubscribeResponse>;
 }
