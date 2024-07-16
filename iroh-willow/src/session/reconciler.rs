@@ -11,7 +11,7 @@ use tracing::{debug, trace};
 
 use crate::{
     proto::{
-        grouping::ThreeDRange,
+        grouping::{AreaOfInterest, ThreeDRange},
         keys::NamespaceId,
         sync::{
             AreaOfInterestHandle, Fingerprint, LengthyEntry, ReconciliationAnnounceEntries,
@@ -21,7 +21,7 @@ use crate::{
         willow::PayloadDigest,
     },
     session::{
-        aoi_finder::{AoiIntersection, AoiIntersectionQueue},
+        aoi_finder::{AoiIntersection, AoiIntersectionReceiver},
         channels::{ChannelSenders, MessageReceiver},
         events::{EventKind, EventSender},
         payload::{send_payload_chunked, CurrentPayload},
@@ -35,6 +35,18 @@ use crate::{
     },
     util::stream::Cancelable,
 };
+
+// pub enum Input {
+//     Received(ReconciliationMessage),
+//     Intersection(AoiIntersection),
+// }
+//
+// pub enum Output {
+//     Reconciled {
+//         namespace: NamespaceId,
+//         area: AreaOfInterest,
+//     },
+// }
 
 #[derive(derive_more::Debug)]
 pub struct Reconciler<S: Storage> {
@@ -52,7 +64,7 @@ impl<S: Storage> Reconciler<S> {
     pub fn new(
         store: Store<S>,
         recv: Cancelable<MessageReceiver<ReconciliationMessage>>,
-        aoi_intersection_queue: AoiIntersectionQueue,
+        aoi_intersection_receiver: AoiIntersectionReceiver,
         static_tokens: StaticTokens,
         session_id: SessionId,
         send: ChannelSenders,
@@ -71,9 +83,8 @@ impl<S: Storage> Reconciler<S> {
         Ok(Self {
             shared,
             recv,
-            targets: TargetMap::new(aoi_intersection_queue),
+            targets: TargetMap::new(aoi_intersection_receiver),
             current_entry: Default::default(),
-
             events,
         })
     }
@@ -96,9 +107,8 @@ impl<S: Storage> Reconciler<S> {
                         }
                     }
                 }
-                Ok(intersection) = self.targets.aoi_intersection_queue.recv_async() => {
+                Ok(intersection) = self.targets.aoi_intersection_receiver.recv_async() => {
                     tracing::trace!(?intersection, "tick: interesection");
-                    let intersection = intersection;
                     let area = intersection.intersection.clone();
                     let namespace = intersection.namespace;
                     self.targets.init_target(&self.shared, intersection).await?;
@@ -203,14 +213,14 @@ impl<S: Storage> Reconciler<S> {
 #[derive(Debug)]
 struct TargetMap<S: Storage> {
     map: HashMap<TargetId, Target<S>>,
-    aoi_intersection_queue: AoiIntersectionQueue,
+    aoi_intersection_receiver: AoiIntersectionReceiver,
 }
 
 impl<S: Storage> TargetMap<S> {
-    pub fn new(aoi_intersection_queue: AoiIntersectionQueue) -> Self {
+    pub fn new(aoi_intersection_receiver: AoiIntersectionReceiver) -> Self {
         Self {
             map: Default::default(),
-            aoi_intersection_queue,
+            aoi_intersection_receiver,
         }
     }
     pub async fn get_eventually(
@@ -231,7 +241,7 @@ impl<S: Storage> TargetMap<S> {
     ) -> Result<(), Error> {
         loop {
             let intersection = self
-                .aoi_intersection_queue
+                .aoi_intersection_receiver
                 .recv_async()
                 .await
                 .map_err(|_| Error::InvalidState("aoi finder closed"))?;

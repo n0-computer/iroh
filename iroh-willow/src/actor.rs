@@ -4,7 +4,10 @@ use anyhow::Result;
 use futures_lite::{future::Boxed as BoxFuture, stream::Stream, StreamExt};
 use futures_util::future::{self, FutureExt};
 use iroh_base::key::NodeId;
-use tokio::{sync::oneshot, task::JoinSet};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinSet,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, trace, warn, Instrument};
 
@@ -31,7 +34,8 @@ use crate::{
 };
 
 pub const INBOX_CAP: usize = 1024;
-pub const SESSION_EVENT_CAP: usize = 1024;
+pub const SESSION_EVENT_CHANNEL_CAP: usize = 64;
+pub const SESSION_UPDATE_CHANNEL_CAP: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct ActorHandle {
@@ -48,22 +52,11 @@ impl ActorHandle {
         create_store: impl 'static + Send + FnOnce() -> S,
         me: NodeId,
     ) -> ActorHandle {
-        let (handle, events_rx) = Self::spawn_with_events(create_store, me);
-        // drop all events
-        tokio::task::spawn(async move { while events_rx.recv_async().await.is_ok() {} });
-        handle
-    }
-
-    pub fn spawn_with_events<S: Storage>(
-        create_store: impl 'static + Send + FnOnce() -> S,
-        me: NodeId,
-    ) -> (ActorHandle, flume::Receiver<SessionEvent>) {
         let (tx, rx) = flume::bounded(INBOX_CAP);
-        let (session_event_tx, session_event_rx) = flume::bounded(SESSION_EVENT_CAP);
         let join_handle = std::thread::Builder::new()
             .name("willow-actor".to_string())
             .spawn(move || {
-                let span = error_span!("willow_thread", me=%me.fmt_short());
+                let span = error_span!("willow-actor", me=%me.fmt_short());
                 let _guard = span.enter();
 
                 let store = (create_store)();
@@ -75,22 +68,17 @@ impl ActorHandle {
                     next_session_id: 0,
                     session_tasks: Default::default(),
                     tasks: Default::default(),
-                    session_event_tx,
                 };
                 if let Err(error) = actor.run() {
-                    error!(?error, "storage thread failed");
+                    error!(?error, "willow actor failed");
                 };
             })
-            .expect("failed to spawn thread");
+            .expect("failed to spawn willow-actor thread");
         let join_handle = Arc::new(Some(join_handle));
-        (ActorHandle { tx, join_handle }, session_event_rx)
+        ActorHandle { tx, join_handle }
     }
     pub async fn send(&self, action: ToActor) -> Result<()> {
         self.tx.send_async(action).await?;
-        Ok(())
-    }
-    pub fn send_blocking(&self, action: ToActor) -> Result<()> {
-        self.tx.send(action)?;
         Ok(())
     }
     pub async fn ingest_entry(&self, authorised_entry: AuthorisedEntry) -> Result<()> {
@@ -104,6 +92,7 @@ impl ActorHandle {
         reply_rx.await??;
         Ok(())
     }
+
     pub async fn insert_entry(&self, entry: Entry, auth: impl Into<AuthForm>) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
         self.send(ToActor::InsertEntry {
@@ -225,14 +214,21 @@ impl ActorHandle {
             .await?;
         reply_rx.await?
     }
+
+    pub async fn shutdown(&self) -> Result<()> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.send(ToActor::Shutdown { reply: Some(reply) }).await?;
+        reply_rx.await?;
+        Ok(())
+    }
 }
 
 impl Drop for ActorHandle {
     fn drop(&mut self) {
         // this means we're dropping the last reference
         if let Some(handle) = Arc::get_mut(&mut self.join_handle) {
+            let handle = handle.take().expect("can only drop once");
             self.tx.send(ToActor::Shutdown { reply: None }).ok();
-            let handle = handle.take().expect("may only run once");
             if let Err(err) = handle.join() {
                 warn!(?err, "Failed to join sync actor");
             }
@@ -242,46 +238,31 @@ impl Drop for ActorHandle {
 
 #[derive(Debug)]
 pub struct SessionHandle {
-    session_id: SessionId,
-    on_finish: future::Shared<BoxFuture<Result<(), Arc<Error>>>>,
-    cancel_token: CancellationToken,
-    update_tx: flume::Sender<SessionUpdate>,
+    pub session_id: SessionId,
+    pub cancel_token: CancellationToken,
+    pub update_tx: mpsc::Sender<SessionUpdate>,
+    pub event_rx: mpsc::Receiver<EventKind>,
 }
 
 impl SessionHandle {
-    fn new(
-        session_id: SessionId,
-        cancel_token: CancellationToken,
-        on_finish: oneshot::Receiver<Result<(), Arc<Error>>>,
-        update_tx: flume::Sender<SessionUpdate>,
-    ) -> Self {
-        let on_finish = on_finish
-            .map(|r| match r {
-                Ok(res) => res,
-                Err(_) => Err(Arc::new(Error::ActorFailed)),
-            })
-            .boxed()
-            .shared();
-        SessionHandle {
-            session_id,
-            on_finish,
-            cancel_token,
-            update_tx,
-        }
-    }
-
     pub fn session_id(&self) -> SessionId {
         self.session_id
     }
+
     /// Wait for the session to finish.
     ///
     /// Returns an error if the session failed to complete.
-    pub async fn on_finish(&self) -> Result<(), Arc<Error>> {
-        self.on_finish.clone().await
+    pub async fn on_finish(&mut self) -> Result<(), Arc<Error>> {
+        while let Some(event) = self.event_rx.recv().await {
+            if let EventKind::Closed { result } = event {
+                return result;
+            }
+        }
+        Err(Arc::new(Error::ActorFailed))
     }
 
     pub async fn send_update(&self, update: SessionUpdate) -> Result<()> {
-        self.update_tx.send_async(update).await?;
+        self.update_tx.send(update).await?;
         Ok(())
     }
 
@@ -306,11 +287,6 @@ pub enum ToActor {
         init: SessionInit,
         reply: oneshot::Sender<Result<SessionHandle>>,
     },
-    // UpdateSession {
-    //     session_id: SessionId,
-    //     interests: Interests,
-    //     reply: oneshot::Sender<Result<()>>,
-    // },
     GetEntries {
         namespace: NamespaceId,
         range: ThreeDRange,
@@ -364,8 +340,8 @@ pub enum ToActor {
 struct ActiveSession {
     #[allow(unused)]
     peer: NodeId,
-    on_finish: oneshot::Sender<Result<(), Arc<Error>>>,
     task_key: TaskKey, // state: SharedSessionState<S>
+    event_tx: mpsc::Sender<EventKind>,
 }
 
 #[derive(Debug)]
@@ -376,7 +352,6 @@ pub struct Actor<S: Storage> {
     sessions: HashMap<SessionId, ActiveSession>,
     session_tasks: JoinMap<SessionId, Result<(), Error>>,
     tasks: JoinSet<()>,
-    session_event_tx: flume::Sender<SessionEvent>,
 }
 
 impl<S: Storage> Actor<S> {
@@ -439,35 +414,41 @@ impl<S: Storage> Actor<S> {
                 init,
                 reply,
             } => {
-                let id = self.next_session_id();
+                let session_id = self.next_session_id();
                 let store = self.store.clone();
                 let cancel_token = CancellationToken::new();
-                let event_sender = EventSender::new(id, self.session_event_tx.clone());
-                let (update_tx, update_rx) = flume::bounded(16);
+
+                let (update_tx, update_rx) = mpsc::channel(SESSION_UPDATE_CHANNEL_CAP);
+                let (event_tx, event_rx) = mpsc::channel(SESSION_EVENT_CHANNEL_CAP);
+                let update_rx = tokio_stream::wrappers::ReceiverStream::new(update_rx);
 
                 let future = run_session(
                     store,
                     channels,
                     cancel_token.clone(),
-                    id,
+                    session_id,
                     our_role,
                     init,
                     initial_transmission,
-                    event_sender,
+                    EventSender(event_tx.clone()),
                     update_rx,
                 )
                 .instrument(error_span!("session", peer = %peer.fmt_short()));
 
-                let task_key = self.session_tasks.spawn_local(id, future);
+                let task_key = self.session_tasks.spawn_local(session_id, future);
 
-                let (on_finish_tx, on_finish_rx) = oneshot::channel();
                 let active_session = ActiveSession {
-                    on_finish: on_finish_tx,
+                    event_tx,
                     task_key,
                     peer,
                 };
-                self.sessions.insert(id, active_session);
-                let handle = SessionHandle::new(id, cancel_token, on_finish_rx, update_tx);
+                self.sessions.insert(session_id, active_session);
+                let handle = SessionHandle {
+                    session_id,
+                    cancel_token,
+                    update_tx,
+                    event_rx,
+                };
                 send_reply(reply, Ok(handle))
             }
             ToActor::GetEntries {
@@ -551,13 +532,11 @@ impl<S: Storage> Actor<S> {
                 Ok(()) => Ok(()),
                 Err(err) => Err(Arc::new(err)),
             };
-            // TODO: remove
-            session.on_finish.send(result.clone()).ok();
-            self.session_event_tx
-                .send_async(SessionEvent::new(*session_id, EventKind::Closed { result }))
+            session
+                .event_tx
+                .send(EventKind::Closed { result })
                 .await
                 .ok();
-
             self.session_tasks.remove(&session.task_key);
         } else {
             warn!("remove_session called for unknown session");
