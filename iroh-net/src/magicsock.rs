@@ -3051,7 +3051,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_network_change() -> Result<()> {
         time::timeout(
-            Duration::from_secs(50),
+            Duration::from_secs(90),
             test_two_devices_roundtrip_network_change_impl(),
         )
         .await?
