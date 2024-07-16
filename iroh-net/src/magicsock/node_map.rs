@@ -111,11 +111,6 @@ impl NodeMap {
         }
     }
 
-    /// Get the known node addresses which should be persisted.
-    pub fn node_addresses_for_storage(&self) -> Vec<NodeAddr> {
-        self.inner.lock().node_addresses_for_storage().collect()
-    }
-
     /// Add the contact information for a node.
     pub(super) fn add_node_addr(&self, node_addr: NodeAddr, source: Source) {
         self.inner.lock().add_node_addr(node_addr, source)
@@ -263,16 +258,6 @@ impl NodeMap {
 }
 
 impl NodeMapInner {
-    /// Get those node addresses from the map which should be persistet.
-    ///
-    /// This filters out all addresses which were neither loaded from storage nor used.
-    /// For node addresses which were used, only the used paths will be included.
-    pub(super) fn node_addresses_for_storage(&self) -> impl Iterator<Item = NodeAddr> + '_ {
-        self.by_id
-            .values()
-            .filter_map(|endpoint| endpoint.node_addr_for_storage())
-    }
-
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
     fn load_from_vec(nodes: Vec<NodeAddr>) -> Self {
         let mut me = Self::default();
@@ -677,47 +662,40 @@ mod tests {
         node_map.add_test_addr(node_addr_c);
         node_map.add_test_addr(node_addr_d);
 
-        let addrs = node_map.node_addresses_for_storage();
-        let loaded_node_map = NodeMap::load_from_vec(addrs);
+        let mut addrs: Vec<NodeAddr> = node_map
+            .node_infos(Instant::now())
+            .into_iter()
+            .filter_map(|info| {
+                let addr: NodeAddr = info.into();
+                if addr.info.is_empty() {
+                    return None;
+                }
+                Some(addr)
+            })
+            .collect();
+        let loaded_node_map = NodeMap::load_from_vec(addrs.clone());
 
-        let mut loaded = loaded_node_map.node_addresses_for_storage();
+        let mut loaded: Vec<NodeAddr> = loaded_node_map
+            .node_infos(Instant::now())
+            .into_iter()
+            .filter_map(|info| {
+                let addr: NodeAddr = info.into();
+                if addr.info.is_empty() {
+                    return None;
+                }
+                Some(addr)
+            })
+            .collect();
+
         loaded.sort_unstable();
-        let mut og = node_map.node_addresses_for_storage();
-        og.sort_unstable();
+        addrs.sort_unstable();
 
         // compare the node maps via their known nodes
-        assert_eq!(og, loaded);
+        assert_eq!(addrs, loaded);
     }
 
     fn addr(port: u16) -> SocketAddr {
         (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()
-    }
-
-    #[tokio::test]
-    async fn save_node_map_cases() {
-        let node_a = SecretKey::generate().public();
-        let direct_addrs_a = [addr(4000), addr(4001)];
-        let node_addr_a = NodeAddr::new(node_a).with_direct_addresses(direct_addrs_a);
-
-        let node_map = NodeMap::default();
-        node_map.add_test_addr(node_addr_a.clone());
-
-        // unused endpoints are included
-        let list = node_map.node_addresses_for_storage();
-        assert_eq!(list, vec![node_addr_a.clone()]);
-
-        // once the endpoint is used, only valid paths are included
-        node_map.receive_udp(direct_addrs_a[0]);
-        let list = node_map.node_addresses_for_storage();
-        assert_eq!(
-            list,
-            vec![NodeAddr::new(node_a).with_direct_addresses([direct_addrs_a[0]])]
-        );
-
-        // if all paths are used, all are included
-        node_map.receive_udp(direct_addrs_a[1]);
-        let list = node_map.node_addresses_for_storage();
-        assert_eq!(list, vec![node_addr_a.clone()]);
     }
 
     #[test]

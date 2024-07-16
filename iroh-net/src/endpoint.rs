@@ -767,11 +767,6 @@ impl Endpoint {
         self.msock.conn_type_stream(node_id)
     }
 
-    /// Get the known node addresses which should be persisted.
-    pub fn node_addresses_for_storage(&self) -> Vec<NodeAddr> {
-        self.msock.node_addresses_for_storage()
-    }
-
     /// Returns the DNS resolver used in this [`Endpoint`].
     ///
     /// See [`Builder::discovery`].
@@ -1278,7 +1273,11 @@ mod tests {
         endpoint.add_node_addr(node_addr.clone()).unwrap();
 
         // Grab the current addrs
-        let node_addrs = endpoint.node_addresses_for_storage();
+        let node_addrs: Vec<NodeAddr> = endpoint
+            .connection_infos()
+            .into_iter()
+            .map(Into::into)
+            .collect();
         assert_eq!(node_addrs.len(), 1);
         assert_eq!(node_addrs[0], node_addr);
 

@@ -1111,40 +1111,6 @@ impl NodeState {
         self.direct_addr_state.keys().copied()
     }
 
-    pub(super) fn used_paths(&self) -> impl Iterator<Item = IpPort> + '_ {
-        self.direct_addr_state
-            .iter()
-            .filter_map(|(addr, state)| state.last_alive().map(|_| *addr))
-    }
-
-    /// Get the addressing information of this endpoint that should be stored.
-    ///
-    /// If the endpoint was not used at all in this session, all known addresses will be returned.
-    /// If the endpoint was used, only the paths that were in use will be returned.
-    ///
-    /// Returns `None` if the resulting [`NodeAddr`] would be empty.
-    pub(super) fn node_addr_for_storage(&self) -> Option<NodeAddr> {
-        let direct_addresses = if self.last_used().is_none() {
-            self.direct_addresses()
-                .map(SocketAddr::from)
-                .collect::<BTreeSet<_>>()
-        } else {
-            self.used_paths().map(SocketAddr::from).collect()
-        };
-        let relay_url = self.relay_url();
-        if direct_addresses.is_empty() && relay_url.is_none() {
-            None
-        } else {
-            Some(NodeAddr {
-                node_id: self.node_id,
-                info: AddrInfo {
-                    relay_url: self.relay_url(),
-                    direct_addresses,
-                },
-            })
-        }
-    }
-
     #[cfg(test)]
     pub(super) fn direct_address_states(&self) -> impl Iterator<Item = (&IpPort, &PathState)> + '_ {
         self.direct_addr_state.iter()
@@ -1152,6 +1118,24 @@ impl NodeState {
 
     pub(super) fn last_used(&self) -> Option<Instant> {
         self.last_used
+    }
+}
+
+impl From<NodeInfo> for NodeAddr {
+    fn from(info: NodeInfo) -> Self {
+        let direct_addresses = info
+            .addrs
+            .into_iter()
+            .map(|info| info.addr)
+            .collect::<BTreeSet<_>>();
+
+        NodeAddr {
+            node_id: info.node_id,
+            info: AddrInfo {
+                relay_url: info.relay_url.map(Into::into),
+                direct_addresses,
+            },
+        }
     }
 }
 
@@ -1498,6 +1482,12 @@ impl From<(RelayUrl, PathState)> for RelayUrlInfo {
             last_alive: value.1.last_alive().map(|i| i.elapsed()),
             latency: value.1.latency(),
         }
+    }
+}
+
+impl From<RelayUrlInfo> for RelayUrl {
+    fn from(value: RelayUrlInfo) -> Self {
+        value.relay_url
     }
 }
 

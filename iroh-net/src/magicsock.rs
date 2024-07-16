@@ -260,11 +260,6 @@ impl MagicSock {
         self.proxy_url.as_ref()
     }
 
-    /// Get the known node addresses which should be persisted.
-    pub(crate) fn node_addresses_for_storage(&self) -> Vec<NodeAddr> {
-        self.node_map.node_addresses_for_storage()
-    }
-
     /// Sets the relay node with the best latency.
     ///
     /// If we are not connected to any relay nodes, set this to `None`.

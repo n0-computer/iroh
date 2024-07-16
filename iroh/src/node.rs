@@ -48,8 +48,8 @@ use iroh_blobs::{downloader::Downloader, protocol::Closed};
 use iroh_gossip::dispatcher::GossipDispatcher;
 use iroh_gossip::net::Gossip;
 use iroh_net::key::SecretKey;
-use iroh_net::Endpoint;
 use iroh_net::{endpoint::DirectAddrsStream, util::SharedAbortingJoinHandle};
+use iroh_net::{Endpoint, NodeAddr};
 use quic_rpc::transport::ServerEndpoint as _;
 use quic_rpc::RpcServer;
 use tokio::task::JoinSet;
@@ -320,7 +320,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                         biased;
                         _ = token.cancelled() => {
                             trace!("save known node addresses shutdown");
-                            let addrs = ep.node_addresses_for_storage();
+                            let addrs = node_addresses_for_storage(&ep);
                             if let Err(err) = store_node_addrs(&nodes_data_path, &addrs).await {
                                 warn!("failed to store knonw node addresses: {:?}", err);
                             }
@@ -328,7 +328,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                         }
                         _ = save_timer.tick() => {
                             trace!("save known node addresses tick");
-                            let addrs = ep.node_addresses_for_storage();
+                            let addrs = node_addresses_for_storage(&ep);
                             if let Err(err) = store_node_addrs(&nodes_data_path, &addrs).await {
                                 warn!("failed to store knonw node addresses: {:?}", err);
                             }
@@ -554,6 +554,19 @@ async fn handle_connection(
     if let Err(err) = handler.accept(connecting).await {
         warn!("Handling incoming connection ended with error: {err}");
     }
+}
+
+fn node_addresses_for_storage(ep: &Endpoint) -> Vec<NodeAddr> {
+    ep.connection_infos()
+        .into_iter()
+        .filter_map(|info| {
+            let addr: NodeAddr = info.into();
+            if addr.info.is_empty() {
+                return None;
+            }
+            Some(addr)
+        })
+        .collect()
 }
 
 #[cfg(test)]
