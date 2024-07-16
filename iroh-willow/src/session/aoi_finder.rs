@@ -1,12 +1,27 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::hash_map, future::Future, rc::Rc};
+
+use futures_lite::{Stream, StreamExt};
+use genawaiter::rc::Co;
+use tokio::sync::mpsc;
 
 use crate::{
+    auth::InterestMap,
     proto::{
         grouping::{Area, AreaOfInterest},
         keys::NamespaceId,
-        sync::{AreaOfInterestHandle, CapabilityHandle, ReadCapability, SetupBindAreaOfInterest},
+        sync::{
+            AreaOfInterestHandle, CapabilityHandle, IntersectionHandle, ReadAuthorisation,
+            ReadCapability, SetupBindAreaOfInterest,
+        },
     },
-    session::{channels::ChannelSenders, resource::ResourceMap, Error, Scope},
+    session::{
+        capabilities::Capabilities,
+        channels::ChannelSenders,
+        pai_finder::{self, PaiIntersection},
+        resource::ResourceMap,
+        Error, Scope,
+    },
+    util::gen_stream::GenStream,
 };
 
 /// Intersection between two areas of interest.
@@ -28,96 +43,190 @@ impl AoiIntersection {
     }
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct AoiFinder(Rc<RefCell<Inner>>);
-
-pub type AoiIntersectionReceiver = flume::Receiver<AoiIntersection>;
-
-#[derive(Debug, Default)]
-struct Inner {
-    our_handles: ResourceMap<AreaOfInterestHandle, AoiInfo>,
-    their_handles: ResourceMap<AreaOfInterestHandle, AoiInfo>,
-    subscribers: Vec<flume::Sender<AoiIntersection>>,
-}
-
-impl AoiFinder {
-    pub async fn bind_and_send_ours(
-        &self,
-        sender: &ChannelSenders,
+#[derive(Debug)]
+pub enum Input {
+    AddInterests(InterestMap),
+    PaiIntersection(PaiIntersection),
+    ReceivedValidatedAoi {
         namespace: NamespaceId,
         aoi: AreaOfInterest,
+    },
+}
+
+#[derive(Debug)]
+pub enum Output {
+    SendMessage(SetupBindAreaOfInterest),
+    SubmitAuthorisation(ReadAuthorisation),
+    AoiIntersection(AoiIntersection),
+    SignAndSendCapability {
+        handle: IntersectionHandle,
+        capability: ReadCapability,
+    },
+}
+
+#[derive(derive_more::Debug)]
+pub struct IntersectionFinder {
+    #[debug("Co")]
+    co: Co<Output>,
+    caps: Capabilities,
+    handles: AoiResources,
+    interests: InterestMap,
+}
+
+impl IntersectionFinder {
+    /// Run the [`IntersectionFinder`].
+    ///
+    /// The returned stream is a generator, so it must be polled repeatedly to progress.
+    pub fn run_gen(
+        caps: Capabilities,
+        inbox: impl Stream<Item = Input>,
+    ) -> impl Stream<Item = Result<Output, Error>> {
+        GenStream::new(|co| Self::new(co, caps).run(inbox))
+    }
+
+    fn new(co: Co<Output>, caps: Capabilities) -> Self {
+        Self {
+            co,
+            caps,
+            interests: Default::default(),
+            handles: Default::default(),
+        }
+    }
+
+    async fn run(mut self, inbox: impl Stream<Item = Input>) -> Result<(), Error> {
+        tokio::pin!(inbox);
+        while let Some(input) = inbox.next().await {
+            match input {
+                Input::AddInterests(interests) => self.add_interests(interests).await,
+                Input::PaiIntersection(intersection) => {
+                    self.on_pai_intersection(intersection).await?;
+                }
+                Input::ReceivedValidatedAoi { namespace, aoi } => {
+                    self.handles
+                        .bind_validated(&self.co, Scope::Theirs, namespace, aoi)
+                        .await;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn add_interests(&mut self, interests: InterestMap) {
+        for (authorisation, aois) in interests.into_iter() {
+            let capability_handle = self.caps.find_ours(authorisation.read_cap());
+            let namespace = authorisation.namespace();
+            match self.interests.entry(authorisation.clone()) {
+                hash_map::Entry::Occupied(mut entry) => {
+                    // The authorisation is already submitted.
+                    let existing = entry.get_mut();
+                    for aoi in aois {
+                        // If the AoI is new, and the capability is already bound, bind and send
+                        // the AoI right away.
+                        if existing.insert(aoi.clone()) {
+                            if let Some(capability_handle) = capability_handle {
+                                self.handles
+                                    .bind_and_send_ours(&self.co, namespace, capability_handle, aoi)
+                                    .await;
+                            }
+                        }
+                    }
+                }
+                hash_map::Entry::Vacant(entry) => {
+                    // The authorisation is new. Submit to the PaiFinder.
+                    entry.insert(aois);
+                    self.co
+                        .yield_(Output::SubmitAuthorisation(authorisation))
+                        .await;
+                }
+            }
+        }
+    }
+
+    async fn on_pai_intersection(&mut self, intersection: PaiIntersection) -> Result<(), Error> {
+        let PaiIntersection {
+            authorisation,
+            handle,
+        } = intersection;
+        let aois = self
+            .interests
+            .get(&authorisation)
+            .ok_or(Error::NoKnownInterestsForCapability)?
+            .clone();
+        let namespace = authorisation.namespace();
+        let (capability_handle, is_new) = self.caps.bind_ours(authorisation.read_cap().clone());
+        if is_new {
+            self.co
+                .yield_(Output::SignAndSendCapability {
+                    handle,
+                    capability: authorisation.read_cap().clone(),
+                })
+                .await;
+        }
+
+        for aoi in aois.into_iter() {
+            self.handles
+                .bind_and_send_ours(&self.co, namespace, capability_handle, aoi)
+                .await;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct AoiResources {
+    our_handles: ResourceMap<AreaOfInterestHandle, AoiInfo>,
+    their_handles: ResourceMap<AreaOfInterestHandle, AoiInfo>,
+}
+
+impl AoiResources {
+    async fn bind_and_send_ours(
+        &mut self,
+        co: &Co<Output>,
+        namespace: NamespaceId,
         authorisation: CapabilityHandle,
-    ) -> Result<(), Error> {
-        self.bind(Scope::Ours, namespace, aoi.clone())?;
+        aoi: AreaOfInterest,
+    ) {
+        self.bind_validated(co, Scope::Ours, namespace, aoi.clone())
+            .await;
         let msg = SetupBindAreaOfInterest {
             area_of_interest: aoi,
             authorisation,
         };
-        sender.send(msg).await?;
-        Ok(())
+        co.yield_(Output::SendMessage(msg)).await;
     }
-
-    pub fn validate_and_bind_theirs(
-        &self,
-        their_cap: &ReadCapability,
-        aoi: AreaOfInterest,
-    ) -> Result<(), Error> {
-        their_cap.try_granted_area(&aoi.area)?;
-        self.bind(Scope::Theirs, their_cap.granted_namespace().id(), aoi)?;
-        Ok(())
-    }
-
-    pub fn subscribe(&self) -> flume::Receiver<AoiIntersection> {
-        let (tx, rx) = flume::bounded(2);
-        self.0.borrow_mut().subscribers.push(tx);
-        rx
-    }
-
-    pub fn close(&self) {
-        let mut inner = self.0.borrow_mut();
-        inner.subscribers.drain(..);
-    }
-
-    fn bind(&self, scope: Scope, namespace: NamespaceId, aoi: AreaOfInterest) -> Result<(), Error> {
-        let mut inner = self.0.borrow_mut();
-        inner.bind_validated_aoi(scope, namespace, aoi)
-    }
-}
-
-impl Inner {
-    pub fn bind_validated_aoi(
+    pub async fn bind_validated(
         &mut self,
+        co: &Co<Output>,
         scope: Scope,
         namespace: NamespaceId,
         aoi: AreaOfInterest,
-    ) -> Result<(), Error> {
-        // let area = aoi.area.clone();
+    ) {
         let info = AoiInfo {
             aoi: aoi.clone(),
             namespace,
         };
-        let handle = match scope {
+        let bound_handle = match scope {
             Scope::Ours => self.our_handles.bind(info),
             Scope::Theirs => self.their_handles.bind(info),
         };
 
-        let other_resources = match scope {
+        let store_to_check_against = match scope {
             Scope::Ours => &self.their_handles,
             Scope::Theirs => &self.our_handles,
         };
 
         // TODO: If we stored the AoIs by namespace we would need to iterate less.
-        for (candidate_handle, candidate) in other_resources.iter() {
-            if candidate.namespace != namespace {
+        for (other_handle, other_aoi) in store_to_check_against.iter() {
+            if other_aoi.namespace != namespace {
                 continue;
             }
-            let candidate_handle = *candidate_handle;
+            let other_handle = *other_handle;
             // Check if we have an intersection.
-            if let Some(intersection) = candidate.aoi.intersection(&aoi) {
+            if let Some(intersection) = other_aoi.aoi.intersection(&aoi) {
                 // We found an intersection!
                 let (our_handle, their_handle) = match scope {
-                    Scope::Ours => (handle, candidate_handle),
-                    Scope::Theirs => (candidate_handle, handle),
+                    Scope::Ours => (bound_handle, other_handle),
+                    Scope::Theirs => (other_handle, bound_handle),
                 };
                 let intersection = AoiIntersection {
                     our_handle,
@@ -125,12 +234,9 @@ impl Inner {
                     intersection,
                     namespace,
                 };
-                // TODO: This can block...
-                self.subscribers
-                    .retain(|sender| sender.send(intersection.clone()).is_ok());
+                co.yield_(Output::AoiIntersection(intersection)).await;
             }
         }
-        Ok(())
     }
 }
 
@@ -138,10 +244,4 @@ impl Inner {
 struct AoiInfo {
     aoi: AreaOfInterest,
     namespace: NamespaceId,
-}
-
-impl AoiInfo {
-    // fn area(&self) -> &Area {
-    //     &self.aoi.area
-    // }
 }

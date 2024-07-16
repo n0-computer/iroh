@@ -1,22 +1,32 @@
-use std::{cell::RefCell, collections::hash_map, rc::Rc};
+use std::{cell::RefCell, collections::hash_map, future::Future, rc::Rc};
 
-use futures_concurrency::stream::StreamExt as _;
+use futures_concurrency::{
+    future::{Join, TryJoin},
+    stream::StreamExt as _,
+};
 use futures_lite::{Stream, StreamExt as _};
+use futures_util::{Sink, SinkExt};
 use genawaiter::GeneratorState;
 use strum::IntoEnumIterator;
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, error_span, trace, warn, Span};
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::{CancellationToken, PollSender};
+use tracing::{debug, error_span, trace, warn, Instrument, Span};
 
 use crate::{
     auth::InterestMap,
-    proto::sync::{ControlIssueGuarantee, InitialTransmission, LogicalChannel, Message},
+    proto::sync::{
+        ControlIssueGuarantee, InitialTransmission, LogicalChannel, Message,
+        SetupBindAreaOfInterest,
+    },
     session::{
-        aoi_finder::AoiFinder,
+        aoi_finder::{self, IntersectionFinder},
         capabilities::Capabilities,
         channels::{ChannelSenders, LogicalChannelReceivers},
+        data,
         events::{EventKind, EventSender, SessionEvent},
         pai_finder::{self as pai, PaiFinder, PaiIntersection},
+        reconciler,
         static_tokens::StaticTokens,
         Channels, Error, Role, SessionId, SessionInit, SessionUpdate,
     },
@@ -30,6 +40,7 @@ use crate::{
 use super::{
     channels::ChannelReceivers,
     data::{DataReceiver, DataSender},
+    error::ChannelReceiverDropped,
     reconciler::Reconciler,
     SessionMode,
 };
@@ -48,7 +59,10 @@ pub async fn run_session<S: Storage>(
     update_receiver: impl Stream<Item = SessionUpdate> + Unpin + 'static,
 ) -> Result<(), Error> {
     debug!(role = ?our_role, mode = ?init.mode, "start session");
-    let Channels { send, recv } = channels;
+    let Channels {
+        send: channel_sender,
+        recv,
+    } = channels;
     let ChannelReceivers {
         control_recv,
         logical_recv:
@@ -77,312 +91,250 @@ pub async fn run_session<S: Storage>(
         initial_transmission.received_commitment,
     );
     let tokens = StaticTokens::default();
-    let aoi_finder = AoiFinder::default();
 
-    let tasks = Tasks::default();
+    // Setup a channels for communication between the loops.
+    let (pai_inbox, pai_inbox_rx) = channel::<pai::Input>(2);
+    let pai_inbox_rx = Cancelable::new(pai_inbox_rx, cancel_token.clone());
 
-    let initial_interests = store.auth().resolve_interests(init.interests)?;
-    let all_interests = Rc::new(RefCell::new(initial_interests.clone()));
+    let (intersection_inbox, intersection_inbox_rx) = channel::<aoi_finder::Input>(2);
+    let intersection_inbox_rx = Cancelable::new(intersection_inbox_rx, cancel_token.clone());
 
-    // Setup a channel for the private area intersection finder.
-    let (pai_inbox_tx, pai_inbox_rx) = flume::bounded(128);
+    let (rec_inbox, rec_inbox_rx) = channel::<reconciler::Input>(2);
+    let rec_inbox_rx = Cancelable::new(rec_inbox_rx, cancel_token.clone());
 
-    // Spawn a task to handle session updates.
-    tasks.spawn(error_span!("upd"), {
-        let store = store.clone();
-        let caps = caps.clone();
-        let to_pai = pai_inbox_tx.clone();
-        let all_interests = all_interests.clone();
-        let sender = send.clone();
-        let aoi_finder = aoi_finder.clone();
-        async move {
-            while let Some(update) = update_receiver.next().await {
-                match update {
-                    SessionUpdate::AddInterests(interests) => {
-                        caps.revealed().await;
-                        let interests = store.auth().resolve_interests(interests)?;
-                        for (authorisation, aois) in interests.into_iter() {
-                            let is_new_cap = {
-                                let mut all_interests = all_interests.borrow_mut();
-                                match all_interests.entry(authorisation.clone()) {
-                                    hash_map::Entry::Occupied(mut entry) => {
-                                        entry.get_mut().extend(aois.clone());
-                                        false
-                                    }
-                                    hash_map::Entry::Vacant(entry) => {
-                                        entry.insert(aois.clone());
-                                        true
-                                    }
-                                }
-                            };
-                            if let Some(capability_handle) =
-                                caps.find_ours(authorisation.read_cap())
-                            {
-                                let namespace = authorisation.namespace();
-                                for aoi in aois.into_iter() {
-                                    aoi_finder
-                                        .bind_and_send_ours(
-                                            &sender,
-                                            namespace,
-                                            aoi,
-                                            capability_handle,
-                                        )
-                                        .await?;
-                                }
-                            }
-                            if is_new_cap {
-                                to_pai
-                                    .send_async(pai::Input::SubmitAuthorisation(authorisation))
-                                    .await
-                                    .map_err(|_| Error::InvalidState("PAI actor dead"))?;
-                            }
-                        }
-                    }
-                }
-            }
-            Ok(())
-        }
+    // Setup data channels only if in live mode.
+    let (data_inbox, data_inbox_rx) = if init.mode == SessionMode::Live {
+        let (data_inbox, data_inbox_rx) = channel::<data::Input>(2);
+        let data_inbox_rx = Cancelable::new(data_inbox_rx, cancel_token.clone());
+        (Some(data_inbox), Some(data_inbox_rx))
+    } else {
+        (None, None)
+    };
+
+    let initial_interests_fut = with_span(error_span!("init"), async {
+        caps.revealed().await;
+        let interests = store.auth().resolve_interests(init.interests)?;
+        intersection_inbox
+            .send(aoi_finder::Input::AddInterests(interests))
+            .await?;
+        Result::<_, Error>::Ok(())
     });
 
-    // Spawn a task to setup the initial interests
-    tasks.spawn(error_span!("setup-pai"), {
-        let caps = caps.clone();
-        let to_pai = pai_inbox_tx.clone();
-        async move {
-            caps.revealed().await;
-            for authorisation in initial_interests.keys() {
-                to_pai
-                    .send_async(pai::Input::SubmitAuthorisation(authorisation.clone()))
-                    .await
-                    .map_err(|_| Error::InvalidState("PAI actor dead"))?;
-            }
-            Ok(())
-        }
-    });
-
-    tasks.spawn(error_span!("pai"), {
-        let store = store.clone();
-        let send = send.clone();
-        let caps = caps.clone();
-        let inbox = pai_inbox_rx
-            .into_stream()
-            .merge(intersection_recv.map(pai::Input::ReceivedMessage));
-        let interests = Rc::clone(&all_interests);
-        let aoi_finder = aoi_finder.clone();
-        let event_sender = event_sender.clone();
-        async move {
-            let mut gen = PaiFinder::run_gen(inbox);
-            loop {
-                match gen.async_resume().await {
-                    GeneratorState::Yielded(output) => match output {
-                        pai::Output::SendMessage(message) => send.send(message).await?,
-                        pai::Output::NewIntersection(intersection) => {
-                            let event = EventKind::CapabilityIntersection {
-                                namespace: intersection.authorisation.namespace(),
-                                area: intersection.authorisation.read_cap().granted_area().clone(),
-                            };
-                            // TODO: break if error?
-                            event_sender.send(event).await.ok();
-                            on_pai_intersection(
-                                &interests,
-                                store.secrets(),
-                                &aoi_finder,
-                                &caps,
-                                &send,
-                                intersection,
-                            )
-                            .await?;
-                        }
-                        pai::Output::SignAndSendSubspaceCap(handle, cap) => {
-                            let message =
-                                caps.sign_subspace_capabiltiy(store.secrets(), cap, handle)?;
-                            send.send(Box::new(message)).await?;
-                        }
-                    },
-                    GeneratorState::Complete(res) => {
-                        return res;
-                    }
-                }
-            }
-        }
-    });
-
-    // Spawn a task to handle incoming static tokens.
-    tasks.spawn(error_span!("stt"), {
-        let tokens = tokens.clone();
-        async move {
-            while let Some(message) = static_tokens_recv.try_next().await? {
-                tokens.bind_theirs(message.static_token);
-            }
-            Ok(())
-        }
-    });
-
-    // Only setup data receiver if session is configured in live mode.
-    if init.mode == SessionMode::Live {
-        tasks.spawn(error_span!("data-recv"), {
-            let store = store.clone();
-            let tokens = tokens.clone();
-            async move {
-                let mut data_receiver = DataReceiver::new(store, tokens, session_id);
+    let data_loop = with_span(error_span!("data"), async {
+        // Start data loop only if in live mode.
+        if let Some(inbox) = data_inbox_rx {
+            let send_fut = DataSender::new(
+                inbox,
+                store.clone(),
+                channel_sender.clone(),
+                tokens.clone(),
+                session_id,
+            )
+            .run();
+            let recv_fut = async {
+                let mut data_receiver =
+                    DataReceiver::new(store.clone(), tokens.clone(), session_id);
                 while let Some(message) = data_recv.try_next().await? {
                     data_receiver.on_message(message).await?;
                 }
+                tracing::debug!("data receiver done");
                 Ok(())
-            }
-        });
-        tasks.spawn(error_span!("data-send"), {
-            let store = store.clone();
-            let tokens = tokens.clone();
-            let send = send.clone();
-            let aoi_intersections = aoi_finder.subscribe();
-            async move {
-                DataSender::new(store, send, aoi_intersections, tokens, session_id)
-                    .run()
-                    .await?;
-                Ok(())
-            }
-        });
-    }
-
-    // Spawn a task to handle incoming capabilities.
-    tasks.spawn(error_span!("cap-recv"), {
-        let to_pai = pai_inbox_tx.clone();
-        let caps = caps.clone();
-        async move {
-            while let Some(message) = capability_recv.try_next().await? {
-                let handle = message.handle;
-                caps.validate_and_bind_theirs(message.capability, message.signature)?;
-                to_pai
-                    .send_async(pai::Input::ReceivedReadCapForIntersection(handle))
-                    .await
-                    .map_err(|_| Error::InvalidState("PAI actor dead"))?;
-            }
+            };
+            (send_fut, recv_fut).try_join().await?;
+            Ok(())
+        } else {
             Ok(())
         }
     });
 
-    // Spawn a task to handle incoming areas of interest.
-    tasks.spawn(error_span!("aoi-recv"), {
-        let aoi_finder = aoi_finder.clone();
-        let caps = caps.clone();
-        async move {
-            while let Some(message) = aoi_recv.try_next().await? {
-                let cap = caps.get_theirs_eventually(message.authorisation).await;
-                aoi_finder.validate_and_bind_theirs(&cap, message.area_of_interest)?;
+    let update_loop = with_span(error_span!("update"), async {
+        while let Some(update) = update_receiver.next().await {
+            match update {
+                SessionUpdate::AddInterests(interests) => {
+                    caps.revealed().await;
+                    let interests = store.auth().resolve_interests(interests)?;
+                    intersection_inbox
+                        .send(aoi_finder::Input::AddInterests(interests))
+                        .await?;
+                }
             }
-            aoi_finder.close();
-            Ok(())
         }
+        Ok(())
     });
 
-    // Spawn a task to handle reconciliation messages
-    tasks.spawn(error_span!("rec"), {
-        let cancel_token = cancel_token.clone();
-        let aoi_intersections = aoi_finder.subscribe();
-        let reconciler = Reconciler::new(
+    let intersection_loop = with_span(error_span!("intersection"), async {
+        use aoi_finder::Output;
+        let mut gen = IntersectionFinder::run_gen(caps.clone(), intersection_inbox_rx);
+        while let Some(output) = gen.try_next().await? {
+            match output {
+                Output::SendMessage(message) => channel_sender.send(message).await?,
+                Output::SubmitAuthorisation(authorisation) => {
+                    pai_inbox
+                        .send(pai::Input::SubmitAuthorisation(authorisation))
+                        .await?;
+                }
+                Output::AoiIntersection(intersection) => {
+                    let area = intersection.intersection.clone();
+                    let namespace = intersection.namespace;
+                    rec_inbox
+                        .send(reconciler::Input::AoiIntersection(intersection.clone()))
+                        .await?;
+                    event_sender
+                        .send(EventKind::InterestIntersection { namespace, area })
+                        .await?;
+                    if let Some(data_inbox) = &data_inbox {
+                        data_inbox
+                            .send(data::Input::AoiIntersection(intersection.clone()))
+                            .await?;
+                    }
+                }
+                Output::SignAndSendCapability { handle, capability } => {
+                    let message = caps.sign_capability(store.secrets(), handle, capability)?;
+                    channel_sender.send(message).await?;
+                }
+            }
+        }
+        Ok(())
+    });
+
+    let pai_loop = with_span(error_span!("pai"), async {
+        use pai::Output;
+        let inbox = pai_inbox_rx.merge(intersection_recv.map(pai::Input::ReceivedMessage));
+        let mut gen = PaiFinder::run_gen(inbox);
+        while let Some(output) = gen.try_next().await? {
+            match output {
+                Output::SendMessage(message) => channel_sender.send(message).await?,
+                Output::NewIntersection(intersection) => {
+                    let event = EventKind::CapabilityIntersection {
+                        namespace: intersection.authorisation.namespace(),
+                        area: intersection.authorisation.read_cap().granted_area().clone(),
+                    };
+                    (
+                        intersection_inbox.send(aoi_finder::Input::PaiIntersection(intersection)),
+                        event_sender.send(event),
+                    )
+                        .try_join()
+                        .await?;
+                }
+                Output::SignAndSendSubspaceCap(handle, cap) => {
+                    let message = caps.sign_subspace_capabiltiy(store.secrets(), cap, handle)?;
+                    channel_sender.send(Box::new(message)).await?;
+                }
+            }
+        }
+        Ok(())
+    });
+
+    let reconciler_loop = with_span(error_span!("reconciler"), async {
+        use reconciler::Output;
+        let mut gen = Reconciler::run_gen(
+            rec_inbox_rx,
             store.clone(),
             reconciliation_recv,
-            aoi_intersections,
             tokens.clone(),
             session_id,
-            send.clone(),
-            event_sender.clone(),
+            channel_sender.clone(),
             our_role,
-            init.mode,
-        )?;
-        async move {
-            let res = reconciler.run().await;
-            if res.is_ok() && !init.mode.is_live() {
-                debug!("reconciliation complete and not in live mode: trigger cancel");
-                cancel_token.cancel();
-            }
-            res
-        }
-    });
-
-    // Spawn a task to handle control messages
-    tasks.spawn(error_span!("ctl-recv"), {
-        let cancel_token = cancel_token.clone();
-        let fut = control_loop(our_role, caps, send.clone(), control_recv, pai_inbox_tx);
-        async move {
-            let res = fut.await;
-            if res.is_ok() {
-                debug!("control channel closed: trigger cancel");
-                cancel_token.cancel();
-            }
-            res
-        }
-    });
-
-    // Wait until the session is cancelled, or until a task fails.
-    let result = loop {
-        tokio::select! {
-            _ = cancel_token.cancelled() => {
-                debug!("cancel token triggered: close session");
-                break Ok(());
-            },
-            Some((span, result)) = tasks.join_next() => {
-                let _guard = span.enter();
-                trace!(?result, remaining = tasks.remaining_tasks(), "task complete");
-                match result {
-                    Err(err) => {
-                        warn!(?err, "session task paniced: abort session");
-                        break Err(Error::TaskFailed(err));
-                    },
-                    Ok(Err(err)) => {
-                        warn!(?err, "session task failed: abort session");
-                        break Err(err);
-                    }
-                    Ok(Ok(())) => {}
+        );
+        while let Some(output) = gen.try_next().await? {
+            match output {
+                Output::ReconciledArea { namespace, area } => {
+                    event_sender
+                        .send(EventKind::Reconciled { namespace, area })
+                        .await?;
                 }
-            },
+                Output::ReconciledAll => {
+                    // Stop session if not in live mode;
+                    if !init.mode.is_live() {
+                        cancel_token.cancel();
+                        break;
+                    }
+                }
+            }
         }
-    };
+        Ok(())
+    });
 
-    if result.is_err() {
-        debug!("aborting session");
-        tasks.abort_all();
-    } else {
-        debug!("closing session");
+    let token_recv_loop = with_span(error_span!("token_recv"), async {
+        while let Some(message) = static_tokens_recv.try_next().await? {
+            tokens.bind_theirs(message.static_token);
+        }
+        Ok(())
+    });
+
+    let caps_recv_loop = with_span(error_span!("caps_recv"), async {
+        while let Some(message) = capability_recv.try_next().await? {
+            let handle = message.handle;
+            caps.validate_and_bind_theirs(message.capability, message.signature)?;
+            pai_inbox
+                .send(pai::Input::ReceivedReadCapForIntersection(handle))
+                .await?;
+        }
+        Ok(())
+    });
+
+    let control_loop = with_span(error_span!("control"), async {
+        let res = control_loop(control_recv, our_role, &caps, &channel_sender, &pai_inbox).await;
+        cancel_token.cancel();
+        res
+    });
+
+    let aoi_recv_loop = with_span(error_span!("aoi_recv"), async {
+        while let Some(message) = aoi_recv.try_next().await? {
+            let SetupBindAreaOfInterest {
+                area_of_interest,
+                authorisation,
+            } = message;
+            let cap = caps.get_theirs_eventually(authorisation).await;
+            cap.try_granted_area(&area_of_interest.area)?;
+            let namespace = cap.granted_namespace().id();
+            intersection_inbox
+                .send(aoi_finder::Input::ReceivedValidatedAoi {
+                    namespace,
+                    aoi: area_of_interest,
+                })
+                .await?;
+        }
+        Ok(())
+    });
+
+    let result = (
+        initial_interests_fut,
+        control_loop,
+        data_loop,
+        update_loop,
+        pai_loop,
+        intersection_loop,
+        reconciler_loop,
+        token_recv_loop,
+        caps_recv_loop,
+        aoi_recv_loop,
+    )
+        .try_join()
+        .await;
+
+    match &result {
+        Ok(_) => debug!("session complete"),
+        Err(err) => debug!(?err, "session failed"),
     }
 
     // Unsubscribe from the store.  This stops the data send task.
     store.entries().unsubscribe(&session_id);
 
-    // Wait for remaining tasks to terminate to catch any panics.
-    // TODO: Add timeout?
-    while let Some((span, result)) = tasks.join_next().await {
-        let _guard = span.enter();
-        trace!(
-            ?result,
-            remaining = tasks.remaining_tasks(),
-            "task complete"
-        );
-        match result {
-            Err(err) if err.is_cancelled() => {}
-            Err(err) => warn!("task paniced: {err:?}"),
-            Ok(Err(err)) => warn!("task failed: {err:?}"),
-            Ok(Ok(())) => {}
-        }
-    }
-
     // Close our channel senders.
     // This will stop the network send loop after all pending data has been sent.
-    send.close_all();
+    channel_sender.close_all();
 
     debug!(success = result.is_ok(), "session complete");
-    result
+    result.map(|_| ())
 }
 
-pub type Tasks = SharedJoinMap<Span, Result<(), Error>>;
-
 async fn control_loop(
-    our_role: Role,
-    caps: Capabilities,
-    sender: ChannelSenders,
     mut control_recv: Cancelable<Receiver<Message>>,
-    to_pai: flume::Sender<pai::Input>,
+    our_role: Role,
+    caps: &Capabilities,
+    sender: &ChannelSenders,
+    pai_inbox: &Sender<pai::Input>,
 ) -> Result<(), Error> {
     // Reveal our nonce.
     let reveal_message = caps.reveal_commitment()?;
@@ -409,20 +361,18 @@ async fn control_loop(
                 sender.get_logical(channel).add_guarantees(amount);
             }
             Message::PaiRequestSubspaceCapability(msg) => {
-                to_pai
-                    .send_async(pai::Input::ReceivedSubspaceCapRequest(msg.handle))
-                    .await
-                    .map_err(|_| Error::InvalidState("PAI actor dead"))?;
+                pai_inbox
+                    .send(pai::Input::ReceivedSubspaceCapRequest(msg.handle))
+                    .await?;
             }
             Message::PaiReplySubspaceCapability(msg) => {
                 caps.verify_subspace_cap(&msg.capability, &msg.signature)?;
-                to_pai
-                    .send_async(pai::Input::ReceivedVerifiedSubspaceCapReply(
+                pai_inbox
+                    .send(pai::Input::ReceivedVerifiedSubspaceCapReply(
                         msg.handle,
                         msg.capability.granted_namespace().id(),
                     ))
-                    .await
-                    .map_err(|_| Error::InvalidState("PAI actor dead"))?;
+                    .await?;
             }
             _ => return Err(Error::UnsupportedMessage),
         }
@@ -431,34 +381,33 @@ async fn control_loop(
     Ok(())
 }
 
-async fn on_pai_intersection<S: SecretStorage>(
-    interests: &Rc<RefCell<InterestMap>>,
-    secrets: &S,
-    aoi_finder: &AoiFinder,
-    capabilities: &Capabilities,
-    sender: &ChannelSenders,
-    intersection: PaiIntersection,
-) -> Result<(), Error> {
-    let PaiIntersection {
-        authorisation,
-        handle,
-    } = intersection;
-    let aois = {
-        let interests = interests.borrow();
-        interests
-            .get(&authorisation)
-            .ok_or(Error::NoKnownInterestsForCapability)?
-            .clone()
-    };
-    let namespace = authorisation.namespace();
-    let capability_handle = capabilities
-        .bind_and_send_ours(secrets, sender, handle, authorisation.read_cap().clone())
-        .await?;
+fn channel<T: Send + 'static>(cap: usize) -> (Sender<T>, ReceiverStream<T>) {
+    let (tx, rx) = mpsc::channel(cap);
+    (Sender(tx), ReceiverStream::new(rx))
+}
 
-    for aoi in aois.into_iter() {
-        aoi_finder
-            .bind_and_send_ours(sender, namespace, aoi, capability_handle)
-            .await?;
+#[derive(Debug)]
+pub struct Sender<T>(mpsc::Sender<T>);
+
+impl<T> Clone for Sender<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
     }
-    Ok(())
+}
+
+impl<T: Send> Sender<T> {
+    async fn send(&self, item: T) -> Result<(), ChannelReceiverDropped> {
+        self.0.send(item).await.map_err(|_| ChannelReceiverDropped)
+    }
+}
+
+async fn with_span(span: Span, fut: impl Future<Output = Result<(), Error>>) -> Result<(), Error> {
+    async move {
+        tracing::debug!("start");
+        let res = fut.await;
+        tracing::debug!(?res, "done");
+        res
+    }
+    .instrument(span)
+    .await
 }

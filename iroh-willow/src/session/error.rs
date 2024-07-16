@@ -71,6 +71,17 @@ pub enum Error {
     Pai(#[from] PaiError),
     #[error("net failed: {0}")]
     Net(anyhow::Error),
+    #[error("channel receiver dropped")]
+    ChannelDropped,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("channel receiver dropped")]
+pub struct ChannelReceiverDropped;
+impl From<ChannelReceiverDropped> for Error {
+    fn from(_: ChannelReceiverDropped) -> Self {
+        Self::ChannelDropped
+    }
 }
 
 // TODO: Remove likely?

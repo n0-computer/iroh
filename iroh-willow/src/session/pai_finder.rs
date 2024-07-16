@@ -8,11 +8,16 @@
 //! Licensed under LGPL and ported into this MIT/Apache codebase with explicit permission
 //! from the original author (gwil).
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use genawaiter::rc::Gen;
+use genawaiter::{rc::Gen, GeneratorState};
 use tracing::{debug, trace};
 
 use crate::{
@@ -29,6 +34,7 @@ use crate::{
         resource::{MissingResource, ResourceMap},
         Error, Scope,
     },
+    util::gen_stream::GenStream,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -76,10 +82,14 @@ pub struct PaiFinder {
 }
 
 impl PaiFinder {
+    /// Run the [`PaiFinder`].
+    ///
+    /// The returned stream is a generator, so it must be polled repeatedly for the [`PaiFinder`]
+    /// to progress.
     pub fn run_gen(
         inbox: impl Stream<Item = Input> + Unpin,
-    ) -> Gen<Output, (), impl std::future::Future<Output = Result<(), Error>>> {
-        Gen::new(|co| PaiFinder::new(co).run(inbox))
+    ) -> impl Stream<Item = Result<Output, Error>> {
+        GenStream::new(|co| PaiFinder::new(co).run(inbox))
     }
 
     #[cfg(test)]
@@ -88,16 +98,11 @@ impl PaiFinder {
         mut outbox: impl futures_util::Sink<Output, Error = Error> + Unpin,
     ) -> Result<(), Error> {
         use futures_util::SinkExt;
-        use genawaiter::GeneratorState;
-
-        let mut gen = Gen::new(|co| PaiFinder::new(co).run(inbox));
-        loop {
-            let y = gen.async_resume().await;
-            match y {
-                GeneratorState::Yielded(output) => outbox.send(output).await?,
-                GeneratorState::Complete(res) => break res,
-            }
+        let mut gen = Self::run_gen(inbox);
+        while let Some(output) = gen.try_next().await? {
+            outbox.send(output).await?;
         }
+        Ok(())
     }
 
     pub fn new(co: genawaiter::rc::Co<Output>) -> Self {
