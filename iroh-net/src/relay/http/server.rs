@@ -357,7 +357,7 @@ impl ServerState {
         } = self;
         let listener = TcpListener::bind(&addr)
             .await
-            .context("failed to bind server socket")?;
+            .with_context(|| format!("failed to bind server socket to {addr}"))?;
         // we will use this cancel token to stop the infinite loop in the `listener.accept() task`
         let cancel_server_loop = CancellationToken::new();
         let addr = listener.local_addr()?;

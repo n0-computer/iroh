@@ -1,5 +1,15 @@
 //! API to manage the iroh node itself.
-
+//!
+//! The main entry point is the [Client].
+//!
+//! The client can be used to get information about the node, such as the
+//! [status](Client::status), [node id](Client::node_id) or
+//! [node address](Client::node_addr).
+//!
+//! It can also be used to provide additional information to the node, e.g.
+//! using the [add_node_addr](Client::add_node_addr) method.
+//!
+//! It provides a way to [shutdown](Client::shutdown) the entire node.
 use std::{collections::BTreeMap, net::SocketAddr};
 
 use anyhow::Result;
@@ -92,6 +102,6 @@ pub struct NodeStatus {
     pub listen_addrs: Vec<SocketAddr>,
     /// The version of the node
     pub version: String,
-    /// RPC port, if currently listening.
-    pub rpc_port: Option<u16>,
+    /// RPC address, if currently listening.
+    pub rpc_addr: Option<SocketAddr>,
 }

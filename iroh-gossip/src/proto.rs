@@ -59,7 +59,7 @@ pub mod util;
 #[cfg(test)]
 mod tests;
 
-pub use plumtree::Scope;
+pub use plumtree::{DeliveryScope, Scope};
 pub use state::{InEvent, Message, OutEvent, State, Timer, TopicId};
 pub use topic::{Command, Config, Event, IO};
 
