@@ -35,7 +35,7 @@
 //! well, without going through [`client`](crate::client::Iroh))
 //!
 //! To shut down the node, call [`Node::shutdown`].
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{collections::BTreeSet, net::SocketAddr};
 use std::{fmt::Debug, time::Duration};
@@ -55,12 +55,14 @@ use quic_rpc::RpcServer;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
+use crate::node::nodes_storage::store_node_addrs;
 use crate::node::{docs::DocsEngine, protocol::ProtocolMap};
 
 mod builder;
 mod docs;
+mod nodes_storage;
 mod protocol;
 mod rpc;
 mod rpc_status;
@@ -71,6 +73,9 @@ pub use self::builder::{
 };
 pub use self::rpc_status::RpcStatus;
 pub use protocol::ProtocolHandler;
+
+/// How often to save node data.
+const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
 
 /// The quic-rpc server endpoint for the iroh node.
 ///
@@ -257,6 +262,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         protocols: Arc<ProtocolMap>,
         gc_policy: GcPolicy,
         gc_done_callback: Option<Box<dyn Fn() + Send>>,
+        nodes_data_path: Option<PathBuf>,
     ) {
         let (ipv4, ipv6) = self.endpoint.bound_sockets();
         debug!(
@@ -296,6 +302,41 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                     }
                     Ok(())
                 }
+            });
+        }
+
+        if let Some(nodes_data_path) = nodes_data_path {
+            let ep = self.endpoint.clone();
+            let token = self.cancel_token.clone();
+
+            join_set.spawn(async move {
+                let mut save_timer = tokio::time::interval_at(
+                    tokio::time::Instant::now() + SAVE_NODES_INTERVAL,
+                    SAVE_NODES_INTERVAL,
+                );
+
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = token.cancelled() => {
+                            trace!("save known node addresses shutdown");
+                            let addrs = ep.node_addresses_for_storage();
+                            if let Err(err) = store_node_addrs(&nodes_data_path, &addrs).await {
+                                warn!("failed to store knonw node addresses: {:?}", err);
+                            }
+                            break;
+                        }
+                        _ = save_timer.tick() => {
+                            trace!("save known node addresses tick");
+                            let addrs = ep.node_addresses_for_storage();
+                            if let Err(err) = store_node_addrs(&nodes_data_path, &addrs).await {
+                                warn!("failed to store knonw node addresses: {:?}", err);
+                            }
+                        }
+                    }
+                }
+
+                Ok(())
             });
         }
 

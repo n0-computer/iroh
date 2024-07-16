@@ -35,6 +35,7 @@ use tracing::{debug, error_span, trace, Instrument};
 use crate::{
     client::RPC_ALPN,
     node::{
+        nodes_storage::load_node_addrs,
         protocol::{BlobsProtocol, ProtocolMap},
         ProtocolHandler,
     },
@@ -455,7 +456,7 @@ where
     async fn build_inner(self) -> Result<ProtocolBuilder<D>> {
         trace!("building node");
         let lp = LocalPoolHandle::new(num_cpus::get());
-        let endpoint = {
+        let (endpoint, nodes_data_path) = {
             let mut transport_config = quinn::TransportConfig::default();
             transport_config
                 .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
@@ -512,18 +513,22 @@ where
             };
 
             #[cfg(any(test, feature = "test-utils"))]
-            let endpoint =
+            let mut endpoint =
                 endpoint.insecure_skip_relay_cert_verify(self.insecure_skip_relay_cert_verify);
 
-            let endpoint = match self.storage {
+            let nodes_data_path = match self.storage {
                 StorageConfig::Persistent(ref root) => {
-                    let peers_data_path = IrohPaths::PeerData.with_root(root);
-                    endpoint.peers_data_path(peers_data_path)
+                    let nodes_data_path = IrohPaths::PeerData.with_root(root);
+                    let node_addrs = load_node_addrs(&nodes_data_path)
+                        .await
+                        .context("loading known node addresses")?;
+                    endpoint = endpoint.known_nodes(node_addrs);
+                    Some(nodes_data_path)
                 }
-                StorageConfig::Mem => endpoint,
+                StorageConfig::Mem => None,
             };
             let bind_port = self.bind_port.unwrap_or(DEFAULT_BIND_PORT);
-            endpoint.bind(bind_port).await?
+            (endpoint.bind(bind_port).await?, nodes_data_path)
         };
         trace!("created endpoint");
 
@@ -577,6 +582,7 @@ where
             external_rpc: self.rpc_endpoint,
             gc_policy: self.gc_policy,
             gc_done_callback: self.gc_done_callback,
+            nodes_data_path,
         };
 
         let protocol_builder = protocol_builder.register_iroh_protocols();
@@ -602,6 +608,7 @@ pub struct ProtocolBuilder<D> {
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
     gc_policy: GcPolicy,
+    nodes_data_path: Option<PathBuf>,
 }
 
 impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
@@ -727,6 +734,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
             protocols,
             gc_done_callback,
             gc_policy,
+            nodes_data_path,
         } = self;
         let protocols = Arc::new(protocols);
         let node_id = inner.endpoint.node_id();
@@ -750,6 +758,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
                 protocols.clone(),
                 gc_policy,
                 gc_done_callback,
+                nodes_data_path,
             )
             .instrument(error_span!("node", me=%node_id.fmt_short()));
         let task = tokio::task::spawn(fut);
