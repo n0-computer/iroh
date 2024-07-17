@@ -1,6 +1,9 @@
 //! A local task pool with proper shutdown
 use std::{future::Future, ops::Deref, pin::Pin, sync::Arc};
-use tokio::{sync::Semaphore, task::LocalSet};
+use tokio::{
+    sync::Semaphore,
+    task::{JoinSet, LocalSet},
+};
 use tokio_util::sync::CancellationToken;
 
 type SpawnFn = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send + 'static>;
@@ -76,7 +79,7 @@ impl Default for Config {
         Self {
             threads: num_cpus::get(),
             queue_size: 1024,
-            thread_name_prefix: "local-pool-",
+            thread_name_prefix: "local-pool",
         }
     }
 }
@@ -90,7 +93,7 @@ impl LocalPool {
             thread_name_prefix,
         } = config;
         let cancel_token = CancellationToken::new();
-        let (send, recv) = flume::bounded::<Message>(queue_size);
+        let (send, recv) = flume::unbounded::<Message>();
         let handles = (0..threads)
             .map(|i| {
                 Self::spawn_one(
@@ -121,6 +124,7 @@ impl LocalPool {
     ) -> std::io::Result<std::thread::JoinHandle<()>> {
         std::thread::Builder::new().name(task_name).spawn(move || {
             let ls = LocalSet::new();
+            let mut js = JoinSet::new();
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -135,9 +139,11 @@ impl LocalPool {
                             match msg {
                                 Ok(Message::Execute(f)) => {
                                     let fut = (f)();
-                                    ls.spawn_local(fut);
+                                    js.spawn_local(fut);
                                 }
-                                Ok(Message::Shutdown(sem_opt)) => break sem_opt,
+                                Ok(Message::Shutdown(sem_opt)) => {
+                                    break sem_opt
+                                },
                                 Err(flume::RecvError::Disconnected) => break None,
                             }
                         }
@@ -145,6 +151,21 @@ impl LocalPool {
                 }
             });
             if let Some(sem) = sem_opt {
+                // somebody is asking for a clean shutdown, wait for all tasks to finish
+                ls.block_on(&rt, async {
+                    loop {
+                        tokio::select! {
+                            _ = js.join_next() => {
+                                if js.is_empty() {
+                                    break;
+                                }
+                            }
+                            _ = cancel_token.cancelled() => {
+                                break
+                            },
+                        }
+                    }
+                });
                 sem.add_permits(1);
             }
         })
@@ -240,19 +261,35 @@ impl LocalPoolHandle {
         T: Send + 'static,
     {
         let send = self.send.clone();
-        tokio::spawn(async move {
-            let (send_res, recv_res) = tokio::sync::oneshot::channel();
-            let item: SpawnFn = Box::new(move || {
-                let fut = (gen)();
-                let res: Pin<Box<dyn Future<Output = ()>>> = Box::pin(async move {
-                    let res = fut.await;
-                    send_res.send(res).ok();
-                });
-                res
+        let (send_cancel, recv_cancel) = tokio::sync::oneshot::channel::<()>();
+        let guard = CancelGuard(Some(send_cancel));
+        let (send_res, recv_res) = tokio::sync::oneshot::channel();
+        let item: SpawnFn = Box::new(move || {
+            let fut = (gen)();
+            let res: Pin<Box<dyn Future<Output = ()>>> = Box::pin(async move {
+                tokio::select! {
+                    res = fut => { send_res.send(res).ok(); }
+                    _ = recv_cancel => {}
+                }
             });
-            send.send_async(Message::Execute(item)).await.unwrap();
-            recv_res.await.unwrap()
+            res
+        });
+        send.send(Message::Execute(item)).unwrap();
+        tokio::spawn(async move {
+            let res = recv_res.await.unwrap();
+            drop(guard);
+            res
         })
+    }
+}
+
+struct CancelGuard(Option<tokio::sync::oneshot::Sender<()>>);
+
+impl Drop for CancelGuard {
+    fn drop(&mut self) {
+        if let Some(sender) = self.0.take() {
+            sender.send(()).ok();
+        }
     }
 }
 
@@ -262,22 +299,37 @@ mod tests {
 
     use super::*;
 
+    #[allow(dead_code)]
+    fn thread_name() -> String {
+        std::thread::current()
+            .name()
+            .unwrap_or("unnamed")
+            .to_string()
+    }
+
     /// A struct that simulates a long running drop operation
     #[derive(Debug)]
-    struct TestDrop(Arc<AtomicU64>);
+    struct TestDrop(Option<Arc<AtomicU64>>);
 
     impl Drop for TestDrop {
         fn drop(&mut self) {
             // delay to make sure the drop is executed completely
             std::thread::sleep(Duration::from_millis(100));
             // increment the drop counter
-            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if let Some(counter) = self.0.take() {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
         }
     }
 
     impl TestDrop {
         fn new(counter: Arc<AtomicU64>) -> Self {
-            Self(counter)
+            Self(Some(counter))
+        }
+
+        fn forget(mut self) {
+            println!("forgetting");
+            self.0.take();
         }
     }
 
@@ -290,6 +342,15 @@ mod tests {
         // drop x at the end. we will never get here when the future is
         // no longer polled, but drop should still be called
         drop(x);
+    }
+
+    /// Use a TestDrop instance to test cancellation
+    async fn non_send_cancel(x: TestDrop) {
+        // just to make sure the future is not Send
+        let t = Rc::new(RefCell::new(0));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        drop(t);
+        x.forget();
     }
 
     #[tokio::test]
@@ -322,5 +383,24 @@ mod tests {
         }
         pool.shutdown().await;
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), n);
+    }
+
+    #[tokio::test]
+    async fn test_cancel() {
+        let _ = tracing_subscriber::fmt::try_init();
+        let pool = LocalPool::new(Config {
+            threads: 2,
+            ..Config::default()
+        });
+        let counter1 = Arc::new(AtomicU64::new(0));
+        let td1 = TestDrop::new(counter1.clone());
+        let handle = pool.spawn_pinned(Box::new(move || Box::pin(non_send_cancel(td1))));
+        handle.abort();
+        let counter2 = Arc::new(AtomicU64::new(0));
+        let td2 = TestDrop::new(counter2.clone());
+        let _handle = pool.spawn_pinned(Box::new(move || Box::pin(non_send_cancel(td2))));
+        pool.shutdown().await;
+        assert_eq!(counter1.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(counter2.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }
