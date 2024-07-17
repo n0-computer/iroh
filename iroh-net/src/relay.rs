@@ -15,6 +15,7 @@ pub(crate) mod client_conn;
 pub(crate) mod clients;
 pub(crate) mod codec;
 pub mod http;
+#[cfg(feature = "iroh-relay")]
 pub mod iroh_relay;
 mod map;
 mod metrics;
