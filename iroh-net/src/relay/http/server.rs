@@ -58,7 +58,7 @@ fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes)> {
     }
 }
 
-/// The server HTTP handler to do HTTP upgrades
+/// The server HTTP handler to do HTTP upgrades.
 async fn relay_connection_handler(
     protocol: Protocol,
     conn_handler: &ClientConnHandler,
