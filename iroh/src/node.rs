@@ -55,7 +55,7 @@ use quic_rpc::RpcServer;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
 use crate::node::nodes_storage::store_node_addrs;
 use crate::node::{docs::DocsEngine, protocol::ProtocolMap};
@@ -309,35 +309,38 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             let ep = self.endpoint.clone();
             let token = self.cancel_token.clone();
 
-            join_set.spawn(async move {
-                let mut save_timer = tokio::time::interval_at(
-                    tokio::time::Instant::now() + SAVE_NODES_INTERVAL,
-                    SAVE_NODES_INTERVAL,
-                );
+            join_set.spawn(
+                async move {
+                    let mut save_timer = tokio::time::interval_at(
+                        tokio::time::Instant::now() + SAVE_NODES_INTERVAL,
+                        SAVE_NODES_INTERVAL,
+                    );
 
-                loop {
-                    tokio::select! {
-                        biased;
-                        _ = token.cancelled() => {
-                            trace!("save known node addresses shutdown");
-                            let addrs = node_addresses_for_storage(&ep);
-                            if let Err(err) = store_node_addrs(&nodes_data_path, &addrs).await {
-                                warn!("failed to store knonw node addresses: {:?}", err);
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = token.cancelled() => {
+                                trace!("save known node addresses shutdown");
+                                let addrs = node_addresses_for_storage(&ep);
+                                if let Err(err) = store_node_addrs(&nodes_data_path, &addrs).await {
+                                    warn!("failed to store knonw node addresses: {:?}", err);
+                                }
+                                break;
                             }
-                            break;
-                        }
-                        _ = save_timer.tick() => {
-                            trace!("save known node addresses tick");
-                            let addrs = node_addresses_for_storage(&ep);
-                            if let Err(err) = store_node_addrs(&nodes_data_path, &addrs).await {
-                                warn!("failed to store knonw node addresses: {:?}", err);
+                            _ = save_timer.tick() => {
+                                trace!("save known node addresses tick");
+                                let addrs = node_addresses_for_storage(&ep);
+                                if let Err(err) = store_node_addrs(&nodes_data_path, &addrs).await {
+                                    warn!("failed to store knonw node addresses: {:?}", err);
+                                }
                             }
                         }
                     }
-                }
 
-                Ok(())
-            });
+                    Ok(())
+                }
+                .instrument(info_span!("known-addrs")),
+            );
         }
 
         // Spawn a task that updates the gossip endpoints.
