@@ -1,8 +1,17 @@
-use std::collections::{hash_map, BTreeMap, BTreeSet, HashMap, HashSet};
+use std::{
+    collections::{hash_map, BTreeMap, BTreeSet, HashMap, HashSet},
+    sync::mpsc,
+};
+
+use tokio::sync::oneshot;
 
 use crate::{
     auth::CapSelector,
     proto::{grouping::AreaOfInterest, sync::ReadAuthorisation},
+    session::{
+        events::EventKind,
+        intents::{IntentChannels, IntentData},
+    },
 };
 
 mod aoi_finder;
@@ -11,6 +20,7 @@ pub mod channels;
 mod data;
 mod error;
 pub mod events;
+pub mod intents;
 mod pai_finder;
 mod payload;
 mod reconciler;
@@ -114,9 +124,9 @@ impl From<SelectBuilder> for Interests {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum SessionUpdate {
-    AddInterests(Interests),
+    SubmitIntent(IntentData),
 }
 
 // impl Interest {

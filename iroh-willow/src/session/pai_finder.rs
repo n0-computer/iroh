@@ -55,6 +55,7 @@ pub struct PaiIntersection {
 
 #[derive(Debug)]
 pub enum Input {
+    Established,
     SubmitAuthorisation(ReadAuthorisation),
     ReceivedMessage(Result<IntersectionMessage, Error>),
     ReceivedSubspaceCapRequest(IntersectionHandle),
@@ -79,6 +80,7 @@ pub struct PaiFinder {
     their_intersection_handles: ResourceMap<IntersectionHandle, GroupState>,
     requested_subspace_cap_handles: HashSet<IntersectionHandle>,
     submitted: HashSet<ReadAuthorisation>,
+    pending: Option<HashSet<ReadAuthorisation>>,
 }
 
 impl PaiFinder {
@@ -86,6 +88,10 @@ impl PaiFinder {
     ///
     /// The returned stream is a generator, so it must be polled repeatedly for the [`PaiFinder`]
     /// to progress.
+    ///
+    /// Submit inputs through the inbox. The [`PaiFinder`] will not yield any outputs until
+    /// [`Input::Established`]. Authorisations submitted prior are queued and will be yielded after
+    /// the establish input.
     pub fn run_gen(
         inbox: impl Stream<Item = Input> + Unpin,
     ) -> impl Stream<Item = Result<Output, Error>> {
@@ -114,6 +120,7 @@ impl PaiFinder {
             fragments_info: Default::default(),
             requested_subspace_cap_handles: Default::default(),
             submitted: Default::default(),
+            pending: Some(Default::default()),
         }
     }
 
@@ -127,7 +134,20 @@ impl PaiFinder {
 
     async fn input(&mut self, input: Input) -> Result<(), Error> {
         match input {
-            Input::SubmitAuthorisation(auth) => self.submit_authorisation(auth).await,
+            Input::SubmitAuthorisation(auth) => {
+                if let Some(pending) = self.pending.as_mut() {
+                    pending.insert(auth);
+                } else {
+                    self.submit_authorisation(auth).await;
+                }
+            }
+            Input::Established => {
+                if let Some(mut pending) = self.pending.take() {
+                    for authorisation in pending.drain() {
+                        self.submit_authorisation(authorisation).await;
+                    }
+                }
+            }
             Input::ReceivedMessage(message) => match message? {
                 IntersectionMessage::BindFragment(message) => self.receive_bind(message).await?,
                 IntersectionMessage::ReplyFragment(message) => self.receive_reply(message).await?,
@@ -644,6 +664,7 @@ mod tests {
         pub fn new(span: Span) -> Self {
             let (input, input_rx) = flume::bounded(1);
             let (output_tx, output) = flume::bounded(1);
+            input.try_send(Input::Established).expect("has capacity");
             let outbox = output_tx
                 .into_sink()
                 .sink_map_err(|_| Error::InvalidState("failed to send"));
