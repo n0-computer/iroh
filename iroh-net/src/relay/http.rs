@@ -41,7 +41,7 @@ pub enum Protocol {
 }
 
 impl Protocol {
-    /// The HTTP upgrade header used or expected
+    /// The HTTP upgrade header used or expected.
     pub const fn upgrade_header(&self) -> &'static str {
         match self {
             Protocol::Relay => HTTP_UPGRADE_PROTOCOL,
