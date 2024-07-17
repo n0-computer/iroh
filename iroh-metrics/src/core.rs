@@ -60,6 +60,23 @@ impl Counter {
         self.counter.inc_by(v)
     }
 
+    /// Set the [`Counter`] value.
+    /// Warning: this is not default behavior for a counter that should always be monotonically increasing.
+    #[cfg(feature = "metrics")]
+    pub fn set(&self, v: u64) -> u64 {
+        self.counter
+            .inner()
+            .store(v, std::sync::atomic::Ordering::Relaxed);
+        v
+    }
+
+    /// Set the [`Counter`] value.
+    /// Warning: this is not default behavior for a counter that should always be monotonically increasing.
+    #[cfg(not(feature = "metrics"))]
+    pub fn set(&self, _v: u64) -> u64 {
+        0
+    }
+
     /// Increase the [`Counter`] by `u64`, returning the previous value.
     #[cfg(not(feature = "metrics"))]
     pub fn inc_by(&self, _v: u64) -> u64 {

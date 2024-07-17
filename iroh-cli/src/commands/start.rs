@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::{future::Future, net::SocketAddr, path::Path, time::Duration};
 
 use crate::config::NodeConfig;
@@ -39,11 +40,16 @@ where
 {
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, iroh_data_root)?;
     let metrics_fut = start_metrics_server(config.metrics_addr);
+    let metrics_dumper_fut =
+        start_metrics_dumper(config.metrics_dump_path.clone(), Duration::from_millis(100));
 
     let res = run_with_command_inner(config, iroh_data_root, rpc_addr, run_type, command).await;
 
     if let Some(metrics_fut) = metrics_fut {
         metrics_fut.abort();
+    }
+    if let Some(metrics_dumper_fut) = metrics_dumper_fut {
+        metrics_dumper_fut.abort();
     }
 
     let (clear_rpc, res) = match res {
@@ -184,6 +190,20 @@ pub fn start_metrics_server(
     }
     tracing::info!("Metrics server not started, no address provided");
     None
+}
+
+pub fn start_metrics_dumper(
+    path: Option<PathBuf>,
+    interval: Duration,
+) -> Option<tokio::task::JoinHandle<()>> {
+    // doesn't start the dumper if the address is None
+    Some(tokio::task::spawn(async move {
+        if let Some(path) = path {
+            if let Err(e) = iroh_metrics::metrics::start_metrics_dumper(path, interval).await {
+                eprintln!("Failed to start metrics dumper: {e}");
+            }
+        }
+    }))
 }
 
 #[cfg(test)]

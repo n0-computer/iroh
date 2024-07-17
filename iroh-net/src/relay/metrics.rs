@@ -51,6 +51,9 @@ pub struct Metrics {
     /// Number of connections we have removed because of an error
     pub disconnects: Counter,
 
+    /// Number of unique client keys per day
+    pub unique_client_keys: Counter,
+
     /// Number of accepted websocket connections
     pub websocket_accepts: Counter,
     /// Number of accepted 'iroh derp http' connection upgrades
@@ -95,6 +98,8 @@ impl Default for Metrics {
              */
             accepts: Counter::new("Number of times this server has accepted a connection."),
             disconnects: Counter::new("Number of clients that have then disconnected."),
+
+            unique_client_keys: Counter::new("Number of unique client keys per day."),
 
             websocket_accepts: Counter::new("Number of accepted websocket connections"),
             derp_accepts: Counter::new("Number of accepted 'iroh derp http' connection upgrades"),
