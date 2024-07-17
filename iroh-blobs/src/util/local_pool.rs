@@ -7,7 +7,7 @@ use std::{
         Arc,
     }
 };
-use tokio::sync::{Notify, Semaphore};
+use tokio::{sync::{Notify, Semaphore}, task::LocalSet};
 
 /// A lightweight cancellation token
 #[derive(Debug, Clone)]
@@ -196,7 +196,8 @@ impl LocalPool {
                     .enable_all()
                     .build()
                     .unwrap();
-                let sem_opt = rt.block_on(async {
+                let ls = LocalSet::new();
+                let sem_opt = ls.block_on(&rt, async {
                     loop {
                         tokio::select! {
                             // poll the set of futures
@@ -219,7 +220,7 @@ impl LocalPool {
                 });
                 if let Some(sem) = sem_opt {
                     // somebody is asking for a clean shutdown, wait for all tasks to finish
-                    rt.block_on(async {
+                    ls.block_on(&rt, async {
                         loop {
                             tokio::select! {
                                 res = s.next() => {
