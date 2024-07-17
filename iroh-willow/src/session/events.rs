@@ -4,6 +4,8 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
+use futures_buffered::join_all;
+use futures_concurrency::future::Join;
 use futures_lite::StreamExt;
 use futures_util::FutureExt;
 use iroh_net::{
@@ -28,39 +30,28 @@ use crate::{
         sync::{ReadAuthorisation, ReadCapability},
     },
     session::{
-        error::ChannelReceiverDropped, Error, Interests, Role, SessionId, SessionInit, SessionMode,
-        SessionUpdate,
+        error::ChannelReceiverDropped,
+        intents::{IntentChannels, IntentData, IntentHandle, IntentInfo},
+        Error, Interests, Role, SessionId, SessionInit, SessionMode, SessionUpdate,
     },
     store::traits::Storage,
 };
 
-use super::SessionUpdate::AddInterests;
-
-type NamespaceInterests = HashMap<NamespaceId, HashSet<AreaOfInterest>>;
-
 const COMMAND_CHANNEL_CAP: usize = 128;
-const INTENT_UPDATE_CAP: usize = 16;
-const INTENT_EVENT_CAP: usize = 64;
 
 #[derive(Debug, Clone)]
-pub struct EventSender(pub mpsc::Sender<EventKind>);
+pub struct EventSender(pub mpsc::Sender<SessionEvent>);
 
 impl EventSender {
-    pub async fn send(&self, event: EventKind) -> Result<(), ChannelReceiverDropped> {
+    pub async fn send(&self, event: SessionEvent) -> Result<(), ChannelReceiverDropped> {
         self.0.send(event).await.map_err(|_| ChannelReceiverDropped)
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct SessionEvent {
-    pub session_id: SessionId,
-    pub event: EventKind,
-}
-
-impl SessionEvent {
-    pub fn new(session_id: SessionId, event: EventKind) -> Self {
-        Self { session_id, event }
-    }
+#[derive(Debug)]
+pub enum SessionEvent {
+    Revealed,
+    Complete { result: Result<(), Arc<Error>> },
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -78,8 +69,8 @@ pub enum EventKind {
         area: AreaOfInterest,
     },
     ReconciledAll,
-    Closed {
-        result: Result<(), Arc<Error>>,
+    Abort {
+        error: Arc<Error>,
     },
 }
 
@@ -95,21 +86,9 @@ impl EventKind {
 }
 
 #[derive(Debug)]
-pub enum IntentUpdate {
-    AddInterests(Interests),
-    Close,
-}
-
-#[derive(Debug)]
 pub enum Command {
-    SyncWithPeer {
-        peer: NodeId,
-        init: SessionInit,
-        reply: oneshot::Sender<Result<IntentHandle>>,
-    },
-    HandleConnection {
-        conn: Connection,
-    },
+    SubmitIntent { peer: NodeId, intent: IntentData },
+    HandleConnection { conn: Connection },
 }
 
 #[derive(Debug, Clone)]
@@ -129,16 +108,14 @@ impl ManagedHandle {
         let (command_tx, command_rx) = mpsc::channel(COMMAND_CHANNEL_CAP);
         let peer_manager = PeerManager {
             session_event_rx: Default::default(),
-            intent_update_rx: Default::default(),
+            betty_intent_rx: Default::default(),
             command_rx,
             establish_tasks: Default::default(),
             net_tasks: Default::default(),
             actor: actor.clone(),
             peers: Default::default(),
-            sessions: Default::default(),
             endpoint: endpoint.clone(),
             dialer: Dialer::new(endpoint),
-            next_intent_id: 0,
         };
         let task_handle = tokio::task::spawn(
             async move { peer_manager.run().await.map_err(|err| format!("{err:?}")) }
@@ -159,11 +136,12 @@ impl ManagedHandle {
     }
 
     pub async fn sync_with_peer(&self, peer: NodeId, init: SessionInit) -> Result<IntentHandle> {
-        let (reply, reply_rx) = oneshot::channel();
+        // TODO: expose cap
+        let (handle, intent) = IntentHandle::new(init);
         self.command_tx
-            .send(Command::SyncWithPeer { peer, init, reply })
+            .send(Command::SubmitIntent { peer, intent })
             .await?;
-        reply_rx.await?
+        Ok(handle)
     }
 }
 
@@ -179,23 +157,17 @@ type NetTasks = JoinSet<Result<()>>;
 
 type EstablishRes = (NodeId, Result<(NetTasks, SessionHandle)>);
 
-pub type IntentId = (NodeId, u64);
-
 #[derive(derive_more::Debug)]
 pub struct PeerManager {
-    session_event_rx: StreamMap<SessionId, ReceiverStream<EventKind>>,
-    #[debug("StreamMap")]
-    intent_update_rx: StreamMap<IntentId, StreamNotifyClose<ReceiverStream<IntentUpdate>>>,
+    session_event_rx: StreamMap<NodeId, ReceiverStream<SessionEvent>>,
+    betty_intent_rx: StreamMap<NodeId, ReceiverStream<EventKind>>,
     command_rx: mpsc::Receiver<Command>,
     establish_tasks: JoinSet<EstablishRes>,
     net_tasks: JoinSet<(NodeId, Result<()>)>,
-
     actor: ActorHandle,
     peers: HashMap<NodeId, PeerState>,
-    sessions: HashMap<SessionId, SessionInfo>,
     endpoint: Endpoint,
     dialer: Dialer,
-    next_intent_id: u64,
 }
 
 impl PeerManager {
@@ -205,16 +177,9 @@ impl PeerManager {
                 Some((session_id, event)) = self.session_event_rx.next(), if !self.session_event_rx.is_empty() => {
                     self.received_event(session_id, event).await;
                 }
-                Some(((peer, intent_id), event)) = self.intent_update_rx.next(), if !self.intent_update_rx.is_empty() => {
-                    if let Some(event) = event {
-                        // Received an intent update.
-                        if let Err(err) = self.update_intent(peer, intent_id, event).await {
-                            tracing::warn!(peer=%peer.fmt_short(), %intent_id, ?err, "failed to update intent");
-                        }
-                    } else {
-                        // The intent update sender was dropped: Cancel the intent.
-                        self.cancel_intent(peer, intent_id);
-                    }
+                Some((_session_id, _event)) = self.betty_intent_rx.next(), if !self.betty_intent_rx.is_empty() => {
+                    // TODO: Do we want to emit these somewhere?
+                    // self.received_event(session_id, event).await;
                 }
                 Some(command) = self.command_rx.recv() => {
                     self.received_command(command).await;
@@ -223,7 +188,7 @@ impl PeerManager {
                     match res {
                         Err(err) if err.is_cancelled() => continue,
                         Err(err) => Err(err).context("establish task paniced")?,
-                        Ok((peer, Ok((tasks, handle)))) => self.on_established(peer, handle, tasks).await?,
+                        Ok((peer, Ok((tasks, handle)))) => self.on_established(peer, handle, tasks)?,
                         Ok((peer, Err(err))) => self.remove_peer(peer, Err(Arc::new(Error::Net(err)))).await,
                     }
                 }
@@ -232,7 +197,10 @@ impl PeerManager {
                         Err(err) if err.is_cancelled() => continue,
                         Err(err) => Err(err).context("net task paniced")?,
                         Ok((_peer, Ok(())))=> continue,
-                        Ok((peer, Err(err))) => self.on_net_task_failed(peer, err),
+                        Ok((peer, Err(err))) => {
+                            // TODO: Forward to session?
+                            tracing::warn!(?peer, ?err, "net task failed");
+                        }
                     }
                 },
                 Some((peer, conn)) = self.dialer.next() => {
@@ -248,34 +216,49 @@ impl PeerManager {
         Ok(())
     }
 
+    pub async fn received_command(&mut self, command: Command) {
+        tracing::info!(?command, "command");
+        match command {
+            Command::SubmitIntent { peer, intent } => {
+                if let Err(err) = self.submit_intent(peer, intent).await {
+                    tracing::warn!("failed to submit intent: {err:?}");
+                }
+            }
+            Command::HandleConnection { conn } => {
+                self.handle_connection(conn, Role::Betty).await;
+            }
+        }
+    }
+
     async fn remove_peer(&mut self, peer: NodeId, result: Result<(), Arc<Error>>) {
         let Some(peer_state) = self.peers.remove(&peer) else {
             tracing::warn!(?peer, "attempted to remove unknown peer");
             return;
         };
-        let (intents, session_id) = match peer_state {
+        let intents = match peer_state {
             PeerState::Connecting { intents, .. } => {
                 self.dialer.abort_dial(&peer);
-                (Some(intents), None)
+                Some(intents)
             }
-            PeerState::Establishing { intents, .. } => (Some(intents), None),
-            PeerState::Active { session_id } => {
-                let session = self.sessions.remove(&session_id);
-                let intents = session.map(|session| session.intents);
-                (intents, Some(session_id))
+            PeerState::Establishing { intents, .. } => Some(intents),
+            PeerState::Active { cancel_token, .. } => {
+                cancel_token.cancel();
+                None
             }
             PeerState::Placeholder => unreachable!(),
         };
         if let Some(intents) = intents {
-            for intent in &intents {
-                self.intent_update_rx.remove(&(peer, intent.intent_id));
+            if let Err(error) = result {
+                join_all(
+                    intents
+                        .into_iter()
+                        .map(|intent| intent.send_abort(error.clone())),
+                )
+                .await;
             }
-            let senders = intents.into_iter().map(|intent| intent.event_tx);
-            send_all(senders, EventKind::Closed { result }).await;
         }
-        if let Some(session_id) = session_id {
-            self.session_event_rx.remove(&session_id);
-        }
+        self.session_event_rx.remove(&peer);
+        self.betty_intent_rx.remove(&peer);
     }
 
     async fn on_dial_fail(&mut self, peer: NodeId, err: anyhow::Error) {
@@ -283,23 +266,7 @@ impl PeerManager {
         self.remove_peer(peer, result).await;
     }
 
-    fn session_mut(&mut self, peer: &NodeId) -> Option<&mut SessionInfo> {
-        let peer_state = self.peers.get(peer)?;
-        match peer_state {
-            PeerState::Active { session_id } => self.sessions.get_mut(session_id),
-            _ => None,
-        }
-    }
-
-    fn on_net_task_failed(&mut self, peer: NodeId, err: anyhow::Error) {
-        if let Some(session) = self.session_mut(&peer) {
-            if session.net_error.is_none() {
-                session.net_error = Some(err);
-            }
-        }
-    }
-
-    async fn on_established(
+    fn on_established(
         &mut self,
         peer: NodeId,
         session_handle: SessionHandle,
@@ -311,19 +278,15 @@ impl PeerManager {
             .ok_or_else(|| anyhow!("unreachable: on_established called for unknown peer"))?;
         let current_state = std::mem::replace(peer_state, PeerState::Placeholder);
         let PeerState::Establishing {
-            our_role,
-            intents,
-            submitted_interests,
-            pending_interests,
+            // our_role,
+            intents: _,
+            betty_catchall_intent,
         } = current_state
         else {
             anyhow::bail!("unreachable: on_established called for peer in wrong state")
         };
-        if our_role.is_alfie() && intents.is_empty() {
-            session_handle.close();
-        }
         let SessionHandle {
-            session_id,
+            // session_id,
             cancel_token,
             update_tx,
             event_rx,
@@ -331,238 +294,57 @@ impl PeerManager {
         self.net_tasks.spawn(
             async move { crate::net::join_all(&mut net_tasks).await }.map(move |r| (peer, r)),
         );
-        let mut session_info = SessionInfo {
-            peer,
-            our_role,
-            complete_areas: Default::default(),
-            submitted_interests,
-            intents,
-            net_error: None,
-            update_tx,
-            cancel_token,
-        };
-        if !pending_interests.is_empty() {
-            session_info.push_interests(pending_interests).await?;
-        }
-        self.sessions.insert(session_id, session_info);
         self.session_event_rx
-            .insert(session_id, ReceiverStream::new(event_rx));
-        *peer_state = PeerState::Active { session_id };
+            .insert(peer, ReceiverStream::new(event_rx));
+        // TODO: submit intents that were submitted while establishing
+        // for intent in intents {
+        //     update_tx.send(SessionUpdate::SubmitIntent(intent)).await?;
+        // }
+        if let Some(handle) = betty_catchall_intent {
+            self.betty_intent_rx.insert(peer, handle.split().1);
+        }
+        *peer_state = PeerState::Active {
+            // session_id,
+            cancel_token,
+            update_tx,
+            // our_role,
+        };
         Ok(())
     }
 
-    pub async fn sync_with_peer(
-        &mut self,
-        peer: NodeId,
-        init: SessionInit,
-    ) -> Result<IntentHandle> {
-        let intent_interests = self.actor.resolve_interests(init.interests).await?;
-        // TODO: Allow to configure cap?
-        let (event_tx, event_rx) = mpsc::channel(INTENT_EVENT_CAP);
-        let (update_tx, update_rx) = mpsc::channel(INTENT_UPDATE_CAP);
-        let intent_id = {
-            let intent_id = self.next_intent_id;
-            self.next_intent_id += 1;
-            intent_id
-        };
-        let info = IntentInfo {
-            intent_id,
-            interests: flatten_interests(&intent_interests),
-            mode: init.mode,
-            event_tx,
-        };
-        let handle = IntentHandle {
-            event_rx,
-            update_tx,
-        };
-        self.intent_update_rx.insert(
-            (peer, intent_id),
-            StreamNotifyClose::new(ReceiverStream::new(update_rx)),
-        );
+    pub async fn submit_intent(&mut self, peer: NodeId, intent: IntentData) -> Result<()> {
         match self.peers.get_mut(&peer) {
             None => {
                 self.dialer.queue_dial(peer, ALPN);
-                let intents = vec![info];
-                let peer_state = PeerState::Connecting {
-                    intents,
-                    interests: intent_interests,
-                };
+                let intents = vec![intent];
+                let peer_state = PeerState::Connecting { intents };
                 self.peers.insert(peer, peer_state);
             }
             Some(state) => match state {
-                PeerState::Connecting { intents, interests } => {
-                    intents.push(info);
-                    merge_interests(interests, intent_interests);
+                PeerState::Connecting { intents } => {
+                    intents.push(intent);
                 }
-                PeerState::Establishing {
-                    intents,
-                    pending_interests,
-                    ..
-                } => {
-                    intents.push(info);
-                    merge_interests(pending_interests, intent_interests);
+                PeerState::Establishing { intents, .. } => {
+                    intents.push(intent);
                 }
-                PeerState::Active { session_id, .. } => {
-                    let session = self.sessions.get_mut(session_id).expect("session to exist");
-                    session.intents.push(info);
-                    session.push_interests(intent_interests).await?;
+                PeerState::Active { update_tx, .. } => {
+                    update_tx.send(SessionUpdate::SubmitIntent(intent)).await?;
                 }
                 PeerState::Placeholder => unreachable!(),
             },
         };
-        Ok(handle)
-    }
-
-    pub async fn update_intent(
-        &mut self,
-        peer: NodeId,
-        intent_id: u64,
-        update: IntentUpdate,
-    ) -> Result<()> {
-        match update {
-            IntentUpdate::AddInterests(interests) => {
-                let add_interests = self.actor.resolve_interests(interests).await?;
-                match self.peers.get_mut(&peer) {
-                    None => anyhow::bail!("invalid node id"),
-                    Some(peer_state) => match peer_state {
-                        PeerState::Connecting { intents, interests } => {
-                            let intent_info = intents
-                                .iter_mut()
-                                .find(|i| i.intent_id == intent_id)
-                                .ok_or_else(|| anyhow!("invalid intent id"))?;
-                            intent_info.merge_interests(&add_interests);
-                            merge_interests(interests, add_interests);
-                        }
-                        PeerState::Establishing {
-                            intents,
-                            pending_interests,
-                            ..
-                        } => {
-                            let intent_info = intents
-                                .iter_mut()
-                                .find(|i| i.intent_id == intent_id)
-                                .ok_or_else(|| anyhow!("invalid intent id"))?;
-                            intent_info.merge_interests(&add_interests);
-                            merge_interests(pending_interests, add_interests);
-                        }
-                        PeerState::Active { session_id, .. } => {
-                            let session =
-                                self.sessions.get_mut(session_id).expect("session to exist");
-                            let Some(intent_info) = session
-                                .intents
-                                .iter_mut()
-                                .find(|i| i.intent_id == intent_id)
-                            else {
-                                anyhow::bail!("invalid intent id");
-                            };
-                            intent_info.merge_interests(&add_interests);
-                            session.push_interests(add_interests).await?;
-                        }
-                        PeerState::Placeholder => unreachable!(),
-                    },
-                };
-            }
-            IntentUpdate::Close => {
-                self.cancel_intent(peer, intent_id);
-            }
-        }
         Ok(())
     }
 
-    pub fn cancel_intent(&mut self, peer: NodeId, intent_id: u64) {
-        let Some(peer_state) = self.peers.get_mut(&peer) else {
-            return;
-        };
-
-        self.intent_update_rx.remove(&(peer, intent_id));
-
-        match peer_state {
-            PeerState::Connecting { intents, .. } => {
-                intents.retain(|intent_info| intent_info.intent_id != intent_id);
-                if intents.is_empty() {
-                    self.dialer.abort_dial(&peer);
-                    self.peers.remove(&peer);
-                }
-            }
-            PeerState::Establishing { intents, .. } => {
-                intents.retain(|intent_info| intent_info.intent_id != intent_id);
-            }
-            PeerState::Active { session_id, .. } => {
-                let session = self.sessions.get_mut(session_id).expect("session to exist");
-                session
-                    .intents
-                    .retain(|intent| intent.intent_id != intent_id);
-                if session.intents.is_empty() {
-                    session.cancel_token.cancel();
-                }
-            }
-            PeerState::Placeholder => unreachable!(),
-        }
-    }
-
-    pub async fn received_command(&mut self, command: Command) {
-        tracing::info!(?command, "command");
-        match command {
-            Command::SyncWithPeer { peer, init, reply } => {
-                let res = self.sync_with_peer(peer, init).await;
-                reply.send(res).ok();
-            }
-            Command::HandleConnection { conn } => {
-                self.handle_connection(conn, Role::Betty).await;
-            }
-        }
-    }
-
-    pub async fn received_event(&mut self, session_id: SessionId, event: EventKind) {
+    pub async fn received_event(&mut self, peer: NodeId, event: SessionEvent) {
         tracing::info!(?event, "event");
-        let Some(session) = self.sessions.get_mut(&session_id) else {
-            tracing::warn!(?session_id, ?event, "Got event for unknown session");
-            return;
-        };
-
-        let peer = session.peer;
-
-        if let EventKind::Closed { mut result } = event {
-            if result.is_ok() {
-                // Inject error from networking tasks.
-                if let Some(net_error) = session.net_error.take() {
-                    result = Err(Arc::new(Error::Net(net_error)));
-                }
+        match event {
+            SessionEvent::Revealed => {}
+            SessionEvent::Complete { result } => {
+                self.remove_peer(peer, result).await;
             }
-            self.remove_peer(peer, result).await;
-            return;
-        }
-
-        if let EventKind::Reconciled { namespace, area } = &event {
-            session
-                .complete_areas
-                .entry(*namespace)
-                .or_default()
-                .insert(area.clone());
-        }
-
-        let send_futs = session
-            .intents
-            .iter_mut()
-            .map(|intent_info| intent_info.handle_event(&event));
-        let send_res = futures_buffered::join_all(send_futs).await;
-        let mut removed = 0;
-        for (i, res) in send_res.into_iter().enumerate() {
-            match res {
-                Err(ReceiverDropped) | Ok(false) => {
-                    session.intents.remove(i - removed);
-                    removed += 1;
-                }
-                Ok(true) => {}
-            }
-        }
-
-        // Cancel the session if all intents are gone.
-        if session.our_role.is_alfie() && session.intents.is_empty() {
-            session.cancel_token.cancel();
         }
     }
-
     async fn handle_connection(&mut self, conn: Connection, our_role: Role) {
         let peer = match iroh_net::endpoint::get_remote_node_id(&conn) {
             Ok(node_id) => node_id,
@@ -571,21 +353,21 @@ impl PeerManager {
                 return;
             }
         };
-        if let Err(err) = self.handle_connection_inner(peer, conn, our_role).await {
+        if let Err(err) = self.handle_connection_inner(peer, conn, our_role) {
             tracing::warn!(?peer, ?err, "failed to establish connection");
             let result = Err(Arc::new(Error::Net(err)));
             self.remove_peer(peer, result).await;
         }
     }
 
-    async fn handle_connection_inner(
+    fn handle_connection_inner(
         &mut self,
         peer: NodeId,
         conn: Connection,
         our_role: Role,
     ) -> Result<()> {
         let peer_state = self.peers.get_mut(&peer);
-        let (interests, mode, intents) = match our_role {
+        let (intents, betty_catchall_intent) = match our_role {
             Role::Alfie => {
                 let peer_state = peer_state
                     .ok_or_else(|| anyhow!("got connection for peer without any intents"))?;
@@ -600,18 +382,11 @@ impl PeerManager {
                         tracing::warn!("got connection for already establishing peer");
                         return Ok(());
                     }
-                    PeerState::Connecting { intents, interests } => {
-                        let mode = if intents.iter().any(|i| matches!(i.mode, SessionMode::Live)) {
-                            SessionMode::Live
-                        } else {
-                            SessionMode::ReconcileOnce
-                        };
-                        (interests, mode, intents)
-                    }
+                    PeerState::Connecting { intents } => (intents, None),
                 }
             }
             Role::Betty => {
-                let intents = if let Some(peer_state) = peer_state {
+                let mut intents = if let Some(peer_state) = peer_state {
                     let peer_state = std::mem::replace(peer_state, PeerState::Placeholder);
                     match peer_state {
                         PeerState::Placeholder => unreachable!(),
@@ -631,32 +406,28 @@ impl PeerManager {
                 } else {
                     Default::default()
                 };
-                let interests = self.actor.resolve_interests(Interests::All).await?;
-                (interests, SessionMode::Live, intents)
+                let all_init = SessionInit::new(Interests::All, SessionMode::Live);
+                let (handle, data) = IntentHandle::new(all_init);
+                intents.push(data);
+                (intents, Some(handle))
             }
         };
 
         let me = self.endpoint.node_id();
         let actor = self.actor.clone();
-        let submitted_interests = interests.clone();
-        let init = SessionInit {
-            mode,
-            interests: Interests::Exact(interests),
-        };
         let establish_fut = async move {
             let (initial_transmission, channels, tasks) = setup(conn, me, our_role).await?;
             let session_handle = actor
-                .init_session(peer, our_role, initial_transmission, channels, init)
+                .init_session(peer, our_role, initial_transmission, channels, intents)
                 .await?;
             Ok::<_, anyhow::Error>((tasks, session_handle))
         };
         let establish_fut = establish_fut.map(move |res| (peer, res));
         let _task_handle = self.establish_tasks.spawn(establish_fut);
         let peer_state = PeerState::Establishing {
-            our_role,
-            intents,
-            submitted_interests,
-            pending_interests: Default::default(),
+            // our_role,
+            intents: Vec::new(),
+            betty_catchall_intent,
         };
         self.peers.insert(peer, peer_state);
         Ok(())
@@ -664,198 +435,27 @@ impl PeerManager {
 }
 
 #[derive(Debug)]
-struct SessionInfo {
-    peer: NodeId,
-    our_role: Role,
-    complete_areas: NamespaceInterests,
-    submitted_interests: InterestMap,
-    intents: Vec<IntentInfo>,
-    net_error: Option<anyhow::Error>,
-    cancel_token: CancellationToken,
-    update_tx: mpsc::Sender<SessionUpdate>,
-}
-
-impl SessionInfo {
-    async fn push_interests(&mut self, interests: InterestMap) -> Result<()> {
-        let new_interests = self.merge_interests(interests);
-        self.update_tx
-            .send(AddInterests(Interests::Exact(new_interests)))
-            .await?;
-        Ok(())
-    }
-
-    fn merge_interests(&mut self, interests: InterestMap) -> InterestMap {
-        let mut new: InterestMap = HashMap::new();
-        for (auth, aois) in interests.into_iter() {
-            match self.submitted_interests.entry(auth.clone()) {
-                hash_map::Entry::Vacant(entry) => {
-                    entry.insert(aois.clone());
-                    new.insert(auth, aois);
-                }
-                hash_map::Entry::Occupied(mut entry) => {
-                    let existing = entry.get_mut();
-                    for aoi in aois {
-                        if !existing.contains(&aoi) {
-                            existing.insert(aoi.clone());
-                            new.entry(auth.clone()).or_default().insert(aoi);
-                        }
-                    }
-                }
-            }
-        }
-        new
-    }
-}
-
-#[derive(Debug)]
 enum PeerState {
     Connecting {
-        intents: Vec<IntentInfo>,
-        interests: InterestMap,
+        intents: Vec<IntentData>,
     },
     Establishing {
-        our_role: Role,
-        intents: Vec<IntentInfo>,
-        submitted_interests: InterestMap,
-        pending_interests: InterestMap,
+        // our_role: Role,
+        intents: Vec<IntentData>,
+        betty_catchall_intent: Option<IntentHandle>,
     },
     Active {
-        session_id: SessionId,
+        // session_id: SessionId,
+        // our_role: Role,
+        update_tx: mpsc::Sender<SessionUpdate>,
+        cancel_token: CancellationToken,
     },
     Placeholder,
-}
-
-#[derive(Debug)]
-pub struct IntentHandle {
-    event_rx: mpsc::Receiver<EventKind>,
-    update_tx: mpsc::Sender<IntentUpdate>,
-}
-
-impl IntentHandle {
-    // TODO: impl stream
-    pub async fn next(&mut self) -> Option<EventKind> {
-        self.event_rx.recv().await
-    }
-
-    pub async fn complete(&mut self) -> Result<(), Arc<Error>> {
-        loop {
-            let event = self
-                .event_rx
-                .recv()
-                .await
-                .ok_or_else(|| Arc::new(Error::ActorFailed))?;
-            if let EventKind::Closed { result } = event {
-                return result;
-            }
-        }
-    }
-
-    pub async fn add_interests(&self, interests: impl Into<Interests>) -> Result<()> {
-        self.update_tx
-            .send(IntentUpdate::AddInterests(interests.into()))
-            .await?;
-        Ok(())
-    }
-
-    pub async fn close(&self) {
-        self.update_tx.send(IntentUpdate::Close).await.ok();
-    }
-}
-
-#[derive(Debug)]
-struct IntentInfo {
-    intent_id: u64,
-    interests: NamespaceInterests,
-    mode: SessionMode,
-    event_tx: mpsc::Sender<EventKind>,
-}
-
-impl IntentInfo {
-    fn merge_interests(&mut self, interests: &InterestMap) {
-        for (auth, aois) in interests.iter() {
-            self.interests
-                .entry(auth.namespace())
-                .or_default()
-                .extend(aois.clone());
-        }
-    }
-
-    async fn handle_event(&mut self, event: &EventKind) -> Result<bool, ReceiverDropped> {
-        let send = |event: EventKind| async {
-            self.event_tx.send(event).await.map_err(|_| ReceiverDropped)
-        };
-
-        let stay_alive = match &event {
-            EventKind::CapabilityIntersection { namespace, .. } => {
-                if self.interests.contains_key(namespace) {
-                    send(event.clone()).await?;
-                }
-                true
-            }
-            EventKind::InterestIntersection { area, namespace } => {
-                if let Some(interests) = self.interests.get(namespace) {
-                    let matches = interests
-                        .iter()
-                        .any(|x| x.area.has_intersection(&area.area));
-                    if matches {
-                        send(event.clone()).await?;
-                    }
-                }
-                true
-            }
-            EventKind::Reconciled { area, namespace } => {
-                if let Some(interests) = self.interests.get_mut(namespace) {
-                    let matches = interests
-                        .iter()
-                        .any(|x| x.area.has_intersection(&area.area));
-                    if matches {
-                        send(event.clone()).await?;
-                        interests.retain(|x| !area.area.includes_area(&x.area));
-                        if interests.is_empty() {
-                            send(EventKind::ReconciledAll).await?;
-                        }
-                    }
-                }
-                true
-            }
-            EventKind::Closed { .. } => {
-                send(event.clone()).await?;
-                false
-            }
-            EventKind::ReconciledAll => true,
-        };
-        Ok(stay_alive)
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("receiver dropped")]
 pub struct ReceiverDropped;
-
-fn merge_interests(a: &mut InterestMap, b: InterestMap) {
-    for (cap, aois) in b.into_iter() {
-        a.entry(cap).or_default().extend(aois);
-    }
-}
-
-fn flatten_interests(interests: &InterestMap) -> NamespaceInterests {
-    let mut out = NamespaceInterests::new();
-    for (cap, aois) in interests {
-        out.entry(cap.namespace()).or_default().extend(aois.clone());
-    }
-    out
-}
-
-async fn send_all<T: Clone>(
-    senders: impl IntoIterator<Item = impl std::borrow::Borrow<mpsc::Sender<T>>>,
-    message: T,
-) -> Vec<Result<(), mpsc::error::SendError<T>>> {
-    let futs = senders.into_iter().map(|sender| {
-        let message = message.clone();
-        async move { sender.borrow().send(message).await }
-    });
-    futures_buffered::join_all(futs).await
-}
 
 #[cfg(test)]
 mod tests {
@@ -870,7 +470,7 @@ mod tests {
         actor::ActorHandle,
         auth::{CapSelector, DelegateTo},
         form::{AuthForm, EntryForm, PayloadForm, SubspaceForm, TimestampForm},
-        net::run,
+        // net::run,
         proto::{
             grouping::{Area, AreaOfInterest, ThreeDRange},
             keys::{NamespaceId, NamespaceKind, UserId},
@@ -935,10 +535,10 @@ mod tests {
 
                 assert_eq!(intent.next().await.unwrap(), EventKind::ReconciledAll);
 
-                assert_eq!(
-                    intent.next().await.unwrap(),
-                    EventKind::Closed { result: Ok(()) }
-                );
+                // assert_eq!(
+                //     intent.next().await.unwrap(),
+                //     EventKind::Closed { result: Ok(()) }
+                // );
 
                 assert!(intent.next().await.is_none());
             }
@@ -980,10 +580,10 @@ mod tests {
 
                 assert_eq!(intent.next().await.unwrap(), EventKind::ReconciledAll);
 
-                assert_eq!(
-                    intent.next().await.unwrap(),
-                    EventKind::Closed { result: Ok(()) }
-                );
+                // assert_eq!(
+                //     intent.next().await.unwrap(),
+                //     EventKind::Closed { result: Ok(()) }
+                // );
 
                 assert!(intent.next().await.is_none());
             }
@@ -1010,11 +610,11 @@ mod tests {
         insert(&betty, namespace, betty_user, &[b"bar"], "bar 1").await?;
 
         let path = Path::new(&[b"foo"]).unwrap();
-
         let interests = Interests::select().area(namespace, [Area::path(path.clone())]);
         let init = SessionInit::new(interests, SessionMode::Live);
         let mut intent = alfie.sync_with_peer(betty_node_id, init).await.unwrap();
 
+        println!("start");
         assert_eq!(
             intent.next().await.unwrap(),
             EventKind::CapabilityIntersection {
@@ -1022,6 +622,7 @@ mod tests {
                 area: Area::full(),
             }
         );
+        println!("first in!");
         assert_eq!(
             intent.next().await.unwrap(),
             EventKind::InterestIntersection {
@@ -1062,10 +663,6 @@ mod tests {
         intent.close().await;
 
         assert!(intent.next().await.is_none(),);
-        // assert_eq!(
-        //     intent.next().await.unwrap(),
-        //     EventKind::Closed { result: Ok(()) }
-        // );
 
         shutdown();
         Ok(())

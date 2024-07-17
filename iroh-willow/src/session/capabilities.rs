@@ -58,6 +58,10 @@ impl Capabilities {
         })
     }
 
+    pub fn is_revealed(&self) -> bool {
+        self.0.borrow().challenge.is_revealed()
+    }
+
     pub fn find_ours(&self, cap: &ReadCapability) -> Option<CapabilityHandle> {
         self.0.borrow().ours.find(cap)
     }
@@ -137,10 +141,6 @@ impl Capabilities {
         }
         Ok(())
     }
-
-    // pub fn is_revealed(&self) -> bool {
-    //     self.0.borrow().challenge.is_revealed()
-    // }
 
     pub fn sign_subspace_capabiltiy<S: SecretStorage>(
         &self,

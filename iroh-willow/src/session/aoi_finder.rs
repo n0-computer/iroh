@@ -113,12 +113,12 @@ impl IntersectionFinder {
 
     async fn add_interests(&mut self, interests: InterestMap) {
         for (authorisation, aois) in interests.into_iter() {
-            let capability_handle = self.caps.find_ours(authorisation.read_cap());
             let namespace = authorisation.namespace();
             match self.interests.entry(authorisation.clone()) {
                 hash_map::Entry::Occupied(mut entry) => {
                     // The authorisation is already submitted.
                     let existing = entry.get_mut();
+                    let capability_handle = self.caps.find_ours(authorisation.read_cap());
                     for aoi in aois {
                         // If the AoI is new, and the capability is already bound, bind and send
                         // the AoI right away.

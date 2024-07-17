@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures_lite::{future::Boxed as BoxFuture, stream::Stream, StreamExt};
 use futures_util::future::{self, FutureExt};
 use iroh_base::key::NodeId;
@@ -23,6 +23,7 @@ use crate::{
     },
     session::{
         events::{EventKind, EventSender, SessionEvent},
+        intents::IntentData,
         run_session, Channels, Error, Interests, Role, SessionId, SessionInit, SessionUpdate,
     },
     store::{
@@ -150,7 +151,8 @@ impl ActorHandle {
         our_role: Role,
         initial_transmission: InitialTransmission,
         channels: Channels,
-        init: SessionInit,
+        // init: SessionInit,
+        intents: Vec<IntentData>,
     ) -> Result<SessionHandle> {
         let (reply, reply_rx) = oneshot::channel();
         self.send(ToActor::InitSession {
@@ -158,7 +160,8 @@ impl ActorHandle {
             initial_transmission,
             peer,
             channels,
-            init,
+            // init,
+            intents,
             reply,
         })
         .await?;
@@ -238,27 +241,27 @@ impl Drop for ActorHandle {
 
 #[derive(Debug)]
 pub struct SessionHandle {
-    pub session_id: SessionId,
+    // pub session_id: SessionId,
     pub cancel_token: CancellationToken,
     pub update_tx: mpsc::Sender<SessionUpdate>,
-    pub event_rx: mpsc::Receiver<EventKind>,
+    pub event_rx: mpsc::Receiver<SessionEvent>,
 }
 
 impl SessionHandle {
-    pub fn session_id(&self) -> SessionId {
-        self.session_id
-    }
+    // pub fn session_id(&self) -> SessionId {
+    //     self.session_id
+    // }
 
     /// Wait for the session to finish.
     ///
     /// Returns an error if the session failed to complete.
     pub async fn on_finish(&mut self) -> Result<(), Arc<Error>> {
         while let Some(event) = self.event_rx.recv().await {
-            if let EventKind::Closed { result } = event {
+            if let SessionEvent::Complete { result } = event {
                 return result;
             }
         }
-        Err(Arc::new(Error::ActorFailed))
+        Ok(())
     }
 
     pub async fn send_update(&self, update: SessionUpdate) -> Result<()> {
@@ -272,6 +275,7 @@ impl SessionHandle {
     /// Previously queued messages will still be sent out. The session will only be closed
     /// once the other peer closes their senders as well.
     pub fn close(&self) {
+        debug!("close session (session handle close called)");
         self.cancel_token.cancel();
     }
 }
@@ -284,7 +288,8 @@ pub enum ToActor {
         initial_transmission: InitialTransmission,
         #[debug(skip)]
         channels: Channels,
-        init: SessionInit,
+        // init: SessionInit,
+        intents: Vec<IntentData>,
         reply: oneshot::Sender<Result<SessionHandle>>,
     },
     GetEntries {
@@ -338,10 +343,9 @@ pub enum ToActor {
 
 #[derive(Debug)]
 struct ActiveSession {
-    #[allow(unused)]
-    peer: NodeId,
+    // peer: NodeId,
     task_key: TaskKey, // state: SharedSessionState<S>
-    event_tx: mpsc::Sender<EventKind>,
+                       // event_tx: mpsc::Sender<SessionEvent>,
 }
 
 #[derive(Debug)]
@@ -350,7 +354,7 @@ pub struct Actor<S: Storage> {
     store: Store<S>,
     next_session_id: u64,
     sessions: HashMap<SessionId, ActiveSession>,
-    session_tasks: JoinMap<SessionId, Result<(), Error>>,
+    session_tasks: JoinMap<SessionId, Result<(), Arc<Error>>>,
     tasks: JoinSet<()>,
 }
 
@@ -385,11 +389,8 @@ impl<S: Storage> Actor<S> {
                     }
                 },
                 Some((id, res)) = self.session_tasks.next(), if !self.session_tasks.is_empty() => {
-                    let res = match res {
-                        Ok(res) => res,
-                        Err(err) => Err(err.into())
-                    };
-                    self.complete_session(&id, res).await;
+                    let _res = res.context("session task paniced")?;
+                    self.complete_session(&id).await;
                 }
             };
         }
@@ -411,7 +412,8 @@ impl<S: Storage> Actor<S> {
                 channels,
                 our_role,
                 initial_transmission,
-                init,
+                intents,
+                // init,
                 reply,
             } => {
                 let session_id = self.next_session_id();
@@ -428,7 +430,7 @@ impl<S: Storage> Actor<S> {
                     cancel_token.clone(),
                     session_id,
                     our_role,
-                    init,
+                    intents,
                     initial_transmission,
                     EventSender(event_tx.clone()),
                     update_rx,
@@ -438,13 +440,13 @@ impl<S: Storage> Actor<S> {
                 let task_key = self.session_tasks.spawn_local(session_id, future);
 
                 let active_session = ActiveSession {
-                    event_tx,
+                    // event_tx,
                     task_key,
-                    peer,
+                    // peer,
                 };
                 self.sessions.insert(session_id, active_session);
                 let handle = SessionHandle {
-                    session_id,
+                    // session_id,
                     cancel_token,
                     update_tx,
                     event_rx,
@@ -524,19 +526,19 @@ impl<S: Storage> Actor<S> {
         }
     }
 
-    async fn complete_session(&mut self, session_id: &SessionId, result: Result<(), Error>) {
+    async fn complete_session(&mut self, session_id: &SessionId) {
         let session = self.sessions.remove(session_id);
         if let Some(session) = session {
-            debug!(?session, ?result, "complete session");
-            let result = match result {
-                Ok(()) => Ok(()),
-                Err(err) => Err(Arc::new(err)),
-            };
-            session
-                .event_tx
-                .send(EventKind::Closed { result })
-                .await
-                .ok();
+            // debug!(?session, ?result, "complete session");
+            // let result = match result {
+            //     Ok(()) => Ok(()),
+            //     Err(err) => Err(Arc::new(err)),
+            // };
+            // session
+            //     .event_tx
+            //     .send(EventKind::Closed { result })
+            //     .await
+            //     .ok();
             self.session_tasks.remove(&session.task_key);
         } else {
             warn!("remove_session called for unknown session");

@@ -14,6 +14,7 @@ use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 #[derive(Debug)]
 pub struct Cancelable<S> {
     stream: S,
+    // TODO: Don't allocate here.
     cancelled: Pin<Box<WaitForCancellationFutureOwned>>,
     is_cancelled: bool,
 }
@@ -31,18 +32,20 @@ impl<S> Cancelable<S> {
 impl<S: Stream + Unpin> Stream for Cancelable<S> {
     type Item = S::Item;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.is_cancelled {
-            return Poll::Ready(None);
-        }
         match Pin::new(&mut self.stream).poll_next(cx) {
             Poll::Ready(r) => Poll::Ready(r),
-            Poll::Pending => match Pin::new(&mut self.cancelled).poll(cx) {
-                Poll::Ready(()) => {
-                    self.is_cancelled = true;
-                    Poll::Ready(None)
+            Poll::Pending => {
+                if self.is_cancelled {
+                    return Poll::Ready(None);
                 }
-                Poll::Pending => Poll::Pending,
-            },
+                match Pin::new(&mut self.cancelled).poll(cx) {
+                    Poll::Ready(()) => {
+                        self.is_cancelled = true;
+                        Poll::Ready(None)
+                    }
+                    Poll::Pending => Poll::Pending,
+                }
+            }
         }
     }
 }

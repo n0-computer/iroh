@@ -20,6 +20,7 @@ use crate::{
             ChannelReceivers, ChannelSenders, Channels, LogicalChannelReceivers,
             LogicalChannelSenders,
         },
+        intents::IntentData,
         Role, SessionInit,
     },
     util::channel::{
@@ -84,17 +85,18 @@ pub async fn run(
     actor: ActorHandle,
     conn: Connection,
     our_role: Role,
-    init: SessionInit,
+    intents: Vec<IntentData>,
+    // init: SessionInit,
 ) -> anyhow::Result<SessionHandle> {
     let peer = iroh_net::endpoint::get_remote_node_id(&conn)?;
     let (initial_transmission, channels, tasks) = setup(conn, me, our_role).await?;
     let handle = actor
-        .init_session(peer, our_role, initial_transmission, channels, init)
+        .init_session(peer, our_role, initial_transmission, channels, intents)
         .await?;
 
     Ok(SessionHandle { handle, tasks })
 }
-
+//
 #[derive(Debug)]
 pub struct SessionHandle {
     handle: actor::SessionHandle,
@@ -335,7 +337,7 @@ mod tests {
             meadowcap::AccessMode,
             willow::{Entry, InvalidPath, Path},
         },
-        session::{Interests, Role, SessionInit, SessionMode},
+        session::{intents::IntentHandle, Interests, Role, SessionInit, SessionMode},
     };
 
     const ALPN: &[u8] = b"iroh-willow/0";
@@ -402,6 +404,8 @@ mod tests {
 
         let init_alfie = SessionInit::new(Interests::All, SessionMode::ReconcileOnce);
         let init_betty = SessionInit::new(Interests::All, SessionMode::ReconcileOnce);
+        let (mut intent_alfie, intent_alfie_data) = IntentHandle::new(init_alfie);
+        let (mut intent_betty, intent_betty_data) = IntentHandle::new(init_betty);
 
         info!("init took {:?}", start.elapsed());
 
@@ -419,25 +423,33 @@ mod tests {
                 handle_alfie.clone(),
                 conn_alfie,
                 Role::Alfie,
-                init_alfie
+                vec![intent_alfie_data]
             ),
             run(
                 node_id_betty,
                 handle_betty.clone(),
                 conn_betty,
                 Role::Betty,
-                init_betty
+                vec![intent_betty_data]
             )
         );
         let mut session_alfie = session_alfie?;
         let mut session_betty = session_betty?;
-        let (res_alfie, res_betty) = tokio::join!(session_alfie.join(), session_betty.join());
-        info!(time=?start.elapsed(), "reconciliation finished");
 
-        info!("alfie res {:?}", res_alfie);
-        info!("betty res {:?}", res_betty);
+        let (res_alfie, res_betty) = tokio::join!(intent_alfie.complete(), intent_betty.complete());
+        info!("alfie intent res {:?}", res_alfie);
+        info!("betty intent res {:?}", res_betty);
         assert!(res_alfie.is_ok());
         assert!(res_betty.is_ok());
+
+        let (res_alfie, res_betty) = tokio::join!(session_alfie.join(), session_betty.join());
+        info!("alfie session res {:?}", res_alfie);
+        info!("betty session res {:?}", res_betty);
+        assert!(res_alfie.is_ok());
+        assert!(res_betty.is_ok());
+
+        info!(time=?start.elapsed(), "reconciliation finished");
+
         let alfie_entries = get_entries(&handle_alfie, namespace_id).await?;
         let betty_entries = get_entries(&handle_betty, namespace_id).await?;
         info!("alfie has now {} entries", alfie_entries.len());
@@ -543,20 +555,23 @@ mod tests {
         let init_alfie = SessionInit::new(Interests::All, SessionMode::Live);
         let init_betty = SessionInit::new(Interests::All, SessionMode::Live);
 
+        let (mut intent_alfie, intent_alfie_data) = IntentHandle::new(init_alfie);
+        let (mut intent_betty, intent_betty_data) = IntentHandle::new(init_betty);
+
         let (session_alfie, session_betty) = tokio::join!(
             run(
                 node_id_alfie,
                 handle_alfie.clone(),
                 conn_alfie,
                 Role::Alfie,
-                init_alfie
+                vec![intent_alfie_data]
             ),
             run(
                 node_id_betty,
                 handle_betty.clone(),
                 conn_betty,
                 Role::Betty,
-                init_betty
+                vec![intent_betty_data]
             )
         );
         let mut session_alfie = session_alfie?;
@@ -568,11 +583,17 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(1)).await;
         session_alfie.close();
 
-        let (res_alfie, res_betty) = tokio::join!(session_alfie.join(), session_betty.join());
+        let (res_alfie, res_betty) = tokio::join!(intent_alfie.complete(), intent_betty.complete());
         info!(time=?start.elapsed(), "reconciliation finished");
+        info!("alfie intent res {:?}", res_alfie);
+        info!("betty intent res {:?}", res_betty);
+        assert!(res_alfie.is_ok());
+        assert!(res_betty.is_ok());
 
-        info!("alfie res {:?}", res_alfie);
-        info!("betty res {:?}", res_betty);
+        let (res_alfie, res_betty) = tokio::join!(session_alfie.join(), session_betty.join());
+
+        info!("alfie session res {:?}", res_alfie);
+        info!("betty session res {:?}", res_betty);
         assert!(res_alfie.is_ok());
         assert!(res_betty.is_ok());
         let alfie_entries = get_entries(&handle_alfie, namespace_id).await?;
