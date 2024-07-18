@@ -312,9 +312,13 @@ impl ClientBuilder {
         let roots = rustls::RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
         };
-        let mut config = rustls::client::ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
+        let mut config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("default versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth();
         #[cfg(any(test, feature = "test-utils"))]
         if self.insecure_skip_cert_verify {
             warn!("Insecure config: SSL certificates from relay servers will be trusted without verification");
