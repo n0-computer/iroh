@@ -480,7 +480,7 @@ async fn with_span<T: std::fmt::Debug>(
     span: Span,
     fut: impl Future<Output = Result<T, Error>>,
 ) -> Result<T, Error> {
-    async move {
+    async {
         tracing::debug!("start");
         let res = fut.await;
         tracing::debug!(?res, "done");

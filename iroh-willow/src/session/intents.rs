@@ -144,6 +144,16 @@ impl Intent {
     }
 }
 
+#[derive(Debug)]
+pub enum Completion {
+    /// All interests were reconciled.
+    Complete,
+    /// Some interests were reconciled.
+    Partial,
+    /// No interests were reconciled.
+    Nothing,
+}
+
 /// Handle to a [`Intent`].
 ///
 /// The [`IntentHandle`] is a [`Stream`] of [`EventKind`]. It *must* be progressed in a loop,
@@ -173,13 +183,27 @@ impl IntentHandle {
     /// Note that successful completion of this future does not guarantee that all interests were
     /// fulfilled. If you need to know that, use the [`IntentHandle`] as a stream and wait for the
     /// [`EventKind::ReconciledAll`] event.
-    pub async fn complete(&mut self) -> Result<(), Arc<Error>> {
+    pub async fn complete(&mut self) -> Result<Completion, Arc<Error>> {
+        let mut complete = false;
+        let mut partial = false;
         while let Some(event) = self.event_rx.recv().await {
-            if let EventKind::Abort { error } = event {
-                return Err(error);
+            match event {
+                EventKind::ReconciledAll => complete = true,
+                // TODO: track partial reconciliations
+                EventKind::Reconciled { .. } => partial = true,
+                EventKind::Abort { error } => return Err(error),
+                _ => {}
             }
         }
-        Ok(())
+        let completion = if complete {
+            Completion::Complete
+        } else if partial {
+            Completion::Partial
+        } else {
+            Completion::Nothing
+        };
+
+        Ok(completion)
     }
 
     /// Submit new synchronisation interests into the session.
