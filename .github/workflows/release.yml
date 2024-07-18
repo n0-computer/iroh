@@ -263,14 +263,6 @@ jobs:
         - name: Checkout
           uses: actions/checkout@v4
 
-        - name: Install rust
-          uses: dtolnay/rust-toolchain@master
-          with:
-            toolchain: stable
-
-        - name: Install sccache
-          uses: mozilla-actions/sccache-action@v0.0.4
-
         - name: Set up Docker Buildx
           uses: docker/setup-buildx-action@v3
 
@@ -305,7 +297,7 @@ jobs:
 
             aws s3 cp s3://vorc/iroh-linux-aarch64-${GITHUB_SHA::7} bins/linux/arm64/v8/iroh
             aws s3 cp s3://vorc/iroh-relay-linux-aarch64-${GITHUB_SHA::7} bins/linux/arm64/v8/iroh-relay
-            aws s3 cp s3://vorc/iroh-dns-server-aarch64-${GITHUB_SHA::7} bins/linux/arm64/v8/iroh-dns-server
+            aws s3 cp s3://vorc/iroh-dns-server-linux-aarch64-${GITHUB_SHA::7} bins/linux/arm64/v8/iroh-dns-server
 
         - name: Build Docker image (iroh)
           uses: docker/build-push-action@v6
@@ -333,6 +325,6 @@ jobs:
             context: .
             push: true
             tags: n0computer/iroh-dns-server:latest,n0computer/iroh-dns-server:${{ needs.create-release.outputs.release_version }}
-            target: iroh
+            target: iroh-dns-server
             platforms: linux/amd64,linux/arm64/v8
             file: docker/Dockerfile.ci
