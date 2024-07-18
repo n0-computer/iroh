@@ -72,7 +72,7 @@ impl AccessChallenge {
     }
 
     pub fn hash(&self) -> ChallengeHash {
-        ChallengeHash(*Hash::new(&self.0).as_bytes())
+        ChallengeHash(*Hash::new(self.0).as_bytes())
     }
 }
 
