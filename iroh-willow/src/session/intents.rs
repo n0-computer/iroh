@@ -21,7 +21,6 @@ use tokio_util::sync::{CancellationToken, PollSender};
 use tracing::{debug, error_span, Instrument};
 
 use crate::{
-    actor::{Actor, ActorHandle, SessionHandle},
     auth::{Auth, InterestMap},
     net::{setup, ALPN},
     proto::{
@@ -30,9 +29,8 @@ use crate::{
         sync::{ReadAuthorisation, ReadCapability},
     },
     session::{
-        error::ChannelReceiverDropped,
-        events::{EventKind, ReceiverDropped},
-        Error, Interests, Role, SessionId, SessionInit, SessionMode, SessionUpdate,
+        error::ChannelReceiverDropped, Error, Interests, Role, SessionHandle, SessionId,
+        SessionInit, SessionMode, SessionUpdate,
     },
     store::traits::Storage,
     util::gen_stream::GenStream,
@@ -48,37 +46,169 @@ pub type IntentId = u64;
 type Sender<T> = mpsc::Sender<T>;
 type Receiver<T> = mpsc::Receiver<T>;
 
-#[derive(Debug)]
-pub struct IntentData {
-    pub init: SessionInit,
-    pub channels: IntentChannels,
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum EventKind {
+    CapabilityIntersection {
+        namespace: NamespaceId,
+        area: Area,
+    },
+    InterestIntersection {
+        namespace: NamespaceId,
+        area: AreaOfInterest,
+    },
+    Reconciled {
+        namespace: NamespaceId,
+        area: AreaOfInterest,
+    },
+    ReconciledAll,
+    Abort {
+        error: Arc<Error>,
+    },
 }
 
-impl IntentData {
-    pub(super) async fn send_abort(self, error: Arc<Error>) {
-        self.channels
-            .event_tx
-            .send(EventKind::Abort { error })
-            .await
-            .ok();
+impl EventKind {
+    pub fn namespace(&self) -> Option<NamespaceId> {
+        match self {
+            EventKind::CapabilityIntersection { namespace, .. } => Some(*namespace),
+            EventKind::InterestIntersection { namespace, .. } => Some(*namespace),
+            EventKind::Reconciled { namespace, .. } => Some(*namespace),
+            _ => None,
+        }
     }
 }
 
 #[derive(Debug)]
-pub enum Input {
-    EmitEvent(EventKind),
-    SubmitIntent(IntentData),
+pub enum IntentUpdate {
+    AddInterests(Interests),
+    Close,
+}
+
+/// A synchronisation intent.
+#[derive(Debug)]
+pub struct Intent {
+    pub(super) init: SessionInit,
+    channels: Option<IntentChannels>,
+}
+
+impl Intent {
+    /// Create a new intent with associated handle.
+    ///
+    /// The returned [`Intent`] must be passed into a session.
+    /// The returned [`IntentHandle`] can issue updates to the intent, and receives events for the
+    /// intent. The [`IntentHandle`] must be received from in a loop, otherwise the session will
+    /// block.
+    pub fn new(init: SessionInit) -> (Self, IntentHandle) {
+        Self::new_with_cap(init, INTENT_EVENT_CAP, INTENT_UPDATE_CAP)
+    }
+
+    /// Create a new detached intent.
+    ///
+    /// A detached intent submits interests into a session, but does not allow to issue updates or
+    /// receive events.
+    pub fn new_detached(init: SessionInit) -> Self {
+        Self {
+            init,
+            channels: None,
+        }
+    }
+
+    fn new_with_cap(
+        init: SessionInit,
+        event_cap: usize,
+        update_cap: usize,
+    ) -> (Self, IntentHandle) {
+        let (event_tx, event_rx) = mpsc::channel(event_cap);
+        let (update_tx, update_rx) = mpsc::channel(update_cap);
+        let handle = IntentHandle {
+            event_rx,
+            update_tx,
+        };
+        let channels = IntentChannels {
+            event_tx,
+            update_rx,
+        };
+        let intent = Intent {
+            init,
+            channels: Some(channels),
+        };
+        (intent, handle)
+    }
+
+    /// Abort the intent.
+    ///
+    /// Will send a final [`EventKind::Abort`] if the intent is not detached.
+    pub async fn send_abort(self, error: Arc<Error>) {
+        if let Some(channels) = self.channels {
+            channels
+                .event_tx
+                .send(EventKind::Abort { error })
+                .await
+                .ok();
+        }
+    }
+}
+
+/// Handle to a [`Intent`]
+#[derive(Debug)]
+pub struct IntentHandle {
+    event_rx: Receiver<EventKind>,
+    update_tx: Sender<IntentUpdate>,
+}
+
+impl IntentHandle {
+    pub fn split(self) -> (PollSender<IntentUpdate>, ReceiverStream<EventKind>) {
+        (
+            PollSender::new(self.update_tx),
+            ReceiverStream::new(self.event_rx),
+        )
+    }
+
+    pub async fn next(&mut self) -> Option<EventKind> {
+        self.event_rx.recv().await
+    }
+
+    pub async fn complete(&mut self) -> Result<(), Arc<Error>> {
+        while let Some(event) = self.event_rx.recv().await {
+            if let EventKind::Abort { error } = event {
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn add_interests(&self, interests: impl Into<Interests>) -> Result<()> {
+        self.update_tx
+            .send(IntentUpdate::AddInterests(interests.into()))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn close(&self) {
+        self.update_tx.send(IntentUpdate::Close).await.ok();
+    }
 }
 
 #[derive(Debug)]
-pub enum Output {
+struct IntentChannels {
+    event_tx: Sender<EventKind>,
+    update_rx: Receiver<IntentUpdate>,
+}
+
+#[derive(Debug)]
+pub(super) enum Input {
+    EmitEvent(EventKind),
+    SubmitIntent(Intent),
+}
+
+#[derive(Debug)]
+pub(super) enum Output {
     SubmitInterests(InterestMap),
     AllIntentsDropped,
 }
 
 #[derive(derive_more::Debug)]
-pub struct IntentDispatcher<S: Storage> {
-    pending_intents: VecDeque<IntentData>,
+pub(super) struct IntentDispatcher<S: Storage> {
+    pending_intents: VecDeque<Intent>,
     intents: HashMap<IntentId, IntentInfo>,
     auth: Auth<S>,
     #[debug("StreamMap")]
@@ -88,7 +218,7 @@ pub struct IntentDispatcher<S: Storage> {
 }
 
 impl<S: Storage> IntentDispatcher<S> {
-    pub fn new(auth: Auth<S>, initial_intents: impl IntoIterator<Item = IntentData>) -> Self {
+    pub(super) fn new(auth: Auth<S>, initial_intents: impl IntoIterator<Item = Intent>) -> Self {
         Self {
             pending_intents: initial_intents.into_iter().collect(),
             intents: Default::default(),
@@ -99,16 +229,21 @@ impl<S: Storage> IntentDispatcher<S> {
         }
     }
 
-    pub async fn abort_all(&self, error: Arc<Error>) {
+    pub(super) async fn abort_all(&self, error: Arc<Error>) {
         let _ = futures_buffered::join_all(
-            self.pending_intents
-                .iter()
-                .map(|intent| &intent.channels.event_tx)
-                .chain(self.intents.values().map(|intent| &intent.event_tx))
-                .map(|event_tx| {
-                    let error = error.clone();
-                    async move { event_tx.send(EventKind::Abort { error }).await }
-                }),
+            Iterator::chain(
+                self.pending_intents
+                    .iter()
+                    .flat_map(|intent| intent.channels.as_ref())
+                    .map(|ch| &ch.event_tx),
+                self.intents
+                    .values()
+                    .flat_map(|intent| intent.event_tx.as_ref()),
+            )
+            .map(|event_tx| {
+                let error = error.clone();
+                async move { event_tx.send(EventKind::Abort { error }).await }
+            }),
         )
         .await;
     }
@@ -116,18 +251,14 @@ impl<S: Storage> IntentDispatcher<S> {
     /// Run the [`IntentDispatcher`].
     ///
     /// The returned stream is a generator, so it must be polled repeatedly to progress.
-    pub fn run_gen(
+    pub(super) fn run_gen(
         &mut self,
         inbox: impl Stream<Item = Input> + 'static,
     ) -> GenStream<Output, Error, impl Future<Output = Result<(), Error>> + '_> {
         GenStream::new(|co| self.run(co, inbox))
     }
 
-    pub async fn run(
-        &mut self,
-        co: Co<Output>,
-        inbox: impl Stream<Item = Input>,
-    ) -> Result<(), Error> {
+    async fn run(&mut self, co: Co<Output>, inbox: impl Stream<Item = Input>) -> Result<(), Error> {
         tokio::pin!(inbox);
 
         while let Some(intent) = self.pending_intents.pop_front() {
@@ -171,17 +302,21 @@ impl<S: Storage> IntentDispatcher<S> {
         Ok(())
     }
 
-    async fn submit_intent(&mut self, co: &Co<Output>, intent: IntentData) -> Result<(), Error> {
+    async fn submit_intent(&mut self, co: &Co<Output>, intent: Intent) -> Result<(), Error> {
         let interests = self.auth.resolve_interests(intent.init.interests)?;
         let intent_id = {
             let intent_id = self.next_intent_id;
             self.next_intent_id += 1;
             intent_id
         };
-        let IntentChannels {
-            event_tx,
-            update_rx,
-        } = intent.channels;
+        let (event_tx, update_rx) = match intent.channels {
+            None => (None, None),
+            Some(IntentChannels {
+                event_tx,
+                update_rx,
+            }) => (Some(event_tx), Some(update_rx)),
+        };
+
         let mut info = IntentInfo {
             interests: flatten_interests(&interests),
             mode: intent.init.mode,
@@ -196,10 +331,12 @@ impl<S: Storage> IntentDispatcher<S> {
 
         if !info.is_complete() {
             self.intents.insert(intent_id, info);
-            self.intent_update_rx.insert(
-                intent_id,
-                StreamNotifyClose::new(ReceiverStream::new(update_rx)),
-            );
+            if let Some(update_rx) = update_rx {
+                self.intent_update_rx.insert(
+                    intent_id,
+                    StreamNotifyClose::new(ReceiverStream::new(update_rx)),
+                );
+            }
             co.yield_(Output::SubmitInterests(interests)).await;
         }
 
@@ -220,7 +357,7 @@ impl<S: Storage> IntentDispatcher<S> {
         let send_res = futures_buffered::join_all(send_futs).await;
         for (id, res) in send_res.into_iter() {
             match res {
-                Err(ReceiverDropped) => {
+                Err(ChannelReceiverDropped) => {
                     if !self.intent_update_rx.contains_key(&id) {
                         self.cancel_intent(co, id).await;
                     }
@@ -234,7 +371,7 @@ impl<S: Storage> IntentDispatcher<S> {
         }
     }
 
-    pub async fn update_intent(
+    async fn update_intent(
         &mut self,
         co: &Co<Output>,
         intent_id: u64,
@@ -257,7 +394,7 @@ impl<S: Storage> IntentDispatcher<S> {
         Ok(())
     }
 
-    pub async fn cancel_intent(&mut self, co: &Co<Output>, intent_id: u64) {
+    async fn cancel_intent(&mut self, co: &Co<Output>, intent_id: u64) {
         debug!(?intent_id, "cancel intent");
         self.intent_update_rx.remove(&intent_id);
         self.intents.remove(&intent_id);
@@ -268,81 +405,10 @@ impl<S: Storage> IntentDispatcher<S> {
 }
 
 #[derive(Debug)]
-pub enum IntentUpdate {
-    AddInterests(Interests),
-    Close,
-}
-
-#[derive(Debug)]
-pub struct IntentHandle {
-    event_rx: Receiver<EventKind>,
-    update_tx: Sender<IntentUpdate>,
-}
-
-#[derive(Debug)]
-pub struct IntentChannels {
-    event_tx: Sender<EventKind>,
-    update_rx: Receiver<IntentUpdate>,
-}
-
-impl IntentHandle {
-    pub fn new(init: SessionInit) -> (Self, IntentData) {
-        let (handle, channels) = Self::with_cap(INTENT_EVENT_CAP, INTENT_UPDATE_CAP);
-        let data = IntentData { init, channels };
-        (handle, data)
-    }
-
-    pub fn with_cap(event_cap: usize, update_cap: usize) -> (Self, IntentChannels) {
-        let (event_tx, event_rx) = mpsc::channel(event_cap);
-        let (update_tx, update_rx) = mpsc::channel(update_cap);
-        (
-            IntentHandle {
-                event_rx,
-                update_tx,
-            },
-            IntentChannels {
-                event_tx,
-                update_rx,
-            },
-        )
-    }
-    pub fn split(self) -> (PollSender<IntentUpdate>, ReceiverStream<EventKind>) {
-        (
-            PollSender::new(self.update_tx),
-            ReceiverStream::new(self.event_rx),
-        )
-    }
-
-    pub async fn next(&mut self) -> Option<EventKind> {
-        self.event_rx.recv().await
-    }
-
-    pub async fn complete(&mut self) -> Result<(), Arc<Error>> {
-        while let Some(event) = self.event_rx.recv().await {
-            if let EventKind::Abort { error } = event {
-                return Err(error);
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn add_interests(&self, interests: impl Into<Interests>) -> Result<()> {
-        self.update_tx
-            .send(IntentUpdate::AddInterests(interests.into()))
-            .await?;
-        Ok(())
-    }
-
-    pub async fn close(&self) {
-        self.update_tx.send(IntentUpdate::Close).await.ok();
-    }
-}
-
-#[derive(Debug)]
 pub(super) struct IntentInfo {
     interests: NamespaceInterests,
     mode: SessionMode,
-    event_tx: Sender<EventKind>,
+    event_tx: Option<Sender<EventKind>>,
 }
 
 impl IntentInfo {
@@ -360,7 +426,10 @@ impl IntentInfo {
     }
 
     fn events_closed(&self) -> bool {
-        self.event_tx.is_closed()
+        match &self.event_tx {
+            None => false,
+            Some(event_tx) => event_tx.is_closed(),
+        }
     }
 
     async fn on_reconciled(&mut self, namespace: NamespaceId, area: &AreaOfInterest) -> Result<()> {
@@ -405,7 +474,7 @@ impl IntentInfo {
     pub(super) async fn handle_event(
         &mut self,
         event: &EventKind,
-    ) -> Result<bool, ReceiverDropped> {
+    ) -> Result<bool, ChannelReceiverDropped> {
         let matches = match event {
             EventKind::CapabilityIntersection { namespace, .. } => {
                 self.interests.contains_key(namespace)
@@ -429,8 +498,15 @@ impl IntentInfo {
         Ok(self.is_complete())
     }
 
-    async fn send(&self, event: EventKind) -> Result<(), ReceiverDropped> {
-        self.event_tx.send(event).await.map_err(|_| ReceiverDropped)
+    async fn send(&self, event: EventKind) -> Result<(), ChannelReceiverDropped> {
+        if let Some(event_tx) = &self.event_tx {
+            event_tx
+                .send(event)
+                .await
+                .map_err(|_| ChannelReceiverDropped)
+        } else {
+            Ok(())
+        }
     }
 }
 

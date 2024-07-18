@@ -39,7 +39,7 @@ use crate::{
     session::{
         aoi_finder::AoiIntersection,
         channels::{ChannelSenders, MessageReceiver},
-        events::{EventKind, EventSender},
+        intents::EventKind,
         payload::{send_payload_chunked, CurrentPayload},
         static_tokens::StaticTokens,
         Error, Role, SessionId, SessionMode,

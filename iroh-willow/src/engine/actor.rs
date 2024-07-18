@@ -14,6 +14,7 @@ use tracing::{debug, error, error_span, trace, warn, Instrument};
 use crate::{
     auth::{CapSelector, CapabilityPack, DelegateTo, InterestMap},
     form::{AuthForm, EntryForm, EntryOrForm},
+    net::WillowConn,
     proto::{
         grouping::ThreeDRange,
         keys::{NamespaceId, NamespaceKind, UserId, UserSecretKey},
@@ -22,9 +23,9 @@ use crate::{
         willow::{AuthorisedEntry, Entry},
     },
     session::{
-        events::{EventKind, EventSender, SessionEvent},
-        intents::IntentData,
-        run_session, Channels, Error, Interests, Role, SessionId, SessionInit, SessionUpdate,
+        intents::{EventKind, Intent},
+        run_session, Channels, Error, EventSender, Interests, Role, SessionEvent, SessionHandle,
+        SessionId, SessionInit, SessionUpdate,
     },
     store::{
         entry::EntryOrigin,
@@ -40,7 +41,7 @@ pub const SESSION_UPDATE_CHANNEL_CAP: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct ActorHandle {
-    tx: flume::Sender<ToActor>,
+    inbox_tx: flume::Sender<Input>,
     join_handle: Arc<Option<JoinHandle<()>>>,
 }
 
@@ -53,7 +54,7 @@ impl ActorHandle {
         create_store: impl 'static + Send + FnOnce() -> S,
         me: NodeId,
     ) -> ActorHandle {
-        let (tx, rx) = flume::bounded(INBOX_CAP);
+        let (inbox_tx, inbox_rx) = flume::bounded(INBOX_CAP);
         let join_handle = std::thread::Builder::new()
             .name("willow-actor".to_string())
             .spawn(move || {
@@ -62,29 +63,25 @@ impl ActorHandle {
 
                 let store = (create_store)();
                 let store = Store::new(store);
-                let actor = Actor {
-                    store,
-                    sessions: Default::default(),
-                    inbox_rx: rx,
-                    next_session_id: 0,
-                    session_tasks: Default::default(),
-                    tasks: Default::default(),
-                };
+                let actor = Actor::new(store, inbox_rx);
                 if let Err(error) = actor.run() {
                     error!(?error, "willow actor failed");
                 };
             })
             .expect("failed to spawn willow-actor thread");
         let join_handle = Arc::new(Some(join_handle));
-        ActorHandle { tx, join_handle }
+        ActorHandle {
+            inbox_tx,
+            join_handle,
+        }
     }
-    pub async fn send(&self, action: ToActor) -> Result<()> {
-        self.tx.send_async(action).await?;
+    pub async fn send(&self, action: Input) -> Result<()> {
+        self.inbox_tx.send_async(action).await?;
         Ok(())
     }
     pub async fn ingest_entry(&self, authorised_entry: AuthorisedEntry) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
-        self.send(ToActor::IngestEntry {
+        self.send(Input::IngestEntry {
             authorised_entry,
             origin: EntryOrigin::Local,
             reply,
@@ -96,7 +93,7 @@ impl ActorHandle {
 
     pub async fn insert_entry(&self, entry: Entry, auth: impl Into<AuthForm>) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
-        self.send(ToActor::InsertEntry {
+        self.send(Input::InsertEntry {
             entry: EntryOrForm::Entry(entry),
             auth: auth.into(),
             reply,
@@ -112,7 +109,7 @@ impl ActorHandle {
         authorisation: impl Into<AuthForm>,
     ) -> Result<(Entry, bool)> {
         let (reply, reply_rx) = oneshot::channel();
-        self.send(ToActor::InsertEntry {
+        self.send(Input::InsertEntry {
             entry: EntryOrForm::Form(form),
             auth: authorisation.into(),
             reply,
@@ -125,7 +122,7 @@ impl ActorHandle {
     pub async fn insert_secret(&self, secret: impl Into<meadowcap::SecretKey>) -> Result<()> {
         let secret = secret.into();
         let (reply, reply_rx) = oneshot::channel();
-        self.send(ToActor::InsertSecret { secret, reply }).await?;
+        self.send(Input::InsertSecret { secret, reply }).await?;
         reply_rx.await??;
         Ok(())
     }
@@ -136,7 +133,7 @@ impl ActorHandle {
         range: ThreeDRange,
     ) -> Result<impl Stream<Item = anyhow::Result<Entry>>> {
         let (tx, rx) = flume::bounded(1024);
-        self.send(ToActor::GetEntries {
+        self.send(Input::GetEntries {
             namespace,
             reply: tx,
             range,
@@ -147,20 +144,12 @@ impl ActorHandle {
 
     pub async fn init_session(
         &self,
-        peer: NodeId,
-        our_role: Role,
-        initial_transmission: InitialTransmission,
-        channels: Channels,
-        // init: SessionInit,
-        intents: Vec<IntentData>,
+        conn: WillowConn,
+        intents: Vec<Intent>,
     ) -> Result<SessionHandle> {
         let (reply, reply_rx) = oneshot::channel();
-        self.send(ToActor::InitSession {
-            our_role,
-            initial_transmission,
-            peer,
-            channels,
-            // init,
+        self.send(Input::InitSession {
+            conn,
             intents,
             reply,
         })
@@ -176,14 +165,14 @@ impl ActorHandle {
         owner: UserId,
     ) -> Result<NamespaceId> {
         let (reply, reply_rx) = oneshot::channel();
-        self.send(ToActor::CreateNamespace { kind, owner, reply })
+        self.send(Input::CreateNamespace { kind, owner, reply })
             .await?;
         reply_rx.await?
     }
 
     pub async fn create_user(&self) -> Result<UserId> {
         let (reply, reply_rx) = oneshot::channel();
-        self.send(ToActor::CreateUser { reply }).await?;
+        self.send(Input::CreateUser { reply }).await?;
         reply_rx.await?
     }
 
@@ -194,7 +183,7 @@ impl ActorHandle {
         to: DelegateTo,
     ) -> Result<Vec<CapabilityPack>> {
         let (reply, reply_rx) = oneshot::channel();
-        self.send(ToActor::DelegateCaps {
+        self.send(Input::DelegateCaps {
             from,
             access_mode,
             to,
@@ -207,20 +196,20 @@ impl ActorHandle {
 
     pub async fn import_caps(&self, caps: Vec<CapabilityPack>) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
-        self.send(ToActor::ImportCaps { caps, reply }).await?;
+        self.send(Input::ImportCaps { caps, reply }).await?;
         reply_rx.await?
     }
 
     pub async fn resolve_interests(&self, interests: Interests) -> Result<InterestMap> {
         let (reply, reply_rx) = oneshot::channel();
-        self.send(ToActor::ResolveInterests { interests, reply })
+        self.send(Input::ResolveInterests { interests, reply })
             .await?;
         reply_rx.await?
     }
 
     pub async fn shutdown(&self) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
-        self.send(ToActor::Shutdown { reply: Some(reply) }).await?;
+        self.send(Input::Shutdown { reply: Some(reply) }).await?;
         reply_rx.await?;
         Ok(())
     }
@@ -231,7 +220,7 @@ impl Drop for ActorHandle {
         // this means we're dropping the last reference
         if let Some(handle) = Arc::get_mut(&mut self.join_handle) {
             let handle = handle.take().expect("can only drop once");
-            self.tx.send(ToActor::Shutdown { reply: None }).ok();
+            self.inbox_tx.send(Input::Shutdown { reply: None }).ok();
             if let Err(err) = handle.join() {
                 warn!(?err, "Failed to join sync actor");
             }
@@ -239,57 +228,11 @@ impl Drop for ActorHandle {
     }
 }
 
-#[derive(Debug)]
-pub struct SessionHandle {
-    // pub session_id: SessionId,
-    pub cancel_token: CancellationToken,
-    pub update_tx: mpsc::Sender<SessionUpdate>,
-    pub event_rx: mpsc::Receiver<SessionEvent>,
-}
-
-impl SessionHandle {
-    // pub fn session_id(&self) -> SessionId {
-    //     self.session_id
-    // }
-
-    /// Wait for the session to finish.
-    ///
-    /// Returns an error if the session failed to complete.
-    pub async fn on_finish(&mut self) -> Result<(), Arc<Error>> {
-        while let Some(event) = self.event_rx.recv().await {
-            if let SessionEvent::Complete { result } = event {
-                return result;
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn send_update(&self, update: SessionUpdate) -> Result<()> {
-        self.update_tx.send(update).await?;
-        Ok(())
-    }
-
-    /// Finish the session gracefully.
-    ///
-    /// After calling this, no further protocol messages will be sent from this node.
-    /// Previously queued messages will still be sent out. The session will only be closed
-    /// once the other peer closes their senders as well.
-    pub fn close(&self) {
-        debug!("close session (session handle close called)");
-        self.cancel_token.cancel();
-    }
-}
-
 #[derive(derive_more::Debug, strum::Display)]
-pub enum ToActor {
+pub enum Input {
     InitSession {
-        our_role: Role,
-        peer: NodeId,
-        initial_transmission: InitialTransmission,
-        #[debug(skip)]
-        channels: Channels,
-        // init: SessionInit,
-        intents: Vec<IntentData>,
+        conn: WillowConn,
+        intents: Vec<Intent>,
         reply: oneshot::Sender<Result<SessionHandle>>,
     },
     GetEntries {
@@ -342,23 +285,25 @@ pub enum ToActor {
 }
 
 #[derive(Debug)]
-struct ActiveSession {
-    // peer: NodeId,
-    task_key: TaskKey, // state: SharedSessionState<S>
-                       // event_tx: mpsc::Sender<SessionEvent>,
-}
-
-#[derive(Debug)]
-pub struct Actor<S: Storage> {
-    inbox_rx: flume::Receiver<ToActor>,
+struct Actor<S: Storage> {
+    inbox_rx: flume::Receiver<Input>,
     store: Store<S>,
     next_session_id: u64,
-    sessions: HashMap<SessionId, ActiveSession>,
     session_tasks: JoinMap<SessionId, Result<(), Arc<Error>>>,
     tasks: JoinSet<()>,
 }
 
 impl<S: Storage> Actor<S> {
+    pub fn new(store: Store<S>, inbox_rx: flume::Receiver<Input>) -> Self {
+        Self {
+            store,
+            inbox_rx,
+            next_session_id: 0,
+            session_tasks: Default::default(),
+            tasks: Default::default(),
+        }
+    }
+
     pub fn run(self) -> Result<()> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -366,12 +311,13 @@ impl<S: Storage> Actor<S> {
         let local_set = tokio::task::LocalSet::new();
         local_set.block_on(&rt, async move { self.run_async().await })
     }
+
     async fn run_async(mut self) -> Result<()> {
         loop {
             tokio::select! {
                 msg = self.inbox_rx.recv_async() => match msg {
                     Err(_) => break,
-                    Ok(ToActor::Shutdown { reply }) => {
+                    Ok(Input::Shutdown { reply }) => {
                         tokio::join!(
                             self.tasks.shutdown(),
                             self.session_tasks.shutdown()
@@ -389,8 +335,8 @@ impl<S: Storage> Actor<S> {
                     }
                 },
                 Some((id, res)) = self.session_tasks.next(), if !self.session_tasks.is_empty() => {
-                    let _res = res.context("session task paniced")?;
-                    self.complete_session(&id).await;
+                    let res = res.context("session task paniced")?;
+                    debug!(?id, ?res, "session complete");
                 }
             };
         }
@@ -403,17 +349,13 @@ impl<S: Storage> Actor<S> {
         id
     }
 
-    async fn handle_message(&mut self, message: ToActor) -> Result<(), SendReplyError> {
+    async fn handle_message(&mut self, message: Input) -> Result<(), SendReplyError> {
         trace!(%message, "tick: handle_message");
         match message {
-            ToActor::Shutdown { .. } => unreachable!("handled in run"),
-            ToActor::InitSession {
-                peer,
-                channels,
-                our_role,
-                initial_transmission,
+            Input::Shutdown { .. } => unreachable!("handled in run"),
+            Input::InitSession {
+                conn,
                 intents,
-                // init,
                 reply,
             } => {
                 let session_id = self.next_session_id();
@@ -424,27 +366,22 @@ impl<S: Storage> Actor<S> {
                 let (event_tx, event_rx) = mpsc::channel(SESSION_EVENT_CHANNEL_CAP);
                 let update_rx = tokio_stream::wrappers::ReceiverStream::new(update_rx);
 
+                let peer = conn.peer;
                 let future = run_session(
                     store,
-                    channels,
+                    conn,
+                    intents,
                     cancel_token.clone(),
                     session_id,
-                    our_role,
-                    intents,
-                    initial_transmission,
                     EventSender(event_tx.clone()),
                     update_rx,
                 )
                 .instrument(error_span!("session", peer = %peer.fmt_short()));
 
-                let task_key = self.session_tasks.spawn_local(session_id, future);
+                let _task_key = self.session_tasks.spawn_local(session_id, future);
 
-                let active_session = ActiveSession {
-                    // event_tx,
-                    task_key,
-                    // peer,
-                };
-                self.sessions.insert(session_id, active_session);
+                // let active_session = ActiveSession { task_key };
+                // self.sessions.insert(session_id, active_session);
                 let handle = SessionHandle {
                     // session_id,
                     cancel_token,
@@ -453,7 +390,7 @@ impl<S: Storage> Actor<S> {
                 };
                 send_reply(reply, Ok(handle))
             }
-            ToActor::GetEntries {
+            Input::GetEntries {
                 namespace,
                 range,
                 reply,
@@ -474,7 +411,7 @@ impl<S: Storage> Actor<S> {
                     }
                 }
             }
-            ToActor::IngestEntry {
+            Input::IngestEntry {
                 authorised_entry,
                 origin,
                 reply,
@@ -482,31 +419,31 @@ impl<S: Storage> Actor<S> {
                 let res = self.store.entries().ingest(&authorised_entry, origin);
                 send_reply(reply, res)
             }
-            ToActor::InsertEntry { entry, auth, reply } => {
+            Input::InsertEntry { entry, auth, reply } => {
                 let res = self.store.insert_entry(entry, auth).await;
                 let res = res.map_err(Into::into);
                 send_reply(reply, res)
             }
-            ToActor::InsertSecret { secret, reply } => {
+            Input::InsertSecret { secret, reply } => {
                 let res = self.store.secrets().insert(secret);
                 send_reply(reply, res.map_err(anyhow::Error::from))
             }
-            ToActor::CreateNamespace { kind, owner, reply } => {
+            Input::CreateNamespace { kind, owner, reply } => {
                 let res = self
                     .store
                     .create_namespace(&mut rand::thread_rng(), kind, owner);
                 send_reply(reply, res.map_err(anyhow::Error::from))
             }
-            ToActor::CreateUser { reply } => {
+            Input::CreateUser { reply } => {
                 let secret = UserSecretKey::generate(&mut rand::thread_rng());
                 let res = self.store.secrets().insert_user(secret);
                 send_reply(reply, res.map_err(anyhow::Error::from))
             }
-            ToActor::ImportCaps { caps, reply } => {
+            Input::ImportCaps { caps, reply } => {
                 let res = self.store.auth().import_caps(caps);
                 send_reply(reply, res.map_err(anyhow::Error::from))
             }
-            ToActor::DelegateCaps {
+            Input::DelegateCaps {
                 from,
                 access_mode,
                 to,
@@ -519,29 +456,10 @@ impl<S: Storage> Actor<S> {
                     .delegate_full_caps(from, access_mode, to, store);
                 send_reply(reply, res.map_err(anyhow::Error::from))
             }
-            ToActor::ResolveInterests { interests, reply } => {
+            Input::ResolveInterests { interests, reply } => {
                 let res = self.store.auth().resolve_interests(interests);
                 send_reply(reply, res.map_err(anyhow::Error::from))
             }
-        }
-    }
-
-    async fn complete_session(&mut self, session_id: &SessionId) {
-        let session = self.sessions.remove(session_id);
-        if let Some(session) = session {
-            // debug!(?session, ?result, "complete session");
-            // let result = match result {
-            //     Ok(()) => Ok(()),
-            //     Err(err) => Err(Arc::new(err)),
-            // };
-            // session
-            //     .event_tx
-            //     .send(EventKind::Closed { result })
-            //     .await
-            //     .ok();
-            self.session_tasks.remove(&session.task_key);
-        } else {
-            warn!("remove_session called for unknown session");
         }
     }
 }
@@ -552,14 +470,6 @@ struct SendReplyError;
 fn send_reply<T>(sender: oneshot::Sender<T>, value: T) -> Result<(), SendReplyError> {
     sender.send(value).map_err(send_reply_error)
 }
-
-// fn send_reply_with<T, S: Storage>(
-//     sender: oneshot::Sender<Result<T, Error>>,
-//     this: &mut Actor<S>,
-//     f: impl FnOnce(&mut Actor<S>) -> Result<T, Error>,
-// ) -> Result<(), SendReplyError> {
-//     sender.send(f(this)).map_err(send_reply_error)
-// }
 
 fn send_reply_error<T>(_err: T) -> SendReplyError {
     SendReplyError

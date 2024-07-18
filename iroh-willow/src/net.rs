@@ -2,15 +2,15 @@ use anyhow::ensure;
 use futures_concurrency::future::TryJoin;
 use futures_util::future::TryFutureExt;
 use iroh_base::{hash::Hash, key::NodeId};
-use iroh_net::endpoint::{Connection, RecvStream, SendStream};
+use iroh_net::endpoint::{get_remote_node_id, Connection, RecvStream, SendStream};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    task::JoinSet,
+    task::{JoinHandle, JoinSet},
 };
 use tracing::{debug, error_span, field::Empty, instrument, trace, warn, Instrument, Span};
 
 use crate::{
-    actor::{self, ActorHandle},
+    engine::ActorHandle,
     proto::sync::{
         AccessChallenge, Channel, InitialTransmission, LogicalChannel, Message,
         CHALLENGE_HASH_LENGTH, MAX_PAYLOAD_SIZE_POWER,
@@ -20,8 +20,8 @@ use crate::{
             ChannelReceivers, ChannelSenders, Channels, LogicalChannelReceivers,
             LogicalChannelSenders,
         },
-        intents::IntentData,
-        Role, SessionInit,
+        intents::Intent,
+        Role, SessionHandle, SessionInit,
     },
     util::channel::{
         inbound_channel, outbound_channel, Guarantees, Reader, Receiver, Sender, Writer,
@@ -30,6 +30,40 @@ use crate::{
 
 pub const CHANNEL_CAP: usize = 1024 * 64;
 pub const ALPN: &[u8] = b"iroh-willow/0";
+
+#[derive(derive_more::Debug)]
+pub struct WillowConn {
+    pub(crate) our_role: Role,
+    pub(crate) peer: NodeId,
+    #[debug("InitialTransmission")]
+    pub(crate) initial_transmission: InitialTransmission,
+    #[debug("Channels")]
+    pub(crate) channels: Channels,
+    pub(crate) join_handle: JoinHandle<anyhow::Result<()>>,
+}
+
+impl WillowConn {
+    pub async fn alfie(conn: Connection, me: NodeId) -> anyhow::Result<Self> {
+        Self::connect(conn, me, Role::Alfie).await
+    }
+
+    pub async fn betty(conn: Connection, me: NodeId) -> anyhow::Result<Self> {
+        Self::connect(conn, me, Role::Betty).await
+    }
+
+    async fn connect(conn: Connection, me: NodeId, our_role: Role) -> anyhow::Result<Self> {
+        let peer = get_remote_node_id(&conn)?;
+        let (initial_transmission, channels, mut join_set) = setup(conn, me, our_role).await?;
+        let join_handle = tokio::task::spawn(async move { join_all(&mut join_set).await });
+        Ok(Self {
+            peer,
+            initial_transmission,
+            channels,
+            join_handle,
+            our_role,
+        })
+    }
+}
 
 #[instrument(skip_all, name = "willow_net", fields(me=%me.fmt_short(), peer=Empty))]
 pub async fn setup(
@@ -85,46 +119,11 @@ pub async fn run(
     actor: ActorHandle,
     conn: Connection,
     our_role: Role,
-    intents: Vec<IntentData>,
-    // init: SessionInit,
+    intents: Vec<Intent>,
 ) -> anyhow::Result<SessionHandle> {
-    let peer = iroh_net::endpoint::get_remote_node_id(&conn)?;
-    let (initial_transmission, channels, tasks) = setup(conn, me, our_role).await?;
-    let handle = actor
-        .init_session(peer, our_role, initial_transmission, channels, intents)
-        .await?;
-
-    Ok(SessionHandle { handle, tasks })
-}
-//
-#[derive(Debug)]
-pub struct SessionHandle {
-    handle: actor::SessionHandle,
-    tasks: JoinSet<anyhow::Result<()>>,
-}
-
-impl SessionHandle {
-    /// Close the session gracefully.
-    ///
-    /// After calling this, no further protocol messages will be sent from this node.
-    /// Previously queued messages will still be sent out. The session will only be closed
-    /// once the other peer closes their senders as well.
-    pub fn close(&self) {
-        debug!("trigger user close");
-        self.handle.close()
-    }
-
-    /// Wait for the session to finish.
-    ///
-    /// Returns an error if the session failed to complete.
-    pub async fn join(&mut self) -> anyhow::Result<()> {
-        let session_res = self.handle.on_finish().await;
-        let net_tasks_res = join_all(&mut self.tasks).await;
-        match session_res {
-            Err(err) => Err(err.into()),
-            Ok(()) => net_tasks_res,
-        }
-    }
+    let conn = WillowConn::connect(conn, me, our_role).await?;
+    let handle = actor.init_session(conn, intents).await?;
+    Ok(handle)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -327,8 +326,8 @@ mod tests {
     use tracing::info;
 
     use crate::{
-        actor::ActorHandle,
         auth::{CapSelector, DelegateTo},
+        engine::ActorHandle,
         form::{AuthForm, EntryForm, PayloadForm, SubspaceForm, TimestampForm},
         net::run,
         proto::{
@@ -337,7 +336,10 @@ mod tests {
             meadowcap::AccessMode,
             willow::{Entry, InvalidPath, Path},
         },
-        session::{intents::IntentHandle, Interests, Role, SessionInit, SessionMode},
+        session::{
+            intents::{Intent, IntentHandle},
+            Interests, Role, SessionInit, SessionMode,
+        },
     };
 
     const ALPN: &[u8] = b"iroh-willow/0";
@@ -404,8 +406,8 @@ mod tests {
 
         let init_alfie = SessionInit::new(Interests::All, SessionMode::ReconcileOnce);
         let init_betty = SessionInit::new(Interests::All, SessionMode::ReconcileOnce);
-        let (mut intent_alfie, intent_alfie_data) = IntentHandle::new(init_alfie);
-        let (mut intent_betty, intent_betty_data) = IntentHandle::new(init_betty);
+        let (intent_alfie, mut intent_handle_alfie) = Intent::new(init_alfie);
+        let (intent_betty, mut intent_handle_betty) = Intent::new(init_betty);
 
         info!("init took {:?}", start.elapsed());
 
@@ -423,26 +425,30 @@ mod tests {
                 handle_alfie.clone(),
                 conn_alfie,
                 Role::Alfie,
-                vec![intent_alfie_data]
+                vec![intent_alfie]
             ),
             run(
                 node_id_betty,
                 handle_betty.clone(),
                 conn_betty,
                 Role::Betty,
-                vec![intent_betty_data]
+                vec![intent_betty]
             )
         );
         let mut session_alfie = session_alfie?;
         let mut session_betty = session_betty?;
 
-        let (res_alfie, res_betty) = tokio::join!(intent_alfie.complete(), intent_betty.complete());
+        let (res_alfie, res_betty) = tokio::join!(
+            intent_handle_alfie.complete(),
+            intent_handle_betty.complete()
+        );
         info!("alfie intent res {:?}", res_alfie);
         info!("betty intent res {:?}", res_betty);
         assert!(res_alfie.is_ok());
         assert!(res_betty.is_ok());
 
-        let (res_alfie, res_betty) = tokio::join!(session_alfie.join(), session_betty.join());
+        let (res_alfie, res_betty) =
+            tokio::join!(session_alfie.complete(), session_betty.complete());
         info!("alfie session res {:?}", res_alfie);
         info!("betty session res {:?}", res_betty);
         assert!(res_alfie.is_ok());
@@ -555,8 +561,8 @@ mod tests {
         let init_alfie = SessionInit::new(Interests::All, SessionMode::Live);
         let init_betty = SessionInit::new(Interests::All, SessionMode::Live);
 
-        let (mut intent_alfie, intent_alfie_data) = IntentHandle::new(init_alfie);
-        let (mut intent_betty, intent_betty_data) = IntentHandle::new(init_betty);
+        let (intent_alfie, mut intent_handle_alfie) = Intent::new(init_alfie);
+        let (intent_betty, mut intent_handle_betty) = Intent::new(init_betty);
 
         let (session_alfie, session_betty) = tokio::join!(
             run(
@@ -564,14 +570,14 @@ mod tests {
                 handle_alfie.clone(),
                 conn_alfie,
                 Role::Alfie,
-                vec![intent_alfie_data]
+                vec![intent_alfie]
             ),
             run(
                 node_id_betty,
                 handle_betty.clone(),
                 conn_betty,
                 Role::Betty,
-                vec![intent_betty_data]
+                vec![intent_betty]
             )
         );
         let mut session_alfie = session_alfie?;
@@ -583,14 +589,18 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(1)).await;
         session_alfie.close();
 
-        let (res_alfie, res_betty) = tokio::join!(intent_alfie.complete(), intent_betty.complete());
+        let (res_alfie, res_betty) = tokio::join!(
+            intent_handle_alfie.complete(),
+            intent_handle_betty.complete()
+        );
         info!(time=?start.elapsed(), "reconciliation finished");
         info!("alfie intent res {:?}", res_alfie);
         info!("betty intent res {:?}", res_betty);
         assert!(res_alfie.is_ok());
         assert!(res_betty.is_ok());
 
-        let (res_alfie, res_betty) = tokio::join!(session_alfie.join(), session_betty.join());
+        let (res_alfie, res_betty) =
+            tokio::join!(session_alfie.complete(), session_betty.complete());
 
         info!("alfie session res {:?}", res_alfie);
         info!("betty session res {:?}", res_betty);

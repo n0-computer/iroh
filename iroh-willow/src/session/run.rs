@@ -15,6 +15,7 @@ use tracing::{debug, error_span, trace, warn, Instrument, Span};
 
 use crate::{
     auth::InterestMap,
+    net::WillowConn,
     proto::sync::{
         ControlIssueGuarantee, InitialTransmission, LogicalChannel, Message,
         SetupBindAreaOfInterest,
@@ -24,12 +25,11 @@ use crate::{
         capabilities::Capabilities,
         channels::{ChannelSenders, LogicalChannelReceivers},
         data,
-        events::{EventKind, EventSender, SessionEvent},
-        intents::{self, IntentData},
+        intents::{self, EventKind, Intent},
         pai_finder::{self as pai, PaiFinder, PaiIntersection},
         reconciler,
         static_tokens::StaticTokens,
-        Channels, Error, Role, SessionId, SessionInit, SessionUpdate,
+        Channels, Error, EventSender, Role, SessionEvent, SessionId, SessionInit, SessionUpdate,
     },
     store::{
         traits::{SecretStorage, Storage},
@@ -58,27 +58,20 @@ const INITIAL_GUARANTEES: u64 = u64::MAX;
 
 pub async fn run_session<S: Storage>(
     store: Store<S>,
-    channels: Channels,
+    conn: WillowConn,
+    initial_intents: Vec<Intent>,
     cancel_token: CancellationToken,
     session_id: SessionId,
-    our_role: Role,
-    // init: SessionInit,
-    initial_intents: Vec<IntentData>,
-    initial_transmission: InitialTransmission,
     event_sender: EventSender,
     update_receiver: impl Stream<Item = SessionUpdate> + Unpin + 'static,
 ) -> Result<(), Arc<Error>> {
-    // TODO: update mode to live on intent changes
-    let mode = initial_intents
-        .iter()
-        .fold(SessionMode::ReconcileOnce, |cur, intent| {
-            match intent.init.mode {
-                SessionMode::ReconcileOnce => cur,
-                SessionMode::Live => SessionMode::Live,
-            }
-        });
-
-    debug!(role = ?our_role, ?mode, "start session");
+    let WillowConn {
+        peer: _,
+        initial_transmission,
+        our_role,
+        channels,
+        join_handle,
+    } = conn;
     let Channels {
         send: channel_sender,
         recv,
@@ -95,6 +88,18 @@ pub async fn run_session<S: Storage>(
                 intersection_recv,
             },
     } = recv;
+
+    // TODO: update mode to live on intent changes
+    let mode = initial_intents
+        .iter()
+        .fold(SessionMode::ReconcileOnce, |cur, intent| {
+            match intent.init.mode {
+                SessionMode::ReconcileOnce => cur,
+                SessionMode::Live => SessionMode::Live,
+            }
+        });
+
+    debug!(role = ?our_role, ?mode, "start session");
 
     // Make all our receivers close once the cancel_token is triggered.
     let control_recv = Cancelable::new(control_recv, cancel_token.clone());
@@ -131,6 +136,19 @@ pub async fn run_session<S: Storage>(
         (None, None)
     };
 
+    let net_fut = with_span(error_span!("net"), async {
+        // TODO: awaiting the net task handle hangs
+        drop(join_handle);
+        // let res = join_handle.await;
+        // debug!(?res, "net tasks finished");
+        // match res {
+        //     Ok(Ok(())) => Ok(()),
+        //     Ok(Err(err)) => Err(Error::Net(err)),
+        //     Err(err) => Err(Error::Net(err.into())),
+        // }
+        Ok(())
+    });
+
     let mut intents = intents::IntentDispatcher::new(store.auth().clone(), initial_intents);
     let intents_fut = with_span(error_span!("intents"), async {
         use intents::Output;
@@ -150,7 +168,6 @@ pub async fn run_session<S: Storage>(
                 }
             }
         }
-        debug!("done");
         Ok(())
     });
 
@@ -351,6 +368,7 @@ pub async fn run_session<S: Storage>(
     });
 
     let result = (
+        net_fut,
         intents_fut,
         control_loop,
         data_loop,
@@ -424,7 +442,7 @@ async fn control_loop(
         match message {
             Message::CommitmentReveal(msg) => {
                 caps.received_commitment_reveal(our_role, msg.nonce)?;
-                event_sender.send(SessionEvent::Revealed).await?;
+                event_sender.send(SessionEvent::Established).await?;
             }
             Message::ControlIssueGuarantee(msg) => {
                 let ControlIssueGuarantee { amount, channel } = msg;

@@ -1,16 +1,17 @@
 use std::{
     collections::{hash_map, BTreeMap, BTreeSet, HashMap, HashSet},
-    sync::mpsc,
+    sync::Arc,
 };
 
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     auth::CapSelector,
     proto::{grouping::AreaOfInterest, sync::ReadAuthorisation},
     session::{
-        events::EventKind,
-        intents::{IntentChannels, IntentData},
+        error::ChannelReceiverDropped,
+        intents::{EventKind, Intent},
     },
 };
 
@@ -18,8 +19,7 @@ mod aoi_finder;
 mod capabilities;
 pub mod channels;
 mod data;
-mod error;
-pub mod events;
+pub mod error;
 pub mod intents;
 mod pai_finder;
 mod payload;
@@ -126,21 +126,8 @@ impl From<SelectBuilder> for Interests {
 
 #[derive(Debug)]
 pub enum SessionUpdate {
-    SubmitIntent(IntentData),
+    SubmitIntent(Intent),
 }
-
-// impl Interest {
-//     pub fn merge(&self, other: &Interests) -> Self {
-//         match (self, other) {
-//             (Self::All, _) => Self::All,
-//             (_, Self::All) => Self::All,
-//             (Self::Some(a), Self::Some(b)) => {
-//
-//             }
-//
-//         }
-//     }
-// }
 
 #[derive(Debug, Default, Clone)]
 pub enum AreaOfInterestSelector {
@@ -173,4 +160,55 @@ pub enum Scope {
     Ours,
     /// Resources bound by the other peer.
     Theirs,
+}
+
+#[derive(Debug, Clone)]
+pub struct EventSender(pub mpsc::Sender<SessionEvent>);
+
+impl EventSender {
+    pub async fn send(&self, event: SessionEvent) -> Result<(), ChannelReceiverDropped> {
+        self.0.send(event).await.map_err(|_| ChannelReceiverDropped)
+    }
+}
+
+#[derive(Debug)]
+pub enum SessionEvent {
+    Established,
+    Complete { result: Result<(), Arc<Error>> },
+}
+
+#[derive(Debug)]
+pub struct SessionHandle {
+    pub cancel_token: CancellationToken,
+    pub update_tx: mpsc::Sender<SessionUpdate>,
+    pub event_rx: mpsc::Receiver<SessionEvent>,
+}
+
+impl SessionHandle {
+    /// Wait for the session to finish.
+    ///
+    /// Returns an error if the session failed to complete.
+    pub async fn complete(&mut self) -> Result<(), Arc<Error>> {
+        while let Some(event) = self.event_rx.recv().await {
+            if let SessionEvent::Complete { result } = event {
+                return result;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn send_update(&self, update: SessionUpdate) -> anyhow::Result<()> {
+        self.update_tx.send(update).await?;
+        Ok(())
+    }
+
+    /// Finish the session gracefully.
+    ///
+    /// After calling this, no further protocol messages will be sent from this node.
+    /// Previously queued messages will still be sent out. The session will only be closed
+    /// once the other peer closes their senders as well.
+    pub fn close(&self) {
+        tracing::debug!("close session (session handle close called)");
+        self.cancel_token.cancel();
+    }
 }
