@@ -16,8 +16,6 @@ rust-version = "1.76"
 workspace = true
 
 [dependencies]
-axum = { version = "0.7.4", optional = true }
-aead = { version = "0.5.2", features = ["bytes"] }
 anyhow = { version = "1" }
 base64 = "0.22.1"
 backoff = "0.4.0"
@@ -68,7 +66,6 @@ thiserror = "1"
 time = "0.3.20"
 tokio = { version = "1", features = ["io-util", "macros", "sync", "rt", "net", "fs", "io-std", "signal", "process"] }
 tokio-rustls = { version = "0.26" }
-tokio-rustls-acme = { version = "0.3" }
 tokio-tungstenite = "0.21"
 tokio-tungstenite-wasm = "0.3"
 tokio-util = { version = "0.7", features = ["io-util", "io", "codec"] }
@@ -82,12 +79,14 @@ x509-parser = "0.15"
 z32 = "1.0.3"
 
 # iroh-relay
+axum = { version = "0.7.4", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 regex = { version = "1.7.1", optional = true }
 rustls-pemfile = { version = "2.1", optional = true }
 serde_with = { version = "3.3", optional = true }
 toml = { version = "0.8", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+tokio-rustls-acme = { version = "0.3", optional = true }
 
 # metrics
 iroh-metrics = { version = "0.20.0", path = "../iroh-metrics", default-features = false }
@@ -116,6 +115,7 @@ testdir = "0.9.1"
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 iroh-test = { path = "../iroh-test" }
+iroh-net = { path = ".", features = ["iroh-relay"] }
 serde_json = "1.0.107"
 testresult = "0.4.0"
 
@@ -128,10 +128,19 @@ duct = "0.13.6"
 
 [features]
 default = ["metrics"]
-iroh-relay = ["clap", "toml", "rustls-pemfile", "regex", "serde_with", "tracing-subscriber"]
+iroh-relay = [
+    "dep:tokio-rustls-acme",
+    "dep:axum",
+    "dep:clap",
+    "dep:toml",
+    "dep:rustls-pemfile",
+    "dep:regex",
+    "dep:serde_with",
+    "dep:tracing-subscriber"
+]
 metrics = ["iroh-metrics/metrics"]
-test-utils = ["axum"]
-local_swarm_discovery = ["swarm-discovery"]
+test-utils = ["iroh-relay"]
+local_swarm_discovery = ["dep:swarm-discovery"]
 
 [[bin]]
 name = "iroh-relay"

@@ -2889,7 +2889,6 @@ dependencies = [
 name = "iroh-net"
 version = "0.20.0"
 dependencies = [
- "aead",
  "anyhow",
  "axum",
  "backoff",
@@ -2919,6 +2918,7 @@ dependencies = [
  "igd-next",
  "iroh-base",
  "iroh-metrics",
+ "iroh-net",
  "iroh-quinn",
  "iroh-quinn-proto",
  "iroh-quinn-udp",
