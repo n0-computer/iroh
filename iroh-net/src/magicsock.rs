@@ -402,7 +402,7 @@ impl MagicSock {
             let direct_addrs = self.direct_addrs.read();
             direct_addrs.log_direct_addrs_change();
             self.node_map
-                .on_direct_addr_discovered(eps.iter().map(|ep| ep.addr));
+                .on_direct_addr_discovered(direct_addrs.iter().map(|addr| addr.addr));
             self.publish_my_addr();
         }
     }
@@ -1247,9 +1247,9 @@ impl MagicSock {
     /// Called whenever our addresses or home relay node changes.
     fn publish_my_addr(&self) {
         if let Some(ref discovery) = self.discovery {
-            let direct_addrs = self.direct_addrs.read();
+            let addrs = self.direct_addrs.read();
             let relay_url = self.my_relay();
-            let addrs = direct_addrs.iter().map(|da| da.addr).collect();
+            let direct_addresses = addrs.iter().map(|da| da.addr).collect();
             let info = AddrInfo {
                 relay_url,
                 direct_addresses,
@@ -2519,7 +2519,7 @@ impl DiscoveredDirectAddrs {
         disco::CallMeMaybe { my_numbers }
     }
 
-    fn log_endpoint_change(&self) {
+    fn log_direct_addrs_change(&self) {
         event!(
             target: "events.net.direct_addrs",
             Level::DEBUG,
