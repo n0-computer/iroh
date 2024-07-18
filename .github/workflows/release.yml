@@ -305,7 +305,7 @@ jobs:
 
             aws s3 cp s3://vorc/iroh-linux-aarch64-${GITHUB_SHA::7} bins/linux/arm64/v8/iroh
             aws s3 cp s3://vorc/iroh-relay-linux-aarch64-${GITHUB_SHA::7} bins/linux/arm64/v8/iroh-relay
-            aws s3 cp s3://vorc/iroh-dns-server-aarch64-amd64-${GITHUB_SHA::7} bins/linux/arm64/v8/iroh-dns-server
+            aws s3 cp s3://vorc/iroh-dns-server-aarch64-${GITHUB_SHA::7} bins/linux/arm64/v8/iroh-dns-server
 
         - name: Build Docker image (iroh)
           uses: docker/build-push-action@v6
