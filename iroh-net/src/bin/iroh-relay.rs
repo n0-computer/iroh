@@ -106,7 +106,7 @@ struct Config {
     ///
     /// Defaults to `[::]:80`.
     ///
-    /// When running with `--dev` defaults to [::]:3340`.  If specified overrides these
+    /// When running with `--dev` defaults to `[::]:3340`.  If specified overrides these
     /// defaults.
     ///
     /// The Relay server always starts an HTTP server, this specifies the socket this will
