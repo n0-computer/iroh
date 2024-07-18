@@ -1530,8 +1530,10 @@ mod tests {
         async fn connect_hello(ep: Endpoint, dst: NodeAddr) {
             let conn = ep.connect(dst, TEST_ALPN).await.unwrap();
             let (mut send, mut recv) = conn.open_bi().await.unwrap();
+            info!("sending hello");
             send.write_all(b"hello").await.unwrap();
             send.finish().unwrap();
+            info!("receiving world");
             let m = recv.read_to_end(100).await.unwrap();
             assert_eq!(m, b"world");
         }
@@ -1541,23 +1543,43 @@ mod tests {
             let mut iconn = incoming.accept().unwrap();
             let alpn = iconn.alpn().await.unwrap();
             let conn = iconn.await.unwrap();
-            // TODO: make this work:
-            // let conn = ep.accept().await.unwrap().await.unwrap();
-            // let alpn = conn.alpn();
             let node_id = get_remote_node_id(&conn).unwrap();
             assert_eq!(node_id, src);
             assert_eq!(alpn, TEST_ALPN);
             let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+            info!("receiving hello");
             let m = recv.read_to_end(100).await.unwrap();
             assert_eq!(m, b"hello");
+            info!("sending hello");
             send.write_all(b"world").await.unwrap();
             send.finish().unwrap();
+            send.stopped().await.unwrap();
         }
 
-        let p1_accept = tokio::spawn(accept_world(ep1.clone(), ep2_nodeid));
-        let p2_accept = tokio::spawn(accept_world(ep2.clone(), ep1_nodeid));
-        let p1_connect = tokio::spawn(connect_hello(ep1.clone(), ep2_nodeaddr));
-        let p2_connect = tokio::spawn(connect_hello(ep2.clone(), ep1_nodeaddr));
+        let p1_accept = tokio::spawn(accept_world(ep1.clone(), ep2_nodeid).instrument(info_span!(
+            "p1_accept",
+            ep1 = %ep1.node_id().fmt_short(),
+            dst = %ep2_nodeid.fmt_short(),
+        )));
+        let p2_accept = tokio::spawn(accept_world(ep2.clone(), ep1_nodeid).instrument(info_span!(
+            "p2_accept",
+            ep2 = %ep2.node_id().fmt_short(),
+            dst = %ep1_nodeid.fmt_short(),
+        )));
+        let p1_connect = tokio::spawn(connect_hello(ep1.clone(), ep2_nodeaddr).instrument(
+            info_span!(
+                "p1_connect",
+                ep1 = %ep1.node_id().fmt_short(),
+                dst = %ep2_nodeid.fmt_short(),
+            ),
+        ));
+        let p2_connect = tokio::spawn(connect_hello(ep2.clone(), ep1_nodeaddr).instrument(
+            info_span!(
+                "p2_connect",
+                ep2 = %ep2.node_id().fmt_short(),
+                dst = %ep1_nodeid.fmt_short(),
+            ),
+        ));
 
         p1_accept.await.unwrap();
         p2_accept.await.unwrap();

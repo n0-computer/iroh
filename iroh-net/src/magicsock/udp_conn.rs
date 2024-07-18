@@ -192,6 +192,7 @@ mod tests {
 
     use super::*;
     use anyhow::Result;
+    use tracing::{info_span, Instrument};
 
     const ALPN: &[u8] = b"n0/test/1";
 
@@ -214,11 +215,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_rebinding_conn_send_recv_ipv4() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
         rebinding_conn_send_recv(IpFamily::V4).await
     }
 
     #[tokio::test]
     async fn test_rebinding_conn_send_recv_ipv6() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
         if !crate::netcheck::os_has_ipv6() {
             return Ok(());
         }
@@ -235,18 +238,22 @@ mod tests {
         let m1_addr = SocketAddr::new(network.local_addr(), m1.local_addr()?.port());
         let (m1_send, m1_recv) = flume::bounded(8);
 
-        let m1_task = tokio::task::spawn(async move {
-            if let Some(conn) = m1.accept().await {
-                let conn = conn.await?;
-                let (mut send_bi, mut recv_bi) = conn.accept_bi().await?;
+        let m1_task = tokio::task::spawn(
+            async move {
+                if let Some(conn) = m1.accept().await {
+                    let conn = conn.await?;
+                    let (mut send_bi, mut recv_bi) = conn.accept_bi().await?;
 
-                let val = recv_bi.read_to_end(usize::MAX).await?;
-                m1_send.send_async(val).await?;
-                send_bi.finish()?;
+                    let val = recv_bi.read_to_end(usize::MAX).await?;
+                    m1_send.send_async(val).await?;
+                    send_bi.finish()?;
+                    send_bi.stopped().await?;
+                }
+
+                Ok::<_, anyhow::Error>(())
             }
-
-            Ok::<_, anyhow::Error>(())
-        });
+            .instrument(info_span!("m1_task")),
+        );
 
         let conn = m2.connect(m1_addr, "localhost")?.await?;
 
