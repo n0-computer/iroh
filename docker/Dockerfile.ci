@@ -7,7 +7,7 @@ RUN apk update && apk add ca-certificates && update-ca-certificates
 FROM base as iroh
 ARG TARGETPLATFORM
 
-COPY ./bins/${TARGETPLATFORM}/iroh /iroh
+COPY bins/${TARGETPLATFORM}/iroh /iroh
 
 RUN chmod +x /iroh
 
@@ -23,7 +23,7 @@ CMD ["start"]
 FROM base as iroh-relay
 ARG TARGETPLATFORM
 
-COPY ./bins/${TARGETPLATFORM}/iroh-relay /iroh-relay
+COPY bins/${TARGETPLATFORM}/iroh-relay /iroh-relay
 
 RUN chmod +x /iroh-relay
 
@@ -39,7 +39,7 @@ CMD [""]
 FROM base as iroh-dns-server
 ARG TARGETPLATFORM
 
-COPY ./bins/${TARGETPLATFORM}/iroh-dns-server /iroh-dns-server
+COPY bins/${TARGETPLATFORM}/iroh-dns-server /iroh-dns-server
 
 RUN chmod +x /iroh-dns-server
 
