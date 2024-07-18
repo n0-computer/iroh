@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    future::{poll_fn, Future},
+    future::poll_fn,
     rc::Rc,
     task::{ready, Poll, Waker},
 };

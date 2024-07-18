@@ -148,7 +148,7 @@ async fn open_logical_channels(
                         let (mut send, recv) = conn.open_bi().await?;
                         send.write_u8(ch.id()).await?;
                         trace!(?ch, "opened bi stream");
-                        Result::<_, anyhow::Error>::Ok((ch, Some((send, recv))))
+                        Ok::<_, anyhow::Error>((ch, Some((send, recv))))
                     }
                 })
                 .try_join()
@@ -165,7 +165,7 @@ async fn open_logical_channels(
                     trace!("read channel id {channel_id}");
                     let channel = LogicalChannel::from_id(channel_id)?;
                     trace!("accepted bi stream for logical channel {channel:?}");
-                    Result::<_, anyhow::Error>::Ok((channel, Some((send, recv))))
+                    anyhow::Result::Ok((channel, Some((send, recv))))
                 })
                 .try_join()
                 .await
@@ -200,12 +200,12 @@ async fn open_logical_channels(
 
     Ok((
         LogicalChannelSenders {
-            intersection: pai.0,
-            reconciliation: rec.0,
-            static_tokens: stt.0,
-            aoi: aoi.0,
-            capability: cap.0,
-            data: dat.0,
+            intersection_send: pai.0,
+            reconciliation_send: rec.0,
+            static_tokens_send: stt.0,
+            aoi_send: aoi.0,
+            capability_send: cap.0,
+            data_send: dat.0,
         },
         LogicalChannelReceivers {
             intersection_recv: pai.1.into(),

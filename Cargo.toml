@@ -30,14 +30,11 @@ opt-level = 3
 panic = 'abort'
 incremental = false
 
-[profile.dev.package.ed25519-dalek]
-opt-level = 3
-
-[profile.dev.package.curve25519-dalek]
-opt-level = 3
-
-[profile.dev.package.iroh-blake3]
-opt-level = 3
+[profile.dev.package]
+# optimize crypto dependencies in dev mode
+ed25519-dalek = { opt-level = 3 }
+curve25519-dalek = { opt-level = 3 }
+iroh-blake3 = { opt-level = 3 }
 
 [workspace.lints.rust]
 missing_debug_implementations = "warn"

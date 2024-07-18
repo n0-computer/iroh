@@ -329,7 +329,7 @@ mod tests {
                     let conn = conn.await?;
                     handle.handle_connection(conn).await?;
                 }
-                Ok::<_, anyhow::Error>(())
+                anyhow::Result::Ok(())
             }
         });
         Ok((handle, endpoint, node_addr, accept_task))
