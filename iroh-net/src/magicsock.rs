@@ -229,7 +229,7 @@ pub(crate) struct MagicSock {
     /// Optional discovery service
     discovery: Option<Box<dyn Discovery>>,
 
-    /// Our discovered direct addresses
+    /// Our discovered direct addresses.
     direct_addrs: Watchable<DiscoveredDirectAddrs>,
 
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
@@ -399,8 +399,8 @@ impl MagicSock {
             .update(DiscoveredDirectAddrs::new(eps))
             .is_ok();
         if updated {
-            let eps = self.direct_addrs.read();
-            eps.log_endpoint_change();
+            let direct_addrs = self.direct_addrs.read();
+            direct_addrs.log_direct_addrs_change();
             self.node_map
                 .on_direct_addr_discovered(eps.iter().map(|ep| ep.addr));
             self.publish_my_addr();
@@ -1247,9 +1247,9 @@ impl MagicSock {
     /// Called whenever our addresses or home relay node changes.
     fn publish_my_addr(&self) {
         if let Some(ref discovery) = self.discovery {
-            let eps = self.direct_addrs.read();
+            let direct_addrs = self.direct_addrs.read();
             let relay_url = self.my_relay();
-            let direct_addresses = eps.iter().map(|ep| ep.addr).collect();
+            let addrs = direct_addrs.iter().map(|da| da.addr).collect();
             let info = AddrInfo {
                 relay_url,
                 direct_addresses,
@@ -1308,7 +1308,7 @@ impl DiscoMessageSource {
 struct DirectAddrUpdateState {
     /// If running, set to the reason for the currently the update.
     running: sync::watch::Sender<Option<&'static str>>,
-    /// If set start a new update as soon as the current one is finished.
+    /// If set, start a new update as soon as the current one is finished.
     want_update: parking_lot::Mutex<Option<&'static str>>,
 }
 
@@ -2469,7 +2469,7 @@ fn bind(port: u16) -> Result<(UdpConn, Option<UdpConn>)> {
 
 /// The discovered direct addresses of this [`MagicSock`].
 ///
-/// These are all the [`DirectAddr`]s that this [`MagicSock`] is aware of exist for itself.
+/// These are all the [`DirectAddr`]s that this [`MagicSock`] is aware of for itself.
 /// They include all locally bound ones as well as those discovered by other mechanisms like
 /// STUN.
 #[derive(derive_more::Debug, Default, Clone)]
