@@ -257,7 +257,7 @@ impl NodeState {
 
     /// Returns the address(es) that should be used for sending the next packet.
     ///
-    /// Any or all of the UDP and relay addrs may be non-zero.
+    /// This may return to send on one, both or no paths.
     fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<RelayUrl>) {
         if relay_only_mode() {
             debug!("in `DEV_relay_ONLY` mode, giving the relay address as the only viable address for this endpoint");
