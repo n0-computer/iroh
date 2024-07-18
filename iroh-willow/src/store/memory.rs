@@ -181,7 +181,7 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
             .into_iter()
             .flatten()
             .filter(|entry| range.includes_entry(entry.entry()))
-            .map(|e| Result::<_, anyhow::Error>::Ok(e.clone()))
+            .map(|e| anyhow::Result::Ok(e.clone()))
             .collect::<Vec<_>>()
             .into_iter()
     }

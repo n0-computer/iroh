@@ -87,31 +87,31 @@ impl LogicalChannelReceivers {
 
 #[derive(Debug, Clone)]
 pub struct LogicalChannelSenders {
-    pub intersection: Sender<Message>,
-    pub reconciliation: Sender<Message>,
-    pub static_tokens: Sender<Message>,
-    pub aoi: Sender<Message>,
-    pub capability: Sender<Message>,
-    pub data: Sender<Message>,
+    pub intersection_send: Sender<Message>,
+    pub reconciliation_send: Sender<Message>,
+    pub static_tokens_send: Sender<Message>,
+    pub aoi_send: Sender<Message>,
+    pub capability_send: Sender<Message>,
+    pub data_send: Sender<Message>,
 }
 impl LogicalChannelSenders {
     pub fn close(&self) {
-        self.intersection.close();
-        self.reconciliation.close();
-        self.static_tokens.close();
-        self.aoi.close();
-        self.capability.close();
-        self.data.close();
+        self.intersection_send.close();
+        self.reconciliation_send.close();
+        self.static_tokens_send.close();
+        self.aoi_send.close();
+        self.capability_send.close();
+        self.data_send.close();
     }
 
     pub fn get(&self, channel: LogicalChannel) -> &Sender<Message> {
         match channel {
-            LogicalChannel::Intersection => &self.intersection,
-            LogicalChannel::Reconciliation => &self.reconciliation,
-            LogicalChannel::StaticToken => &self.static_tokens,
-            LogicalChannel::Capability => &self.capability,
-            LogicalChannel::AreaOfInterest => &self.aoi,
-            LogicalChannel::Data => &self.data,
+            LogicalChannel::Intersection => &self.intersection_send,
+            LogicalChannel::Reconciliation => &self.reconciliation_send,
+            LogicalChannel::StaticToken => &self.static_tokens_send,
+            LogicalChannel::Capability => &self.capability_send,
+            LogicalChannel::AreaOfInterest => &self.aoi_send,
+            LogicalChannel::Data => &self.data_send,
         }
     }
 }
