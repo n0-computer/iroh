@@ -430,7 +430,7 @@ impl<D: BaoStore> Handler<D> {
     }
 
     fn rt(&self) -> LocalPoolHandle {
-        self.inner.rt.handle().clone()
+        self.inner.rt_handle.clone()
     }
 
     async fn blob_list_impl(self, co: &Co<RpcResult<BlobInfo>>) -> io::Result<()> {
@@ -705,7 +705,7 @@ impl<D: BaoStore> Handler<D> {
         let downloader = self.inner.downloader.clone();
         let endpoint = self.inner.endpoint.clone();
         let progress = FlumeProgressSender::new(sender);
-        self.inner.rt.run_detached(move || async move {
+        self.inner.rt_handle.run_detached(move || async move {
             if let Err(err) = download(&db, endpoint, &downloader, msg, progress.clone()).await {
                 progress
                     .send(DownloadProgress::Abort(err.into()))
@@ -995,7 +995,7 @@ impl<D: BaoStore> Handler<D> {
     ) -> impl Stream<Item = RpcResult<ReadAtResponse>> + Send + 'static {
         let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
         let db = self.inner.db.clone();
-        let _ = self.inner.rt.spawn_pinned(move || async move {
+        let _ = self.inner.rt_handle.spawn_pinned(move || async move {
             if let Err(err) = read_loop(req, db, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
                 tx.send_async(RpcResult::Err(err.into())).await.ok();
             }
