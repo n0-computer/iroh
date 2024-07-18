@@ -450,3 +450,60 @@ jobs:
         continue-on-error: true
         run: |
           docker kill $(docker ps -q)
+
+  # just testing things out
+  docker:
+    timeout-minutes: 120
+    # needs: create-release
+    name: Docker Publish
+    runs-on: [self-hosted, linux, X64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image (iroh)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: n0computer/iroh:latest,n0computer/iroh:testing
+          target: iroh
+          platforms: linux/amd64,linux/arm64/v8
+          file: docker/Dockerfile
+      
+      - name: Build Docker image (iroh-relay)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: n0computer/iroh-relay:latest,n0computer/iroh-relay:testing
+          target: iroh-relay
+          platforms: linux/amd64,linux/arm64/v8
+          file: docker/Dockerfile
+
+      - name: Build Docker image (iroh-dns-server)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: n0computer/iroh-dns-server:latest,n0computer/iroh-dns-server:testing
+          target: iroh
+          platforms: linux/amd64,linux/arm64/v8
+          file: docker/Dockerfile
