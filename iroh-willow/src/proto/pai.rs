@@ -153,19 +153,24 @@ impl FragmentKit {
     pub fn into_fragment_set(self) -> FragmentSet {
         match self {
             FragmentKit::Complete(namespace_id, path) => {
-                let mut pairs = vec![];
-                for prefix in path.all_prefixes() {
-                    pairs.push((namespace_id, prefix));
-                }
+                let pairs = path
+                    .all_prefixes()
+                    .into_iter()
+                    .map(|prefix| (namespace_id, prefix))
+                    .collect();
                 FragmentSet::Complete(pairs)
             }
             FragmentKit::Selective(namespace_id, subspace_id, path) => {
-                let mut primary = vec![];
-                let mut secondary = vec![];
-                for prefix in path.all_prefixes() {
-                    primary.push((namespace_id, subspace_id, prefix.clone()));
-                    secondary.push((namespace_id, prefix.clone()));
-                }
+                let all_prefixes = path.all_prefixes();
+                let primary = all_prefixes
+                    .iter()
+                    .cloned()
+                    .map(|prefix| (namespace_id, subspace_id, prefix))
+                    .collect();
+                let secondary = all_prefixes
+                    .into_iter()
+                    .map(|prefix| (namespace_id, prefix))
+                    .collect();
                 FragmentSet::Selective { primary, secondary }
             }
         }
