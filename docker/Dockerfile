@@ -80,5 +80,5 @@ WORKDIR /
 # expose the default ports
 # dns, metrics
 EXPOSE 53/udp 9090
-ENTRYPOINT ["/iroh-relay"]
+ENTRYPOINT ["/iroh-dns-server"]
 CMD [""]
