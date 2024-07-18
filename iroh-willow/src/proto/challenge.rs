@@ -1,6 +1,7 @@
-use iroh_base::hash::Hash;
-
-use crate::session::{Error, Role};
+use crate::{
+    proto::sync::AccessChallengeBytes,
+    session::{Error, Role},
+};
 
 use super::{
     keys::{UserPublicKey, UserSecretKey, UserSignature},
@@ -14,8 +15,8 @@ pub enum ChallengeState {
         received_commitment: ChallengeHash,
     },
     Revealed {
-        ours: AccessChallenge,
-        theirs: AccessChallenge,
+        ours: AccessChallengeBytes,
+        theirs: AccessChallengeBytes,
     },
 }
 
@@ -26,12 +27,14 @@ impl ChallengeState {
                 our_nonce,
                 received_commitment,
             } => {
-                if Hash::new(their_nonce).as_bytes() != received_commitment {
+                if their_nonce.hash() != *received_commitment {
                     return Err(Error::BrokenCommittement);
                 }
                 let ours = match our_role {
-                    Role::Alfie => bitwise_xor(*our_nonce, their_nonce),
-                    Role::Betty => bitwise_xor_complement(*our_nonce, their_nonce),
+                    Role::Alfie => bitwise_xor(our_nonce.to_bytes(), their_nonce.to_bytes()),
+                    Role::Betty => {
+                        bitwise_xor_complement(our_nonce.to_bytes(), their_nonce.to_bytes())
+                    }
                 };
                 let theirs = bitwise_complement(ours);
                 *self = Self::Revealed { ours, theirs };
@@ -62,14 +65,14 @@ impl ChallengeState {
         Ok(())
     }
 
-    fn get_ours(&self) -> Result<&AccessChallenge, Error> {
+    fn get_ours(&self) -> Result<&AccessChallengeBytes, Error> {
         match self {
             Self::Revealed { ours, .. } => Ok(ours),
             _ => Err(Error::InvalidMessageInCurrentState),
         }
     }
 
-    fn get_theirs(&self) -> Result<&AccessChallenge, Error> {
+    fn get_theirs(&self) -> Result<&AccessChallengeBytes, Error> {
         match self {
             Self::Revealed { theirs, .. } => Ok(theirs),
             _ => Err(Error::InvalidMessageInCurrentState),

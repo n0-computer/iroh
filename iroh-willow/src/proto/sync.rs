@@ -1,7 +1,8 @@
 use std::{fmt, io::Write, sync::Arc};
 
-use iroh_base::hash::Hash;
-
+use iroh_base::{base32::fmt_short, hash::Hash};
+use rand::Rng;
+use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 use strum::{EnumCount, VariantArray};
 
@@ -28,8 +29,52 @@ pub const MAX_PAYLOAD_SIZE: usize = 2usize.pow(MAX_PAYLOAD_SIZE_POWER as u32);
 
 pub const CHALLENGE_LENGTH: usize = 32;
 pub const CHALLENGE_HASH_LENGTH: usize = DIGEST_LENGTH;
-pub type ChallengeHash = [u8; CHALLENGE_HASH_LENGTH];
-pub type AccessChallenge = [u8; CHALLENGE_LENGTH];
+
+#[derive(derive_more::Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChallengeHash(#[debug("{}..", fmt_short(self.0))] [u8; CHALLENGE_HASH_LENGTH]);
+
+impl ChallengeHash {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn from_bytes(bytes: [u8; CHALLENGE_HASH_LENGTH]) -> Self {
+        Self(bytes)
+    }
+}
+
+#[derive(derive_more::Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct AccessChallenge(#[debug("{}..", fmt_short(self.0))] AccessChallengeBytes);
+
+pub type AccessChallengeBytes = [u8; CHALLENGE_LENGTH];
+
+impl Default for AccessChallenge {
+    fn default() -> Self {
+        Self::generate()
+    }
+}
+
+impl AccessChallenge {
+    pub fn generate() -> Self {
+        Self(rand::random())
+    }
+
+    pub fn generate_with_rng(rng: &mut impl CryptoRngCore) -> Self {
+        Self(rng.gen())
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0
+    }
+
+    pub fn hash(&self) -> ChallengeHash {
+        ChallengeHash(*Hash::new(&self.0).as_bytes())
+    }
+}
 
 // In Meadowcap, for example, StaticToken is the type McCapability
 // and DynamicToken is the type UserSignature,
@@ -312,7 +357,7 @@ impl IsHandle for IntersectionHandle {
 #[derive(Serialize, Deserialize, PartialEq, Eq, derive_more::Debug)]
 pub struct CommitmentReveal {
     /// The nonce of the sender, encoded as a big-endian unsigned integer.
-    #[debug("{}..", iroh_base::base32::fmt_short(self.nonce))]
+    #[debug("{}..", iroh_base::base32::fmt_short(self.nonce.0))]
     pub nonce: AccessChallenge,
 }
 
