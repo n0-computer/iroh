@@ -27,7 +27,7 @@ COPY . .
 RUN cargo build --release --all-features
 
 ### Target image
-FROM alpine:latest as iroh
+FROM alpine:latest AS iroh
 
 RUN apk update && apk add ca-certificates && update-ca-certificates
 
@@ -46,7 +46,7 @@ ENTRYPOINT ["/iroh"]
 CMD ["start"]
 
 ### Target image
-FROM alpine:latest as iroh-relay
+FROM alpine:latest AS iroh-relay
 
 RUN apk update && apk add ca-certificates && update-ca-certificates
 
@@ -65,7 +65,7 @@ ENTRYPOINT ["/iroh-relay"]
 CMD [""]
 
 ### Target image
-FROM alpine:latest as iroh-dns-server
+FROM alpine:latest AS iroh-dns-server
 
 RUN apk update && apk add ca-certificates && update-ca-certificates
 
