@@ -4,6 +4,7 @@ use tokio::sync::mpsc;
 use tracing::{error_span, Instrument};
 
 use crate::{
+    engine::peer_manager::PeerManager,
     session::{
         intents::{Intent, IntentHandle},
         SessionInit,
@@ -15,7 +16,6 @@ mod actor;
 mod peer_manager;
 
 pub use self::actor::ActorHandle;
-pub use self::peer_manager::PeerManager;
 
 const PEER_MANAGER_INBOX_CAP: usize = 128;
 
@@ -73,6 +73,7 @@ impl std::ops::Deref for Engine {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
+    use futures_lite::StreamExt;
     use iroh_net::{Endpoint, NodeId};
     use rand::SeedableRng;
     use rand_chacha::ChaCha12Rng;

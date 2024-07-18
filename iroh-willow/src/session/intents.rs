@@ -1,7 +1,9 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     future::Future,
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
 };
 
 use anyhow::Result;
@@ -73,6 +75,11 @@ pub enum IntentUpdate {
 }
 
 /// A synchronisation intent.
+///
+/// An intent contains a list of interests to sync, and optionally sends events from the session to
+/// a [`IntentHandle`]. The [`IntentHandle`] can also submit updates to the list of interests.
+///
+/// Alternatively, an intent can be *detached*, which means that no events or updates are sent.
 #[derive(Debug)]
 pub struct Intent {
     pub(super) init: SessionInit,
@@ -137,7 +144,12 @@ impl Intent {
     }
 }
 
-/// Handle to a [`Intent`]
+/// Handle to a [`Intent`].
+///
+/// The [`IntentHandle`] is a [`Stream`] of [`EventKind`]. It *must* be progressed in a loop,
+/// otherwise the session will be blocked from progressing.
+///
+/// The [`IntentHandle`] can also submit new interests into the session.
 #[derive(Debug)]
 pub struct IntentHandle {
     event_rx: Receiver<EventKind>,
@@ -145,6 +157,7 @@ pub struct IntentHandle {
 }
 
 impl IntentHandle {
+    /// Split the [`IntentHandle`] into a update sink and event stream.
     pub fn split(self) -> (PollSender<IntentUpdate>, ReceiverStream<EventKind>) {
         (
             PollSender::new(self.update_tx),
@@ -152,10 +165,14 @@ impl IntentHandle {
         )
     }
 
-    pub async fn next(&mut self) -> Option<EventKind> {
-        self.event_rx.recv().await
-    }
-
+    /// Wait for the intent to be completed.
+    ///
+    /// This future completes either if the session terminated, or if all interests of the intent
+    /// are reconciled and the intent is not in live data mode.
+    ///
+    /// Note that successful completion of this future does not guarantee that all interests were
+    /// fulfilled. If you need to know that, use the [`IntentHandle`] as a stream and wait for the
+    /// [`EventKind::ReconciledAll`] event.
     pub async fn complete(&mut self) -> Result<(), Arc<Error>> {
         while let Some(event) = self.event_rx.recv().await {
             if let EventKind::Abort { error } = event {
@@ -165,6 +182,10 @@ impl IntentHandle {
         Ok(())
     }
 
+    /// Submit new synchronisation interests into the session.
+    ///
+    /// The [`IntentHandle`] will then receive events for these interests in addition to already
+    /// submitted interests.
     pub async fn add_interests(&self, interests: impl Into<Interests>) -> Result<()> {
         self.update_tx
             .send(IntentUpdate::AddInterests(interests.into()))
@@ -172,8 +193,17 @@ impl IntentHandle {
         Ok(())
     }
 
+    /// Close the intent.
     pub async fn close(&self) {
         self.update_tx.send(IntentUpdate::Close).await.ok();
+    }
+}
+
+impl Stream for IntentHandle {
+    type Item = EventKind;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.event_rx).poll_recv(cx)
     }
 }
 

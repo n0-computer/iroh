@@ -1,7 +1,7 @@
 use std::{sync::Arc, thread::JoinHandle};
 
-use anyhow::{Context, Result};
-use futures_lite::{stream::Stream, StreamExt};
+use anyhow::Result;
+use futures_lite::stream::Stream;
 use iroh_base::key::NodeId;
 use tokio::{
     sync::{mpsc, oneshot},
@@ -20,15 +20,12 @@ use crate::{
         meadowcap::{self, AccessMode},
         willow::{AuthorisedEntry, Entry},
     },
-    session::{
-        intents::Intent, run_session, Error, EventSender, Interests, SessionHandle, SessionId,
-    },
+    session::{intents::Intent, run_session, Error, EventSender, Interests, SessionHandle},
     store::{
         entry::EntryOrigin,
         traits::{EntryReader, SecretStorage, Storage},
         Store,
     },
-    util::task::JoinMap,
 };
 
 pub const INBOX_CAP: usize = 1024;
@@ -56,9 +53,7 @@ impl ActorHandle {
             .spawn(move || {
                 let span = error_span!("willow-actor", me=%me.fmt_short());
                 let _guard = span.enter();
-
-                let store = (create_store)();
-                let store = Store::new(store);
+                let store = Store::new((create_store)());
                 let actor = Actor::new(store, inbox_rx);
                 if let Err(error) = actor.run() {
                     error!(?error, "willow actor failed");
@@ -71,10 +66,12 @@ impl ActorHandle {
             join_handle,
         }
     }
-    pub async fn send(&self, action: Input) -> Result<()> {
+
+    async fn send(&self, action: Input) -> Result<()> {
         self.inbox_tx.send_async(action).await?;
         Ok(())
     }
+
     pub async fn ingest_entry(&self, authorised_entry: AuthorisedEntry) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
         self.send(Input::IngestEntry {
@@ -285,7 +282,6 @@ struct Actor<S: Storage> {
     inbox_rx: flume::Receiver<Input>,
     store: Store<S>,
     next_session_id: u64,
-    session_tasks: JoinMap<SessionId, Result<(), Arc<Error>>>,
     tasks: JoinSet<()>,
 }
 
@@ -295,7 +291,6 @@ impl<S: Storage> Actor<S> {
             store,
             inbox_rx,
             next_session_id: 0,
-            session_tasks: Default::default(),
             tasks: Default::default(),
         }
     }
@@ -314,10 +309,7 @@ impl<S: Storage> Actor<S> {
                 msg = self.inbox_rx.recv_async() => match msg {
                     Err(_) => break,
                     Ok(Input::Shutdown { reply }) => {
-                        tokio::join!(
-                            self.tasks.shutdown(),
-                            self.session_tasks.shutdown()
-                        );
+                        self.tasks.shutdown().await;
                         drop(self);
                         if let Some(reply) = reply {
                             reply.send(()).ok();
@@ -330,10 +322,6 @@ impl<S: Storage> Actor<S> {
                         }
                     }
                 },
-                Some((id, res)) = self.session_tasks.next(), if !self.session_tasks.is_empty() => {
-                    let res = res.context("session task paniced")?;
-                    debug!(?id, ?res, "session complete");
-                }
             };
         }
         Ok(())
@@ -374,12 +362,13 @@ impl<S: Storage> Actor<S> {
                 )
                 .instrument(error_span!("session", peer = %peer.fmt_short()));
 
-                let _task_key = self.session_tasks.spawn_local(session_id, future);
+                self.tasks.spawn_local(async move {
+                    if let Err(err) = future.await {
+                        tracing::debug!(?peer, ?session_id, ?err, "session failed");
+                    }
+                });
 
-                // let active_session = ActiveSession { task_key };
-                // self.sessions.insert(session_id, active_session);
                 let handle = SessionHandle {
-                    // session_id,
                     cancel_token,
                     update_tx,
                     event_rx,
