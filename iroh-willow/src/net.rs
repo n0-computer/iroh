@@ -21,7 +21,7 @@ use crate::{
             LogicalChannelSenders,
         },
         intents::Intent,
-        Role, SessionHandle, SessionInit,
+        Role, SessionHandle,
     },
     util::channel::{
         inbound_channel, outbound_channel, Guarantees, Reader, Receiver, Sender, Writer,
@@ -336,10 +336,7 @@ mod tests {
             meadowcap::AccessMode,
             willow::{Entry, InvalidPath, Path},
         },
-        session::{
-            intents::{Intent, IntentHandle},
-            Interests, Role, SessionInit, SessionMode,
-        },
+        session::{intents::Intent, Interests, Role, SessionInit, SessionMode},
     };
 
     const ALPN: &[u8] = b"iroh-willow/0";

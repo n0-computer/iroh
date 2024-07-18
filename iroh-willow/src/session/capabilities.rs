@@ -5,8 +5,6 @@ use std::{
     task::{ready, Poll, Waker},
 };
 
-use tokio::sync::Notify;
-
 use crate::{
     proto::{
         challenge::ChallengeState,
@@ -17,7 +15,7 @@ use crate::{
             SubspaceCapability,
         },
     },
-    session::{channels::ChannelSenders, resource::ResourceMap, Error, Role},
+    session::{resource::ResourceMap, Error, Role},
     store::traits::SecretStorage,
 };
 

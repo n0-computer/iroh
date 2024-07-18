@@ -1,4 +1,3 @@
-use iroh_net::NodeId;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},

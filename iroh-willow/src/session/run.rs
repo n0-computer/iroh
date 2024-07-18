@@ -1,41 +1,29 @@
-use std::{cell::RefCell, collections::hash_map, future::Future, rc::Rc, sync::Arc};
+use std::{future::Future, sync::Arc};
 
-use futures_concurrency::{
-    future::{Join, TryJoin},
-    stream::StreamExt as _,
-};
+use futures_concurrency::{future::TryJoin, stream::StreamExt as _};
 use futures_lite::{Stream, StreamExt as _};
-use futures_util::{Sink, SinkExt};
-use genawaiter::GeneratorState;
 use strum::IntoEnumIterator;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use tokio_util::sync::{CancellationToken, PollSender};
-use tracing::{debug, error_span, trace, warn, Instrument, Span};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error_span, Instrument, Span};
 
 use crate::{
-    auth::InterestMap,
     net::WillowConn,
-    proto::sync::{
-        ControlIssueGuarantee, InitialTransmission, LogicalChannel, Message,
-        SetupBindAreaOfInterest,
-    },
+    proto::sync::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
     session::{
         aoi_finder::{self, IntersectionFinder},
         capabilities::Capabilities,
         channels::{ChannelSenders, LogicalChannelReceivers},
         data,
         intents::{self, EventKind, Intent},
-        pai_finder::{self as pai, PaiFinder, PaiIntersection},
+        pai_finder::{self as pai, PaiFinder},
         reconciler,
         static_tokens::StaticTokens,
-        Channels, Error, EventSender, Role, SessionEvent, SessionId, SessionInit, SessionUpdate,
+        Channels, Error, EventSender, Role, SessionEvent, SessionId, SessionUpdate,
     },
-    store::{
-        traits::{SecretStorage, Storage},
-        Store,
-    },
-    util::{channel::Receiver, stream::Cancelable, task::SharedJoinMap},
+    store::{traits::Storage, Store},
+    util::{channel::Receiver, stream::Cancelable},
 };
 
 use super::{

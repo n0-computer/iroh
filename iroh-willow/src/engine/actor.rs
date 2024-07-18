@@ -1,8 +1,7 @@
-use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
+use std::{sync::Arc, thread::JoinHandle};
 
 use anyhow::{Context, Result};
-use futures_lite::{future::Boxed as BoxFuture, stream::Stream, StreamExt};
-use futures_util::future::{self, FutureExt};
+use futures_lite::{stream::Stream, StreamExt};
 use iroh_base::key::NodeId;
 use tokio::{
     sync::{mpsc, oneshot},
@@ -19,20 +18,17 @@ use crate::{
         grouping::ThreeDRange,
         keys::{NamespaceId, NamespaceKind, UserId, UserSecretKey},
         meadowcap::{self, AccessMode},
-        sync::InitialTransmission,
         willow::{AuthorisedEntry, Entry},
     },
     session::{
-        intents::{EventKind, Intent},
-        run_session, Channels, Error, EventSender, Interests, Role, SessionEvent, SessionHandle,
-        SessionId, SessionInit, SessionUpdate,
+        intents::Intent, run_session, Error, EventSender, Interests, SessionHandle, SessionId,
     },
     store::{
         entry::EntryOrigin,
         traits::{EntryReader, SecretStorage, Storage},
         Store,
     },
-    util::task::{JoinMap, TaskKey},
+    util::task::JoinMap,
 };
 
 pub const INBOX_CAP: usize = 1024;

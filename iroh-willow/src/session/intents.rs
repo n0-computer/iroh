@@ -1,37 +1,26 @@
 use std::{
-    collections::{hash_map, HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     future::Future,
     sync::Arc,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use futures_util::{FutureExt, Sink};
+use futures_util::FutureExt;
 use genawaiter::rc::Co;
-use iroh_net::{
-    dialer::Dialer, endpoint::Connection, util::SharedAbortingJoinHandle, Endpoint, NodeId,
-};
-use tokio::{
-    io::Interest,
-    sync::{mpsc, oneshot},
-    task::{AbortHandle, JoinHandle, JoinSet},
-};
+
+use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, StreamMap, StreamNotifyClose};
-use tokio_util::sync::{CancellationToken, PollSender};
-use tracing::{debug, error_span, Instrument};
+use tokio_util::sync::PollSender;
+use tracing::debug;
 
 use crate::{
     auth::{Auth, InterestMap},
-    net::{setup, ALPN},
     proto::{
         grouping::{Area, AreaOfInterest},
         keys::NamespaceId,
-        sync::{ReadAuthorisation, ReadCapability},
     },
-    session::{
-        error::ChannelReceiverDropped, Error, Interests, Role, SessionHandle, SessionId,
-        SessionInit, SessionMode, SessionUpdate,
-    },
+    session::{error::ChannelReceiverDropped, Error, Interests, SessionInit, SessionMode},
     store::traits::Storage,
     util::gen_stream::GenStream,
 };

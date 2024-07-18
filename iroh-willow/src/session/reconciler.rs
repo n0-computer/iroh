@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU64,
-    ops::ControlFlow,
 };
 
 use bytes::Bytes;
@@ -39,10 +38,9 @@ use crate::{
     session::{
         aoi_finder::AoiIntersection,
         channels::{ChannelSenders, MessageReceiver},
-        intents::EventKind,
         payload::{send_payload_chunked, CurrentPayload},
         static_tokens::StaticTokens,
-        Error, Role, SessionId, SessionMode,
+        Error, Role, SessionId,
     },
     store::{
         entry::{EntryChannel, EntryOrigin},

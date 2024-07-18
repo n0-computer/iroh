@@ -8,16 +8,11 @@
 //! Licensed under LGPL and ported into this MIT/Apache codebase with explicit permission
 //! from the original author (gwil).
 
-use std::{
-    collections::{HashMap, HashSet},
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use genawaiter::{rc::Gen, GeneratorState};
+
 use tracing::{debug, trace};
 
 use crate::{

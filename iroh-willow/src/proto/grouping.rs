@@ -672,7 +672,7 @@ impl<'a> Encoder for AreaInArea<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeSet, HashSet};
+    use std::collections::HashSet;
 
     use crate::proto::{grouping::Area, willow::Path};
 
