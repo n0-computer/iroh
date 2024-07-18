@@ -1,7 +1,7 @@
 use anyhow::ensure;
 use futures_concurrency::future::TryJoin;
 use futures_util::future::TryFutureExt;
-use iroh_base::{hash::Hash, key::NodeId};
+use iroh_base::key::NodeId;
 use iroh_net::endpoint::{get_remote_node_id, Connection, RecvStream, SendStream};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -10,9 +10,8 @@ use tokio::{
 use tracing::{debug, error_span, field::Empty, instrument, trace, warn, Instrument, Span};
 
 use crate::{
-    engine::ActorHandle,
     proto::sync::{
-        AccessChallenge, Channel, InitialTransmission, LogicalChannel, Message,
+        AccessChallenge, ChallengeHash, Channel, InitialTransmission, LogicalChannel, Message,
         CHALLENGE_HASH_LENGTH, MAX_PAYLOAD_SIZE_POWER,
     },
     session::{
@@ -20,8 +19,7 @@ use crate::{
             ChannelReceivers, ChannelSenders, Channels, LogicalChannelReceivers,
             LogicalChannelSenders,
         },
-        intents::Intent,
-        Role, SessionHandle,
+        Role,
     },
     util::channel::{
         inbound_channel, outbound_channel, Guarantees, Reader, Receiver, Sender, Writer,
@@ -43,17 +41,31 @@ pub struct WillowConn {
 }
 
 impl WillowConn {
-    pub async fn alfie(conn: Connection, me: NodeId) -> anyhow::Result<Self> {
-        Self::connect(conn, me, Role::Alfie).await
+    pub async fn alfie(
+        conn: Connection,
+        me: NodeId,
+        our_nonce: AccessChallenge,
+    ) -> anyhow::Result<Self> {
+        Self::connect(conn, me, Role::Alfie, our_nonce).await
     }
 
-    pub async fn betty(conn: Connection, me: NodeId) -> anyhow::Result<Self> {
-        Self::connect(conn, me, Role::Betty).await
+    pub async fn betty(
+        conn: Connection,
+        me: NodeId,
+        our_nonce: AccessChallenge,
+    ) -> anyhow::Result<Self> {
+        Self::connect(conn, me, Role::Betty, our_nonce).await
     }
 
-    async fn connect(conn: Connection, me: NodeId, our_role: Role) -> anyhow::Result<Self> {
+    async fn connect(
+        conn: Connection,
+        me: NodeId,
+        our_role: Role,
+        our_nonce: AccessChallenge,
+    ) -> anyhow::Result<Self> {
         let peer = get_remote_node_id(&conn)?;
-        let (initial_transmission, channels, mut join_set) = setup(conn, me, our_role).await?;
+        let (initial_transmission, channels, mut join_set) =
+            setup(conn, me, our_role, our_nonce).await?;
         let join_handle = tokio::task::spawn(async move { join_all(&mut join_set).await });
         Ok(Self {
             peer,
@@ -66,10 +78,11 @@ impl WillowConn {
 }
 
 #[instrument(skip_all, name = "willow_net", fields(me=%me.fmt_short(), peer=Empty))]
-pub async fn setup(
+async fn setup(
     conn: Connection,
     me: NodeId,
     our_role: Role,
+    our_nonce: AccessChallenge,
 ) -> anyhow::Result<(InitialTransmission, Channels, JoinSet<anyhow::Result<()>>)> {
     let peer = iroh_net::endpoint::get_remote_node_id(&conn)?;
     Span::current().record("peer", tracing::field::display(peer.fmt_short()));
@@ -84,8 +97,12 @@ pub async fn setup(
     control_send_stream.set_priority(i32::MAX)?;
     debug!("control channel ready");
 
-    let initial_transmission =
-        exchange_commitments(&mut control_send_stream, &mut control_recv_stream).await?;
+    let initial_transmission = exchange_commitments(
+        &mut control_send_stream,
+        &mut control_recv_stream,
+        our_nonce,
+    )
+    .await?;
     debug!("exchanged commitments");
 
     let (control_send, control_recv) = spawn_channel(
@@ -111,19 +128,6 @@ pub async fn setup(
         },
     };
     Ok((initial_transmission, channels, tasks))
-}
-
-#[instrument(skip_all, name = "willow_net", fields(me=%me.fmt_short(), peer=Empty))]
-pub async fn run(
-    me: NodeId,
-    actor: ActorHandle,
-    conn: Connection,
-    our_role: Role,
-    intents: Vec<Intent>,
-) -> anyhow::Result<SessionHandle> {
-    let conn = WillowConn::connect(conn, me, our_role).await?;
-    let handle = actor.init_session(conn, intents).await?;
-    Ok(handle)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -270,9 +274,9 @@ async fn send_loop(mut send_stream: SendStream, channel_reader: Reader) -> anyho
 async fn exchange_commitments(
     send_stream: &mut SendStream,
     recv_stream: &mut RecvStream,
+    our_nonce: AccessChallenge,
 ) -> anyhow::Result<InitialTransmission> {
-    let our_nonce: AccessChallenge = rand::random();
-    let challenge_hash = Hash::new(our_nonce);
+    let challenge_hash = our_nonce.hash();
     send_stream.write_u8(MAX_PAYLOAD_SIZE_POWER).await?;
     send_stream.write_all(challenge_hash.as_bytes()).await?;
 
@@ -286,7 +290,7 @@ async fn exchange_commitments(
     recv_stream.read_exact(&mut received_commitment).await?;
     Ok(InitialTransmission {
         our_nonce,
-        received_commitment,
+        received_commitment: ChallengeHash::from_bytes(received_commitment),
         their_max_payload_size,
     })
 }
@@ -320,7 +324,7 @@ mod tests {
 
     use futures_lite::StreamExt;
     use iroh_base::key::SecretKey;
-    use iroh_net::{Endpoint, NodeAddr, NodeId};
+    use iroh_net::{endpoint::Connection, Endpoint, NodeAddr, NodeId};
     use rand::SeedableRng;
     use rand_chacha::ChaCha12Rng;
     use tracing::info;
@@ -329,14 +333,15 @@ mod tests {
         auth::{CapSelector, DelegateTo},
         engine::ActorHandle,
         form::{AuthForm, EntryForm, PayloadForm, SubspaceForm, TimestampForm},
-        net::run,
+        net::WillowConn,
         proto::{
             grouping::ThreeDRange,
             keys::{NamespaceId, NamespaceKind, UserId},
             meadowcap::AccessMode,
+            sync::AccessChallenge,
             willow::{Entry, InvalidPath, Path},
         },
-        session::{intents::Intent, Interests, Role, SessionInit, SessionMode},
+        session::{intents::Intent, Interests, Role, SessionHandle, SessionInit, SessionMode},
     };
 
     const ALPN: &[u8] = b"iroh-willow/0";
@@ -344,6 +349,19 @@ mod tests {
     fn create_rng(seed: &str) -> ChaCha12Rng {
         let seed = iroh_base::hash::Hash::new(seed);
         rand_chacha::ChaCha12Rng::from_seed(*(seed.as_bytes()))
+    }
+
+    pub async fn run(
+        me: NodeId,
+        actor: ActorHandle,
+        conn: Connection,
+        our_role: Role,
+        our_nonce: AccessChallenge,
+        intents: Vec<Intent>,
+    ) -> anyhow::Result<SessionHandle> {
+        let conn = WillowConn::connect(conn, me, our_role, our_nonce).await?;
+        let handle = actor.init_session(conn, intents).await?;
+        Ok(handle)
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -416,12 +434,15 @@ mod tests {
         info!("connecting took {:?}", start.elapsed());
 
         let start = Instant::now();
+        let nonce_alfie = AccessChallenge::generate_with_rng(&mut rng);
+        let nonce_betty = AccessChallenge::generate_with_rng(&mut rng);
         let (session_alfie, session_betty) = tokio::join!(
             run(
                 node_id_alfie,
                 handle_alfie.clone(),
                 conn_alfie,
                 Role::Alfie,
+                nonce_alfie,
                 vec![intent_alfie]
             ),
             run(
@@ -429,6 +450,7 @@ mod tests {
                 handle_betty.clone(),
                 conn_betty,
                 Role::Betty,
+                nonce_betty,
                 vec![intent_betty]
             )
         );
@@ -561,12 +583,16 @@ mod tests {
         let (intent_alfie, mut intent_handle_alfie) = Intent::new(init_alfie);
         let (intent_betty, mut intent_handle_betty) = Intent::new(init_betty);
 
+        let nonce_alfie = AccessChallenge::generate_with_rng(&mut rng);
+        let nonce_betty = AccessChallenge::generate_with_rng(&mut rng);
+
         let (session_alfie, session_betty) = tokio::join!(
             run(
                 node_id_alfie,
                 handle_alfie.clone(),
                 conn_alfie,
                 Role::Alfie,
+                nonce_alfie,
                 vec![intent_alfie]
             ),
             run(
@@ -574,6 +600,7 @@ mod tests {
                 handle_betty.clone(),
                 conn_betty,
                 Role::Betty,
+                nonce_betty,
                 vec![intent_betty]
             )
         );

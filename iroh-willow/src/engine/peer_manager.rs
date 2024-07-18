@@ -19,6 +19,7 @@ use tracing::{debug, trace};
 
 use crate::{
     net::{WillowConn, ALPN},
+    proto::sync::AccessChallenge,
     session::{
         intents::Intent, Error, Interests, Role, SessionEvent, SessionHandle, SessionInit,
         SessionMode, SessionUpdate,
@@ -112,9 +113,11 @@ impl PeerManager {
 
         match self.peers.get_mut(&peer) {
             None => {
+                // TODO: Allow to pass RNG.
+                let our_nonce = AccessChallenge::generate();
                 let abort_handle = self
                     .tasks
-                    .spawn(WillowConn::betty(conn, me).map(move |res| (peer, res)));
+                    .spawn(WillowConn::betty(conn, me, our_nonce).map(move |res| (peer, res)));
                 let init = SessionInit::continuous(Interests::All);
                 let intent = Intent::new_detached(init);
                 self.peers.insert(
@@ -140,9 +143,10 @@ impl PeerManager {
                     // Abort our dial attempt.
                     abort_handle.abort();
                     // Set the new abort handle.
+                    let our_nonce = AccessChallenge::generate();
                     *abort_handle = self
                         .tasks
-                        .spawn(WillowConn::betty(conn, me).map(move |res| (peer, res)));
+                        .spawn(WillowConn::betty(conn, me, our_nonce).map(move |res| (peer, res)));
                     // Add a catchall interest.
                     let init = SessionInit::new(Interests::All, SessionMode::Live);
                     let intent = Intent::new_detached(init);
@@ -218,10 +222,11 @@ impl PeerManager {
                 let intents = vec![intent];
                 let me = self.endpoint.node_id();
                 let endpoint = self.endpoint.clone();
+                let our_nonce = AccessChallenge::generate();
                 let abort_handle = self.tasks.spawn(
                     async move {
                         let conn = endpoint.connect_by_node_id(&peer, ALPN).await?;
-                        let conn = WillowConn::alfie(conn, me).await?;
+                        let conn = WillowConn::alfie(conn, me, our_nonce).await?;
                         Ok(conn)
                     }
                     .map(move |res| (peer, res)),
