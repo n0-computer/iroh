@@ -44,17 +44,17 @@ impl Capabilities {
         })))
     }
 
-    pub fn revealed(&self) -> impl Future<Output = ()> + '_ {
-        std::future::poll_fn(|cx| {
-            let mut inner = self.0.borrow_mut();
-            if inner.challenge.is_revealed() {
-                Poll::Ready(())
-            } else {
-                inner.on_reveal_wakers.push(cx.waker().to_owned());
-                Poll::Pending
-            }
-        })
-    }
+    // pub fn revealed(&self) -> impl Future<Output = ()> + '_ {
+    //     std::future::poll_fn(|cx| {
+    //         let mut inner = self.0.borrow_mut();
+    //         if inner.challenge.is_revealed() {
+    //             Poll::Ready(())
+    //         } else {
+    //             inner.on_reveal_wakers.push(cx.waker().to_owned());
+    //             Poll::Pending
+    //         }
+    //     })
+    // }
 
     pub fn is_revealed(&self) -> bool {
         self.0.borrow().challenge.is_revealed()

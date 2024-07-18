@@ -15,7 +15,7 @@ use tokio::{
 };
 use tokio_stream::{wrappers::ReceiverStream, StreamMap};
 
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{
     net::{WillowConn, ALPN},
@@ -27,8 +27,10 @@ use crate::{
 
 use super::actor::ActorHandle;
 
+const ERROR_CODE_IGNORE_CONN: u8 = 1;
+
 #[derive(derive_more::Debug)]
-pub enum Input {
+pub(super) enum Input {
     SubmitIntent {
         peer: NodeId,
         intent: Intent,
@@ -40,7 +42,7 @@ pub enum Input {
 }
 
 #[derive(derive_more::Debug)]
-pub struct PeerManager {
+pub(super) struct PeerManager {
     actor: ActorHandle,
     endpoint: Endpoint,
     inbox: mpsc::Receiver<Input>,
@@ -50,7 +52,7 @@ pub struct PeerManager {
 }
 
 impl PeerManager {
-    pub fn new(
+    pub(super) fn new(
         actor_handle: ActorHandle,
         endpoint: Endpoint,
         inbox: mpsc::Receiver<Input>,
@@ -64,19 +66,20 @@ impl PeerManager {
             peers: Default::default(),
         }
     }
-    pub async fn run(mut self) -> Result<(), Error> {
+
+    pub(super) async fn run(mut self) -> Result<(), Error> {
         loop {
             tokio::select! {
                 Some(input) = self.inbox.recv() => {
-                    debug!(?input, "tick: inbox");
+                    trace!(?input, "tick: inbox");
                     self.handle_input(input).await;
                 }
                 Some((session_id, event)) = self.events_rx.next(), if !self.events_rx.is_empty() => {
-                    debug!(?session_id, ?event, "tick: event");
+                    trace!(?session_id, ?event, "tick: event");
                     self.handle_event(session_id, event);
                 }
                 Some(res) = self.tasks.join_next(), if !self.tasks.is_empty() => {
-                    debug!("tick: task.join_next");
+                    trace!("tick: task joined");
                     match res {
                         Err(err) if err.is_cancelled() => continue,
                         Err(err) => Err(err).context("establish task paniced")?,
@@ -90,16 +93,10 @@ impl PeerManager {
         Ok(())
     }
 
-    pub async fn handle_input(&mut self, input: Input) {
+    async fn handle_input(&mut self, input: Input) {
         match input {
-            Input::SubmitIntent { peer, intent } => {
-                if let Err(err) = self.submit_intent(peer, intent).await {
-                    tracing::warn!("failed to submit intent: {err:?}");
-                }
-            }
-            Input::HandleConnection { conn } => {
-                self.handle_connection(conn);
-            }
+            Input::SubmitIntent { peer, intent } => self.submit_intent(peer, intent).await,
+            Input::HandleConnection { conn } => self.handle_connection(conn),
         }
     }
 
@@ -107,7 +104,7 @@ impl PeerManager {
         let peer = match get_remote_node_id(&conn) {
             Ok(node_id) => node_id,
             Err(err) => {
-                tracing::debug!("ignore incoming connection (QUIC handshake failed: {err})");
+                tracing::debug!("ignore incoming connection (failed to get remote node id: {err})");
                 return;
             }
         };
@@ -118,7 +115,7 @@ impl PeerManager {
                 let abort_handle = self
                     .tasks
                     .spawn(WillowConn::betty(conn, me).map(move |res| (peer, res)));
-                let init = SessionInit::new(Interests::All, SessionMode::Live);
+                let init = SessionInit::continuous(Interests::All);
                 let intent = Intent::new_detached(init);
                 self.peers.insert(
                     peer,
@@ -138,15 +135,15 @@ impl PeerManager {
                     tracing::debug!(
                         "ignore incoming connection (already dialing and our dial wins)"
                     );
-                    conn.close(0u8.into(), b"duplicate-our-dial-wins");
+                    conn.close(ERROR_CODE_IGNORE_CONN.into(), b"duplicate-our-dial-wins");
                 } else {
-                    // abort our dial attempt
+                    // Abort our dial attempt.
                     abort_handle.abort();
-                    // set the new abort handle
+                    // Set the new abort handle.
                     *abort_handle = self
                         .tasks
                         .spawn(WillowConn::betty(conn, me).map(move |res| (peer, res)));
-                    // add catchall interest
+                    // Add a catchall interest.
                     let init = SessionInit::new(Interests::All, SessionMode::Live);
                     let intent = Intent::new_detached(init);
                     intents.push(intent);
@@ -157,18 +154,24 @@ impl PeerManager {
                 ..
             }) => {
                 tracing::debug!("ignore incoming connection (already accepting)");
-                conn.close(0u8.into(), b"duplicate-already-accepting");
+                conn.close(
+                    ERROR_CODE_IGNORE_CONN.into(),
+                    b"duplicate-already-accepting",
+                );
             }
             Some(PeerState::Active { .. }) => {
-                tracing::debug!("got connection for already active peer");
-                conn.close(0u8.into(), b"duplicate-already-accepting");
+                tracing::debug!("ignore incoming connection (already connected)");
+                conn.close(
+                    ERROR_CODE_IGNORE_CONN.into(),
+                    b"duplicate-already-accepting",
+                );
             }
         }
     }
 
     async fn failed_to_connect(&mut self, peer: NodeId, error: Arc<Error>) {
         let Some(peer_state) = self.peers.remove(&peer) else {
-            tracing::warn!(?peer, "attempted to remove unknown peer");
+            tracing::warn!(?peer, "connection failure for unknown peer");
             return;
         };
         match peer_state {
@@ -181,7 +184,7 @@ impl PeerManager {
                 .await;
             }
             PeerState::Active { .. } => {
-                unreachable!("we don't accept connections for active peers")
+                unreachable!("we never handle connections for active peers")
             }
         };
     }
@@ -209,7 +212,7 @@ impl PeerManager {
         Ok(())
     }
 
-    pub async fn submit_intent(&mut self, peer: NodeId, intent: Intent) -> Result<()> {
+    async fn submit_intent(&mut self, peer: NodeId, intent: Intent) {
         match self.peers.get_mut(&peer) {
             None => {
                 let intents = vec![intent];
@@ -235,19 +238,22 @@ impl PeerManager {
                     intents.push(intent);
                 }
                 PeerState::Active { update_tx, .. } => {
-                    update_tx.send(SessionUpdate::SubmitIntent(intent)).await?;
+                    if let Err(intent) = update_tx.send(SessionUpdate::SubmitIntent(intent)).await {
+                        let SessionUpdate::SubmitIntent(intent) = intent.0;
+                        intent.send_abort(Arc::new(Error::ActorFailed)).await;
+                    }
                 }
             },
         };
-        Ok(())
     }
 
-    pub fn handle_event(&mut self, peer: NodeId, event: SessionEvent) {
+    fn handle_event(&mut self, peer: NodeId, event: SessionEvent) {
         tracing::info!(?event, "event");
         match event {
             SessionEvent::Established => {}
             SessionEvent::Complete { .. } => {
-                self.peers.remove(&peer);
+                let state = self.peers.remove(&peer);
+                debug_assert!(matches!(state, Some(PeerState::Active { .. })));
             }
         }
     }
@@ -262,10 +268,5 @@ enum PeerState {
     },
     Active {
         update_tx: mpsc::Sender<SessionUpdate>,
-        // cancel_token: CancellationToken,
     },
 }
-
-#[derive(Debug, thiserror::Error)]
-#[error("receiver dropped")]
-pub struct ReceiverDropped;

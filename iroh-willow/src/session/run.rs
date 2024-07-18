@@ -36,14 +36,6 @@ use super::{
 
 const INITIAL_GUARANTEES: u64 = u64::MAX;
 
-// struct Session {
-//     session_id: SessionId,
-//     our_role: Role,
-//     initial_transmission: InitialTransmission,
-//     event_sender: EventSender,
-//     cancel_token: CancellationToken,
-// }
-
 pub async fn run_session<S: Storage>(
     store: Store<S>,
     conn: WillowConn,
@@ -77,7 +69,7 @@ pub async fn run_session<S: Storage>(
             },
     } = recv;
 
-    // TODO: update mode to live on intent changes
+    // TODO: make mode change on intent changes
     let mode = initial_intents
         .iter()
         .fold(SessionMode::ReconcileOnce, |cur, intent| {
@@ -233,12 +225,6 @@ pub async fn run_session<S: Storage>(
         Ok(())
     });
 
-    let pai_init = with_span(error_span!("pai-init"), async {
-        caps.revealed().await;
-        pai_inbox.send(pai::Input::Established).await?;
-        Ok(())
-    });
-
     let pai_loop = with_span(error_span!("pai"), async {
         use pai::Output;
         let inbox = pai_inbox_rx.merge(intersection_recv.map(pai::Input::ReceivedMessage));
@@ -361,7 +347,6 @@ pub async fn run_session<S: Storage>(
         control_loop,
         data_loop,
         update_loop,
-        pai_init,
         pai_loop,
         intersection_loop,
         reconciler_loop,
@@ -430,6 +415,7 @@ async fn control_loop(
         match message {
             Message::CommitmentReveal(msg) => {
                 caps.received_commitment_reveal(our_role, msg.nonce)?;
+                pai_inbox.send(pai::Input::Established).await?;
                 event_sender.send(SessionEvent::Established).await?;
             }
             Message::ControlIssueGuarantee(msg) => {
@@ -463,11 +449,6 @@ async fn control_loop(
 
     Ok(())
 }
-
-// fn channel<T: Send + 'static>(cap: usize) -> (Sender<T>, ReceiverStream<T>) {
-//     let (tx, rx) = mpsc::channel(cap);
-//     (Sender(tx), ReceiverStream::new(rx))
-// }
 
 fn cancelable_channel<T: Send + 'static>(
     cap: usize,

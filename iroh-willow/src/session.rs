@@ -146,6 +146,14 @@ impl SessionInit {
         let interests = interests.into();
         Self { interests, mode }
     }
+
+    pub fn continuous(interests: impl Into<Interests>) -> Self {
+        Self::new(interests, SessionMode::Live)
+    }
+
+    pub fn reconcile_once(interests: impl Into<Interests>) -> Self {
+        Self::new(interests, SessionMode::ReconcileOnce)
+    }
 }
 
 /// The bind scope for resources.
@@ -194,8 +202,11 @@ impl SessionHandle {
         Ok(())
     }
 
-    pub async fn send_update(&self, update: SessionUpdate) -> anyhow::Result<()> {
-        self.update_tx.send(update).await?;
+    /// Submit a new synchronisation intent.
+    pub async fn submit_intent(&self, intent: Intent) -> anyhow::Result<()> {
+        self.update_tx
+            .send(SessionUpdate::SubmitIntent(intent))
+            .await?;
         Ok(())
     }
 
