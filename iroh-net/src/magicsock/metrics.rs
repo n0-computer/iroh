@@ -9,7 +9,7 @@ use iroh_metrics::{
 pub struct Metrics {
     pub rebind_calls: Counter,
     pub re_stun_calls: Counter,
-    pub update_endpoints: Counter,
+    pub update_direct_addrs: Counter,
 
     // Sends (data or disco)
     pub send_relay_queued: Counter,
@@ -76,7 +76,7 @@ impl Default for Metrics {
 
             rebind_calls: Counter::new("rebind_calls"),
             re_stun_calls: Counter::new("restun_calls"),
-            update_endpoints: Counter::new("update_endpoints"),
+            update_direct_addrs: Counter::new("update_endpoints"),
 
             // Sends (data or disco)
             send_relay_queued: Counter::new("send_relay_queued"),
