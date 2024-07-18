@@ -323,7 +323,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.5
+      uses: mozilla-actions/sccache-action@v0.0.4
 
     - name: Build iroh
       run: |
