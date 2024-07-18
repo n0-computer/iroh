@@ -1,18 +1,15 @@
 use std::{
-    collections::{hash_map, BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{hash_map, BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     auth::CapSelector,
     proto::{grouping::AreaOfInterest, sync::ReadAuthorisation},
-    session::{
-        error::ChannelReceiverDropped,
-        intents::{EventKind, Intent},
-    },
+    session::{error::ChannelReceiverDropped, intents::Intent},
 };
 
 mod aoi_finder;

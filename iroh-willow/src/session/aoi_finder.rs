@@ -1,8 +1,7 @@
-use std::{cell::RefCell, collections::hash_map, future::Future, rc::Rc};
+use std::collections::hash_map;
 
 use futures_lite::{Stream, StreamExt};
 use genawaiter::rc::Co;
-use tokio::sync::mpsc;
 
 use crate::{
     auth::InterestMap,
@@ -15,11 +14,8 @@ use crate::{
         },
     },
     session::{
-        capabilities::Capabilities,
-        channels::ChannelSenders,
-        pai_finder::{self, PaiIntersection},
-        resource::ResourceMap,
-        Error, Scope,
+        capabilities::Capabilities, pai_finder::PaiIntersection, resource::ResourceMap, Error,
+        Scope,
     },
     util::gen_stream::GenStream,
 };

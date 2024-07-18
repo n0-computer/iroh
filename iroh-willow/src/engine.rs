@@ -73,23 +73,22 @@ impl std::ops::Deref for Engine {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use iroh_net::{Endpoint, NodeAddr, NodeId};
+    use iroh_net::{Endpoint, NodeId};
     use rand::SeedableRng;
     use rand_chacha::ChaCha12Rng;
-    use std::collections::HashMap;
 
     use crate::{
         auth::{CapSelector, DelegateTo},
         engine::Engine,
-        form::{AuthForm, EntryForm, PayloadForm, SubspaceForm, TimestampForm},
+        form::EntryForm,
         net::ALPN,
         proto::{
-            grouping::{Area, AreaOfInterest, ThreeDRange},
+            grouping::Area,
             keys::{NamespaceId, NamespaceKind, UserId},
             meadowcap::AccessMode,
-            willow::{Entry, InvalidPath, Path},
+            willow::Path,
         },
-        session::{intents::EventKind, Interests, Role, SessionInit, SessionMode},
+        session::{intents::EventKind, Interests, SessionInit, SessionMode},
     };
 
     fn create_rng(seed: &str) -> ChaCha12Rng {

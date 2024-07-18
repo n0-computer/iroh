@@ -1,44 +1,28 @@
-use std::{
-    collections::{hash_map, HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
 use futures_buffered::join_all;
-use futures_concurrency::future::future_group;
-use futures_concurrency::future::Join;
+
 use futures_lite::StreamExt;
 use futures_util::FutureExt;
 use iroh_net::{
-    dialer::Dialer,
     endpoint::{get_remote_node_id, Connection},
-    util::SharedAbortingJoinHandle,
     Endpoint, NodeId,
 };
 use tokio::{
-    io::Interest,
-    sync::{mpsc, oneshot},
-    task::{AbortHandle, JoinHandle, JoinSet},
+    sync::mpsc,
+    task::{AbortHandle, JoinSet},
 };
-use tokio_stream::{wrappers::ReceiverStream, StreamMap, StreamNotifyClose};
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, error_span, Instrument};
+use tokio_stream::{wrappers::ReceiverStream, StreamMap};
+
+use tracing::debug;
 
 use crate::{
-    auth::{Auth, InterestMap},
-    net::{setup, WillowConn, ALPN},
-    proto::{
-        grouping::{Area, AreaOfInterest},
-        keys::NamespaceId,
-        sync::{ReadAuthorisation, ReadCapability},
-    },
+    net::{WillowConn, ALPN},
     session::{
-        error::ChannelReceiverDropped,
-        intents::{EventKind, Intent, IntentHandle},
-        Error, Interests, Role, SessionEvent, SessionHandle, SessionId, SessionInit, SessionMode,
-        SessionUpdate,
+        intents::Intent, Error, Interests, Role, SessionEvent, SessionHandle, SessionInit,
+        SessionMode, SessionUpdate,
     },
-    store::traits::Storage,
 };
 
 use super::actor::ActorHandle;
