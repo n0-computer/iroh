@@ -369,7 +369,9 @@ impl LocalPoolHandle {
                 Ok(res) => res,
                 Err(_) => {
                     // abort the outer task and wait forever (basically return pending)
-                    abort.get().map(|a| a.abort());
+                    if let Some(abort) = abort.get() {
+                        abort.abort();
+                    }
                     futures_lite::future::pending().await
                 }
             }
