@@ -85,7 +85,7 @@ impl PeerManager {
                         Err(err) if err.is_cancelled() => continue,
                         Err(err) => Err(err).context("establish task paniced")?,
                         Ok((_peer, Ok(conn))) => self.on_established(conn).await?,
-                        Ok((peer, Err(err))) => self.failed_to_connect(peer, Arc::new(Error::Net(err))).await,
+                        Ok((peer, Err(err))) => self.on_establish_failed(peer, Arc::new(Error::Net(err))).await,
                     }
                 }
                 else => break,
@@ -173,7 +173,7 @@ impl PeerManager {
         }
     }
 
-    async fn failed_to_connect(&mut self, peer: NodeId, error: Arc<Error>) {
+    async fn on_establish_failed(&mut self, peer: NodeId, error: Arc<Error>) {
         let Some(peer_state) = self.peers.remove(&peer) else {
             tracing::warn!(?peer, "connection failure for unknown peer");
             return;
@@ -195,12 +195,12 @@ impl PeerManager {
 
     async fn on_established(&mut self, conn: WillowConn) -> anyhow::Result<()> {
         let peer = conn.peer;
-        let peer_state = self
+        let state = self
             .peers
             .remove(&peer)
             .ok_or_else(|| anyhow!("unreachable: on_established called for unknown peer"))?;
 
-        let PeerState::Pending { intents, .. } = peer_state else {
+        let PeerState::Pending { intents, .. } = state else {
             anyhow::bail!("unreachable: on_established called for peer in wrong state")
         };
 
@@ -219,36 +219,31 @@ impl PeerManager {
     async fn submit_intent(&mut self, peer: NodeId, intent: Intent) {
         match self.peers.get_mut(&peer) {
             None => {
-                let intents = vec![intent];
-                let me = self.endpoint.node_id();
-                let endpoint = self.endpoint.clone();
                 let our_nonce = AccessChallenge::generate();
-                let abort_handle = self.tasks.spawn(
+                let abort_handle = self.tasks.spawn({
+                    let endpoint = self.endpoint.clone();
                     async move {
                         let conn = endpoint.connect_by_node_id(&peer, ALPN).await?;
-                        let conn = WillowConn::alfie(conn, me, our_nonce).await?;
-                        Ok(conn)
+                        WillowConn::alfie(conn, endpoint.node_id(), our_nonce).await
                     }
-                    .map(move |res| (peer, res)),
-                );
-                let peer_state = PeerState::Pending {
-                    intents,
+                    .map(move |res| (peer, res))
+                });
+                let state = PeerState::Pending {
+                    intents: vec![intent],
                     abort_handle,
                     our_role: Role::Alfie,
                 };
-                self.peers.insert(peer, peer_state);
+                self.peers.insert(peer, state);
             }
-            Some(state) => match state {
-                PeerState::Pending { intents, .. } => {
-                    intents.push(intent);
+            Some(PeerState::Pending { intents, .. }) => {
+                intents.push(intent);
+            }
+            Some(PeerState::Active { update_tx, .. }) => {
+                if let Err(message) = update_tx.send(SessionUpdate::SubmitIntent(intent)).await {
+                    let SessionUpdate::SubmitIntent(intent) = message.0;
+                    intent.send_abort(Arc::new(Error::ActorFailed)).await;
                 }
-                PeerState::Active { update_tx, .. } => {
-                    if let Err(intent) = update_tx.send(SessionUpdate::SubmitIntent(intent)).await {
-                        let SessionUpdate::SubmitIntent(intent) = intent.0;
-                        intent.send_abort(Arc::new(Error::ActorFailed)).await;
-                    }
-                }
-            },
+            }
         };
     }
 
