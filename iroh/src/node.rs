@@ -286,7 +286,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             let inner = self.clone();
             let handle = self
                 .rt
-                .spawn_pinned(move || inner.run_gc_loop(gc_period, gc_done_callback));
+                .run(move || inner.run_gc_loop(gc_period, gc_done_callback));
             // We cannot spawn tasks that run on the local pool directly into the join set,
             // so instead we create a new task that supervises the local task.
             join_set.spawn({
