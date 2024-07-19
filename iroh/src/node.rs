@@ -109,7 +109,7 @@ struct NodeInner<D> {
     client: crate::client::Iroh,
     downloader: Downloader,
     gossip_dispatcher: GossipDispatcher,
-    rt_handle: LocalPoolHandle,
+    local_pool_handle: LocalPoolHandle,
 }
 
 /// In memory node.
@@ -185,7 +185,7 @@ impl<D: BaoStore> Node<D> {
 
     /// Returns a reference to the used `LocalPoolHandle`.
     pub fn local_pool_handle(&self) -> &LocalPoolHandle {
-        &self.inner.rt_handle
+        &self.inner.local_pool_handle
     }
 
     /// Get the relay server we are connected to.
@@ -256,7 +256,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         protocols: Arc<ProtocolMap>,
         gc_policy: GcPolicy,
         gc_done_callback: Option<Box<dyn Fn() + Send>>,
-        rt: LocalPool,
+        local_pool: LocalPool,
     ) {
         let (ipv4, ipv6) = self.endpoint.bound_sockets();
         debug!(
@@ -284,7 +284,8 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         // Spawn a task for the garbage collection.
         if let GcPolicy::Interval(gc_period) = gc_policy {
             let inner = self.clone();
-            let handle = rt.spawn_pinned(move || inner.run_gc_loop(gc_period, gc_done_callback));
+            let handle =
+                local_pool.spawn_pinned(move || inner.run_gc_loop(gc_period, gc_done_callback));
             // We cannot spawn tasks that run on the local pool directly into the join set,
             // so instead we create a new task that supervises the local task.
             join_set.spawn({
@@ -377,7 +378,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         join_set.shutdown().await;
 
         // Abort remaining local tasks.
-        rt.shutdown().await;
+        local_pool.shutdown().await;
     }
 
     /// Shutdown the different parts of the node concurrently.

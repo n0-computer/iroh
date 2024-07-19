@@ -571,7 +571,7 @@ where
             downloader,
             gossip,
             gossip_dispatcher,
-            rt_handle: lp.handle().clone(),
+            local_pool_handle: lp.handle().clone(),
         });
 
         let protocol_builder = ProtocolBuilder {
@@ -581,7 +581,7 @@ where
             external_rpc: self.rpc_endpoint,
             gc_policy: self.gc_policy,
             gc_done_callback: self.gc_done_callback,
-            rt: lp,
+            local_pool: lp,
         };
 
         let protocol_builder = protocol_builder.register_iroh_protocols();
@@ -607,7 +607,7 @@ pub struct ProtocolBuilder<D> {
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
     gc_policy: GcPolicy,
-    rt: LocalPool,
+    local_pool: LocalPool,
 }
 
 impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
@@ -684,7 +684,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
 
     /// Returns a reference to the used [`LocalPoolHandle`].
     pub fn local_pool_handle(&self) -> &LocalPoolHandle {
-        self.rt.handle()
+        self.local_pool.handle()
     }
 
     /// Returns a reference to the [`Downloader`] used by the node.
@@ -733,7 +733,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
             protocols,
             gc_done_callback,
             gc_policy,
-            rt,
+            local_pool: rt,
         } = self;
         let protocols = Arc::new(protocols);
         let node_id = inner.endpoint.node_id();
