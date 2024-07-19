@@ -377,7 +377,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         join_set.shutdown().await;
 
         // Abort remaining local tasks.
-        local_pool.shutdown().await;
+        // local_pool.shutdown().await;
     }
 
     /// Shutdown the different parts of the node concurrently.
