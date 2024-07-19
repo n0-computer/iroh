@@ -11,7 +11,7 @@ use iroh_base::key::SecretKey;
 use iroh_blobs::{
     downloader::Downloader,
     store::{Map, Store as BaoStore},
-    util::local_pool::{LocalPool, LocalPoolHandle},
+    util::local_pool::{self, LocalPool, LocalPoolHandle, PanicMode},
 };
 use iroh_docs::engine::DefaultAuthorStorage;
 use iroh_docs::net::DOCS_ALPN;
@@ -455,7 +455,10 @@ where
 
     async fn build_inner(self) -> Result<ProtocolBuilder<D>> {
         trace!("building node");
-        let lp = LocalPool::default();
+        let lp = LocalPool::new(local_pool::Config {
+            panic_mode: PanicMode::LogAndContinue,
+            ..Default::default()
+        });
         let endpoint = {
             let mut transport_config = quinn::TransportConfig::default();
             transport_config

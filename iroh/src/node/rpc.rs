@@ -566,7 +566,7 @@ impl<D: BaoStore> Handler<D> {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
         let tx2 = tx.clone();
-        self.rt().run_detached(|| async move {
+        self.rt().spawn(|| async move {
             if let Err(e) = self.blob_add_from_path0(msg, tx).await {
                 tx2.send_async(AddProgress::Abort(e.into())).await.ok();
             }
@@ -578,7 +578,7 @@ impl<D: BaoStore> Handler<D> {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
         let tx2 = tx.clone();
-        self.rt().run_detached(|| async move {
+        self.rt().spawn(|| async move {
             if let Err(e) = self.doc_import_file0(msg, tx).await {
                 tx2.send_async(crate::client::docs::ImportProgress::Abort(e.into()))
                     .await
@@ -662,7 +662,7 @@ impl<D: BaoStore> Handler<D> {
     fn doc_export_file(self, msg: ExportFileRequest) -> impl Stream<Item = ExportFileResponse> {
         let (tx, rx) = flume::bounded(1024);
         let tx2 = tx.clone();
-        self.rt().run_detached(|| async move {
+        self.rt().spawn(|| async move {
             if let Err(e) = self.doc_export_file0(msg, tx).await {
                 tx2.send_async(ExportProgress::Abort(e.into())).await.ok();
             }
@@ -705,7 +705,7 @@ impl<D: BaoStore> Handler<D> {
         let downloader = self.inner.downloader.clone();
         let endpoint = self.inner.endpoint.clone();
         let progress = FlumeProgressSender::new(sender);
-        self.inner.rt_handle.run_detached(move || async move {
+        self.inner.rt_handle.spawn(move || async move {
             if let Err(err) = download(&db, endpoint, &downloader, msg, progress.clone()).await {
                 progress
                     .send(DownloadProgress::Abort(err.into()))
@@ -720,7 +720,7 @@ impl<D: BaoStore> Handler<D> {
     fn blob_export(self, msg: ExportRequest) -> impl Stream<Item = ExportResponse> {
         let (tx, rx) = flume::bounded(1024);
         let progress = FlumeProgressSender::new(tx);
-        self.rt().run_detached(move || async move {
+        self.rt().spawn(move || async move {
             let res = iroh_blobs::export::export(
                 &self.inner.db,
                 msg.hash,
