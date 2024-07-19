@@ -439,8 +439,8 @@ async fn validate_impl(
     let complete_result = futures_lite::stream::iter(complete)
         .map(|hash| {
             let store = store.clone();
-            let tx = tx.clone();
-            lp.spawn_pinned(move || async move {
+            let tx: BoxedProgressSender<ValidateProgress> = tx.clone();
+            lp.run(move || async move {
                 let entry = store
                     .get(&hash)
                     .await?
@@ -489,7 +489,7 @@ async fn validate_impl(
         .map(|hash| {
             let store = store.clone();
             let tx = tx.clone();
-            lp.spawn_pinned(move || async move {
+            lp.run(move || async move {
                 let entry = store
                     .get(&hash)
                     .await?
