@@ -926,7 +926,7 @@ impl<D: BaoStore> Handler<D> {
         let (tx, rx) = flume::bounded(32);
         let this = self.clone();
 
-        self.local_pool_handle().spawn_pinned(|| async move {
+        self.local_pool_handle().spawn(|| async move {
             if let Err(err) = this.blob_add_stream0(msg, stream, tx.clone()).await {
                 tx.send_async(AddProgress::Abort(err.into())).await.ok();
             }
@@ -995,7 +995,7 @@ impl<D: BaoStore> Handler<D> {
     ) -> impl Stream<Item = RpcResult<ReadAtResponse>> + Send + 'static {
         let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
         let db = self.inner.db.clone();
-        let _ = self.local_pool_handle().spawn_pinned(move || async move {
+        self.local_pool_handle().spawn(move || async move {
             if let Err(err) = read_loop(req, db, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
                 tx.send_async(RpcResult::Err(err.into())).await.ok();
             }
@@ -1059,7 +1059,7 @@ impl<D: BaoStore> Handler<D> {
         let (tx, rx) = flume::bounded(32);
         let mut conn_infos = self.inner.endpoint.connection_infos();
         conn_infos.sort_by_key(|n| n.node_id.to_string());
-        self.local_pool_handle().spawn_pinned(|| async move {
+        self.local_pool_handle().spawn(|| async move {
             for conn_info in conn_infos {
                 tx.send_async(Ok(ConnectionsResponse { conn_info }))
                     .await
