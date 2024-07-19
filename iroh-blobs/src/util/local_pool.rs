@@ -233,8 +233,8 @@ impl LocalPool {
                 // Always add the permit. If nobody is waiting for it, it does
                 // no harm.
                 shutdown_sem.add_permits(1);
-                if let Some(panic) = last_panic {
-                    std::panic::resume_unwind(panic);
+                if let Some(_panic) = last_panic {
+                    // std::panic::resume_unwind(panic);
                 }
             })
     }
@@ -324,7 +324,7 @@ impl Drop for LocalPool {
                 let panic_info = get_panic_info(&panic);
                 let thread_name = get_thread_name();
                 tracing::error!("Error joining thread: {}\n{}", thread_name, panic_info);
-                std::panic::resume_unwind(panic);
+                // std::panic::resume_unwind(panic);
             }
         }
     }
