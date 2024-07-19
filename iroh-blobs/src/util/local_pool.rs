@@ -2,6 +2,7 @@
 use futures_buffered::FuturesUnordered;
 use futures_lite::StreamExt;
 use std::{
+    any::Any,
     future::Future,
     ops::Deref,
     pin::Pin,
@@ -109,12 +110,7 @@ pub struct LocalPoolHandle {
 
 impl Drop for LocalPool {
     fn drop(&mut self) {
-        self.cancel_token.cancel();
-        for handle in self.threads.drain(..) {
-            if let Err(cause) = handle.join() {
-                tracing::error!("Error joining thread: {:?}", cause);
-            }
-        }
+        self.drop_impl();
     }
 }
 
@@ -186,68 +182,72 @@ impl LocalPool {
 
     /// Spawn a new pool thread.
     fn spawn_pool_thread(
-        task_name: String,
+        thread_name: String,
         recv: flume::Receiver<Message>,
         cancel_token: CancellationToken,
     ) -> std::io::Result<std::thread::JoinHandle<()>> {
-        std::thread::Builder::new().name(task_name).spawn(move || {
-            let res = std::panic::catch_unwind(|| {
-                let mut s = FuturesUnordered::new();
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
-                let ls = LocalSet::new();
-                let sem_opt = ls.block_on(&rt, async {
-                    loop {
-                        tokio::select! {
-                            // poll the set of futures
-                            _ = s.next() => {},
-                            // if the cancel token is cancelled, break the loop immediately
-                            _ = cancel_token.cancelled() => break None,
-                            // if we receive a message, execute it
-                            msg = recv.recv_async() => {
-                                match msg {
-                                    // just push into the FuturesUnordered
-                                    Ok(Message::Execute(f)) => {
-                                        let fut = (f)();
-                                        // let fut = UnwindFuture::new(fut, "task");
-                                        s.push(fut);
-                                    },
-                                    // break with optional semaphore
-                                    Ok(Message::Shutdown(sem_opt)) => break sem_opt,
-                                    // if the sender is dropped, break the loop immediately
-                                    Err(flume::RecvError::Disconnected) => break None,
-                                }
-                            }
-                        }
-                    }
-                });
-                if let Some(sem) = sem_opt {
-                    // somebody is asking for a clean shutdown, wait for all tasks to finish
-                    ls.block_on(&rt, async {
+        std::thread::Builder::new()
+            .name(thread_name)
+            .spawn(move || {
+                let res = std::panic::catch_unwind(|| {
+                    let mut s = FuturesUnordered::new();
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    let ls = LocalSet::new();
+                    let sem_opt = ls.block_on(&rt, async {
                         loop {
                             tokio::select! {
-                                res = s.next() => {
-                                    if res.is_none() {
-                                        break
+                                // poll the set of futures
+                                _ = s.next() => {},
+                                // if the cancel token is cancelled, break the loop immediately
+                                _ = cancel_token.cancelled() => break None,
+                                // if we receive a message, execute it
+                                msg = recv.recv_async() => {
+                                    match msg {
+                                        // just push into the FuturesUnordered
+                                        Ok(Message::Execute(f)) => {
+                                            let fut = (f)();
+                                            // let fut = UnwindFuture::new(fut, "task");
+                                            s.push(fut);
+                                        },
+                                        // break with optional semaphore
+                                        Ok(Message::Shutdown(sem_opt)) => break sem_opt,
+                                        // if the sender is dropped, break the loop immediately
+                                        Err(flume::RecvError::Disconnected) => break None,
                                     }
                                 }
-                                _ = cancel_token.cancelled() => break,
                             }
                         }
                     });
-                    sem.add_permits(1);
+                    if let Some(sem) = sem_opt {
+                        // somebody is asking for a clean shutdown, wait for all tasks to finish
+                        ls.block_on(&rt, async {
+                            loop {
+                                tokio::select! {
+                                    res = s.next() => {
+                                        if res.is_none() {
+                                            break
+                                        }
+                                    }
+                                    _ = cancel_token.cancelled() => break,
+                                }
+                            }
+                        });
+                        sem.add_permits(1);
+                    }
+                });
+                if let Err(panic) = res {
+                    // this thread is gone, so the entire thread pool is unusable.
+                    // cancel it all.
+                    cancel_token.cancel();
+                    let panic_info = get_panic_info(&panic);
+                    let thread_name = get_thread_name();
+                    tracing::error!("Error in thread: {}\n{}", thread_name, panic_info);
+                    std::panic::resume_unwind(panic);
                 }
-            });
-            if let Err(payload) = res {
-                // this thread is gone, so the entire thread pool is unusable.
-                // cancel it all.
-                cancel_token.cancel();
-                tracing::error!("THREAD PANICKED YYY: {:?}", payload);
-                std::panic::resume_unwind(payload);
-            }
-        })
+            })
     }
 
     /// Immediately stop polling all tasks and wait for all threads to finish.
@@ -255,10 +255,29 @@ impl LocalPool {
     /// This is like Drop, but allows you to wait for the threads to finish and
     /// control from which thread the pool threads are joined.
     pub fn shutdown(mut self) {
+        self.drop_impl();
+    }
+
+    /// Drain and join all threads
+    ///
+    /// This is shared between drop and shutdown.
+    fn drop_impl(&mut self) {
         self.cancel_token.cancel();
+        let current_thread_id = std::thread::current().id();
         for handle in self.threads.drain(..) {
-            if let Err(cause) = handle.join() {
-                tracing::error!("Error joining thread: {:?}", cause);
+            // we have no control over from where Drop is called, especially
+            // if the pool ends up in an Arc. So we need to check if we are
+            // dropping from within a pool thread and skip it in that case.
+            if handle.thread().id() == current_thread_id {
+                tracing::error!("Dropping LocalPool from within a pool thread.");
+                continue;
+            }
+            // Log any panics and resume them
+            if let Err(panic) = handle.join() {
+                let panic_info = get_panic_info(&panic);
+                let thread_name = get_thread_name();
+                tracing::error!("Error joining thread: {}\n{}", thread_name, panic_info);
+                std::panic::resume_unwind(panic);
             }
         }
     }
@@ -401,14 +420,13 @@ impl LocalPoolHandle {
 pub struct UnwindFuture<F> {
     #[pin]
     future: F,
-    text: &'static str,
 }
 
 ///
 impl<F> UnwindFuture<F> {
     ///
-    pub fn new(future: F, text: &'static str) -> Self {
-        UnwindFuture { future, text }
+    pub fn new(future: F) -> Self {
+        UnwindFuture { future }
     }
 }
 
@@ -420,17 +438,35 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> std::task::Poll<Self::Output> {
         let this = self.project();
-        let text = *this.text;
 
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.future.poll(cx))) {
             Ok(result) => result,
-            Err(_panic) => {
-                tracing::error!("Task XOXO {text} panicked");
+            Err(panic) => {
+                let panic_info = get_panic_info(&panic);
+                let thread_name = get_thread_name();
+                tracing::error!("Error in thread: {}\n{}", thread_name, panic_info);
                 std::task::Poll::Pending
-                // std::panic::resume_unwind(_panic);
+                // std::panic::resume_unwind(panic);
             }
         }
     }
+}
+
+fn get_panic_info(panic: &Box<dyn Any + Send>) -> String {
+    if let Some(s) = panic.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = panic.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "Panic info unavailable".to_string()
+    }
+}
+
+fn get_thread_name() -> String {
+    std::thread::current()
+        .name()
+        .unwrap_or("unnamed")
+        .to_string()
 }
 
 #[cfg(test)]
@@ -438,14 +474,6 @@ mod tests {
     use std::{cell::RefCell, rc::Rc, sync::atomic::AtomicU64, time::Duration};
 
     use super::*;
-
-    #[allow(dead_code)]
-    fn thread_name() -> String {
-        std::thread::current()
-            .name()
-            .unwrap_or("unnamed")
-            .to_string()
-    }
 
     /// A struct that simulates a long running drop operation
     #[derive(Debug)]
