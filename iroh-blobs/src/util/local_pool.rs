@@ -21,7 +21,7 @@ enum Message {
     /// Create a new task and execute it locally
     Execute(SpawnFn),
     /// Shutdown the thread after finishing all tasks
-    Shutdown,
+    Finish,
 }
 
 /// A local task pool with proper shutdown
@@ -203,7 +203,7 @@ impl LocalPool {
                                         s.spawn_local((f)());
                                     }
                                     // break with optional semaphore
-                                    Ok(Message::Shutdown) => break ShutdownMode::Finish,
+                                    Ok(Message::Finish) => break ShutdownMode::Finish,
                                     // if the sender is dropped, break the loop immediately
                                     Err(flume::RecvError::Disconnected) => break ShutdownMode::Stop,
                                 }
@@ -229,12 +229,6 @@ impl LocalPool {
                         }
                     });
                 }
-                // cancel all remaining tasks. This might be futile if the
-                // reason we got here was cancellation, but then it is a no-op.
-                //
-                // We never want a situation where some threads run but some are
-                // stopped.
-                cancel_token.cancel();
                 // Always add the permit. If nobody is waiting for it, it does
                 // no harm.
                 shutdown_sem.add_permits(1);
@@ -244,21 +238,14 @@ impl LocalPool {
             })
     }
 
-    /// Immediately stop polling all tasks and wait for all threads to finish.
-    ///
-    /// This is like Drop, but allows you to wait for the threads to finish and
-    /// control from which thread the pool threads are joined.
-    ///
-    /// If there was a panic on any of the threads, it will be re-thrown here.
-    pub fn shutdown_blocking(self) {
-        // just make it explicit that this is where drop runs
-        drop(self);
+    /// A future that resolves when the pool is cancelled
+    pub async fn cancelled(&self) {
+        self.cancel_token.cancelled().await
     }
 
     /// Immediately stop polling all tasks and wait for all threads to finish.
     ///
-    /// This is like [`LocalPool::shutdown_blocking`], but waits for thraead
-    /// completion asynchronously.
+    /// This is like droo, but waits for thread completion asynchronously.
     ///
     /// If there was a panic on any of the threads, it will be re-thrown here.
     pub async fn shutdown(self) {
@@ -281,13 +268,14 @@ impl LocalPool {
         // we assume that there are exactly as many threads as there are handles.
         // also, we assume that the threads are still running.
         for _ in 0..self.threads_u32() {
+            println!("sending shutdown message");
             // send the shutdown message
             // sending will fail if all threads are already finished, but
             // in that case we don't need to do anything.
             //
             // Threads will add a permit in any case, so await_thread_completion
             // will then immediately return.
-            self.send.send(Message::Shutdown).ok();
+            self.send.send(Message::Finish).ok();
         }
         self.await_thread_completion().await;
     }
@@ -302,11 +290,19 @@ impl LocalPool {
     async fn await_thread_completion(&self) {
         // wait for all threads to finish.
         // Each thread will add a permit to the semaphore.
-        let _ = self
-            .shutdown_sem
-            .acquire_many(self.threads_u32())
-            .await
-            .expect("semaphore closed");
+        let wait_for_semaphore = async move {
+            let _ = self
+                .shutdown_sem
+                .acquire_many(self.threads_u32())
+                .await
+                .expect("semaphore closed");
+        };
+        // race the semaphore wait with the cancel token in case somebody
+        // cancels the pool while we are waiting.
+        tokio::select! {
+            _ = wait_for_semaphore => {}
+            _ = self.cancel_token.cancelled() => {}
+        }
     }
 }
 
@@ -355,12 +351,10 @@ impl LocalPoolHandle {
         self.send.len()
     }
 
-    /// Try to spawn a new task and return a tokio join handle.
+    /// Spawn a new task and return a tokio join handle.
     ///
-    /// This fn exists mostly for compatibility with tokio's `LocalPoolHandle`.
-    /// It spawns an additional normal tokio task in order to be able to return
-    /// a [`tokio::task::JoinHandle`]. Aborting the returned handle will
-    /// cancel the task.
+    /// This is like [`LocalPoolHandle::spawn_pinned`], but does not panic if
+    /// the pool is shut down.
     pub fn try_spawn_pinned<T, F, Fut>(&self, gen: F) -> SpawnResult<tokio::task::JoinHandle<T>>
     where
         F: FnOnce() -> Fut + Send + 'static,
@@ -425,7 +419,7 @@ impl LocalPoolHandle {
 
     /// Run a task in the pool and await the result.
     ///
-    /// This is like [`LocalPoolHandle::run_detached`], but assuming that the
+    /// This is like [`LocalPoolHandle::spawn`], but assuming that the
     /// generator function is already boxed.
     pub fn try_spawn_boxed(&self, gen: SpawnFn) -> SpawnResult<()> {
         self.send
@@ -435,8 +429,10 @@ impl LocalPoolHandle {
 
     /// Spawn a new task and return a tokio join handle.
     ///
-    /// Like [`LocalPoolHandle::try_spawn_pinned`], but panics if the pool is
-    /// shut down.
+    /// This fn exists mostly for compatibility with tokio's `LocalPoolHandle`.
+    /// It spawns an additional normal tokio task in order to be able to return
+    /// a [`tokio::task::JoinHandle`]. Aborting the returned handle will
+    /// cancel the task.
     pub fn spawn_pinned<T, F, Fut>(&self, gen: F) -> tokio::task::JoinHandle<T>
     where
         F: FnOnce() -> Fut + Send + 'static,
