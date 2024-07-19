@@ -338,7 +338,7 @@ impl Downloader {
 
             service.run().instrument(error_span!("downloader", %me))
         };
-        let _ = rt.spawn_pinned(create_future);
+        rt.spawn_pinned(create_future);
         Self {
             next_id: Arc::new(AtomicU64::new(0)),
             msg_tx,

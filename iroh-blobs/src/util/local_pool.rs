@@ -232,7 +232,6 @@ impl LocalPoolHandle {
     ///
     /// The overhead is necessary for this method to be synchronous and for it
     /// to return a tokio::task::JoinHandle.
-    #[must_use]
     pub fn spawn_pinned<T, F, Fut>(&self, gen: F) -> tokio::task::JoinHandle<T>
     where
         F: FnOnce() -> Fut + Send + 'static,
