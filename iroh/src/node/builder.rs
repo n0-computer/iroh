@@ -11,7 +11,7 @@ use iroh_base::key::SecretKey;
 use iroh_blobs::{
     downloader::Downloader,
     store::{Map, Store as BaoStore},
-    util::local_pool::{LocalPool, LocalPoolHandle},
+    util::local_pool::{self, LocalPool, LocalPoolHandle, PanicMode},
 };
 use iroh_docs::engine::DefaultAuthorStorage;
 use iroh_docs::net::DOCS_ALPN;
@@ -455,7 +455,10 @@ where
 
     async fn build_inner(self) -> Result<ProtocolBuilder<D>> {
         trace!("building node");
-        let lp = LocalPool::default();
+        let lp = LocalPool::new(local_pool::Config {
+            panic_mode: PanicMode::LogAndContinue,
+            ..Default::default()
+        });
         let endpoint = {
             let mut transport_config = quinn::TransportConfig::default();
             transport_config
@@ -565,10 +568,10 @@ where
             secret_key: self.secret_key,
             client,
             cancel_token: CancellationToken::new(),
-            rt: lp,
             downloader,
             gossip,
             gossip_dispatcher,
+            local_pool_handle: lp.handle().clone(),
         });
 
         let protocol_builder = ProtocolBuilder {
@@ -578,6 +581,7 @@ where
             external_rpc: self.rpc_endpoint,
             gc_policy: self.gc_policy,
             gc_done_callback: self.gc_done_callback,
+            local_pool: lp,
         };
 
         let protocol_builder = protocol_builder.register_iroh_protocols();
@@ -603,6 +607,7 @@ pub struct ProtocolBuilder<D> {
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
     gc_policy: GcPolicy,
+    local_pool: LocalPool,
 }
 
 impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
@@ -679,7 +684,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
 
     /// Returns a reference to the used [`LocalPoolHandle`].
     pub fn local_pool_handle(&self) -> &LocalPoolHandle {
-        self.inner.rt.handle()
+        self.local_pool.handle()
     }
 
     /// Returns a reference to the [`Downloader`] used by the node.
@@ -728,6 +733,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
             protocols,
             gc_done_callback,
             gc_policy,
+            local_pool: rt,
         } = self;
         let protocols = Arc::new(protocols);
         let node_id = inner.endpoint.node_id();
@@ -751,6 +757,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
                 protocols.clone(),
                 gc_policy,
                 gc_done_callback,
+                rt,
             )
             .instrument(error_span!("node", me=%node_id.fmt_short()));
         let task = tokio::task::spawn(fut);
