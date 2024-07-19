@@ -8,9 +8,8 @@ type SpawnFn = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send + 's
 enum Message {
     /// Create a new task and execute it locally
     Execute(SpawnFn),
-    /// Shutdown the thread, with an optional semaphore to signal when the thread
-    /// has finished shutting down
-    Shutdown(Option<Arc<Semaphore>>),
+    /// Shutdown the thread after finishing all tasks
+    Finish,
 }
 
 /// A local task pool with proper shutdown
@@ -30,6 +29,7 @@ enum Message {
 #[derive(Debug)]
 pub struct LocalPool {
     threads: Vec<std::thread::JoinHandle<()>>,
+    shutdown_sem: Arc<Semaphore>,
     cancel_token: CancellationToken,
     handle: LocalPoolHandle,
 }
@@ -91,12 +91,14 @@ impl LocalPool {
         } = config;
         let cancel_token = CancellationToken::new();
         let (send, recv) = flume::bounded::<Message>(queue_size);
+        let shutdown_sem = Arc::new(Semaphore::new(0));
         let handles = (0..threads)
             .map(|i| {
                 Self::spawn_one(
                     format!("{thread_name_prefix}-{i}"),
                     recv.clone(),
                     cancel_token.clone(),
+                    shutdown_sem.clone(),
                 )
             })
             .collect::<std::io::Result<Vec<_>>>()
@@ -105,6 +107,7 @@ impl LocalPool {
             threads: handles,
             handle: LocalPoolHandle { send },
             cancel_token,
+            shutdown_sem,
         }
     }
 
@@ -118,6 +121,7 @@ impl LocalPool {
         task_name: String,
         recv: flume::Receiver<Message>,
         cancel_token: CancellationToken,
+        shutdown_sem: Arc<Semaphore>,
     ) -> std::io::Result<std::thread::JoinHandle<()>> {
         std::thread::Builder::new().name(task_name).spawn(move || {
             let ls = LocalSet::new();
@@ -125,11 +129,11 @@ impl LocalPool {
                 .enable_all()
                 .build()
                 .unwrap();
-            let sem_opt = ls.block_on(&rt, async {
+            ls.block_on(&rt, async {
                 loop {
                     tokio::select! {
                         _ = cancel_token.cancelled() => {
-                            break None;
+                            break;
                         }
                         msg = recv.recv_async() => {
                             match msg {
@@ -137,16 +141,14 @@ impl LocalPool {
                                     let fut = (f)();
                                     ls.spawn_local(fut);
                                 }
-                                Ok(Message::Shutdown(sem_opt)) => break sem_opt,
-                                Err(flume::RecvError::Disconnected) => break None,
+                                Ok(Message::Finish) => break,
+                                Err(flume::RecvError::Disconnected) => break,
                             }
                         }
                     }
                 }
             });
-            if let Some(sem) = sem_opt {
-                sem.add_permits(1);
-            }
+            shutdown_sem.add_permits(1);
         })
     }
 
@@ -157,7 +159,6 @@ impl LocalPool {
     /// If you just want to drop the pool without giving the threads a chance to
     /// process their remaining tasks, just use drop.
     pub async fn shutdown(self) {
-        let semaphore = Arc::new(Semaphore::new(0));
         let threads = self
             .threads
             .len()
@@ -165,11 +166,12 @@ impl LocalPool {
             .expect("invalid number of threads");
         for _ in 0..threads {
             self.send
-                .send_async(Message::Shutdown(Some(semaphore.clone())))
+                .send_async(Message::Finish)
                 .await
                 .expect("receiver dropped");
         }
-        let _ = semaphore
+        let _ = self
+            .shutdown_sem
             .acquire_many(threads)
             .await
             .expect("semaphore closed");
