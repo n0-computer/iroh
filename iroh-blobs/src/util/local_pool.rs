@@ -32,13 +32,15 @@ enum Message {
 /// this pool will join all its threads when dropped, ensuring that all Drop
 /// implementations are run to completion.
 ///
-/// On drop, this pool will immediately cancel all tasks that are currently
+/// On drop, this pool will immediately cancel all *tasks* that are currently
 /// being executed, and will wait for all threads to finish executing their
 /// loops before returning. This means that all drop implementations will be
-/// able to run to completion.
+/// able to run to completion before drop exits.
 ///
-/// On [`LocalPool::finish`], this pool will notify all threads to shut down, and then
-/// wait for all threads to finish executing their loops before returning.
+/// On [`LocalPool::finish`], this pool will notify all threads to shut down,
+/// and then wait for all threads to finish executing their loops before
+/// returning. This means that all currently executing tasks will be allowed to
+/// run to completion.
 #[derive(Debug)]
 pub struct LocalPool {
     threads: Vec<std::thread::JoinHandle<()>>,
@@ -111,7 +113,7 @@ impl LocalPool {
         })
     }
 
-    /// Create a new task pool with `n` threads and a queue of size `queue_size`
+    /// Create a new local pool with the given config.
     pub fn new(config: Config) -> Self {
         let Config {
             threads,
@@ -142,6 +144,9 @@ impl LocalPool {
     }
 
     /// Get a cheaply cloneable handle to the pool
+    ///
+    /// This is not strictly necessary since we implement deref for
+    /// LocalPoolHandle, but makes getting a handle more explicit.
     pub fn handle(&self) -> &LocalPoolHandle {
         &self.handle
     }
@@ -324,28 +329,6 @@ impl LocalPoolHandle {
         self.spawn_local(Box::new(move || Box::pin(gen()))).await
     }
 
-    /// Try to spawn a new task in the pool.
-    ///
-    /// Returns an error if the pool is shutting down.
-    pub fn try_spawn_local(
-        &self,
-        gen: SpawnFn,
-    ) -> std::result::Result<anyhow::Result<()>, SpawnFn> {
-        let msg = Message::Execute(gen);
-        match self.send.try_send(msg) {
-            Ok(()) => Ok(Ok(())),
-            Err(flume::TrySendError::Full(msg)) => {
-                let Message::Execute(gen) = msg else {
-                    unreachable!()
-                };
-                Err(gen)
-            }
-            Err(flume::TrySendError::Disconnected(_)) => {
-                Ok(Err(anyhow::anyhow!("receiver dropped")))
-            }
-        }
-    }
-
     /// Spawn a new task and return a tokio join handle.
     ///
     /// This comes with quite a bit of overhead, so only use this variant if you
@@ -427,21 +410,6 @@ impl LocalPoolHandle {
             .send(Message::Execute(gen))
             .map_err(|_| SpawnError::Shutdown)
     }
-
-    // /// Spawn a new task and return a tokio join handle.
-    // ///
-    // /// This fn exists mostly for compatibility with tokio's `LocalPoolHandle`.
-    // /// It spawns an additional normal tokio task in order to be able to return
-    // /// a [`tokio::task::JoinHandle`]. Aborting the returned handle will
-    // /// cancel the task.
-    // pub fn spawn_pinned<T, F, Fut>(&self, gen: F) -> tokio::task::JoinHandle<T>
-    // where
-    //     F: FnOnce() -> Fut + Send + 'static,
-    //     Fut: Future<Output = T> + 'static,
-    //     T: Send + 'static,
-    // {
-    //     self.try_spawn_pinned(gen).expect("pool is shut down")
-    // }
 
     /// Run a task in the pool and await the result.
     ///
