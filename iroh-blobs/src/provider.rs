@@ -302,19 +302,14 @@ pub async fn handle_connection<D: Map, E: EventSender>(
             };
             events.send(Event::ClientConnected { connection_id }).await;
             let db = db.clone();
-            let res = rt
-                .spawn_pinned_detached(|| {
-                    async move {
-                        if let Err(err) = handle_stream(db, reader, writer).await {
-                            warn!("error: {err:#?}",);
-                        }
+            rt.spawn(|| {
+                async move {
+                    if let Err(err) = handle_stream(db, reader, writer).await {
+                        warn!("error: {err:#?}",);
                     }
-                    .instrument(span)
-                })
-                .await;
-            if res.is_err() {
-                break;
-            }
+                }
+                .instrument(span)
+            });
         }
     }
     .instrument(span)
