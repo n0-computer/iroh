@@ -1,9 +1,20 @@
 //! A local task pool with proper shutdown
 use core::panic;
 use futures_lite::FutureExt;
-use std::{any::Any, future::Future, ops::Deref, pin::Pin, sync::Arc};
-use tokio::{sync::Semaphore, task::LocalSet};
-use tokio_util::sync::CancellationToken;
+use std::{
+    any::Any,
+    future::Future,
+    ops::Deref,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
+use tokio::{
+    sync::{Notify, Semaphore},
+    task::LocalSet,
+};
 
 type SpawnFn = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send + 'static>;
 
@@ -463,6 +474,16 @@ impl LocalPoolHandle {
     }
 }
 
+/// Thread shutdown mode
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShutdownMode {
+    /// Finish all tasks and then stop
+    Finish,
+    /// Stop immediately
+    Stop,
+}
+
 fn get_panic_info(panic: &Box<dyn Any + Send>) -> String {
     if let Some(s) = panic.downcast_ref::<&str>() {
         s.to_string()
@@ -478,6 +499,48 @@ fn get_thread_name() -> String {
         .name()
         .unwrap_or("unnamed")
         .to_string()
+}
+
+/// A lightweight cancellation token
+#[derive(Debug, Clone)]
+struct CancellationToken {
+    inner: Arc<CancellationTokenInner>,
+}
+
+#[derive(Debug)]
+struct CancellationTokenInner {
+    is_cancelled: AtomicBool,
+    notify: Notify,
+}
+
+impl CancellationToken {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(CancellationTokenInner {
+                is_cancelled: AtomicBool::new(false),
+                notify: Notify::new(),
+            }),
+        }
+    }
+
+    fn cancel(&self) {
+        if !self.inner.is_cancelled.swap(true, Ordering::SeqCst) {
+            self.inner.notify.notify_waiters();
+        }
+    }
+
+    async fn cancelled(&self) {
+        if self.is_cancelled() {
+            return;
+        }
+
+        // Wait for notification if not cancelled
+        self.inner.notify.notified().await;
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.inner.is_cancelled.load(Ordering::SeqCst)
+    }
 }
 
 #[cfg(test)]
