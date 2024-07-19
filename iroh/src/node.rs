@@ -377,6 +377,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         join_set.shutdown().await;
 
         // Abort remaining local tasks.
+        Box::leak(Box::new(local_pool));
         // local_pool.shutdown().await;
     }
 
