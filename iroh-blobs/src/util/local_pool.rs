@@ -1,4 +1,5 @@
 //! A local task pool with proper shutdown
+use futures_lite::FutureExt;
 use std::{
     any::Any,
     future::Future,
@@ -339,6 +340,40 @@ pub enum SpawnError {
 
 type SpawnResult<T> = std::result::Result<T, SpawnError>;
 
+/// Future returned by [`LocalPoolHandle::run`] and [`LocalPoolHandle::try_run`].
+///
+/// Dropping this future will immediately cancel the task. The task can fail if
+/// the pool is shut down.
+#[repr(transparent)]
+#[derive(Debug)]
+pub struct Run<T>(tokio::sync::oneshot::Receiver<T>);
+
+impl<T> Run<T> {
+    /// Abort the task
+    ///
+    /// Dropping the future will also abort the task.
+    pub fn abort(&mut self) {
+        self.0.close();
+    }
+}
+
+impl<T> Future for Run<T> {
+    type Output = std::result::Result<T, SpawnError>;
+
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        self.0.poll(cx).map_err(|_| SpawnError::Shutdown)
+    }
+}
+
+impl From<SpawnError> for std::io::Error {
+    fn from(e: SpawnError) -> Self {
+        std::io::Error::new(std::io::ErrorKind::Other, e)
+    }
+}
+
 impl LocalPoolHandle {
     /// Get the number of tasks in the queue
     ///
@@ -385,7 +420,7 @@ impl LocalPoolHandle {
     /// When the returned future is dropped, the task will be immediately
     /// cancelled. Any drop implementation is guaranteed to run to completion in
     /// any case.
-    pub fn try_run<T, F, Fut>(&self, gen: F) -> SpawnResult<tokio::sync::oneshot::Receiver<T>>
+    pub fn try_run<T, F, Fut>(&self, gen: F) -> SpawnResult<Run<T>>
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = T> + 'static,
@@ -402,7 +437,7 @@ impl LocalPoolHandle {
             }
         };
         self.try_spawn(item)?;
-        Ok(recv_res)
+        Ok(Run(recv_res))
     }
 
     /// Run a task in the pool.
@@ -447,7 +482,7 @@ impl LocalPoolHandle {
     /// Run a task in the pool and await the result.
     ///
     /// Like [`LocalPoolHandle::try_run`], but panics if the pool is shut down.
-    pub fn run<T, F, Fut>(&self, gen: F) -> tokio::sync::oneshot::Receiver<T>
+    pub fn run<T, F, Fut>(&self, gen: F) -> Run<T>
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = T> + 'static,
@@ -625,19 +660,19 @@ mod tests {
         });
         let c1 = Arc::new(AtomicU64::new(0));
         let td1 = TestDrop::new(c1.clone());
-        let handle = pool.spawn_pinned(Box::new(move || {
+        let handle = pool.run(move || {
             // this one will be aborted anyway, so use a long delay to make sure
             // that it does not accidentally run to completion
-            Box::pin(delay_then_forget(td1, Duration::from_secs(10)))
-        }));
-        handle.abort();
+            delay_then_forget(td1, Duration::from_secs(10))
+        });
+        drop(handle);
         let c2 = Arc::new(AtomicU64::new(0));
         let td2 = TestDrop::new(c2.clone());
-        let _handle = pool.spawn_pinned(Box::new(move || {
+        let _handle = pool.run(move || {
             // this one will not be aborted, so use a short delay so the test
             // does not take too long
-            Box::pin(delay_then_forget(td2, Duration::from_millis(100)))
-        }));
+            delay_then_forget(td2, Duration::from_millis(100))
+        });
         pool.finish().await;
         // c1 will be aborted, so drop will run before forget, so the counter will be increased
         assert_eq!(c1.load(std::sync::atomic::Ordering::SeqCst), 1);

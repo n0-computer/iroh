@@ -440,7 +440,7 @@ async fn validate_impl(
         .map(|hash| {
             let store = store.clone();
             let tx = tx.clone();
-            lp.spawn_pinned(move || async move {
+            lp.run(move || async move {
                 let entry = store
                     .get(&hash)
                     .await?
@@ -489,7 +489,7 @@ async fn validate_impl(
         .map(|hash| {
             let store = store.clone();
             let tx = tx.clone();
-            lp.spawn_pinned(move || async move {
+            lp.run(move || async move {
                 let entry = store
                     .get(&hash)
                     .await?
