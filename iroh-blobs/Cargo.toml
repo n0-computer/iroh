@@ -33,6 +33,7 @@ iroh-metrics = { version = "0.20.0", path = "../iroh-metrics", optional = true }
 iroh-net = { version = "0.20.0", path = "../iroh-net" }
 num_cpus = "1.15.0"
 parking_lot = { version = "0.12.1", optional = true }
+pin-project = "1.1.5"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 rand = "0.8"
 range-collections = "0.4.0"

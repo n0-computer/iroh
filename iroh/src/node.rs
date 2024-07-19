@@ -284,8 +284,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         // Spawn a task for the garbage collection.
         if let GcPolicy::Interval(gc_period) = gc_policy {
             let inner = self.clone();
-            let handle = rt
-                .spawn_pinned(move || inner.run_gc_loop(gc_period, gc_done_callback));
+            let handle = rt.spawn_pinned(move || inner.run_gc_loop(gc_period, gc_done_callback));
             // We cannot spawn tasks that run on the local pool directly into the join set,
             // so instead we create a new task that supervises the local task.
             join_set.spawn({
@@ -377,7 +376,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         // Abort remaining tasks.
         join_set.shutdown().await;
 
-        // rt.shutdown().await;
+        rt.shutdown();
     }
 
     /// Shutdown the different parts of the node concurrently.

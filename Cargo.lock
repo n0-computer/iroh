@@ -2564,6 +2564,7 @@ dependencies = [
  "iroh-test",
  "num_cpus",
  "parking_lot",
+ "pin-project",
  "postcard",
  "proptest",
  "rand",

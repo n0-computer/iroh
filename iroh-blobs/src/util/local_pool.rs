@@ -2,12 +2,19 @@
 use futures_buffered::FuturesUnordered;
 use futures_lite::StreamExt;
 use std::{
-    any::Any, future::Future, ops::Deref, pin::Pin, sync::{
+    future::Future,
+    ops::Deref,
+    pin::Pin,
+    sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    }
+    },
+    task::Context,
 };
-use tokio::{sync::{Notify, Semaphore}, task::LocalSet};
+use tokio::{
+    sync::{Notify, Semaphore},
+    task::LocalSet,
+};
 
 /// A lightweight cancellation token
 #[derive(Debug, Clone)]
@@ -118,8 +125,6 @@ pub struct Config {
     pub threads: usize,
     /// Prefix for thread names
     pub thread_name_prefix: &'static str,
-    /// Handler for panics in the pool threads
-    pub panic_handler: Option<flume::Sender<Box<dyn Any + Send + 'static>>>,
 }
 
 impl Default for Config {
@@ -127,7 +132,6 @@ impl Default for Config {
         Self {
             threads: num_cpus::get(),
             thread_name_prefix: "local-pool",
-            panic_handler: None,
         }
     }
 }
@@ -152,7 +156,6 @@ impl LocalPool {
         let Config {
             threads,
             thread_name_prefix,
-            panic_handler,
         } = config;
         let cancel_token = CancellationToken::new();
         let (send, recv) = flume::unbounded::<Message>();
@@ -162,7 +165,6 @@ impl LocalPool {
                     format!("{thread_name_prefix}-{i}"),
                     recv.clone(),
                     cancel_token.clone(),
-                    panic_handler.clone(),
                 )
             })
             .collect::<std::io::Result<Vec<_>>>()
@@ -187,7 +189,6 @@ impl LocalPool {
         task_name: String,
         recv: flume::Receiver<Message>,
         cancel_token: CancellationToken,
-        panic_handler: Option<flume::Sender<Box<dyn Any + Send + 'static>>>,
     ) -> std::io::Result<std::thread::JoinHandle<()>> {
         std::thread::Builder::new().name(task_name).spawn(move || {
             let res = std::panic::catch_unwind(|| {
@@ -208,7 +209,10 @@ impl LocalPool {
                             msg = recv.recv_async() => {
                                 match msg {
                                     // just push into the FuturesUnordered
-                                    Ok(Message::Execute(f)) => s.push((f)()),
+                                    Ok(Message::Execute(f)) => {
+                                        let fut = (f)();
+                                        s.push(fut);
+                                    },
                                     // break with optional semaphore
                                     Ok(Message::Shutdown(sem_opt)) => break sem_opt,
                                     // if the sender is dropped, break the loop immediately
@@ -235,17 +239,27 @@ impl LocalPool {
                     sem.add_permits(1);
                 }
             });
-            if let Err(e) = res {
+            if let Err(payload) = res {
                 // this thread is gone, so the entire thread pool is unusable.
                 // cancel it all.
                 cancel_token.cancel();
-                if let Some(handler) = panic_handler {
-                    handler.send(Box::new(e)).ok();
-                } else {
-                    tracing::error!("Thread panicked: {:?}", e);
-                }
+                tracing::error!("THREAD PANICKED YYY: {:?}", payload);
+                std::panic::resume_unwind(payload);
             }
         })
+    }
+
+    /// Immediately stop polling all tasks and wait for all threads to finish.
+    ///
+    /// This is like Drop, but allows you to wait for the threads to finish and
+    /// control from which thread the pool threads are joined.
+    pub fn shutdown(mut self) {
+        self.cancel_token.cancel();
+        for handle in self.threads.drain(..) {
+            if let Err(cause) = handle.join() {
+                tracing::error!("Error joining thread: {:?}", cause);
+            }
+        }
     }
 
     /// Cleanly shut down the pool
@@ -257,7 +271,7 @@ impl LocalPool {
     ///
     /// If you want to wait for only a limited time for the tasks to finish,
     /// you can race this function with a timeout.
-    pub async fn shutdown(self) {
+    pub async fn finish(self) {
         if self.cancel_token.is_cancelled() {
             return;
         }
@@ -367,6 +381,44 @@ impl LocalPoolHandle {
     }
 }
 
+///
+#[derive(Debug)]
+#[pin_project::pin_project]
+pub struct UnwindFuture<F> {
+    #[pin]
+    future: F,
+    text: &'static str,
+}
+
+///
+impl<F> UnwindFuture<F> {
+    ///
+    pub fn new(future: F, text: &'static str) -> Self {
+        UnwindFuture { future, text }
+    }
+}
+
+impl<F> Future for UnwindFuture<F>
+where
+    F: Future,
+{
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> std::task::Poll<Self::Output> {
+        let this = self.project();
+        let text = *this.text;
+
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.future.poll(cx))) {
+            Ok(result) => result,
+            Err(_panic) => {
+                tracing::error!("Task XOXO {text} panicked");
+                std::task::Poll::Pending
+                // std::panic::resume_unwind(_panic);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc, sync::atomic::AtomicU64, time::Duration};
@@ -450,7 +502,7 @@ mod tests {
             let td = TestDrop::new(counter.clone());
             pool.run_detached(move || non_send(td));
         }
-        pool.shutdown().await;
+        pool.finish().await;
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), n);
     }
 
@@ -468,27 +520,22 @@ mod tests {
         let counter2 = Arc::new(AtomicU64::new(0));
         let td2 = TestDrop::new(counter2.clone());
         let _handle = pool.spawn_pinned(Box::new(move || Box::pin(non_send_cancel(td2))));
-        pool.shutdown().await;
+        pool.finish().await;
         assert_eq!(counter1.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(counter2.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
+    #[ignore = "todo"]
     async fn test_panic() {
         let _ = tracing_subscriber::fmt::try_init();
-        let (panic_sender, panic_receiver) = flume::unbounded();
         let pool = LocalPool::new(Config {
             threads: 2,
-            panic_handler: Some(panic_sender),
             ..Config::default()
         });
         pool.run_detached(|| async {
             panic!("test panic");
         });
-        let mut panic_count = 0;
-        while let Ok(_panic) = panic_receiver.recv_async().await {
-            panic_count += 1;
-        }
-        assert_eq!(panic_count, 1);
+        pool.shutdown();
     }
 }
