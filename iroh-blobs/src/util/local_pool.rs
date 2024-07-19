@@ -25,7 +25,7 @@ enum Message {
 /// loops before returning. This means that all drop implementations will be
 /// able to run to completion.
 ///
-/// On [`LocalPool::shutdown`], this pool will notify all threads to shut down, and then
+/// On [`LocalPool::finish`], this pool will notify all threads to shut down, and then
 /// wait for all threads to finish executing their loops before returning.
 #[derive(Debug)]
 pub struct LocalPool {
@@ -394,7 +394,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_shutdown() {
+    async fn test_finish() {
         let _ = tracing_subscriber::fmt::try_init();
         let pool = LocalPool::new(Config::default());
         let counter = Arc::new(AtomicU64::new(0));
