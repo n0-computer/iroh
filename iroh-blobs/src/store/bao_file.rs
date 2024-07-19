@@ -958,7 +958,7 @@ mod tests {
             )),
             hash.into(),
         );
-        let local = LocalPool::new(Default::default());
+        let local = LocalPool::default();
         let mut tasks = Vec::new();
         for i in 0..4 {
             let file = handle.writer();

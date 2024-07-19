@@ -51,46 +51,6 @@ pub struct LocalPoolHandle {
     send: flume::Sender<Message>,
 }
 
-impl Drop for LocalPool {
-    fn drop(&mut self) {
-        self.cancel_token.cancel();
-        let current_thread_id = std::thread::current().id();
-        for handle in self.threads.drain(..) {
-            // we have no control over from where Drop is called, especially
-            // if the pool ends up in an Arc. So we need to check if we are
-            // dropping from within a pool thread and skip it in that case.
-            if handle.thread().id() == current_thread_id {
-                tracing::error!("Dropping LocalPool from within a pool thread.");
-                continue;
-            }
-            // Log any panics and resume them
-            if let Err(panic) = handle.join() {
-                let panic_info = get_panic_info(&panic);
-                let thread_name = get_thread_name();
-                tracing::error!("Error joining thread: {}\n{}", thread_name, panic_info);
-                // std::panic::resume_unwind(panic);
-            }
-        }
-    }
-}
-
-fn get_panic_info(panic: &Box<dyn Any + Send>) -> String {
-    if let Some(s) = panic.downcast_ref::<&str>() {
-        s.to_string()
-    } else if let Some(s) = panic.downcast_ref::<String>() {
-        s.clone()
-    } else {
-        "Panic info unavailable".to_string()
-    }
-}
-
-fn get_thread_name() -> String {
-    std::thread::current()
-        .name()
-        .unwrap_or("unnamed")
-        .to_string()
-}
-
 /// What to do when a panic occurs in a pool thread
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PanicMode {
@@ -156,8 +116,8 @@ impl LocalPool {
                     format!("{thread_name_prefix}-{i}"),
                     recv.clone(),
                     cancel_token.clone(),
-                    shutdown_sem.clone(),
                     panic_mode,
+                    shutdown_sem.clone(),
                 )
             })
             .collect::<std::io::Result<Vec<_>>>()
@@ -180,8 +140,8 @@ impl LocalPool {
         task_name: String,
         recv: flume::Receiver<Message>,
         cancel_token: CancellationToken,
-        shutdown_sem: Arc<Semaphore>,
         _panic_mode: PanicMode,
+        shutdown_sem: Arc<Semaphore>,
     ) -> std::io::Result<std::thread::JoinHandle<()>> {
         std::thread::Builder::new().name(task_name).spawn(move || {
             let ls = LocalSet::new();
@@ -259,6 +219,29 @@ impl LocalPool {
         tokio::select! {
             _ = wait_for_semaphore => {}
             _ = self.cancel_token.cancelled() => {}
+        }
+    }
+}
+
+impl Drop for LocalPool {
+    fn drop(&mut self) {
+        self.cancel_token.cancel();
+        let current_thread_id = std::thread::current().id();
+        for handle in self.threads.drain(..) {
+            // we have no control over from where Drop is called, especially
+            // if the pool ends up in an Arc. So we need to check if we are
+            // dropping from within a pool thread and skip it in that case.
+            if handle.thread().id() == current_thread_id {
+                tracing::error!("Dropping LocalPool from within a pool thread.");
+                continue;
+            }
+            // Log any panics and resume them
+            if let Err(panic) = handle.join() {
+                let panic_info = get_panic_info(&panic);
+                let thread_name = get_thread_name();
+                tracing::error!("Error joining thread: {}\n{}", thread_name, panic_info);
+                // std::panic::resume_unwind(panic);
+            }
         }
     }
 }
@@ -478,6 +461,23 @@ impl LocalPoolHandle {
     pub fn spawn_boxed(&self, gen: SpawnFn) {
         self.try_spawn_boxed(gen).expect("pool is shut down")
     }
+}
+
+fn get_panic_info(panic: &Box<dyn Any + Send>) -> String {
+    if let Some(s) = panic.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = panic.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "Panic info unavailable".to_string()
+    }
+}
+
+fn get_thread_name() -> String {
+    std::thread::current()
+        .name()
+        .unwrap_or("unnamed")
+        .to_string()
 }
 
 #[cfg(test)]

@@ -455,7 +455,7 @@ where
 
     async fn build_inner(self) -> Result<ProtocolBuilder<D>> {
         trace!("building node");
-        let lp = LocalPool::new(Default::default());
+        let lp = LocalPool::default();
         let endpoint = {
             let mut transport_config = quinn::TransportConfig::default();
             transport_config
