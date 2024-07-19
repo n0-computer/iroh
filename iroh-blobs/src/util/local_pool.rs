@@ -216,7 +216,7 @@ impl LocalPool {
     /// Notifies all the pool threads to shut down and waits for them to finish.
     ///
     /// If you just want to drop the pool without giving the threads a chance to
-    /// process their remaining tasks, just use [`Self::shutdown`].
+    /// process their remaining tasks, just use [`Self::finish`].
     ///
     /// If you want to wait for only a limited time for the tasks to finish,
     /// you can race this function with a timeout.
