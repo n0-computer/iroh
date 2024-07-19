@@ -1,5 +1,5 @@
 //! A local task pool with proper shutdown
-use std::{future::Future, ops::Deref, pin::Pin, sync::Arc};
+use std::{any::Any, future::Future, ops::Deref, pin::Pin, sync::Arc};
 use tokio::{sync::Semaphore, task::LocalSet};
 use tokio_util::sync::CancellationToken;
 
@@ -52,12 +52,41 @@ pub struct LocalPoolHandle {
 impl Drop for LocalPool {
     fn drop(&mut self) {
         self.cancel_token.cancel();
+        let current_thread_id = std::thread::current().id();
         for handle in self.threads.drain(..) {
-            if let Err(cause) = handle.join() {
-                tracing::error!("Error joining thread: {:?}", cause);
+            // we have no control over from where Drop is called, especially
+            // if the pool ends up in an Arc. So we need to check if we are
+            // dropping from within a pool thread and skip it in that case.
+            if handle.thread().id() == current_thread_id {
+                tracing::error!("Dropping LocalPool from within a pool thread.");
+                continue;
+            }
+            // Log any panics and resume them
+            if let Err(panic) = handle.join() {
+                let panic_info = get_panic_info(&panic);
+                let thread_name = get_thread_name();
+                tracing::error!("Error joining thread: {}\n{}", thread_name, panic_info);
+                // std::panic::resume_unwind(panic);
             }
         }
     }
+}
+
+fn get_panic_info(panic: &Box<dyn Any + Send>) -> String {
+    if let Some(s) = panic.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = panic.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "Panic info unavailable".to_string()
+    }
+}
+
+fn get_thread_name() -> String {
+    std::thread::current()
+        .name()
+        .unwrap_or("unnamed")
+        .to_string()
 }
 
 /// Local task pool configuration
