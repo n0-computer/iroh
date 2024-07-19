@@ -375,8 +375,10 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
 
         // Abort remaining tasks.
         join_set.shutdown().await;
+        tracing::info!("Shutting down remaining tasks");
 
         // Abort remaining local tasks.
+        tracing::info!("Shutting down local pool");
         local_pool.shutdown().await;
     }
 
