@@ -7,13 +7,13 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
     task::Context,
 };
 use tokio::{
     sync::{Notify, Semaphore},
-    task::LocalSet,
+    task::{AbortHandle, LocalSet},
 };
 
 /// A lightweight cancellation token
@@ -211,6 +211,7 @@ impl LocalPool {
                                     // just push into the FuturesUnordered
                                     Ok(Message::Execute(f)) => {
                                         let fut = (f)();
+                                        // let fut = UnwindFuture::new(fut, "task");
                                         s.push(fut);
                                     },
                                     // break with optional semaphore
@@ -328,7 +329,20 @@ impl LocalPoolHandle {
         T: Send + 'static,
     {
         let inner = self.run(gen);
-        tokio::spawn(async move { inner.await.expect("task cancelled") })
+        let abort: Arc<OnceLock<AbortHandle>> = Arc::new(OnceLock::new());
+        let abort2 = abort.clone();
+        let res = tokio::spawn(async move {
+            match inner.await {
+                Ok(res) => res,
+                Err(_) => {
+                    // abort the outer task and wait forever (basically return pending)
+                    abort.get().map(|a| a.abort());
+                    futures_lite::future::pending().await
+                }
+            }
+        });
+        let _ = abort2.set(res.abort_handle());
+        res
     }
 
     /// Run a task in the pool and await the result.
