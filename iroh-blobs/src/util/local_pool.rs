@@ -1,5 +1,6 @@
 //! A local task pool with proper shutdown
 use core::panic;
+use futures_lite::FutureExt;
 use std::{any::Any, future::Future, ops::Deref, pin::Pin, sync::Arc};
 use tokio::{sync::Semaphore, task::LocalSet};
 use tokio_util::sync::CancellationToken;
@@ -262,6 +263,50 @@ impl LocalPool {
     }
 }
 
+/// Errors for spawn failures
+#[derive(thiserror::Error, Debug)]
+pub enum SpawnError {
+    /// Pool is shut down
+    #[error("pool is shut down")]
+    Shutdown,
+}
+
+type SpawnResult<T> = std::result::Result<T, SpawnError>;
+
+/// Future returned by [`LocalPoolHandle::run`] and [`LocalPoolHandle::try_run`].
+///
+/// Dropping this future will immediately cancel the task. The task can fail if
+/// the pool is shut down.
+#[repr(transparent)]
+#[derive(Debug)]
+pub struct Run<T>(tokio::sync::oneshot::Receiver<T>);
+
+impl<T> Run<T> {
+    /// Abort the task
+    ///
+    /// Dropping the future will also abort the task.
+    pub fn abort(&mut self) {
+        self.0.close();
+    }
+}
+
+impl<T> Future for Run<T> {
+    type Output = std::result::Result<T, SpawnError>;
+
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        self.0.poll(cx).map_err(|_| SpawnError::Shutdown)
+    }
+}
+
+impl From<SpawnError> for std::io::Error {
+    fn from(e: SpawnError) -> Self {
+        std::io::Error::new(std::io::ErrorKind::Other, e)
+    }
+}
+
 impl LocalPoolHandle {
     /// Spawn a new task in the pool.
     ///
@@ -338,6 +383,100 @@ impl LocalPoolHandle {
             send.send_async(Message::Execute(item)).await.unwrap();
             recv_res.await.unwrap()
         })
+    }
+
+    /// Run a task in the pool and await the result.
+    ///
+    /// When the returned future is dropped, the task will be immediately
+    /// cancelled. Any drop implementation is guaranteed to run to completion in
+    /// any case.
+    pub fn try_run<T, F, Fut>(&self, gen: F) -> SpawnResult<Run<T>>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = T> + 'static,
+        T: Send + 'static,
+    {
+        let (mut send_res, recv_res) = tokio::sync::oneshot::channel();
+        let item = move || async move {
+            let fut = (gen)();
+            tokio::select! {
+                // send the result to the receiver
+                res = fut => { send_res.send(res).ok(); }
+                // immediately stop the task if the receiver is dropped
+                _ = send_res.closed() => {}
+            }
+        };
+        self.try_spawn(item)?;
+        Ok(Run(recv_res))
+    }
+
+    /// Run a task in the pool.
+    ///
+    /// The task will be run detached. This can be useful if
+    /// you are not interested in the result or in in cancellation or
+    /// you provide your own result handling and cancellation mechanism.
+    pub fn try_spawn<F, Fut>(&self, gen: F) -> SpawnResult<()>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + 'static,
+    {
+        let gen: SpawnFn = Box::new(move || Box::pin(gen()));
+        self.try_spawn_boxed(gen)
+    }
+
+    /// Run a task in the pool and await the result.
+    ///
+    /// This is like [`LocalPoolHandle::spawn`], but assuming that the
+    /// generator function is already boxed.
+    pub fn try_spawn_boxed(&self, gen: SpawnFn) -> SpawnResult<()> {
+        self.send
+            .send(Message::Execute(gen))
+            .map_err(|_| SpawnError::Shutdown)
+    }
+
+    // /// Spawn a new task and return a tokio join handle.
+    // ///
+    // /// This fn exists mostly for compatibility with tokio's `LocalPoolHandle`.
+    // /// It spawns an additional normal tokio task in order to be able to return
+    // /// a [`tokio::task::JoinHandle`]. Aborting the returned handle will
+    // /// cancel the task.
+    // pub fn spawn_pinned<T, F, Fut>(&self, gen: F) -> tokio::task::JoinHandle<T>
+    // where
+    //     F: FnOnce() -> Fut + Send + 'static,
+    //     Fut: Future<Output = T> + 'static,
+    //     T: Send + 'static,
+    // {
+    //     self.try_spawn_pinned(gen).expect("pool is shut down")
+    // }
+
+    /// Run a task in the pool and await the result.
+    ///
+    /// Like [`LocalPoolHandle::try_run`], but panics if the pool is shut down.
+    pub fn run<T, F, Fut>(&self, gen: F) -> Run<T>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = T> + 'static,
+        T: Send + 'static,
+    {
+        self.try_run(gen).expect("pool is shut down")
+    }
+
+    /// Spawn a task in the pool.
+    ///
+    /// Like [`LocalPoolHandle::try_spawn`], but panics if the pool is shut down.
+    pub fn spawn<F, Fut>(&self, gen: F)
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + 'static,
+    {
+        self.try_spawn(gen).expect("pool is shut down")
+    }
+
+    /// Spawn a boxed task in the pool.
+    ///
+    /// Like [`LocalPoolHandle::try_spawn_boxed`], but panics if the pool is shut down.
+    pub fn spawn_boxed(&self, gen: SpawnFn) {
+        self.try_spawn_boxed(gen).expect("pool is shut down")
     }
 }
 

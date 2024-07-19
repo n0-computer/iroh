@@ -566,7 +566,7 @@ impl<D: BaoStore> Handler<D> {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
         let tx2 = tx.clone();
-        self.rt().spawn_pinned(|| async move {
+        self.rt().spawn(|| async move {
             if let Err(e) = self.blob_add_from_path0(msg, tx).await {
                 tx2.send_async(AddProgress::Abort(e.into())).await.ok();
             }
@@ -578,7 +578,7 @@ impl<D: BaoStore> Handler<D> {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
         let tx2 = tx.clone();
-        self.rt().spawn_pinned(|| async move {
+        self.rt().spawn(|| async move {
             if let Err(e) = self.doc_import_file0(msg, tx).await {
                 tx2.send_async(crate::client::docs::ImportProgress::Abort(e.into()))
                     .await
@@ -662,7 +662,7 @@ impl<D: BaoStore> Handler<D> {
     fn doc_export_file(self, msg: ExportFileRequest) -> impl Stream<Item = ExportFileResponse> {
         let (tx, rx) = flume::bounded(1024);
         let tx2 = tx.clone();
-        self.rt().spawn_pinned(|| async move {
+        self.rt().spawn(|| async move {
             if let Err(e) = self.doc_export_file0(msg, tx).await {
                 tx2.send_async(ExportProgress::Abort(e.into())).await.ok();
             }
@@ -705,7 +705,7 @@ impl<D: BaoStore> Handler<D> {
         let downloader = self.inner.downloader.clone();
         let endpoint = self.inner.endpoint.clone();
         let progress = FlumeProgressSender::new(sender);
-        self.inner.rt.spawn_pinned(move || async move {
+        self.inner.rt.spawn(move || async move {
             if let Err(err) = download(&db, endpoint, &downloader, msg, progress.clone()).await {
                 progress
                     .send(DownloadProgress::Abort(err.into()))
@@ -720,7 +720,7 @@ impl<D: BaoStore> Handler<D> {
     fn blob_export(self, msg: ExportRequest) -> impl Stream<Item = ExportResponse> {
         let (tx, rx) = flume::bounded(1024);
         let progress = FlumeProgressSender::new(tx);
-        self.rt().spawn_pinned(move || async move {
+        self.rt().spawn(move || async move {
             let res = iroh_blobs::export::export(
                 &self.inner.db,
                 msg.hash,
@@ -733,7 +733,7 @@ impl<D: BaoStore> Handler<D> {
             match res {
                 Ok(()) => progress.send(ExportProgress::AllDone).await.ok(),
                 Err(err) => progress.send(ExportProgress::Abort(err.into())).await.ok(),
-            }
+            };
         });
         rx.into_stream().map(ExportResponse)
     }
@@ -926,7 +926,7 @@ impl<D: BaoStore> Handler<D> {
         let (tx, rx) = flume::bounded(32);
         let this = self.clone();
 
-        self.rt().spawn_pinned(|| async move {
+        self.rt().spawn(|| async move {
             if let Err(err) = this.blob_add_stream0(msg, stream, tx.clone()).await {
                 tx.send_async(AddProgress::Abort(err.into())).await.ok();
             }
@@ -995,7 +995,7 @@ impl<D: BaoStore> Handler<D> {
     ) -> impl Stream<Item = RpcResult<ReadAtResponse>> + Send + 'static {
         let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
         let db = self.inner.db.clone();
-        self.inner.rt.spawn_pinned(move || async move {
+        self.inner.rt.spawn(move || async move {
             if let Err(err) = read_loop(req, db, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
                 tx.send_async(RpcResult::Err(err.into())).await.ok();
             }
@@ -1059,7 +1059,7 @@ impl<D: BaoStore> Handler<D> {
         let (tx, rx) = flume::bounded(32);
         let mut conn_infos = self.inner.endpoint.connection_infos();
         conn_infos.sort_by_key(|n| n.node_id.to_string());
-        self.rt().spawn_pinned(|| async move {
+        self.rt().spawn(|| async move {
             for conn_info in conn_infos {
                 tx.send_async(Ok(ConnectionsResponse { conn_info }))
                     .await
