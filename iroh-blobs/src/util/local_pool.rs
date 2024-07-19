@@ -545,38 +545,48 @@ impl CancellationToken {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc, sync::atomic::AtomicU64, time::Duration};
+    use std::{sync::atomic::AtomicU64, time::Duration};
 
     use super::*;
 
     /// A struct that simulates a long running drop operation
     #[derive(Debug)]
-    struct TestDrop(Arc<AtomicU64>);
+    struct TestDrop(Option<Arc<AtomicU64>>);
 
     impl Drop for TestDrop {
         fn drop(&mut self) {
             // delay to make sure the drop is executed completely
             std::thread::sleep(Duration::from_millis(100));
             // increment the drop counter
-            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if let Some(counter) = self.0.take() {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
         }
     }
 
     impl TestDrop {
         fn new(counter: Arc<AtomicU64>) -> Self {
-            Self(counter)
+            Self(Some(counter))
+        }
+
+        fn forget(mut self) {
+            self.0.take();
         }
     }
 
     /// Create a non-send test future that captures a TestDrop instance
-    async fn non_send(x: TestDrop) {
-        // just to make sure the future is not Send
-        let t = Rc::new(RefCell::new(0));
+    async fn delay_then_drop(x: TestDrop) {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        drop(t);
         // drop x at the end. we will never get here when the future is
         // no longer polled, but drop should still be called
         drop(x);
+    }
+
+    /// Use a TestDrop instance to test cancellation
+    #[allow(dead_code)]
+    async fn delay_then_forget(x: TestDrop, delay: Duration) {
+        tokio::time::sleep(delay).await;
+        x.forget();
     }
 
     #[tokio::test]
@@ -587,25 +597,21 @@ mod tests {
         let n = 4;
         for _ in 0..n {
             let td = TestDrop::new(counter.clone());
-            pool.spawn_local(Box::new(move || Box::pin(non_send(td))))
-                .await
-                .unwrap();
+            pool.spawn(move || delay_then_drop(td));
         }
         drop(pool);
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), n);
     }
 
     #[tokio::test]
-    async fn test_finish() {
+    async fn test_shutdown() {
         let _ = tracing_subscriber::fmt::try_init();
         let pool = LocalPool::new(Config::default());
         let counter = Arc::new(AtomicU64::new(0));
         let n = 4;
         for _ in 0..n {
             let td = TestDrop::new(counter.clone());
-            pool.spawn_local(Box::new(move || Box::pin(non_send(td))))
-                .await
-                .unwrap();
+            pool.spawn(move || delay_then_drop(td));
         }
         pool.finish().await;
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), n);
