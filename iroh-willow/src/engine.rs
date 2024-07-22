@@ -4,7 +4,6 @@ use tokio::sync::mpsc;
 use tracing::{error_span, Instrument};
 
 use crate::{
-    engine::peer_manager::PeerManager,
     session::{
         intents::{Intent, IntentHandle},
         SessionInit,
@@ -15,7 +14,10 @@ use crate::{
 mod actor;
 mod peer_manager;
 
+use self::peer_manager::PeerManager;
+
 pub use self::actor::ActorHandle;
+pub use self::peer_manager::AcceptOpts;
 
 const PEER_MANAGER_INBOX_CAP: usize = 128;
 
@@ -30,11 +32,12 @@ impl Engine {
     pub fn spawn<S: Storage>(
         endpoint: Endpoint,
         create_store: impl 'static + Send + FnOnce() -> S,
+        accept_opts: AcceptOpts,
     ) -> Self {
         let me = endpoint.node_id();
         let actor = ActorHandle::spawn(create_store, me);
         let (pm_inbox_tx, pm_inbox_rx) = mpsc::channel(PEER_MANAGER_INBOX_CAP);
-        let peer_manager = PeerManager::new(actor.clone(), endpoint, pm_inbox_rx);
+        let peer_manager = PeerManager::new(actor.clone(), endpoint, pm_inbox_rx, accept_opts);
         let peer_manager_handle = tokio::task::spawn(
             async move { peer_manager.run().await.map_err(|err| format!("{err:?}")) }
                 .instrument(error_span!("peer_manager", me = me.fmt_short())),
@@ -80,7 +83,7 @@ mod tests {
 
     use crate::{
         auth::{CapSelector, DelegateTo},
-        engine::Engine,
+        engine::{AcceptOpts, Engine},
         form::EntryForm,
         net::ALPN,
         proto::{
@@ -278,8 +281,8 @@ mod tests {
         (Engine, NodeId, UserId),
         (Engine, NodeId, UserId),
     )> {
-        let (alfie, alfie_ep, alfie_addr, alfie_task) = create(rng).await?;
-        let (betty, betty_ep, betty_addr, betty_task) = create(rng).await?;
+        let (alfie, alfie_ep, alfie_addr, alfie_task) = create(rng, Default::default()).await?;
+        let (betty, betty_ep, betty_addr, betty_task) = create(rng, Default::default()).await?;
 
         let betty_node_id = betty_addr.node_id;
         let alfie_node_id = alfie_addr.node_id;
@@ -302,6 +305,7 @@ mod tests {
 
     pub async fn create(
         rng: &mut rand_chacha::ChaCha12Rng,
+        accept_opts: AcceptOpts,
     ) -> anyhow::Result<(
         Engine,
         Endpoint,
@@ -316,7 +320,7 @@ mod tests {
         let node_addr = endpoint.node_addr().await?;
         let payloads = iroh_blobs::store::mem::Store::default();
         let create_store = move || crate::store::memory::Store::new(payloads);
-        let handle = Engine::spawn(endpoint.clone(), create_store);
+        let handle = Engine::spawn(endpoint.clone(), create_store, accept_opts);
         let accept_task = tokio::task::spawn({
             let handle = handle.clone();
             let endpoint = endpoint.clone();
