@@ -159,6 +159,17 @@ impl Gossip {
         Ok(JoinTopicFut(rx))
     }
 
+    /// Join a given topic and subscribe to its events.
+    pub async fn join_and_subscribe(
+        &self,
+        topic: TopicId,
+        peers: Vec<PublicKey>,
+    ) -> anyhow::Result<broadcast::Receiver<Event>> {
+        // TODO: move to actor
+        self.join(topic, peers).await?;
+        self.subscribe(topic).await
+    }
+
     /// Quit a topic.
     ///
     /// This sends a disconnect message to all active peers and then drops the state

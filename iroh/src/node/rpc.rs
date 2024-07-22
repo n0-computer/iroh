@@ -29,6 +29,7 @@ use iroh_net::relay::RelayUrl;
 use iroh_net::{Endpoint, NodeAddr, NodeId};
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::task::JoinSet;
+use tokio_stream::wrappers::BroadcastStream;
 use tokio_util::either::Either;
 use tracing::{debug, info, warn};
 
@@ -209,20 +210,45 @@ impl<D: BaoStore> Handler<D> {
         use gossip::Request::*;
         match msg {
             Subscribe(msg) => {
-                chan.bidi_streaming(msg, self, |handler, req, updates| {
-                    handler.inner.gossip_dispatcher.subscribe_with_opts(
-                        req.topic,
-                        iroh_gossip::dispatcher::SubscribeOptions {
-                            bootstrap: req.bootstrap,
-                            subscription_capacity: req.subscription_capacity,
-                        },
-                        Box::new(updates),
-                    )
+                chan.try_server_streaming(msg, self, |handler, req| async move {
+                    let sub = handler
+                        .inner
+                        .gossip
+                        .join_and_subscribe(req.topic, req.bootstrap)
+                        .await?;
+                    let stream = BroadcastStream::new(sub)
+                        .map(|res| res.map_err(|e| RpcError::from(anyhow::anyhow!("{:?}", e))));
+                    Ok(stream)
                 })
                 .await
             }
-            Update(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
+            Broadcast(msg) => chan.rpc(msg, self, Self::gossip_broadcast).await,
+            BroadcastNeighbours(msg) => {
+                chan.rpc(msg, self, Self::gossip_neighbours_broadcast).await
+            }
+            Quit(msg) => chan.rpc(msg, self, Self::gossip_quit).await,
         }
+    }
+
+    async fn gossip_broadcast(self, msg: gossip::BroadcastRequest) -> RpcResult<()> {
+        self.inner.gossip.broadcast(msg.topic, msg.message).await?;
+        Ok(())
+    }
+
+    async fn gossip_neighbours_broadcast(
+        self,
+        msg: gossip::BroadcastNeighboursRequest,
+    ) -> RpcResult<()> {
+        self.inner
+            .gossip
+            .broadcast_neighbors(msg.topic, msg.message)
+            .await?;
+        Ok(())
+    }
+
+    async fn gossip_quit(self, msg: gossip::QuitRequest) -> RpcResult<()> {
+        self.inner.gossip.quit(msg.topic).await?;
+        Ok(())
     }
 
     async fn handle_authors_request(

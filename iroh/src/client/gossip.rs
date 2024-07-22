@@ -10,16 +10,18 @@
 //!
 //! [`Client::subscribe_with_opts`] allows you to specify advanced options
 //! such as the buffer size.
-use std::collections::BTreeSet;
-
 use anyhow::Result;
+use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
-use futures_util::{Sink, SinkExt};
-use iroh_gossip::proto::TopicId;
 use iroh_net::NodeId;
 use ref_cast::RefCast;
 
-pub use crate::rpc_protocol::gossip::{SubscribeRequest, SubscribeResponse, SubscribeUpdate};
+use crate::rpc_protocol::gossip::{
+    BroadcastNeighboursRequest, BroadcastRequest, QuitRequest, SubscribeRequest,
+};
+
+pub use crate::rpc_protocol::gossip::SubscribeResponse;
+pub use iroh_gossip::proto::TopicId;
 
 use super::RpcClient;
 
@@ -34,7 +36,7 @@ pub struct Client {
 #[derive(Debug, Clone)]
 pub struct SubscribeOpts {
     /// Bootstrap nodes to connect to.
-    pub bootstrap: BTreeSet<NodeId>,
+    pub bootstrap: Vec<NodeId>,
     /// Subscription capacity.
     pub subscription_capacity: usize,
 }
@@ -42,7 +44,7 @@ pub struct SubscribeOpts {
 impl Default for SubscribeOpts {
     fn default() -> Self {
         Self {
-            bootstrap: BTreeSet::new(),
+            bootstrap: Default::default(),
             subscription_capacity: 256,
         }
     }
@@ -50,42 +52,21 @@ impl Default for SubscribeOpts {
 
 impl Client {
     /// Subscribe to a gossip topic.
-    ///
-    /// Returns a sink to send updates to the topic and a stream of responses.
-    ///
-    /// Updates are either [Broadcast](iroh_gossip::dispatcher::Command::Broadcast)
-    /// or [BroadcastNeighbors](iroh_gossip::dispatcher::Command::BroadcastNeighbors).
-    ///
-    /// Broadcasts are gossiped to the entire swarm, while BroadcastNeighbors are sent to
-    /// just the immediate neighbors of the node.
-    ///
-    /// Responses are either [Gossip](iroh_gossip::dispatcher::Event::Gossip) or
-    /// [Lagged](iroh_gossip::dispatcher::Event::Lagged).
-    ///
-    /// Gossip events contain the actual message content, as well as information about the
-    /// immediate neighbors of the node.
-    ///
-    /// A Lagged event indicates that the gossip stream has not been consumed quickly enough.
-    /// You can adjust the buffer size with the [] option.
     pub async fn subscribe_with_opts(
         &self,
         topic: TopicId,
         opts: SubscribeOpts,
-    ) -> Result<(
-        impl Sink<SubscribeUpdate, Error = anyhow::Error>,
-        impl Stream<Item = Result<SubscribeResponse>>,
-    )> {
-        let (sink, stream) = self
+    ) -> Result<impl Stream<Item = Result<SubscribeResponse>>> {
+        let stream = self
             .rpc
-            .bidi(SubscribeRequest {
+            .try_server_streaming(SubscribeRequest {
                 topic,
                 bootstrap: opts.bootstrap,
                 subscription_capacity: opts.subscription_capacity,
             })
             .await?;
-        let stream = stream.map(|item| anyhow::Ok(item??));
-        let sink = sink.sink_map_err(|_| anyhow::anyhow!("send error"));
-        Ok((sink, stream))
+        let stream = stream.map(|item| anyhow::Ok(item?));
+        Ok(stream)
     }
 
     /// Subscribe to a gossip topic with default options.
@@ -93,10 +74,7 @@ impl Client {
         &self,
         topic: impl Into<TopicId>,
         bootstrap: impl IntoIterator<Item = impl Into<NodeId>>,
-    ) -> Result<(
-        impl Sink<SubscribeUpdate, Error = anyhow::Error>,
-        impl Stream<Item = Result<SubscribeResponse>>,
-    )> {
+    ) -> Result<impl Stream<Item = Result<SubscribeResponse>>> {
         let bootstrap = bootstrap.into_iter().map(Into::into).collect();
         self.subscribe_with_opts(
             topic.into(),
@@ -106,5 +84,41 @@ impl Client {
             },
         )
         .await
+    }
+
+    /// Broadcast a message on the given topic
+    pub async fn broadcast(&self, topic: impl Into<TopicId>, msg: impl Into<Bytes>) -> Result<()> {
+        self.rpc
+            .rpc(BroadcastRequest {
+                topic: topic.into(),
+                message: msg.into(),
+            })
+            .await??;
+        Ok(())
+    }
+
+    /// Broadcast a message to all neighbours on the given topic
+    pub async fn broadcast_neighbours(
+        &self,
+        topic: impl Into<TopicId>,
+        msg: impl Into<Bytes>,
+    ) -> Result<()> {
+        self.rpc
+            .rpc(BroadcastNeighboursRequest {
+                topic: topic.into(),
+                message: msg.into(),
+            })
+            .await??;
+        Ok(())
+    }
+
+    /// Quit the subscription to the given topic.
+    pub async fn quit(&self, topic: impl Into<TopicId>) -> Result<()> {
+        self.rpc
+            .rpc(QuitRequest {
+                topic: topic.into(),
+            })
+            .await??;
+        Ok(())
     }
 }

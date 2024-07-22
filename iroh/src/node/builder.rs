@@ -15,10 +15,7 @@ use iroh_blobs::{
 };
 use iroh_docs::engine::DefaultAuthorStorage;
 use iroh_docs::net::DOCS_ALPN;
-use iroh_gossip::{
-    dispatcher::GossipDispatcher,
-    net::{Gossip, GOSSIP_ALPN},
-};
+use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 #[cfg(not(test))]
 use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 use iroh_net::{
@@ -550,7 +547,6 @@ where
             downloader.clone(),
         )
         .await?;
-        let gossip_dispatcher = GossipDispatcher::new(gossip.clone());
 
         // Initialize the internal RPC connection.
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection::<RpcService>(32);
@@ -570,7 +566,6 @@ where
             cancel_token: CancellationToken::new(),
             downloader,
             gossip,
-            gossip_dispatcher,
             local_pool_handle: lp.handle().clone(),
         });
 

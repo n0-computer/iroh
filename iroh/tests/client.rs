@@ -1,14 +1,10 @@
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
-use futures_util::SinkExt;
+use iroh::client::gossip::{SubscribeResponse, TopicId};
 use iroh::client::Iroh;
-use iroh_gossip::{
-    dispatcher::{Command, Event, GossipEvent},
-    proto::TopicId,
-};
 use iroh_net::{key::SecretKey, NodeAddr};
 use testresult::TestResult;
-use tokio::task::JoinHandle;
+use tracing::info;
 
 /// Spawn an iroh node in a separate thread and tokio runtime, and return
 /// the address and client.
@@ -35,50 +31,31 @@ fn spawn_node() -> (NodeAddr, Iroh) {
 }
 
 /// Await `n` messages from a stream of gossip events.
-fn await_messages(
-    mut stream: impl Stream<Item = anyhow::Result<Event>> + Unpin + Send + Sync + 'static,
+async fn await_messages(
+    mut stream: impl Stream<Item = anyhow::Result<SubscribeResponse>> + Unpin + Send + Sync,
     n: usize,
-) -> JoinHandle<Vec<Bytes>> {
-    tokio::spawn(async move {
-        let mut res = Vec::new();
-        #[allow(clippy::single_match)]
-        while let Some(msg) = stream.next().await {
-            match msg.unwrap() {
-                Event::Gossip(GossipEvent::Received(msg)) => {
-                    res.push(msg.content);
-                    if res.len() >= n {
-                        break;
-                    }
+) -> Vec<Bytes> {
+    let mut res = Vec::new();
+    #[allow(clippy::single_match)]
+    while let Some(msg) = stream.next().await {
+        match msg.unwrap() {
+            SubscribeResponse::Received(msg) => {
+                res.push(msg.content);
+                if res.len() >= n {
+                    break;
                 }
-                _ => {}
             }
+            _ => {}
         }
-        res
-    })
+    }
+    res
 }
 
 #[tokio::test]
 async fn gossip_smoke() -> TestResult {
     let _ = tracing_subscriber::fmt::try_init();
-    let (addr1, node1) = spawn_node();
-    let (addr2, node2) = spawn_node();
-    let gossip1 = node1.gossip();
-    let gossip2 = node2.gossip();
-    node1.add_node_addr(addr2.clone()).await?;
-    node2.add_node_addr(addr1.clone()).await?;
-    let topic = TopicId::from([0u8; 32]);
-    let (mut sink1, _stream1) = gossip1.subscribe(topic, [addr2.node_id]).await?;
-    let (_sink2, stream2) = gossip2.subscribe(topic, [addr1.node_id]).await?;
-    sink1.send(Command::Broadcast("hello".into())).await?;
-    let msgs = await_messages(stream2, 1).await?;
-    assert_eq!(msgs, vec![Bytes::from("hello")]);
-    Ok(())
-}
 
-#[tokio::test]
-#[ignore = "flaky"]
-async fn gossip_drop_sink() -> TestResult {
-    let _ = tracing_subscriber::fmt::try_init();
+    info!("--- setup");
     let (addr1, node1) = spawn_node();
     let (addr2, node2) = spawn_node();
     let gossip1 = node1.gossip();
@@ -87,15 +64,50 @@ async fn gossip_drop_sink() -> TestResult {
     node2.add_node_addr(addr1.clone()).await?;
 
     let topic = TopicId::from([0u8; 32]);
+    let mut stream1 = gossip1.subscribe(topic, [addr2.node_id]).await?;
 
-    let (mut sink1, stream1) = gossip1.subscribe(topic, [addr2.node_id]).await?;
-    let (sink2, stream2) = gossip2.subscribe(topic, [addr1.node_id]).await?;
+    let mut stream2 = gossip2.subscribe(topic, [addr1.node_id]).await?;
 
-    drop(stream1);
-    drop(sink2);
+    info!("--- waiting for connection");
 
-    sink1.send(Command::Broadcast("hello".into())).await?;
-    let msgs = await_messages(stream2, 1).await?;
-    assert_eq!(msgs, vec![Bytes::from("hello")]);
+    // wait for neighbour discovery on both sides
+    let msg = stream1.next().await.unwrap()?;
+    assert!(matches!(msg, SubscribeResponse::NeighborUp(_)));
+    let msg = stream2.next().await.unwrap()?;
+    assert!(matches!(msg, SubscribeResponse::NeighborUp(_)));
+
+    info!("--- broadcasting messages 1 -> 2");
+
+    let mut expected_msgs = Vec::new();
+    for i in 0..10 {
+        let msg = format!("hello1 {i}");
+        gossip1.broadcast(topic, msg.clone()).await?;
+        expected_msgs.push(Bytes::from(msg));
+    }
+    let msgs = await_messages(&mut stream2, 10).await;
+    assert_eq!(msgs, expected_msgs);
+
+    info!("--- broadcasting messages 2 -> 1");
+
+    let mut expected_msgs = Vec::new();
+    for i in 0..10 {
+        let msg = format!("hello2 {i}");
+        gossip2.broadcast(topic, msg.clone()).await?;
+        expected_msgs.push(Bytes::from(msg));
+    }
+    let msgs = await_messages(&mut stream1, 10).await;
+    assert_eq!(msgs, expected_msgs);
+
+    info!("--- shutting down");
+
+    gossip1.quit(topic).await?;
+    gossip2.quit(topic).await?;
+
+    // wait for shutdown notices on both sides
+    let msg = stream1.next().await.unwrap()?;
+    assert!(matches!(msg, SubscribeResponse::NeighborDown(_)));
+    let msg = stream2.next().await.unwrap()?;
+    assert!(matches!(msg, SubscribeResponse::NeighborDown(_)));
+
     Ok(())
 }

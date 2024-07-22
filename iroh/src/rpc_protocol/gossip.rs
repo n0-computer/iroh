@@ -1,6 +1,5 @@
-use std::collections::BTreeSet;
-
-use iroh_base::rpc::RpcResult;
+use bytes::Bytes;
+use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_gossip::proto::TopicId;
 use iroh_net::NodeId;
 use nested_enum_utils::enum_conversions;
@@ -9,17 +8,21 @@ use serde::{Deserialize, Serialize};
 
 use super::RpcService;
 
-pub use iroh_gossip::dispatcher::Command as SubscribeUpdate;
-pub use iroh_gossip::dispatcher::Event as SubscribeResponse;
+pub use iroh_gossip::net::Event as SubscribeResponse;
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[enum_conversions(super::Request)]
 #[rpc_requests(RpcService)]
 pub enum Request {
-    #[bidi_streaming(update = SubscribeUpdate, response = RpcResult<SubscribeResponse>)]
+    #[try_server_streaming(create_error = RpcError, item_error = RpcError, item = SubscribeResponse)]
     Subscribe(SubscribeRequest),
-    Update(SubscribeUpdate),
+    #[rpc(response = RpcResult<()>)]
+    Broadcast(BroadcastRequest),
+    #[rpc(response = RpcResult<()>)]
+    BroadcastNeighbours(BroadcastNeighboursRequest),
+    #[rpc(response = RpcResult<()>)]
+    Quit(QuitRequest),
 }
 
 #[allow(missing_docs)]
@@ -37,7 +40,27 @@ pub struct SubscribeRequest {
     /// The topic to subscribe to
     pub topic: TopicId,
     /// The nodes to bootstrap the subscription from
-    pub bootstrap: BTreeSet<NodeId>,
+    pub bootstrap: Vec<NodeId>,
     /// The capacity of the subscription
     pub subscription_capacity: usize,
+}
+
+#[allow(missing_docs)]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct QuitRequest {
+    pub topic: TopicId,
+}
+
+#[allow(missing_docs)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BroadcastRequest {
+    pub topic: TopicId,
+    pub message: Bytes,
+}
+
+#[allow(missing_docs)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BroadcastNeighboursRequest {
+    pub topic: TopicId,
+    pub message: Bytes,
 }
