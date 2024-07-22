@@ -3,6 +3,7 @@ use std::{any::Any, collections::BTreeMap, fmt, sync::Arc};
 use anyhow::Result;
 use futures_lite::future::Boxed as BoxedFuture;
 use futures_util::future::join_all;
+use iroh_blobs::util::local_pool::LocalPoolHandle;
 use iroh_net::endpoint::Connecting;
 
 /// Handler for incoming connections.
@@ -78,12 +79,12 @@ impl ProtocolMap {
 
 #[derive(Debug)]
 pub(crate) struct BlobsProtocol<S> {
-    rt: tokio_util::task::LocalPoolHandle,
+    rt: LocalPoolHandle,
     store: S,
 }
 
 impl<S: iroh_blobs::store::Store> BlobsProtocol<S> {
-    pub fn new(store: S, rt: tokio_util::task::LocalPoolHandle) -> Self {
+    pub fn new(store: S, rt: LocalPoolHandle) -> Self {
         Self { rt, store }
     }
 }
