@@ -1,12 +1,13 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, future::Future, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
 use futures_buffered::join_all;
 
-use futures_lite::StreamExt;
+use futures_lite::{future::Boxed, StreamExt};
 use futures_util::FutureExt;
 use iroh_net::{
-    endpoint::{get_remote_node_id, Connection},
+    endpoint::{get_remote_node_id, Connection, VarInt},
+    util::AbortingJoinHandle,
     Endpoint, NodeId,
 };
 use tokio::{
@@ -21,14 +22,66 @@ use crate::{
     net::{WillowConn, ALPN},
     proto::sync::AccessChallenge,
     session::{
-        intents::Intent, Error, Interests, Role, SessionEvent, SessionHandle, SessionInit,
-        SessionMode, SessionUpdate,
+        intents::{EventKind, Intent},
+        Error, Interests, Role, SessionEvent, SessionHandle, SessionInit, SessionUpdate,
     },
 };
 
 use super::actor::ActorHandle;
 
-const ERROR_CODE_IGNORE_CONN: u8 = 1;
+const ERROR_CODE_IGNORE_CONN: VarInt = VarInt::from_u32(1);
+
+/// Customize what to do with incoming connections.
+///
+/// You can use [`AcceptOpts::default`] to instantiate with the default behavior:
+/// * Accept all incoming connections, and submit interest in everything we have
+/// * Do not track events for sessions created from incoming connections for which we did not
+///   signal a specific interest ourselves as well
+///
+/// Use [`Self::accept_custom`] to customize which sessions to accept, and which interests to
+/// submit.
+///
+/// Use [`Self::track_events`] to receive events for sessions we accepted.
+#[derive(derive_more::Debug, Default)]
+pub struct AcceptOpts {
+    #[debug("{:?}", accept_cb.as_ref().map(|_| "_"))]
+    accept_cb: Option<AcceptCb>,
+    track_events: Option<mpsc::Sender<(NodeId, EventKind)>>,
+}
+
+impl AcceptOpts {
+    /// Registers a callback to determine the fate of incoming connections.
+    ///
+    /// The callback gets the connecting peer's [`NodeId`] as argument, and must return a future
+    /// that resolves to `Option<`[SessionInit]``>`. When returning `None`, the session will not be
+    /// accepted. When returning a `SessionInit`, the session will be accepted with these
+    /// interests.
+    pub fn accept_custom<F, Fut>(mut self, cb: F) -> Self
+    where
+        F: Fn(NodeId) -> Fut + 'static + Send + Sync,
+        Fut: 'static + Send + Future<Output = Option<SessionInit>>,
+    {
+        let cb = Box::new(move |peer: NodeId| {
+            let fut: Boxed<Option<SessionInit>> = Box::pin((cb)(peer));
+            fut
+        });
+        self.accept_cb = Some(cb);
+        self
+    }
+
+    /// Registers an event channel for events from accepted connections.
+    ///
+    /// If called, the passed [`mpsc::Sender`] will receive all events emitted from session
+    /// intents for incoming connections. The corresponding [`mpsc::Receiver`] **must** then be
+    /// received from in a loop. The session will be blocked from proceeding if the receiver is not
+    /// able to process events fast enough.
+    ///
+    /// If not called, events from session intents for incoming connections will be dropped.
+    pub fn track_events(mut self, sender: mpsc::Sender<(NodeId, EventKind)>) -> Self {
+        self.track_events = Some(sender);
+        self
+    }
+}
 
 #[derive(derive_more::Debug)]
 pub(super) enum Input {
@@ -42,14 +95,17 @@ pub(super) enum Input {
     },
 }
 
+type AcceptCb = Box<dyn Fn(NodeId) -> Boxed<Option<SessionInit>> + Send + Sync + 'static>;
+
 #[derive(derive_more::Debug)]
 pub(super) struct PeerManager {
     actor: ActorHandle,
     endpoint: Endpoint,
     inbox: mpsc::Receiver<Input>,
-    events_rx: StreamMap<NodeId, ReceiverStream<SessionEvent>>,
+    session_events_rx: StreamMap<NodeId, ReceiverStream<SessionEvent>>,
     tasks: JoinSet<(NodeId, Result<WillowConn>)>,
     peers: HashMap<NodeId, PeerState>,
+    accept_handlers: AcceptHandlers,
 }
 
 impl PeerManager {
@@ -57,14 +113,16 @@ impl PeerManager {
         actor_handle: ActorHandle,
         endpoint: Endpoint,
         inbox: mpsc::Receiver<Input>,
+        accept_opts: AcceptOpts,
     ) -> Self {
         PeerManager {
             endpoint: endpoint.clone(),
             actor: actor_handle,
             inbox,
-            events_rx: Default::default(),
+            session_events_rx: Default::default(),
             tasks: Default::default(),
             peers: Default::default(),
+            accept_handlers: AcceptHandlers::new(accept_opts),
         }
     }
 
@@ -75,7 +133,7 @@ impl PeerManager {
                     trace!(?input, "tick: inbox");
                     self.handle_input(input).await;
                 }
-                Some((session_id, event)) = self.events_rx.next(), if !self.events_rx.is_empty() => {
+                Some((session_id, event)) = self.session_events_rx.next(), if !self.session_events_rx.is_empty() => {
                     trace!(?session_id, ?event, "tick: event");
                     self.handle_event(session_id, event);
                 }
@@ -97,11 +155,11 @@ impl PeerManager {
     async fn handle_input(&mut self, input: Input) {
         match input {
             Input::SubmitIntent { peer, intent } => self.submit_intent(peer, intent).await,
-            Input::HandleConnection { conn } => self.handle_connection(conn),
+            Input::HandleConnection { conn } => self.handle_connection(conn).await,
         }
     }
 
-    fn handle_connection(&mut self, conn: Connection) {
+    async fn handle_connection(&mut self, conn: Connection) {
         let peer = match get_remote_node_id(&conn) {
             Ok(node_id) => node_id,
             Err(err) => {
@@ -113,62 +171,48 @@ impl PeerManager {
 
         match self.peers.get_mut(&peer) {
             None => {
-                // TODO: Allow to pass RNG.
-                let our_nonce = AccessChallenge::generate();
-                let abort_handle = self
-                    .tasks
-                    .spawn(WillowConn::betty(conn, me, our_nonce).map(move |res| (peer, res)));
-                let init = SessionInit::continuous(Interests::All);
-                let intent = Intent::new_detached(init);
-                self.peers.insert(
-                    peer,
-                    PeerState::Pending {
-                        our_role: Role::Betty,
-                        intents: vec![intent],
-                        abort_handle,
-                    },
-                );
-            }
-            Some(PeerState::Pending {
-                our_role: Role::Alfie,
-                abort_handle,
-                intents,
-            }) => {
-                if me > peer {
-                    tracing::debug!(
-                        "ignore incoming connection (already dialing and our dial wins)"
+                if let Some(intent) = self.accept_handlers.accept(peer).await {
+                    let abort_handle = self.tasks.spawn(
+                        WillowConn::betty(conn, me, AccessChallenge::generate())
+                            .map(move |res| (peer, res)),
                     );
-                    conn.close(ERROR_CODE_IGNORE_CONN.into(), b"duplicate-our-dial-wins");
-                } else {
-                    // Abort our dial attempt.
-                    abort_handle.abort();
-                    // Set the new abort handle.
-                    let our_nonce = AccessChallenge::generate();
-                    *abort_handle = self
-                        .tasks
-                        .spawn(WillowConn::betty(conn, me, our_nonce).map(move |res| (peer, res)));
-                    // Add a catchall interest.
-                    let init = SessionInit::new(Interests::All, SessionMode::Live);
-                    let intent = Intent::new_detached(init);
-                    intents.push(intent);
+                    self.peers.insert(
+                        peer,
+                        PeerState::Pending {
+                            our_role: Role::Betty,
+                            intents: vec![intent],
+                            abort_handle,
+                        },
+                    );
                 }
             }
             Some(PeerState::Pending {
-                our_role: Role::Betty,
-                ..
+                our_role,
+                abort_handle,
+                intents,
             }) => {
-                tracing::debug!("ignore incoming connection (already accepting)");
-                conn.close(
-                    ERROR_CODE_IGNORE_CONN.into(),
-                    b"duplicate-already-accepting",
-                );
+                if *our_role == Role::Betty {
+                    tracing::debug!("ignore incoming connection (already accepting)");
+                    conn.close(ERROR_CODE_IGNORE_CONN, b"duplicate-already-accepting");
+                } else if me > peer {
+                    tracing::debug!(
+                        "ignore incoming connection (already dialing and our dial wins)"
+                    );
+                    conn.close(ERROR_CODE_IGNORE_CONN, b"duplicate-our-dial-wins");
+                } else if let Some(intent) = self.accept_handlers.accept(peer).await {
+                    // Abort our dial attempt and insert the new abort handle and intent.
+                    abort_handle.abort();
+                    *abort_handle = self.tasks.spawn(
+                        WillowConn::betty(conn, me, AccessChallenge::generate())
+                            .map(move |res| (peer, res)),
+                    );
+                    *our_role = Role::Betty;
+                    intents.push(intent);
+                }
             }
             Some(PeerState::Active { .. }) => {
                 tracing::debug!("ignore incoming connection (already connected)");
-                conn.close(
-                    ERROR_CODE_IGNORE_CONN.into(),
-                    b"duplicate-already-accepting",
-                );
+                conn.close(ERROR_CODE_IGNORE_CONN, b"duplicate-already-accepting");
             }
         }
     }
@@ -211,7 +255,8 @@ impl PeerManager {
             update_tx,
             event_rx,
         } = session_handle;
-        self.events_rx.insert(peer, ReceiverStream::new(event_rx));
+        self.session_events_rx
+            .insert(peer, ReceiverStream::new(event_rx));
         self.peers.insert(peer, PeerState::Active { update_tx });
         Ok(())
     }
@@ -269,4 +314,91 @@ enum PeerState {
     Active {
         update_tx: mpsc::Sender<SessionUpdate>,
     },
+}
+
+#[derive(derive_more::Debug)]
+struct AcceptHandlers {
+    #[debug("{:?}", accept_cb.as_ref().map(|_| "_"))]
+    accept_cb: Option<AcceptCb>,
+    event_forwarder: Option<EventForwarder>,
+}
+
+impl AcceptHandlers {
+    pub fn new(opts: AcceptOpts) -> Self {
+        Self {
+            accept_cb: opts.accept_cb,
+            event_forwarder: opts.track_events.map(EventForwarder::new),
+        }
+    }
+
+    pub async fn accept(&self, peer: NodeId) -> Option<Intent> {
+        let init = match &self.accept_cb {
+            None => Some(SessionInit::continuous(Interests::All)),
+            Some(cb) => cb(peer).await,
+        };
+        let init = init?;
+
+        let intent = match &self.event_forwarder {
+            None => Intent::new_detached(init),
+            Some(forwarder) => {
+                let (intent, handle) = Intent::new(init);
+                let (_update_tx, event_rx) = handle.split();
+                forwarder.add_intent(peer, event_rx).await;
+                intent
+            }
+        };
+
+        Some(intent)
+    }
+}
+
+#[derive(Debug)]
+struct EventForwarder {
+    _join_handle: AbortingJoinHandle<()>,
+    stream_sender: mpsc::Sender<(NodeId, ReceiverStream<EventKind>)>,
+}
+
+#[derive(Debug)]
+struct EventForwarderActor {
+    stream_receiver: mpsc::Receiver<(NodeId, ReceiverStream<EventKind>)>,
+    streams: StreamMap<NodeId, ReceiverStream<EventKind>>,
+    event_sender: mpsc::Sender<(NodeId, EventKind)>,
+}
+
+impl EventForwarder {
+    fn new(event_sender: mpsc::Sender<(NodeId, EventKind)>) -> EventForwarder {
+        let (stream_sender, stream_receiver) = mpsc::channel(16);
+        let forwarder = EventForwarderActor {
+            stream_receiver,
+            streams: Default::default(),
+            event_sender,
+        };
+        let join_handle = tokio::task::spawn(forwarder.run());
+        EventForwarder {
+            _join_handle: join_handle.into(),
+            stream_sender,
+        }
+    }
+
+    pub async fn add_intent(&self, peer: NodeId, event_stream: ReceiverStream<EventKind>) {
+        self.stream_sender.send((peer, event_stream)).await.ok();
+    }
+}
+
+impl EventForwarderActor {
+    async fn run(mut self) {
+        loop {
+            tokio::select! {
+                Some((peer, receiver)) = self.stream_receiver.recv() => {
+                    self.streams.insert(peer, receiver);
+                },
+                Some((peer, event)) = self.streams.next() => {
+                    if let Err(_receiver_dropped) = self.event_sender.send((peer, event)).await {
+                        break;
+                    }
+                },
+                else => break,
+            }
+        }
+    }
 }
