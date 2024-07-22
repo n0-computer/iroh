@@ -82,38 +82,38 @@ async fn dump_metrics(
 ) -> Result<()> {
     let core = Core::get().ok_or_else(|| anyhow!("metrics disabled"))?;
     let m = core.encode();
-    if let Err(e) = m {
-        error!("Failed to encode metrics: {e:#}");
-    } else {
-        let m = m.unwrap();
-        let m = parse_prometheus_metrics(&m)?;
-        let time_since_start = start.elapsed().as_millis() as f64;
+    match m {
+        Err(e) => error!("Failed to encode metrics: {e:#}"),
+        Ok(m) => {
+            let m = parse_prometheus_metrics(&m)?;
+            let time_since_start = start.elapsed().as_millis() as f64;
 
-        // take the keys from m and sort them
-        let mut keys: Vec<&String> = m.keys().collect();
-        keys.sort();
+            // take the keys from m and sort them
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort();
 
-        let mut metrics = String::new();
-        if write_header {
-            metrics.push_str("time");
+            let mut metrics = String::new();
+            if write_header {
+                metrics.push_str("time");
+                for key in keys.iter() {
+                    metrics.push(',');
+                    metrics.push_str(key);
+                }
+                metrics.push('\n');
+            }
+
+            metrics.push_str(&format!("{}", time_since_start));
             for key in keys.iter() {
+                let value = m[*key];
+                let formatted_value = format!("{:.3}", value);
                 metrics.push(',');
-                metrics.push_str(key);
+                metrics.push_str(&formatted_value);
             }
             metrics.push('\n');
-        }
 
-        metrics.push_str(&format!("{}", time_since_start));
-        for key in keys.iter() {
-            let value = m[*key];
-            let formatted_value = format!("{:.3}", value);
-            metrics.push(',');
-            metrics.push_str(&formatted_value);
+            file.write_all(metrics.as_bytes()).await?;
+            file.flush().await?;
         }
-        metrics.push('\n');
-
-        file.write_all(metrics.as_bytes()).await?;
-        file.flush().await?;
     }
     Ok(())
 }
