@@ -367,6 +367,10 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                         _ => {}
                     }
                 },
+                _ = local_pool.cancelled() => {
+                    error!("Local pool cancelled");
+                    break;
+                },
                 else => break,
             }
         }
