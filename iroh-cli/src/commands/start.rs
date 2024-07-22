@@ -83,7 +83,7 @@ where
 
     let client = node.client().clone();
 
-    let mut command_task = node.local_pool_handle().spawn_pinned(move || {
+    let mut command_task = node.local_pool_handle().spawn(move || {
         async move {
             match command(client).await {
                 Err(err) => Err(err),

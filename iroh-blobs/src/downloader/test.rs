@@ -10,7 +10,10 @@ use iroh_net::key::SecretKey;
 
 use crate::{
     get::{db::BlobId, progress::TransferState},
-    util::progress::{FlumeProgressSender, IdGenerator},
+    util::{
+        local_pool::LocalPool,
+        progress::{FlumeProgressSender, IdGenerator},
+    },
 };
 
 use super::*;
@@ -23,7 +26,7 @@ impl Downloader {
         dialer: dialer::TestingDialer,
         getter: getter::TestingGetter,
         concurrency_limits: ConcurrencyLimits,
-    ) -> Self {
+    ) -> (Self, LocalPool) {
         Self::spawn_for_test_with_retry_config(
             dialer,
             getter,
@@ -37,10 +40,11 @@ impl Downloader {
         getter: getter::TestingGetter,
         concurrency_limits: ConcurrencyLimits,
         retry_config: RetryConfig,
-    ) -> Self {
+    ) -> (Self, LocalPool) {
         let (msg_tx, msg_rx) = mpsc::channel(super::SERVICE_CHANNEL_CAPACITY);
 
-        LocalPoolHandle::new(1).spawn_pinned(move || async move {
+        let lp = LocalPool::default();
+        lp.spawn_detached(move || async move {
             // we want to see the logs of the service
             let _guard = iroh_test::logging::setup();
 
@@ -48,10 +52,13 @@ impl Downloader {
             service.run().await
         });
 
-        Downloader {
-            next_id: Arc::new(AtomicU64::new(0)),
-            msg_tx,
-        }
+        (
+            Downloader {
+                next_id: Arc::new(AtomicU64::new(0)),
+                msg_tx,
+            },
+            lp,
+        )
     }
 }
 
@@ -63,7 +70,8 @@ async fn smoke_test() {
     let getter = getter::TestingGetter::default();
     let concurrency_limits = ConcurrencyLimits::default();
 
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     // send a request and make sure the peer is requested the corresponding download
     let peer = SecretKey::generate().public();
@@ -88,7 +96,8 @@ async fn deduplication() {
     getter.set_request_duration(Duration::from_secs(1));
     let concurrency_limits = ConcurrencyLimits::default();
 
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     let peer = SecretKey::generate().public();
     let kind: DownloadKind = HashAndFormat::raw(Hash::new([0u8; 32])).into();
@@ -119,7 +128,8 @@ async fn cancellation() {
     getter.set_request_duration(Duration::from_millis(500));
     let concurrency_limits = ConcurrencyLimits::default();
 
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     let peer = SecretKey::generate().public();
     let kind_1: DownloadKind = HashAndFormat::raw(Hash::new([0u8; 32])).into();
@@ -158,7 +168,8 @@ async fn max_concurrent_requests_total() {
         ..Default::default()
     };
 
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     // send the downloads
     let peer = SecretKey::generate().public();
@@ -201,7 +212,8 @@ async fn max_concurrent_requests_per_peer() {
         ..Default::default()
     };
 
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     // send the downloads
     let peer = SecretKey::generate().public();
@@ -257,7 +269,8 @@ async fn concurrent_progress() {
         }
         .boxed()
     }));
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
 
     let peer = SecretKey::generate().public();
     let hash = Hash::new([0u8; 32]);
@@ -341,7 +354,8 @@ async fn long_queue() {
         ..Default::default()
     };
 
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
     // send the downloads
     let nodes = [
         SecretKey::generate().public(),
@@ -370,7 +384,8 @@ async fn fail_while_running() {
     let _guard = iroh_test::logging::setup();
     let dialer = dialer::TestingDialer::default();
     let getter = getter::TestingGetter::default();
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
     let blob_fail = HashAndFormat::raw(Hash::new([1u8; 32]));
     let blob_success = HashAndFormat::raw(Hash::new([2u8; 32]));
 
@@ -407,7 +422,8 @@ async fn retry_nodes_simple() {
     let _guard = iroh_test::logging::setup();
     let dialer = dialer::TestingDialer::default();
     let getter = getter::TestingGetter::default();
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
     let node = SecretKey::generate().public();
     let dial_attempts = Arc::new(AtomicUsize::new(0));
     let dial_attempts2 = dial_attempts.clone();
@@ -432,7 +448,7 @@ async fn retry_nodes_fail() {
         max_retries_per_node: 3,
     };
 
-    let downloader = Downloader::spawn_for_test_with_retry_config(
+    let (downloader, _lp) = Downloader::spawn_for_test_with_retry_config(
         dialer.clone(),
         getter.clone(),
         Default::default(),
@@ -472,7 +488,8 @@ async fn retry_nodes_jump_queue() {
         ..Default::default()
     };
 
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     let good_node = SecretKey::generate().public();
     let bad_node = SecretKey::generate().public();
