@@ -201,6 +201,7 @@ fn direct_addr_row(info: DirectAddrInfo) -> comfy_table::Row {
         latency,
         last_control,
         last_payload,
+        last_alive,
     } = info;
 
     let last_control = match last_control {
@@ -214,11 +215,17 @@ fn direct_addr_row(info: DirectAddrInfo) -> comfy_table::Row {
         .map(Cell::new)
         .unwrap_or_else(never);
 
+    let last_alive = last_alive
+        .map(fmt_how_long_ago)
+        .map(Cell::new)
+        .unwrap_or_else(never);
+
     [
         addr.into(),
         fmt_latency(latency).into(),
         last_control,
         last_payload,
+        last_alive,
     ]
     .into()
 }
@@ -226,7 +233,7 @@ fn direct_addr_row(info: DirectAddrInfo) -> comfy_table::Row {
 fn fmt_addrs(addrs: Vec<DirectAddrInfo>) -> comfy_table::Table {
     let mut table = Table::new();
     table.load_preset(NOTHING).set_header(
-        vec!["addr", "latency", "last control", "last data"]
+        vec!["addr", "latency", "last control", "last data", "last alive"]
             .into_iter()
             .map(bold_cell),
     );
