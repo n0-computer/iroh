@@ -333,17 +333,18 @@ impl Drop for LocalPool {
 /// Errors for spawn failures
 #[derive(thiserror::Error, Debug)]
 pub enum SpawnError {
-    /// Pool is shut down
-    #[error("pool is shut down")]
-    Shutdown,
+    /// Task was dropped, either due to a panic or because the pool was shut down.
+    #[error("cancelled")]
+    Cancelled,
 }
 
 type SpawnResult<T> = std::result::Result<T, SpawnError>;
 
-/// Future returned by [`LocalPoolHandle::run`] and [`LocalPoolHandle::try_run`].
+/// Future returned by [`LocalPoolHandle::spawn`] and [`LocalPoolHandle::try_spawn`].
 ///
 /// Dropping this future will immediately cancel the task. The task can fail if
-/// the pool is shut down.
+/// the pool is shut down or if the task panics. In both cases the future will
+/// resolve to [`SpawnError::Cancelled`].
 #[repr(transparent)]
 #[derive(Debug)]
 pub struct Run<T>(tokio::sync::oneshot::Receiver<T>);
@@ -367,7 +368,7 @@ impl<T> Future for Run<T> {
         // map a RecvError (other side was dropped) to a SpawnError::Shutdown
         //
         // The only way the receiver can be dropped is if the pool is shut down.
-        self.0.poll(cx).map_err(|_| SpawnError::Shutdown)
+        self.0.poll(cx).map_err(|_| SpawnError::Cancelled)
     }
 }
 
@@ -392,9 +393,8 @@ impl LocalPoolHandle {
     /// Spawn a task in the pool and return a future that resolves when the task
     /// is done.
     ///
-    /// When the returned future is dropped, the task will be immediately
-    /// cancelled. Any drop implementation is guaranteed to run to completion in
-    /// any case.
+    /// If you don't care about the result, prefer [`LocalPoolHandle::spawn_detached`]
+    /// since it is more efficient.
     pub fn try_spawn<T, F, Fut>(&self, gen: F) -> SpawnResult<Run<T>>
     where
         F: FnOnce() -> Fut + Send + 'static,
@@ -417,9 +417,9 @@ impl LocalPoolHandle {
 
     /// Spawn a task in the pool.
     ///
-    /// The task will be run detached. This can be useful if
-    /// you are not interested in the result or in in cancellation or
-    /// you provide your own result handling and cancellation mechanism.
+    /// The task will run to completion unless the pool is shut down or the task
+    /// panics. In case of panic, the pool will either log the panic and continue
+    /// or immediately shut down, depending on the [`PanicMode`].
     pub fn try_spawn_detached<F, Fut>(&self, gen: F) -> SpawnResult<()>
     where
         F: FnOnce() -> Fut + Send + 'static,
@@ -429,67 +429,9 @@ impl LocalPoolHandle {
         self.try_spawn_detached_boxed(gen)
     }
 
-    /// Run a task in the pool and await the result.
+    /// Spawn a task in the pool and await the result.
     ///
-    /// This is like [`LocalPoolHandle::try_spawn_detached`], but assuming that the
-    /// generator function is already boxed.
-    pub fn try_spawn_detached_boxed(&self, gen: SpawnFn) -> SpawnResult<()> {
-        self.send
-            .send(Message::Execute(gen))
-            .map_err(|_| SpawnError::Shutdown)
-    }
-
-    /// Spawn a new task and return a tokio join handle.
-    ///
-    /// This comes with quite a bit of overhead, so only use this variant if you
-    /// need to await the result of the task.
-    ///
-    /// The additional overhead is:
-    /// - a tokio task
-    /// - a tokio::sync::oneshot channel
-    ///
-    /// The overhead is necessary for this method to be synchronous and for it
-    /// to return a tokio::task::JoinHandle.
-    pub fn spawn_pinned<T, F, Fut>(&self, gen: F) -> tokio::task::JoinHandle<T>
-    where
-        F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = T> + 'static,
-        T: Send + 'static,
-    {
-        let send = self.send.clone();
-        tokio::spawn(async move {
-            let (send_res, recv_res) = tokio::sync::oneshot::channel();
-            let item: SpawnFn = Box::new(move || {
-                let fut = (gen)();
-                let res: Pin<Box<dyn Future<Output = ()>>> = Box::pin(async move {
-                    let res = fut.await;
-                    send_res.send(res).ok();
-                });
-                res
-            });
-            send.send_async(Message::Execute(item)).await.unwrap();
-            recv_res.await.unwrap()
-        })
-    }
-
-    // /// Spawn a new task and return a tokio join handle.
-    // ///
-    // /// This fn exists mostly for compatibility with tokio's `LocalPoolHandle`.
-    // /// It spawns an additional normal tokio task in order to be able to return
-    // /// a [`tokio::task::JoinHandle`]. Aborting the returned handle will
-    // /// cancel the task.
-    // pub fn spawn_pinned<T, F, Fut>(&self, gen: F) -> tokio::task::JoinHandle<T>
-    // where
-    //     F: FnOnce() -> Fut + Send + 'static,
-    //     Fut: Future<Output = T> + 'static,
-    //     T: Send + 'static,
-    // {
-    //     self.try_spawn_pinned(gen).expect("pool is shut down")
-    // }
-
-    /// Run a task in the pool and await the result.
-    ///
-    /// Like [`LocalPoolHandle::try_run`], but panics if the pool is shut down.
+    /// Like [`LocalPoolHandle::try_spawn`], but panics if the pool is shut down.
     pub fn spawn<T, F, Fut>(&self, gen: F) -> Run<T>
     where
         F: FnOnce() -> Fut + Send + 'static,
@@ -510,12 +452,15 @@ impl LocalPoolHandle {
         self.try_spawn_detached(gen).expect("pool is shut down")
     }
 
-    /// Spawn a boxed, detached task in the pool.
+    /// Spawn a task in the pool.
     ///
-    /// Like [`LocalPoolHandle::try_spawn_detached_boxed`], but panics if the pool is shut down.
-    pub fn spawn_detached_boxed(&self, gen: SpawnFn) {
-        self.try_spawn_detached_boxed(gen)
-            .expect("pool is shut down")
+    /// This is like [`LocalPoolHandle::try_spawn_detached`], but assuming that the
+    /// generator function is already boxed. This is the lowest overhead way to
+    /// spawn a task in the pool.
+    pub fn try_spawn_detached_boxed(&self, gen: SpawnFn) -> SpawnResult<()> {
+        self.send
+            .send(Message::Execute(gen))
+            .map_err(|_| SpawnError::Cancelled)
     }
 }
 
