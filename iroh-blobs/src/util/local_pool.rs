@@ -179,6 +179,7 @@ impl LocalPool {
                 }
             });
             shutdown_sem.add_permits(1);
+            Box::leak(Box::new(js));
         })
     }
 
