@@ -7,19 +7,12 @@ use iroh_metrics::{
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Iterable)]
 pub struct Metrics {
-    // pub rebind_calls: Counter,
     pub re_stun_calls: Counter,
     pub update_direct_addrs: Counter,
 
     // Sends (data or disco)
-    // pub send_relay_queued: Counter,
-    // pub send_relay_error_chan: Counter,
-    // pub send_relay_error_closed: Counter,
-    // pub send_relay_error_queue: Counter,
     pub send_ipv4: Counter,
-    // pub send_ipv4_error: Counter,
     pub send_ipv6: Counter,
-    // pub send_ipv6_error: Counter,
     pub send_relay: Counter,
     pub send_relay_error: Counter,
 
@@ -40,7 +33,6 @@ pub struct Metrics {
     pub sent_disco_ping: Counter,
     pub sent_disco_pong: Counter,
     pub sent_disco_call_me_maybe: Counter,
-    // pub recv_disco_bad_peer: Counter,
     pub recv_disco_bad_key: Counter,
     pub recv_disco_bad_parse: Counter,
 
@@ -49,7 +41,6 @@ pub struct Metrics {
     pub recv_disco_ping: Counter,
     pub recv_disco_pong: Counter,
     pub recv_disco_call_me_maybe: Counter,
-    // pub recv_disco_call_me_maybe_bad_node: Counter,
     pub recv_disco_call_me_maybe_bad_disco: Counter,
 
     // How many times our relay home node DI has changed from non-zero to a different non-zero.
@@ -84,19 +75,12 @@ impl Default for Metrics {
             num_relay_conns_added: Counter::new("num_relay_conns added"),
             num_relay_conns_removed: Counter::new("num_relay_conns removed"),
 
-            // rebind_calls: Counter::new("rebind_calls"),
             re_stun_calls: Counter::new("restun_calls"),
             update_direct_addrs: Counter::new("update_endpoints"),
 
             // Sends (data or disco)
-            // send_relay_queued: Counter::new("send_relay_queued"),
-            // send_relay_error_chan: Counter::new("send_relay_error_chan"),
-            // send_relay_error_closed: Counter::new("send_relay_error_closed"),
-            // send_relay_error_queue: Counter::new("send_relay_error_queue"),
             send_ipv4: Counter::new("send_ipv4"),
-            // send_ipv4_error: Counter::new("send_ipv4_error"),
             send_ipv6: Counter::new("send_ipv6"),
-            // send_ipv6_error: Counter::new("send_ipv6_error"),
             send_relay: Counter::new("send_relay"),
             send_relay_error: Counter::new("send_relay_error"),
 
@@ -116,7 +100,6 @@ impl Default for Metrics {
             sent_disco_ping: Counter::new("disco_sent_ping"),
             sent_disco_pong: Counter::new("disco_sent_pong"),
             sent_disco_call_me_maybe: Counter::new("disco_sent_callmemaybe"),
-            // recv_disco_bad_peer: Counter::new("disco_recv_bad_peer"),
             recv_disco_bad_key: Counter::new("disco_recv_bad_key"),
             recv_disco_bad_parse: Counter::new("disco_recv_bad_parse"),
 
@@ -125,7 +108,6 @@ impl Default for Metrics {
             recv_disco_ping: Counter::new("disco_recv_ping"),
             recv_disco_pong: Counter::new("disco_recv_pong"),
             recv_disco_call_me_maybe: Counter::new("disco_recv_callmemaybe"),
-            // recv_disco_call_me_maybe_bad_node: Counter::new("disco_recv_callmemaybe_bad_node"),
             recv_disco_call_me_maybe_bad_disco: Counter::new("disco_recv_callmemaybe_bad_disco"),
 
             // How many times our relay home node DI has changed from non-zero to a different non-zero.

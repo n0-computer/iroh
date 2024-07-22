@@ -11,9 +11,6 @@ use crate::rpc_protocol::node::CounterStats;
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Iterable)]
 pub struct Metrics {
-    // pub requests_total: Counter,
-    // pub bytes_sent: Counter,
-    // pub bytes_received: Counter,
     pub doc_gossip_tick_main: Counter,
     pub doc_gossip_tick_event: Counter,
     pub doc_gossip_tick_actor: Counter,
@@ -30,9 +27,6 @@ pub struct Metrics {
 impl Default for Metrics {
     fn default() -> Self {
         Self {
-            // requests_total: Counter::new("Total number of requests received"),
-            // bytes_sent: Counter::new("Number of bytes streamed"),
-            // bytes_received: Counter::new("Number of bytes received"),
             doc_gossip_tick_main: Counter::new("Number of times the main gossip actor loop ticked"),
             doc_gossip_tick_event: Counter::new(
                 "Number of times the gossip actor ticked for an event",

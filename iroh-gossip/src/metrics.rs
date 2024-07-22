@@ -19,8 +19,6 @@ pub struct Metrics {
     pub msgs_ctrl_recv_size: Counter,
     pub neighbor_up: Counter,
     pub neighbor_down: Counter,
-    // pub topics_joined: Counter,
-    // pub topics_left: Counter,
     pub actor_tick_main: Counter,
     pub actor_tick_rx: Counter,
     pub actor_tick_endpoint: Counter,
@@ -44,8 +42,6 @@ impl Default for Metrics {
             msgs_ctrl_recv_size: Counter::new("Total size of all control messages received"),
             neighbor_up: Counter::new("Number of times we connected to a peer"),
             neighbor_down: Counter::new("Number of times we disconnected from a peer"),
-            // topics_joined: Counter::new("Number of times we joined a topic"),
-            // topics_left: Counter::new("Number of times we left a topic"),
             actor_tick_main: Counter::new("Number of times the main actor loop ticked"),
             actor_tick_rx: Counter::new("Number of times the actor ticked for a message received"),
             actor_tick_endpoint: Counter::new(
