@@ -8,20 +8,20 @@ use iroh::client::Iroh;
 
 use crate::config::{ConsoleEnv, NodeConfig};
 
-use self::blob::{BlobAddOptions, BlobSource};
+use self::blobs::{BlobAddOptions, BlobSource};
 use self::rpc::RpcCommands;
 use self::start::RunType;
 
-pub(crate) mod author;
-pub(crate) mod blob;
+pub(crate) mod authors;
+pub(crate) mod blobs;
 pub(crate) mod console;
-pub(crate) mod doc;
+pub(crate) mod docs;
 pub(crate) mod doctor;
 pub(crate) mod gossip;
 pub(crate) mod node;
 pub(crate) mod rpc;
 pub(crate) mod start;
-pub(crate) mod tag;
+pub(crate) mod tags;
 
 /// iroh is a tool for syncing bytes
 /// https://iroh.computer/docs
@@ -183,7 +183,7 @@ impl Cli {
                 }
                 let config = Self::load_config(self.config, self.metrics_port).await?;
 
-                let add_command = add.map(|source| blob::BlobCommands::Add {
+                let add_command = add.map(|source| blobs::BlobCommands::Add {
                     source,
                     options: add_options,
                 });

@@ -45,13 +45,13 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
 };
-use tokio_util::{sync::CancellationToken, task::LocalPoolHandle, time::delay_queue};
+use tokio_util::{sync::CancellationToken, time::delay_queue};
 use tracing::{debug, error_span, trace, warn, Instrument};
 
 use crate::{
     get::{db::DownloadProgress, Stats},
     store::Store,
-    util::progress::ProgressSender,
+    util::{local_pool::LocalPoolHandle, progress::ProgressSender},
 };
 
 mod get;
@@ -338,7 +338,7 @@ impl Downloader {
 
             service.run().instrument(error_span!("downloader", %me))
         };
-        rt.spawn_pinned(create_future);
+        rt.spawn_detached(create_future);
         Self {
             next_id: Arc::new(AtomicU64::new(0)),
             msg_tx,

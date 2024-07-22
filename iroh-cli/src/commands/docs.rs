@@ -90,7 +90,7 @@ pub enum DocCommands {
     /// Set the active document (only works within the Iroh console).
     Switch { id: NamespaceId },
     /// Create a new document.
-    New {
+    Create {
         /// Switch to the created document (only in the Iroh console).
         #[clap(long)]
         switch: bool,
@@ -308,7 +308,7 @@ impl DocCommands {
                 env.set_doc(doc)?;
                 println!("Active doc is now {}", fmt_short(doc.as_bytes()));
             }
-            Self::New { switch } => {
+            Self::Create { switch } => {
                 if switch && !env.is_console() {
                     bail!("The --switch flag is only supported within the Iroh console.");
                 }
