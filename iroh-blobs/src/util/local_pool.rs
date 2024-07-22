@@ -189,7 +189,7 @@ impl LocalPool {
                     loop {
                         tokio::select! {
                             // poll the set of futures
-                            res = s.join_next() => {
+                            res = s.join_next(), if !s.is_empty() => {
                                 if !handle_join(res) {
                                     break ShutdownMode::Stop;
                                 }
