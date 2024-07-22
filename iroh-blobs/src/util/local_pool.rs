@@ -4,7 +4,7 @@ use futures_lite::FutureExt;
 use std::{any::Any, future::Future, ops::Deref, pin::Pin, sync::Arc};
 use tokio::{
     sync::Semaphore,
-    task::{JoinSet, LocalSet},
+    task::{JoinError, JoinSet, LocalSet},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -143,44 +143,103 @@ impl LocalPool {
         &self.handle
     }
 
-    /// Spawn a new task in the pool.
+    /// Spawn a new pool thread.
     fn spawn_pool_thread(
-        task_name: String,
+        thread_name: String,
         recv: flume::Receiver<Message>,
         cancel_token: CancellationToken,
-        _panic_mode: PanicMode,
+        panic_mode: PanicMode,
         shutdown_sem: Arc<Semaphore>,
     ) -> std::io::Result<std::thread::JoinHandle<()>> {
-        std::thread::Builder::new().name(task_name).spawn(move || {
-            let ls = LocalSet::new();
-            let mut js = JoinSet::new();
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-            ls.block_on(&rt, async {
-                loop {
-                    tokio::select! {
-                        _ = cancel_token.cancelled() => {
-                            break;
+        std::thread::Builder::new()
+            .name(thread_name)
+            .spawn(move || {
+                let mut s = JoinSet::<()>::new();
+                let mut last_panic = None;
+                let mut handle_join = |res: Option<std::result::Result<(), JoinError>>| -> bool {
+                    if let Some(Err(e)) = res {
+                        if let Ok(panic) = e.try_into_panic() {
+                            let panic_info = get_panic_info(&panic);
+                            let thread_name = get_thread_name();
+                            tracing::error!(
+                                "Panic in local pool thread: {}\n{}",
+                                thread_name,
+                                panic_info
+                            );
+                            last_panic = Some(panic);
                         }
-                        _ = js.join_next() => {}
-                        msg = recv.recv_async() => {
-                            match msg {
-                                Ok(Message::Execute(f)) => {
-                                    let fut = (f)();
-                                    js.spawn_local(fut);
+                    }
+                    panic_mode == PanicMode::LogAndContinue || last_panic.is_none()
+                };
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let ls = LocalSet::new();
+                ls.enter();
+                let shutdown_mode = ls.block_on(&rt, async {
+                    loop {
+                        tokio::select! {
+                            // poll the set of futures
+                            res = s.join_next(), if !s.is_empty() => {
+                                println!("task finished");
+                                if !handle_join(res) {
+                                    break ShutdownMode::Stop;
                                 }
-                                Ok(Message::Finish) => break,
-                                Err(flume::RecvError::Disconnected) => break,
+                            },
+                            // if the cancel token is cancelled, break the loop immediately
+                            _ = cancel_token.cancelled() => {
+                                println!("cancel token cancelled");
+                                break ShutdownMode::Stop;
+                            }
+                            // if we receive a message, execute it
+                            msg = recv.recv_async() => {
+                                match msg {
+                                    // just push into the FuturesUnordered
+                                    Ok(Message::Execute(f)) => {
+                                        println!("executing task");
+                                        s.spawn_local((f)());
+                                    }
+                                    // break with optional semaphore
+                                    Ok(Message::Finish) => {
+                                        println!("received finish message");
+                                        break ShutdownMode::Finish;
+                                    }
+                                    // if the sender is dropped, break the loop immediately
+                                    Err(flume::RecvError::Disconnected) => {
+                                        println!("sender dropped");
+                                        break ShutdownMode::Stop;
+                                    }
+                                }
                             }
                         }
                     }
+                });
+                // soft shutdown mode is just like normal running, except that
+                // we don't add any more tasks and stop when there are no more
+                // tasks to run.
+                if shutdown_mode == ShutdownMode::Finish {
+                    // somebody is asking for a clean shutdown, wait for all tasks to finish
+                    ls.block_on(&rt, async {
+                        loop {
+                            tokio::select! {
+                                res = s.join_next() => {
+                                    if res.is_none() || !handle_join(res) {
+                                        break;
+                                    }
+                                }
+                                _ = cancel_token.cancelled() => break,
+                            }
+                        }
+                    });
                 }
-            });
-            shutdown_sem.add_permits(1);
-            Box::leak(Box::new(js));
-        })
+                // Always add the permit. If nobody is waiting for it, it does
+                // no harm.
+                shutdown_sem.add_permits(1);
+                if let Some(_panic) = last_panic {
+                    // std::panic::resume_unwind(panic);
+                }
+            })
     }
 
     /// Gently shut down the pool
