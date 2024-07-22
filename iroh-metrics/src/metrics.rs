@@ -53,3 +53,12 @@ use std::net::SocketAddr;
 pub async fn start_metrics_server(addr: SocketAddr) -> anyhow::Result<()> {
     crate::service::run(addr).await
 }
+
+/// Start a metrics dumper service.
+#[cfg(feature = "metrics")]
+pub async fn start_metrics_dumper(
+    path: std::path::PathBuf,
+    interval: std::time::Duration,
+) -> anyhow::Result<()> {
+    crate::service::dumper(&path, interval).await
+}

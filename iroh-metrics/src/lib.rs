@@ -32,6 +32,14 @@ macro_rules! inc_by {
     };
 }
 
+/// Set the given counter to `n`.
+#[macro_export]
+macro_rules! set {
+    ($m:ty, $f:ident, $n:expr) => {
+        <$m as $crate::core::Metric>::with_metric(|m| m.$f.set($n));
+    };
+}
+
 /// Report usage statistics to the configured endpoint.
 #[allow(unused_variables)]
 pub async fn report_usage_stats(report: &UsageStatsReport) {

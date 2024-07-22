@@ -46,6 +46,10 @@ pub(crate) struct Cli {
     /// Address to serve RPC on.
     #[clap(long)]
     pub(crate) rpc_addr: Option<SocketAddr>,
+
+    /// If set, metrics will be dumped in CSV format to the specified path at regular intervals (100ms).
+    #[clap(long)]
+    pub(crate) metrics_dump_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
