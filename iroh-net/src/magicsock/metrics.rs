@@ -64,7 +64,6 @@ pub struct Metrics {
     pub actor_tick_portmap_changed: Counter,
     pub actor_tick_direct_addr_heartbeat: Counter,
     pub actor_tick_direct_addr_update_receiver: Counter,
-    pub actor_tick_nodes_timer: Counter,
     pub actor_link_change: Counter,
     pub actor_tick_other: Counter,
 }
@@ -128,7 +127,6 @@ impl Default for Metrics {
             actor_tick_direct_addr_update_receiver: Counter::new(
                 "actor_tick_direct_addr_update_receiver",
             ),
-            actor_tick_nodes_timer: Counter::new("actor_tick_nodes_timer"),
             actor_link_change: Counter::new("actor_link_change"),
             actor_tick_other: Counter::new("actor_tick_other"),
         }

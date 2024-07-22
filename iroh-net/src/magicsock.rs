@@ -1791,16 +1791,6 @@ impl Actor {
                         self.update_direct_addrs(reason).await;
                     }
                 }
-                _ = save_nodes_timer.tick(), if self.nodes_path.is_some() => {
-                    trace!("tick: nodes_timer");
-                    let path = self.nodes_path.as_ref().expect("precondition: `is_some()`");
-                    inc!(Metrics, actor_tick_nodes_timer);
-                    self.msock.node_map.prune_inactive();
-                    match self.msock.node_map.save_to_file(path).await {
-                        Ok(count) => debug!(count, "nodes persisted"),
-                        Err(e) => debug!(%e, "failed to persist known nodes"),
-                    }
-                }
                 Some(is_major) = link_change_r.recv() => {
                     trace!("tick: link change {}", is_major);
                     inc!(Metrics, actor_link_change);
