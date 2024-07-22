@@ -1815,7 +1815,7 @@ impl Actor {
                         "tick: direct addr heartbeat {} direct addrs",
                         self.msock.node_map.node_count(),
                     );
-		    inc!(Metrics, actor_tick_endpoint_heartbeat);
+                    inc!(Metrics, actor_tick_direct_addr_heartbeat);
                     // TODO: this might trigger too many packets at once, pace this
 
                     self.msock.node_map.prune_inactive();
@@ -1825,7 +1825,7 @@ impl Actor {
                 _ = direct_addr_update_receiver.changed() => {
                     let reason = *direct_addr_update_receiver.borrow();
                     trace!("tick: direct addr update receiver {:?}", reason);
-		    inc!(Metrics, actor_tick_endpoints_update_receiver);
+                    inc!(Metrics, actor_tick_direct_addr_update_receiver);
                     if let Some(reason) = reason {
                         self.update_direct_addrs(reason).await;
                     }
