@@ -114,6 +114,9 @@ impl LocalPool {
     }
 
     /// Create a new local pool with the given config.
+    ///
+    /// This will use the current tokio runtime handle, so it must be called
+    /// from within a tokio runtime.
     pub fn new(config: Config) -> Self {
         let Config {
             threads,
