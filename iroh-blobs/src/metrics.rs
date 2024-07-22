@@ -14,6 +14,14 @@ pub struct Metrics {
     pub downloads_success: Counter,
     pub downloads_error: Counter,
     pub downloads_notfound: Counter,
+
+    pub downloader_tick_main: Counter,
+    pub downloader_tick_connection_ready: Counter,
+    pub downloader_tick_message_received: Counter,
+    pub downloader_tick_transfer_completed: Counter,
+    pub downloader_tick_transfer_failed: Counter,
+    pub downloader_tick_retry_node: Counter,
+    pub downloader_tick_goodbye_node: Counter,
 }
 
 impl Default for Metrics {
@@ -24,6 +32,28 @@ impl Default for Metrics {
             downloads_success: Counter::new("Total number of successful downloads"),
             downloads_error: Counter::new("Total number of downloads failed with error"),
             downloads_notfound: Counter::new("Total number of downloads failed with not found"),
+
+            downloader_tick_main: Counter::new(
+                "Number of times the main downloader actor loop ticked",
+            ),
+            downloader_tick_connection_ready: Counter::new(
+                "Number of times the downloader actor ticked for a connection ready",
+            ),
+            downloader_tick_message_received: Counter::new(
+                "Number of times the downloader actor ticked for a message received",
+            ),
+            downloader_tick_transfer_completed: Counter::new(
+                "Number of times the downloader actor ticked for a transfer completed",
+            ),
+            downloader_tick_transfer_failed: Counter::new(
+                "Number of times the downloader actor ticked for a transfer failed",
+            ),
+            downloader_tick_retry_node: Counter::new(
+                "Number of times the downloader actor ticked for a retry node",
+            ),
+            downloader_tick_goodbye_node: Counter::new(
+                "Number of times the downloader actor ticked for a goodbye node",
+            ),
         }
     }
 }

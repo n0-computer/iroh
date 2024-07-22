@@ -58,6 +58,8 @@ pub(crate) struct NodeConfig {
     /// Bind address on which to serve Prometheus metrics
     pub(crate) metrics_addr: Option<SocketAddr>,
     pub(crate) file_logs: super::logging::FileLogging,
+    /// Path to dump metrics to in CSV format.
+    pub(crate) metrics_dump_path: Option<PathBuf>,
 }
 
 impl Default for NodeConfig {
@@ -83,6 +85,7 @@ impl Default for NodeConfig {
             gc_policy: GcPolicy::Disabled,
             metrics_addr: Some(([127, 0, 0, 1], 9090).into()),
             file_logs: Default::default(),
+            metrics_dump_path: None,
         }
     }
 }

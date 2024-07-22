@@ -40,6 +40,7 @@ use std::{
 use futures_lite::{future::BoxedLocal, Stream, StreamExt};
 use hashlink::LinkedHashSet;
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
+use iroh_metrics::inc;
 use iroh_net::{endpoint, Endpoint, NodeAddr, NodeId};
 use tokio::{
     sync::{mpsc, oneshot},
@@ -50,6 +51,7 @@ use tracing::{debug, error_span, trace, warn, Instrument};
 
 use crate::{
     get::{db::DownloadProgress, Stats},
+    metrics::Metrics,
     store::Store,
     util::{local_pool::LocalPoolHandle, progress::ProgressSender},
 };
@@ -566,13 +568,16 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     async fn run(mut self) {
         loop {
             trace!("wait for tick");
+            inc!(Metrics, downloader_tick_main);
             tokio::select! {
                 Some((node, conn_result)) = self.dialer.next() => {
                     trace!(node=%node.fmt_short(), "tick: connection ready");
+                    inc!(Metrics, downloader_tick_connection_ready);
                     self.on_connection_ready(node, conn_result);
                 }
                 maybe_msg = self.msg_rx.recv() => {
                     trace!(msg=?maybe_msg, "tick: message received");
+                    inc!(Metrics, downloader_tick_message_received);
                     match maybe_msg {
                         Some(msg) => self.handle_message(msg).await,
                         None => return self.shutdown().await,
@@ -582,21 +587,25 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                     match res {
                         Ok((kind, result)) => {
                             trace!(%kind, "tick: transfer completed");
+                            inc!(Metrics, downloader_tick_transfer_completed);
                             self.on_download_completed(kind, result);
                         }
                         Err(err) => {
                             warn!(?err, "transfer task panicked");
+                            inc!(Metrics, downloader_tick_transfer_failed);
                         }
                     }
                 }
                 Some(expired) = self.retry_nodes_queue.next() => {
                     let node = expired.into_inner();
                     trace!(node=%node.fmt_short(), "tick: retry node");
+                    inc!(Metrics, downloader_tick_retry_node);
                     self.on_retry_wait_elapsed(node);
                 }
                 Some(expired) = self.goodbye_nodes_queue.next() => {
                     let node = expired.into_inner();
                     trace!(node=%node.fmt_short(), "tick: goodbye node");
+                    inc!(Metrics, downloader_tick_goodbye_node);
                     self.disconnect_idle_node(node, "idle expired");
                 }
             }

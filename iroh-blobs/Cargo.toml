@@ -29,7 +29,7 @@ hashlink = { version = "0.9.0", optional = true }
 hex = "0.4.3"
 iroh-base = { version = "0.20.0", features = ["redb"], path = "../iroh-base" }
 iroh-io = { version = "0.6.0", features = ["stats"] }
-iroh-metrics = { version = "0.20.0", path = "../iroh-metrics", optional = true }
+iroh-metrics = { version = "0.20.0", path = "../iroh-metrics", default-features = false }
 iroh-net = { version = "0.20.0", path = "../iroh-net" }
 num_cpus = "1.15.0"
 parking_lot = { version = "0.12.1", optional = true }
@@ -77,7 +77,7 @@ version = "0.10"
 default = ["fs-store"]
 downloader = ["dep:parking_lot", "tokio-util/time", "dep:hashlink"]
 fs-store = ["dep:reflink-copy", "redb", "dep:redb_v1", "dep:tempfile"]
-metrics = ["dep:iroh-metrics"]
+metrics = ["iroh-metrics/metrics"]
 redb = ["dep:redb"]
 
 [package.metadata.docs.rs]

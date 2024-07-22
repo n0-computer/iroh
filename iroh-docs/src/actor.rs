@@ -12,11 +12,13 @@ use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use futures_util::FutureExt;
 use iroh_base::hash::Hash;
+use iroh_metrics::inc;
 use serde::{Deserialize, Serialize};
 use tokio::{sync::oneshot, task::JoinSet};
 use tracing::{debug, error, error_span, trace, warn};
 
 use crate::{
+    metrics::Metrics,
     ranger::Message,
     store::{
         fs::{ContentHashesIterator, StoreInstance},
@@ -629,6 +631,7 @@ impl Actor {
                 }
             };
             trace!(%action, "tick");
+            inc!(Metrics, actor_tick_main);
             match action {
                 Action::Shutdown { reply } => {
                     break reply;

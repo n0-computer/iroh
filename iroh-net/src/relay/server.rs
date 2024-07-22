@@ -1,4 +1,5 @@
 //! based on tailscale/derp/derp_server.go
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -10,7 +11,8 @@ use futures_lite::Stream;
 use futures_sink::Sink;
 use hyper::HeaderMap;
 use iroh_metrics::core::UsageStatsReport;
-use iroh_metrics::{inc, report_usage_stats};
+use iroh_metrics::{inc, inc_by, report_usage_stats};
+use time::{Date, OffsetDateTime};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -231,6 +233,7 @@ pub(crate) struct ServerActor {
     receiver: mpsc::Receiver<ServerMessage>,
     /// All clients connected to this server
     clients: Clients,
+    client_counter: ClientCounter,
 }
 
 impl ServerActor {
@@ -239,6 +242,7 @@ impl ServerActor {
             key,
             receiver,
             clients: Clients::new(),
+            client_counter: ClientCounter::default(),
         }
     }
 
@@ -290,43 +294,45 @@ impl ServerActor {
                                 tracing::warn!("send disco packet: no way to reach client {key:?}, dropped packet");
                                 inc!(Metrics, disco_packets_dropped);
                             }
-                       }
-                       ServerMessage::CreateClient(client_builder) => {
-                           inc!(Metrics, accepts);
+                        }
+                        ServerMessage::CreateClient(client_builder) => {
+                            inc!(Metrics, accepts);
 
-                           tracing::trace!("create client: {:?}", client_builder.key);
-                           let key = client_builder.key;
+                            tracing::trace!("create client: {:?}", client_builder.key);
+                            let key = client_builder.key;
 
-                           report_usage_stats(&UsageStatsReport::new(
+                            report_usage_stats(&UsageStatsReport::new(
                                 "relay_accepts".to_string(),
                                 self.key.to_string(),
                                 1,
                                 None, // TODO(arqu): attribute to user id; possibly with the re-introduction of request tokens or other auth
                                 Some(key.to_string()),
                             )).await;
+                            let nc = self.client_counter.update(key);
+                            inc_by!(Metrics, unique_client_keys, nc);
 
-                           // build and register client, starting up read & write loops for the
-                           // client connection
-                           self.clients.register(client_builder);
+                            // build and register client, starting up read & write loops for the
+                            // client connection
+                            self.clients.register(client_builder);
 
-                       }
-                       ServerMessage::RemoveClient((key, conn_num)) => {
-                           inc!(Metrics, disconnects);
-                           tracing::trace!("remove client: {:?}", key);
-                           // ensure we still have the client in question
-                           if self.clients.has_client(&key, conn_num) {
-                               // remove the client from the map of clients, & notify any peers that it
-                               // has sent messages that it has left the network
-                               self.clients.unregister(&key);
+                        }
+                        ServerMessage::RemoveClient((key, conn_num)) => {
+                            inc!(Metrics, disconnects);
+                            tracing::trace!("remove client: {:?}", key);
+                            // ensure we still have the client in question
+                            if self.clients.has_client(&key, conn_num) {
+                                // remove the client from the map of clients, & notify any peers that it
+                                // has sent messages that it has left the network
+                                self.clients.unregister(&key);
                             }
-                       }
-                       ServerMessage::Shutdown => {
-                        tracing::info!("server gracefully shutting down...");
-                        // close all client connections and client read/write loops
-                        self.clients.shutdown().await;
-                        return Ok(());
-                       }
-                   }
+                        }
+                        ServerMessage::Shutdown => {
+                            tracing::info!("server gracefully shutting down...");
+                            // close all client connections and client read/write loops
+                            self.clients.shutdown().await;
+                            return Ok(());
+                        }
+                    }
                 }
             }
         }
@@ -507,6 +513,39 @@ impl AsyncWrite for MaybeTlsStream {
             #[cfg(test)]
             MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_write_vectored(cx, bufs),
         }
+    }
+}
+
+struct ClientCounter {
+    clients: HashMap<PublicKey, usize>,
+    last_clear_date: Date,
+}
+
+impl Default for ClientCounter {
+    fn default() -> Self {
+        Self {
+            clients: HashMap::new(),
+            last_clear_date: OffsetDateTime::now_utc().date(),
+        }
+    }
+}
+
+impl ClientCounter {
+    fn check_and_clear(&mut self) {
+        let today = OffsetDateTime::now_utc().date();
+        if today != self.last_clear_date {
+            self.clients.clear();
+            self.last_clear_date = today;
+        }
+    }
+
+    /// Updates the client counter.
+    pub fn update(&mut self, client: PublicKey) -> u64 {
+        self.check_and_clear();
+        let new_conn = !self.clients.contains_key(&client);
+        let counter = self.clients.entry(client).or_insert(0);
+        *counter += 1;
+        new_conn as u64
     }
 }
 
