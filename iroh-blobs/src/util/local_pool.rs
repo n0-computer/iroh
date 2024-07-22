@@ -114,6 +114,9 @@ impl LocalPool {
     }
 
     /// Create a new local pool with the given config.
+    ///
+    /// This will use the current tokio runtime handle, so it must be called
+    /// from within a tokio runtime.
     pub fn new(config: Config) -> Self {
         let Config {
             threads,
@@ -123,6 +126,7 @@ impl LocalPool {
         let cancel_token = CancellationToken::new();
         let (send, recv) = flume::unbounded::<Message>();
         let shutdown_sem = Arc::new(Semaphore::new(0));
+        let handle = tokio::runtime::Handle::current();
         let handles = (0..threads)
             .map(|i| {
                 Self::spawn_pool_thread(
@@ -131,6 +135,7 @@ impl LocalPool {
                     cancel_token.clone(),
                     panic_mode,
                     shutdown_sem.clone(),
+                    handle.clone(),
                 )
             })
             .collect::<std::io::Result<Vec<_>>>()
@@ -158,6 +163,7 @@ impl LocalPool {
         cancel_token: CancellationToken,
         panic_mode: PanicMode,
         shutdown_sem: Arc<Semaphore>,
+        handle: tokio::runtime::Handle,
     ) -> std::io::Result<std::thread::JoinHandle<()>> {
         std::thread::Builder::new()
             .name(thread_name)
@@ -179,13 +185,8 @@ impl LocalPool {
                     }
                     panic_mode == PanicMode::LogAndContinue || last_panic.is_none()
                 };
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
                 let ls = LocalSet::new();
-                ls.enter();
-                let shutdown_mode = ls.block_on(&rt, async {
+                let shutdown_mode = handle.block_on(ls.run_until(async {
                     loop {
                         tokio::select! {
                             // poll the set of futures
@@ -211,13 +212,13 @@ impl LocalPool {
                             }
                         }
                     }
-                });
+                }));
                 // soft shutdown mode is just like normal running, except that
                 // we don't add any more tasks and stop when there are no more
                 // tasks to run.
                 if shutdown_mode == ShutdownMode::Finish {
                     // somebody is asking for a clean shutdown, wait for all tasks to finish
-                    ls.block_on(&rt, async {
+                    handle.block_on(ls.run_until(async {
                         loop {
                             tokio::select! {
                                 res = s.join_next() => {
@@ -228,7 +229,7 @@ impl LocalPool {
                                 _ = cancel_token.cancelled() => break,
                             }
                         }
-                    });
+                    }));
                 }
                 // Always add the permit. If nobody is waiting for it, it does
                 // no harm.
