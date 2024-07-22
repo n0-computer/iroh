@@ -2,7 +2,10 @@
 use core::panic;
 use futures_lite::FutureExt;
 use std::{any::Any, future::Future, ops::Deref, pin::Pin, sync::Arc};
-use tokio::{sync::Semaphore, task::LocalSet};
+use tokio::{
+    sync::Semaphore,
+    task::{JoinSet, LocalSet},
+};
 use tokio_util::sync::CancellationToken;
 
 type SpawnFn = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send + 'static>;
@@ -150,6 +153,7 @@ impl LocalPool {
     ) -> std::io::Result<std::thread::JoinHandle<()>> {
         std::thread::Builder::new().name(task_name).spawn(move || {
             let ls = LocalSet::new();
+            let mut js = JoinSet::new();
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -160,11 +164,12 @@ impl LocalPool {
                         _ = cancel_token.cancelled() => {
                             break;
                         }
+                        _ = js.join_next() => {}
                         msg = recv.recv_async() => {
                             match msg {
                                 Ok(Message::Execute(f)) => {
                                     let fut = (f)();
-                                    ls.spawn_local(fut);
+                                    js.spawn_local(fut);
                                 }
                                 Ok(Message::Finish) => break,
                                 Err(flume::RecvError::Disconnected) => break,
