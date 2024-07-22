@@ -153,7 +153,7 @@ async fn multiple_clients() -> Result<()> {
         let peer_id = node.node_id();
         let content = content.to_vec();
 
-        tasks.push(node.local_pool_handle().run(move || {
+        tasks.push(node.local_pool_handle().spawn(move || {
             async move {
                 let (secret_key, peer) = get_options(peer_id, addrs);
                 let expected_data = &content;

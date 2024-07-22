@@ -7,12 +7,12 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, OnceLock,
+        Arc,
     },
 };
 use tokio::{
     sync::{Notify, Semaphore},
-    task::{AbortHandle, JoinError, JoinSet, LocalSet},
+    task::{JoinError, JoinSet, LocalSet},
 };
 
 type BoxedFut<T = ()> = Pin<Box<dyn Future<Output = T>>>;
@@ -364,6 +364,9 @@ impl<T> Future for Run<T> {
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
+        // map a RecvError (other side was dropped) to a SpawnError::Shutdown
+        //
+        // The only way the receiver can be dropped is if the pool is shut down.
         self.0.poll(cx).map_err(|_| SpawnError::Shutdown)
     }
 }
@@ -386,41 +389,13 @@ impl LocalPoolHandle {
         self.send.len()
     }
 
-    /// Spawn a new task and return a tokio join handle.
-    ///
-    /// This is like [`LocalPoolHandle::spawn_pinned`], but does not panic if
-    /// the pool is shut down.
-    pub fn try_spawn_pinned<T, F, Fut>(&self, gen: F) -> SpawnResult<tokio::task::JoinHandle<T>>
-    where
-        F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = T> + 'static,
-        T: Send + 'static,
-    {
-        let inner = self.try_run(gen)?;
-        let abort: Arc<OnceLock<AbortHandle>> = Arc::new(OnceLock::new());
-        let abort2 = abort.clone();
-        let res = tokio::spawn(async move {
-            match inner.await {
-                Ok(res) => res,
-                Err(_) => {
-                    // abort the outer task and wait forever (basically return pending)
-                    if let Some(abort) = abort.get() {
-                        abort.abort();
-                    }
-                    futures_lite::future::pending().await
-                }
-            }
-        });
-        let _ = abort2.set(res.abort_handle());
-        Ok(res)
-    }
-
-    /// Run a task in the pool and await the result.
+    /// Spawn a task in the pool and return a future that resolves when the task
+    /// is done.
     ///
     /// When the returned future is dropped, the task will be immediately
     /// cancelled. Any drop implementation is guaranteed to run to completion in
     /// any case.
-    pub fn try_run<T, F, Fut>(&self, gen: F) -> SpawnResult<Run<T>>
+    pub fn try_spawn<T, F, Fut>(&self, gen: F) -> SpawnResult<Run<T>>
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = T> + 'static,
@@ -436,29 +411,29 @@ impl LocalPoolHandle {
                 _ = send_res.closed() => {}
             }
         };
-        self.try_spawn(item)?;
+        self.try_spawn_detached(item)?;
         Ok(Run(recv_res))
     }
 
-    /// Run a task in the pool.
+    /// Spawn a task in the pool.
     ///
     /// The task will be run detached. This can be useful if
     /// you are not interested in the result or in in cancellation or
     /// you provide your own result handling and cancellation mechanism.
-    pub fn try_spawn<F, Fut>(&self, gen: F) -> SpawnResult<()>
+    pub fn try_spawn_detached<F, Fut>(&self, gen: F) -> SpawnResult<()>
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = ()> + 'static,
     {
         let gen: SpawnFn = Box::new(move || Box::pin(gen()));
-        self.try_spawn_boxed(gen)
+        self.try_spawn_detached_boxed(gen)
     }
 
     /// Run a task in the pool and await the result.
     ///
-    /// This is like [`LocalPoolHandle::spawn`], but assuming that the
+    /// This is like [`LocalPoolHandle::try_spawn_detached`], but assuming that the
     /// generator function is already boxed.
-    pub fn try_spawn_boxed(&self, gen: SpawnFn) -> SpawnResult<()> {
+    pub fn try_spawn_detached_boxed(&self, gen: SpawnFn) -> SpawnResult<()> {
         self.send
             .send(Message::Execute(gen))
             .map_err(|_| SpawnError::Shutdown)
@@ -515,31 +490,32 @@ impl LocalPoolHandle {
     /// Run a task in the pool and await the result.
     ///
     /// Like [`LocalPoolHandle::try_run`], but panics if the pool is shut down.
-    pub fn run<T, F, Fut>(&self, gen: F) -> Run<T>
+    pub fn spawn<T, F, Fut>(&self, gen: F) -> Run<T>
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = T> + 'static,
         T: Send + 'static,
     {
-        self.try_run(gen).expect("pool is shut down")
+        self.try_spawn(gen).expect("pool is shut down")
     }
 
     /// Spawn a task in the pool.
     ///
-    /// Like [`LocalPoolHandle::try_spawn`], but panics if the pool is shut down.
-    pub fn spawn<F, Fut>(&self, gen: F)
+    /// Like [`LocalPoolHandle::try_spawn_detached`], but panics if the pool is shut down.
+    pub fn spawn_detached<F, Fut>(&self, gen: F)
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = ()> + 'static,
     {
-        self.try_spawn(gen).expect("pool is shut down")
+        self.try_spawn_detached(gen).expect("pool is shut down")
     }
 
-    /// Spawn a boxed task in the pool.
+    /// Spawn a boxed, detached task in the pool.
     ///
-    /// Like [`LocalPoolHandle::try_spawn_boxed`], but panics if the pool is shut down.
-    pub fn spawn_boxed(&self, gen: SpawnFn) {
-        self.try_spawn_boxed(gen).expect("pool is shut down")
+    /// Like [`LocalPoolHandle::try_spawn_detached_boxed`], but panics if the pool is shut down.
+    pub fn spawn_detached_boxed(&self, gen: SpawnFn) {
+        self.try_spawn_detached_boxed(gen)
+            .expect("pool is shut down")
     }
 }
 
@@ -664,7 +640,7 @@ mod tests {
         let n = 4;
         for _ in 0..n {
             let td = TestDrop::new(counter.clone());
-            pool.spawn(move || delay_then_drop(td));
+            pool.spawn_detached(move || delay_then_drop(td));
         }
         drop(pool);
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), n);
@@ -678,7 +654,7 @@ mod tests {
         let n = 4;
         for _ in 0..n {
             let td = TestDrop::new(counter.clone());
-            pool.spawn(move || delay_then_drop(td));
+            pool.spawn_detached(move || delay_then_drop(td));
         }
         pool.finish().await;
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), n);
@@ -693,7 +669,7 @@ mod tests {
         });
         let c1 = Arc::new(AtomicU64::new(0));
         let td1 = TestDrop::new(c1.clone());
-        let handle = pool.run(move || {
+        let handle = pool.spawn(move || {
             // this one will be aborted anyway, so use a long delay to make sure
             // that it does not accidentally run to completion
             delay_then_forget(td1, Duration::from_secs(10))
@@ -701,7 +677,7 @@ mod tests {
         drop(handle);
         let c2 = Arc::new(AtomicU64::new(0));
         let td2 = TestDrop::new(c2.clone());
-        let _handle = pool.run(move || {
+        let _handle = pool.spawn(move || {
             // this one will not be aborted, so use a short delay so the test
             // does not take too long
             delay_then_forget(td2, Duration::from_millis(100))
@@ -722,7 +698,7 @@ mod tests {
             threads: 2,
             ..Config::default()
         });
-        pool.spawn(|| async {
+        pool.spawn_detached(|| async {
             panic!("test panic");
         });
         // we can't use shutdown here, because we need to allow time for the

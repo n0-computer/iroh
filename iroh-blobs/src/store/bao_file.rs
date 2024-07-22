@@ -969,7 +969,7 @@ mod tests {
                 .map(io::Result::Ok)
                 .boxed();
             let trickle = TokioStreamReader::new(tokio_util::io::StreamReader::new(trickle));
-            let task = local.run(move || async move {
+            let task = local.spawn(move || async move {
                 decode_response_into_batch(hash, IROH_BLOCK_SIZE, chunk_ranges, trickle, file).await
             });
             tasks.push(task);
