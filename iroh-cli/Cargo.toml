@@ -49,7 +49,7 @@ portable-atomic = "1"
 postcard = "1.0.8"
 quic-rpc = { version = "0.11", features = ["flume-transport", "quinn-transport"] }
 rand = "0.8.5"
-ratatui = "0.27"
+ratatui = "0.26.2"
 reqwest = { version = "0.12.4", default-features = false, features = ["json", "rustls-tls"] }
 rustyline = "12.0.0"
 serde = { version = "1.0.197", features = ["derive"] }
