@@ -16,8 +16,8 @@ use tokio_stream::{
 };
 use tracing::{debug, error, trace, warn};
 
-use crate::{actor::SyncHandle, ContentStatus, NamespaceId};
 use crate::metrics::Metrics;
+use crate::{actor::SyncHandle, ContentStatus, NamespaceId};
 
 use super::live::{Op, ToLiveActor};
 
