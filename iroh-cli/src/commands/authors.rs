@@ -14,7 +14,7 @@ pub enum AuthorCommands {
     /// Set the active author (only works within the Iroh console).
     Switch { author: AuthorId },
     /// Create a new author.
-    New {
+    Create {
         /// Switch to the created author (only in the Iroh console).
         #[clap(long)]
         switch: bool,
@@ -60,7 +60,7 @@ impl AuthorCommands {
                     println!("Active author is now {}", fmt_short(author_id.as_bytes()));
                 }
             }
-            Self::New { switch } => {
+            Self::Create { switch } => {
                 if switch && !env.is_console() {
                     bail!("The --switch flag is only supported within the Iroh console.");
                 }
