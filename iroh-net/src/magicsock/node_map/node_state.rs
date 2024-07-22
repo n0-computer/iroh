@@ -236,6 +236,9 @@ impl NodeState {
                     .last_payload_msg
                     .as_ref()
                     .map(|instant| now.duration_since(*instant)),
+                last_alive: endpoint_state
+                    .last_alive()
+                    .map(|instant| now.duration_since(instant)),
             })
             .collect();
 
@@ -1462,6 +1465,8 @@ pub struct DirectAddrInfo {
     pub last_control: Option<(Duration, ControlMsg)>,
     /// How long ago was the last payload message for this node.
     pub last_payload: Option<Duration>,
+    /// When was this connection last alive, if ever.
+    pub last_alive: Option<Duration>,
 }
 
 /// Information about a relay URL.
@@ -1722,6 +1727,7 @@ mod tests {
                     latency: Some(latency),
                     last_control: Some((elapsed, ControlMsg::Pong)),
                     last_payload: None,
+                    last_alive: None,
                 }]),
                 conn_type: ConnectionType::Direct(a_socket_addr),
                 latency: Some(latency),
@@ -1766,6 +1772,7 @@ mod tests {
                     latency: Some(latency),
                     last_control: Some((elapsed, ControlMsg::Pong)),
                     last_payload: None,
+                    last_alive: None,
                 }]),
                 conn_type: ConnectionType::Mixed(d_socket_addr, send_addr.clone()),
                 latency: Some(Duration::from_millis(50)),

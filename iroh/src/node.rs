@@ -48,8 +48,11 @@ use iroh_blobs::{downloader::Downloader, protocol::Closed};
 use iroh_gossip::dispatcher::GossipDispatcher;
 use iroh_gossip::net::Gossip;
 use iroh_net::key::SecretKey;
-use iroh_net::{endpoint::DirectAddrsStream, util::SharedAbortingJoinHandle};
-use iroh_net::{Endpoint, NodeAddr};
+use iroh_net::{
+    endpoint::{ConnectionInfo, DirectAddrsStream},
+    util::SharedAbortingJoinHandle,
+};
+use iroh_net::{AddrInfo, Endpoint, NodeAddr};
 use quic_rpc::transport::ServerEndpoint as _;
 use quic_rpc::RpcServer;
 use tokio::task::JoinSet;
@@ -323,7 +326,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                                 trace!("save known node addresses shutdown");
                                 let addrs = node_addresses_for_storage(&ep);
                                 if let Err(err) = store_node_addrs(&nodes_data_path, &addrs).await {
-                                    warn!("failed to store knonw node addresses: {:?}", err);
+                                    warn!("failed to store known node addresses: {:?}", err);
                                 }
                                 break;
                             }
@@ -331,7 +334,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                                 trace!("save known node addresses tick");
                                 let addrs = node_addresses_for_storage(&ep);
                                 if let Err(err) = store_node_addrs(&nodes_data_path, &addrs).await {
-                                    warn!("failed to store knonw node addresses: {:?}", err);
+                                    warn!("failed to store known node addresses: {:?}", err);
                                 }
                             }
                         }
@@ -562,14 +565,44 @@ async fn handle_connection(
 fn node_addresses_for_storage(ep: &Endpoint) -> Vec<NodeAddr> {
     ep.connection_infos()
         .into_iter()
-        .filter_map(|info| {
-            let addr: NodeAddr = info.into();
-            if addr.info.is_empty() {
-                return None;
-            }
-            Some(addr)
-        })
+        .filter_map(node_address_for_storage)
         .collect()
+}
+/// Get the addressing information of this endpoint that should be stored.
+///
+/// If the endpoint was not used at all in this session, all known addresses will be returned.
+/// If the endpoint was used, only the paths that were in use will be returned.
+///
+/// Returns `None` if the resulting [`NodeAddr`] would be empty.
+fn node_address_for_storage(info: ConnectionInfo) -> Option<NodeAddr> {
+    let direct_addresses = if info.last_used.is_none() {
+        info.addrs
+            .into_iter()
+            .map(|info| info.addr)
+            .collect::<BTreeSet<_>>()
+    } else {
+        info.addrs
+            .iter()
+            .filter_map(|info| {
+                if info.last_alive.is_some() {
+                    Some(info.addr)
+                } else {
+                    None
+                }
+            })
+            .collect::<BTreeSet<_>>()
+    };
+    if direct_addresses.is_empty() && info.relay_url.is_none() {
+        None
+    } else {
+        Some(NodeAddr {
+            node_id: info.node_id,
+            info: AddrInfo {
+                relay_url: info.relay_url.map(|u| u.into()),
+                direct_addresses,
+            },
+        })
+    }
 }
 
 #[cfg(test)]
