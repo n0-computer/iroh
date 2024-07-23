@@ -72,6 +72,7 @@ nix = { version = "0.27", features = ["signal", "process"] }
 rand_xorshift = "0.3.0"
 regex = "1.10.3"
 testdir = "0.9.1"
+url = "2.5.0"
 walkdir = "2"
 
 [features]

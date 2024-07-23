@@ -98,7 +98,7 @@ pub(crate) fn init_terminal_logging() -> anyhow::Result<()> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub(crate) struct FileLogging {
     /// RUST_LOG directive to filter file logs.
     pub(crate) rust_log: EnvFilter,

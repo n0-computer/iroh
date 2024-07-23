@@ -10,7 +10,7 @@ use iroh::{
     net::relay::{RelayMap, RelayMode},
     node::RpcStatus,
 };
-use tracing::{info_span, Instrument};
+use tracing::{info_span, trace, Instrument};
 
 /// Whether to stop the node after running a command or run forever until stopped.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -79,6 +79,7 @@ where
     F: FnOnce(iroh::client::Iroh) -> T + Send + 'static,
     T: Future<Output = Result<()>> + 'static,
 {
+    trace!(?config, "using config");
     let relay_map = config.relay_map()?;
 
     let spinner = create_spinner("Iroh booting...");
