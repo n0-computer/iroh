@@ -464,7 +464,7 @@ mod tests {
         let source = r#"
           not_a_field = true
         "#;
-        let res = NodeConfig::load_toml(&source);
+        let res = NodeConfig::load_toml(source);
         assert!(res.is_err());
     }
 
@@ -476,7 +476,7 @@ mod tests {
           stun_only = false
           stun_port = 123
         "#;
-        let config = NodeConfig::load_toml(&source).unwrap();
+        let config = NodeConfig::load_toml(source).unwrap();
 
         let expected = RelayNode {
             url: Url::parse("https://example.org./").unwrap().into(),
@@ -492,7 +492,7 @@ mod tests {
           [gc_policy]
           enabled = false
         "#;
-        let config = NodeConfig::load_toml(&source).unwrap();
+        let config = NodeConfig::load_toml(source).unwrap();
         assert_eq!(GcPolicy::from(config.gc_policy), GcPolicy::Disabled);
 
         // Default interval should be used.
@@ -500,7 +500,7 @@ mod tests {
           [gc_policy]
           enabled = true
         "#;
-        let config = NodeConfig::load_toml(&source).unwrap();
+        let config = NodeConfig::load_toml(source).unwrap();
         let gc_policy = GcPolicy::from(config.gc_policy);
         assert!(matches!(gc_policy, GcPolicy::Interval(_)));
         assert_eq!(gc_policy, GcPolicy::default());
@@ -510,7 +510,7 @@ mod tests {
           enabled = true
           interval = 1234
         "#;
-        let config = NodeConfig::load_toml(&source).unwrap();
+        let config = NodeConfig::load_toml(source).unwrap();
         assert_eq!(
             GcPolicy::from(config.gc_policy),
             GcPolicy::Interval(Duration::from_secs(1234))
@@ -520,7 +520,7 @@ mod tests {
             [gc_policy]
             not_a_field = true
         "#;
-        let res = NodeConfig::load_toml(&source);
+        let res = NodeConfig::load_toml(source);
         assert!(res.is_err());
     }
 
@@ -529,7 +529,7 @@ mod tests {
         let source = r#"
             metrics_addr = "1.2.3.4:1234"
         "#;
-        let config = NodeConfig::load_toml(&source).unwrap();
+        let config = NodeConfig::load_toml(source).unwrap();
         assert_eq!(
             config.metrics_addr,
             Some(SocketAddr::new(Ipv4Addr::new(1, 2, 3, 4).into(), 1234)),
@@ -538,7 +538,7 @@ mod tests {
         let source = r#"
             metrics_addr = "[123:456::789:abc]:1234"
         "#;
-        let config = NodeConfig::load_toml(&source).unwrap();
+        let config = NodeConfig::load_toml(source).unwrap();
         assert_eq!(
             config.metrics_addr,
             Some(SocketAddr::new(
@@ -557,7 +557,7 @@ mod tests {
             rotation = "daily"
             dir = "/var/log/iroh"
         "#;
-        let config = NodeConfig::load_toml(&source).unwrap();
+        let config = NodeConfig::load_toml(source).unwrap();
         assert_eq!(
             config.file_logs.rust_log,
             EnvFilter::from_str("iroh_net=trace").unwrap()
@@ -570,7 +570,7 @@ mod tests {
             [file_logs]
             rust_log = "info"
         "#;
-        let config = NodeConfig::load_toml(&source).unwrap();
+        let config = NodeConfig::load_toml(source).unwrap();
         assert_eq!(
             config.file_logs.rust_log,
             EnvFilter::from_str("info").unwrap()
