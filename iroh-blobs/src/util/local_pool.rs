@@ -168,7 +168,6 @@ impl LocalPool {
         std::thread::Builder::new()
             .name(thread_name)
             .spawn(move || {
-                tracing::trace!("Thread {} starting", get_thread_name());
                 let mut s = JoinSet::new();
                 let mut last_panic = None;
                 let mut handle_join = |res: Option<std::result::Result<(), JoinError>>| -> bool {
@@ -193,15 +192,11 @@ impl LocalPool {
                             // poll the set of futures
                             res = s.join_next(), if !s.is_empty() => {
                                 if !handle_join(res) {
-                                    tracing::trace!("Thread {} stopping due to join result", get_thread_name());
                                     break ShutdownMode::Stop;
                                 }
                             },
                             // if the cancel token is cancelled, break the loop immediately
-                            _ = cancel_token.cancelled() => {
-                                tracing::trace!("Thread {} stopping due to cancel", get_thread_name());
-                                break ShutdownMode::Stop;
-                            },
+                            _ = cancel_token.cancelled() => break ShutdownMode::Stop,
                             // if we receive a message, execute it
                             msg = recv.recv() => {
                                 match msg {
@@ -210,10 +205,7 @@ impl LocalPool {
                                         s.spawn_local((f)());
                                     }
                                     // break with optional semaphore
-                                    Ok(Message::Finish) => {
-                                        tracing::trace!("Thread {} received finish", get_thread_name());
-                                        break ShutdownMode::Finish;
-                                    }
+                                    Ok(Message::Finish) => break ShutdownMode::Finish,
                                     // if the sender is dropped, break the loop immediately
                                     Err(async_channel::RecvError) => break ShutdownMode::Stop,
                                 }
@@ -241,7 +233,6 @@ impl LocalPool {
                 }
                 // Always add the permit. If nobody is waiting for it, it does
                 // no harm.
-                tracing::trace!("Thread {} shutting down, adding permit", get_thread_name());
                 shutdown_sem.add_permits(1);
                 if let Some(_panic) = last_panic {
                     // std::panic::resume_unwind(panic);
