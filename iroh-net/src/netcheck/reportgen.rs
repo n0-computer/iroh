@@ -1339,7 +1339,7 @@ mod tests {
             node: Arc::new(relay),
         };
 
-        // A singe ICMP packet might get lost.  Try several and take the first.
+        // A single ICMP packet might get lost.  Try several and take the first.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut tasks = JoinSet::new();
         for i in 0..8 {

@@ -1554,7 +1554,7 @@ impl Stream for DirectAddrsStream {
                         // When we start up we might initially have empty local endpoints as
                         // the magic socket has not yet figured this out.  Later on this set
                         // should never be empty.  However even if it was the magicsock
-                        // would be in a state not very useable so skipping those events is
+                        // would be in a state not very usable so skipping those events is
                         // probably fine.
                         // To make sure we install the right waker we loop rather than
                         // returning Poll::Pending immediately here.
