@@ -49,6 +49,8 @@ impl ConsolePaths {
 }
 
 /// The configuration for an iroh node.
+// Please note that this is documented in the `iroh.computer` repository under
+// `src/app/docs/reference/config/page.mdx`.  Any changes to this need to be updated there.
 #[derive(PartialEq, Eq, Debug, Deserialize, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct NodeConfig {

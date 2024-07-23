@@ -802,6 +802,8 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
 }
 
 /// Policy for garbage collection.
+// Please note that this is documented in the `iroh.computer` repository under
+// `src/app/docs/reference/config/page.mdx`.  Any changes to this need to be updated there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GcPolicy {
     /// Garbage collection is disabled.
