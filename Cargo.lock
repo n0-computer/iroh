@@ -242,6 +242,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-channel"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89b47800b0be77592da0afd425cc03468052844aff33b84e33cc696f64e77b6a"
+dependencies = [
+ "concurrent-queue",
+ "event-listener-strategy",
+ "futures-core",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1513,6 +1525,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "event-listener"
+version = "5.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6032be9bd27023a771701cc49f9f053c751055f71efb2e0ae5c15809093675ba"
+dependencies = [
+ "concurrent-queue",
+ "parking",
+ "pin-project-lite",
+]
+
+[[package]]
+name = "event-listener-strategy"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f214dc438f977e6d4e3500aaa277f5ad94ca83fbbd9b1a15713ce2344ccc5a1"
+dependencies = [
+ "event-listener 5.3.1",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2543,6 +2576,7 @@ name = "iroh-blobs"
 version = "0.21.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "bao-tree",
  "bytes",
  "chrono",
@@ -6461,7 +6495,7 @@ version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "45b42a2f611916b5965120a9cde2b60f2db4454826dd9ad5e6f47c24a5b3b259"
 dependencies = [
- "event-listener",
+ "event-listener 4.0.3",
  "futures-util",
  "parking_lot",
  "thiserror",
