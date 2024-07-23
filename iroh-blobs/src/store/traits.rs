@@ -12,12 +12,12 @@ use iroh_base::rpc::RpcError;
 use iroh_io::AsyncSliceReader;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
-use tokio_util::task::LocalPoolHandle;
 
 use crate::{
     hashseq::parse_hash_seq,
     protocol::RangeSpec,
     util::{
+        local_pool::{self, LocalPool},
         progress::{BoxedProgressSender, IdGenerator, ProgressSender},
         Tag,
     },
@@ -423,7 +423,10 @@ async fn validate_impl(
     use futures_buffered::BufferedStreamExt;
 
     let validate_parallelism: usize = num_cpus::get();
-    let lp = LocalPoolHandle::new(validate_parallelism);
+    let lp = LocalPool::new(local_pool::Config {
+        threads: validate_parallelism,
+        ..Default::default()
+    });
     let complete = store.blobs().await?.collect::<io::Result<Vec<_>>>()?;
     let partial = store
         .partial_blobs()
@@ -437,7 +440,7 @@ async fn validate_impl(
         .map(|hash| {
             let store = store.clone();
             let tx = tx.clone();
-            lp.spawn_pinned(move || async move {
+            lp.spawn(move || async move {
                 let entry = store
                     .get(&hash)
                     .await?
@@ -486,7 +489,7 @@ async fn validate_impl(
         .map(|hash| {
             let store = store.clone();
             let tx = tx.clone();
-            lp.spawn_pinned(move || async move {
+            lp.spawn(move || async move {
                 let entry = store
                     .get(&hash)
                     .await?

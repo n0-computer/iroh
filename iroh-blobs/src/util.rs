@@ -19,6 +19,7 @@ pub mod progress;
 pub use mem_or_file::MemOrFile;
 mod sparse_mem_file;
 pub use sparse_mem_file::SparseMemFile;
+pub mod local_pool;
 
 /// A tag
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, From, Into)]

@@ -10,6 +10,7 @@ use iroh_blobs::get::Stats;
 use iroh_blobs::HashAndFormat;
 use iroh_blobs::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
+use iroh_metrics::inc;
 use iroh_net::NodeId;
 use iroh_net::{key::PublicKey, Endpoint, NodeAddr};
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,7 @@ use tokio::{
 };
 use tracing::{debug, error, error_span, info, instrument, trace, warn, Instrument, Span};
 
+use crate::metrics::Metrics;
 use crate::{
     actor::{OpenOpts, SyncHandle},
     net::{
@@ -244,11 +246,13 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         loop {
             i += 1;
             trace!(?i, "tick wait");
+            inc!(Metrics, doc_live_tick_main);
             tokio::select! {
                 biased;
                 msg = self.inbox.recv() => {
                     let msg = msg.context("to_actor closed")?;
                     trace!(?i, %msg, "tick: to_actor");
+                    inc!(Metrics, doc_live_tick_actor);
                     match msg {
                         ToLiveActor::Shutdown { reply } => {
                             break Ok(reply);
@@ -260,6 +264,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 }
                 event = self.replica_events_rx.recv_async() => {
                     trace!(?i, "tick: replica_event");
+                    inc!(Metrics, doc_live_tick_replica_event);
                     let event = event.context("replica_events closed")?;
                     if let Err(err) = self.on_replica_event(event).await {
                         error!(?err, "Failed to process replica event");
@@ -267,17 +272,20 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 }
                 Some(res) = self.running_sync_connect.join_next(), if !self.running_sync_connect.is_empty() => {
                     trace!(?i, "tick: running_sync_connect");
+                    inc!(Metrics, doc_live_tick_running_sync_connect);
                     let (namespace, peer, reason, res) = res.context("running_sync_connect closed")?;
                     self.on_sync_via_connect_finished(namespace, peer, reason, res).await;
 
                 }
                 Some(res) = self.running_sync_accept.join_next(), if !self.running_sync_accept.is_empty() => {
                     trace!(?i, "tick: running_sync_accept");
+                    inc!(Metrics, doc_live_tick_running_sync_accept);
                     let res = res.context("running_sync_accept closed")?;
                     self.on_sync_via_accept_finished(res).await;
                 }
                 Some(res) = self.download_tasks.join_next(), if !self.download_tasks.is_empty() => {
                     trace!(?i, "tick: pending_downloads");
+                    inc!(Metrics, doc_live_tick_pending_downloads);
                     let (namespace, hash, res) = res.context("pending_downloads closed")?;
                     self.on_download_ready(namespace, hash, res).await;
 

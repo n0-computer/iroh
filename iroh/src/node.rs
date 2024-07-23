@@ -35,7 +35,7 @@
 //! well, without going through [`client`](crate::client::Iroh))
 //!
 //! To shut down the node, call [`Node::shutdown`].
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{collections::BTreeSet, net::SocketAddr};
 use std::{fmt::Debug, time::Duration};
@@ -44,23 +44,28 @@ use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
 use iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store as BaoStore};
+use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
 use iroh_blobs::{downloader::Downloader, protocol::Closed};
 use iroh_gossip::dispatcher::GossipDispatcher;
 use iroh_gossip::net::Gossip;
 use iroh_net::key::SecretKey;
-use iroh_net::Endpoint;
-use iroh_net::{endpoint::DirectAddrsStream, util::SharedAbortingJoinHandle};
+use iroh_net::{
+    endpoint::{ConnectionInfo, DirectAddrsStream},
+    util::SharedAbortingJoinHandle,
+};
+use iroh_net::{AddrInfo, Endpoint, NodeAddr};
 use quic_rpc::transport::ServerEndpoint as _;
 use quic_rpc::RpcServer;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-use tokio_util::task::LocalPoolHandle;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
+use crate::node::nodes_storage::store_node_addrs;
 use crate::node::{docs::DocsEngine, protocol::ProtocolMap};
 
 mod builder;
 mod docs;
+mod nodes_storage;
 mod protocol;
 mod rpc;
 mod rpc_status;
@@ -71,6 +76,9 @@ pub use self::builder::{
 };
 pub use self::rpc_status::RpcStatus;
 pub use protocol::ProtocolHandler;
+
+/// How often to save node data.
+const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
 
 /// The quic-rpc server endpoint for the iroh node.
 ///
@@ -107,10 +115,9 @@ struct NodeInner<D> {
     secret_key: SecretKey,
     cancel_token: CancellationToken,
     client: crate::client::Iroh,
-    #[debug("rt")]
-    rt: LocalPoolHandle,
     downloader: Downloader,
     gossip_dispatcher: GossipDispatcher,
+    local_pool_handle: LocalPoolHandle,
 }
 
 /// In memory node.
@@ -186,7 +193,7 @@ impl<D: BaoStore> Node<D> {
 
     /// Returns a reference to the used `LocalPoolHandle`.
     pub fn local_pool_handle(&self) -> &LocalPoolHandle {
-        &self.inner.rt
+        &self.inner.local_pool_handle
     }
 
     /// Get the relay server we are connected to.
@@ -250,6 +257,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         Ok(endpoints.into_iter().map(|x| x.addr).collect())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run(
         self: Arc<Self>,
         external_rpc: IrohServerEndpoint,
@@ -257,6 +265,8 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         protocols: Arc<ProtocolMap>,
         gc_policy: GcPolicy,
         gc_done_callback: Option<Box<dyn Fn() + Send>>,
+        nodes_data_path: Option<PathBuf>,
+        local_pool: LocalPool,
     ) {
         let (ipv4, ipv6) = self.endpoint.bound_sockets();
         debug!(
@@ -284,9 +294,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         // Spawn a task for the garbage collection.
         if let GcPolicy::Interval(gc_period) = gc_policy {
             let inner = self.clone();
-            let handle = self
-                .rt
-                .spawn_pinned(move || inner.run_gc_loop(gc_period, gc_done_callback));
+            let handle = local_pool.spawn(move || inner.run_gc_loop(gc_period, gc_done_callback));
             // We cannot spawn tasks that run on the local pool directly into the join set,
             // so instead we create a new task that supervises the local task.
             join_set.spawn({
@@ -297,6 +305,44 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                     Ok(())
                 }
             });
+        }
+
+        if let Some(nodes_data_path) = nodes_data_path {
+            let ep = self.endpoint.clone();
+            let token = self.cancel_token.clone();
+
+            join_set.spawn(
+                async move {
+                    let mut save_timer = tokio::time::interval_at(
+                        tokio::time::Instant::now() + SAVE_NODES_INTERVAL,
+                        SAVE_NODES_INTERVAL,
+                    );
+
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = token.cancelled() => {
+                                trace!("save known node addresses shutdown");
+                                let addrs = node_addresses_for_storage(&ep);
+                                if let Err(err) = store_node_addrs(&nodes_data_path, &addrs).await {
+                                    warn!("failed to store known node addresses: {:?}", err);
+                                }
+                                break;
+                            }
+                            _ = save_timer.tick() => {
+                                trace!("save known node addresses tick");
+                                let addrs = node_addresses_for_storage(&ep);
+                                if let Err(err) = store_node_addrs(&nodes_data_path, &addrs).await {
+                                    warn!("failed to store known node addresses: {:?}", err);
+                                }
+                            }
+                        }
+                    }
+
+                    Ok(())
+                }
+                .instrument(info_span!("known-addrs")),
+            );
         }
 
         // Spawn a task that updates the gossip endpoints.
@@ -377,6 +423,11 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
 
         // Abort remaining tasks.
         join_set.shutdown().await;
+        tracing::info!("Shutting down remaining tasks");
+
+        // Abort remaining local tasks.
+        tracing::info!("Shutting down local pool");
+        local_pool.shutdown().await;
     }
 
     /// Shutdown the different parts of the node concurrently.
@@ -516,6 +567,49 @@ async fn handle_connection(incoming: iroh_net::endpoint::Incoming, protocols: Ar
     };
     if let Err(err) = handler.accept(connecting).await {
         warn!("Handling incoming connection ended with error: {err}");
+    }
+}
+
+fn node_addresses_for_storage(ep: &Endpoint) -> Vec<NodeAddr> {
+    ep.connection_infos()
+        .into_iter()
+        .filter_map(node_address_for_storage)
+        .collect()
+}
+/// Get the addressing information of this endpoint that should be stored.
+///
+/// If the endpoint was not used at all in this session, all known addresses will be returned.
+/// If the endpoint was used, only the paths that were in use will be returned.
+///
+/// Returns `None` if the resulting [`NodeAddr`] would be empty.
+fn node_address_for_storage(info: ConnectionInfo) -> Option<NodeAddr> {
+    let direct_addresses = if info.last_used.is_none() {
+        info.addrs
+            .into_iter()
+            .map(|info| info.addr)
+            .collect::<BTreeSet<_>>()
+    } else {
+        info.addrs
+            .iter()
+            .filter_map(|info| {
+                if info.last_alive.is_some() {
+                    Some(info.addr)
+                } else {
+                    None
+                }
+            })
+            .collect::<BTreeSet<_>>()
+    };
+    if direct_addresses.is_empty() && info.relay_url.is_none() {
+        None
+    } else {
+        Some(NodeAddr {
+            node_id: info.node_id,
+            info: AddrInfo {
+                relay_url: info.relay_url.map(|u| u.into()),
+                direct_addresses,
+            },
+        })
     }
 }
 

@@ -2528,7 +2528,7 @@ checksum = "8f518f335dce6725a761382244631d86cf0ccb2863413590b31338feb467f9c3"
 
 [[package]]
 name = "iroh"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2583,7 +2583,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2627,7 +2627,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-blobs"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2651,6 +2651,7 @@ dependencies = [
  "iroh-test",
  "num_cpus",
  "parking_lot",
+ "pin-project",
  "postcard",
  "proptest",
  "rand",
@@ -2677,7 +2678,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-cli"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2733,7 +2734,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2782,7 +2783,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-docs"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2823,7 +2824,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-gossip"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2868,7 +2869,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "erased_set",
@@ -2887,7 +2888,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2982,7 +2983,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-bench"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3045,7 +3046,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-test"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "tokio",
@@ -3352,9 +3353,9 @@ dependencies = [
 
 [[package]]
 name = "netdev"
-version = "0.29.0"
+version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6b7a18d9c482b774500c660991da545bac1259fe4dfd40981870e5832aedffc"
+checksum = "7516ad2c46cc25da098ed7d6b9a0cbe9e1fbffbd04b1596148b95f2841179c83"
 dependencies = [
  "dlopen2",
  "libc",
@@ -6002,8 +6003,6 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
- "futures-util",
- "hashbrown 0.14.5",
  "pin-project-lite",
  "slab",
  "tokio",

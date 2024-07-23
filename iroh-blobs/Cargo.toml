@@ -1,6 +1,6 @@
 [package]
 name = "iroh-blobs"
-version = "0.20.0"
+version = "0.21.0"
 edition = "2021"
 readme = "README.md"
 description = "blob and collection transfer support for iroh"
@@ -27,12 +27,13 @@ futures-lite = "2.3"
 genawaiter = { version = "0.99.1", features = ["futures03"] }
 hashlink = { version = "0.9.0", optional = true }
 hex = "0.4.3"
-iroh-base = { version = "0.20.0", features = ["redb"], path = "../iroh-base" }
+iroh-base = { version = "0.21.0", features = ["redb"], path = "../iroh-base" }
 iroh-io = { version = "0.6.0", features = ["stats"] }
-iroh-metrics = { version = "0.20.0", path = "../iroh-metrics", optional = true }
-iroh-net = { version = "0.20.0", path = "../iroh-net" }
+iroh-metrics = { version = "0.21.0", path = "../iroh-metrics", default-features = false }
+iroh-net = { version = "0.21.0", path = "../iroh-net" }
 num_cpus = "1.15.0"
 parking_lot = { version = "0.12.1", optional = true }
+pin-project = "1.1.5"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quinn = { package = "iroh-quinn", version = "0.11", features = ["ring"] }
 rand = "0.8"
@@ -46,7 +47,7 @@ smallvec = { version = "1.10.0", features = ["serde", "const_new"] }
 tempfile = { version = "3.10.0", optional = true }
 thiserror = "1"
 tokio = { version = "1", features = ["fs"] }
-tokio-util = { version = "0.7", features = ["io-util", "io", "rt"] }
+tokio-util = { version = "0.7", features = ["io-util", "io"] }
 tracing = "0.1"
 tracing-futures = "0.2.5"
 
@@ -70,7 +71,7 @@ futures-util = "0.3.30"
 default = ["fs-store"]
 downloader = ["dep:parking_lot", "tokio-util/time", "dep:hashlink"]
 fs-store = ["dep:reflink-copy", "redb", "dep:redb_v1", "dep:tempfile"]
-metrics = ["dep:iroh-metrics"]
+metrics = ["iroh-metrics/metrics"]
 redb = ["dep:redb"]
 
 [package.metadata.docs.rs]
