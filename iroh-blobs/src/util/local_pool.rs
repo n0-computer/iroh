@@ -276,7 +276,7 @@ impl LocalPool {
             //
             // Threads will add a permit in any case, so await_thread_completion
             // will then immediately return.
-            self.send.send_blocking(Message::Finish).ok();
+            self.send.send(Message::Finish).await.ok();
         }
         self.await_thread_completion().await;
     }
