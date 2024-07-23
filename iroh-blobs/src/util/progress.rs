@@ -471,6 +471,19 @@ impl<T> Clone for FlumeProgressSender<T> {
     }
 }
 
+fn same_channel<T>(a: &async_channel::Sender<T>, b: &async_channel::Sender<T>) -> bool {
+    assert!(std::mem::size_of::<async_channel::Sender<T>>() == std::mem::size_of::<usize>());
+    fn get_arc_reference<T>(x: &async_channel::Sender<T>) -> &Arc<()> {
+        unsafe {
+            // Transmute the reference to MyNewType to a reference to Arc<()>
+            std::mem::transmute::<_, &Arc<()>>(x)
+        }
+    }
+    let a = get_arc_reference(a);
+    let b = get_arc_reference(b);
+    Arc::ptr_eq(a, b)
+}
+
 impl<T> FlumeProgressSender<T> {
     /// Create a new progress sender from a flume sender.
     pub fn new(sender: async_channel::Sender<T>) -> Self {
@@ -482,8 +495,7 @@ impl<T> FlumeProgressSender<T> {
 
     /// Returns true if `other` sends on the same `flume` channel as `self`.
     pub fn same_channel(&self, other: &FlumeProgressSender<T>) -> bool {
-        self.id.load(std::sync::atomic::Ordering::SeqCst)
-            == other.id.load(std::sync::atomic::Ordering::SeqCst)
+        same_channel(&self.sender, &other.sender)
     }
 }
 
