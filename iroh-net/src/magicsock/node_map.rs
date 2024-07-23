@@ -186,7 +186,6 @@ impl NodeMap {
     pub(super) fn get_send_addrs(
         &self,
         addr: QuicMappedAddr,
-        have_ipv6: bool,
     ) -> Option<(
         PublicKey,
         Option<SocketAddr>,
@@ -196,7 +195,7 @@ impl NodeMap {
         let mut inner = self.inner.lock();
         let ep = inner.get_mut(NodeStateKey::QuicMappedAddr(addr))?;
         let public_key = *ep.public_key();
-        let (udp_addr, relay_url, msgs) = ep.get_send_addrs(have_ipv6);
+        let (udp_addr, relay_url, msgs) = ep.get_send_addrs();
         Some((public_key, udp_addr, relay_url, msgs))
     }
 

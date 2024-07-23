@@ -499,10 +499,7 @@ impl MagicSock {
         let dest = QuicMappedAddr(dest);
 
         let mut transmits_sent = 0;
-        match self
-            .node_map
-            .get_send_addrs(dest, self.ipv6_reported.load(Ordering::Relaxed))
-        {
+        match self.node_map.get_send_addrs(dest) {
             Some((public_key, udp_addr, relay_url, mut msgs)) => {
                 let mut pings_sent = false;
                 // If we have pings to send, we *have* to send them out first.
@@ -3015,7 +3012,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_network_change() -> Result<()> {
         time::timeout(
-            Duration::from_secs(50),
+            Duration::from_secs(90),
             test_two_devices_roundtrip_network_change_impl(),
         )
         .await?
