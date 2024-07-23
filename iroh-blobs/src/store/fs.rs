@@ -534,25 +534,25 @@ pub(crate) enum ActorMessage {
     /// Query method: get the rough entry status for a hash. Just complete, partial or not found.
     EntryStatus {
         hash: Hash,
-        tx: flume::Sender<ActorResult<EntryStatus>>,
+        tx: async_channel::Sender<ActorResult<EntryStatus>>,
     },
     #[cfg(test)]
     /// Query method: get the full entry state for a hash, both in memory and in redb.
     /// This is everything we got about the entry, including the actual inline outboard and data.
     EntryState {
         hash: Hash,
-        tx: flume::Sender<ActorResult<test_support::EntryStateResponse>>,
+        tx: async_channel::Sender<ActorResult<test_support::EntryStateResponse>>,
     },
     /// Query method: get the full entry state for a hash.
     GetFullEntryState {
         hash: Hash,
-        tx: flume::Sender<ActorResult<Option<EntryData>>>,
+        tx: async_channel::Sender<ActorResult<Option<EntryData>>>,
     },
     /// Modification method: set the full entry state for a hash.
     SetFullEntryState {
         hash: Hash,
         entry: Option<EntryData>,
-        tx: flume::Sender<ActorResult<()>>,
+        tx: async_channel::Sender<ActorResult<()>>,
     },
     /// Modification method: get or create a file handle for a hash.
     ///
@@ -934,18 +934,18 @@ impl StoreInner {
     }
 
     async fn entry_status(&self, hash: &Hash) -> OuterResult<EntryStatus> {
-        let (tx, rx) = flume::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         self.tx
             .send_async(ActorMessage::EntryStatus { hash: *hash, tx })
             .await?;
-        Ok(rx.into_recv_async().await??)
+        Ok(rx.recv().await??)
     }
 
     fn entry_status_sync(&self, hash: &Hash) -> OuterResult<EntryStatus> {
-        let (tx, rx) = flume::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         self.tx
             .send(ActorMessage::EntryStatus { hash: *hash, tx })?;
-        Ok(rx.recv()??)
+        Ok(rx.recv_blocking()??)
     }
 
     async fn complete(&self, entry: Entry) -> OuterResult<()> {
@@ -1243,13 +1243,17 @@ pub(crate) enum OuterError {
     #[error("inner error: {0}")]
     Inner(#[from] ActorError),
     #[error("send error: {0}")]
-    Send(#[from] flume::SendError<ActorMessage>),
+    Send1(#[from] async_channel::SendError<ActorMessage>),
+    #[error("send error: {0}")]
+    Send2(#[from] flume::SendError<ActorMessage>),
     #[error("progress send error: {0}")]
     ProgressSend(#[from] ProgressSendError),
     #[error("recv error: {0}")]
     Recv(#[from] oneshot::error::RecvError),
     #[error("recv error: {0}")]
     FlumeRecv(#[from] flume::RecvError),
+    #[error("recv error: {0}")]
+    AsyncChannelRecv(#[from] async_channel::RecvError),
     #[error("join error: {0}")]
     JoinTask(#[from] tokio::task::JoinError),
 }
@@ -2217,7 +2221,7 @@ impl ActorState {
             }
             ActorMessage::EntryStatus { hash, tx } => {
                 let res = self.entry_status(tables, hash);
-                tx.send(res).ok();
+                tx.send_blocking(res).ok();
             }
             ActorMessage::Blobs { filter, tx } => {
                 let res = self.blobs(tables, filter);
@@ -2237,11 +2241,11 @@ impl ActorState {
             }
             #[cfg(test)]
             ActorMessage::EntryState { hash, tx } => {
-                tx.send(self.entry_state(tables, hash)).ok();
+                tx.send_blocking(self.entry_state(tables, hash)).ok();
             }
             ActorMessage::GetFullEntryState { hash, tx } => {
                 let res = self.get_full_entry_state(tables, hash);
-                tx.send(res).ok();
+                tx.send_blocking(res).ok();
             }
             x => return Ok(Err(x)),
         }
@@ -2287,7 +2291,7 @@ impl ActorState {
             }
             ActorMessage::SetFullEntryState { hash, entry, tx } => {
                 let res = self.set_full_entry_state(tables, hash, entry);
-                tx.send(res).ok();
+                tx.send_blocking(res).ok();
             }
             msg => {
                 // try to handle it as readonly

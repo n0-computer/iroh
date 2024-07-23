@@ -106,27 +106,27 @@ impl Store {
 impl StoreInner {
     #[cfg(test)]
     async fn entry_state(&self, hash: Hash) -> OuterResult<EntryStateResponse> {
-        let (tx, rx) = flume::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         self.tx
             .send_async(ActorMessage::EntryState { hash, tx })
             .await?;
-        Ok(rx.recv_async().await??)
+        Ok(rx.recv().await??)
     }
 
     async fn set_full_entry_state(&self, hash: Hash, entry: Option<EntryData>) -> OuterResult<()> {
-        let (tx, rx) = flume::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         self.tx
             .send_async(ActorMessage::SetFullEntryState { hash, entry, tx })
             .await?;
-        Ok(rx.recv_async().await??)
+        Ok(rx.recv().await??)
     }
 
     async fn get_full_entry_state(&self, hash: Hash) -> OuterResult<Option<EntryData>> {
-        let (tx, rx) = flume::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         self.tx
             .send_async(ActorMessage::GetFullEntryState { hash, tx })
             .await?;
-        Ok(rx.recv_async().await??)
+        Ok(rx.recv().await??)
     }
 
     async fn all_blobs(&self) -> OuterResult<Vec<io::Result<Hash>>> {
