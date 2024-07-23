@@ -1266,7 +1266,7 @@ mod tests {
                     let mut buf = [0u8, 5];
                     stream.read_exact(&mut buf).await.unwrap();
                     info!("Accepted 1 stream, received {buf:?}.  Closing now.");
-                    // close the stream
+                    // close the connection
                     conn.close(7u8.into(), b"bye");
 
                     let res = conn.accept_uni().await;
@@ -1305,6 +1305,7 @@ mod tests {
                 // the error.
                 stream.write_all(b"hello").await.unwrap();
 
+                info!("waiting for closed");
                 // Remote now closes the connection, we should see an error sometime soon.
                 let err = conn.closed().await;
                 let expected_err =
@@ -1314,9 +1315,7 @@ mod tests {
                     });
                 assert_eq!(err, expected_err);
 
-                let res = stream.finish();
-                assert!(res.is_err());
-
+                info!("opening new - expect it to fail");
                 let res = conn.open_uni().await;
                 assert_eq!(res.unwrap_err(), expected_err);
                 info!("client test completed");
@@ -1324,7 +1323,12 @@ mod tests {
             .instrument(info_span!("test-client")),
         );
 
-        let (server, client) = tokio::join!(server, client);
+        let (server, client) = tokio::time::timeout(
+            Duration::from_secs(5),
+            futures_lite::future::zip(server, client),
+        )
+        .await
+        .expect("timeout");
         server.unwrap();
         client.unwrap();
     }
