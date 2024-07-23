@@ -993,24 +993,24 @@ impl<D: BaoStore> Handler<D> {
         self,
         req: ReadAtRequest,
     ) -> impl Stream<Item = RpcResult<ReadAtResponse>> + Send + 'static {
-        let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
+        let (tx, rx) = async_channel::bounded(RPC_BLOB_GET_CHANNEL_CAP);
         let db = self.inner.db.clone();
         self.local_pool_handle().spawn_detached(move || async move {
             if let Err(err) = read_loop(req, db, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
-                tx.send_async(RpcResult::Err(err.into())).await.ok();
+                tx.send(RpcResult::Err(err.into())).await.ok();
             }
         });
 
         async fn read_loop<D: iroh_blobs::store::Store>(
             req: ReadAtRequest,
             db: D,
-            tx: flume::Sender<RpcResult<ReadAtResponse>>,
+            tx: async_channel::Sender<RpcResult<ReadAtResponse>>,
             max_chunk_size: usize,
         ) -> anyhow::Result<()> {
             let entry = db.get(&req.hash).await?;
             let entry = entry.ok_or_else(|| anyhow!("Blob not found"))?;
             let size = entry.size();
-            tx.send_async(Ok(ReadAtResponse::Entry {
+            tx.send(Ok(ReadAtResponse::Entry {
                 size,
                 is_complete: entry.is_complete(),
             }))
@@ -1037,7 +1037,7 @@ impl<D: BaoStore> Handler<D> {
                 let chunk = reader.read_at(req.offset + read, chunk_size).await?;
                 let chunk_len = chunk.len();
                 if !chunk.is_empty() {
-                    tx.send_async(Ok(ReadAtResponse::Data { chunk })).await?;
+                    tx.send(Ok(ReadAtResponse::Data { chunk })).await?;
                 }
                 if chunk_len < chunk_size {
                     break;
@@ -1048,7 +1048,7 @@ impl<D: BaoStore> Handler<D> {
             Ok(())
         }
 
-        rx.into_stream()
+        rx
     }
 
     fn node_connections(
@@ -1056,17 +1056,15 @@ impl<D: BaoStore> Handler<D> {
         _: ConnectionsRequest,
     ) -> impl Stream<Item = RpcResult<ConnectionsResponse>> + Send + 'static {
         // provide a little buffer so that we don't slow down the sender
-        let (tx, rx) = flume::bounded(32);
+        let (tx, rx) = async_channel::bounded(32);
         let mut conn_infos = self.inner.endpoint.connection_infos();
         conn_infos.sort_by_key(|n| n.node_id.to_string());
         self.local_pool_handle().spawn_detached(|| async move {
             for conn_info in conn_infos {
-                tx.send_async(Ok(ConnectionsResponse { conn_info }))
-                    .await
-                    .ok();
+                tx.send(Ok(ConnectionsResponse { conn_info })).await.ok();
             }
         });
-        rx.into_stream()
+        rx
     }
 
     // This method is called as an RPC method, which have to be async

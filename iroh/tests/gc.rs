@@ -37,11 +37,14 @@ pub fn simulate_remote(data: &[u8]) -> (blake3::Hash, Cursor<Bytes>) {
 }
 
 /// Wrap a bao store in a node that has gc enabled.
-async fn wrap_in_node<S>(bao_store: S, gc_period: Duration) -> (Node<S>, flume::Receiver<()>)
+async fn wrap_in_node<S>(
+    bao_store: S,
+    gc_period: Duration,
+) -> (Node<S>, async_channel::Receiver<()>)
 where
     S: iroh_blobs::store::Store,
 {
-    let (gc_send, gc_recv) = flume::unbounded();
+    let (gc_send, gc_recv) = async_channel::unbounded();
     let node = node::Builder::with_db_and_store(
         bao_store,
         DocsStorage::Memory,
@@ -49,7 +52,7 @@ where
     )
     .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
     .register_gc_done_cb(Box::new(move || {
-        gc_send.send(()).ok();
+        gc_send.send_blocking(()).ok();
     }))
     .spawn()
     .await
@@ -60,19 +63,19 @@ where
 async fn gc_test_node() -> (
     Node<iroh_blobs::store::mem::Store>,
     iroh_blobs::store::mem::Store,
-    flume::Receiver<()>,
+    async_channel::Receiver<()>,
 ) {
     let bao_store = iroh_blobs::store::mem::Store::new();
     let (node, gc_recv) = wrap_in_node(bao_store.clone(), Duration::from_millis(500)).await;
     (node, bao_store, gc_recv)
 }
 
-async fn step(evs: &flume::Receiver<()>) {
+async fn step(evs: &async_channel::Receiver<()>) {
     // drain the event queue, we want a new GC
     while evs.try_recv().is_ok() {}
     // wait for several GC cycles
     for _ in 0..3 {
-        evs.recv_async().await.unwrap();
+        evs.recv().await.unwrap();
     }
 }
 
