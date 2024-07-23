@@ -243,7 +243,6 @@ async fn sync_gossip_bulk() -> Result<()> {
 
 /// This tests basic sync and gossip with 3 peers.
 #[tokio::test]
-#[ignore = "flaky"]
 async fn sync_full_basic() -> Result<()> {
     let mut rng = test_rng(b"sync_full_basic");
     setup_logging();
