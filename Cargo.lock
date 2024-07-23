@@ -2629,6 +2629,7 @@ name = "iroh-cli"
 version = "0.21.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "bao-tree",
  "bytes",
  "clap",

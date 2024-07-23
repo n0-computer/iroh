@@ -212,9 +212,9 @@ mod file {
 
     async fn check_consistency(store: &impl Store) -> anyhow::Result<ReportLevel> {
         let mut max_level = ReportLevel::Trace;
-        let (tx, rx) = flume::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         let task = tokio::task::spawn(async move {
-            while let Ok(ev) = rx.recv_async().await {
+            while let Ok(ev) = rx.recv().await {
                 if let ConsistencyCheckProgress::Update { level, .. } = &ev {
                     max_level = max_level.max(*level);
                 }

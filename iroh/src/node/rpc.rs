@@ -527,7 +527,7 @@ impl<D: BaoStore> Handler<D> {
         self,
         msg: ValidateRequest,
     ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
-        let (tx, rx) = flume::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         let tx2 = tx.clone();
         let db = self.inner.db.clone();
         tokio::task::spawn(async move {
@@ -535,10 +535,10 @@ impl<D: BaoStore> Handler<D> {
                 .validate(msg.repair, FlumeProgressSender::new(tx).boxed())
                 .await
             {
-                tx2.send_async(ValidateProgress::Abort(e.into())).await.ok();
+                tx2.send(ValidateProgress::Abort(e.into())).await.ok();
             }
         });
-        rx.into_stream()
+        rx
     }
 
     /// Invoke validate on the database and stream out the result
@@ -546,7 +546,7 @@ impl<D: BaoStore> Handler<D> {
         self,
         msg: ConsistencyCheckRequest,
     ) -> impl Stream<Item = ConsistencyCheckProgress> + Send + 'static {
-        let (tx, rx) = flume::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         let tx2 = tx.clone();
         let db = self.inner.db.clone();
         tokio::task::spawn(async move {
@@ -554,44 +554,44 @@ impl<D: BaoStore> Handler<D> {
                 .consistency_check(msg.repair, FlumeProgressSender::new(tx).boxed())
                 .await
             {
-                tx2.send_async(ConsistencyCheckProgress::Abort(e.into()))
+                tx2.send(ConsistencyCheckProgress::Abort(e.into()))
                     .await
                     .ok();
             }
         });
-        rx.into_stream()
+        rx
     }
 
     fn blob_add_from_path(self, msg: AddPathRequest) -> impl Stream<Item = AddPathResponse> {
         // provide a little buffer so that we don't slow down the sender
-        let (tx, rx) = flume::bounded(32);
+        let (tx, rx) = async_channel::bounded(32);
         let tx2 = tx.clone();
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(e) = self.blob_add_from_path0(msg, tx).await {
-                tx2.send_async(AddProgress::Abort(e.into())).await.ok();
+                tx2.send(AddProgress::Abort(e.into())).await.ok();
             }
         });
-        rx.into_stream().map(AddPathResponse)
+        rx.map(AddPathResponse)
     }
 
     fn doc_import_file(self, msg: ImportFileRequest) -> impl Stream<Item = ImportFileResponse> {
         // provide a little buffer so that we don't slow down the sender
-        let (tx, rx) = flume::bounded(32);
+        let (tx, rx) = async_channel::bounded(32);
         let tx2 = tx.clone();
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(e) = self.doc_import_file0(msg, tx).await {
-                tx2.send_async(crate::client::docs::ImportProgress::Abort(e.into()))
+                tx2.send(crate::client::docs::ImportProgress::Abort(e.into()))
                     .await
                     .ok();
             }
         });
-        rx.into_stream().map(ImportFileResponse)
+        rx.map(ImportFileResponse)
     }
 
     async fn doc_import_file0(
         self,
         msg: ImportFileRequest,
-        progress: flume::Sender<crate::client::docs::ImportProgress>,
+        progress: async_channel::Sender<crate::client::docs::ImportProgress>,
     ) -> anyhow::Result<()> {
         let docs = self.docs().ok_or_else(|| anyhow!("docs are disabled"))?;
         use crate::client::docs::ImportProgress as DocImportProgress;
@@ -660,20 +660,20 @@ impl<D: BaoStore> Handler<D> {
     }
 
     fn doc_export_file(self, msg: ExportFileRequest) -> impl Stream<Item = ExportFileResponse> {
-        let (tx, rx) = flume::bounded(1024);
+        let (tx, rx) = async_channel::bounded(1024);
         let tx2 = tx.clone();
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(e) = self.doc_export_file0(msg, tx).await {
-                tx2.send_async(ExportProgress::Abort(e.into())).await.ok();
+                tx2.send(ExportProgress::Abort(e.into())).await.ok();
             }
         });
-        rx.into_stream().map(ExportFileResponse)
+        rx.map(ExportFileResponse)
     }
 
     async fn doc_export_file0(
         self,
         msg: ExportFileRequest,
-        progress: flume::Sender<ExportProgress>,
+        progress: async_channel::Sender<ExportProgress>,
     ) -> anyhow::Result<()> {
         let _docs = self.docs().ok_or_else(|| anyhow!("docs are disabled"))?;
         let progress = FlumeProgressSender::new(progress);
@@ -700,7 +700,7 @@ impl<D: BaoStore> Handler<D> {
     }
 
     fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = DownloadResponse> {
-        let (sender, receiver) = flume::bounded(1024);
+        let (sender, receiver) = async_channel::bounded(1024);
         let db = self.inner.db.clone();
         let downloader = self.inner.downloader.clone();
         let endpoint = self.inner.endpoint.clone();
@@ -714,11 +714,11 @@ impl<D: BaoStore> Handler<D> {
             }
         });
 
-        receiver.into_stream().map(DownloadResponse)
+        receiver.map(DownloadResponse)
     }
 
     fn blob_export(self, msg: ExportRequest) -> impl Stream<Item = ExportResponse> {
-        let (tx, rx) = flume::bounded(1024);
+        let (tx, rx) = async_channel::bounded(1024);
         let progress = FlumeProgressSender::new(tx);
         self.local_pool_handle().spawn_detached(move || async move {
             let res = iroh_blobs::export::export(
@@ -735,13 +735,13 @@ impl<D: BaoStore> Handler<D> {
                 Err(err) => progress.send(ExportProgress::Abort(err.into())).await.ok(),
             };
         });
-        rx.into_stream().map(ExportResponse)
+        rx.map(ExportResponse)
     }
 
     async fn blob_add_from_path0(
         self,
         msg: AddPathRequest,
-        progress: flume::Sender<AddProgress>,
+        progress: async_channel::Sender<AddProgress>,
     ) -> anyhow::Result<()> {
         use iroh_blobs::store::ImportMode;
         use std::collections::BTreeMap;
@@ -923,23 +923,23 @@ impl<D: BaoStore> Handler<D> {
         msg: AddStreamRequest,
         stream: impl Stream<Item = AddStreamUpdate> + Send + Unpin + 'static,
     ) -> impl Stream<Item = AddStreamResponse> {
-        let (tx, rx) = flume::bounded(32);
+        let (tx, rx) = async_channel::bounded(32);
         let this = self.clone();
 
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(err) = this.blob_add_stream0(msg, stream, tx.clone()).await {
-                tx.send_async(AddProgress::Abort(err.into())).await.ok();
+                tx.send(AddProgress::Abort(err.into())).await.ok();
             }
         });
 
-        rx.into_stream().map(AddStreamResponse)
+        rx.map(AddStreamResponse)
     }
 
     async fn blob_add_stream0(
         self,
         msg: AddStreamRequest,
         stream: impl Stream<Item = AddStreamUpdate> + Send + Unpin + 'static,
-        progress: flume::Sender<AddProgress>,
+        progress: async_channel::Sender<AddProgress>,
     ) -> anyhow::Result<()> {
         let progress = FlumeProgressSender::new(progress);
 

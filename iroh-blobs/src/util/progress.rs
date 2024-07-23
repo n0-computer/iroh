@@ -449,7 +449,7 @@ impl<
 
 /// A progress sender that uses a flume channel.
 pub struct FlumeProgressSender<T> {
-    sender: flume::Sender<T>,
+    sender: async_channel::Sender<T>,
     id: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -473,7 +473,7 @@ impl<T> Clone for FlumeProgressSender<T> {
 
 impl<T> FlumeProgressSender<T> {
     /// Create a new progress sender from a flume sender.
-    pub fn new(sender: flume::Sender<T>) -> Self {
+    pub fn new(sender: async_channel::Sender<T>) -> Self {
         Self {
             sender,
             id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -482,7 +482,8 @@ impl<T> FlumeProgressSender<T> {
 
     /// Returns true if `other` sends on the same `flume` channel as `self`.
     pub fn same_channel(&self, other: &FlumeProgressSender<T>) -> bool {
-        self.sender.same_channel(&other.sender)
+        self.id.load(std::sync::atomic::Ordering::SeqCst)
+            == other.id.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -497,7 +498,7 @@ impl<T: Send + Sync + 'static> ProgressSender for FlumeProgressSender<T> {
 
     async fn send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
         self.sender
-            .send_async(msg)
+            .send(msg)
             .await
             .map_err(|_| ProgressSendError::ReceiverDropped)
     }
@@ -505,13 +506,13 @@ impl<T: Send + Sync + 'static> ProgressSender for FlumeProgressSender<T> {
     fn try_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
         match self.sender.try_send(msg) {
             Ok(_) => Ok(()),
-            Err(flume::TrySendError::Full(_)) => Ok(()),
-            Err(flume::TrySendError::Disconnected(_)) => Err(ProgressSendError::ReceiverDropped),
+            Err(async_channel::TrySendError::Full(_)) => Ok(()),
+            Err(async_channel::TrySendError::Closed(_)) => Err(ProgressSendError::ReceiverDropped),
         }
     }
 
     fn blocking_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
-        match self.sender.send(msg) {
+        match self.sender.send_blocking(msg) {
             Ok(_) => Ok(()),
             Err(_) => Err(ProgressSendError::ReceiverDropped),
         }
