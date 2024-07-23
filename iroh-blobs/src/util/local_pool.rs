@@ -168,6 +168,7 @@ impl LocalPool {
         std::thread::Builder::new()
             .name(thread_name)
             .spawn(move || {
+                tracing::trace!("Thread {} starting", get_thread_name());
                 let mut s = JoinSet::new();
                 let mut last_panic = None;
                 let mut handle_join = |res: Option<std::result::Result<(), JoinError>>| -> bool {
@@ -192,23 +193,34 @@ impl LocalPool {
                             // poll the set of futures
                             res = s.join_next(), if !s.is_empty() => {
                                 if !handle_join(res) {
+                                    tracing::trace!("Thread {} stopping due to join result", get_thread_name());
                                     break ShutdownMode::Stop;
                                 }
                             },
                             // if the cancel token is cancelled, break the loop immediately
-                            _ = cancel_token.cancelled() => break ShutdownMode::Stop,
+                            _ = cancel_token.cancelled() => {
+                                tracing::trace!("Thread {} stopping due to cancel", get_thread_name());
+                                break ShutdownMode::Stop;
+                            },
                             // if we receive a message, execute it
                             msg = recv.recv_async() => {
                                 match msg {
-                                    // just push into the FuturesUnordered
+                                    // just push into the join set
                                     Ok(Message::Execute(f)) => {
                                         s.spawn_local((f)());
                                     }
                                     // break with optional semaphore
-                                    Ok(Message::Finish) => break ShutdownMode::Finish,
+                                    Ok(Message::Finish) => {
+                                        tracing::trace!("Thread {} received finish", get_thread_name());
+                                        tracing::trace!("queue size = {}", recv.len());
+                                        break ShutdownMode::Finish;
+                                    }
                                     // if the sender is dropped, break the loop immediately
                                     Err(flume::RecvError::Disconnected) => break ShutdownMode::Stop,
                                 }
+                            },
+                            _ = tokio::time::sleep(std::time::Duration::from_secs(100)) => {
+                                tracing::trace!("Thread {} tick", get_thread_name());
                             }
                         }
                     }
@@ -233,6 +245,7 @@ impl LocalPool {
                 }
                 // Always add the permit. If nobody is waiting for it, it does
                 // no harm.
+                tracing::trace!("Thread {} shutting down, adding permit", get_thread_name());
                 shutdown_sem.add_permits(1);
                 if let Some(_panic) = last_panic {
                     // std::panic::resume_unwind(panic);
@@ -269,6 +282,7 @@ impl LocalPool {
     pub async fn finish(self) {
         // we assume that there are exactly as many threads as there are handles.
         // also, we assume that the threads are still running.
+        let mut res = Vec::new();
         for _ in 0..self.threads_u32() {
             // send the shutdown message
             // sending will fail if all threads are already finished, but
@@ -276,7 +290,13 @@ impl LocalPool {
             //
             // Threads will add a permit in any case, so await_thread_completion
             // will then immediately return.
-            self.send.send(Message::Finish).ok();
+            // tracing::trace!("Sending finish message");
+            let sent = self.send.send(Message::Finish);
+            res.push(sent);
+            // tracing::trace!("Sent finish message {:?}", sent);
+        }
+        for r in res {
+            tracing::trace!("Finish message sent: {:?}", r);
         }
         self.await_thread_completion().await;
     }
@@ -592,7 +612,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_shutdown() {
+    async fn test_finish() {
         let _ = tracing_subscriber::fmt::try_init();
         let pool = LocalPool::new(Config::default());
         let counter = Arc::new(AtomicU64::new(0));
