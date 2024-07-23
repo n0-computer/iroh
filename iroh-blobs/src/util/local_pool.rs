@@ -212,7 +212,6 @@ impl LocalPool {
                                     // break with optional semaphore
                                     Ok(Message::Finish) => {
                                         tracing::trace!("Thread {} received finish", get_thread_name());
-                                        tracing::trace!("queue size = {}", recv.len());
                                         break ShutdownMode::Finish;
                                     }
                                     // if the sender is dropped, break the loop immediately
@@ -279,7 +278,6 @@ impl LocalPool {
     pub async fn finish(self) {
         // we assume that there are exactly as many threads as there are handles.
         // also, we assume that the threads are still running.
-        let mut res = Vec::new();
         for _ in 0..self.threads_u32() {
             // send the shutdown message
             // sending will fail if all threads are already finished, but
@@ -287,13 +285,7 @@ impl LocalPool {
             //
             // Threads will add a permit in any case, so await_thread_completion
             // will then immediately return.
-            // tracing::trace!("Sending finish message");
-            let sent = self.send.send_blocking(Message::Finish);
-            res.push(sent);
-            // tracing::trace!("Sent finish message {:?}", sent);
-        }
-        for r in res {
-            tracing::trace!("Finish message sent: {:?}", r);
+            self.send.send_blocking(Message::Finish).ok();
         }
         self.await_thread_completion().await;
     }
