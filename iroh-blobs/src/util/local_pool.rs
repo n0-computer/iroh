@@ -247,7 +247,7 @@ impl LocalPool {
 
     /// Immediately stop polling all tasks and wait for all threads to finish.
     ///
-    /// This is like droo, but waits for thread completion asynchronously.
+    /// This is like drop, but waits for thread completion asynchronously.
     ///
     /// If there was a panic on any of the threads, it will be re-thrown here.
     pub async fn shutdown(self) {
@@ -270,7 +270,6 @@ impl LocalPool {
         // we assume that there are exactly as many threads as there are handles.
         // also, we assume that the threads are still running.
         for _ in 0..self.threads_u32() {
-            println!("sending shutdown message");
             // send the shutdown message
             // sending will fail if all threads are already finished, but
             // in that case we don't need to do anything.
