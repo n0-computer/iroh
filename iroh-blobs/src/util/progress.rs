@@ -557,6 +557,8 @@ impl<T> AsyncChannelProgressSender<T> {
     }
 }
 
+/// Given a value that is aligned and sized like a pointer, return the value of
+/// the pointer as a usize.
 fn get_as_ptr<T>(value: &T) -> Option<usize> {
     use std::mem;
     if mem::size_of::<T>() == std::mem::size_of::<usize>()
@@ -570,6 +572,9 @@ fn get_as_ptr<T>(value: &T) -> Option<usize> {
 }
 
 fn same_channel<T>(a: &async_channel::Sender<T>, b: &async_channel::Sender<T>) -> bool {
+    // This relies on async_channel::Sender being just a newtype wrapper around
+    // an Arc<Channel<T>>, so if two senders point to the same channel, the
+    // pointers will be the same.
     get_as_ptr(a).unwrap() == get_as_ptr(b).unwrap()
 }
 
@@ -713,5 +718,41 @@ impl<W: AsyncSliceWriter + 'static, F: Fn(u64, usize) -> io::Result<()> + 'stati
 
     async fn set_len(&mut self, size: u64) -> io::Result<()> {
         self.0.set_len(size).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    #[test]
+    fn get_as_ptr_works() {
+        struct Wrapper(Arc<u64>);
+        let x = Wrapper(Arc::new(1u64));
+        assert_eq!(
+            get_as_ptr(&x).unwrap(),
+            Arc::as_ptr(&x.0) as usize - 2 * std::mem::size_of::<usize>()
+        );
+    }
+
+    #[test]
+    fn get_as_ptr_wrong_use() {
+        struct Wrapper(#[allow(dead_code)] u8);
+        let x = Wrapper(1);
+        assert!(get_as_ptr(&x).is_none());
+    }
+
+    #[test]
+    fn test_sender_is_ptr() {
+        assert_eq!(
+            std::mem::size_of::<usize>(),
+            std::mem::size_of::<flume::Sender<u8>>()
+        );
+        assert_eq!(
+            std::mem::align_of::<usize>(),
+            std::mem::align_of::<flume::Sender<u8>>()
+        );
     }
 }
