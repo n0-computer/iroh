@@ -23,7 +23,7 @@ impl Drop for RouteMonitor {
 }
 
 impl RouteMonitor {
-    pub(super) fn new(sender: flume::Sender<NetworkMessage>) -> Result<Self> {
+    pub(super) fn new(sender: async_channel::Sender<NetworkMessage>) -> Result<Self> {
         let socket = socket2::Socket::new(libc::AF_ROUTE.into(), socket2::Type::RAW, None)?;
         socket.set_nonblocking(true)?;
         let socket_std: std::os::unix::net::UnixStream = socket.into();
@@ -44,7 +44,7 @@ impl RouteMonitor {
                         ) {
                             Ok(msgs) => {
                                 if contains_interesting_message(&msgs) {
-                                    sender.send_async(NetworkMessage::Change).await.ok();
+                                    sender.send(NetworkMessage::Change).await.ok();
                                 }
                             }
                             Err(err) => {

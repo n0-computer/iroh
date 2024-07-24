@@ -14,7 +14,7 @@ use derive_more::FromStr;
 use futures_lite::{stream::Boxed as BoxStream, StreamExt};
 use tracing::{debug, error, trace, warn};
 
-use flume::Sender;
+use async_channel::Sender;
 use iroh_base::key::PublicKey;
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::task::JoinSet;
@@ -62,7 +62,7 @@ impl LocalSwarmDiscovery {
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
     pub fn new(node_id: NodeId) -> Result<Self> {
         debug!("Creating new LocalSwarmDiscovery service");
-        let (send, recv) = flume::bounded(64);
+        let (send, recv) = async_channel::bounded(64);
         let task_sender = send.clone();
         let rt = tokio::runtime::Handle::current();
         let mut guard = Some(LocalSwarmDiscovery::spawn_discoverer(
@@ -80,7 +80,7 @@ impl LocalSwarmDiscovery {
             let mut timeouts = JoinSet::new();
             loop {
                 trace!(?node_addrs, "LocalSwarmDiscovery Service loop tick");
-                let msg = match recv.recv_async().await {
+                let msg = match recv.recv().await {
                     Err(err) => {
                         error!("LocalSwarmDiscovery service error: {err:?}");
                         error!("closing LocalSwarmDiscovery");
@@ -124,7 +124,7 @@ impl LocalSwarmDiscovery {
                             for sender in senders.values() {
                                 let item: DiscoveryItem = (&peer_info).into();
                                 trace!(?item, "sending DiscoveryItem");
-                                sender.send_async(Ok(item)).await.ok();
+                                sender.send(Ok(item)).await.ok();
                             }
                         }
                         trace!(
@@ -141,7 +141,7 @@ impl LocalSwarmDiscovery {
                         if let Some(peer_info) = node_addrs.get(&node_id) {
                             let item: DiscoveryItem = peer_info.into();
                             debug!(?item, "sending DiscoveryItem");
-                            sender.send_async(Ok(item)).await.ok();
+                            sender.send(Ok(item)).await.ok();
                         }
                         if let Some(senders_for_node_id) = senders.get_mut(&node_id) {
                             senders_for_node_id.insert(id, sender);
@@ -155,7 +155,7 @@ impl LocalSwarmDiscovery {
                             tokio::time::sleep(DISCOVERY_DURATION).await;
                             trace!(?node_id, "discovery timeout");
                             timeout_sender
-                                .send_async(Message::Timeout(node_id, id))
+                                .send(Message::Timeout(node_id, id))
                                 .await
                                 .ok();
                         });
@@ -210,7 +210,7 @@ impl LocalSwarmDiscovery {
             );
 
             sender
-                .send(Message::Discovery(node_id.to_string(), peer.clone()))
+                .send_blocking(Message::Discovery(node_id.to_string(), peer.clone()))
                 .ok();
         };
         let mut addrs: HashMap<u16, Vec<IpAddr>> = HashMap::default();
@@ -267,15 +267,15 @@ impl From<&Peer> for DiscoveryItem {
 
 impl Discovery for LocalSwarmDiscovery {
     fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
-        let (send, recv) = flume::bounded(20);
+        let (send, recv) = async_channel::bounded(20);
         let discovery_sender = self.sender.clone();
         tokio::spawn(async move {
             discovery_sender
-                .send_async(Message::SendAddrs(node_id, send))
+                .send(Message::SendAddrs(node_id, send))
                 .await
                 .ok();
         });
-        Some(recv.into_stream().boxed())
+        Some(recv.boxed())
     }
 
     fn publish(&self, info: &AddrInfo) {
@@ -283,7 +283,7 @@ impl Discovery for LocalSwarmDiscovery {
         let info = info.clone();
         tokio::spawn(async move {
             discovery_sender
-                .send_async(Message::ChangeLocalAddrs(info))
+                .send(Message::ChangeLocalAddrs(info))
                 .await
                 .ok();
         });

@@ -19,21 +19,21 @@ pub(super) struct RouteMonitor {
 }
 
 impl RouteMonitor {
-    pub(super) fn new(sender: flume::Sender<NetworkMessage>) -> Result<Self> {
+    pub(super) fn new(sender: async_channel::Sender<NetworkMessage>) -> Result<Self> {
         // Register two callbacks with the windows api
         let mut cb_handler = CallbackHandler::default();
 
         // 1. Unicast Address Changes
         let s = sender.clone();
         cb_handler.register_unicast_address_change_callback(Box::new(move || {
-            if let Err(err) = s.send(NetworkMessage::Change) {
+            if let Err(err) = s.send_blocking(NetworkMessage::Change) {
                 warn!("unable to send: unicast change notification: {:?}", err);
             }
         }))?;
 
         // 2. Route Changes
         cb_handler.register_route_change_callback(Box::new(move || {
-            if let Err(err) = sender.send(NetworkMessage::Change) {
+            if let Err(err) = sender.send_blocking(NetworkMessage::Change) {
                 warn!("unable to send: route change notification: {:?}", err);
             }
         }))?;
