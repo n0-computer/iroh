@@ -106,7 +106,7 @@ struct State {
 /// Type alias for a stream of gossip updates, so we don't have to repeat all the bounds.
 type CommandStream = Box<dyn Stream<Item = Command> + Send + Sync + Unpin + 'static>;
 /// Type alias for a sink of gossip events.
-type EventSink = flume::Sender<RpcResult<Event>>;
+type EventSink = async_channel::Sender<RpcResult<Event>>;
 
 #[derive(derive_more::Debug)]
 enum TopicState {
@@ -214,7 +214,7 @@ impl GossipDispatcher {
     /// This will not wait until the sink is full, but send a `Lagged` response if the sink is almost full.
     fn try_send(send: &EventSink, event: &IrohGossipEvent) -> bool {
         // If the stream is disconnected, we don't need to send to it.
-        if send.is_disconnected() {
+        if send.is_closed() {
             return false;
         }
         // Check if the send buffer is almost full, and send a lagged response if it is.
@@ -404,7 +404,7 @@ impl GossipDispatcher {
                         let mut update_tasks = vec![];
                         for (updates, event_sink) in waiting {
                             // if the stream is disconnected, we don't need to keep it and start the update task
-                            if event_sink.is_disconnected() {
+                            if event_sink.is_closed() {
                                 continue;
                             }
                             event_sinks.push(event_sink);
@@ -440,7 +440,7 @@ impl GossipDispatcher {
         updates: CommandStream,
     ) -> impl Stream<Item = RpcResult<Event>> {
         let mut inner = self.inner.lock().unwrap();
-        let (send, recv) = flume::bounded(options.subscription_capacity);
+        let (send, recv) = async_channel::bounded(options.subscription_capacity);
         match inner.current_subscriptions.entry(topic) {
             Entry::Vacant(entry) => {
                 // There is no existing subscription, so we need to start a new one.
@@ -490,7 +490,7 @@ impl GossipDispatcher {
                 }
             }
         }
-        recv.into_stream()
+        Box::pin(recv)
     }
 }
 
