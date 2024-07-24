@@ -471,19 +471,6 @@ impl<T> Clone for FlumeProgressSender<T> {
     }
 }
 
-fn same_channel<T>(a: &async_channel::Sender<T>, b: &async_channel::Sender<T>) -> bool {
-    assert!(std::mem::size_of::<async_channel::Sender<T>>() == std::mem::size_of::<usize>());
-    fn get_arc_reference<T>(x: &async_channel::Sender<T>) -> &Arc<()> {
-        unsafe {
-            // Transmute the reference to MyNewType to a reference to Arc<()>
-            std::mem::transmute::<_, &Arc<()>>(x)
-        }
-    }
-    let a = get_arc_reference(a);
-    let b = get_arc_reference(b);
-    Arc::ptr_eq(a, b)
-}
-
 impl<T> FlumeProgressSender<T> {
     /// Create a new progress sender from a flume sender.
     pub fn new(sender: async_channel::Sender<T>) -> Self {
@@ -497,6 +484,22 @@ impl<T> FlumeProgressSender<T> {
     pub fn same_channel(&self, other: &FlumeProgressSender<T>) -> bool {
         same_channel(&self.sender, &other.sender)
     }
+}
+
+fn get_as_ptr<T>(value: &T) -> Option<usize> {
+    use std::mem;
+    if mem::size_of::<T>() == std::mem::size_of::<usize>() && mem::align_of::<T>() == mem::align_of::<usize>() {
+        // Safe only if size and alignment requirements are met
+        unsafe {
+            Some(mem::transmute_copy(value))
+        }
+    } else {
+        None
+    }
+}
+
+fn same_channel<T>(a: &async_channel::Sender<T>, b: &async_channel::Sender<T>) -> bool {
+    get_as_ptr(a).unwrap() == get_as_ptr(b).unwrap()
 }
 
 impl<T> IdGenerator for FlumeProgressSender<T> {
