@@ -10,6 +10,7 @@ use crate::{
     proto::{DeliveryScope, TopicId},
 };
 use bytes::Bytes;
+use futures_lite::StreamExt;
 use futures_util::Stream;
 use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_net::{key::PublicKey, util::AbortingJoinHandle, NodeId};
@@ -234,7 +235,6 @@ impl GossipDispatcher {
     ///
     /// This should not fail unless the gossip instance is faulty.
     async fn dispatch_loop(mut self) -> anyhow::Result<()> {
-        use futures_lite::stream::StreamExt;
         let stream = self.gossip.clone().subscribe_all();
         tokio::pin!(stream);
         while let Some(item) = stream.next().await {
@@ -306,7 +306,6 @@ impl GossipDispatcher {
         topic: TopicId,
         mut updates: CommandStream,
     ) -> anyhow::Result<()> {
-        use futures_lite::stream::StreamExt;
         while let Some(update) = Pin::new(&mut updates).next().await {
             match update {
                 Command::Broadcast(msg) => {
@@ -438,7 +437,7 @@ impl GossipDispatcher {
         topic: TopicId,
         options: SubscribeOptions,
         updates: CommandStream,
-    ) -> impl Stream<Item = RpcResult<Event>> {
+    ) -> impl Stream<Item = RpcResult<Event>> + Unpin {
         let mut inner = self.inner.lock().unwrap();
         let (send, recv) = async_channel::bounded(options.subscription_capacity);
         match inner.current_subscriptions.entry(topic) {
@@ -490,7 +489,7 @@ impl GossipDispatcher {
                 }
             }
         }
-        Box::pin(recv)
+        recv.boxed()
     }
 }
 
