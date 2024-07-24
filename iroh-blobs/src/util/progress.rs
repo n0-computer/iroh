@@ -488,11 +488,11 @@ impl<T> FlumeProgressSender<T> {
 
 fn get_as_ptr<T>(value: &T) -> Option<usize> {
     use std::mem;
-    if mem::size_of::<T>() == std::mem::size_of::<usize>() && mem::align_of::<T>() == mem::align_of::<usize>() {
+    if mem::size_of::<T>() == std::mem::size_of::<usize>()
+        && mem::align_of::<T>() == mem::align_of::<usize>()
+    {
         // Safe only if size and alignment requirements are met
-        unsafe {
-            Some(mem::transmute_copy(value))
-        }
+        unsafe { Some(mem::transmute_copy(value)) }
     } else {
         None
     }
