@@ -2,21 +2,26 @@ use std::fmt::Debug;
 
 use anyhow::Result;
 
-use crate::proto::{
-    grouping::ThreeDRange,
-    keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
-    meadowcap,
-    sync::Fingerprint,
-    willow::{AuthorisedEntry, Entry, NamespaceId},
+use crate::{
+    auth::{CapSelector, CapabilityPack},
+    proto::{
+        grouping::ThreeDRange,
+        keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
+        meadowcap,
+        sync::{Fingerprint, ReadAuthorisation},
+        willow::{AuthorisedEntry, Entry, NamespaceId, WriteCapability},
+    },
 };
 
 pub trait Storage: Debug + Clone + 'static {
     type Entries: EntryStorage;
     type Secrets: SecretStorage;
     type Payloads: iroh_blobs::store::Store;
+    type Caps: CapsStorage;
     fn entries(&self) -> &Self::Entries;
     fn secrets(&self) -> &Self::Secrets;
     fn payloads(&self) -> &Self::Payloads;
+    fn caps(&self) -> &Self::Caps;
 }
 
 pub trait SecretStorage: Debug + Clone + 'static {
@@ -138,4 +143,22 @@ impl Default for SplitOpts {
             split_factor: 2,
         }
     }
+}
+
+pub trait CapsStorage: Debug + Clone {
+    fn insert(&self, cap: CapabilityPack) -> Result<()>;
+
+    fn list_read_caps(
+        &self,
+        namespace: Option<NamespaceId>,
+    ) -> Result<impl Iterator<Item = ReadAuthorisation> + '_>;
+
+    fn list_write_caps(
+        &self,
+        namespace: Option<NamespaceId>,
+    ) -> Result<impl Iterator<Item = WriteCapability> + '_>;
+
+    fn get_write_cap(&self, selector: &CapSelector) -> Result<Option<WriteCapability>>;
+
+    fn get_read_cap(&self, selector: &CapSelector) -> Result<Option<ReadAuthorisation>>;
 }

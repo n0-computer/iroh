@@ -5,12 +5,13 @@ use std::rc::Rc;
 use anyhow::Result;
 
 use crate::{
+    auth::{CapSelector, CapabilityPack},
     proto::{
         grouping::{Range, RangeEnd, ThreeDRange},
         keys::{NamespaceSecretKey, UserId, UserSecretKey},
         meadowcap,
-        sync::Fingerprint,
-        willow::{AuthorisedEntry, Entry, NamespaceId},
+        sync::{Fingerprint, ReadAuthorisation},
+        willow::{AuthorisedEntry, Entry, NamespaceId, WriteCapability},
     },
     store::traits::{self, RangeSplit, SplitAction, SplitOpts},
 };
@@ -20,6 +21,7 @@ pub struct Store {
     secrets: Rc<RefCell<SecretStore>>,
     entries: Rc<RefCell<EntryStore>>,
     payloads: iroh_blobs::store::mem::Store,
+    caps: Rc<RefCell<CapsStore>>,
 }
 
 impl Store {
@@ -28,6 +30,7 @@ impl Store {
             payloads,
             secrets: Default::default(),
             entries: Default::default(),
+            caps: Default::default(),
         }
     }
 }
@@ -36,6 +39,7 @@ impl traits::Storage for Store {
     type Entries = Rc<RefCell<EntryStore>>;
     type Secrets = Rc<RefCell<SecretStore>>;
     type Payloads = iroh_blobs::store::mem::Store;
+    type Caps = Rc<RefCell<CapsStore>>;
 
     fn entries(&self) -> &Self::Entries {
         &self.entries
@@ -47,6 +51,10 @@ impl traits::Storage for Store {
 
     fn payloads(&self) -> &Self::Payloads {
         &self.payloads
+    }
+
+    fn caps(&self) -> &Self::Caps {
+        &self.caps
     }
 }
 
@@ -229,5 +237,127 @@ impl traits::EntryStorage for Rc<RefCell<EntryStore>> {
         }
         entries.push(entry.clone());
         Ok(true)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct CapsStore {
+    write_caps: HashMap<NamespaceId, Vec<WriteCapability>>,
+    read_caps: HashMap<NamespaceId, Vec<ReadAuthorisation>>,
+}
+
+impl CapsStore {
+    fn get_write_cap(&self, selector: &CapSelector) -> Result<Option<WriteCapability>> {
+        let candidates = self
+            .write_caps
+            .get(&selector.namespace_id)
+            .into_iter()
+            .flatten()
+            .filter(|cap| selector.is_covered_by(cap));
+
+        // Select the best candidate, by sorting for
+        // * first: widest area
+        // * then: smallest number of delegations
+        let best = candidates.reduce(
+            |prev, next| {
+                if next.is_wider_than(prev) {
+                    next
+                } else {
+                    prev
+                }
+            },
+        );
+        Ok(best.cloned())
+    }
+
+    fn get_read_cap(&self, selector: &CapSelector) -> Result<Option<ReadAuthorisation>> {
+        let candidates = self
+            .read_caps
+            .get(&selector.namespace_id)
+            .into_iter()
+            .flatten()
+            .filter(|auth| selector.is_covered_by(auth.read_cap()));
+
+        // Select the best candidate, by sorting for
+        // * widest area
+        let best = candidates.reduce(|prev, next| {
+            if next.read_cap().is_wider_than(prev.read_cap()) {
+                next
+            } else {
+                prev
+            }
+        });
+
+        Ok(best.cloned())
+    }
+
+    fn list_write_caps(
+        &self,
+        namespace: Option<NamespaceId>,
+    ) -> Result<impl Iterator<Item = WriteCapability> + 'static> {
+        let caps = if let Some(namespace) = namespace {
+            self.write_caps.get(&namespace).cloned().unwrap_or_default()
+        } else {
+            self.write_caps.values().flatten().cloned().collect()
+        };
+        Ok(caps.into_iter())
+    }
+
+    fn list_read_caps(
+        &self,
+        namespace: Option<NamespaceId>,
+    ) -> Result<impl Iterator<Item = ReadAuthorisation> + 'static> {
+        let caps = if let Some(namespace) = namespace {
+            self.read_caps.get(&namespace).cloned().unwrap_or_default()
+        } else {
+            self.read_caps.values().flatten().cloned().collect()
+        };
+        Ok(caps.into_iter())
+    }
+
+    fn insert(&mut self, cap: CapabilityPack) {
+        match cap {
+            CapabilityPack::Read(cap) => {
+                self.read_caps
+                    .entry(cap.read_cap().granted_namespace().id())
+                    .or_default()
+                    .push(cap);
+            }
+            CapabilityPack::Write(cap) => {
+                self.write_caps
+                    .entry(cap.granted_namespace().id())
+                    .or_default()
+                    .push(cap);
+            }
+        }
+    }
+}
+
+impl traits::CapsStorage for Rc<RefCell<CapsStore>> {
+    fn insert(&self, cap: CapabilityPack) -> Result<()> {
+        self.borrow_mut().insert(cap);
+        Ok(())
+    }
+
+    fn list_read_caps(
+        &self,
+        namespace: Option<NamespaceId>,
+    ) -> Result<impl Iterator<Item = ReadAuthorisation>> {
+        self.borrow().list_read_caps(namespace)
+    }
+
+    fn list_write_caps(
+        &self,
+        namespace: Option<NamespaceId>,
+    ) -> Result<impl Iterator<Item = WriteCapability>> {
+        self.borrow().list_write_caps(namespace)
+    }
+
+    fn get_write_cap(&self, selector: &CapSelector) -> Result<Option<WriteCapability>> {
+        self.borrow().get_write_cap(selector)
+    }
+
+    fn get_read_cap(&self, selector: &CapSelector) -> Result<Option<ReadAuthorisation>> {
+        self.borrow().get_read_cap(selector)
     }
 }
