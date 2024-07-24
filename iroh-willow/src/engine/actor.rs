@@ -357,7 +357,7 @@ impl<S: Storage> Actor<S> {
                     intents,
                     cancel_token.clone(),
                     session_id,
-                    EventSender(event_tx.clone()),
+                    EventSender(event_tx),
                     update_rx,
                 )
                 .instrument(error_span!("session", peer = %peer.fmt_short()));

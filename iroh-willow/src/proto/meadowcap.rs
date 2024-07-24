@@ -228,12 +228,6 @@ impl McCapability {
         (self.granted_area().includes_area(&other.granted_area()))
             || (self.granted_area() == other.granted_area()
                 && self.delegations().len() < other.delegations().len())
-
-        // match self.delegations().len().cmp(&other.delegations().len()) {
-        //     Ordering::Less => true,
-        //     Ordering::Greater => false,
-        //     Ordering::Equal => self.granted_area().includes_area(&other.granted_area()),
-        // }
     }
 
     pub fn delegate(

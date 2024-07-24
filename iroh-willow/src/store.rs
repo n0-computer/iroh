@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use rand_core::CryptoRngCore;
 
 use crate::{
-    auth::{Auth, AuthError, CapSelector, UserSelector},
+    auth::{Auth, AuthError, CapSelector, ReceiverSelector},
     form::{AuthForm, EntryOrForm},
     proto::{
         keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserId},
@@ -35,7 +35,7 @@ impl<S: Storage> Store<S> {
             entries: WatchableEntryStore::new(storage.entries().clone()),
             secrets: storage.secrets().clone(),
             payloads: storage.payloads().clone(),
-            auth: Auth::new(storage.secrets().clone()),
+            auth: Auth::new(storage.secrets().clone(), storage.caps().clone()),
         }
     }
 
@@ -64,7 +64,7 @@ impl<S: Storage> Store<S> {
         let capability = match auth {
             AuthForm::Exact(cap) => cap,
             AuthForm::Any(user_id) => {
-                let selector = CapSelector::for_entry(&entry, UserSelector::Exact(user_id));
+                let selector = CapSelector::for_entry(&entry, ReceiverSelector::Exact(user_id));
                 self.auth()
                     .get_write_cap(&selector)?
                     .ok_or_else(|| anyhow!("no write capability available"))?
