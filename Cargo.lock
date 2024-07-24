@@ -2836,6 +2836,7 @@ name = "iroh-net"
 version = "0.21.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "axum",
  "backoff",
  "base64 0.22.1",
@@ -2846,7 +2847,6 @@ dependencies = [
  "der",
  "derive_more",
  "duct",
- "flume",
  "futures-buffered",
  "futures-concurrency",
  "futures-lite 2.3.0",
