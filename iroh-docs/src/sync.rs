@@ -108,17 +108,34 @@ pub struct SyncOutcome {
     pub num_sent: usize,
 }
 
+fn get_as_ptr<T>(value: &T) -> Option<usize> {
+    use std::mem;
+    if mem::size_of::<T>() == std::mem::size_of::<usize>()
+        && mem::align_of::<T>() == mem::align_of::<usize>()
+    {
+        // Safe only if size and alignment requirements are met
+        unsafe { Some(mem::transmute_copy(value)) }
+    } else {
+        None
+    }
+}
+
+fn same_channel<T>(a: &async_channel::Sender<T>, b: &async_channel::Sender<T>) -> bool {
+    get_as_ptr(a).unwrap() == get_as_ptr(b).unwrap()
+}
+
 #[derive(Debug, Default)]
-struct Subscribers(Vec<flume::Sender<Event>>);
+struct Subscribers(Vec<async_channel::Sender<Event>>);
 impl Subscribers {
-    pub fn subscribe(&mut self, sender: flume::Sender<Event>) {
+    pub fn subscribe(&mut self, sender: async_channel::Sender<Event>) {
         self.0.push(sender)
     }
-    pub fn unsubscribe(&mut self, sender: &flume::Sender<Event>) {
-        self.0.retain(|s| !s.same_channel(sender));
+    pub fn unsubscribe(&mut self, sender: &async_channel::Sender<Event>) {
+        self.0.retain(|s| !same_channel(s, sender));
     }
     pub fn send(&mut self, event: Event) {
-        self.0.retain(|sender| sender.send(event.clone()).is_ok())
+        self.0
+            .retain(|sender| sender.send_blocking(event.clone()).is_ok())
     }
     pub fn len(&self) -> usize {
         self.0.len()
@@ -263,10 +280,10 @@ impl ReplicaInfo {
 
     /// Subscribe to insert events.
     ///
-    /// When subscribing to a replica, you must ensure that the corresponding [`flume::Receiver`] is
+    /// When subscribing to a replica, you must ensure that the corresponding [`async_channel::Receiver`] is
     /// received from in a loop. If not receiving, local and remote inserts will hang waiting for
     /// the receiver to be received from.
-    pub fn subscribe(&mut self, sender: flume::Sender<Event>) {
+    pub fn subscribe(&mut self, sender: async_channel::Sender<Event>) {
         self.subscribers.subscribe(sender)
     }
 
@@ -275,7 +292,7 @@ impl ReplicaInfo {
     /// Simply dropping the receiver is fine too. If you cloned a single sender to subscribe to
     /// multiple replicas, you can use this method to explicitly unsubscribe the sender from
     /// this replica without having to drop the receiver.
-    pub fn unsubscribe(&mut self, sender: &flume::Sender<Event>) {
+    pub fn unsubscribe(&mut self, sender: &async_channel::Sender<Event>) {
         self.subscribers.unsubscribe(sender)
     }
 
@@ -2156,6 +2173,14 @@ mod tests {
         Ok(())
     }
 
+    fn drain(events: async_channel::Receiver<Event>) -> Vec<Event> {
+        let mut res = vec![];
+        while let Ok(ev) = events.try_recv() {
+            res.push(ev);
+        }
+        res
+    }
+
     /// This tests that no events are emitted for entries received during sync which are obsolete
     /// (too old) by the time they are actually inserted in the store.
     #[test]
@@ -2173,8 +2198,8 @@ mod tests {
         let mut replica1 = store1.new_replica(namespace.clone())?;
         let mut replica2 = store2.new_replica(namespace.clone())?;
 
-        let (events1_sender, events1) = flume::bounded(32);
-        let (events2_sender, events2) = flume::bounded(32);
+        let (events1_sender, events1) = async_channel::bounded(32);
+        let (events2_sender, events2) = async_channel::bounded(32);
 
         replica1.info.subscribe(events1_sender);
         replica2.info.subscribe(events2_sender);
@@ -2198,8 +2223,8 @@ mod tests {
             .sync_process_message(from1, peer1, &mut state2)
             .unwrap();
         assert!(from2.is_none());
-        let events1 = events1.drain().collect::<Vec<_>>();
-        let events2 = events2.drain().collect::<Vec<_>>();
+        let events1 = drain(events1);
+        let events2 = drain(events2);
         assert_eq!(events1.len(), 1);
         assert_eq!(events2.len(), 1);
         assert!(matches!(events1[0], Event::LocalInsert { .. }));
