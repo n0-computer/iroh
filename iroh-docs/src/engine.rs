@@ -393,7 +393,7 @@ pub struct DefaultAuthor {
 impl DefaultAuthor {
     /// Load the default author from storage.
     ///
-    /// If the storage is empty creates a new author and perists it.
+    /// If the storage is empty creates a new author and persists it.
     pub async fn load(storage: DefaultAuthorStorage, docs_store: &SyncHandle) -> Result<Self> {
         let value = storage.load(docs_store).await?;
         Ok(Self {

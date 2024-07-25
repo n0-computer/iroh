@@ -130,7 +130,7 @@ pub async fn load_secret_key(key_path: PathBuf) -> anyhow::Result<SecretKey> {
         let secret_key = SecretKey::generate();
         let ser_key = secret_key.to_openssh()?;
 
-        // Try to canoncialize if possible
+        // Try to canonicalize if possible
         let key_path = key_path.canonicalize().unwrap_or(key_path);
         let key_path_parent = key_path.parent().ok_or_else(|| {
             anyhow::anyhow!("no parent directory found for '{}'", key_path.display())
