@@ -146,7 +146,7 @@ pub struct RelayNode {
 }
 
 impl RelayNode {
-    /// Creates a new relay node from itself.
+    /// Creates a new instance of a RelayNode from itself.
     pub fn copied(&self) -> Self {
         Self {
             url: self.url.clone(),
