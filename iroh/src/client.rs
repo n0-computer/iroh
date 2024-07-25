@@ -21,9 +21,11 @@ pub mod gossip;
 pub mod node;
 pub mod tags;
 
-/// Iroh rpc client - boxed so that we can have a concrete type.
-pub(crate) type RpcClient =
-    quic_rpc::RpcClient<RpcService, quic_rpc::transport::boxed::Connection<RpcService>>;
+/// Iroh rpc connection - boxed so that we can have a concrete type.
+pub(crate) type RpcConnection = quic_rpc::transport::boxed::Connection<RpcService>;
+
+/// Iroh rpc client.
+pub(crate) type RpcClient = quic_rpc::RpcClient<RpcService, RpcConnection>;
 
 /// Iroh client.
 #[derive(Debug, Clone)]
