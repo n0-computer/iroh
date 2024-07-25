@@ -55,7 +55,7 @@ pub(crate) struct ClientConnManager {
 /// Channels that the [`ClientConnManager`] uses to communicate with the
 /// [`ClientConnIo`] to forward the client:
 ///  - information about a peer leaving the network (This should only happen for peers that this
-///  client was previously communciating with)
+///    client was previously communciating with)
 ///  - packets sent to this client from another client in the network
 #[derive(Debug)]
 pub(crate) struct ClientChannels {
@@ -192,7 +192,7 @@ impl ClientConnManager {
 /// On the "write" side, the [`ClientConnIo`] can send the client:
 ///  - a KEEP_ALIVE frame
 ///  - a PEER_GONE frame to inform the client that a peer they have previously sent messages to
-///  is gone from the network
+///    is gone from the network
 ///  - packets from other peers
 ///
 /// On the "read" side, it can:
