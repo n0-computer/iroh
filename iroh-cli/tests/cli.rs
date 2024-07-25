@@ -709,7 +709,7 @@ fn make_get_cmd(iroh_data_dir: &Path, ticket: &str, out: Option<PathBuf>) -> duc
         "--metrics-port",
         "disabled",
         "--start",
-        "blob",
+        "blobs",
         "get",
         ticket,
         "--out",
