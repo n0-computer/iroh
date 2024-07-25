@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Event","InEvent","Message","OutEvent","Priority","RemovalReason","Timer"],"struct":["Config","Disconnect","ForwardJoin","Neighbor","Shuffle","ShuffleReply","State","Stats","Ttl"],"type":["Alive","Respond"]};

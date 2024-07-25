@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"static":["EMPTY_RANGE_SPEC"],"struct":["NonEmptyRequestRangeSpecIter","RangeSpec","RangeSpecSeq","RequestRangeSpecIter"]};

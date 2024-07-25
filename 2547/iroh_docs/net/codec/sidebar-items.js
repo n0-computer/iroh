@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_MESSAGE_SIZE"],"enum":["Message"],"fn":["run_alice"],"struct":["BobState","SyncCodec"]};

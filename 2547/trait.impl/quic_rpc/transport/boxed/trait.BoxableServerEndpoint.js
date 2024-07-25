@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"iroh":[["impl BoxableServerEndpoint&lt;<a class=\"enum\" href=\"iroh/rpc_protocol/enum.Request.html\" title=\"enum iroh::rpc_protocol::Request\">Request</a>, <a class=\"enum\" href=\"iroh/rpc_protocol/enum.Response.html\" title=\"enum iroh::rpc_protocol::Response\">Response</a>&gt; for <a class=\"struct\" href=\"iroh/node/builder/struct.DummyServerEndpoint.html\" title=\"struct iroh::node::builder::DummyServerEndpoint\">DummyServerEndpoint</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

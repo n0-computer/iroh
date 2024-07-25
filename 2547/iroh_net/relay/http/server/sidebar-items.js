@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RelayHandler","TlsAcceptor"],"fn":["body_empty","body_full","downcast_upgrade","relay_connection_handler"],"struct":["Handlers","Inner","RelayService","Server","ServerBuilder","ServerHandle","ServerState","TlsConfig"],"type":["BytesBody","HyperError","HyperHandler","HyperResult"]};

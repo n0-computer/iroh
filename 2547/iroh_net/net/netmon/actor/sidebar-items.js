@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ACTOR_CHAN_CAPACITY","MON_CHAN_CAPACITY","POLL_WALL_TIME_INTERVAL"],"enum":["ActorMessage","NetworkMessage"],"fn":["is_major_change","prefixes_major_equal"],"struct":["Actor","CallbackToken"],"type":["Callback"]};

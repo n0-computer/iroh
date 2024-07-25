@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DecodeError","Error","ErrorCode","ResultCode","SuccessCode"],"struct":["Response"]};
