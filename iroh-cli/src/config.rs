@@ -10,10 +10,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use iroh::net::{
-    defaults,
-    relay::{RelayMap, RelayNode},
-};
+use iroh::net::relay::{RelayMap, RelayNode};
 use iroh::node::GcPolicy;
 use iroh::{
     client::Iroh,
@@ -68,32 +65,8 @@ pub(crate) struct NodeConfig {
 
 impl Default for NodeConfig {
     fn default() -> Self {
-        let relay_nodes = {
-            #[cfg(not(test))]
-            let force_staging_relays = match env::var(iroh::net::endpoint::ENV_FORCE_STAGING_RELAYS)
-            {
-                Ok(value) => value == "1",
-                Err(_) => false,
-            };
-            #[cfg(test)]
-            #[allow(unused_variables)]
-            let force_staging_relays = false;
-
-            if force_staging_relays {
-                use defaults::staging::{default_eu_relay_node, default_na_relay_node};
-                [default_na_relay_node(), default_eu_relay_node()].into()
-            } else {
-                use defaults::prod::{
-                    default_ap_relay_node, default_eu_relay_node, default_na_relay_node,
-                };
-                [
-                    default_na_relay_node(),
-                    default_eu_relay_node(),
-                    default_ap_relay_node(),
-                ]
-                .into()
-            }
-        };
+        let relay_map = iroh::net::endpoint::default_relay_mode().relay_map();
+        let relay_nodes = relay_map.nodes().map(|v| v.copied()).collect();
         Self {
             relay_nodes,
             gc_policy: GcPolicyConfig::default(),

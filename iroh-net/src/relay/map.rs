@@ -22,6 +22,18 @@ pub enum RelayMode {
     Custom(RelayMap),
 }
 
+impl RelayMode {
+    /// Returns the relay map for this mode.
+    pub fn relay_map(&self) -> RelayMap {
+        match self {
+            RelayMode::Disabled => RelayMap::empty(),
+            RelayMode::Default => crate::defaults::prod::default_relay_map(),
+            RelayMode::Staging => crate::defaults::staging::default_relay_map(),
+            RelayMode::Custom(relay_map) => relay_map.clone(),
+        }
+    }
+}
+
 /// Configuration of all the relay servers that can be used.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelayMap {
@@ -131,6 +143,17 @@ pub struct RelayNode {
     ///
     /// Setting this to `0` means the default STUN port is used.
     pub stun_port: u16,
+}
+
+impl RelayNode {
+    /// Creates a new relay node from itself.
+    pub fn copied(&self) -> Self {
+        Self {
+            url: self.url.clone(),
+            stun_only: self.stun_only,
+            stun_port: self.stun_port,
+        }
+    }
 }
 
 impl fmt::Display for RelayNode {
