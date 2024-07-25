@@ -23,7 +23,7 @@ pub(crate) mod rpc;
 pub(crate) mod start;
 pub(crate) mod tags;
 
-/// iroh is a tool for syncing bytes
+/// iroh is a tool for building distributed apps
 /// https://iroh.computer/docs
 #[derive(Parser, Debug, Clone)]
 #[clap(version, verbatim_doc_comment)]
@@ -31,7 +31,7 @@ pub(crate) struct Cli {
     #[clap(subcommand)]
     pub(crate) command: Commands,
 
-    /// Path to the configuration file.
+    /// Path to the configuration file, see https://iroh.computer/docs/reference/config.
     #[clap(long)]
     pub(crate) config: Option<PathBuf>,
 
@@ -47,7 +47,7 @@ pub(crate) struct Cli {
     #[clap(long)]
     pub(crate) rpc_addr: Option<SocketAddr>,
 
-    /// If set, metrics will be dumped in CSV format to the specified path at regular intervals (100ms).
+    /// Write metrics in CSV format at 100ms intervals. Disabled by default.
     #[clap(long)]
     pub(crate) metrics_dump_path: Option<PathBuf>,
 }
