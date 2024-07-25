@@ -388,7 +388,7 @@ fn cli_bao_store_migration() -> anyhow::Result<()> {
     );
 
     println!("iroh started up.");
-    let tags_output = run_cli(&iroh_data_dir, ["tag", "list"])?;
+    let tags_output = run_cli(&iroh_data_dir, ["tags", "list"])?;
     let expected = r#""complete": 2vfkw5gcrtbybfsczoxq4mae47svtgcgsniwcvoz7xf36nz45yfa (Raw)
 "partial": 4yny3v7anmzzsajv2amm3nxpqd2owfw4dqnjwq6anv7nj2djmt2q (Raw)
 "#;
