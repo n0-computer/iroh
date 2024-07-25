@@ -59,6 +59,9 @@ pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 /// is still no connection the configured [`Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
+/// Environment variable to force the use of staging relays.
+pub const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
+
 /// Builder for [`Endpoint`].
 ///
 /// By default the endpoint will generate a new random [`SecretKey`], which will result in a
@@ -86,7 +89,15 @@ impl Default for Builder {
     fn default() -> Self {
         // Use staging in testing
         #[cfg(not(any(test, feature = "test-utils")))]
-        let relay_mode = RelayMode::Default;
+        let force_staging_relays = match std::env::var(ENV_FORCE_STAGING_RELAYS) {
+            Ok(value) => value == "1",
+            Err(_) => false,
+        };
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let relay_mode = match force_staging_relays {
+            true => RelayMode::Staging,
+            false => RelayMode::Default,
+        };
         #[cfg(any(test, feature = "test-utils"))]
         let relay_mode = RelayMode::Staging;
 
