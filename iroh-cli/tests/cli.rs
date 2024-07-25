@@ -394,12 +394,12 @@ fn cli_bao_store_migration() -> anyhow::Result<()> {
 "#;
     assert_eq!(tags_output, expected);
 
-    let blob_output = run_cli(&iroh_data_dir, ["blob", "list", "blobs"])?;
+    let blob_output = run_cli(&iroh_data_dir, ["blobs", "list", "blobs"])?;
     let expected = r#" 2vfkw5gcrtbybfsczoxq4mae47svtgcgsniwcvoz7xf36nz45yfa (8 B)
 "#;
     assert_eq!(blob_output, expected);
 
-    let incomplete_blob_output = run_cli(iroh_data_dir, ["blob", "list", "incomplete-blobs"])?;
+    let incomplete_blob_output = run_cli(iroh_data_dir, ["blobs", "list", "incomplete-blobs"])?;
     let expected = r#"4yny3v7anmzzsajv2amm3nxpqd2owfw4dqnjwq6anv7nj2djmt2q (0 B)
 "#;
     assert_eq!(incomplete_blob_output, expected);
@@ -830,7 +830,7 @@ fn test_provide_get_loop_single(input: Input, output: Output, hash: Hash) -> Res
         "--metrics-port",
         "disabled",
         "--start",
-        "blob",
+        "blobs",
         "get",
         "--node",
         &node,
