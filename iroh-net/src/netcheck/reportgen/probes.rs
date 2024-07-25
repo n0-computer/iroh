@@ -203,7 +203,7 @@ impl ProbePlan {
         let mut plan = Self(BTreeSet::new());
 
         // The first time we need add probes after the STUN we record this delay, so that
-        // further relay server can re-use this delay.
+        // further relay server can reuse this delay.
         let mut max_stun_delay: Option<Duration> = None;
 
         for relay_node in relay_map.nodes() {
@@ -284,7 +284,7 @@ impl ProbePlan {
         let mut plan = Self(Default::default());
 
         // The first time we need add probes after the STUN we record this delay, so that
-        // further relay servers can re-use this delay.
+        // further relay servers can reuse this delay.
         let mut max_stun_delay: Option<Duration> = None;
 
         let had_stun_ipv4 = !last_report.relay_v4_latency.is_empty();
