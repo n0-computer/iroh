@@ -27,6 +27,8 @@ const ENV_AUTHOR: &str = "IROH_AUTHOR";
 const ENV_DOC: &str = "IROH_DOC";
 const ENV_CONFIG_DIR: &str = "IROH_CONFIG_DIR";
 const ENV_FILE_RUST_LOG: &str = "IROH_FILE_RUST_LOG";
+#[allow(dead_code)]
+const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub(crate) const CONFIG_FILE_NAME: &str = "iroh.config.toml";
@@ -68,24 +70,33 @@ pub(crate) struct NodeConfig {
 
 impl Default for NodeConfig {
     fn default() -> Self {
-        #[cfg(not(test))]
         let relay_nodes = {
-            use defaults::prod::{
-                default_ap_relay_node, default_eu_relay_node, default_na_relay_node,
+            #[cfg(not(test))]
+            let force_staging_relays = match env::var(ENV_FORCE_STAGING_RELAYS) {
+                Ok(value) => value == "1",
+                Err(_) => false,
             };
-            [
-                default_na_relay_node(),
-                default_eu_relay_node(),
-                default_ap_relay_node(),
-            ]
-        };
-        #[cfg(test)]
-        let relay_nodes = {
-            use defaults::staging::{default_eu_relay_node, default_na_relay_node};
-            [default_na_relay_node(), default_eu_relay_node()]
+            #[cfg(test)]
+            #[allow(unused_variables)]
+            let force_staging_relays = false;
+
+            if force_staging_relays {
+                use defaults::staging::{default_eu_relay_node, default_na_relay_node};
+                [default_na_relay_node(), default_eu_relay_node()].into()
+            } else {
+                use defaults::prod::{
+                    default_ap_relay_node, default_eu_relay_node, default_na_relay_node,
+                };
+                [
+                    default_na_relay_node(),
+                    default_eu_relay_node(),
+                    default_ap_relay_node(),
+                ]
+                .into()
+            }
         };
         Self {
-            relay_nodes: relay_nodes.into(),
+            relay_nodes,
             gc_policy: GcPolicyConfig::default(),
             metrics_addr: Some(([127, 0, 0, 1], 9090).into()),
             file_logs: Default::default(),
