@@ -46,6 +46,7 @@ use crate::rpc_protocol::blobs::{
     BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse, BatchCreateTempTagRequest,
     BatchUpdate, BlobStatusRequest, BlobStatusResponse,
 };
+use crate::rpc_protocol::tags::SyncMode;
 use crate::rpc_protocol::{
     authors, blobs,
     blobs::{
@@ -216,8 +217,8 @@ impl<D: BaoStore> Handler<D> {
         match msg {
             ListTags(msg) => chan.server_streaming(msg, self, Self::blob_list_tags).await,
             DeleteTag(msg) => chan.rpc(msg, self, Self::blob_delete_tag).await,
-            Create(msg) => chan.rpc(msg, self, Self::tags_create_tag).await,
-            Set(msg) => chan.rpc(msg, self, Self::tags_set_tag).await,
+            Create(msg) => chan.rpc(msg, self, Self::tags_create).await,
+            Set(msg) => chan.rpc(msg, self, Self::tags_set).await,
         }
     }
 
@@ -942,7 +943,11 @@ impl<D: BaoStore> Handler<D> {
         }
     }
 
-    async fn tags_set_tag(self, msg: tags::SetRequest) -> RpcResult<()> {
+    async fn tags_set(self, msg: tags::SetRequest) -> RpcResult<()> {
+        self.inner.db.set_tag(msg.name, msg.value).await?;
+        if let SyncMode::Full = msg.sync {
+            self.inner.db.sync().await?;
+        }
         if let Some(batch) = msg.batch {
             if let Some(content) = msg.value.as_ref() {
                 self.inner
@@ -952,11 +957,14 @@ impl<D: BaoStore> Handler<D> {
                     .remove_one(batch, content)?;
             }
         }
-        self.inner.db.set_tag(msg.name, msg.value).await?;
         Ok(())
     }
 
-    async fn tags_create_tag(self, msg: tags::CreateRequest) -> RpcResult<Tag> {
+    async fn tags_create(self, msg: tags::CreateRequest) -> RpcResult<Tag> {
+        let tag = self.inner.db.create_tag(msg.value).await?;
+        if let SyncMode::Full = msg.sync {
+            self.inner.db.sync().await?;
+        }
         if let Some(batch) = msg.batch {
             self.inner
                 .blob_batches
@@ -964,7 +972,7 @@ impl<D: BaoStore> Handler<D> {
                 .await
                 .remove_one(batch, &msg.value)?;
         }
-        Ok(self.inner.db.create_tag(msg.value).await?)
+        Ok(tag)
     }
 
     fn node_watch(self, _: NodeWatchRequest) -> impl Stream<Item = WatchResponse> {

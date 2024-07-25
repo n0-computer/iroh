@@ -758,13 +758,6 @@ impl Store {
         Ok(self.0.dump().await?)
     }
 
-    /// Ensure that all operations before the sync are processed and persisted.
-    ///
-    /// This is done by closing any open write transaction.
-    pub async fn sync(&self) -> io::Result<()> {
-        Ok(self.0.sync().await?)
-    }
-
     /// Import from a v0 or v1 flat store, for backwards compatibility.
     pub async fn import_flat_store(&self, paths: FlatStorePaths) -> io::Result<bool> {
         Ok(self.0.import_flat_store(paths).await?)
@@ -1422,6 +1415,10 @@ impl super::Store for Store {
 
     fn temp_tag(&self, value: HashAndFormat) -> TempTag {
         self.0.temp.temp_tag(value)
+    }
+
+    async fn sync(&self) -> io::Result<()> {
+        Ok(self.0.sync().await?)
     }
 
     async fn shutdown(&self) {

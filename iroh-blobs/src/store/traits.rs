@@ -400,6 +400,9 @@ pub trait Store: ReadableStore + MapMut + std::fmt::Debug {
     /// Shutdown the store.
     fn shutdown(&self) -> impl Future<Output = ()> + Send;
 
+    /// Sync the store.
+    fn sync(&self) -> impl Future<Output = io::Result<()>> + Send;
+
     /// Validate the database
     ///
     /// This will check that the file and outboard content is correct for all complete

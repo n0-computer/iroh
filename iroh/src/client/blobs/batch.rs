@@ -28,7 +28,7 @@ use crate::{
             BatchAddPathRequest, BatchAddStreamRequest, BatchAddStreamResponse,
             BatchAddStreamUpdate, BatchCreateTempTagRequest, BatchId, BatchUpdate,
         },
-        tags,
+        tags::{self, SyncMode},
     },
 };
 
@@ -417,6 +417,7 @@ impl Batch {
             .rpc(tags::CreateRequest {
                 value: tt.hash_and_format(),
                 batch: Some(self.0.batch),
+                sync: SyncMode::Full,
             })
             .await??;
         Ok(tag)
@@ -430,6 +431,7 @@ impl Batch {
                 name: tag,
                 value: Some(tt.hash_and_format()),
                 batch: Some(self.0.batch),
+                sync: SyncMode::Full,
             })
             .await??;
         Ok(())

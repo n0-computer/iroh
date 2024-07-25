@@ -32,6 +32,16 @@ pub enum Response {
     DeleteTag(RpcResult<()>),
 }
 
+/// Determine how to sync the db after a modification operation
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub enum SyncMode {
+    /// Fully sync the db
+    #[default]
+    Full,
+    /// Do not sync the db
+    None,
+}
+
 /// Create a tag
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateRequest {
@@ -39,6 +49,8 @@ pub struct CreateRequest {
     pub value: HashAndFormat,
     /// Batch to use, none for global
     pub batch: Option<BatchId>,
+    /// Sync mode
+    pub sync: SyncMode,
 }
 
 /// Set or delete a tag
@@ -50,6 +62,8 @@ pub struct SetRequest {
     pub value: Option<HashAndFormat>,
     /// Batch to use, none for global
     pub batch: Option<BatchId>,
+    /// Sync mode
+    pub sync: SyncMode,
 }
 
 /// List all collections
