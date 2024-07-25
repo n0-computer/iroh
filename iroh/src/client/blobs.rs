@@ -54,7 +54,6 @@ use std::{
 };
 
 use anyhow::{anyhow, Context as _, Result};
-use batch::Batch;
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use futures_util::SinkExt;
@@ -77,7 +76,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
 mod batch;
-pub use batch::AddDirOpts;
+pub use batch::{AddDirOpts, AddFileOpts, AddReaderOpts, Batch};
 
 use crate::rpc_protocol::blobs::{
     AddPathRequest, AddStreamRequest, AddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
