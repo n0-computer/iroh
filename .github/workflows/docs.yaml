@@ -30,7 +30,7 @@ jobs:
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         publish_dir: ./target/doc
-        destination_dir: ${{ github.event.pull_request.number }}
+        destination_dir: pr/${{ github.event.pull_request.number }}/docs
 
     - name: Find Docs Comment
       uses: peter-evans/find-comment@v3
@@ -46,7 +46,7 @@ jobs:
         issue-number: ${{ github.event.pull_request.number }}
         comment-id: ${{ steps.fc.outputs.comment-id }}
         body: |
-          Documentation for this PR has been generated and is available at: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/${{ github.event.pull_request.number }}/
+          Documentation for this PR has been generated and is available at: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/pr/${{ github.event.pull_request.number }}/docs/
           
           Last updated: ${{ github.event.pull_request.updated_at }}
         edit-mode: replace
