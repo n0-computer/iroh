@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["PEERS_PER_DOC_CACHE_SIZE"],"enum":["AuthorFilter","DownloadPolicy","FilterKind","ImportNamespaceOutcome","KeyFilter","OpenError","QueryKind","SortBy","SortDirection"],"mod":["fs","pubkeys","util"],"struct":["FlatQuery","MemPublicKeyStore","Query","QueryBuilder","SingleLatestPerKeyQuery"],"trait":["DownloadPolicyStore","PublicKeyStore"]};

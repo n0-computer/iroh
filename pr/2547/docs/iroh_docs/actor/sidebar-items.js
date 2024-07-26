@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ACTION_CAP","MAX_COMMIT_DELAY"],"enum":["Action","ReplicaAction"],"fn":["get_author","iter_to_channel_async","send_reply","send_reply_error","send_reply_with"],"struct":["Actor","OpenOpts","OpenReplica","OpenReplicas","OpenState","SendReplyError","SyncHandle"]};

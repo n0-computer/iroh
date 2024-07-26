@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_BIND_PORT","DEFAULT_GC_INTERVAL","DEFAULT_RPC_ADDR","DEFAULT_RPC_PORT","ENDPOINT_WAIT","MAX_CONNECTIONS","MAX_RPC_CONNECTIONS","MAX_RPC_STREAMS","MAX_STREAMS"],"enum":["DiscoveryConfig","DocsStorage","GcPolicy","StorageConfig"],"fn":["make_rpc_endpoint","mk_external_rpc"],"struct":["Builder","DummyServerEndpoint","ProtocolBuilder"]};

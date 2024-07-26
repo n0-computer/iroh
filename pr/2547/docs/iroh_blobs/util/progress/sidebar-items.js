@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ProgressSendError"],"struct":["BoxableProgressSenderWrapper","BoxedProgressSender","FallibleProgressSliceWriter","FlumeProgressSender","IgnoreProgressSender","ProgressSliceWriter","WithFilterMap","WithMap"],"trait":["BoxableProgressSender","IdGenerator","ProgressSender"],"type":["BoxFuture","ProgressSendResult"]};

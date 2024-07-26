@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["run"],"macro":["migrate_multimap_table","migrate_table"],"mod":["new","old"]};

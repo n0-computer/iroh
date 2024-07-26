@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AddProgress","Event","SentStatus"],"fn":["encode_error_to_anyhow","handle_connection","handle_get","handle_stream","read_request","send_blob","transfer_collection"],"struct":["ResponseWriter","TransferStats"],"trait":["EventSender"]};

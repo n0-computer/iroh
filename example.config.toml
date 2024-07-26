@@ -1,0 +1,5 @@
+[[derp_nodes]]
+url = "https://foo.bar"
+stun_only = false
+stun_port = 1244
+

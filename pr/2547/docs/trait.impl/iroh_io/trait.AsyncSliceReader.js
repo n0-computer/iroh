@@ -1,0 +1,4 @@
+(function() {var implementors = {
+"iroh":[],
+"iroh_blobs":[["impl AsyncSliceReader for <a class=\"struct\" href=\"iroh_blobs/store/bao_file/struct.DataReader.html\" title=\"struct iroh_blobs::store::bao_file::DataReader\">DataReader</a>"],["impl AsyncSliceReader for <a class=\"struct\" href=\"iroh_blobs/store/bao_file/struct.OutboardReader.html\" title=\"struct iroh_blobs::store::bao_file::OutboardReader\">OutboardReader</a>"],["impl AsyncSliceReader for <a class=\"struct\" href=\"iroh_blobs/store/mem/struct.DataReader.html\" title=\"struct iroh_blobs::store::mem::DataReader\">DataReader</a>"],["impl AsyncSliceReader for <a class=\"struct\" href=\"iroh_blobs/store/mem/struct.OutboardReader.html\" title=\"struct iroh_blobs::store::mem::OutboardReader\">OutboardReader</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

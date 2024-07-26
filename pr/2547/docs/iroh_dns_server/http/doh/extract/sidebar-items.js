@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DnsMimeType"],"fn":["decode_request","encode_query_as_request","handle_dns_json_query","handle_dns_message_query"],"struct":["DnsMessageQuery","DnsQuery","DnsRequestBody","DnsRequestQuery"]};

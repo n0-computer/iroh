@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["RETRIES"],"enum":["SendError"],"fn":["try_send"],"struct":["Client","Clients"]};

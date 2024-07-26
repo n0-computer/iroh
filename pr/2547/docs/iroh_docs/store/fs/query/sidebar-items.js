@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["QueryRange"],"fn":["value_is_empty"],"struct":["QueryIterator"]};
