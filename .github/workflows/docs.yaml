@@ -49,7 +49,7 @@ jobs:
         issue-number: ${{ github.event.pull_request.number }}
         comment-id: ${{ steps.fc.outputs.comment-id }}
         body: |
-          Documentation for this PR has been generated and is available at: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/${{ env.PREVIEW_PATH }}/
+          Documentation for this PR has been generated and is available at: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/${{ env.PREVIEW_PATH }}/iroh/
           
           Last updated: ${{ github.event.pull_request.updated_at }}
         edit-mode: replace
