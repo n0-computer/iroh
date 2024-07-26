@@ -14,7 +14,6 @@ use std::{collections::BTreeMap, net::SocketAddr};
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use iroh_base::key::PublicKey;
 use iroh_net::{endpoint::ConnectionInfo, relay::RelayUrl, NodeAddr, NodeId};
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
