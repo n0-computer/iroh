@@ -23,7 +23,7 @@ pub mod gossip;
 pub mod node;
 pub mod tags;
 
-// Keep this type exposed, otherwise every occurance of `RpcClient` in the API
+// Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
 // will show up as `RpcClient<RpcService, Connection<RpcService>>` in the docs.
 /// Iroh rpc client - boxed so that we can have a concrete type.
 pub type RpcClient =
