@@ -51,7 +51,7 @@ impl Default for SubscribeOpts {
 }
 
 impl Client {
-    /// Subscribe to a gossip topic.
+    /// Subscribes to a gossip topic.
     ///
     /// Returns a sink to send updates to the topic and a stream of responses.
     ///
@@ -68,7 +68,7 @@ impl Client {
     /// immediate neighbors of the node.
     ///
     /// A Lagged event indicates that the gossip stream has not been consumed quickly enough.
-    /// You can adjust the buffer size with the [] option.
+    /// You can adjust the buffer size with the [`SubscribeOpts::subscription_capacity`] option.
     pub async fn subscribe_with_opts(
         &self,
         topic: TopicId,
@@ -90,7 +90,7 @@ impl Client {
         Ok((sink, stream))
     }
 
-    /// Subscribe to a gossip topic with default options.
+    /// Subscribes to a gossip topic with default options.
     pub async fn subscribe(
         &self,
         topic: impl Into<TopicId>,

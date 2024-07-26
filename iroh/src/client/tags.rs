@@ -29,19 +29,19 @@ pub struct Client {
 }
 
 impl Client {
-    /// List all tags.
+    /// Lists all tags.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<TagInfo>>> {
         let stream = self.rpc.server_streaming(ListRequest::all()).await?;
         Ok(stream.map(|res| res.map_err(anyhow::Error::from)))
     }
 
-    /// List all tags with a hash_seq format.
+    /// Lists all tags with a hash_seq format.
     pub async fn list_hash_seq(&self) -> Result<impl Stream<Item = Result<TagInfo>>> {
         let stream = self.rpc.server_streaming(ListRequest::hash_seq()).await?;
         Ok(stream.map(|res| res.map_err(anyhow::Error::from)))
     }
 
-    /// Delete a tag.
+    /// Deletes a tag.
     pub async fn delete(&self, name: Tag) -> Result<()> {
         self.rpc.rpc(DeleteRequest { name }).await??;
         Ok(())
