@@ -24,7 +24,7 @@ jobs:
       uses: mozilla-actions/sccache-action@v0.0.5
 
     - name: Generate Docs
-      run: cargo doc --workspace --all-features --no-deps --document-private-items
+      run: cargo doc --workspace --all-features --no-deps
       env:
         RUSTDOCFLAGS: --cfg docsrs
 
