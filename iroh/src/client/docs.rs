@@ -312,7 +312,7 @@ impl Doc {
         Ok(res.entry.map(|entry| entry.into()))
     }
 
-    /// Returns entries.
+    /// Returns all entries matching the query.
     pub async fn get_many(
         &self,
         query: impl Into<Query>,
