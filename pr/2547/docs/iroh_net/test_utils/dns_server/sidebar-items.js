@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["create_dns_resolver","run_dns_server"],"struct":["TestDnsServer"],"trait":["QueryHandler"],"type":["QueryHandlerFunction"]};

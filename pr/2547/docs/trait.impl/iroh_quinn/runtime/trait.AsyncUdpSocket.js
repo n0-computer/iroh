@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"iroh_net":[["impl AsyncUdpSocket for <a class=\"struct\" href=\"iroh_net/magicsock/struct.Handle.html\" title=\"struct iroh_net::magicsock::Handle\">Handle</a>"],["impl AsyncUdpSocket for <a class=\"struct\" href=\"iroh_net/magicsock/udp_conn/struct.UdpConn.html\" title=\"struct iroh_net::magicsock::udp_conn::UdpConn\">UdpConn</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

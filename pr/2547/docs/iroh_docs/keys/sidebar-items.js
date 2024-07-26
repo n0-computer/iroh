@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["Author","AuthorId","AuthorPublicKey","NamespaceId","NamespacePublicKey","NamespaceSecret"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CertMode","TlsAcceptor"],"fn":["escape_hostname","load_certs","load_secret_key"],"static":["UNSAFE_HOSTNAME_CHARACTERS"]};

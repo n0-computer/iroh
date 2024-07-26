@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["Collection","CollectionMeta"],"trait":["SimpleStore"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["overwrite_and_sync","read_and_remove"],"struct":["BatchIter","PeekableFlumeReceiver","ProgressReader"]};
