@@ -54,6 +54,8 @@ impl Client {
     }
 
     /// Lists document authors for which we have a secret key.
+    ///
+    /// It's only possible to create writes from authors that we have the secret key of.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<AuthorId>>> {
         let stream = self.rpc.server_streaming(ListRequest {}).await?;
         Ok(flatten(stream).map(|res| res.map(|res| res.author_id)))
@@ -61,7 +63,7 @@ impl Client {
 
     /// Exports the given author.
     ///
-    /// Warning: This contains sensitive data.
+    /// Warning: The [`Author`] struct contains sensitive data.
     pub async fn export(&self, author: AuthorId) -> Result<Option<Author>> {
         let res = self.rpc.rpc(ExportRequest { author }).await??;
         Ok(res.author)
@@ -69,7 +71,7 @@ impl Client {
 
     /// Imports the given author.
     ///
-    /// Warning: This contains sensitive data.
+    /// Warning: The [`Author`] struct contains sensitive data.
     pub async fn import(&self, author: Author) -> Result<()> {
         self.rpc.rpc(ImportRequest { author }).await??;
         Ok(())
