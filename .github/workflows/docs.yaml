@@ -12,6 +12,8 @@ jobs:
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
+      PREVIEW_PATH: pr/${{ github.event.pull_request.number }}/docs
+
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@master
@@ -25,12 +27,18 @@ jobs:
       env:
         RUSTDOCFLAGS: --cfg docsrs
 
-    - name: Deploy Docs to GitHub Pages
+    - name: Prepare Docs for Deployment
+      run: |
+        mkdir -p ${{ env.PREVIEW_PATH }}
+        cp -R target/doc/* ${{ env.PREVIEW_PATH }}/
+
+    - name: Deploy Docs to Preview Branch
       uses: peaceiris/actions-gh-pages@v4
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./target/doc
-        destination_dir: pr/${{ github.event.pull_request.number }}/docs
+        publish_dir: .
+        publish_branch: generated-docs-preview
+        keep_files: true
 
     - name: Find Docs Comment
       uses: peter-evans/find-comment@v3
@@ -46,7 +54,7 @@ jobs:
         issue-number: ${{ github.event.pull_request.number }}
         comment-id: ${{ steps.fc.outputs.comment-id }}
         body: |
-          Documentation for this PR has been generated and is available at: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/pr/${{ github.event.pull_request.number }}/docs/
+          Documentation for this PR has been generated and is available at: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/${{ env.PREVIEW_PATH }}/
           
           Last updated: ${{ github.event.pull_request.updated_at }}
         edit-mode: replace
