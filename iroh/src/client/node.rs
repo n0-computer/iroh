@@ -1,6 +1,10 @@
 //! API to manage the iroh node itself.
 //!
-//! The main entry point is the [Client].
+//! The main entry point is the [`Client`].
+//!
+//! You obtain a [`Client`] via [`Iroh::node()`](crate::client::Iroh::node),
+//! or just use [`Iroh`](crate::client::Iroh) directly,
+//! as it has a `Deref` implementation for this [`Client`].
 //!
 //! The client can be used to get information about the node, such as the
 //! [status](Client::status), [node id](Client::node_id) or

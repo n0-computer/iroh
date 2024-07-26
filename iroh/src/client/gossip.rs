@@ -4,6 +4,8 @@
 //!
 //! The main entry point is the [`Client`].
 //!
+//! You obtain a [`Client`] via [`Iroh::gossip()`](crate::client::Iroh::gossip).
+//!
 //! The gossip API is extremely simple. You use [`subscribe`](Client::subscribe)
 //! to subscribe to a topic. This returns a sink to send updates to the topic
 //! and a stream of responses.

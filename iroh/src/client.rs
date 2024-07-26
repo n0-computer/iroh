@@ -1,4 +1,6 @@
 //! Client to an Iroh node.
+//!
+//! See the documentation for [`Iroh`] for more information.
 
 use futures_lite::{Stream, StreamExt};
 use ref_cast::RefCast;
@@ -25,7 +27,17 @@ pub mod tags;
 pub(crate) type RpcClient =
     quic_rpc::RpcClient<RpcService, quic_rpc::transport::boxed::Connection<RpcService>>;
 
-/// Iroh client.
+/// The iroh client.
+///
+/// There are three ways to obtain this client, depending on from which context
+/// you're running in, relative to the main [`Node`](crate::node::Node):
+///
+/// 1. If you just spawned the client in rust the same process and have a reference to it:
+///    Use [`Node::client()`](crate::node::Node::client).
+/// 2. If the main node wasn't spawned in the same process, but on the same machine:
+///    Use [`Iroh::connect_path`].
+/// 3. If the main node was spawned somewhere else and has been made accessible via IP:
+///    Use [`Iroh::connect_addr`].
 #[derive(Debug, Clone)]
 pub struct Iroh {
     rpc: RpcClient,

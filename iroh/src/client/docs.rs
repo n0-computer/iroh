@@ -1,4 +1,8 @@
 //! API for document management.
+//!
+//! The main entry point is the [`Client`].
+//!
+//! You obtain a [`Client`] via [`Iroh::docs()`](crate::client::Iroh::docs).
 
 use std::{
     path::{Path, PathBuf},
