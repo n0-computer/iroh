@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Message","PanicMode","ShutdownMode","SpawnError"],"fn":["get_panic_info","get_thread_name"],"struct":["CancellationToken","CancellationTokenInner","Config","LocalPool","LocalPoolHandle","Run"],"type":["BoxedFut","SpawnFn","SpawnResult"]};

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["load_node_addrs","store_node_addrs"]};

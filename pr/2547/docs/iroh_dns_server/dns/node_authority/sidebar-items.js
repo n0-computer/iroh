@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["err_nx_domain","err_refused","parse_name_as_pkarr_with_origin"],"struct":["NodeAuthority"]};

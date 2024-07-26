@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Request","Response"],"struct":["DeleteRequest","ListRequest"]};

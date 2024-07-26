@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["MigrateOutcome"],"fn":["migration_001_populate_latest_table","migration_002_namespaces_populate_v2","migration_003_namespaces_delete_v1","migration_004_populate_by_key_index","run_migration","run_migrations"]};

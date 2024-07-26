@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Origin","SyncDirection","SyncReason","SyncState"],"fn":["expected_sync_direction"],"struct":["NamespaceState","NamespaceStates","PeerState"]};

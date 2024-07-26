@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["ITER_CHANNEL_CAP"]};

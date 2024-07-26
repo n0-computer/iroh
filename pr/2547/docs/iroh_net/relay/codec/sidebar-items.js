@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["HEADER_LEN","KEEP_ALIVE","MAGIC","MAX_FRAME_SIZE","MAX_PACKET_SIZE","NOT_PREFERRED","PER_CLIENT_READ_QUEUE_DEPTH","PER_CLIENT_SEND_QUEUE_DEPTH","PREFERRED","PROTOCOL_VERSION","SERVER_CHANNEL_SIZE"],"enum":["Frame","FrameType"],"fn":["recv_client_key","recv_frame","send_client_key","write_frame"],"struct":["DerpCodec"]};

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["BLOBS_TABLE","INLINE_DATA_TABLE","INLINE_OUTBOARD_TABLE","TAGS_TABLE"],"enum":["BaoFilePart"],"struct":["DeleteSet","ReadOnlyTables","Tables"],"trait":["ReadableTables"]};

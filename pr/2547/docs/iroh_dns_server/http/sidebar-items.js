@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["CertMode"],"fn":["create_app","metrics_middleware"],"mod":["doh","error","pkarr","rate_limiting","tls"],"struct":["HttpConfig","HttpServer","HttpsConfig"]};

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["SIGNED_PACKETS_TABLE"],"fn":["get_packet"],"struct":["SignedPacketStore"],"type":["SignedPacketsKey"]};

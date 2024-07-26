@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["BatchWriter","DataReader","Entry","EntryInner","OutboardReader","StateInner","Store","StoreInner"]};

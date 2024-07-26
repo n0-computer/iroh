@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS"],"enum":["LookupIter"],"fn":["create_default_resolver","default_resolver","resolver","stagger_call"],"mod":["node_info"],"static":["DNS_RESOLVER"],"trait":["ResolverExt"],"type":["DnsResolver"]};

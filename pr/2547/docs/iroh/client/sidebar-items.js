@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["flatten"],"mod":["authors","blobs","docs","gossip","node","quic","tags"],"struct":["Iroh","RpcService"],"type":["RpcClient"]};

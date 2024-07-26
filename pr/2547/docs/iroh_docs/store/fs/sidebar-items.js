@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["CurrentTransaction"],"fn":["chain_none","get_exact","into_entry","parents","parse_capability"],"mod":["bounds","migrate_v1_v2","migrations","query","ranges","tables"],"struct":["ContentHashesIterator","LatestIterator","ParentIterator","RecordsRange","Store","StoreInstance"],"type":["PeersIter"]};

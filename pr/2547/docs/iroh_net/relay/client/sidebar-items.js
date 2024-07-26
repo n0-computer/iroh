@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["CLIENT_RECV_TIMEOUT"],"enum":["ClientWriterMessage","ConnReader","ConnWriter","ReceivedMessage"],"fn":["process_incoming_frame","send_packet","tung_wasm_to_io_err"],"struct":["Client","ClientBuilder","ClientReceiver","ClientWriter","InnerClient"]};

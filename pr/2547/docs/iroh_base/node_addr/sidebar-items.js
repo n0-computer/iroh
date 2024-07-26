@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["AddrInfoOptions"],"struct":["AddrInfo","DbgStr","NodeAddr","RelayUrl"]};

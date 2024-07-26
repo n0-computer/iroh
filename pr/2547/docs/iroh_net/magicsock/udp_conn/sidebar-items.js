@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["bind"],"struct":["UdpConn"]};

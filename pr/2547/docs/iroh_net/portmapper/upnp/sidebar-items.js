@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["HALF_LIFETIME","PORT_MAPPING_DESCRIPTION","PORT_MAPPING_LEASE_DURATION_SECONDS","SEARCH_TIMEOUT"],"fn":["probe_available"],"struct":["Mapping"],"type":["Gateway"]};

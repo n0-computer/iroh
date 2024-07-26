@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["MemOrFile","SetTagOption"],"fn":["copy_limited_slice","get_limited_slice","limited_range","raw_outboard","raw_outboard_size","total_bytes"],"mod":["io","local_pool","mem_or_file","progress","redb_support","sparse_mem_file"],"struct":["DD","NonSend","SparseMemFile","Tag","TempTag"],"trait":["TagCounter","TagDrop"]};

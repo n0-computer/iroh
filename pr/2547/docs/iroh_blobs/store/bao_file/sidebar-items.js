@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["BaoFileStorage","HandleChange"],"fn":["create_read_write","max_offset","read_to_end","with_storage"],"struct":["BaoFileConfig","BaoFileHandle","BaoFileHandleInner","BaoFileHandleWeak","BaoFileWriter","CompleteStorage","DataPaths","DataReader","FileStorage","OutboardReader"],"type":["CreateCb"]};

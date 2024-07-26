@@ -1,3 +1,0 @@
-(function() {var implementors = {
-"iroh_net":[["impl ServerCertVerifier for <a class=\"struct\" href=\"iroh_net/relay/http/client/struct.NoCertVerifier.html\" title=\"struct iroh_net::relay::http::client::NoCertVerifier\">NoCertVerifier</a>"],["impl ServerCertVerifier for <a class=\"struct\" href=\"iroh_net/tls/verifier/struct.Libp2pCertificateVerifier.html\" title=\"struct iroh_net::tls::verifier::Libp2pCertificateVerifier\">Libp2pCertificateVerifier</a>"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

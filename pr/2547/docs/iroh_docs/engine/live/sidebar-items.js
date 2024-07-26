@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["SOURCE_NAME"],"enum":["Event","Op","ToLiveActor"],"fn":["fmt_accept_namespace","fmt_accept_peer"],"struct":["LiveActor","QueuedHashes","Subscribers","SubscribersMap","SyncDetails","SyncEvent","SyncReport"],"type":["DownloadRes","SyncAcceptRes","SyncConnectRes"]};
