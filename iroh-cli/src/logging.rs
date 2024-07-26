@@ -97,8 +97,11 @@ pub(crate) fn init_terminal_logging() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Configuration for the logfiles.
+// Please note that this is documented in the `iroh.computer` repository under
+// `src/app/docs/reference/config/page.mdx`.  Any changes to this need to be updated there.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub(crate) struct FileLogging {
     /// RUST_LOG directive to filter file logs.
     pub(crate) rust_log: EnvFilter,
