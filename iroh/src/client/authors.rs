@@ -20,7 +20,7 @@ pub struct Client {
 }
 
 impl Client {
-    /// Create a new document author.
+    /// Creates a new document author.
     ///
     /// You likely want to save the returned [`AuthorId`] somewhere so that you can use this author
     /// again.
@@ -42,7 +42,7 @@ impl Client {
         Ok(res.author_id)
     }
 
-    /// Set the node-wide default author.
+    /// Sets the node-wide default author.
     ///
     /// If the author does not exist, an error is returned.
     ///
@@ -53,13 +53,13 @@ impl Client {
         Ok(())
     }
 
-    /// List document authors for which we have a secret key.
+    /// Lists document authors for which we have a secret key.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<AuthorId>>> {
         let stream = self.rpc.server_streaming(ListRequest {}).await?;
         Ok(flatten(stream).map(|res| res.map(|res| res.author_id)))
     }
 
-    /// Export the given author.
+    /// Exports the given author.
     ///
     /// Warning: This contains sensitive data.
     pub async fn export(&self, author: AuthorId) -> Result<Option<Author>> {
@@ -67,7 +67,7 @@ impl Client {
         Ok(res.author)
     }
 
-    /// Import the given author.
+    /// Imports the given author.
     ///
     /// Warning: This contains sensitive data.
     pub async fn import(&self, author: Author) -> Result<()> {
