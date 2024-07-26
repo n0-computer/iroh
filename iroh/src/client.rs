@@ -29,8 +29,8 @@ pub(crate) type RpcClient =
 
 /// The iroh client.
 ///
-/// There are three ways to obtain this client, depending on from which context
-/// you're running in, relative to the main [`Node`](crate::node::Node):
+/// There are three ways to obtain this client, depending on which context
+/// you're running in relative to the main [`Node`](crate::node::Node):
 ///
 /// 1. If you just spawned the client in rust the same process and have a reference to it:
 ///    Use [`Node::client()`](crate::node::Node::client).
