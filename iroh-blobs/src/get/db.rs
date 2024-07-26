@@ -346,7 +346,7 @@ async fn get_hash_seq<
                             child: BlobId::from_offset((i as u64) + 1),
                             hash: children[i],
                             size,
-                            valid_ranges: RangeSpec::new(&info.valid_ranges()),
+                            valid_ranges: RangeSpec::new(info.valid_ranges()),
                         })
                         .await?;
                 }

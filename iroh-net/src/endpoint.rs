@@ -841,7 +841,7 @@ impl Endpoint {
     /// This will launch discovery in all cases except if:
     /// 1) we do not have discovery enabled
     /// 2) we have discovery enabled, but already have at least one verified, unexpired
-    /// addresses for this `node_id`
+    ///    addresses for this `node_id`
     ///
     /// # Errors
     ///

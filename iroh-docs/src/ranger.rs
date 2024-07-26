@@ -56,9 +56,11 @@ pub trait RangeValue: Sized + Debug + Ord + PartialEq + Clone + 'static {}
 /// Stores a range.
 ///
 /// There are three possibilities
+///
 /// - x, x: All elements in a set, denoted with
 /// - [x, y): x < y: Includes x, but not y
 /// - S \ [y, x) y < x: Includes x, but not y.
+///
 /// This means that ranges are "wrap around" conceptually.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub struct Range<K> {
