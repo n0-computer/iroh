@@ -27,18 +27,13 @@ jobs:
       env:
         RUSTDOCFLAGS: --cfg docsrs
 
-    - name: Prepare Docs for Deployment
-      run: |
-        mkdir -p ${{ env.PREVIEW_PATH }}
-        cp -R target/doc/* ${{ env.PREVIEW_PATH }}/
-
     - name: Deploy Docs to Preview Branch
       uses: peaceiris/actions-gh-pages@v4
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: .
+        publish_dir: ./target/doc/
+        destination_dir: ${{ env.PREVIEW_PATH }}
         publish_branch: generated-docs-preview
-        keep_files: true
 
     - name: Find Docs Comment
       uses: peter-evans/find-comment@v3
