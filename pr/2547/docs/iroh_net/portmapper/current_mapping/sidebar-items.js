@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Event"],"struct":["ActiveMapping","CurrentMapping"],"trait":["Mapping"]};

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["IpNet"],"fn":["default_route_interface","is_usable_v4","is_usable_v6"],"mod":["linux"],"struct":["DefaultRouteDetails","HomeRouter","Interface","Ipv4Net","Ipv6Net","State"]};

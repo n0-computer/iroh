@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["BlobFormat"],"mod":["redb_support"],"struct":["DD","Hash","HashAndFormat"]};
+window.SIDEBAR_ITEMS = {"enum":["BlobFormat"],"struct":["Hash","HashAndFormat"]};

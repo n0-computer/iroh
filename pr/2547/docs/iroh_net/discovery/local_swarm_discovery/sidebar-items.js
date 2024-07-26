@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["DISCOVERY_DURATION","N0_LOCAL_SWARM","PROVENANCE"],"enum":["Message"],"struct":["LocalSwarmDiscovery"]};
+window.SIDEBAR_ITEMS = {"struct":["LocalSwarmDiscovery"]};

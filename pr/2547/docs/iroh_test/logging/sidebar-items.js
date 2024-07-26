@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["setup","setup_multithreaded","testing_subscriber"],"struct":["TestWriter"]};
+window.SIDEBAR_ITEMS = {"fn":["setup","setup_multithreaded","testing_subscriber"]};

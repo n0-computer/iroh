@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["config","dns","http","metrics","server","state","store","util"]};
+window.SIDEBAR_ITEMS = {"mod":["config","dns","http","metrics","server","state"]};

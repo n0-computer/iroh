@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"macro":["idbytes_impls"],"struct":["IndexSet","TimeBoundCache","TimerMap"]};
+window.SIDEBAR_ITEMS = {"struct":["TimeBoundCache","TimerMap"]};

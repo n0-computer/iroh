@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ExportProgress"],"fn":["export","export_blob","export_collection","pathbuf_from_name"]};
+window.SIDEBAR_ITEMS = {"enum":["ExportProgress"],"fn":["export","export_blob","export_collection"]};

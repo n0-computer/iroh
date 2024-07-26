@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["serde_status_code"],"struct":["AppError"],"type":["AppResult"]};

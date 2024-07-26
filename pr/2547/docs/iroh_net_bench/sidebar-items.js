@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Commands","ConnectionSelector","EndpointSelector"],"fn":["client_handler","configure_tracing_subscriber","parse_byte_size","rt"],"mod":["iroh","quinn","s2n","stats"],"struct":["ClientStats","Opt"]};
+window.SIDEBAR_ITEMS = {"enum":["Commands","ConnectionSelector","EndpointSelector"],"fn":["client_handler","configure_tracing_subscriber","rt"],"mod":["iroh","quinn","s2n","stats"],"struct":["ClientStats","Opt"]};

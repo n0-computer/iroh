@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["KEY_CACHE_CAPACITY","KEY_CACHE_TTL","PUBLIC_KEY_LENGTH"],"enum":["KeyParsingError"],"fn":["get_or_create_crypto_keys","lock_key_cache"],"mod":["encryption"],"static":["KEY_CACHE"],"struct":["CryptoKeys","PublicKey","SecretKey","SharedSecret","Signature"],"type":["NodeId"]};
+window.SIDEBAR_ITEMS = {"constant":["PUBLIC_KEY_LENGTH"],"enum":["KeyParsingError"],"struct":["PublicKey","SecretKey","SharedSecret","Signature"],"type":["NodeId"]};

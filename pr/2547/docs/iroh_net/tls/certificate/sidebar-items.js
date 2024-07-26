@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["P2P_EXT_OID","P2P_SIGNING_PREFIX"],"fn":["generate","make_libp2p_extension","parse","parse_unverified"],"static":["P2P_SIGNATURE_ALGORITHM"],"struct":["GenError","P2pCertificate","P2pExtension","ParseError","SignedKey","VerificationError"]};
+window.SIDEBAR_ITEMS = {"fn":["generate","parse"],"struct":["GenError","P2pCertificate","P2pExtension","ParseError","VerificationError"]};

@@ -1,3 +1,0 @@
-(function() {var implementors = {
-"iroh_net":[["impl Sink&lt;<a class=\"enum\" href=\"iroh_net/relay/codec/enum.Frame.html\" title=\"enum iroh_net::relay::codec::Frame\">Frame</a>&gt; for <a class=\"enum\" href=\"iroh_net/relay/client/enum.ConnWriter.html\" title=\"enum iroh_net::relay::client::ConnWriter\">ConnWriter</a>"],["impl Sink&lt;<a class=\"enum\" href=\"iroh_net/relay/codec/enum.Frame.html\" title=\"enum iroh_net::relay::codec::Frame\">Frame</a>&gt; for <a class=\"enum\" href=\"iroh_net/relay/server/enum.RelayIo.html\" title=\"enum iroh_net::relay::server::RelayIo\">RelayIo</a>"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

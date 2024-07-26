@@ -1,3 +1,0 @@
-(function() {var implementors = {
-"iroh_test":[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/std/io/trait.Write.html\" title=\"trait std::io::Write\">Write</a> for <a class=\"struct\" href=\"iroh_test/logging/struct.TestWriter.html\" title=\"struct iroh_test::logging::TestWriter\">TestWriter</a>"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

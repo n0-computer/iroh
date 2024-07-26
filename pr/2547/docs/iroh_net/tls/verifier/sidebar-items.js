@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["verify_presented_certs","verify_tls13_signature"],"static":["CIPHERSUITES","PROTOCOL_VERSIONS"],"struct":["Libp2pCertificateVerifier"]};

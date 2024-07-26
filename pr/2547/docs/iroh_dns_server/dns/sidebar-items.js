@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_A_TTL","DEFAULT_NS_TTL","DEFAULT_SOA_TTL"],"fn":["create_static_authority","push_record"],"mod":["node_authority"],"struct":["DnsConfig","DnsHandler","DnsServer","Handle"]};
+window.SIDEBAR_ITEMS = {"struct":["DnsConfig","DnsHandler","DnsServer","Handle"]};

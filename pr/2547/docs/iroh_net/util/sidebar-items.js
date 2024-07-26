@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["relay_only_mode"],"mod":["chain"],"struct":["AbortingJoinHandle","CancelOnDrop","MaybeFuture","SharedAbortingJoinHandle"]};
+window.SIDEBAR_ITEMS = {"mod":["chain"],"struct":["AbortingJoinHandle","CancelOnDrop","MaybeFuture","SharedAbortingJoinHandle"]};

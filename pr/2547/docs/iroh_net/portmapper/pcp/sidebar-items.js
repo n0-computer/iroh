@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["MAPPING_REQUESTED_LIFETIME_SECONDS","RECV_TIMEOUT"],"fn":["probe_available","probe_available_fallible"],"mod":["protocol"],"struct":["Mapping"]};

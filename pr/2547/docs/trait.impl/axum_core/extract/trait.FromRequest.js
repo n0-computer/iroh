@@ -1,3 +1,0 @@
-(function() {var implementors = {
-"iroh_dns_server":[["impl&lt;S&gt; FromRequest&lt;S&gt; for <a class=\"struct\" href=\"iroh_dns_server/http/doh/extract/struct.DnsRequestBody.html\" title=\"struct iroh_dns_server::http::doh::extract::DnsRequestBody\">DnsRequestBody</a><div class=\"where\">where\n    S: <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/marker/trait.Send.html\" title=\"trait core::marker::Send\">Send</a> + <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/marker/trait.Sync.html\" title=\"trait core::marker::Sync\">Sync</a>,</div>"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

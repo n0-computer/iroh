@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["IpFamily"],"mod":["interfaces","ip","ip_family","netmon","udp"],"struct":["UdpSocket"]};
+window.SIDEBAR_ITEMS = {"enum":["IpFamily"],"mod":["ip","netmon"],"struct":["UdpSocket"]};

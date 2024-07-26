@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["IROH_TXT_NAME"],"enum":["IrohAttr"],"fn":["ensure_iroh_txt_label","from_z32","node_domain","node_id_from_hickory_name","to_z32"],"struct":["NodeInfo","TxtAttrs"]};
+window.SIDEBAR_ITEMS = {"constant":["IROH_TXT_NAME"],"enum":["IrohAttr"],"fn":["from_z32","to_z32"],"struct":["NodeInfo","TxtAttrs"]};

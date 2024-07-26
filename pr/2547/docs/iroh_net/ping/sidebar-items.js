@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_TIMEOUT"],"enum":["PingError"],"struct":["Inner","Pinger"]};
+window.SIDEBAR_ITEMS = {"enum":["PingError"],"struct":["Pinger"]};

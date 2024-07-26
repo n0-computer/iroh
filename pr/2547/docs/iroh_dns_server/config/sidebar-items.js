@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_METRICS_ADDR"],"enum":["BootstrapOption"],"struct":["Config","MainlineConfig","MetricsConfig"]};
+window.SIDEBAR_ITEMS = {"enum":["BootstrapOption"],"struct":["Config","MainlineConfig","MetricsConfig"]};

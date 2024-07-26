@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["BroadcastProgressSender","Inner","ProgressTracker"],"type":["ProgressSubscriber","Shared"]};

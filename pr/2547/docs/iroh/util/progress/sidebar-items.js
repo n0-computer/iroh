@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ProgressReaderUpdate"],"struct":["InnerProgressEmitter","Progress","ProgressAsyncReader","ProgressEmitter","ProgressReader","ProgressWriter"]};
+window.SIDEBAR_ITEMS = {"struct":["Progress","ProgressAsyncReader","ProgressEmitter","ProgressWriter"]};

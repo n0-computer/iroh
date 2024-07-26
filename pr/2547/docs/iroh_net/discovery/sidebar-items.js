@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_AGE","SOURCE_NAME"],"mod":["dns","local_swarm_discovery","pkarr"],"struct":["ConcurrentDiscovery","DiscoveryItem","DiscoveryTask"],"trait":["Discovery"]};
+window.SIDEBAR_ITEMS = {"mod":["dns","local_swarm_discovery","pkarr"],"struct":["ConcurrentDiscovery","DiscoveryItem"],"trait":["Discovery"]};

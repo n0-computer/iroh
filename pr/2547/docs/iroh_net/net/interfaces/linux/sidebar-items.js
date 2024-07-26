@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["PROC_NET_ROUTE_PATH"],"fn":["default_route","default_route_netlink","default_route_netlink_family","default_route_proc","iface_by_index"]};

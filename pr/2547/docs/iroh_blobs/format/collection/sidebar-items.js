@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["Collection","CollectionMeta"],"trait":["SimpleStore"]};
+window.SIDEBAR_ITEMS = {"struct":["Collection"],"trait":["SimpleStore"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ImportProgress","LiveEvent","Origin","ShareMode","SyncReason"],"struct":["Client","Doc","DocInner","Entry","ExportFileOutcome","ExportFileProgress","ImportFileOutcome","ImportFileProgress","SyncEvent"]};
+window.SIDEBAR_ITEMS = {"enum":["ImportProgress","LiveEvent","Origin","ShareMode","SyncReason"],"struct":["Client","Doc","Entry","ExportFileOutcome","ExportFileProgress","ImportFileOutcome","ImportFileProgress","SyncEvent"]};
