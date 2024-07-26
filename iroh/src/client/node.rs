@@ -34,59 +34,74 @@ pub struct Client {
 }
 
 impl Client {
-    /// Get statistics of the running node.
+    /// Fetches statistics of the running node.
     pub async fn stats(&self) -> Result<BTreeMap<String, CounterStats>> {
         let res = self.rpc.rpc(StatsRequest {}).await??;
         Ok(res.stats)
     }
 
-    /// Get information about the different connections we have made
+    /// Fetches information about currently known connections.
+    ///
+    /// This streams a *current snapshot*. It does not keep the stream open after finishing
+    /// transferring the snapshot.
+    ///
+    /// See also [`Endpoint::connection_infos`](crate::net::Endpoint::connection_infos).
     pub async fn connections(&self) -> Result<impl Stream<Item = Result<ConnectionInfo>>> {
         let stream = self.rpc.server_streaming(ConnectionsRequest {}).await?;
         Ok(flatten(stream).map(|res| res.map(|res| res.conn_info)))
     }
 
-    /// Get connection information about a node
-    pub async fn connection_info(&self, node_id: PublicKey) -> Result<Option<ConnectionInfo>> {
+    /// Fetches connection information about a connection to another node identified by its [`NodeId`].
+    ///
+    /// See also [`Endpoint::connection_info`](crate::net::Endpoint::connection_info).
+    pub async fn connection_info(&self, node_id: NodeId) -> Result<Option<ConnectionInfo>> {
         let ConnectionInfoResponse { conn_info } =
             self.rpc.rpc(ConnectionInfoRequest { node_id }).await??;
         Ok(conn_info)
     }
 
-    /// Get status information about a node.
+    /// Fetches status information about this node.
     pub async fn status(&self) -> Result<NodeStatus> {
         let response = self.rpc.rpc(StatusRequest).await??;
         Ok(response)
     }
 
-    /// Get the id of this node.
+    /// Fetches the node id of this node.
+    ///
+    /// See also [`Endpoint::node_id`](crate::net::Endpoint::node_id).
     pub async fn node_id(&self) -> Result<NodeId> {
         let id = self.rpc.rpc(IdRequest).await??;
         Ok(id)
     }
 
-    /// Return the [`NodeAddr`] for this node.
+    /// Fetches the [`NodeAddr`] for this node.
+    ///
+    /// See also [`Endpoint::node_addr`](crate::net::Endpoint::node_addr).
     pub async fn node_addr(&self) -> Result<NodeAddr> {
         let addr = self.rpc.rpc(AddrRequest).await??;
         Ok(addr)
     }
 
-    /// Add a known node address to the node.
+    /// Adds a known node address to this node.
+    ///
+    /// See also [`Endpoint::add_node_addr`](crate::net::Endpoint::add_node_addr).
     pub async fn add_node_addr(&self, addr: NodeAddr) -> Result<()> {
         self.rpc.rpc(AddAddrRequest { addr }).await??;
         Ok(())
     }
 
-    /// Get the relay server we are connected to.
+    /// Returns the relay server we are connected to.
+    ///
+    /// See also [`Endpoint::home_relay`](crate::net::Endpoint::home_relay).
     pub async fn home_relay(&self) -> Result<Option<RelayUrl>> {
         let relay = self.rpc.rpc(RelayRequest).await??;
         Ok(relay)
     }
 
-    /// Shutdown the node.
+    /// Shuts down the node.
     ///
-    /// If `force` is true, the node will be killed instantly without waiting for things to
-    /// shutdown gracefully.
+    /// If `force` is true, the node will be shut down instantly without
+    /// waiting for things to stop gracefully.
     pub async fn shutdown(&self, force: bool) -> Result<()> {
         self.rpc.rpc(ShutdownRequest { force }).await?;
         Ok(())
