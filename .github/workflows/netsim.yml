@@ -52,7 +52,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
     
     - name: Run sccache-cache
-      uses: mozilla-actions/sccache-action@v0.0.4
+      uses: mozilla-actions/sccache-action@v0.0.5
 
     - name: Build iroh
       run: |
@@ -97,7 +97,7 @@ jobs:
     - name: Copy binaries to right location
       run: |
         cp target/optimized-release/iroh ../chuck/netsim/bins/iroh
-        cp target/optimized-release/derper ../chuck/netsim/bins/derper
+        cp target/optimized-release/iroh-relay ../chuck/netsim/bins/iroh-relay
         cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
     
     - name: Detect comment commands
@@ -132,7 +132,7 @@ jobs:
       
     - name: Cleanup
       run: |
-        sudo kill -9 $(pgrep derper) || true
+        sudo kill -9 $(pgrep iroh-relay) || true
         sudo kill -9 $(pgrep iroh) || true
         sudo kill -9 $(pgrep ovs) || true
         sudo mn --clean || true
@@ -173,7 +173,7 @@ jobs:
         echo "HEAD_REF=${{ github.ref }}" >> ${GITHUB_ENV}
 
     - name: Respond Issue
-      uses: peter-evans/create-or-update-comment@v2
+      uses: peter-evans/create-or-update-comment@v4
       if: github.event_name == 'issue_comment'
       with:
         issue-number: ${{ github.event.issue.number }}
@@ -183,7 +183,7 @@ jobs:
           ${{ steps.generate_report.outputs.NETSIM_REPORT }}
 
     - name: Respond PR
-      uses: peter-evans/create-or-update-comment@v2
+      uses: peter-evans/create-or-update-comment@v4
       if: github.event.pull_request
       with:
         issue-number: ${{ github.event.pull_request.number }}
