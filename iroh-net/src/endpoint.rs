@@ -179,7 +179,7 @@ impl Builder {
     /// By default the Number0 relay servers are used.
     ///
     /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
-    /// configured relay node.  If an invalid [`RelayMap`] is provided [`bind`]
+    /// configured relay node.  If an invalid RelayMap is provided [`bind`]
     /// will result in an error.
     ///
     /// [`bind`]: Builder::bind
