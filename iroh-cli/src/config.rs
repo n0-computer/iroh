@@ -10,10 +10,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use iroh::net::{
-    defaults,
-    relay::{RelayMap, RelayNode},
-};
+use iroh::net::relay::{RelayMap, RelayNode};
 use iroh::node::GcPolicy;
 use iroh::{
     client::Iroh,
@@ -68,24 +65,13 @@ pub(crate) struct NodeConfig {
 
 impl Default for NodeConfig {
     fn default() -> Self {
-        #[cfg(not(test))]
-        let relay_nodes = {
-            use defaults::prod::{
-                default_ap_relay_node, default_eu_relay_node, default_na_relay_node,
-            };
-            [
-                default_na_relay_node(),
-                default_eu_relay_node(),
-                default_ap_relay_node(),
-            ]
-        };
-        #[cfg(test)]
-        let relay_nodes = {
-            use defaults::staging::{default_eu_relay_node, default_na_relay_node};
-            [default_na_relay_node(), default_eu_relay_node()]
-        };
+        let relay_map = iroh::net::endpoint::default_relay_mode().relay_map();
+        let relay_nodes = relay_map
+            .nodes()
+            .map(|v| Arc::unwrap_or_clone(v.clone()))
+            .collect();
         Self {
-            relay_nodes: relay_nodes.into(),
+            relay_nodes,
             gc_policy: GcPolicyConfig::default(),
             metrics_addr: Some(([127, 0, 0, 1], 9090).into()),
             file_logs: Default::default(),
