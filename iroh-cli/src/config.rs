@@ -66,7 +66,10 @@ pub(crate) struct NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         let relay_map = iroh::net::endpoint::default_relay_mode().relay_map();
-        let relay_nodes = relay_map.nodes().map(|v| v.copied()).collect();
+        let relay_nodes = relay_map
+            .nodes()
+            .map(|v| Arc::unwrap_or_clone(v.clone()))
+            .collect();
         Self {
             relay_nodes,
             gc_policy: GcPolicyConfig::default(),

@@ -145,17 +145,6 @@ pub struct RelayNode {
     pub stun_port: u16,
 }
 
-impl RelayNode {
-    /// Creates a new instance of a RelayNode from itself.
-    pub fn copied(&self) -> Self {
-        Self {
-            url: self.url.clone(),
-            stun_only: self.stun_only,
-            stun_port: self.stun_port,
-        }
-    }
-}
-
 impl fmt::Display for RelayNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.url)

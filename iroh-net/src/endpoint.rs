@@ -59,7 +59,8 @@ pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 /// Environment variable to force the use of staging relays.
-pub const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
+#[cfg(not(any(test, feature = "test-utils")))]
+const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
 /// Builder for [`Endpoint`].
 ///
