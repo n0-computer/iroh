@@ -209,7 +209,6 @@ fn cli_provide_tree_resume() -> Result<()> {
     Ok(())
 }
 
-#[ignore = "flaky"]
 #[test]
 fn cli_provide_file_resume() -> Result<()> {
     use iroh::blobs::store::fs::test_support::{make_partial, MakePartialResult};
@@ -229,54 +228,70 @@ fn cli_provide_file_resume() -> Result<()> {
     let src_iroh_data_dir = tmp.join("src_iroh_data_dir");
     let file = src.join("file");
     let hash = make_rand_file(100000, &file)?;
+
     // import the files into an ephemeral iroh to use the generated blobs db in tests
     let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
     let count = count_input_files(&src);
-    let ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
+    // small synchronization point: allow iroh to be ready for transfer
+    std::thread::sleep(std::time::Duration::from_secs(5));
     drop(provider);
 
-    {
-        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
-        println!("first test - empty work dir");
-        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_01");
-        let get_output = run_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()))?;
-        let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-        assert_eq!(matches, vec!["98.04 KiB"]);
-        assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
-        // compare_files(&src, &tgt)?;
-        std::fs::remove_file(&tgt)?;
-        drop(provider);
+    // setup the data dir for the iroh instances that will get the blobs
+    // first test: empty
+    let empty_data_dir = tmp.join("get_iroh_data_dir_01");
+    // second test: all data available already
+    let full_data_dir = tmp.join("get_iroh_data_dir_02");
+    copy_blob_dirs(&src_iroh_data_dir, &full_data_dir)?;
+    // third test: partial files
+    let partial_data_dir = tmp.join("get_iroh_data_dir_03");
+    copy_blob_dirs(&src_iroh_data_dir, &partial_data_dir)?;
+    make_partial(&partial_data_dir, |_hash, _size| {
+        MakePartialResult::Truncate(1024 * 32)
+    })?;
+
+    // here only for readability
+    struct TestCase {
+        name: &'static str,
+        get_folder: PathBuf,
+        transfer_size: &'static str,
     }
 
-    // second test - full work dir
-    {
-        println!("second test - full work dir");
-        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_02");
-        copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
-        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
-        let get_output = run_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()))?;
-        let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-        assert_eq!(matches, vec!["0 B"]);
-        assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
-        std::fs::remove_file(&tgt)?;
-        drop(provider);
-    }
+    let test_cases = [
+        TestCase {
+            name: "empty folder produces full transfer",
+            get_folder: empty_data_dir,
+            transfer_size: "98.04 KiB",
+        },
+        TestCase {
+            name: "full folder needs no transfer",
+            get_folder: full_data_dir,
+            transfer_size: "0 B",
+        },
+        TestCase {
+            name: "partial data produces partial transfer",
+            get_folder: partial_data_dir,
+            transfer_size: "65.98 KiB",
+        },
+    ];
 
-    // third test - partial work dir - truncate some large files
-    {
-        println!("fourth test - partial work dir - truncate some large files");
-        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_04");
-        copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
-        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
-        make_partial(&get_iroh_data_dir, |_hash, _size| {
-            MakePartialResult::Truncate(1024 * 32)
-        })?;
-        let get_output = run_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()))?;
+    // start the provider and run the test cases
+
+    let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
+    let ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
+    for case in test_cases {
+        let TestCase {
+            name,
+            get_folder,
+            transfer_size,
+        } = case;
+
+        println!("\n***\n{name}\n***");
+        let get_output = run_get_cmd(&get_folder, &ticket, Some(tgt.clone()))?;
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-        assert_eq!(matches, vec!["65.98 KiB"]);
-        assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
+        assert_eq!(matches, vec![transfer_size], "{name}: wrong transfer size");
+        let current_hash = Hash::new(std::fs::read(&tgt)?);
+        assert_eq!(current_hash, hash, "{name}: wrong blob contents");
         std::fs::remove_file(&tgt)?;
-        drop(provider);
     }
     Ok(())
 }
