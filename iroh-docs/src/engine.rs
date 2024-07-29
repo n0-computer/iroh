@@ -170,15 +170,15 @@ impl Engine {
 
         // Subscribe to insert events from the replica.
         let a = {
-            let (s, r) = flume::bounded(SUBSCRIBE_CHANNEL_CAP);
+            let (s, r) = async_channel::bounded(SUBSCRIBE_CHANNEL_CAP);
             this.sync.subscribe(namespace, s).await?;
-            r.into_stream()
-                .map(move |ev| LiveEvent::from_replica_event(ev, &content_status_cb))
+            Box::pin(r).map(move |ev| LiveEvent::from_replica_event(ev, &content_status_cb))
         };
 
         // Subscribe to events from the [`live::Actor`].
         let b = {
-            let (s, r) = flume::bounded(SUBSCRIBE_CHANNEL_CAP);
+            let (s, r) = async_channel::bounded(SUBSCRIBE_CHANNEL_CAP);
+            let r = Box::pin(r);
             let (reply, reply_rx) = oneshot::channel();
             this.to_live_actor
                 .send(ToLiveActor::Subscribe {
@@ -188,7 +188,7 @@ impl Engine {
                 })
                 .await?;
             reply_rx.await??;
-            r.into_stream().map(|event| Ok(LiveEvent::from(event)))
+            r.map(|event| Ok(LiveEvent::from(event)))
         };
 
         Ok(a.or(b))

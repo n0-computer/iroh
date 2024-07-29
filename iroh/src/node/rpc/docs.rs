@@ -1,11 +1,10 @@
 //! This module contains an impl block on [`DocsEngine`] with handlers for RPC requests
 
 use anyhow::anyhow;
-use futures_lite::Stream;
+use futures_lite::{Stream, StreamExt};
 use iroh_base::rpc::RpcResult;
 use iroh_blobs::{store::Store as BaoStore, BlobFormat};
 use iroh_docs::{Author, DocTicket, NamespaceSecret};
-use tokio_stream::StreamExt;
 
 use crate::client::docs::ShareMode;
 use crate::node::DocsEngine;
@@ -60,18 +59,18 @@ impl DocsEngine {
     pub fn author_list(
         &self,
         _req: AuthorListRequest,
-    ) -> impl Stream<Item = RpcResult<AuthorListResponse>> {
-        let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
+    ) -> impl Stream<Item = RpcResult<AuthorListResponse>> + Unpin {
+        let (tx, rx) = async_channel::bounded(ITER_CHANNEL_CAP);
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
         tokio::task::spawn(async move {
             let tx2 = tx.clone();
             if let Err(err) = sync.list_authors(tx).await {
-                tx2.send_async(Err(err)).await.ok();
+                tx2.send(Err(err)).await.ok();
             }
         });
-        rx.into_stream().map(|r| {
+        rx.boxed().map(|r| {
             r.map(|author_id| AuthorListResponse { author_id })
                 .map_err(Into::into)
         })
@@ -111,18 +110,21 @@ impl DocsEngine {
         Ok(DropResponse {})
     }
 
-    pub fn doc_list(&self, _req: DocListRequest) -> impl Stream<Item = RpcResult<DocListResponse>> {
-        let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
+    pub fn doc_list(
+        &self,
+        _req: DocListRequest,
+    ) -> impl Stream<Item = RpcResult<DocListResponse>> + Unpin {
+        let (tx, rx) = async_channel::bounded(ITER_CHANNEL_CAP);
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
         tokio::task::spawn(async move {
             let tx2 = tx.clone();
             if let Err(err) = sync.list_replicas(tx).await {
-                tx2.send_async(Err(err)).await.ok();
+                tx2.send(Err(err)).await.ok();
             }
         });
-        rx.into_stream().map(|r| {
+        rx.boxed().map(|r| {
             r.map(|(id, capability)| DocListResponse { id, capability })
                 .map_err(Into::into)
         })
@@ -249,19 +251,19 @@ impl DocsEngine {
     pub fn doc_get_many(
         &self,
         req: GetManyRequest,
-    ) -> impl Stream<Item = RpcResult<GetManyResponse>> {
+    ) -> impl Stream<Item = RpcResult<GetManyResponse>> + Unpin {
         let GetManyRequest { doc_id, query } = req;
-        let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
+        let (tx, rx) = async_channel::bounded(ITER_CHANNEL_CAP);
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
         tokio::task::spawn(async move {
             let tx2 = tx.clone();
             if let Err(err) = sync.get_many(doc_id, query, tx).await {
-                tx2.send_async(Err(err)).await.ok();
+                tx2.send(Err(err)).await.ok();
             }
         });
-        rx.into_stream()
+        rx.boxed()
             .map(|r| r.map(|entry| GetManyResponse { entry }).map_err(Into::into))
     }
 

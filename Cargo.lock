@@ -2478,6 +2478,7 @@ name = "iroh"
 version = "0.21.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "bao-tree",
  "bytes",
  "clap",
@@ -2733,10 +2734,10 @@ name = "iroh-docs"
 version = "0.21.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "bytes",
  "derive_more",
  "ed25519-dalek",
- "flume",
  "futures-buffered",
  "futures-lite 2.3.0",
  "futures-util",
