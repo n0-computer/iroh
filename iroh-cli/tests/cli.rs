@@ -275,12 +275,12 @@ fn cli_provide_file_resume() -> Result<()> {
     // first test - empty work dir
     {
         println!("first test - empty work dir");
+        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_01");
 
         // start the provider in each test to avoid holding a lock on blobs.db
         let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
         let ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
 
-        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_01");
         let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
@@ -294,13 +294,13 @@ fn cli_provide_file_resume() -> Result<()> {
     // second test - full work dir
     {
         println!("second test - full work dir");
+        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_02");
+        copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
 
         // start the provider in each test to avoid holding a lock on blobs.db
         let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
         let ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
 
-        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_02");
-        copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
         let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
@@ -313,16 +313,16 @@ fn cli_provide_file_resume() -> Result<()> {
     // third test - partial work dir - truncate some large files
     {
         println!("fourth test - partial work dir - truncate some large files");
-
-        // start the provider in each test to avoid holding a lock on blobs.db
-        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
-        let ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
-
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_04");
         copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
         make_partial(&get_iroh_data_dir, |_hash, _size| {
             MakePartialResult::Truncate(1024 * 32)
         })?;
+
+        // start the provider in each test to avoid holding a lock on blobs.db
+        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
+        let ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
+
         let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
