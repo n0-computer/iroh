@@ -13,6 +13,7 @@ env:
   MSRV: "1.66"
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
+  IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
   netsim:

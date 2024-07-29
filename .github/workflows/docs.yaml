@@ -3,6 +3,9 @@ name: Docs Preview
 on:
   pull_request:
 
+env:
+  IROH_FORCE_STAGING_RELAYS: "1"
+
 jobs:
   preview_docs:
     timeout-minutes: 30
