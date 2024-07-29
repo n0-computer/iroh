@@ -41,7 +41,6 @@ fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_one_file_basic() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -51,7 +50,6 @@ fn cli_provide_one_file_basic() -> Result<()> {
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_one_file_large() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -62,7 +60,6 @@ fn cli_provide_one_file_large() -> Result<()> {
 
 /// Test single file download to a path
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_one_file_single_path() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -74,7 +71,6 @@ fn cli_provide_one_file_single_path() -> Result<()> {
 
 /// test single file download to stdout
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_one_file_single_stdout() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -86,7 +82,6 @@ fn cli_provide_one_file_single_stdout() -> Result<()> {
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_folder() -> Result<()> {
     let path = testdir!().join("src");
     std::fs::create_dir(&path)?;
@@ -99,7 +94,6 @@ fn cli_provide_folder() -> Result<()> {
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_tree() -> Result<()> {
     let path = testdir!().join("src");
     std::fs::create_dir(&path)?;
@@ -155,9 +149,7 @@ fn cli_provide_tree_resume() -> Result<()> {
     {
         println!("first test - empty work dir");
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_01");
-        let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
-        let get_output = get.unchecked().run()?;
-        assert!(get_output.status.success());
+        let get_output = run_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()))?;
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
         assert_eq!(matches, vec!["112.89 KiB"]);
         compare_files(&src, &tgt)?;
@@ -169,9 +161,7 @@ fn cli_provide_tree_resume() -> Result<()> {
         println!("second test - full work dir");
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_02");
         copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
-        let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
-        let get_output = get.unchecked().run()?;
-        assert!(get_output.status.success());
+        let get_output = run_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()))?;
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
         assert_eq!(matches, vec!["0 B"]);
         compare_files(&src, &tgt)?;
@@ -190,9 +180,7 @@ fn cli_provide_tree_resume() -> Result<()> {
                 MakePartialResult::Retain
             }
         })?;
-        let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
-        let get_output = get.unchecked().run()?;
-        assert!(get_output.status.success());
+        let get_output = run_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()))?;
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
         assert_eq!(matches, vec!["98.04 KiB"]);
         compare_files(&src, &tgt)?;
@@ -211,9 +199,7 @@ fn cli_provide_tree_resume() -> Result<()> {
                 MakePartialResult::Retain
             }
         })?;
-        let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
-        let get_output = get.unchecked().run()?;
-        assert!(get_output.status.success());
+        let get_output = run_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()))?;
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
         assert_eq!(matches, vec!["65.98 KiB"]);
         compare_files(&src, &tgt)?;
@@ -250,9 +236,7 @@ fn cli_provide_file_resume() -> Result<()> {
     {
         println!("first test - empty work dir");
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_01");
-        let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
-        let get_output = get.unchecked().run()?;
-        assert!(get_output.status.success());
+        let get_output = run_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()))?;
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
         assert_eq!(matches, vec!["98.04 KiB"]);
         assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
@@ -265,9 +249,7 @@ fn cli_provide_file_resume() -> Result<()> {
         println!("second test - full work dir");
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_02");
         copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
-        let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
-        let get_output = get.unchecked().run()?;
-        assert!(get_output.status.success());
+        let get_output = run_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()))?;
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
         assert_eq!(matches, vec!["0 B"]);
         assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
@@ -282,9 +264,7 @@ fn cli_provide_file_resume() -> Result<()> {
         make_partial(&get_iroh_data_dir, |_hash, _size| {
             MakePartialResult::Truncate(1024 * 32)
         })?;
-        let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
-        let get_output = get.unchecked().run()?;
-        assert!(get_output.status.success());
+        let get_output = run_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()))?;
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
         assert_eq!(matches, vec!["65.98 KiB"]);
         assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
@@ -295,7 +275,6 @@ fn cli_provide_file_resume() -> Result<()> {
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_from_stdin_to_stdout() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -408,7 +387,6 @@ fn cli_bao_store_migration() -> anyhow::Result<()> {
 
 #[cfg(unix)]
 #[tokio::test]
-#[ignore = "flaky"]
 async fn cli_provide_persistence() -> anyhow::Result<()> {
     use iroh::blobs::store::ReadableStore;
     use nix::{
@@ -481,8 +459,8 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test]
 #[ignore = "flaky"]
+#[test]
 fn cli_provide_addresses() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -521,7 +499,6 @@ fn cli_provide_addresses() -> Result<()> {
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_rpc_lock_restart() -> Result<()> {
     let dir = testdir!();
     let iroh_data_dir = dir.join("data-dir");
@@ -699,8 +676,16 @@ fn to_out_dir(output: Output) -> Option<PathBuf> {
     }
 }
 
-/// Create a get command given a ticket and an output mode
-fn make_get_cmd(iroh_data_dir: &Path, ticket: &str, out: Option<PathBuf>) -> duct::Expression {
+/// Create a get command given a ticket and an output mode and run it.
+///
+/// The commands STDOUT and STDERR are printed, and the command's result code is checked for
+/// success.
+#[track_caller]
+fn run_get_cmd(
+    iroh_data_dir: &Path,
+    ticket: &str,
+    out: Option<PathBuf>,
+) -> Result<std::process::Output> {
     // create a `get-ticket` cmd & optionally provide out path
     let out = out
         .map(|ref o| o.to_str().unwrap().to_string())
@@ -722,11 +707,24 @@ fn make_get_cmd(iroh_data_dir: &Path, ticket: &str, out: Option<PathBuf>) -> duc
         iroh_data_dir.display()
     );
 
-    cmd(iroh_bin(), &args)
+    let output = cmd(iroh_bin(), &args)
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", iroh_data_dir)
         .stdout_capture()
         .stderr_capture()
+        .unchecked()
+        .run()?;
+
+    // checking the output first, so you can still view any logging
+    println!("STDOUT: {}", String::from_utf8_lossy(&output.stdout));
+    println!("STDERR: {}", String::from_utf8_lossy(&output.stderr));
+
+    ensure!(
+        output.status.success(),
+        "iroh command failed. See STDERR output above."
+    );
+
+    Ok(output)
 }
 
 /// Test the provide and get loop for success, stderr output, and file contents.
@@ -750,15 +748,9 @@ fn test_provide_get_loop(input: Input, output: Output) -> Result<()> {
     let ticket = match_provide_output(&mut provider, num_blobs, input.is_blob_or_collection())?;
     let out_dir = to_out_dir(output);
     let get_iroh_data_dir = dir.join("get-iroh-data-dir");
-    let get_cmd = make_get_cmd(&get_iroh_data_dir, &ticket, out_dir.clone());
+    let get_output = run_get_cmd(&get_iroh_data_dir, &ticket, out_dir.clone())?;
 
-    // test get stderr output
-    let get_output = get_cmd.unchecked().run()?;
     drop(provider);
-
-    // checking the output first, so you can still view any logging
-    println!("STDOUT: {}", String::from_utf8_lossy(&get_output.stdout));
-    println!("STDERR: {}", String::from_utf8_lossy(&get_output.stderr));
 
     match_get_stderr(get_output.stderr)?;
     assert!(get_output.status.success());
