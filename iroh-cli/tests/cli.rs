@@ -150,13 +150,12 @@ fn cli_provide_tree_resume() -> Result<()> {
     drop(provider);
 
     // setup the data dir for the iroh instances that will get the blobs
-    //
+    // first tests
     let empty_data_dir = tmp.join("get_iroh_data_dir_01");
-    //
+    // second test
     let full_data_dir = tmp.join("get_iroh_data_dir_02");
     copy_blob_dirs(&src_iroh_data_dir, &full_data_dir)?;
-    //
-    //
+    // third test
     let missing_blobs_data_dir = tmp.join("get_iroh_data_dir_03");
     copy_blob_dirs(&src_iroh_data_dir, &missing_blobs_data_dir)?;
     make_partial(&missing_blobs_data_dir, |_hash, size| {
@@ -166,7 +165,7 @@ fn cli_provide_tree_resume() -> Result<()> {
             MakePartialResult::Retain
         }
     })?;
-
+    // fourth test
     let partial_data_dir = tmp.join("get_iroh_data_dir_04");
     copy_blob_dirs(&src_iroh_data_dir, &partial_data_dir)?;
     make_partial(&partial_data_dir, |_hash, size| {
