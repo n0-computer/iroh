@@ -18,6 +18,7 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.76"
   SCCACHE_CACHE_SIZE: "50G"
+  IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
   tests:

@@ -37,6 +37,9 @@ concurrency:
   group: flaky-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  IROH_FORCE_STAGING_RELAYS: "1"
+
 jobs:
   tests:
     if: "contains(github.event.pull_request.labels.*.name, 'flaky-test') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'"
