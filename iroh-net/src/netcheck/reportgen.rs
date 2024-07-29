@@ -211,7 +211,7 @@ impl Actor {
             Ok(_) => debug!("reportgen actor finished"),
             Err(err) => {
                 self.netcheck
-                    .send(netcheck::Message::ReportAborted)
+                    .send(netcheck::Message::ReportAborted { err })
                     .await
                     .ok();
             }
@@ -256,7 +256,6 @@ impl Actor {
             tokio::select! {
                 biased;
                 _ = &mut total_timer => {
-                    if self.
                     trace!("tick: total_timer expired");
                     bail!("report timed out");
                 }
