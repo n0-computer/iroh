@@ -1097,8 +1097,8 @@ fn copy_retrying(src: &Path, dst: &Path) -> Result<u64> {
     let mut retries = 0;
     let mut last_result;
     loop {
-        last_result = std::fs::copy(&src, &dst);
-        if let Ok(_) = last_result {
+        last_result = std::fs::copy(src, dst);
+        if last_result.is_ok() {
             return last_result.map_err(anyhow::Error::from);
         }
         println!(
