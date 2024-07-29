@@ -551,7 +551,7 @@ impl<T> AsyncChannelProgressSender<T> {
         }
     }
 
-    /// Returns true if `other` sends on the same `flume` channel as `self`.
+    /// Returns true if `other` sends on the same `async_channel` channel as `self`.
     pub fn same_channel(&self, other: &AsyncChannelProgressSender<T>) -> bool {
         same_channel(&self.sender, &other.sender)
     }
