@@ -264,12 +264,22 @@ fn cli_provide_file_resume() -> Result<()> {
     let src_iroh_data_dir = tmp.join("src_iroh_data_dir");
     let file = src.join("file");
     let hash = make_rand_file(100000, &file)?;
-    // leave the provider running for the entire test
-    let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
+
     let count = count_input_files(&src);
-    let ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
+    {
+        // Initialize the source dir with the blobs.db
+        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
+        match_provide_output(&provider, count, BlobOrCollection::Blob)?;
+    }
+
+    // first test - empty work dir
     {
         println!("first test - empty work dir");
+
+        // start the provider in each test to avoid holding a lock on blobs.db
+        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
+        let ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
+
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_01");
         let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
@@ -284,6 +294,11 @@ fn cli_provide_file_resume() -> Result<()> {
     // second test - full work dir
     {
         println!("second test - full work dir");
+
+        // start the provider in each test to avoid holding a lock on blobs.db
+        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
+        let ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
+
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_02");
         copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
         let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
@@ -298,6 +313,11 @@ fn cli_provide_file_resume() -> Result<()> {
     // third test - partial work dir - truncate some large files
     {
         println!("fourth test - partial work dir - truncate some large files");
+
+        // start the provider in each test to avoid holding a lock on blobs.db
+        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
+        let ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
+
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_04");
         copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
         make_partial(&get_iroh_data_dir, |_hash, _size| {
@@ -311,7 +331,6 @@ fn cli_provide_file_resume() -> Result<()> {
         assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
         std::fs::remove_file(&tgt)?;
     }
-    drop(provider);
     Ok(())
 }
 
