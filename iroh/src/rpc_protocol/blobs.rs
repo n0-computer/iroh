@@ -1,23 +1,27 @@
 use std::path::PathBuf;
 
 use bytes::Bytes;
-use iroh_base::hash::Hash;
 use iroh_base::rpc::RpcResult;
+use iroh_base::{hash::Hash, rpc::RpcError};
+use iroh_blobs::provider::BatchAddPathProgress;
 use iroh_blobs::{
     export::ExportProgress,
     format::collection::Collection,
     get::db::DownloadProgress,
     provider::AddProgress,
-    store::{BaoBlobSize, ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
+    store::{
+        BaoBlobSize, ConsistencyCheckProgress, ExportFormat, ExportMode, ImportMode,
+        ValidateProgress,
+    },
     util::SetTagOption,
-    BlobFormat, Tag,
+    BlobFormat, HashAndFormat, Tag,
 };
 use iroh_net::NodeAddr;
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
-use crate::client::blobs::{BlobInfo, DownloadMode, IncompleteBlobInfo, WrapOption};
+use crate::client::blobs::{BlobInfo, BlobStatus, DownloadMode, IncompleteBlobInfo, WrapOption};
 
 use super::RpcService;
 
@@ -49,6 +53,19 @@ pub enum Request {
     Fsck(ConsistencyCheckRequest),
     #[rpc(response = RpcResult<CreateCollectionResponse>)]
     CreateCollection(CreateCollectionRequest),
+    #[rpc(response = RpcResult<BlobStatusResponse>)]
+    BlobStatus(BlobStatusRequest),
+
+    #[bidi_streaming(update = BatchUpdate, response = BatchCreateResponse)]
+    BatchCreate(BatchCreateRequest),
+    BatchUpdate(BatchUpdate),
+    #[bidi_streaming(update = BatchAddStreamUpdate, response = BatchAddStreamResponse)]
+    BatchAddStream(BatchAddStreamRequest),
+    BatchAddStreamUpdate(BatchAddStreamUpdate),
+    #[server_streaming(response = BatchAddPathResponse)]
+    BatchAddPath(BatchAddPathRequest),
+    #[rpc(response = RpcResult<()>)]
+    BatchCreateTempTag(BatchCreateTempTagRequest),
 }
 
 #[allow(missing_docs)]
@@ -65,6 +82,10 @@ pub enum Response {
     Export(ExportResponse),
     Validate(ValidateProgress),
     CreateCollection(RpcResult<CreateCollectionResponse>),
+    BlobStatus(RpcResult<BlobStatusResponse>),
+    BatchCreate(BatchCreateResponse),
+    BatchAddStream(BatchAddStreamResponse),
+    BatchAddPath(BatchAddPathResponse),
 }
 
 /// A request to the node to provide the data at the given path
@@ -235,3 +256,88 @@ pub struct CreateCollectionResponse {
     /// The resulting tag.
     pub tag: Tag,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobStatusRequest {
+    /// The hash of the blob
+    pub hash: Hash,
+}
+
+/// The response to a status request
+#[derive(Debug, Serialize, Deserialize, derive_more::From, derive_more::Into)]
+pub struct BlobStatusResponse(pub BlobStatus);
+
+/// Request to create a new scope for temp tags
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchCreateRequest;
+
+/// Update to a temp tag scope
+#[derive(Debug, Serialize, Deserialize)]
+pub enum BatchUpdate {
+    /// Drop of a remote temp tag
+    Drop(HashAndFormat),
+    /// Message to check that the connection is still alive
+    Ping,
+}
+
+/// Response to a temp tag scope request
+#[derive(Debug, Serialize, Deserialize)]
+pub enum BatchCreateResponse {
+    /// We got the id of the scope
+    Id(BatchId),
+}
+
+/// Create a temp tag with a given hash and format
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchCreateTempTagRequest {
+    /// Content to protect
+    pub content: HashAndFormat,
+    /// Batch to create the temp tag in
+    pub batch: BatchId,
+}
+
+/// Write a blob from a byte stream
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BatchAddStreamRequest {
+    /// What format to use for the blob
+    pub format: BlobFormat,
+    /// Batch to create the temp tag in
+    pub batch: BatchId,
+}
+
+/// Write a blob from a byte stream
+#[derive(Serialize, Deserialize, Debug)]
+pub enum BatchAddStreamUpdate {
+    /// A chunk of stream data
+    Chunk(Bytes),
+    /// Abort the request due to an error on the client side
+    Abort,
+}
+
+/// Wrapper around [`AddProgress`].
+#[derive(Debug, Serialize, Deserialize)]
+pub enum BatchAddStreamResponse {
+    Abort(RpcError),
+    OutboardProgress { offset: u64 },
+    Result { hash: Hash },
+}
+
+/// Write a blob from a byte stream
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BatchAddPathRequest {
+    /// The path to the data to provide.
+    pub path: PathBuf,
+    /// Add the data in place
+    pub import_mode: ImportMode,
+    /// What format to use for the blob
+    pub format: BlobFormat,
+    /// Batch to create the temp tag in
+    pub batch: BatchId,
+}
+
+/// Response to a batch add path request
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BatchAddPathResponse(pub BatchAddPathProgress);
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Serialize, Deserialize, Ord, Clone, Copy, Hash)]
+pub struct BatchId(pub(crate) u64);
