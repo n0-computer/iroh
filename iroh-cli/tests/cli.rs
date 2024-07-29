@@ -210,7 +210,6 @@ fn cli_provide_tree_resume() -> Result<()> {
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_file_resume() -> Result<()> {
     use iroh::blobs::store::fs::test_support::{make_partial, MakePartialResult};
 
