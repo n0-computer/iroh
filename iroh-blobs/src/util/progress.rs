@@ -748,11 +748,11 @@ mod tests {
     fn test_sender_is_ptr() {
         assert_eq!(
             std::mem::size_of::<usize>(),
-            std::mem::size_of::<flume::Sender<u8>>()
+            std::mem::size_of::<async_channel::Sender<u8>>()
         );
         assert_eq!(
             std::mem::align_of::<usize>(),
-            std::mem::align_of::<flume::Sender<u8>>()
+            std::mem::align_of::<async_channel::Sender<u8>>()
         );
     }
 }
