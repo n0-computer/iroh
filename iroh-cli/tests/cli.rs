@@ -229,11 +229,14 @@ fn cli_provide_file_resume() -> Result<()> {
     let src_iroh_data_dir = tmp.join("src_iroh_data_dir");
     let file = src.join("file");
     let hash = make_rand_file(100000, &file)?;
-    // leave the provider running for the entire test
+    // import the files into an ephemeral iroh to use the generated blobs db in tests
     let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
     let count = count_input_files(&src);
     let ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
+    drop(provider);
+
     {
+        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
         println!("first test - empty work dir");
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_01");
         let get_output = run_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()))?;
@@ -249,6 +252,7 @@ fn cli_provide_file_resume() -> Result<()> {
         println!("second test - full work dir");
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_02");
         copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
+        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
         let get_output = run_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()))?;
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
         assert_eq!(matches, vec!["0 B"]);
@@ -261,6 +265,7 @@ fn cli_provide_file_resume() -> Result<()> {
         println!("fourth test - partial work dir - truncate some large files");
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_04");
         copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
+        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
         make_partial(&get_iroh_data_dir, |_hash, _size| {
             MakePartialResult::Truncate(1024 * 32)
         })?;
@@ -270,7 +275,6 @@ fn cli_provide_file_resume() -> Result<()> {
         assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
         std::fs::remove_file(&tgt)?;
     }
-    drop(provider);
     Ok(())
 }
 
@@ -619,7 +623,7 @@ fn iroh_bin() -> &'static str {
     env!("CARGO_BIN_EXE_iroh")
 }
 
-/// Makes a provider process with it's home directory in `iroh_data_dir`.
+/// Makes a provider process with its home directory in `iroh_data_dir`.
 fn make_provider_in(iroh_data_dir: &Path, input: Input, wrap: bool) -> Result<ReaderHandle> {
     let mut args = vec!["--metrics-port", "disabled", "start"];
     if wrap {
