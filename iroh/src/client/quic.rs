@@ -21,7 +21,7 @@ use crate::{
 pub(crate) const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 
 impl Iroh {
-    /// Connect to an iroh node running on the same computer, but in a different process.
+    /// Connects to an iroh node running on the same computer, but in a different process.
     pub async fn connect_path(root: impl AsRef<Path>) -> anyhow::Result<Self> {
         let rpc_status = RpcStatus::load(root).await?;
         match rpc_status {
@@ -32,7 +32,7 @@ impl Iroh {
         }
     }
 
-    /// Connect to an iroh node at the given RPC address.
+    /// Connects to an iroh node at the given RPC address.
     pub async fn connect_addr(addr: SocketAddr) -> anyhow::Result<Self> {
         let client = connect_raw(addr).await?;
         Ok(Iroh::new(client))
