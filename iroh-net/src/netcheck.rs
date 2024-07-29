@@ -550,7 +550,7 @@ impl Actor {
     fn handle_report_aborted(&mut self, err: anyhow::Error) {
         self.in_flight_stun_requests.clear();
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
-            report_tx.send(Err(anyhow!("report aborted: {err}"))).ok();
+            report_tx.send(Err(err.context("report aborted"))).ok();
         }
     }
 
