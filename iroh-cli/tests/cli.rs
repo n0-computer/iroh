@@ -245,6 +245,7 @@ fn cli_provide_file_resume() -> Result<()> {
         assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
         // compare_files(&src, &tgt)?;
         std::fs::remove_file(&tgt)?;
+        drop(provider);
     }
 
     // second test - full work dir
@@ -258,6 +259,7 @@ fn cli_provide_file_resume() -> Result<()> {
         assert_eq!(matches, vec!["0 B"]);
         assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
         std::fs::remove_file(&tgt)?;
+        drop(provider);
     }
 
     // third test - partial work dir - truncate some large files
@@ -274,6 +276,7 @@ fn cli_provide_file_resume() -> Result<()> {
         assert_eq!(matches, vec!["65.98 KiB"]);
         assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
         std::fs::remove_file(&tgt)?;
+        drop(provider);
     }
     Ok(())
 }
