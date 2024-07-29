@@ -41,7 +41,6 @@ fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_one_file_basic() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -51,7 +50,6 @@ fn cli_provide_one_file_basic() -> Result<()> {
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_one_file_large() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -62,7 +60,6 @@ fn cli_provide_one_file_large() -> Result<()> {
 
 /// Test single file download to a path
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_one_file_single_path() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -74,7 +71,6 @@ fn cli_provide_one_file_single_path() -> Result<()> {
 
 /// test single file download to stdout
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_one_file_single_stdout() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -86,7 +82,6 @@ fn cli_provide_one_file_single_stdout() -> Result<()> {
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_folder() -> Result<()> {
     let path = testdir!().join("src");
     std::fs::create_dir(&path)?;
@@ -99,7 +94,6 @@ fn cli_provide_folder() -> Result<()> {
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_tree() -> Result<()> {
     let path = testdir!().join("src");
     std::fs::create_dir(&path)?;
@@ -295,7 +289,6 @@ fn cli_provide_file_resume() -> Result<()> {
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_from_stdin_to_stdout() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -408,7 +401,6 @@ fn cli_bao_store_migration() -> anyhow::Result<()> {
 
 #[cfg(unix)]
 #[tokio::test]
-#[ignore = "flaky"]
 async fn cli_provide_persistence() -> anyhow::Result<()> {
     use iroh::blobs::store::ReadableStore;
     use nix::{
@@ -482,7 +474,6 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_provide_addresses() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -521,7 +512,6 @@ fn cli_provide_addresses() -> Result<()> {
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_rpc_lock_restart() -> Result<()> {
     let dir = testdir!();
     let iroh_data_dir = dir.join("data-dir");
