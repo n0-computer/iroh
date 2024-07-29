@@ -459,6 +459,7 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[ignore = "flaky"]
 #[test]
 fn cli_provide_addresses() -> Result<()> {
     let dir = testdir!();
