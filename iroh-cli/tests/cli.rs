@@ -6,10 +6,12 @@ use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::blake3;
 use duct::{cmd, ReaderHandle};
+use indicatif::HumanDuration;
 use iroh::{
     base::ticket::BlobTicket,
     blobs::{Hash, HashAndFormat},
@@ -1052,7 +1054,7 @@ where
     caps
 }
 
-fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<usize> {
+fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<usize> {
     let src = src.as_ref();
     let dst = dst.as_ref();
     std::fs::create_dir_all(dst)?;
@@ -1077,7 +1079,7 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<
                 )
             })?;
         } else {
-            std::fs::copy(&src, &dst).with_context(|| {
+            copy_retrying(&src, &dst).with_context(|| {
                 format!(
                     "failed to copy file `{}` to `{}`",
                     src.display(),
@@ -1088,6 +1090,31 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<
         }
     }
     Ok(len)
+}
+
+fn copy_retrying(src: &Path, dst: &Path) -> Result<u64> {
+    const MAX_RETRIES: u64 = 5;
+    let mut retries = 0;
+    let mut last_result;
+    loop {
+        last_result = std::fs::copy(&src, &dst);
+        if let Ok(_) = last_result {
+            return last_result.map_err(anyhow::Error::from);
+        }
+        println!(
+            "Failed to copy {} to {} after {} retries.",
+            src.display(),
+            dst.display(),
+            retries
+        );
+        let wait = Duration::from_millis(100 * retries);
+        println!("Sleeping for {} then trying again.", HumanDuration(wait));
+        std::thread::sleep(wait);
+        retries += 1;
+        if retries >= MAX_RETRIES {
+            return last_result.map_err(anyhow::Error::from);
+        }
+    }
 }
 
 fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {
