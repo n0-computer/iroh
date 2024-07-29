@@ -564,7 +564,7 @@ fn get_as_ptr<T>(value: &T) -> Option<usize> {
     if mem::size_of::<T>() == std::mem::size_of::<usize>()
         && mem::align_of::<T>() == mem::align_of::<usize>()
     {
-        // Safe only if size and alignment requirements are met
+        // SAFETY: size and alignment requirements are checked and met
         unsafe { Some(mem::transmute_copy(value)) }
     } else {
         None
