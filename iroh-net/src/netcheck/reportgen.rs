@@ -210,9 +210,8 @@ impl Actor {
         match self.run_inner().await {
             Ok(_) => debug!("reportgen actor finished"),
             Err(err) => {
-                error!("reportgen actor failed: {err:#}");
                 self.netcheck
-                    .send(netcheck::Message::ReportAborted)
+                    .send(netcheck::Message::ReportAborted { err })
                     .await
                     .ok();
             }

@@ -327,7 +327,7 @@ pub(crate) enum Message {
     /// A report produced by the [`reportgen`] actor.
     ReportReady { report: Box<Report> },
     /// The [`reportgen`] actor failed to produce a report.
-    ReportAborted,
+    ReportAborted { err: anyhow::Error },
     /// An incoming STUN packet to parse.
     StunPacket {
         /// The raw UDP payload.
@@ -458,8 +458,8 @@ impl Actor {
                 Message::ReportReady { report } => {
                     self.handle_report_ready(report);
                 }
-                Message::ReportAborted => {
-                    self.handle_report_aborted();
+                Message::ReportAborted { err } => {
+                    self.handle_report_aborted(err);
                 }
                 Message::StunPacket { payload, from_addr } => {
                     self.handle_stun_packet(&payload, from_addr);
@@ -547,10 +547,10 @@ impl Actor {
         }
     }
 
-    fn handle_report_aborted(&mut self) {
+    fn handle_report_aborted(&mut self, err: anyhow::Error) {
         self.in_flight_stun_requests.clear();
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
-            report_tx.send(Err(anyhow!("report aborted"))).ok();
+            report_tx.send(Err(err.context("report aborted"))).ok();
         }
     }
 
