@@ -6,12 +6,10 @@ use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::time::Duration;
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::blake3;
 use duct::{cmd, ReaderHandle};
-use indicatif::HumanDuration;
 use iroh::{
     base::ticket::BlobTicket,
     blobs::{Hash, HashAndFormat},
@@ -150,13 +148,20 @@ fn cli_provide_tree_resume() -> Result<()> {
         make_rand_file(100000, &file2)?;
         make_rand_file(5000, &file3)?;
     }
-    // leave the provider running for the entire test
-    let provider = make_provider_in(&src_iroh_data_dir, Input::Path(src.clone()), false)?;
     let count = count_input_files(&src);
-    let ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
+    {
+        // Initialize the source dir with the blobs.db
+        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(src.clone()), false)?;
+        match_provide_output(&provider, count, BlobOrCollection::Collection)?;
+    }
     {
         println!("first test - empty work dir");
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_01");
+
+        // start the provider in each test to avoid holding a lock on blobs.db
+        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(src.clone()), false)?;
+        let ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
+
         let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
@@ -171,6 +176,11 @@ fn cli_provide_tree_resume() -> Result<()> {
         println!("second test - full work dir");
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_02");
         copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
+
+        // start the provider in each test to avoid holding a lock on blobs.db
+        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(src.clone()), false)?;
+        let ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
+
         let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
@@ -185,6 +195,11 @@ fn cli_provide_tree_resume() -> Result<()> {
         println!("third test - partial work dir - remove some large files");
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_03");
         copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
+
+        // start the provider in each test to avoid holding a lock on blobs.db
+        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(src.clone()), false)?;
+        let ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
+
         make_partial(&get_iroh_data_dir, |_hash, size| {
             if size == 100000 {
                 MakePartialResult::Remove
@@ -206,6 +221,11 @@ fn cli_provide_tree_resume() -> Result<()> {
         println!("fourth test - partial work dir - truncate some large files");
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_04");
         copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
+
+        // start the provider in each test to avoid holding a lock on blobs.db
+        let provider = make_provider_in(&src_iroh_data_dir, Input::Path(src.clone()), false)?;
+        let ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
+
         make_partial(&get_iroh_data_dir, |_hash, size| {
             if size == 100000 {
                 MakePartialResult::Truncate(1024 * 32)
@@ -221,7 +241,6 @@ fn cli_provide_tree_resume() -> Result<()> {
         compare_files(&src, &tgt)?;
         std::fs::remove_dir_all(&tgt)?;
     }
-    drop(provider);
     Ok(())
 }
 
@@ -1079,7 +1098,7 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<usize> {
                 )
             })?;
         } else {
-            copy_retrying(&src, &dst).with_context(|| {
+            std::fs::copy(&src, &dst).with_context(|| {
                 format!(
                     "failed to copy file `{}` to `{}`",
                     src.display(),
@@ -1090,31 +1109,6 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<usize> {
         }
     }
     Ok(len)
-}
-
-fn copy_retrying(src: &Path, dst: &Path) -> Result<u64> {
-    const MAX_RETRIES: u64 = 5;
-    let mut retries = 0;
-    let mut last_result;
-    loop {
-        last_result = std::fs::copy(src, dst);
-        if last_result.is_ok() {
-            return last_result.map_err(anyhow::Error::from);
-        }
-        println!(
-            "Failed to copy {} to {} after {} retries.",
-            src.display(),
-            dst.display(),
-            retries
-        );
-        let wait = Duration::from_millis(100 * retries);
-        println!("Sleeping for {} then trying again.", HumanDuration(wait));
-        std::thread::sleep(wait);
-        retries += 1;
-        if retries >= MAX_RETRIES {
-            return last_result.map_err(anyhow::Error::from);
-        }
-    }
 }
 
 fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {
