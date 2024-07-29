@@ -18,6 +18,7 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.76"
   SCCACHE_CACHE_SIZE: "50G"
+  IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
   tests:
@@ -82,7 +83,7 @@ jobs:
           - armv7-linux-androideabi
     steps:
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
@@ -92,13 +93,13 @@ jobs:
       run: rustup target add ${{ matrix.target }}
 
     - name: Setup Java
-      uses: actions/setup-java@v3
+      uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
         java-version: '17'
     
     - name: Setup Android SDK
-      uses: android-actions/setup-android@v2
+      uses: android-actions/setup-android@v3
 
     - name: Setup Android NDK
       uses: arqu/setup-ndk@main
@@ -173,7 +174,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
+        uses: mozilla-actions/sccache-action@v0.0.5
 
       - name: Setup Environment (PR)
         if: ${{ github.event_name == 'pull_request' }}
@@ -208,7 +209,7 @@ jobs:
         components: rustfmt
 
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.4
+      uses: mozilla-actions/sccache-action@v0.0.5
 
     - name: fmt
       run: cargo fmt --all -- --check
@@ -226,7 +227,7 @@ jobs:
       with:
         toolchain: nightly-2024-05-02
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.4
+      uses: mozilla-actions/sccache-action@v0.0.5
 
     - name: Docs
       run: cargo doc --workspace --all-features --no-deps --document-private-items
@@ -245,7 +246,7 @@ jobs:
       with:
         components: clippy
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.4
+      uses: mozilla-actions/sccache-action@v0.0.5
 
     # TODO: We have a bunch of platform-dependent code so should
     #    probably run this job on the full platform matrix
@@ -286,7 +287,7 @@ jobs:
       with:
         toolchain: ${{ env.MSRV }}
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.4
+      uses: mozilla-actions/sccache-action@v0.0.5
 
     - name: Check MSRV all features
       run: |
@@ -425,7 +426,7 @@ jobs:
           toolchain: stable
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
+        uses: mozilla-actions/sccache-action@v0.0.5
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -450,3 +451,10 @@ jobs:
         continue-on-error: true
         run: |
           docker kill $(docker ps -q)
+
+  codespell:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - run: pip install --user codespell[toml]
+    - run: codespell --ignore-words-list=ans,crate,inout,ratatui,ser,stayin,swarmin,worl --skip=CHANGELOG.md

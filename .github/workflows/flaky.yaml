@@ -37,6 +37,9 @@ concurrency:
   group: flaky-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  IROH_FORCE_STAGING_RELAYS: "1"
+
 jobs:
   tests:
     if: "contains(github.event.pull_request.labels.*.name, 'flaky-test') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'"
@@ -55,12 +58,42 @@ jobs:
           result=$(echo '${{ toJSON(needs) }}' | jq -r .tests.result)
           echo TESTS_RESULT=$result
           echo "TESTS_RESULT=$result" >>"$GITHUB_ENV"
+      - name: download nextest reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-*
+          merge-multiple: true
+          path: nextest-results
+      - name: create summary report
+        id: make_summary
+        run: |
+          # prevent the glob expression in the loop to match on itself when the dir is empty
+          shopt -s nullglob
+          # to deal with multiline outputs it's recommended to use a random EOF, the syntax is based on
+          # https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#multiline-strings
+          EOF=aP51VriWCxNJ1JjvmO9i
+          echo "summary<<$EOF" >> $GITHUB_OUTPUT
+          for report in nextest-results/*.json; do
+            # remove the name prefix and extension, and split the parts
+            name=$(echo ${report:16:-5} | tr _ ' ')
+            echo $name
+            echo "- **$name**" >> $GITHUB_OUTPUT
+            # select the failed tests
+            # the tests have this format "crate::module$test_name", the sed expressions remove the quotes and replace $ for ::
+            failure=$(jq --slurp '.[] | select(.["type"] == "test" and .["event"] == "failed" ) | .["name"]' $report | sed -e 's/^"//g' -e 's/\$/::/' -e 's/"//')
+            echo "$failure"
+            echo "$failure" >> $GITHUB_OUTPUT
+          done
+          echo "$EOF" >> $GITHUB_OUTPUT
       - name: Notify discord on failure
         uses: n0-computer/discord-webhook-notify@v1
         if: ${{ env.TESTS_RESULT == 'failure' }}
         with:
           severity: warn
           details: |
-            Flaky tests failed again, why don't you go fix them?
+            Flaky tests failure:
+
+            ${{ steps.make_summary.outputs.summary }}
+
             See https://github.com/n0-computer/iroh/actions/workflows/flaky.yaml
           webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
