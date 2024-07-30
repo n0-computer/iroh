@@ -503,6 +503,7 @@
 <a href="#503" id="503">503</a>
 <a href="#504" id="504">504</a>
 <a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/derp/derp_client.go
 </span><span class="kw">use </span>std::net::SocketAddr;
 <span class="kw">use </span>std::pin::Pin;
@@ -700,7 +701,7 @@
     }
 }
 
-<span class="doccomment">/// The kinds of messages we can send to the [`super::server::Server`]
+<span class="doccomment">/// The kinds of messages we can send to the [`Server`](crate::relay::server::Server)
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>ConnWriterMessage {
     <span class="doccomment">/// Send a packet (addressed to the [`PublicKey`]) to the server
@@ -715,7 +716,7 @@
     </span>Shutdown,
 }
 
-<span class="doccomment">/// Call [`ConnWriter::run`] to listen for messages to send to the connection.
+<span class="doccomment">/// Call [`ConnWriterTasks::run`] to listen for messages to send to the connection.
 /// Should be used by the [`Conn`]
 ///
 /// Shutsdown when you send a [`ConnWriterMessage::Shutdown`], or if there is an error writing to
@@ -755,7 +756,8 @@
     }
 }
 
-<span class="doccomment">/// The Builder returns a [`Conn`] and a started [`ClientWriter`] run task.
+<span class="doccomment">/// The Builder returns a [`Conn`] and a [`ConnReceiver`] and
+/// runs a [`ConnWriterTasks`] in the background.
 </span><span class="kw">pub struct </span>ConnBuilder {
     secret_key: SecretKey,
     reader: ConnReader,
