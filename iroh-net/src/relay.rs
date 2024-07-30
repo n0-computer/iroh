@@ -10,8 +10,8 @@
 
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
-pub(crate) mod client;
 pub(crate) mod codec;
+pub(crate) mod conn;
 pub mod http;
 mod map;
 mod metrics;
@@ -19,8 +19,8 @@ mod metrics;
 pub mod server;
 pub(crate) mod types;
 
-pub use self::client::{Conn as RelayClient, ReceivedMessage};
 pub use self::codec::MAX_PACKET_SIZE;
+pub use self::conn::{Conn as RelayClient, ReceivedMessage};
 pub use self::http::Client as HttpClient;
 pub use self::map::{RelayMap, RelayMode, RelayNode};
 pub use self::metrics::Metrics;

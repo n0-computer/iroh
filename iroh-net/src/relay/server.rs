@@ -719,7 +719,7 @@ mod tests {
 
     use crate::relay::http::{ClientBuilder, Protocol, HTTP_UPGRADE_PROTOCOL};
 
-    use self::relay::client::ReceivedMessage;
+    use self::relay::conn::ReceivedMessage;
 
     use super::*;
 

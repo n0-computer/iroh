@@ -75,7 +75,7 @@ mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use crate::key::{PublicKey, SecretKey};
-    use crate::relay::client::ReceivedMessage;
+    use crate::relay::conn::ReceivedMessage;
 
     pub(crate) fn make_tls_config() -> TlsConfig {
         let subject_alt_names = vec!["localhost".to_string()];

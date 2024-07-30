@@ -28,14 +28,14 @@ use url::Url;
 
 use crate::dns::{DnsResolver, ResolverExt};
 use crate::key::{PublicKey, SecretKey};
-use crate::relay::client::{ConnReader, ConnWriter};
 use crate::relay::codec::DerpCodec;
+use crate::relay::conn::{ConnReader, ConnWriter};
 use crate::relay::http::streams::{downcast_upgrade, MaybeTlsStream};
 use crate::relay::http::RELAY_PATH;
 use crate::relay::RelayUrl;
 use crate::relay::{
-    client::Conn as RelayClient, client::ConnBuilder as RelayClientBuilder,
-    client::ConnReceiver as RelayClientReceiver, client::ReceivedMessage,
+    conn::Conn as RelayClient, conn::ConnBuilder as RelayClientBuilder,
+    conn::ConnReceiver as RelayClientReceiver, conn::ReceivedMessage,
 };
 use crate::util::chain;
 use crate::util::AbortingJoinHandle;
