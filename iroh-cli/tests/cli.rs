@@ -142,14 +142,16 @@ fn cli_provide_tree_resume() -> Result<()> {
         make_rand_file(100000, &file2)?;
         make_rand_file(5000, &file3)?;
     }
-    // leave the provider running for the entire test
-    let provider = make_provider_in(&src_iroh_data_dir_pre, Input::Path(src.clone()), false)?;
+
     let count = count_input_files(&src);
-    // wait for iroh to import all data
-    std::thread::sleep(std::time::Duration::from_secs(4));
-    let ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
-    drop(provider);
-    drop(ticket);
+
+    {
+        // import the files into an ephemeral iroh to use the generated blobs db in tests
+        let provider = make_provider_in(&src_iroh_data_dir_pre, Input::Path(src.clone()), false)?;
+        // small synchronization points: allow iroh to be ready for transfer
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        let _ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
+    }
 
     // setup the data dir for the iroh instances that will get the blobs
     let src_iroh_data_dir = tmp.join("src_iroh_data_dir");
@@ -251,13 +253,15 @@ fn cli_provide_file_resume() -> Result<()> {
     let src_iroh_data_dir_pre = tmp.join("src_iroh_data_dir_pre");
     let file = src.join("file");
     let hash = make_rand_file(100000, &file)?;
-
-    // import the files into an ephemeral iroh to use the generated blobs db in tests
-    let provider = make_provider_in(&src_iroh_data_dir_pre, Input::Path(file.clone()), false)?;
     let count = count_input_files(&src);
-    // small synchronization point: allow iroh to be ready for transfer
-    std::thread::sleep(std::time::Duration::from_secs(4));
-    drop(provider);
+
+    {
+        // import the files into an ephemeral iroh to use the generated blobs db in tests
+        let provider = make_provider_in(&src_iroh_data_dir_pre, Input::Path(file.clone()), false)?;
+        // small synchronization points: allow iroh to be ready for transfer
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        let _ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
+    }
 
     // setup the data dir for the iroh instances that will get the blobs
     let src_iroh_data_dir = tmp.join("src_iroh_data_dir");
