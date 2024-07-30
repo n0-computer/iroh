@@ -16,7 +16,7 @@ use crate::{disco::looks_like_disco_wrapper, key::PublicKey};
 use iroh_metrics::{inc, inc_by};
 
 use crate::relay::codec::Frame;
-use crate::relay::server::RelayIo;
+use crate::relay::server::streams::RelayIo;
 use crate::relay::{
     codec::{write_frame, KEEP_ALIVE},
     metrics::Metrics,
@@ -453,7 +453,7 @@ impl ClientConnIo {
 mod tests {
     use crate::key::SecretKey;
     use crate::relay::codec::{recv_frame, DerpCodec, FrameType};
-    use crate::relay::server::MaybeTlsStream;
+    use crate::relay::server::streams::MaybeTlsStream;
 
     use super::*;
 

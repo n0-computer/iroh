@@ -7,7 +7,7 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "iroh-relay")]
-use super::client_conn::ClientConnBuilder;
+use super::server::client_conn::ClientConnBuilder;
 #[cfg(feature = "iroh-relay")]
 use crate::key::PublicKey;
 

@@ -24,7 +24,8 @@ use tungstenite::handshake::derive_accept_key;
 
 use crate::key::SecretKey;
 use crate::relay::http::SUPPORTED_WEBSOCKET_VERSION;
-use crate::relay::server::{ClientConnHandler, MaybeTlsStream};
+use crate::relay::server::actor::{ClientConnHandler, ServerActorTask};
+use crate::relay::server::streams::MaybeTlsStream;
 
 use super::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH};
 
@@ -260,7 +261,7 @@ impl ServerBuilder {
         );
         let (relay_handler, relay_server) = if let Some(secret_key) = self.secret_key {
             // spawns a server actor/task
-            let server = crate::relay::server::ServerActorTask::new(secret_key.clone());
+            let server = ServerActorTask::new(secret_key.clone());
             (
                 RelayHandler::ConnHandler(server.client_conn_handler(self.headers.clone())),
                 Some(server),
@@ -305,7 +306,7 @@ impl ServerBuilder {
 struct ServerState {
     addr: SocketAddr,
     tls_config: Option<TlsConfig>,
-    server: Option<crate::relay::server::ServerActorTask>,
+    server: Option<ServerActorTask>,
     service: RelayService,
 }
 

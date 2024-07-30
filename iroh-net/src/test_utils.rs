@@ -1,8 +1,10 @@
 //! Internal utilities to support testing.
+use std::net::Ipv4Addr;
 
 use anyhow::Result;
 use tokio::sync::oneshot;
 
+use crate::relay::server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig};
 use crate::{
     key::SecretKey,
     relay::{RelayMap, RelayNode, RelayUrl},
@@ -25,12 +27,7 @@ pub struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 ///
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
-///
-/// [`Server`]: crate::relay::iroh_relay::Server
-pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, crate::relay::iroh_relay::Server)> {
-    use crate::relay::iroh_relay::{CertConfig, RelayConfig, ServerConfig, StunConfig, TlsConfig};
-    use std::net::Ipv4Addr;
-
+pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server)> {
     let secret_key = SecretKey::generate();
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
     let rustls_cert = rustls::Certificate(cert.serialize_der().unwrap());
@@ -55,9 +52,7 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, crate::relay::iro
         #[cfg(feature = "metrics")]
         metrics_addr: None,
     };
-    let server = crate::relay::iroh_relay::Server::spawn(config)
-        .await
-        .unwrap();
+    let server = Server::spawn(config).await.unwrap();
     let url: RelayUrl = format!("https://localhost:{}", server.https_addr().unwrap().port())
         .parse()
         .unwrap();
