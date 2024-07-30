@@ -46,7 +46,7 @@ pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Will forcefully abort the server actor loop when dropped.
 /// For stopping gracefully, use [`ServerActorTask::close`].
 ///
-/// Responsible for managing connections to relay [`Conn`](crate::relay::client::Conn)s, sending packets from one client to another.
+/// Responsible for managing connections to relay [`Conn`](crate::relay::RelayConn)s, sending packets from one client to another.
 #[derive(Debug)]
 pub struct ServerActorTask {
     /// Optionally specifies how long to wait before failing when writing

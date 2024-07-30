@@ -407,7 +407,7 @@ impl Client {
     /// Returns [`ClientError::Closed`] if the [`Client`] is closed.
     ///
     /// If there is already an active relay connection, returns the already
-    /// connected [`crate::relay::client::Conn`].
+    /// connected [`crate::relay::RelayConn`].
     pub async fn connect(&self) -> Result<(RelayClient, usize), ClientError> {
         self.send_actor(ActorMessage::Connect).await
     }
