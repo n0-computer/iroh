@@ -559,7 +559,7 @@
 }
 
 <span class="attr">#[derive(Debug)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ClientReceiver {
+</span><span class="kw">pub struct </span>ClientReceiver {
     <span class="doccomment">/// The reader channel, receiving incoming messages.
     </span>reader_channel: mpsc::Receiver&lt;<span class="prelude-ty">Result</span>&lt;ReceivedMessage&gt;&gt;,
 }
@@ -950,7 +950,7 @@
 }
 
 <span class="attr">#[derive(derive_more::Debug, Clone)]
-</span><span class="doccomment">/// The type of message received by the [`ClientReceiver`] from a relay server.
+</span><span class="doccomment">/// The type of message received by the [`Client`] from a relay server.
 </span><span class="kw">pub enum </span>ReceivedMessage {
     <span class="doccomment">/// Represents an incoming packet.
     </span>ReceivedPacket {

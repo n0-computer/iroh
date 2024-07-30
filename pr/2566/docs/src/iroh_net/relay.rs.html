@@ -60,7 +60,7 @@
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>server;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>types;
 
-<span class="kw">pub use </span><span class="self">self</span>::client::Client <span class="kw">as </span>RelayClient;
+<span class="kw">pub use </span><span class="self">self</span>::client::{Client <span class="kw">as </span>RelayClient, ReceivedMessage};
 <span class="kw">pub use </span><span class="self">self</span>::codec::MAX_PACKET_SIZE;
 <span class="kw">pub use </span><span class="self">self</span>::http::Client <span class="kw">as </span>HttpClient;
 <span class="kw">pub use </span><span class="self">self</span>::map::{RelayMap, RelayMode, RelayNode};
