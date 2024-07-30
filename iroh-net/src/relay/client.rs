@@ -48,7 +48,7 @@ pub struct Client {
 }
 
 #[derive(Debug)]
-pub(crate) struct ClientReceiver {
+pub struct ClientReceiver {
     /// The reader channel, receiving incoming messages.
     reader_channel: mpsc::Receiver<Result<ReceivedMessage>>,
 }
@@ -439,7 +439,7 @@ impl ClientBuilder {
 }
 
 #[derive(derive_more::Debug, Clone)]
-/// The type of message received by the [`ClientReceiver`] from a relay server.
+/// The type of message received by the [`Client`] from a relay server.
 pub enum ReceivedMessage {
     /// Represents an incoming packet.
     ReceivedPacket {
