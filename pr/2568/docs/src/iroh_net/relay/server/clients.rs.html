@@ -337,6 +337,7 @@
 <a href="#337" id="337">337</a>
 <a href="#338" id="338">338</a>
 <a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/derp/derp_server.go
 //!
 //! The "Server" side of the client. Uses the `ClientConnManager`.
@@ -350,7 +351,8 @@
 <span class="kw">use </span><span class="kw">crate</span>::key::PublicKey;
 
 <span class="kw">use </span><span class="kw">super</span>::client_conn::{ClientConnBuilder, ClientConnManager};
-<span class="kw">use </span><span class="kw">crate</span>::relay::{metrics::Metrics, types::Packet};
+<span class="kw">use </span><span class="kw">super</span>::types::Packet;
+<span class="kw">use </span><span class="kw">crate</span>::relay::metrics::Metrics;
 
 <span class="doccomment">/// Number of times we try to send to a client connection before dropping the data;
 </span><span class="kw">const </span>RETRIES: usize = <span class="number">3</span>;

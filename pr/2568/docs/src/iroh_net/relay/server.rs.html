@@ -1039,6 +1039,7 @@
 <a href="#1039" id="1039">1039</a>
 <a href="#1040" id="1040">1040</a>
 <a href="#1041" id="1041">1041</a>
+<a href="#1042" id="1042">1042</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A full-fledged iroh-relay server.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1079,6 +1080,7 @@
 <span class="kw">mod </span>clients;
 <span class="kw">mod </span>http_server;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>streams;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>types;
 
 <span class="kw">const </span>NO_CONTENT_CHALLENGE_HEADER: <span class="kw-2">&amp;</span>str = <span class="string">"X-Tailscale-Challenge"</span>;
 <span class="kw">const </span>NO_CONTENT_RESPONSE_HEADER: <span class="kw-2">&amp;</span>str = <span class="string">"X-Tailscale-Response"</span>;

@@ -686,10 +686,10 @@
 
 <span class="kw">use </span><span class="kw">crate</span>::relay::codec::Frame;
 <span class="kw">use </span><span class="kw">crate</span>::relay::server::streams::RelayIo;
+<span class="kw">use </span><span class="kw">crate</span>::relay::server::types::{Packet, ServerMessage};
 <span class="kw">use </span><span class="kw">crate</span>::relay::{
     codec::{write_frame, KEEP_ALIVE},
     metrics::Metrics,
-    types::{Packet, ServerMessage},
 };
 
 <span class="doccomment">/// The [`Server`] side representation of a [`Client`]'s connection.

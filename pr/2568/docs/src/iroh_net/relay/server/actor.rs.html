@@ -756,8 +756,6 @@
 <a href="#756" id="756">756</a>
 <a href="#757" id="757">757</a>
 <a href="#758" id="758">758</a>
-<a href="#759" id="759">759</a>
-<a href="#760" id="760">760</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/derp/derp_server.go
 </span><span class="kw">use </span>std::collections::HashMap;
 <span class="kw">use </span>std::sync::atomic::{AtomicUsize, Ordering};
@@ -777,10 +775,9 @@
 <span class="kw">use </span>tungstenite::protocol::Role;
 
 <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
-<span class="kw">use </span><span class="kw">crate</span>::relay::server::streams::{MaybeTlsStream, RelayIo};
-<span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
-
 <span class="kw">use </span><span class="kw">crate</span>::relay::http::Protocol;
+<span class="kw">use </span><span class="kw">crate</span>::relay::server::streams::{MaybeTlsStream, RelayIo};
+<span class="kw">use </span><span class="kw">crate</span>::relay::server::types::ServerMessage;
 <span class="kw">use </span><span class="kw">crate</span>::relay::{
     codec::{
         recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
@@ -789,8 +786,8 @@
     metrics::Metrics,
     server::client_conn::ClientConnBuilder,
     server::clients::Clients,
-    types::ServerMessage,
 };
+<span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
 
 <span class="comment">// TODO: skipping `verboseDropKeys` for now
 
@@ -1171,8 +1168,7 @@
     <span class="kw">use </span><span class="kw">crate</span>::relay::{
         client::conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
         client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
-        codec::{recv_frame, Frame, FrameType},
-        types::ClientInfo,
+        codec::{recv_frame, ClientInfo, Frame, FrameType},
     };
     <span class="kw">use </span>tokio_util::codec::{FramedRead, FramedWrite};
     <span class="kw">use </span>tracing_subscriber::{prelude::<span class="kw-2">*</span>, EnvFilter};

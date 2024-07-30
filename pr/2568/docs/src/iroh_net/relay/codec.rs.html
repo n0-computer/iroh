@@ -800,6 +800,13 @@
 <a href="#800" id="800">800</a>
 <a href="#801" id="801">801</a>
 <a href="#802" id="802">802</a>
+<a href="#803" id="803">803</a>
+<a href="#804" id="804">804</a>
+<a href="#805" id="805">805</a>
+<a href="#806" id="806">806</a>
+<a href="#807" id="807">807</a>
+<a href="#808" id="808">808</a>
+<a href="#809" id="809">809</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::time::Duration;
 
 <span class="kw">use </span>anyhow::{bail, ensure};
@@ -809,9 +816,10 @@
 <span class="kw">use </span>futures_sink::Sink;
 <span class="kw">use </span>futures_util::SinkExt;
 <span class="kw">use </span>iroh_base::key::{Signature, PUBLIC_KEY_LENGTH};
+<span class="kw">use </span>postcard::experimental::max_size::MaxSize;
+<span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio_util::codec::{Decoder, Encoder};
 
-<span class="kw">use </span><span class="kw">super</span>::types::ClientInfo;
 <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
 
 <span class="doccomment">/// The maximum size of a packet sent over relay.
@@ -915,6 +923,12 @@
     <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>std::fmt::Formatter) -&gt; std::fmt::Result {
         <span class="macro">write!</span>(f, <span class="string">"{self:?}"</span>)
     }
+}
+
+<span class="attr">#[derive(Debug, Serialize, Deserialize, MaxSize, PartialEq, Eq)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ClientInfo {
+    <span class="doccomment">/// The relay protocol version that the client was built with.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) version: usize,
 }
 
 <span class="doccomment">/// Writes complete frame, errors if it is unable to write within the given `timeout`.
