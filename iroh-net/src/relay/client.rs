@@ -439,7 +439,7 @@ impl ClientBuilder {
 }
 
 #[derive(derive_more::Debug, Clone)]
-/// The type of message received by the [`Client`] from a relay server.
+/// The type of message received by the [`ClientReceiver`] from a relay server.
 pub enum ReceivedMessage {
     /// Represents an incoming packet.
     ReceivedPacket {
