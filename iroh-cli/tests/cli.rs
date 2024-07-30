@@ -128,7 +128,7 @@ fn cli_provide_tree_resume() -> Result<()> {
     let tmp = testdir!();
     let src = tmp.join("src");
     std::fs::create_dir(&src)?;
-    let src_iroh_data_dir = tmp.join("src_iroh_data_dir");
+    let src_iroh_data_dir_pre = tmp.join("src_iroh_data_dir_pre");
     let tgt = tmp.join("tgt");
     {
         let foo_path = src.join("foo");
@@ -143,15 +143,17 @@ fn cli_provide_tree_resume() -> Result<()> {
         make_rand_file(5000, &file3)?;
     }
     // leave the provider running for the entire test
-    let provider = make_provider_in(&src_iroh_data_dir, Input::Path(src.clone()), false)?;
+    let provider = make_provider_in(&src_iroh_data_dir_pre, Input::Path(src.clone()), false)?;
     let count = count_input_files(&src);
     // wait for iroh to import all data
     std::thread::sleep(std::time::Duration::from_secs(4));
+    let ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
     drop(provider);
-    // extra time for cleanup
-    std::thread::sleep(std::time::Duration::from_secs(1));
+    drop(ticket);
 
     // setup the data dir for the iroh instances that will get the blobs
+    let src_iroh_data_dir = tmp.join("src_iroh_data_dir");
+    copy_blob_dirs(&src_iroh_data_dir_pre, &src_iroh_data_dir)?;
     // first tests
     let empty_data_dir = tmp.join("get_iroh_data_dir_01");
     // second test
@@ -246,20 +248,21 @@ fn cli_provide_file_resume() -> Result<()> {
     let src = tmp.join("src");
     let tgt = tmp.join("tgt");
     std::fs::create_dir(&src)?;
-    let src_iroh_data_dir = tmp.join("src_iroh_data_dir");
+    let src_iroh_data_dir_pre = tmp.join("src_iroh_data_dir_pre");
     let file = src.join("file");
     let hash = make_rand_file(100000, &file)?;
 
     // import the files into an ephemeral iroh to use the generated blobs db in tests
-    let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
+    let provider = make_provider_in(&src_iroh_data_dir_pre, Input::Path(file.clone()), false)?;
     let count = count_input_files(&src);
     // small synchronization point: allow iroh to be ready for transfer
     std::thread::sleep(std::time::Duration::from_secs(4));
     drop(provider);
-    // extra time for cleanup
-    std::thread::sleep(std::time::Duration::from_secs(1));
 
     // setup the data dir for the iroh instances that will get the blobs
+    let src_iroh_data_dir = tmp.join("src_iroh_data_dir");
+    copy_blob_dirs(&src_iroh_data_dir_pre, &src_iroh_data_dir)?;
+
     // first test: empty
     let empty_data_dir = tmp.join("get_iroh_data_dir_01");
     // second test: all data available already
@@ -1114,6 +1117,7 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<
                 )
             })?;
         } else {
+            println!("copying {} to {}", src.display(), dst.display());
             std::fs::copy(&src, &dst).with_context(|| {
                 format!(
                     "failed to copy file `{}` to `{}`",
