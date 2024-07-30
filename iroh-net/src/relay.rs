@@ -17,7 +17,6 @@ mod map;
 mod metrics;
 #[cfg(feature = "iroh-relay")]
 pub mod server;
-pub(crate) mod types;
 
 pub use self::client::conn::{Conn as RelayConn, ReceivedMessage};
 pub use self::client::{

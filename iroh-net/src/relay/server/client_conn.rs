@@ -17,10 +17,10 @@ use iroh_metrics::{inc, inc_by};
 
 use crate::relay::codec::Frame;
 use crate::relay::server::streams::RelayIo;
+use crate::relay::server::types::{Packet, ServerMessage};
 use crate::relay::{
     codec::{write_frame, KEEP_ALIVE},
     metrics::Metrics,
-    types::{Packet, ServerMessage},
 };
 
 /// The [`Server`] side representation of a [`Client`]'s connection.

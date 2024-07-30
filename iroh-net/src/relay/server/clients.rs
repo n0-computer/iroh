@@ -11,7 +11,8 @@ use tracing::{Instrument, Span};
 use crate::key::PublicKey;
 
 use super::client_conn::{ClientConnBuilder, ClientConnManager};
-use crate::relay::{metrics::Metrics, types::Packet};
+use super::types::Packet;
+use crate::relay::metrics::Metrics;
 
 /// Number of times we try to send to a client connection before dropping the data;
 const RETRIES: usize = 3;

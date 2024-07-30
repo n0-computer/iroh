@@ -1,11 +1,12 @@
 //! based on tailscale/derp/derp_client.go
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use bytes::Bytes;
 use futures_lite::Stream;
 use futures_sink::Sink;
@@ -16,17 +17,12 @@ use tokio_tungstenite_wasm::WebSocketStream;
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, info_span, trace, Instrument};
 
-use crate::relay::client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter};
-use crate::relay::codec::PER_CLIENT_READ_QUEUE_DEPTH;
-use crate::relay::{
-    codec::{
-        write_frame, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH,
-        PROTOCOL_VERSION,
-    },
-    types::{ClientInfo, RateLimiter},
-};
-
 use crate::key::{PublicKey, SecretKey};
+use crate::relay::client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter};
+use crate::relay::codec::{
+    write_frame, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+};
+use crate::relay::codec::{ClientInfo, PER_CLIENT_READ_QUEUE_DEPTH};
 use crate::util::AbortingJoinHandle;
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
@@ -503,4 +499,38 @@ pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     writer.flush().await?;
 
     Ok(())
+}
+
+pub(crate) struct RateLimiter {
+    inner: governor::RateLimiter<
+        governor::state::direct::NotKeyed,
+        governor::state::InMemoryState,
+        governor::clock::DefaultClock,
+        governor::middleware::NoOpMiddleware,
+    >,
+}
+
+impl RateLimiter {
+    pub(crate) fn new(bytes_per_second: usize, bytes_burst: usize) -> Result<Option<Self>> {
+        if bytes_per_second == 0 || bytes_burst == 0 {
+            return Ok(None);
+        }
+        let bytes_per_second = NonZeroU32::new(u32::try_from(bytes_per_second)?)
+            .context("bytes_per_second not non-zero")?;
+        let bytes_burst =
+            NonZeroU32::new(u32::try_from(bytes_burst)?).context("bytes_burst not non-zero")?;
+        Ok(Some(Self {
+            inner: governor::RateLimiter::direct(
+                governor::Quota::per_second(bytes_per_second).allow_burst(bytes_burst),
+            ),
+        }))
+    }
+
+    pub(crate) fn check_n(&self, n: usize) -> Result<()> {
+        let n = NonZeroU32::new(u32::try_from(n)?).context("n not non-zero")?;
+        match self.inner.check_n(n) {
+            Ok(_) => Ok(()),
+            Err(_) => bail!("batch cannot go through"),
+        }
+    }
 }

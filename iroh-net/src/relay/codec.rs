@@ -7,9 +7,10 @@ use futures_lite::{Stream, StreamExt};
 use futures_sink::Sink;
 use futures_util::SinkExt;
 use iroh_base::key::{Signature, PUBLIC_KEY_LENGTH};
+use postcard::experimental::max_size::MaxSize;
+use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Decoder, Encoder};
 
-use super::types::ClientInfo;
 use crate::key::{PublicKey, SecretKey};
 
 /// The maximum size of a packet sent over relay.
@@ -113,6 +114,12 @@ impl std::fmt::Display for FrameType {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{self:?}")
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, MaxSize, PartialEq, Eq)]
+pub(crate) struct ClientInfo {
+    /// The relay protocol version that the client was built with.
+    pub(crate) version: usize,
 }
 
 /// Writes complete frame, errors if it is unable to write within the given `timeout`.

@@ -17,10 +17,9 @@ use tracing::{info_span, trace, Instrument};
 use tungstenite::protocol::Role;
 
 use crate::key::{PublicKey, SecretKey};
-use crate::relay::server::streams::{MaybeTlsStream, RelayIo};
-use crate::util::AbortingJoinHandle;
-
 use crate::relay::http::Protocol;
+use crate::relay::server::streams::{MaybeTlsStream, RelayIo};
+use crate::relay::server::types::ServerMessage;
 use crate::relay::{
     codec::{
         recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
@@ -29,8 +28,8 @@ use crate::relay::{
     metrics::Metrics,
     server::client_conn::ClientConnBuilder,
     server::clients::Clients,
-    types::ServerMessage,
 };
+use crate::util::AbortingJoinHandle;
 
 // TODO: skipping `verboseDropKeys` for now
 
@@ -411,8 +410,7 @@ mod tests {
     use crate::relay::{
         client::conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
         client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
-        codec::{recv_frame, Frame, FrameType},
-        types::ClientInfo,
+        codec::{recv_frame, ClientInfo, Frame, FrameType},
     };
     use tokio_util::codec::{FramedRead, FramedWrite};
     use tracing_subscriber::{prelude::*, EnvFilter};

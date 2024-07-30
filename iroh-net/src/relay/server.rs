@@ -38,6 +38,7 @@ pub(crate) mod client_conn;
 mod clients;
 mod http_server;
 pub(crate) mod streams;
+pub(crate) mod types;
 
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
 const NO_CONTENT_RESPONSE_HEADER: &str = "X-Tailscale-Response";
