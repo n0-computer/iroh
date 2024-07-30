@@ -452,18 +452,6 @@ pub(crate) enum ReceivedMessage {
     /// Indicates that the client identified by the underlying public key had previously sent you a
     /// packet but has now disconnected from the server.
     PeerGone(PublicKey),
-    /// Sent by the server upon first connect.
-    ServerInfo {
-        /// How many bytes per second the server says it will accept, including all framing bytes.
-        ///
-        /// Zero means unspecified. There might be a limit, but the client need not try to respect it.
-        token_bucket_bytes_per_second: usize,
-        /// How many bytes the server will allow in one burst, temporarily violating
-        /// `token_bucket_bytes_per_second`.
-        ///
-        /// Zero means unspecified. There might be a limit, but the [`Client`] need not try to respect it.
-        token_bucket_bytes_burst: usize,
-    },
     /// Request from a client or server to reply to the
     /// other side with a [`ReceivedMessage::Pong`] with the given payload.
     Ping([u8; 8]),
@@ -482,17 +470,20 @@ pub(crate) enum ReceivedMessage {
         ///
         /// The default condition is healthy, so the server doesn't broadcast a [`ReceivedMessage::Health`]
         /// until a problem exists.
+        #[allow(unused)]
         problem: Option<String>,
     },
     /// A one-way message from server to client, advertising that the server is restarting.
     ServerRestarting {
         /// An advisory duration that the client should wait before attempting to reconnect.
         /// It might be zero. It exists for the server to smear out the reconnects.
+        #[allow(unused)]
         reconnect_in: Duration,
         /// An advisory duration for how long the client should attempt to reconnect
         /// before giving up and proceeding with its normal connection failure logic. The interval
         /// between retries is undefined for now. A server should not send a TryFor duration more
         /// than a few seconds.
+        #[allow(unused)]
         try_for: Duration,
     },
 }
