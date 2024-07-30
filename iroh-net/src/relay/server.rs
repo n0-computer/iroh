@@ -15,7 +15,6 @@ use iroh_metrics::{inc, inc_by, report_usage_stats};
 use time::{Date, OffsetDateTime};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 use tokio_tungstenite::WebSocketStream;
 use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
@@ -23,6 +22,7 @@ use tracing::{info_span, trace, Instrument};
 use tungstenite::protocol::Role;
 
 use crate::key::{PublicKey, SecretKey};
+use crate::util::AbortingJoinHandle;
 
 use super::codec::Frame;
 use super::http::Protocol;
@@ -63,7 +63,7 @@ pub struct Server {
     /// When true, the server has been shutdown.
     closed: bool,
     /// Server loop handler
-    loop_handler: JoinHandle<Result<()>>,
+    loop_handler: AbortingJoinHandle<Result<()>>,
     /// Done token, forces a hard shutdown. To gracefully shutdown, use [`Server::close`]
     cancel: CancellationToken,
     // TODO: stats collection
@@ -79,7 +79,8 @@ impl Server {
         let server_task = tokio::spawn(
             async move { server_actor.run(done).await }
                 .instrument(info_span!("relay.server", me = %key.public().fmt_short())),
-        );
+        )
+        .into();
         let meta_cert = init_meta_cert(&key.public());
         Self {
             write_timeout: Some(WRITE_TIMEOUT),
@@ -671,7 +672,7 @@ mod tests {
 
         // start a task as if a client is doing the "accept" handshake
         let pub_client_key = client_key.public();
-        let client_task: JoinHandle<Result<()>> = tokio::spawn(async move {
+        let client_task: AbortingJoinHandle<Result<()>> = tokio::spawn(async move {
             // send the client info
             let client_info = ClientInfo {
                 version: PROTOCOL_VERSION,
@@ -680,7 +681,8 @@ mod tests {
                 .await?;
 
             Ok(())
-        });
+        })
+        .into();
 
         // attempt to add the connection to the server
         handler
