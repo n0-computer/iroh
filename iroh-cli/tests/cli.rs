@@ -149,7 +149,7 @@ fn cli_provide_tree_resume() -> Result<()> {
         // import the files into an ephemeral iroh to use the generated blobs db in tests
         let provider = make_provider_in(&src_iroh_data_dir_pre, Input::Path(src.clone()), false)?;
         // small synchronization points: allow iroh to be ready for transfer
-        std::thread::sleep(std::time::Duration::from_secs(4));
+        std::thread::sleep(std::time::Duration::from_secs(3));
         let _ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
     }
 
@@ -259,7 +259,7 @@ fn cli_provide_file_resume() -> Result<()> {
         // import the files into an ephemeral iroh to use the generated blobs db in tests
         let provider = make_provider_in(&src_iroh_data_dir_pre, Input::Path(file.clone()), false)?;
         // small synchronization points: allow iroh to be ready for transfer
-        std::thread::sleep(std::time::Duration::from_secs(4));
+        std::thread::sleep(std::time::Duration::from_secs(3));
         let _ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
     }
 
