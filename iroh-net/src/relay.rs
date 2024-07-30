@@ -25,7 +25,7 @@ mod metrics;
 pub(crate) mod server;
 pub(crate) mod types;
 
-pub use self::client::Client as RelayClient;
+pub use self::client::{Client as RelayClient, ReceivedMessage};
 pub use self::codec::MAX_PACKET_SIZE;
 pub use self::http::Client as HttpClient;
 pub use self::map::{RelayMap, RelayMode, RelayNode};
