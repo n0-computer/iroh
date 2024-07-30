@@ -46,7 +46,7 @@ pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Will forcefully abort the server actor loop when dropped.
 /// For stopping gracefully, use [`ServerActorTask::close`].
 ///
-/// Responsible for managing connections to relay [`Client`](super::client::Client)s, sending packets from one client to another.
+/// Responsible for managing connections to relay [`Conn`](crate::relay::client::Conn)s, sending packets from one client to another.
 #[derive(Debug)]
 pub struct ServerActorTask {
     /// Optionally specifies how long to wait before failing when writing
@@ -182,6 +182,9 @@ impl ClientConnHandler {
     /// and is unable to verify this one, or if there is some issue communicating with the server.
     ///
     /// The provided [`AsyncRead`] and [`AsyncWrite`] must be already connected to the connection.
+    ///
+    /// [`AsyncRead`]: tokio::io::AsyncRead
+    /// [`AsyncWrite`]: tokio::io::AsyncWrite
     pub async fn accept(&self, protocol: Protocol, io: MaybeTlsStream) -> Result<()> {
         trace!(?protocol, "accept: start");
         let mut io = match protocol {
@@ -406,7 +409,7 @@ mod tests {
     use super::*;
 
     use crate::relay::{
-        client::{ClientBuilder, ConnReader, ConnWriter, ReceivedMessage},
+        client::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
         codec::{recv_frame, Frame, FrameType},
         http::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         types::ClientInfo,
@@ -551,7 +554,7 @@ mod tests {
         Ok(())
     }
 
-    fn make_test_client(secret_key: SecretKey) -> (tokio::io::DuplexStream, ClientBuilder) {
+    fn make_test_client(secret_key: SecretKey) -> (tokio::io::DuplexStream, ConnBuilder) {
         let (client, server) = tokio::io::duplex(10);
         let (client_reader, client_writer) = tokio::io::split(client);
 
@@ -563,7 +566,7 @@ mod tests {
 
         (
             server,
-            ClientBuilder::new(secret_key, None, client_reader, client_writer),
+            ConnBuilder::new(secret_key, None, client_reader, client_writer),
         )
     }
 

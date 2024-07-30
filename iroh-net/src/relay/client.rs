@@ -31,32 +31,33 @@ use crate::util::AbortingJoinHandle;
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
 
-impl PartialEq for Client {
+impl PartialEq for Conn {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.inner, &other.inner)
     }
 }
 
-impl Eq for Client {}
+impl Eq for Conn {}
 
-/// A relay Client.
+/// A connection to a relay server.
+///
 /// Cheaply clonable.
-/// Call `close` to shutdown the write loop and read functionality.
+/// Call `close` to shut down the write loop and read functionality.
 #[derive(Debug, Clone)]
-pub struct Client {
-    inner: Arc<InnerClient>,
+pub struct Conn {
+    inner: Arc<ConnTasks>,
 }
 
 #[derive(Debug)]
-pub struct ClientReceiver {
+pub struct ConnReceiver {
     /// The reader channel, receiving incoming messages.
     reader_channel: mpsc::Receiver<Result<ReceivedMessage>>,
 }
 
-impl ClientReceiver {
+impl ConnReceiver {
     /// Reads a messages from a relay server.
     ///
-    /// Once it returns an error, the [`Client`] is dead forever.
+    /// Once it returns an error, the [`Conn`] is dead forever.
     pub async fn recv(&mut self) -> Result<ReceivedMessage> {
         let msg = self
             .reader_channel
@@ -68,29 +69,29 @@ impl ClientReceiver {
 }
 
 #[derive(derive_more::Debug)]
-pub struct InnerClient {
+pub struct ConnTasks {
     /// Our local address, if known.
     ///
     /// Is `None` in tests or when using websockets (because we don't control connection establishment in browsers).
     local_addr: Option<SocketAddr>,
     /// Channel on which to communicate to the server. The associated [`mpsc::Receiver`] will close
     /// if there is ever an error writing to the server.
-    writer_channel: mpsc::Sender<ClientWriterMessage>,
-    /// JoinHandle for the [`ClientWriter`] task
+    writer_channel: mpsc::Sender<ConnWriterMessage>,
+    /// JoinHandle for the [`ConnWriter`] task
     writer_task: AbortingJoinHandle<Result<()>>,
     reader_task: AbortingJoinHandle<()>,
 }
 
-impl Client {
+impl Conn {
     /// Sends a packet to the node identified by `dstkey`
     ///
-    /// Errors if the packet is larger than [`super::MAX_PACKET_SIZE`]
+    /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
     pub async fn send(&self, dstkey: PublicKey, packet: Bytes) -> Result<()> {
         trace!(%dstkey, len = packet.len(), "[RELAY] send");
 
         self.inner
             .writer_channel
-            .send(ClientWriterMessage::Packet((dstkey, packet)))
+            .send(ConnWriterMessage::Packet((dstkey, packet)))
             .await?;
         Ok(())
     }
@@ -99,7 +100,7 @@ impl Client {
     pub async fn send_ping(&self, data: [u8; 8]) -> Result<()> {
         self.inner
             .writer_channel
-            .send(ClientWriterMessage::Ping(data))
+            .send(ConnWriterMessage::Ping(data))
             .await?;
         Ok(())
     }
@@ -109,40 +110,40 @@ impl Client {
     pub async fn send_pong(&self, data: [u8; 8]) -> Result<()> {
         self.inner
             .writer_channel
-            .send(ClientWriterMessage::Pong(data))
+            .send(ConnWriterMessage::Pong(data))
             .await?;
         Ok(())
     }
 
     /// Sends a packet that tells the server whether this
-    /// client is the user's preferred server. This is only
+    /// connection is to the user's preferred server. This is only
     /// used in the server for stats.
     pub async fn note_preferred(&self, preferred: bool) -> Result<()> {
         self.inner
             .writer_channel
-            .send(ClientWriterMessage::NotePreferred(preferred))
+            .send(ConnWriterMessage::NotePreferred(preferred))
             .await?;
         Ok(())
     }
 
-    /// The local address that the [`Client`] is listening on.
+    /// The local address that the [`Conn`] is listening on.
     ///
     /// `None`, when run in a testing environment or when using websockets.
     pub fn local_addr(&self) -> Option<SocketAddr> {
         self.inner.local_addr
     }
 
-    /// Whether or not this [`Client`] is closed.
+    /// Whether or not this [`Conn`] is closed.
     ///
-    /// The [`Client`] is considered closed if the write side of the client is no longer running.
+    /// The [`Conn`] is considered closed if the write side of the connection is no longer running.
     pub fn is_closed(&self) -> bool {
         self.inner.writer_task.is_finished()
     }
 
-    /// Close the client
+    /// Close the connection
     ///
-    /// Shuts down the write loop directly and marks the client as closed. The [`Client`] will
-    /// check if the client is closed before attempting to read from it.
+    /// Shuts down the write loop directly and marks the connection as closed. The [`Conn`] will
+    /// check if the it is closed before attempting to read from it.
     pub async fn close(&self) {
         if self.inner.writer_task.is_finished() && self.inner.reader_task.is_finished() {
             return;
@@ -150,7 +151,7 @@ impl Client {
 
         self.inner
             .writer_channel
-            .send(ClientWriterMessage::Shutdown)
+            .send(ConnWriterMessage::Shutdown)
             .await
             .ok();
         self.inner.reader_task.abort();
@@ -196,7 +197,7 @@ fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
 
 /// The kinds of messages we can send to the [`super::server::Server`]
 #[derive(Debug)]
-enum ClientWriterMessage {
+enum ConnWriterMessage {
     /// Send a packet (addressed to the [`PublicKey`]) to the server
     Packet((PublicKey, Bytes)),
     /// Send a pong to the server
@@ -209,37 +210,37 @@ enum ClientWriterMessage {
     Shutdown,
 }
 
-/// Call [`ClientWriter::run`] to listen for messages to send to the client.
-/// Should be used by the [`Client`]
+/// Call [`ConnWriter::run`] to listen for messages to send to the connection.
+/// Should be used by the [`Conn`]
 ///
-/// Shutsdown when you send a [`ClientWriterMessage::Shutdown`], or if there is an error writing to
+/// Shutsdown when you send a [`ConnWriterMessage::Shutdown`], or if there is an error writing to
 /// the server.
-struct ClientWriter {
-    recv_msgs: mpsc::Receiver<ClientWriterMessage>,
+struct ConnWriterTasks {
+    recv_msgs: mpsc::Receiver<ConnWriterMessage>,
     writer: ConnWriter,
     rate_limiter: Option<RateLimiter>,
 }
 
-impl ClientWriter {
+impl ConnWriterTasks {
     async fn run(mut self) -> Result<()> {
         while let Some(msg) = self.recv_msgs.recv().await {
             match msg {
-                ClientWriterMessage::Packet((key, bytes)) => {
+                ConnWriterMessage::Packet((key, bytes)) => {
                     send_packet(&mut self.writer, &self.rate_limiter, key, bytes).await?;
                 }
-                ClientWriterMessage::Pong(data) => {
+                ConnWriterMessage::Pong(data) => {
                     write_frame(&mut self.writer, Frame::Pong { data }, None).await?;
                     self.writer.flush().await?;
                 }
-                ClientWriterMessage::Ping(data) => {
+                ConnWriterMessage::Ping(data) => {
                     write_frame(&mut self.writer, Frame::Ping { data }, None).await?;
                     self.writer.flush().await?;
                 }
-                ClientWriterMessage::NotePreferred(preferred) => {
+                ConnWriterMessage::NotePreferred(preferred) => {
                     write_frame(&mut self.writer, Frame::NotePreferred { preferred }, None).await?;
                     self.writer.flush().await?;
                 }
-                ClientWriterMessage::Shutdown => {
+                ConnWriterMessage::Shutdown => {
                     return Ok(());
                 }
             }
@@ -249,8 +250,8 @@ impl ClientWriter {
     }
 }
 
-/// The Builder returns a [`Client`] and a started [`ClientWriter`] run task.
-pub struct ClientBuilder {
+/// The Builder returns a [`Conn`] and a started [`ClientWriter`] run task.
+pub struct ConnBuilder {
     secret_key: SecretKey,
     reader: ConnReader,
     writer: ConnWriter,
@@ -332,7 +333,7 @@ impl Sink<Frame> for ConnWriter {
     }
 }
 
-impl ClientBuilder {
+impl ConnBuilder {
     pub fn new(
         secret_key: SecretKey,
         local_addr: Option<SocketAddr>,
@@ -363,66 +364,59 @@ impl ClientBuilder {
         Ok(rate_limiter)
     }
 
-    pub async fn build(mut self) -> Result<(Client, ClientReceiver)> {
+    pub async fn build(mut self) -> Result<(Conn, ConnReceiver)> {
         // exchange information with the server
         let rate_limiter = self.server_handshake().await?;
 
         // create task to handle writing to the server
         let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
         let writer_task = tokio::task::spawn(
-            async move {
-                let client_writer = ClientWriter {
-                    rate_limiter,
-                    writer: self.writer,
-                    recv_msgs: writer_recv,
-                };
-                client_writer.run().await?;
-                Ok(())
+            ConnWriterTasks {
+                rate_limiter,
+                writer: self.writer,
+                recv_msgs: writer_recv,
             }
+            .run()
             .instrument(info_span!("client.writer")),
         );
 
         let (reader_sender, reader_recv) = mpsc::channel(PER_CLIENT_READ_QUEUE_DEPTH);
-        let writer_sender2 = writer_sender.clone();
-        let reader_task = tokio::task::spawn(async move {
-            loop {
-                let frame = tokio::time::timeout(CLIENT_RECV_TIMEOUT, self.reader.next()).await;
-                let res = match frame {
-                    Ok(Some(Ok(frame))) => process_incoming_frame(frame),
-                    Ok(Some(Err(err))) => {
-                        // Error processing incoming messages
-                        Err(err)
+        let reader_task = tokio::task::spawn({
+            let writer_sender = writer_sender.clone();
+            async move {
+                loop {
+                    let frame = tokio::time::timeout(CLIENT_RECV_TIMEOUT, self.reader.next()).await;
+                    let res = match frame {
+                        Ok(Some(Ok(frame))) => process_incoming_frame(frame),
+                        Ok(Some(Err(err))) => {
+                            // Error processing incoming messages
+                            Err(err)
+                        }
+                        Ok(None) => {
+                            // EOF
+                            Err(anyhow::anyhow!("EOF: reader stream ended"))
+                        }
+                        Err(err) => {
+                            // Timeout
+                            Err(err.into())
+                        }
+                    };
+                    if res.is_err() {
+                        // shutdown
+                        writer_sender.send(ConnWriterMessage::Shutdown).await.ok();
+                        break;
                     }
-                    Ok(None) => {
-                        // EOF
-                        Err(anyhow::anyhow!("EOF: reader stream ended"))
+                    if reader_sender.send(res).await.is_err() {
+                        // shutdown, as the reader is gone
+                        writer_sender.send(ConnWriterMessage::Shutdown).await.ok();
+                        break;
                     }
-                    Err(err) => {
-                        // Timeout
-                        Err(err.into())
-                    }
-                };
-                if res.is_err() {
-                    // shutdown
-                    writer_sender2
-                        .send(ClientWriterMessage::Shutdown)
-                        .await
-                        .ok();
-                    break;
-                }
-                if reader_sender.send(res).await.is_err() {
-                    // shutdown, as the reader is gone
-                    writer_sender2
-                        .send(ClientWriterMessage::Shutdown)
-                        .await
-                        .ok();
-                    break;
                 }
             }
         });
 
-        let client = Client {
-            inner: Arc::new(InnerClient {
+        let conn = Conn {
+            inner: Arc::new(ConnTasks {
                 local_addr: self.local_addr,
                 writer_channel: writer_sender,
                 writer_task: writer_task.into(),
@@ -430,16 +424,16 @@ impl ClientBuilder {
             }),
         };
 
-        let client_receiver = ClientReceiver {
+        let conn_receiver = ConnReceiver {
             reader_channel: reader_recv,
         };
 
-        Ok((client, client_receiver))
+        Ok((conn, conn_receiver))
     }
 }
 
 #[derive(derive_more::Debug, Clone)]
-/// The type of message received by the [`Client`] from a relay server.
+/// The type of message received by the [`Conn`] from a relay server.
 pub enum ReceivedMessage {
     /// Represents an incoming packet.
     ReceivedPacket {

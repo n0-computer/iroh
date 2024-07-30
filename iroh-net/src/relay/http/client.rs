@@ -34,8 +34,8 @@ use crate::relay::http::streams::{downcast_upgrade, MaybeTlsStream};
 use crate::relay::http::RELAY_PATH;
 use crate::relay::RelayUrl;
 use crate::relay::{
-    client::Client as RelayClient, client::ClientBuilder as RelayClientBuilder,
-    client::ClientReceiver as RelayClientReceiver, client::ReceivedMessage,
+    client::Conn as RelayClient, client::ConnBuilder as RelayClientBuilder,
+    client::ConnReceiver as RelayClientReceiver, client::ReceivedMessage,
 };
 use crate::util::chain;
 use crate::util::AbortingJoinHandle;
@@ -408,7 +408,7 @@ impl Client {
     /// Returns [`ClientError::Closed`] if the [`Client`] is closed.
     ///
     /// If there is already an active relay connection, returns the already
-    /// connected [`crate::relay::client::Client`].
+    /// connected [`crate::relay::client::Conn`].
     pub async fn connect(&self) -> Result<(RelayClient, usize), ClientError> {
         self.send_actor(ActorMessage::Connect).await
     }
