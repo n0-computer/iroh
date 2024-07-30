@@ -50,7 +50,7 @@ pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 ///
 /// Responsible for managing connections to relay [`super::client::Client`]s, sending packets from one client to another.
 #[derive(Debug)]
-pub struct Server {
+pub struct ServerActorTask {
     /// Optionally specifies how long to wait before failing when writing
     /// to a client
     write_timeout: Option<Duration>,
@@ -69,7 +69,7 @@ pub struct Server {
     // TODO: stats collection
 }
 
-impl Server {
+impl ServerActorTask {
     /// TODO: replace with builder
     pub fn new(key: SecretKey) -> Self {
         let (server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
@@ -722,7 +722,7 @@ mod tests {
 
         // create the server!
         let server_key = SecretKey::generate();
-        let server: Server = Server::new(server_key);
+        let server: ServerActorTask = ServerActorTask::new(server_key);
 
         // create client a and connect it to the server
         let key_a = SecretKey::generate();
@@ -798,7 +798,7 @@ mod tests {
 
         // create the server!
         let server_key = SecretKey::generate();
-        let server: Server = Server::new(server_key);
+        let server: ServerActorTask = ServerActorTask::new(server_key);
 
         // create client a and connect it to the server
         let key_a = SecretKey::generate();

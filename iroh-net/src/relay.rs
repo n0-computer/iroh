@@ -31,5 +31,7 @@ pub use self::http::Client as HttpClient;
 pub use self::map::{RelayMap, RelayMode, RelayNode};
 pub use self::metrics::Metrics;
 #[cfg(feature = "iroh-relay")]
-pub use self::server::{ClientConnHandler, MaybeTlsStream as MaybeTlsStreamServer, Server};
+pub use self::server::{
+    ClientConnHandler, MaybeTlsStream as MaybeTlsStreamServer, ServerActorTask,
+};
 pub use iroh_base::node_addr::RelayUrl;

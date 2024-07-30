@@ -260,7 +260,7 @@ impl ServerBuilder {
         );
         let (relay_handler, relay_server) = if let Some(secret_key) = self.secret_key {
             // spawns a server actor/task
-            let server = crate::relay::server::Server::new(secret_key.clone());
+            let server = crate::relay::server::ServerActorTask::new(secret_key.clone());
             (
                 RelayHandler::ConnHandler(server.client_conn_handler(self.headers.clone())),
                 Some(server),
@@ -305,7 +305,7 @@ impl ServerBuilder {
 struct ServerState {
     addr: SocketAddr,
     tls_config: Option<TlsConfig>,
-    server: Option<crate::relay::server::Server>,
+    server: Option<crate::relay::server::ServerActorTask>,
     service: RelayService,
 }
 
