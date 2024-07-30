@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["RELAY_PATH","RELAY_PROBE_PATH"],"enum":["Protocol","TlsAcceptor"],"struct":["Server","ServerBuilder","ServerHandle","TlsConfig"]};
+window.SIDEBAR_ITEMS = {"constant":["RELAY_PATH","RELAY_PROBE_PATH"],"enum":["Protocol"]};

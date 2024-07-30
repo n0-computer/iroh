@@ -1109,6 +1109,7 @@
 <a href="#1109" id="1109">1109</a>
 <a href="#1110" id="1110">1110</a>
 <a href="#1111" id="1111">1111</a>
+<a href="#1112" id="1112">1112</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Based on tailscale/derp/derphttp/derphttp_client.go
 
 </span><span class="kw">use </span>std::collections::HashMap;
@@ -1141,17 +1142,18 @@
     Conn <span class="kw">as </span>RelayClient, ConnBuilder <span class="kw">as </span>RelayClientBuilder, ConnReader,
     ConnReceiver <span class="kw">as </span>RelayClientReceiver, ConnWriter, ReceivedMessage,
 };
+<span class="kw">use </span>streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
 
 <span class="kw">use </span><span class="kw">crate</span>::dns::{DnsResolver, ResolverExt};
 <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
 <span class="kw">use </span><span class="kw">crate</span>::relay::codec::DerpCodec;
-<span class="kw">use </span><span class="kw">crate</span>::relay::http::streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
 <span class="kw">use </span><span class="kw">crate</span>::relay::http::{Protocol, RELAY_PATH};
 <span class="kw">use </span><span class="kw">crate</span>::relay::RelayUrl;
 <span class="kw">use </span><span class="kw">crate</span>::util::chain;
 <span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>conn;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>streams;
 
 <span class="kw">const </span>DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(<span class="number">1500</span>);
 <span class="kw">const </span>PING_TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);

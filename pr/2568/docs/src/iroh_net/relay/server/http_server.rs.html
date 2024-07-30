@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh-net/src/relay/http/server.rs`."><title>server.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-b21aa549bf6d91ff.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="iroh_net" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.0-nightly (c987ad527 2024-05-01)" data-channel="nightly" data-search-js="search-bf21c90c8c1d92b1.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../../static.files/storage-e32f0c247825364d.js"></script><script defer src="../../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-09095024cf37855e.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../../../iroh_net/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Type ‘S’ or ‘/’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../../settings.html" title="settings">Settings</a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh-net/src/relay/server/http_server.rs`."><title>http_server.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-b21aa549bf6d91ff.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="iroh_net" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.0-nightly (c987ad527 2024-05-01)" data-channel="nightly" data-search-js="search-bf21c90c8c1d92b1.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../../static.files/storage-e32f0c247825364d.js"></script><script defer src="../../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-09095024cf37855e.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../../../iroh_net/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Type ‘S’ or ‘/’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../../settings.html" title="settings">Settings</a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -683,6 +683,236 @@
 <a href="#683" id="683">683</a>
 <a href="#684" id="684">684</a>
 <a href="#685" id="685">685</a>
+<a href="#686" id="686">686</a>
+<a href="#687" id="687">687</a>
+<a href="#688" id="688">688</a>
+<a href="#689" id="689">689</a>
+<a href="#690" id="690">690</a>
+<a href="#691" id="691">691</a>
+<a href="#692" id="692">692</a>
+<a href="#693" id="693">693</a>
+<a href="#694" id="694">694</a>
+<a href="#695" id="695">695</a>
+<a href="#696" id="696">696</a>
+<a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
+<a href="#699" id="699">699</a>
+<a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
+<a href="#704" id="704">704</a>
+<a href="#705" id="705">705</a>
+<a href="#706" id="706">706</a>
+<a href="#707" id="707">707</a>
+<a href="#708" id="708">708</a>
+<a href="#709" id="709">709</a>
+<a href="#710" id="710">710</a>
+<a href="#711" id="711">711</a>
+<a href="#712" id="712">712</a>
+<a href="#713" id="713">713</a>
+<a href="#714" id="714">714</a>
+<a href="#715" id="715">715</a>
+<a href="#716" id="716">716</a>
+<a href="#717" id="717">717</a>
+<a href="#718" id="718">718</a>
+<a href="#719" id="719">719</a>
+<a href="#720" id="720">720</a>
+<a href="#721" id="721">721</a>
+<a href="#722" id="722">722</a>
+<a href="#723" id="723">723</a>
+<a href="#724" id="724">724</a>
+<a href="#725" id="725">725</a>
+<a href="#726" id="726">726</a>
+<a href="#727" id="727">727</a>
+<a href="#728" id="728">728</a>
+<a href="#729" id="729">729</a>
+<a href="#730" id="730">730</a>
+<a href="#731" id="731">731</a>
+<a href="#732" id="732">732</a>
+<a href="#733" id="733">733</a>
+<a href="#734" id="734">734</a>
+<a href="#735" id="735">735</a>
+<a href="#736" id="736">736</a>
+<a href="#737" id="737">737</a>
+<a href="#738" id="738">738</a>
+<a href="#739" id="739">739</a>
+<a href="#740" id="740">740</a>
+<a href="#741" id="741">741</a>
+<a href="#742" id="742">742</a>
+<a href="#743" id="743">743</a>
+<a href="#744" id="744">744</a>
+<a href="#745" id="745">745</a>
+<a href="#746" id="746">746</a>
+<a href="#747" id="747">747</a>
+<a href="#748" id="748">748</a>
+<a href="#749" id="749">749</a>
+<a href="#750" id="750">750</a>
+<a href="#751" id="751">751</a>
+<a href="#752" id="752">752</a>
+<a href="#753" id="753">753</a>
+<a href="#754" id="754">754</a>
+<a href="#755" id="755">755</a>
+<a href="#756" id="756">756</a>
+<a href="#757" id="757">757</a>
+<a href="#758" id="758">758</a>
+<a href="#759" id="759">759</a>
+<a href="#760" id="760">760</a>
+<a href="#761" id="761">761</a>
+<a href="#762" id="762">762</a>
+<a href="#763" id="763">763</a>
+<a href="#764" id="764">764</a>
+<a href="#765" id="765">765</a>
+<a href="#766" id="766">766</a>
+<a href="#767" id="767">767</a>
+<a href="#768" id="768">768</a>
+<a href="#769" id="769">769</a>
+<a href="#770" id="770">770</a>
+<a href="#771" id="771">771</a>
+<a href="#772" id="772">772</a>
+<a href="#773" id="773">773</a>
+<a href="#774" id="774">774</a>
+<a href="#775" id="775">775</a>
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
+<a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
+<a href="#781" id="781">781</a>
+<a href="#782" id="782">782</a>
+<a href="#783" id="783">783</a>
+<a href="#784" id="784">784</a>
+<a href="#785" id="785">785</a>
+<a href="#786" id="786">786</a>
+<a href="#787" id="787">787</a>
+<a href="#788" id="788">788</a>
+<a href="#789" id="789">789</a>
+<a href="#790" id="790">790</a>
+<a href="#791" id="791">791</a>
+<a href="#792" id="792">792</a>
+<a href="#793" id="793">793</a>
+<a href="#794" id="794">794</a>
+<a href="#795" id="795">795</a>
+<a href="#796" id="796">796</a>
+<a href="#797" id="797">797</a>
+<a href="#798" id="798">798</a>
+<a href="#799" id="799">799</a>
+<a href="#800" id="800">800</a>
+<a href="#801" id="801">801</a>
+<a href="#802" id="802">802</a>
+<a href="#803" id="803">803</a>
+<a href="#804" id="804">804</a>
+<a href="#805" id="805">805</a>
+<a href="#806" id="806">806</a>
+<a href="#807" id="807">807</a>
+<a href="#808" id="808">808</a>
+<a href="#809" id="809">809</a>
+<a href="#810" id="810">810</a>
+<a href="#811" id="811">811</a>
+<a href="#812" id="812">812</a>
+<a href="#813" id="813">813</a>
+<a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a>
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
+<a href="#819" id="819">819</a>
+<a href="#820" id="820">820</a>
+<a href="#821" id="821">821</a>
+<a href="#822" id="822">822</a>
+<a href="#823" id="823">823</a>
+<a href="#824" id="824">824</a>
+<a href="#825" id="825">825</a>
+<a href="#826" id="826">826</a>
+<a href="#827" id="827">827</a>
+<a href="#828" id="828">828</a>
+<a href="#829" id="829">829</a>
+<a href="#830" id="830">830</a>
+<a href="#831" id="831">831</a>
+<a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a>
+<a href="#837" id="837">837</a>
+<a href="#838" id="838">838</a>
+<a href="#839" id="839">839</a>
+<a href="#840" id="840">840</a>
+<a href="#841" id="841">841</a>
+<a href="#842" id="842">842</a>
+<a href="#843" id="843">843</a>
+<a href="#844" id="844">844</a>
+<a href="#845" id="845">845</a>
+<a href="#846" id="846">846</a>
+<a href="#847" id="847">847</a>
+<a href="#848" id="848">848</a>
+<a href="#849" id="849">849</a>
+<a href="#850" id="850">850</a>
+<a href="#851" id="851">851</a>
+<a href="#852" id="852">852</a>
+<a href="#853" id="853">853</a>
+<a href="#854" id="854">854</a>
+<a href="#855" id="855">855</a>
+<a href="#856" id="856">856</a>
+<a href="#857" id="857">857</a>
+<a href="#858" id="858">858</a>
+<a href="#859" id="859">859</a>
+<a href="#860" id="860">860</a>
+<a href="#861" id="861">861</a>
+<a href="#862" id="862">862</a>
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a>
+<a href="#869" id="869">869</a>
+<a href="#870" id="870">870</a>
+<a href="#871" id="871">871</a>
+<a href="#872" id="872">872</a>
+<a href="#873" id="873">873</a>
+<a href="#874" id="874">874</a>
+<a href="#875" id="875">875</a>
+<a href="#876" id="876">876</a>
+<a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
+<a href="#891" id="891">891</a>
+<a href="#892" id="892">892</a>
+<a href="#893" id="893">893</a>
+<a href="#894" id="894">894</a>
+<a href="#895" id="895">895</a>
+<a href="#896" id="896">896</a>
+<a href="#897" id="897">897</a>
+<a href="#898" id="898">898</a>
+<a href="#899" id="899">899</a>
+<a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::HashMap;
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::net::SocketAddr;
@@ -701,18 +931,16 @@
 <span class="kw">use </span>hyper::upgrade::Upgraded;
 <span class="kw">use </span>hyper::{HeaderMap, Method, Request, Response, StatusCode};
 <span class="kw">use </span>tokio::net::{TcpListener, TcpStream};
-<span class="kw">use </span>tokio::task::JoinHandle;
 <span class="kw">use </span>tokio_rustls_acme::AcmeAcceptor;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
 <span class="kw">use </span>tungstenite::handshake::derive_accept_key;
 
 <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
-<span class="kw">use </span><span class="kw">crate</span>::relay::http::SUPPORTED_WEBSOCKET_VERSION;
+<span class="kw">use </span><span class="kw">crate</span>::relay::http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION};
 <span class="kw">use </span><span class="kw">crate</span>::relay::server::actor::{ClientConnHandler, ServerActorTask};
 <span class="kw">use </span><span class="kw">crate</span>::relay::server::streams::MaybeTlsStream;
-
-<span class="kw">use super</span>::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH};
+<span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
 
 <span class="kw">type </span>BytesBody = http_body_util::Full&lt;hyper::body::Bytes&gt;;
 <span class="kw">type </span>HyperError = Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync&gt;;
@@ -770,7 +998,7 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>Server {
     addr: SocketAddr,
-    http_server_task: JoinHandle&lt;()&gt;,
+    http_server_task: AbortingJoinHandle&lt;()&gt;,
     cancel_server_loop: CancellationToken,
 }
 
@@ -791,12 +1019,12 @@
         <span class="self">self</span>.cancel_server_loop.cancel();
     }
 
-    <span class="doccomment">/// Returns the [`JoinHandle`] for the supervisor task managing the server.
+    <span class="doccomment">/// Returns the [`AbortingJoinHandle`] for the supervisor task managing the server.
     ///
     /// This is the root of all the tasks for the server.  Aborting it will abort all the
     /// other tasks for the server.  Awaiting it will complete when all the server tasks are
     /// completed.
-    </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>JoinHandle&lt;()&gt; {
+    </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortingJoinHandle&lt;()&gt; {
         <span class="kw-2">&amp;mut </span><span class="self">self</span>.http_server_task
     }
 
@@ -838,8 +1066,8 @@
 
 <span class="doccomment">/// Builder for the Relay HTTP Server.
 ///
-/// Defaults to handling relay requests on the "/derp" endpoint.  Other HTTP endpoints can
-/// be added using [`ServerBuilder::request_handler`].
+/// Defaults to handling relay requests on the "/relay" (and "/derp" for backwards compatibility) endpoint.
+/// Other HTTP endpoints can be added using [`ServerBuilder::request_handler`].
 ///
 /// If no [`SecretKey`] is provided, it is assumed that you will provide a
 /// [`ServerBuilder::relay_override`] function that handles requests to the relay
@@ -1062,7 +1290,7 @@
 
         <span class="prelude-val">Ok</span>(Server {
             addr,
-            http_server_task: task,
+            http_server_task: AbortingJoinHandle::from(task),
             cancel_server_loop,
         })
     }
@@ -1367,5 +1595,237 @@
     <span class="kw">fn </span>deref_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span><span class="self">Self</span>::Target {
         <span class="kw-2">&amp;mut </span><span class="self">self</span>.<span class="number">0
     </span>}
+}
+
+<span class="attr">#[cfg(test)]
+</span><span class="kw">mod </span>tests {
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+
+    <span class="kw">use </span>anyhow::Result;
+    <span class="kw">use </span>bytes::Bytes;
+    <span class="kw">use </span>reqwest::Url;
+    <span class="kw">use </span>tokio::sync::mpsc;
+    <span class="kw">use </span>tokio::task::JoinHandle;
+    <span class="kw">use </span>tracing::{info, info_span, Instrument};
+    <span class="kw">use </span>tracing_subscriber::{prelude::<span class="kw-2">*</span>, EnvFilter};
+
+    <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
+    <span class="kw">use </span><span class="kw">crate</span>::relay::client::conn::ReceivedMessage;
+    <span class="kw">use </span><span class="kw">crate</span>::relay::client::{Client, ClientBuilder};
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>make_tls_config() -&gt; TlsConfig {
+        <span class="kw">let </span>subject_alt_names = <span class="macro">vec!</span>[<span class="string">"localhost"</span>.to_string()];
+
+        <span class="kw">let </span>cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
+        <span class="kw">let </span>rustls_certificate = rustls::Certificate(cert.serialize_der().unwrap());
+        <span class="kw">let </span>rustls_key = rustls::PrivateKey(cert.get_key_pair().serialize_der());
+        <span class="kw">let </span>config = rustls::ServerConfig::builder()
+            .with_safe_defaults()
+            .with_no_client_auth()
+            .with_single_cert(<span class="macro">vec!</span>[(rustls_certificate)], rustls_key)
+            .unwrap();
+
+        <span class="kw">let </span>config = std::sync::Arc::new(config);
+        <span class="kw">let </span>acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
+
+        TlsConfig {
+            config,
+            acceptor: TlsAcceptor::Manual(acceptor),
+        }
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_http_clients_and_server() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+
+        <span class="kw">let </span>server_key = SecretKey::generate();
+        <span class="kw">let </span>a_key = SecretKey::generate();
+        <span class="kw">let </span>b_key = SecretKey::generate();
+
+        <span class="comment">// start server
+        </span><span class="kw">let </span>server = ServerBuilder::new(<span class="string">"127.0.0.1:0"</span>.parse().unwrap())
+            .secret_key(<span class="prelude-val">Some</span>(server_key))
+            .spawn()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>addr = server.addr();
+
+        <span class="comment">// get dial info
+        </span><span class="kw">let </span>port = addr.port();
+        <span class="kw">let </span>addr = {
+            <span class="kw">if let </span>std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
+                ipv4_addr
+            } <span class="kw">else </span>{
+                <span class="macro">anyhow::bail!</span>(<span class="string">"cannot get ipv4 addr from socket addr {addr:?}"</span>);
+            }
+        };
+        <span class="macro">info!</span>(<span class="string">"addr: {addr}:{port}"</span>);
+        <span class="kw">let </span>relay_addr: Url = <span class="macro">format!</span>(<span class="string">"http://{addr}:{port}"</span>).parse().unwrap();
+
+        <span class="comment">// create clients
+        </span><span class="kw">let </span>(a_key, <span class="kw-2">mut </span>a_recv, client_a_task, client_a) = {
+            <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"client-a"</span>);
+            <span class="kw">let </span>_guard = span.enter();
+            create_test_client(a_key, relay_addr.clone())
+        };
+        <span class="macro">info!</span>(<span class="string">"created client {a_key:?}"</span>);
+        <span class="kw">let </span>(b_key, <span class="kw-2">mut </span>b_recv, client_b_task, client_b) = {
+            <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"client-b"</span>);
+            <span class="kw">let </span>_guard = span.enter();
+            create_test_client(b_key, relay_addr)
+        };
+        <span class="macro">info!</span>(<span class="string">"created client {b_key:?}"</span>);
+
+        <span class="macro">info!</span>(<span class="string">"ping a"</span>);
+        client_a.ping().<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="macro">info!</span>(<span class="string">"ping b"</span>);
+        client_b.ping().<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="macro">info!</span>(<span class="string">"sending message from a to b"</span>);
+        <span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"hi there, client b!"</span>);
+        client_a.send(b_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">info!</span>(<span class="string">"waiting for message from a on b"</span>);
+        <span class="kw">let </span>(got_key, got_msg) = b_recv.recv().<span class="kw">await</span>.expect(<span class="string">"expected message from client_a"</span>);
+        <span class="macro">assert_eq!</span>(a_key, got_key);
+        <span class="macro">assert_eq!</span>(msg, got_msg);
+
+        <span class="macro">info!</span>(<span class="string">"sending message from b to a"</span>);
+        <span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"right back at ya, client b!"</span>);
+        client_b.send(a_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">info!</span>(<span class="string">"waiting for message b on a"</span>);
+        <span class="kw">let </span>(got_key, got_msg) = a_recv.recv().<span class="kw">await</span>.expect(<span class="string">"expected message from client_b"</span>);
+        <span class="macro">assert_eq!</span>(b_key, got_key);
+        <span class="macro">assert_eq!</span>(msg, got_msg);
+
+        client_a.close().<span class="kw">await</span><span class="question-mark">?</span>;
+        client_a_task.abort();
+        client_b.close().<span class="kw">await</span><span class="question-mark">?</span>;
+        client_b_task.abort();
+        server.shutdown();
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="kw">fn </span>create_test_client(
+        key: SecretKey,
+        server_url: Url,
+    ) -&gt; (
+        PublicKey,
+        mpsc::Receiver&lt;(PublicKey, Bytes)&gt;,
+        JoinHandle&lt;()&gt;,
+        Client,
+    ) {
+        <span class="kw">let </span>client = ClientBuilder::new(server_url).insecure_skip_cert_verify(<span class="bool-val">true</span>);
+        <span class="kw">let </span>dns_resolver = <span class="kw">crate</span>::dns::default_resolver();
+        <span class="kw">let </span>(client, <span class="kw-2">mut </span>client_reader) = client.build(key.clone(), dns_resolver.clone());
+        <span class="kw">let </span>public_key = key.public();
+        <span class="kw">let </span>(received_msg_s, received_msg_r) = tokio::sync::mpsc::channel(<span class="number">10</span>);
+        <span class="kw">let </span>client_reader_task = tokio::spawn(
+            <span class="kw">async move </span>{
+                <span class="kw">loop </span>{
+                    <span class="macro">info!</span>(<span class="string">"waiting for message on {:?}"</span>, key.public());
+                    <span class="kw">match </span>client_reader.recv().<span class="kw">await </span>{
+                        <span class="prelude-val">None </span>=&gt; {
+                            <span class="macro">info!</span>(<span class="string">"client received nothing"</span>);
+                            <span class="kw">return</span>;
+                        }
+                        <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e)) =&gt; {
+                            <span class="macro">info!</span>(<span class="string">"client {:?} `recv` error {e}"</span>, key.public());
+                            <span class="kw">return</span>;
+                        }
+                        <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>((msg, <span class="kw">_</span>))) =&gt; {
+                            <span class="macro">info!</span>(<span class="string">"got message on {:?}: {msg:?}"</span>, key.public());
+                            <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = msg {
+                                received_msg_s
+                                    .send((source, data))
+                                    .<span class="kw">await
+                                    </span>.unwrap_or_else(|err| {
+                                        <span class="macro">panic!</span>(
+                                            <span class="string">"client {:?}, error sending message over channel: {:?}"</span>,
+                                            key.public(),
+                                            err
+                                        )
+                                    });
+                            }
+                        }
+                    }
+                }
+            }
+            .instrument(<span class="macro">info_span!</span>(<span class="string">"test-client-reader"</span>)),
+        );
+        (public_key, received_msg_r, client_reader_task, client)
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_https_clients_and_server() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
+        <span class="kw">let </span>server_key = SecretKey::generate();
+        <span class="kw">let </span>a_key = SecretKey::generate();
+        <span class="kw">let </span>b_key = SecretKey::generate();
+
+        <span class="comment">// create tls_config
+        </span><span class="kw">let </span>tls_config = make_tls_config();
+
+        <span class="comment">// start server
+        </span><span class="kw">let </span><span class="kw-2">mut </span>server = ServerBuilder::new(<span class="string">"127.0.0.1:0"</span>.parse().unwrap())
+            .secret_key(<span class="prelude-val">Some</span>(server_key))
+            .tls_config(<span class="prelude-val">Some</span>(tls_config))
+            .spawn()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>addr = server.addr();
+
+        <span class="comment">// get dial info
+        </span><span class="kw">let </span>port = addr.port();
+        <span class="kw">let </span>addr = {
+            <span class="kw">if let </span>std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
+                ipv4_addr
+            } <span class="kw">else </span>{
+                <span class="macro">anyhow::bail!</span>(<span class="string">"cannot get ipv4 addr from socket addr {addr:?}"</span>);
+            }
+        };
+        <span class="macro">info!</span>(<span class="string">"Relay listening on: {addr}:{port}"</span>);
+
+        <span class="kw">let </span>url: Url = <span class="macro">format!</span>(<span class="string">"https://localhost:{port}"</span>).parse().unwrap();
+
+        <span class="comment">// create clients
+        </span><span class="kw">let </span>(a_key, <span class="kw-2">mut </span>a_recv, client_a_task, client_a) = create_test_client(a_key, url.clone());
+        <span class="macro">info!</span>(<span class="string">"created client {a_key:?}"</span>);
+        <span class="kw">let </span>(b_key, <span class="kw-2">mut </span>b_recv, client_b_task, client_b) = create_test_client(b_key, url);
+        <span class="macro">info!</span>(<span class="string">"created client {b_key:?}"</span>);
+
+        client_a.ping().<span class="kw">await</span><span class="question-mark">?</span>;
+        client_b.ping().<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="macro">info!</span>(<span class="string">"sending message from a to b"</span>);
+        <span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"hi there, client b!"</span>);
+        client_a.send(b_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">info!</span>(<span class="string">"waiting for message from a on b"</span>);
+        <span class="kw">let </span>(got_key, got_msg) = b_recv.recv().<span class="kw">await</span>.expect(<span class="string">"expected message from client_a"</span>);
+        <span class="macro">assert_eq!</span>(a_key, got_key);
+        <span class="macro">assert_eq!</span>(msg, got_msg);
+
+        <span class="macro">info!</span>(<span class="string">"sending message from b to a"</span>);
+        <span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"right back at ya, client b!"</span>);
+        client_b.send(a_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">info!</span>(<span class="string">"waiting for message b on a"</span>);
+        <span class="kw">let </span>(got_key, got_msg) = a_recv.recv().<span class="kw">await</span>.expect(<span class="string">"expected message from client_b"</span>);
+        <span class="macro">assert_eq!</span>(b_key, got_key);
+        <span class="macro">assert_eq!</span>(msg, got_msg);
+
+        server.shutdown();
+        server.task_handle().<span class="kw">await</span><span class="question-mark">?</span>;
+        client_a.close().<span class="kw">await</span><span class="question-mark">?</span>;
+        client_a_task.abort();
+        client_b.close().<span class="kw">await</span><span class="question-mark">?</span>;
+        client_b_task.abort();
+        <span class="prelude-val">Ok</span>(())
+    }
 }
 </code></pre></div></section></main></body></html>

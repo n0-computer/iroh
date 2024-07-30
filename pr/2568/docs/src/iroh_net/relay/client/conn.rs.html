@@ -521,8 +521,8 @@
 <span class="kw">use </span>tokio_util::codec::{FramedRead, FramedWrite};
 <span class="kw">use </span>tracing::{debug, info_span, trace, Instrument};
 
+<span class="kw">use </span><span class="kw">crate</span>::relay::client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter};
 <span class="kw">use </span><span class="kw">crate</span>::relay::codec::PER_CLIENT_READ_QUEUE_DEPTH;
-<span class="kw">use </span><span class="kw">crate</span>::relay::http::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter};
 <span class="kw">use </span><span class="kw">crate</span>::relay::{
     codec::{
         write_frame, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH,

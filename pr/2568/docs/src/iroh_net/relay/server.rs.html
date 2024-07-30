@@ -1039,21 +1039,6 @@
 <a href="#1039" id="1039">1039</a>
 <a href="#1040" id="1040">1040</a>
 <a href="#1041" id="1041">1041</a>
-<a href="#1042" id="1042">1042</a>
-<a href="#1043" id="1043">1043</a>
-<a href="#1044" id="1044">1044</a>
-<a href="#1045" id="1045">1045</a>
-<a href="#1046" id="1046">1046</a>
-<a href="#1047" id="1047">1047</a>
-<a href="#1048" id="1048">1048</a>
-<a href="#1049" id="1049">1049</a>
-<a href="#1050" id="1050">1050</a>
-<a href="#1051" id="1051">1051</a>
-<a href="#1052" id="1052">1052</a>
-<a href="#1053" id="1053">1053</a>
-<a href="#1054" id="1054">1054</a>
-<a href="#1055" id="1055">1055</a>
-<a href="#1056" id="1056">1056</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A full-fledged iroh-relay server.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1082,10 +1067,7 @@
 <span class="kw">use </span>tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
 <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
-<span class="kw">use </span><span class="kw">crate</span>::relay;
-<span class="kw">use </span><span class="kw">crate</span>::relay::http::{
-    ServerBuilder <span class="kw">as </span>RelayServerBuilder, TlsAcceptor, LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH,
-};
+<span class="kw">use </span><span class="kw">crate</span>::relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH};
 <span class="kw">use </span><span class="kw">crate</span>::stun;
 <span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
 
@@ -1095,6 +1077,7 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>actor;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>client_conn;
 <span class="kw">mod </span>clients;
+<span class="kw">mod </span>http_server;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>streams;
 
 <span class="kw">const </span>NO_CONTENT_CHALLENGE_HEADER: <span class="kw-2">&amp;</span>str = <span class="string">"X-Tailscale-Challenge"</span>;
@@ -1232,7 +1215,7 @@
     /// [`Server::http_addr`].
     </span>https_addr: <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;,
     <span class="doccomment">/// Handle to the relay server.
-    </span>relay_handle: <span class="prelude-ty">Option</span>&lt;relay::http::ServerHandle&gt;,
+    </span>relay_handle: <span class="prelude-ty">Option</span>&lt;http_server::ServerHandle&gt;,
     <span class="doccomment">/// The main task running the server.
     </span>supervisor: AbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
 }
@@ -1292,7 +1275,7 @@
                     <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>tls) =&gt; tls.https_bind_addr,
                     <span class="prelude-val">None </span>=&gt; relay_config.http_bind_addr,
                 };
-                <span class="kw">let </span><span class="kw-2">mut </span>builder = RelayServerBuilder::new(relay_bind_addr)
+                <span class="kw">let </span><span class="kw-2">mut </span>builder = http_server::ServerBuilder::new(relay_bind_addr)
                     .secret_key(<span class="prelude-val">Some</span>(relay_config.secret_key))
                     .headers(headers)
                     .relay_override(Box::new(relay_disabled_handler))
@@ -1315,7 +1298,8 @@
                                 <span class="kw">let </span><span class="kw-2">mut </span>state = config.state();
                                 <span class="kw">let </span>server_config =
                                     server_config.with_cert_resolver(state.resolver());
-                                <span class="kw">let </span>acceptor = TlsAcceptor::LetsEncrypt(state.acceptor());
+                                <span class="kw">let </span>acceptor =
+                                    http_server::TlsAcceptor::LetsEncrypt(state.acceptor());
                                 tasks.spawn(
                                     <span class="kw">async move </span>{
                                         <span class="kw">while let </span><span class="prelude-val">Some</span>(event) = state.next().<span class="kw">await </span>{
@@ -1328,7 +1312,7 @@
                                     }
                                     .instrument(<span class="macro">info_span!</span>(<span class="string">"acme"</span>)),
                                 );
-                                <span class="prelude-val">Some</span>(relay::http::TlsConfig {
+                                <span class="prelude-val">Some</span>(http_server::TlsConfig {
                                     config: Arc::new(server_config),
                                     acceptor,
                                 })
@@ -1339,8 +1323,8 @@
                                 <span class="kw">let </span>server_config = Arc::new(server_config);
                                 <span class="kw">let </span>acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
-                                <span class="kw">let </span>acceptor = TlsAcceptor::Manual(acceptor);
-                                <span class="prelude-val">Some</span>(relay::http::TlsConfig {
+                                <span class="kw">let </span>acceptor = http_server::TlsAcceptor::Manual(acceptor);
+                                <span class="prelude-val">Some</span>(http_server::TlsConfig {
                                     config: server_config,
                                     acceptor,
                                 })
@@ -1380,7 +1364,6 @@
         // relay_server is serving HTTP, including the /generate_204 service.
         </span><span class="kw">let </span>relay_addr = relay_server.as_ref().map(|srv| srv.addr());
         <span class="kw">let </span>relay_handle = relay_server.as_ref().map(|srv| srv.handle());
-        <span class="kw">let </span>relay_server = relay_server.map(RelayHttpServerGuard);
         <span class="kw">let </span>task = tokio::spawn(relay_supervisor(tasks, relay_server));
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             http_addr: http_addr.or(relay_addr),
@@ -1427,19 +1410,6 @@
     }
 }
 
-<span class="doccomment">/// Horrible hack to make [`relay::http::Server`] behave somewhat.
-///
-/// We need this server to abort on drop to achieve structured concurrency.
-</span><span class="comment">// TODO: could consider building this directly into the relay::http::Server
-</span><span class="attr">#[derive(Debug)]
-</span><span class="kw">struct </span>RelayHttpServerGuard(relay::http::Server);
-
-<span class="kw">impl </span>Drop <span class="kw">for </span>RelayHttpServerGuard {
-    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="self">self</span>.<span class="number">0</span>.task_handle().abort();
-    }
-}
-
 <span class="doccomment">/// Supervisor for the relay server tasks.
 ///
 /// As soon as one of the tasks exits, all other tasks are stopped and the server stops.
@@ -1447,19 +1417,19 @@
 </span><span class="attr">#[instrument(skip_all)]
 </span><span class="kw">async fn </span>relay_supervisor(
     <span class="kw-2">mut </span>tasks: JoinSet&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
-    <span class="kw-2">mut </span>relay_http_server: <span class="prelude-ty">Option</span>&lt;RelayHttpServerGuard&gt;,
+    <span class="kw-2">mut </span>relay_http_server: <span class="prelude-ty">Option</span>&lt;http_server::Server&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="kw">let </span>res = <span class="kw">match </span>(relay_http_server.as_mut(), tasks.len()) {
         (<span class="prelude-val">None</span>, <span class="kw">_</span>) =&gt; tasks
             .join_next()
             .<span class="kw">await
             </span>.unwrap_or_else(|| <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Nothing to supervise"</span>)))),
-        (<span class="prelude-val">Some</span>(relay), <span class="number">0</span>) =&gt; relay.<span class="number">0</span>.task_handle().<span class="kw">await</span>.map(anyhow::Ok),
+        (<span class="prelude-val">Some</span>(relay), <span class="number">0</span>) =&gt; relay.task_handle().<span class="kw">await</span>.map(anyhow::Ok),
         (<span class="prelude-val">Some</span>(relay), <span class="kw">_</span>) =&gt; {
             <span class="macro">tokio::select!</span> {
                 biased;
                 <span class="prelude-val">Some</span>(ret) = tasks.join_next() =&gt; ret,
-                ret = relay.<span class="number">0</span>.task_handle() =&gt; ret.map(anyhow::Ok),
+                ret = relay.task_handle() =&gt; ret.map(anyhow::Ok),
                 <span class="kw">else </span>=&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Empty JoinSet (unreachable)"</span>))),
             }
         }
@@ -1486,7 +1456,7 @@
     <span class="comment">// Ensure the HTTP server terminated, there is no harm in calling this after it is
     // already shut down.  The JoinSet is aborted on drop.
     </span><span class="kw">if let </span><span class="prelude-val">Some</span>(server) = relay_http_server {
-        server.<span class="number">0</span>.shutdown();
+        server.shutdown();
     }
 
     tasks.shutdown().<span class="kw">await</span>;
@@ -1669,7 +1639,7 @@
                 <span class="kw">let </span>handler = CaptivePortalService;
 
                 tasks.spawn(<span class="kw">async move </span>{
-                    <span class="kw">let </span>stream = relay::server::streams::MaybeTlsStream::Plain(stream);
+                    <span class="kw">let </span>stream = <span class="kw">crate</span>::relay::server::streams::MaybeTlsStream::Plain(stream);
                     <span class="kw">let </span>stream = hyper_util::rt::TokioIo::new(stream);
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = hyper::server::conn::http1::Builder::new()
                         .serve_connection(stream, handler)

@@ -1170,8 +1170,8 @@
 
     <span class="kw">use </span><span class="kw">crate</span>::relay::{
         client::conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
+        client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         codec::{recv_frame, Frame, FrameType},
-        http::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         types::ClientInfo,
     };
     <span class="kw">use </span>tokio_util::codec::{FramedRead, FramedWrite};
