@@ -30,17 +30,18 @@ use conn::{
     Conn as RelayClient, ConnBuilder as RelayClientBuilder, ConnReader,
     ConnReceiver as RelayClientReceiver, ConnWriter, ReceivedMessage,
 };
+use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
 
 use crate::dns::{DnsResolver, ResolverExt};
 use crate::key::{PublicKey, SecretKey};
 use crate::relay::codec::DerpCodec;
-use crate::relay::http::streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
 use crate::relay::http::{Protocol, RELAY_PATH};
 use crate::relay::RelayUrl;
 use crate::util::chain;
 use crate::util::AbortingJoinHandle;
 
 pub(crate) mod conn;
+pub(crate) mod streams;
 
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
 const PING_TIMEOUT: Duration = Duration::from_secs(5);

@@ -3,7 +3,6 @@
 //!
 #[cfg(feature = "iroh-relay")]
 mod server;
-pub(crate) mod streams;
 
 #[cfg(feature = "iroh-relay")]
 pub use self::server::{Server, ServerBuilder, ServerHandle, TlsAcceptor, TlsConfig};

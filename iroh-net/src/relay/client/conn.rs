@@ -16,8 +16,8 @@ use tokio_tungstenite_wasm::WebSocketStream;
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, info_span, trace, Instrument};
 
+use crate::relay::client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter};
 use crate::relay::codec::PER_CLIENT_READ_QUEUE_DEPTH;
-use crate::relay::http::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter};
 use crate::relay::{
     codec::{
         write_frame, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH,

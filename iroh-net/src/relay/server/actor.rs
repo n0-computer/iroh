@@ -410,8 +410,8 @@ mod tests {
 
     use crate::relay::{
         client::conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
+        client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         codec::{recv_frame, Frame, FrameType},
-        http::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         types::ClientInfo,
     };
     use tokio_util::codec::{FramedRead, FramedWrite};
