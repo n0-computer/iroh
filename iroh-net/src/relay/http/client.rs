@@ -377,7 +377,7 @@ impl ClientBuilder {
 impl ClientReceiver {
     /// Reads a message from the server. Returns the message and the `conn_get`, or the number of
     /// re-connections this Client has ever made
-    pub(crate) async fn recv(&mut self) -> Option<Result<(ReceivedMessage, usize), ClientError>> {
+    pub async fn recv(&mut self) -> Option<Result<(ReceivedMessage, usize), ClientError>> {
         self.msg_receiver.recv().await
     }
 }
