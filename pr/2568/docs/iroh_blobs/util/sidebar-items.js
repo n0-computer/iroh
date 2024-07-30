@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MemOrFile","SetTagOption"],"fn":["total_bytes"],"mod":["io","local_pool","progress"],"struct":["SparseMemFile","Tag","TempTag"],"trait":["TagCounter","TagDrop"]};
