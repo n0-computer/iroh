@@ -26,10 +26,7 @@ use tokio::task::JoinSet;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
 use crate::key::SecretKey;
-use crate::relay;
-use crate::relay::http::{
-    ServerBuilder as RelayServerBuilder, TlsAcceptor, LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH,
-};
+use crate::relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH};
 use crate::stun;
 use crate::util::AbortingJoinHandle;
 
@@ -39,6 +36,7 @@ use metrics::StunMetrics;
 pub(crate) mod actor;
 pub(crate) mod client_conn;
 mod clients;
+mod http_server;
 pub(crate) mod streams;
 
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
@@ -176,7 +174,7 @@ pub struct Server {
     /// [`Server::http_addr`].
     https_addr: Option<SocketAddr>,
     /// Handle to the relay server.
-    relay_handle: Option<relay::http::ServerHandle>,
+    relay_handle: Option<http_server::ServerHandle>,
     /// The main task running the server.
     supervisor: AbortingJoinHandle<Result<()>>,
 }
@@ -236,7 +234,7 @@ impl Server {
                     Some(ref tls) => tls.https_bind_addr,
                     None => relay_config.http_bind_addr,
                 };
-                let mut builder = RelayServerBuilder::new(relay_bind_addr)
+                let mut builder = http_server::ServerBuilder::new(relay_bind_addr)
                     .secret_key(Some(relay_config.secret_key))
                     .headers(headers)
                     .relay_override(Box::new(relay_disabled_handler))
@@ -259,7 +257,8 @@ impl Server {
                                 let mut state = config.state();
                                 let server_config =
                                     server_config.with_cert_resolver(state.resolver());
-                                let acceptor = TlsAcceptor::LetsEncrypt(state.acceptor());
+                                let acceptor =
+                                    http_server::TlsAcceptor::LetsEncrypt(state.acceptor());
                                 tasks.spawn(
                                     async move {
                                         while let Some(event) = state.next().await {
@@ -272,7 +271,7 @@ impl Server {
                                     }
                                     .instrument(info_span!("acme")),
                                 );
-                                Some(relay::http::TlsConfig {
+                                Some(http_server::TlsConfig {
                                     config: Arc::new(server_config),
                                     acceptor,
                                 })
@@ -283,8 +282,8 @@ impl Server {
                                 let server_config = Arc::new(server_config);
                                 let acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
-                                let acceptor = TlsAcceptor::Manual(acceptor);
-                                Some(relay::http::TlsConfig {
+                                let acceptor = http_server::TlsAcceptor::Manual(acceptor);
+                                Some(http_server::TlsConfig {
                                     config: server_config,
                                     acceptor,
                                 })
@@ -371,12 +370,12 @@ impl Server {
     }
 }
 
-/// Horrible hack to make [`relay::http::Server`] behave somewhat.
+/// Horrible hack to make [`http_server::Server`] behave somewhat.
 ///
 /// We need this server to abort on drop to achieve structured concurrency.
-// TODO: could consider building this directly into the relay::http::Server
+// TODO: could consider building this directly into the http_server::Server
 #[derive(Debug)]
-struct RelayHttpServerGuard(relay::http::Server);
+struct RelayHttpServerGuard(http_server::Server);
 
 impl Drop for RelayHttpServerGuard {
     fn drop(&mut self) {
@@ -613,7 +612,7 @@ async fn run_captive_portal_service(http_listener: TcpListener) -> Result<()> {
                 let handler = CaptivePortalService;
 
                 tasks.spawn(async move {
-                    let stream = relay::server::streams::MaybeTlsStream::Plain(stream);
+                    let stream = crate::relay::server::streams::MaybeTlsStream::Plain(stream);
                     let stream = hyper_util::rt::TokioIo::new(stream);
                     if let Err(err) = hyper::server::conn::http1::Builder::new()
                         .serve_connection(stream, handler)
