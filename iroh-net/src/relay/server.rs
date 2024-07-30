@@ -46,9 +46,12 @@ fn new_conn_num() -> usize {
 
 pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// A relay server.
+/// The task for a running server actor.
 ///
-/// Responsible for managing connections to relay [`super::client::Client`]s, sending packets from one client to another.
+/// Will forcefully abort the server actor loop when dropped.
+/// For stopping gracefully, use [`ServerActorTask::close`].
+///
+/// Responsible for managing connections to relay [`Client`](super::client::Client)s, sending packets from one client to another.
 #[derive(Debug)]
 pub struct ServerActorTask {
     /// Optionally specifies how long to wait before failing when writing
@@ -124,18 +127,18 @@ impl ServerActorTask {
 
     /// Aborts the server.
     ///
-    /// You should prefer to use [`Server::close`] for a graceful shutdown.
+    /// You should prefer to use [`ServerActorTask::close`] for a graceful shutdown.
     pub fn abort(&self) {
         self.cancel.cancel();
     }
 
-    /// Whether or not the relay [Server] is closed.
+    /// Whether or not the relay [`ServerActorTask`] is closed.
     pub fn is_closed(&self) -> bool {
         self.closed
     }
 
     /// Create a [`ClientConnHandler`], which can verify connections and add them to the
-    /// [`Server`].
+    /// [`ServerActorTask`].
     pub fn client_conn_handler(&self, default_headers: HeaderMap) -> ClientConnHandler {
         ClientConnHandler {
             server_channel: self.server_channel.clone(),
@@ -154,7 +157,7 @@ impl ServerActorTask {
 
 /// Handle incoming connections to the Server.
 ///
-/// Created by the [`Server`] by calling [`Server::client_conn_handler`].
+/// Created by the [`ServerActorTask`] by calling [`ServerActorTask::client_conn_handler`].
 ///
 /// Can be cheaply cloned.
 #[derive(Debug)]
@@ -229,7 +232,7 @@ impl ClientConnHandler {
     }
 }
 
-pub(crate) struct ServerActor {
+struct ServerActor {
     key: PublicKey,
     receiver: mpsc::Receiver<ServerMessage>,
     /// All clients connected to this server
@@ -238,7 +241,7 @@ pub(crate) struct ServerActor {
 }
 
 impl ServerActor {
-    pub(crate) fn new(key: PublicKey, receiver: mpsc::Receiver<ServerMessage>) -> Self {
+    fn new(key: PublicKey, receiver: mpsc::Receiver<ServerMessage>) -> Self {
         Self {
             key,
             receiver,
@@ -247,7 +250,7 @@ impl ServerActor {
         }
     }
 
-    pub(crate) async fn run(mut self, done: CancellationToken) -> Result<()> {
+    async fn run(mut self, done: CancellationToken) -> Result<()> {
         loop {
             tokio::select! {
                 biased;
