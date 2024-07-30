@@ -20,7 +20,7 @@ use tracing::{debug, info, info_span, trace, warn, Instrument};
 
 use crate::{
     key::{PublicKey, PUBLIC_KEY_LENGTH},
-    relay::{self, http::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE},
+    relay::{self, client::ReceivedMessage, http::ClientError, RelayUrl, MAX_PACKET_SIZE},
 };
 
 use super::{ActorMessage, MagicSock};

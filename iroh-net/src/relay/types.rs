@@ -5,6 +5,7 @@ use bytes::Bytes;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "iroh-relay")]
 use super::client_conn::ClientConnBuilder;
 use crate::key::PublicKey;
 
@@ -57,6 +58,7 @@ pub(crate) struct ClientInfo {
     pub(crate) version: usize,
 }
 
+#[cfg(feature = "iroh-relay")]
 #[derive(derive_more::Debug)]
 pub(crate) enum ServerMessage {
     SendPacket((PublicKey, Packet)),

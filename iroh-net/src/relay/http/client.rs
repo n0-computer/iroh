@@ -35,7 +35,7 @@ use crate::relay::http::RELAY_PATH;
 use crate::relay::RelayUrl;
 use crate::relay::{
     client::Client as RelayClient, client::ClientBuilder as RelayClientBuilder,
-    client::ClientReceiver as RelayClientReceiver, ReceivedMessage,
+    client::ClientReceiver as RelayClientReceiver, client::ReceivedMessage,
 };
 use crate::util::chain;
 use crate::util::AbortingJoinHandle;
@@ -367,7 +367,7 @@ impl ClientBuilder {
         )
     }
 
-    /// The expected [`PublicKey`] of the [`super::server::Server`] we are connecting to.
+    /// The expected [`PublicKey`] of the relay server we are connecting to.
     pub fn server_public_key(mut self, server_public_key: PublicKey) -> Self {
         self.server_public_key = Some(server_public_key);
         self

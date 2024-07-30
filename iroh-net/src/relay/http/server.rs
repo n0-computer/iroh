@@ -25,7 +25,6 @@ use tungstenite::handshake::derive_accept_key;
 use crate::key::SecretKey;
 use crate::relay::http::SUPPORTED_WEBSOCKET_VERSION;
 use crate::relay::server::{ClientConnHandler, MaybeTlsStream};
-use crate::relay::MaybeTlsStreamServer;
 
 use super::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH};
 
@@ -609,8 +608,7 @@ impl RelayService {
             Some(tls_config) => self.tls_serve_connection(stream, tls_config).await,
             None => {
                 debug!("HTTP: serve connection");
-                self.serve_connection(MaybeTlsStreamServer::Plain(stream))
-                    .await
+                self.serve_connection(MaybeTlsStream::Plain(stream)).await
             }
         }
     }
@@ -629,7 +627,7 @@ impl RelayService {
                         .into_stream(config)
                         .await
                         .context("TLS[acme] handshake")?;
-                    self.serve_connection(MaybeTlsStreamServer::Tls(tls_stream))
+                    self.serve_connection(MaybeTlsStream::Tls(tls_stream))
                         .await
                         .context("TLS[acme] serve connection")?;
                 }
@@ -637,7 +635,7 @@ impl RelayService {
             TlsAcceptor::Manual(a) => {
                 debug!("TLS[manual]: accept");
                 let tls_stream = a.accept(stream).await.context("TLS[manual] accept")?;
-                self.serve_connection(MaybeTlsStreamServer::Tls(tls_stream))
+                self.serve_connection(MaybeTlsStream::Tls(tls_stream))
                     .await
                     .context("TLS[manual] serve connection")?;
             }

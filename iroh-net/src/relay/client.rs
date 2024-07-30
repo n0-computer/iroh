@@ -439,8 +439,8 @@ impl ClientBuilder {
 }
 
 #[derive(derive_more::Debug, Clone)]
-/// The type of message received by the [`Client`] from the [`super::server::Server`].
-pub enum ReceivedMessage {
+/// The type of message received by the [`ClientReceiver`] from a relay server.
+pub(crate) enum ReceivedMessage {
     /// Represents an incoming packet.
     ReceivedPacket {
         /// The [`PublicKey`] of the packet sender.
@@ -471,7 +471,7 @@ pub enum ReceivedMessage {
     /// with the payload sent previously in the ping.
     Pong([u8; 8]),
     /// A one-way empty message from server to client, just to
-    /// keep the connection alive. It's like a [ReceivedMessage::Ping], but doesn't solicit
+    /// keep the connection alive. It's like a [`ReceivedMessage::Ping`], but doesn't solicit
     /// a reply from the client.
     KeepAlive,
     /// A one-way message from server to client, declaring the connection health state.
