@@ -1,12 +1,14 @@
 use std::num::NonZeroU32;
 
 use anyhow::{bail, Context, Result};
+#[cfg(feature = "iroh-relay")]
 use bytes::Bytes;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "iroh-relay")]
 use super::client_conn::ClientConnBuilder;
+#[cfg(feature = "iroh-relay")]
 use crate::key::PublicKey;
 
 pub(crate) struct RateLimiter {
@@ -45,6 +47,7 @@ impl RateLimiter {
 
 /// A request to write a dataframe to a Client
 #[derive(Debug, Clone)]
+#[cfg(feature = "iroh-relay")]
 pub(crate) struct Packet {
     /// The sender of the packet
     pub(crate) src: PublicKey,
