@@ -146,8 +146,10 @@ fn cli_provide_tree_resume() -> Result<()> {
     let provider = make_provider_in(&src_iroh_data_dir, Input::Path(src.clone()), false)?;
     let count = count_input_files(&src);
     // wait for iroh to import all data
-    std::thread::sleep(std::time::Duration::from_secs(5));
+    std::thread::sleep(std::time::Duration::from_secs(4));
     drop(provider);
+    // extra time for cleanup
+    std::thread::sleep(std::time::Duration::from_secs(1));
 
     // setup the data dir for the iroh instances that will get the blobs
     // first tests
@@ -252,8 +254,10 @@ fn cli_provide_file_resume() -> Result<()> {
     let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
     let count = count_input_files(&src);
     // small synchronization point: allow iroh to be ready for transfer
-    std::thread::sleep(std::time::Duration::from_secs(5));
+    std::thread::sleep(std::time::Duration::from_secs(4));
     drop(provider);
+    // extra time for cleanup
+    std::thread::sleep(std::time::Duration::from_secs(1));
 
     // setup the data dir for the iroh instances that will get the blobs
     // first test: empty
