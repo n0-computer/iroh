@@ -68,16 +68,21 @@
 <a href="#68" id="68">68</a>
 <a href="#69" id="69">69</a>
 <a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::num::NonZeroU32;
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>bytes::Bytes;
+<span class="attr">#[cfg(feature = <span class="string">"iroh-relay"</span>)]
+</span><span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>postcard::experimental::max_size::MaxSize;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="attr">#[cfg(feature = <span class="string">"iroh-relay"</span>)]
 </span><span class="kw">use </span><span class="kw">super</span>::client_conn::ClientConnBuilder;
-<span class="kw">use </span><span class="kw">crate</span>::key::PublicKey;
+<span class="attr">#[cfg(feature = <span class="string">"iroh-relay"</span>)]
+</span><span class="kw">use </span><span class="kw">crate</span>::key::PublicKey;
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RateLimiter {
     inner: governor::RateLimiter&lt;
@@ -115,6 +120,7 @@
 
 <span class="doccomment">/// A request to write a dataframe to a Client
 </span><span class="attr">#[derive(Debug, Clone)]
+#[cfg(feature = <span class="string">"iroh-relay"</span>)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Packet {
     <span class="doccomment">/// The sender of the packet
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) src: PublicKey,
