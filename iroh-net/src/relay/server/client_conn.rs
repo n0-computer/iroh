@@ -452,6 +452,7 @@ impl ClientConnIo {
 #[cfg(test)]
 mod tests {
     use crate::key::SecretKey;
+    use crate::relay::client::conn;
     use crate::relay::codec::{recv_frame, DerpCodec, FrameType};
     use crate::relay::server::streams::MaybeTlsStream;
 
@@ -555,8 +556,7 @@ mod tests {
         // send packet
         println!("  send packet");
         let data = b"hello world!";
-        crate::relay::conn::send_packet(&mut io_rw, &None, target, Bytes::from_static(data))
-            .await?;
+        conn::send_packet(&mut io_rw, &None, target, Bytes::from_static(data)).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
@@ -575,8 +575,7 @@ mod tests {
         let mut disco_data = crate::disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        crate::relay::conn::send_packet(&mut io_rw, &None, target, disco_data.clone().into())
-            .await?;
+        conn::send_packet(&mut io_rw, &None, target, disco_data.clone().into()).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendDiscoPacket((got_target, packet)) => {
@@ -630,8 +629,7 @@ mod tests {
         let data = b"hello world!";
         let target = SecretKey::generate().public();
 
-        crate::relay::conn::send_packet(&mut io_rw, &None, target, Bytes::from_static(data))
-            .await?;
+        conn::send_packet(&mut io_rw, &None, target, Bytes::from_static(data)).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {

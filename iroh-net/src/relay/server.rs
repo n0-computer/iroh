@@ -717,9 +717,9 @@ mod tests {
     use http::header::UPGRADE;
     use iroh_base::node_addr::RelayUrl;
 
-    use crate::relay::http::{ClientBuilder, Protocol, HTTP_UPGRADE_PROTOCOL};
-
-    use self::relay::conn::ReceivedMessage;
+    use crate::relay::client::conn::ReceivedMessage;
+    use crate::relay::client::ClientBuilder;
+    use crate::relay::http::{Protocol, HTTP_UPGRADE_PROTOCOL};
 
     use super::*;
 

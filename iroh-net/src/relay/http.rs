@@ -1,12 +1,10 @@
 //! An http specific relay Client and relay Server. Allows for using tls or non tls connection
 //! upgrades.
 //!
-mod client;
 #[cfg(feature = "iroh-relay")]
 mod server;
 pub(crate) mod streams;
 
-pub use self::client::{Client, ClientBuilder, ClientError, ClientReceiver};
 #[cfg(feature = "iroh-relay")]
 pub use self::server::{Server, ServerBuilder, ServerHandle, TlsAcceptor, TlsConfig};
 
@@ -75,7 +73,8 @@ mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use crate::key::{PublicKey, SecretKey};
-    use crate::relay::conn::ReceivedMessage;
+    use crate::relay::client::conn::ReceivedMessage;
+    use crate::relay::client::{Client, ClientBuilder};
 
     pub(crate) fn make_tls_config() -> TlsConfig {
         let subject_alt_names = vec!["localhost".to_string()];

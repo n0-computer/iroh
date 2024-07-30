@@ -26,22 +26,21 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 use url::Url;
 
+use conn::{
+    Conn as RelayClient, ConnBuilder as RelayClientBuilder, ConnReader,
+    ConnReceiver as RelayClientReceiver, ConnWriter, ReceivedMessage,
+};
+
 use crate::dns::{DnsResolver, ResolverExt};
 use crate::key::{PublicKey, SecretKey};
 use crate::relay::codec::DerpCodec;
-use crate::relay::conn::{ConnReader, ConnWriter};
-use crate::relay::http::streams::{downcast_upgrade, MaybeTlsStream};
-use crate::relay::http::RELAY_PATH;
+use crate::relay::http::streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
+use crate::relay::http::{Protocol, RELAY_PATH};
 use crate::relay::RelayUrl;
-use crate::relay::{
-    conn::Conn as RelayClient, conn::ConnBuilder as RelayClientBuilder,
-    conn::ConnReceiver as RelayClientReceiver, conn::ReceivedMessage,
-};
 use crate::util::chain;
 use crate::util::AbortingJoinHandle;
 
-use super::streams::ProxyStream;
-use super::Protocol;
+pub(crate) mod conn;
 
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
 const PING_TIMEOUT: Duration = Duration::from_secs(5);

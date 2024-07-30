@@ -409,8 +409,8 @@ mod tests {
     use super::*;
 
     use crate::relay::{
+        client::conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
         codec::{recv_frame, Frame, FrameType},
-        conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
         http::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         types::ClientInfo,
     };
@@ -474,7 +474,8 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::relay::conn::send_packet(&mut b_io, &None, key_a, Bytes::from_static(msg)).await?;
+        crate::relay::client::conn::send_packet(&mut b_io, &None, key_a, Bytes::from_static(msg))
+            .await?;
 
         // get message on a's reader
         let frame = recv_frame(FrameType::RecvPacket, &mut a_io).await?;
