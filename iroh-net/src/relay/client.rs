@@ -470,17 +470,20 @@ pub enum ReceivedMessage {
         ///
         /// The default condition is healthy, so the server doesn't broadcast a [`ReceivedMessage::Health`]
         /// until a problem exists.
+        #[allow(unused)]
         problem: Option<String>,
     },
     /// A one-way message from server to client, advertising that the server is restarting.
     ServerRestarting {
         /// An advisory duration that the client should wait before attempting to reconnect.
         /// It might be zero. It exists for the server to smear out the reconnects.
+        #[allow(unused)]
         reconnect_in: Duration,
         /// An advisory duration for how long the client should attempt to reconnect
         /// before giving up and proceeding with its normal connection failure logic. The interval
         /// between retries is undefined for now. A server should not send a TryFor duration more
         /// than a few seconds.
+        #[allow(unused)]
         try_for: Duration,
     },
 }
