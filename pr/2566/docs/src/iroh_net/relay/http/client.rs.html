@@ -1489,7 +1489,7 @@
 <span class="kw">impl </span>ClientReceiver {
     <span class="doccomment">/// Reads a message from the server. Returns the message and the `conn_get`, or the number of
     /// re-connections this Client has ever made
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>recv(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;(ReceivedMessage, usize), ClientError&gt;&gt; {
+    </span><span class="kw">pub async fn </span>recv(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;(ReceivedMessage, usize), ClientError&gt;&gt; {
         <span class="self">self</span>.msg_receiver.recv().<span class="kw">await
     </span>}
 }
