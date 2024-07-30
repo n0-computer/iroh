@@ -323,7 +323,6 @@ impl Server {
         // relay_server is serving HTTP, including the /generate_204 service.
         let relay_addr = relay_server.as_ref().map(|srv| srv.addr());
         let relay_handle = relay_server.as_ref().map(|srv| srv.handle());
-        let relay_server = relay_server.map(RelayHttpServerGuard);
         let task = tokio::spawn(relay_supervisor(tasks, relay_server));
         Ok(Self {
             http_addr: http_addr.or(relay_addr),
@@ -370,19 +369,6 @@ impl Server {
     }
 }
 
-/// Horrible hack to make [`http_server::Server`] behave somewhat.
-///
-/// We need this server to abort on drop to achieve structured concurrency.
-// TODO: could consider building this directly into the http_server::Server
-#[derive(Debug)]
-struct RelayHttpServerGuard(http_server::Server);
-
-impl Drop for RelayHttpServerGuard {
-    fn drop(&mut self) {
-        self.0.task_handle().abort();
-    }
-}
-
 /// Supervisor for the relay server tasks.
 ///
 /// As soon as one of the tasks exits, all other tasks are stopped and the server stops.
@@ -390,19 +376,19 @@ impl Drop for RelayHttpServerGuard {
 #[instrument(skip_all)]
 async fn relay_supervisor(
     mut tasks: JoinSet<Result<()>>,
-    mut relay_http_server: Option<RelayHttpServerGuard>,
+    mut relay_http_server: Option<http_server::Server>,
 ) -> Result<()> {
     let res = match (relay_http_server.as_mut(), tasks.len()) {
         (None, _) => tasks
             .join_next()
             .await
             .unwrap_or_else(|| Ok(Err(anyhow!("Nothing to supervise")))),
-        (Some(relay), 0) => relay.0.task_handle().await.map(anyhow::Ok),
+        (Some(relay), 0) => relay.task_handle().await.map(anyhow::Ok),
         (Some(relay), _) => {
             tokio::select! {
                 biased;
                 Some(ret) = tasks.join_next() => ret,
-                ret = relay.0.task_handle() => ret.map(anyhow::Ok),
+                ret = relay.task_handle() => ret.map(anyhow::Ok),
                 else => Ok(Err(anyhow!("Empty JoinSet (unreachable)"))),
             }
         }
@@ -429,7 +415,7 @@ async fn relay_supervisor(
     // Ensure the HTTP server terminated, there is no harm in calling this after it is
     // already shut down.  The JoinSet is aborted on drop.
     if let Some(server) = relay_http_server {
-        server.0.shutdown();
+        server.shutdown();
     }
 
     tasks.shutdown().await;

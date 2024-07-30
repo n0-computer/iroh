@@ -16,7 +16,6 @@ use hyper::service::Service;
 use hyper::upgrade::Upgraded;
 use hyper::{HeaderMap, Method, Request, Response, StatusCode};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::task::JoinHandle;
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
@@ -26,6 +25,7 @@ use crate::key::SecretKey;
 use crate::relay::http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION};
 use crate::relay::server::actor::{ClientConnHandler, ServerActorTask};
 use crate::relay::server::streams::MaybeTlsStream;
+use crate::util::AbortingJoinHandle;
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -83,7 +83,7 @@ async fn relay_connection_handler(
 #[derive(Debug)]
 pub struct Server {
     addr: SocketAddr,
-    http_server_task: JoinHandle<()>,
+    http_server_task: AbortingJoinHandle<()>,
     cancel_server_loop: CancellationToken,
 }
 
@@ -104,12 +104,12 @@ impl Server {
         self.cancel_server_loop.cancel();
     }
 
-    /// Returns the [`JoinHandle`] for the supervisor task managing the server.
+    /// Returns the [`AbortingJoinHandle`] for the supervisor task managing the server.
     ///
     /// This is the root of all the tasks for the server.  Aborting it will abort all the
     /// other tasks for the server.  Awaiting it will complete when all the server tasks are
     /// completed.
-    pub fn task_handle(&mut self) -> &mut JoinHandle<()> {
+    pub fn task_handle(&mut self) -> &mut AbortingJoinHandle<()> {
         &mut self.http_server_task
     }
 
@@ -375,7 +375,7 @@ impl ServerState {
 
         Ok(Server {
             addr,
-            http_server_task: task,
+            http_server_task: AbortingJoinHandle::from(task),
             cancel_server_loop,
         })
     }
