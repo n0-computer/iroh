@@ -62,7 +62,7 @@ pub struct ServerActorTask {
     closed: bool,
     /// Server loop handler
     loop_handler: AbortingJoinHandle<Result<()>>,
-    /// Done token, forces a hard shutdown. To gracefully shutdown, use [`Server::close`]
+    /// Done token, forces a hard shutdown. To gracefully shutdown, use [`ServerActorTask::close`]
     cancel: CancellationToken,
     // TODO: stats collection
 }
@@ -341,7 +341,7 @@ impl ServerActor {
     }
 }
 
-/// Initializes the [`Server`] with a self-signed x509 cert
+/// Initializes the [`ServerActor`] with a self-signed x509 cert
 /// encoding this server's public key and protocol version. "cmd/relay_server
 /// then sends this after the Let's Encrypt leaf + intermediate certs after
 /// the ServerHello (encrypted in TLS 1.3, not that is matters much).

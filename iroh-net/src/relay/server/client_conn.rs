@@ -23,7 +23,10 @@ use crate::relay::{
     types::{Packet, ServerMessage},
 };
 
-/// The [`super::server::Server`] side representation of a [`super::client::Client`]'s connection
+/// The [`Server`] side representation of a [`Client`]'s connection.
+///
+/// [`Server`]: crate::relay::server::Server
+/// [`Client`]: crate::relay::client::Client
 #[derive(Debug)]
 pub(crate) struct ClientConnManager {
     /// Static after construction, process-wide unique counter, incremented each time we accept

@@ -195,7 +195,7 @@ fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
     }
 }
 
-/// The kinds of messages we can send to the [`super::server::Server`]
+/// The kinds of messages we can send to the [`Server`](crate::relay::server::Server)
 #[derive(Debug)]
 enum ConnWriterMessage {
     /// Send a packet (addressed to the [`PublicKey`]) to the server
@@ -210,7 +210,7 @@ enum ConnWriterMessage {
     Shutdown,
 }
 
-/// Call [`ConnWriter::run`] to listen for messages to send to the connection.
+/// Call [`ConnWriterTasks::run`] to listen for messages to send to the connection.
 /// Should be used by the [`Conn`]
 ///
 /// Shutsdown when you send a [`ConnWriterMessage::Shutdown`], or if there is an error writing to
@@ -250,7 +250,8 @@ impl ConnWriterTasks {
     }
 }
 
-/// The Builder returns a [`Conn`] and a started [`ClientWriter`] run task.
+/// The Builder returns a [`Conn`] and a [`ConnReceiver`] and
+/// runs a [`ConnWriterTasks`] in the background.
 pub struct ConnBuilder {
     secret_key: SecretKey,
     reader: ConnReader,
