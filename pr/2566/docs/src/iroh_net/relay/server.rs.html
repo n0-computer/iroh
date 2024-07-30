@@ -901,6 +901,11 @@
 <a href="#901" id="901">901</a>
 <a href="#902" id="902">902</a>
 <a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/derp/derp_server.go
 </span><span class="kw">use </span>std::collections::HashMap;
 <span class="kw">use </span>std::pin::Pin;
@@ -918,7 +923,6 @@
 <span class="kw">use </span>time::{Date, OffsetDateTime};
 <span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
 <span class="kw">use </span>tokio::sync::mpsc;
-<span class="kw">use </span>tokio::task::JoinHandle;
 <span class="kw">use </span>tokio_tungstenite::WebSocketStream;
 <span class="kw">use </span>tokio_util::codec::Framed;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
@@ -926,6 +930,7 @@
 <span class="kw">use </span>tungstenite::protocol::Role;
 
 <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
+<span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
 
 <span class="kw">use </span><span class="kw">super</span>::codec::Frame;
 <span class="kw">use </span><span class="kw">super</span>::http::Protocol;
@@ -949,11 +954,14 @@
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>WRITE_TIMEOUT: Duration = Duration::from_secs(<span class="number">2</span>);
 
-<span class="doccomment">/// A relay server.
+<span class="doccomment">/// The task for a running server actor.
 ///
-/// Responsible for managing connections to relay [`super::client::Client`]s, sending packets from one client to another.
+/// Will forcefully abort the server actor loop when dropped.
+/// For stopping gracefully, use [`ServerActorTask::close`].
+///
+/// Responsible for managing connections to relay [`Client`](super::client::Client)s, sending packets from one client to another.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>Server {
+</span><span class="kw">pub struct </span>ServerActorTask {
     <span class="doccomment">/// Optionally specifies how long to wait before failing when writing
     /// to a client
     </span>write_timeout: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
@@ -966,13 +974,13 @@
     <span class="doccomment">/// When true, the server has been shutdown.
     </span>closed: bool,
     <span class="doccomment">/// Server loop handler
-    </span>loop_handler: JoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
+    </span>loop_handler: AbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
     <span class="doccomment">/// Done token, forces a hard shutdown. To gracefully shutdown, use [`Server::close`]
     </span>cancel: CancellationToken,
     <span class="comment">// TODO: stats collection
 </span>}
 
-<span class="kw">impl </span>Server {
+<span class="kw">impl </span>ServerActorTask {
     <span class="doccomment">/// TODO: replace with builder
     </span><span class="kw">pub fn </span>new(key: SecretKey) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>(server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
@@ -982,7 +990,8 @@
         <span class="kw">let </span>server_task = tokio::spawn(
             <span class="kw">async move </span>{ server_actor.run(done).<span class="kw">await </span>}
                 .instrument(<span class="macro">info_span!</span>(<span class="string">"relay.server"</span>, me = %key.public().fmt_short())),
-        );
+        )
+        .into();
         <span class="kw">let </span>meta_cert = init_meta_cert(<span class="kw-2">&amp;</span>key.public());
         <span class="self">Self </span>{
             write_timeout: <span class="prelude-val">Some</span>(WRITE_TIMEOUT),
@@ -1026,18 +1035,18 @@
 
     <span class="doccomment">/// Aborts the server.
     ///
-    /// You should prefer to use [`Server::close`] for a graceful shutdown.
+    /// You should prefer to use [`ServerActorTask::close`] for a graceful shutdown.
     </span><span class="kw">pub fn </span>abort(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="self">self</span>.cancel.cancel();
     }
 
-    <span class="doccomment">/// Whether or not the relay [Server] is closed.
+    <span class="doccomment">/// Whether or not the relay [`ServerActorTask`] is closed.
     </span><span class="kw">pub fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="self">self</span>.closed
     }
 
     <span class="doccomment">/// Create a [`ClientConnHandler`], which can verify connections and add them to the
-    /// [`Server`].
+    /// [`ServerActorTask`].
     </span><span class="kw">pub fn </span>client_conn_handler(<span class="kw-2">&amp;</span><span class="self">self</span>, default_headers: HeaderMap) -&gt; ClientConnHandler {
         ClientConnHandler {
             server_channel: <span class="self">self</span>.server_channel.clone(),
@@ -1056,7 +1065,7 @@
 
 <span class="doccomment">/// Handle incoming connections to the Server.
 ///
-/// Created by the [`Server`] by calling [`Server::client_conn_handler`].
+/// Created by the [`ServerActorTask`] by calling [`ServerActorTask::client_conn_handler`].
 ///
 /// Can be cheaply cloned.
 </span><span class="attr">#[derive(Debug)]
@@ -1131,7 +1140,7 @@
     }
 }
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ServerActor {
+<span class="kw">struct </span>ServerActor {
     key: PublicKey,
     receiver: mpsc::Receiver&lt;ServerMessage&gt;,
     <span class="doccomment">/// All clients connected to this server
@@ -1140,7 +1149,7 @@
 }
 
 <span class="kw">impl </span>ServerActor {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(key: PublicKey, receiver: mpsc::Receiver&lt;ServerMessage&gt;) -&gt; <span class="self">Self </span>{
+    <span class="kw">fn </span>new(key: PublicKey, receiver: mpsc::Receiver&lt;ServerMessage&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             key,
             receiver,
@@ -1149,7 +1158,7 @@
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, done: CancellationToken) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, done: CancellationToken) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
                 biased;
@@ -1574,7 +1583,7 @@
 
         <span class="comment">// start a task as if a client is doing the "accept" handshake
         </span><span class="kw">let </span>pub_client_key = client_key.public();
-        <span class="kw">let </span>client_task: JoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; = tokio::spawn(<span class="kw">async move </span>{
+        <span class="kw">let </span>client_task: AbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; = tokio::spawn(<span class="kw">async move </span>{
             <span class="comment">// send the client info
             </span><span class="kw">let </span>client_info = ClientInfo {
                 version: PROTOCOL_VERSION,
@@ -1583,7 +1592,8 @@
                 .<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="prelude-val">Ok</span>(())
-        });
+        })
+        .into();
 
         <span class="comment">// attempt to add the connection to the server
         </span>handler
@@ -1623,7 +1633,7 @@
 
         <span class="comment">// create the server!
         </span><span class="kw">let </span>server_key = SecretKey::generate();
-        <span class="kw">let </span>server: Server = Server::new(server_key);
+        <span class="kw">let </span>server: ServerActorTask = ServerActorTask::new(server_key);
 
         <span class="comment">// create client a and connect it to the server
         </span><span class="kw">let </span>key_a = SecretKey::generate();
@@ -1699,7 +1709,7 @@
 
         <span class="comment">// create the server!
         </span><span class="kw">let </span>server_key = SecretKey::generate();
-        <span class="kw">let </span>server: Server = Server::new(server_key);
+        <span class="kw">let </span>server: ServerActorTask = ServerActorTask::new(server_key);
 
         <span class="comment">// create client a and connect it to the server
         </span><span class="kw">let </span>key_a = SecretKey::generate();

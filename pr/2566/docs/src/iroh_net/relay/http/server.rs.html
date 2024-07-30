@@ -944,7 +944,7 @@
         </span>);
         <span class="kw">let </span>(relay_handler, relay_server) = <span class="kw">if let </span><span class="prelude-val">Some</span>(secret_key) = <span class="self">self</span>.secret_key {
             <span class="comment">// spawns a server actor/task
-            </span><span class="kw">let </span>server = <span class="kw">crate</span>::relay::server::Server::new(secret_key.clone());
+            </span><span class="kw">let </span>server = <span class="kw">crate</span>::relay::server::ServerActorTask::new(secret_key.clone());
             (
                 RelayHandler::ConnHandler(server.client_conn_handler(<span class="self">self</span>.headers.clone())),
                 <span class="prelude-val">Some</span>(server),
@@ -989,7 +989,7 @@
 </span><span class="kw">struct </span>ServerState {
     addr: SocketAddr,
     tls_config: <span class="prelude-ty">Option</span>&lt;TlsConfig&gt;,
-    server: <span class="prelude-ty">Option</span>&lt;<span class="kw">crate</span>::relay::server::Server&gt;,
+    server: <span class="prelude-ty">Option</span>&lt;<span class="kw">crate</span>::relay::server::ServerActorTask&gt;,
     service: RelayService,
 }
 

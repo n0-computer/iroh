@@ -33,6 +33,8 @@
 <a href="#33" id="33">33</a>
 <a href="#34" id="34">34</a>
 <a href="#35" id="35">35</a>
+<a href="#36" id="36">36</a>
+<a href="#37" id="37">37</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Package `relay` implements a revised version of the Designated Encrypted Relay for Packets (DERP)
 //! protocol written by Tailscale.
 </span><span class="comment">//
@@ -66,6 +68,8 @@
 <span class="kw">pub use </span><span class="self">self</span>::map::{RelayMap, RelayMode, RelayNode};
 <span class="kw">pub use </span><span class="self">self</span>::metrics::Metrics;
 <span class="attr">#[cfg(feature = <span class="string">"iroh-relay"</span>)]
-</span><span class="kw">pub use </span><span class="self">self</span>::server::{ClientConnHandler, MaybeTlsStream <span class="kw">as </span>MaybeTlsStreamServer, Server};
+</span><span class="kw">pub use </span><span class="self">self</span>::server::{
+    ClientConnHandler, MaybeTlsStream <span class="kw">as </span>MaybeTlsStreamServer, ServerActorTask,
+};
 <span class="kw">pub use </span>iroh_base::node_addr::RelayUrl;
 </code></pre></div></section></main></body></html>
