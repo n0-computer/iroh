@@ -149,7 +149,7 @@ fn cli_provide_tree_resume() -> Result<()> {
         // import the files into an ephemeral iroh to use the generated blobs db in tests
         let provider = make_provider_in(&src_iroh_data_dir_pre, Input::Path(src.clone()), false)?;
         // small synchronization points: allow iroh to be ready for transfer
-        std::thread::sleep(std::time::Duration::from_secs(3));
+        std::thread::sleep(std::time::Duration::from_secs(5));
         let _ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
     }
 
@@ -157,14 +157,14 @@ fn cli_provide_tree_resume() -> Result<()> {
     let src_iroh_data_dir = tmp.join("src_iroh_data_dir");
     copy_blob_dirs(&src_iroh_data_dir_pre, &src_iroh_data_dir)?;
     // first tests
-    let empty_data_dir = tmp.join("get_iroh_data_dir_01");
+    let empty_dir = tmp.join("get_iroh_data_dir_01");
     // second test
-    let full_data_dir = tmp.join("get_iroh_data_dir_02");
-    copy_blob_dirs(&src_iroh_data_dir, &full_data_dir)?;
+    let full_dir = tmp.join("get_iroh_data_dir_02");
+    copy_blob_dirs(&src_iroh_data_dir, &full_dir)?;
     // third test
-    let missing_blobs_data_dir = tmp.join("get_iroh_data_dir_03");
-    copy_blob_dirs(&src_iroh_data_dir, &missing_blobs_data_dir)?;
-    make_partial(&missing_blobs_data_dir, |_hash, size| {
+    let partial_dir_1 = tmp.join("get_iroh_data_dir_03");
+    copy_blob_dirs(&src_iroh_data_dir, &partial_dir_1)?;
+    make_partial(&partial_dir_1, |_hash, size| {
         if size == 100000 {
             MakePartialResult::Remove
         } else {
@@ -172,9 +172,9 @@ fn cli_provide_tree_resume() -> Result<()> {
         }
     })?;
     // fourth test
-    let partial_data_dir = tmp.join("get_iroh_data_dir_04");
-    copy_blob_dirs(&src_iroh_data_dir, &partial_data_dir)?;
-    make_partial(&partial_data_dir, |_hash, size| {
+    let partial_dir_2 = tmp.join("get_iroh_data_dir_04");
+    copy_blob_dirs(&src_iroh_data_dir, &partial_dir_2)?;
+    make_partial(&partial_dir_2, |_hash, size| {
         if size == 100000 {
             MakePartialResult::Truncate(1024 * 32)
         } else {
@@ -182,53 +182,25 @@ fn cli_provide_tree_resume() -> Result<()> {
         }
     })?;
 
-    struct TestCase {
-        name: &'static str,
-        get_folder: PathBuf,
-        transfer_size: &'static str,
-    }
-
-    let test_cases = [
-        TestCase {
-            name: "empty folder produces full transfer",
-            get_folder: empty_data_dir,
-            transfer_size: "112.89 KiB",
-        },
-        TestCase {
-            name: "full folder needs no transfer",
-            get_folder: full_data_dir,
-            transfer_size: "0 B",
-        },
-        TestCase {
-            name: "missing blobs produces partial transfer",
-            get_folder: missing_blobs_data_dir,
-            transfer_size: "98.04 KiB",
-        },
-        TestCase {
-            name: "partial blobs produces partial transfer",
-            get_folder: partial_data_dir,
-            transfer_size: "65.98 KiB",
-        },
-    ];
-
     // start the provider and run the test cases
     let provider = make_provider_in(&src_iroh_data_dir, Input::Path(src.clone()), false)?;
     let ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
 
-    for case in test_cases {
-        let TestCase {
-            name,
-            get_folder,
-            transfer_size,
-        } = case;
+    let run_test =
+        |name: &'static str, get_folder: PathBuf, transfer_size: &'static str| -> Result<()> {
+            println!("\n***\n{name}\n***");
+            let get_output = run_get_cmd(&get_folder, &ticket, Some(tgt.clone()))?;
+            let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
+            assert_eq!(matches, vec![transfer_size], "{name}: wrong transfer size");
+            compare_files(&src, &tgt).context("file contents do not match")?;
+            std::fs::remove_dir_all(&tgt)?;
+            Ok(())
+        };
 
-        println!("\n***\n{name}\n***");
-        let get_output = run_get_cmd(&get_folder, &ticket, Some(tgt.clone()))?;
-        let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-        assert_eq!(matches, vec![transfer_size], "{name}: wrong transfer size");
-        compare_files(&src, &tgt).context("file contents do not match")?;
-        std::fs::remove_dir_all(&tgt)?;
-    }
+    run_test("no data needs full transfer", empty_dir, "112.89 KiB")?;
+    run_test("full data needs no transfer", full_dir, "0 B")?;
+    run_test("missing blobs needs transfer", partial_dir_1, "98.04 KiB")?;
+    run_test("partial blobs needs transfer", partial_dir_2, "65.98 KiB")?;
 
     drop(provider);
     Ok(())
@@ -259,7 +231,7 @@ fn cli_provide_file_resume() -> Result<()> {
         // import the files into an ephemeral iroh to use the generated blobs db in tests
         let provider = make_provider_in(&src_iroh_data_dir_pre, Input::Path(file.clone()), false)?;
         // small synchronization points: allow iroh to be ready for transfer
-        std::thread::sleep(std::time::Duration::from_secs(3));
+        std::thread::sleep(std::time::Duration::from_secs(5));
         let _ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
     }
 
@@ -279,50 +251,26 @@ fn cli_provide_file_resume() -> Result<()> {
         MakePartialResult::Truncate(1024 * 32)
     })?;
 
-    // here only for readability
-    struct TestCase {
-        name: &'static str,
-        get_folder: PathBuf,
-        transfer_size: &'static str,
-    }
-
-    let test_cases = [
-        TestCase {
-            name: "empty folder produces full transfer",
-            get_folder: empty_data_dir,
-            transfer_size: "98.04 KiB",
-        },
-        TestCase {
-            name: "full folder needs no transfer",
-            get_folder: full_data_dir,
-            transfer_size: "0 B",
-        },
-        TestCase {
-            name: "partial data produces partial transfer",
-            get_folder: partial_data_dir,
-            transfer_size: "65.98 KiB",
-        },
-    ];
-
     // start the provider and run the test cases
 
     let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
     let ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
-    for case in test_cases {
-        let TestCase {
-            name,
-            get_folder,
-            transfer_size,
-        } = case;
 
-        println!("\n***\n{name}\n***");
-        let get_output = run_get_cmd(&get_folder, &ticket, Some(tgt.clone()))?;
-        let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-        assert_eq!(matches, vec![transfer_size], "{name}: wrong transfer size");
-        let current_hash = Hash::new(std::fs::read(&tgt)?);
-        assert_eq!(current_hash, hash, "{name}: wrong blob contents");
-        std::fs::remove_file(&tgt)?;
-    }
+    let run_test =
+        |name: &'static str, get_folder: PathBuf, transfer_size: &'static str| -> Result<()> {
+            println!("\n***\n{name}\n***");
+            let get_output = run_get_cmd(&get_folder, &ticket, Some(tgt.clone()))?;
+            let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
+            assert_eq!(matches, vec![transfer_size], "{name}: wrong transfer size");
+            let current_hash = Hash::new(std::fs::read(&tgt)?);
+            assert_eq!(current_hash, hash, "{name}: wrong blob contents");
+            std::fs::remove_file(&tgt)?;
+            Ok(())
+        };
+
+    run_test("no data needs full transfer", empty_data_dir, "98.04 KiB")?;
+    run_test("full folder needs no transfer", full_data_dir, "0 B")?;
+    run_test("partial data needs transfer", partial_data_dir, "65.98 KiB")?;
     Ok(())
 }
 
