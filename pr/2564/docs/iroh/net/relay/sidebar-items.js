@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_PACKET_SIZE"],"enum":["MaybeTlsStreamServer","ReceivedMessage","RelayMode"],"mod":["http","iroh_relay"],"struct":["ClientConnHandler","HttpClient","Metrics","RelayClient","RelayMap","RelayNode","RelayUrl","Server"]};
+window.SIDEBAR_ITEMS = {"constant":["MAX_PACKET_SIZE"],"enum":["HttpClientError","ReceivedMessage","RelayMode"],"mod":["http","server"],"struct":["HttpClient","HttpClientBuilder","HttpClientReceiver","RelayConn","RelayMap","RelayNode","RelayUrl"]};

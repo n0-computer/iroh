@@ -902,340 +902,608 @@
 <a href="#902" id="902">902</a>
 <a href="#903" id="903">903</a>
 <a href="#904" id="904">904</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/derp/derp_server.go
-</span><span class="kw">use </span>std::collections::HashMap;
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a>
+<a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a>
+<a href="#924" id="924">924</a>
+<a href="#925" id="925">925</a>
+<a href="#926" id="926">926</a>
+<a href="#927" id="927">927</a>
+<a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a>
+<a href="#951" id="951">951</a>
+<a href="#952" id="952">952</a>
+<a href="#953" id="953">953</a>
+<a href="#954" id="954">954</a>
+<a href="#955" id="955">955</a>
+<a href="#956" id="956">956</a>
+<a href="#957" id="957">957</a>
+<a href="#958" id="958">958</a>
+<a href="#959" id="959">959</a>
+<a href="#960" id="960">960</a>
+<a href="#961" id="961">961</a>
+<a href="#962" id="962">962</a>
+<a href="#963" id="963">963</a>
+<a href="#964" id="964">964</a>
+<a href="#965" id="965">965</a>
+<a href="#966" id="966">966</a>
+<a href="#967" id="967">967</a>
+<a href="#968" id="968">968</a>
+<a href="#969" id="969">969</a>
+<a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a>
+<a href="#972" id="972">972</a>
+<a href="#973" id="973">973</a>
+<a href="#974" id="974">974</a>
+<a href="#975" id="975">975</a>
+<a href="#976" id="976">976</a>
+<a href="#977" id="977">977</a>
+<a href="#978" id="978">978</a>
+<a href="#979" id="979">979</a>
+<a href="#980" id="980">980</a>
+<a href="#981" id="981">981</a>
+<a href="#982" id="982">982</a>
+<a href="#983" id="983">983</a>
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
+<a href="#997" id="997">997</a>
+<a href="#998" id="998">998</a>
+<a href="#999" id="999">999</a>
+<a href="#1000" id="1000">1000</a>
+<a href="#1001" id="1001">1001</a>
+<a href="#1002" id="1002">1002</a>
+<a href="#1003" id="1003">1003</a>
+<a href="#1004" id="1004">1004</a>
+<a href="#1005" id="1005">1005</a>
+<a href="#1006" id="1006">1006</a>
+<a href="#1007" id="1007">1007</a>
+<a href="#1008" id="1008">1008</a>
+<a href="#1009" id="1009">1009</a>
+<a href="#1010" id="1010">1010</a>
+<a href="#1011" id="1011">1011</a>
+<a href="#1012" id="1012">1012</a>
+<a href="#1013" id="1013">1013</a>
+<a href="#1014" id="1014">1014</a>
+<a href="#1015" id="1015">1015</a>
+<a href="#1016" id="1016">1016</a>
+<a href="#1017" id="1017">1017</a>
+<a href="#1018" id="1018">1018</a>
+<a href="#1019" id="1019">1019</a>
+<a href="#1020" id="1020">1020</a>
+<a href="#1021" id="1021">1021</a>
+<a href="#1022" id="1022">1022</a>
+<a href="#1023" id="1023">1023</a>
+<a href="#1024" id="1024">1024</a>
+<a href="#1025" id="1025">1025</a>
+<a href="#1026" id="1026">1026</a>
+<a href="#1027" id="1027">1027</a>
+<a href="#1028" id="1028">1028</a>
+<a href="#1029" id="1029">1029</a>
+<a href="#1030" id="1030">1030</a>
+<a href="#1031" id="1031">1031</a>
+<a href="#1032" id="1032">1032</a>
+<a href="#1033" id="1033">1033</a>
+<a href="#1034" id="1034">1034</a>
+<a href="#1035" id="1035">1035</a>
+<a href="#1036" id="1036">1036</a>
+<a href="#1037" id="1037">1037</a>
+<a href="#1038" id="1038">1038</a>
+<a href="#1039" id="1039">1039</a>
+<a href="#1040" id="1040">1040</a>
+<a href="#1041" id="1041">1041</a>
+<a href="#1042" id="1042">1042</a>
+<a href="#1043" id="1043">1043</a>
+<a href="#1044" id="1044">1044</a>
+<a href="#1045" id="1045">1045</a>
+<a href="#1046" id="1046">1046</a>
+<a href="#1047" id="1047">1047</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+//!
+//! This module provides an API to run a full fledged iroh-relay server.  It is primarily
+//! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
+//! other locations however.
+//!
+//! This code is fully written in a form of structured-concurrency: every spawned task is
+//! always attached to a handle and when the handle is dropped the tasks abort.  So tasks
+//! can not outlive their handle.  It is also always possible to await for completion of a
+//! task.  Some tasks additionally have a method to do graceful shutdown.
+
+</span><span class="kw">use </span>std::fmt;
+<span class="kw">use </span>std::future::Future;
+<span class="kw">use </span>std::net::SocketAddr;
 <span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::atomic::{AtomicUsize, Ordering};
 <span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::task::{Context, Poll};
-<span class="kw">use </span>std::time::Duration;
 
-<span class="kw">use </span>anyhow::{bail, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>futures_lite::Stream;
-<span class="kw">use </span>futures_sink::Sink;
-<span class="kw">use </span>hyper::HeaderMap;
-<span class="kw">use </span>iroh_metrics::core::UsageStatsReport;
-<span class="kw">use </span>iroh_metrics::{inc, inc_by, report_usage_stats};
-<span class="kw">use </span>time::{Date, OffsetDateTime};
-<span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
-<span class="kw">use </span>tokio::sync::mpsc;
-<span class="kw">use </span>tokio::task::JoinHandle;
-<span class="kw">use </span>tokio_tungstenite::WebSocketStream;
-<span class="kw">use </span>tokio_util::codec::Framed;
-<span class="kw">use </span>tokio_util::sync::CancellationToken;
-<span class="kw">use </span>tracing::{info_span, trace, Instrument};
-<span class="kw">use </span>tungstenite::protocol::Role;
+<span class="kw">use </span>anyhow::{anyhow, bail, Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>futures_lite::StreamExt;
+<span class="kw">use </span>http::response::Builder <span class="kw">as </span>ResponseBuilder;
+<span class="kw">use </span>http::{HeaderMap, Method, Request, Response, StatusCode};
+<span class="kw">use </span>hyper::body::Incoming;
+<span class="kw">use </span>iroh_metrics::inc;
+<span class="kw">use </span>tokio::net::{TcpListener, UdpSocket};
+<span class="kw">use </span>tokio::task::JoinSet;
+<span class="kw">use </span>tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-<span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
+<span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
+<span class="kw">use </span><span class="kw">crate</span>::relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH};
+<span class="kw">use </span><span class="kw">crate</span>::stun;
+<span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
 
-<span class="kw">use </span><span class="kw">super</span>::codec::Frame;
-<span class="kw">use </span><span class="kw">super</span>::http::Protocol;
-<span class="kw">use super</span>::{
-    client_conn::ClientConnBuilder,
-    clients::Clients,
-    codec::{
-        recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
-        SERVER_CHANNEL_SIZE,
-    },
-    metrics::Metrics,
-    types::ServerMessage,
-};
+<span class="comment">// Module defined in this file.
+</span><span class="kw">use </span>stun_metrics::StunMetrics;
 
-<span class="comment">// TODO: skipping `verboseDropKeys` for now
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>actor;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>client_conn;
+<span class="kw">mod </span>clients;
+<span class="kw">mod </span>http_server;
+<span class="kw">mod </span>metrics;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>streams;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>types;
 
-</span><span class="kw">static </span>CONN_NUM: AtomicUsize = AtomicUsize::new(<span class="number">1</span>);
-<span class="kw">fn </span>new_conn_num() -&gt; usize {
-    CONN_NUM.fetch_add(<span class="number">1</span>, Ordering::Relaxed)
+<span class="kw">pub use </span><span class="self">self</span>::actor::{ClientConnHandler, ServerActorTask};
+<span class="kw">pub use </span><span class="self">self</span>::metrics::Metrics;
+<span class="kw">pub use </span><span class="self">self</span>::streams::MaybeTlsStream <span class="kw">as </span>MaybeTlsStreamServer;
+
+<span class="kw">const </span>NO_CONTENT_CHALLENGE_HEADER: <span class="kw-2">&amp;</span>str = <span class="string">"X-Tailscale-Challenge"</span>;
+<span class="kw">const </span>NO_CONTENT_RESPONSE_HEADER: <span class="kw-2">&amp;</span>str = <span class="string">"X-Tailscale-Response"</span>;
+<span class="kw">const </span>NOTFOUND: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"Not Found"</span>;
+<span class="kw">const </span>RELAY_DISABLED: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"relay server disabled"</span>;
+<span class="kw">const </span>ROBOTS_TXT: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"User-agent: *\nDisallow: /\n"</span>;
+<span class="kw">const </span>INDEX: <span class="kw-2">&amp;</span>[u8] = <span class="string">br#"&lt;html&gt;&lt;body&gt;
+&lt;h1&gt;Iroh Relay&lt;/h1&gt;
+&lt;p&gt;
+  This is an &lt;a href="https://iroh.computer/"&gt;Iroh&lt;/a&gt; Relay server.
+&lt;/p&gt;
+"#</span>;
+<span class="kw">const </span>TLS_HEADERS: [(<span class="kw-2">&amp;</span>str, <span class="kw-2">&amp;</span>str); <span class="number">2</span>] = [
+    (<span class="string">"Strict-Transport-Security"</span>, <span class="string">"max-age=63072000; includeSubDomains"</span>),
+    (<span class="string">"Content-Security-Policy"</span>, <span class="string">"default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'self'; block-all-mixed-content; plugin-types 'none'"</span>)
+];
+
+<span class="kw">type </span>BytesBody = http_body_util::Full&lt;hyper::body::Bytes&gt;;
+<span class="kw">type </span>HyperError = Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync&gt;;
+<span class="kw">type </span>HyperResult&lt;T&gt; = std::result::Result&lt;T, HyperError&gt;;
+
+<span class="doccomment">/// Creates a new [`BytesBody`] with no content.
+</span><span class="kw">fn </span>body_empty() -&gt; BytesBody {
+    http_body_util::Full::new(hyper::body::Bytes::new())
 }
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>WRITE_TIMEOUT: Duration = Duration::from_secs(<span class="number">2</span>);
-
-<span class="doccomment">/// A relay server.
+<span class="doccomment">/// Configuration for the full Relay &amp; STUN server.
 ///
-/// Responsible for managing connections to relay [`super::client::Client`]s, sending packets from one client to another.
+/// Be aware the generic parameters are for when using the Let's Encrypt TLS configuration.
+/// If not used dummy ones need to be provided, e.g. `ServerConfig::&lt;(), ()&gt;::default()`.
+</span><span class="attr">#[derive(Debug, Default)]
+</span><span class="kw">pub struct </span>ServerConfig&lt;EC: fmt::Debug, EA: fmt::Debug = EC&gt; {
+    <span class="doccomment">/// Configuration for the Relay server, disabled if `None`.
+    </span><span class="kw">pub </span>relay: <span class="prelude-ty">Option</span>&lt;RelayConfig&lt;EC, EA&gt;&gt;,
+    <span class="doccomment">/// Configuration for the STUN server, disabled if `None`.
+    </span><span class="kw">pub </span>stun: <span class="prelude-ty">Option</span>&lt;StunConfig&gt;,
+    <span class="doccomment">/// Socket to serve metrics on.
+    </span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+    </span><span class="kw">pub </span>metrics_addr: <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;,
+}
+
+<span class="doccomment">/// Configuration for the Relay HTTP and HTTPS server.
+///
+/// This includes the HTTP services hosted by the Relay server, the Relay `/relay` HTTP
+/// endpoint is only one of the services served.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub struct </span>RelayConfig&lt;EC: fmt::Debug, EA: fmt::Debug = EC&gt; {
+    <span class="doccomment">/// The iroh secret key of the Relay server.
+    </span><span class="kw">pub </span>secret_key: SecretKey,
+    <span class="doccomment">/// The socket address on which the Relay HTTP server should bind.
+    ///
+    /// Normally you'd choose port `80`.  The bind address for the HTTPS server is
+    /// configured in [`RelayConfig::tls`].
+    ///
+    /// If [`RelayConfig::tls`] is `None` then this serves all the HTTP services without
+    /// TLS.
+    </span><span class="kw">pub </span>http_bind_addr: SocketAddr,
+    <span class="doccomment">/// TLS configuration for the HTTPS server.
+    ///
+    /// If *None* all the HTTP services that would be served here are served from
+    /// [`RelayConfig::http_bind_addr`].
+    </span><span class="kw">pub </span>tls: <span class="prelude-ty">Option</span>&lt;TlsConfig&lt;EC, EA&gt;&gt;,
+    <span class="doccomment">/// Rate limits.
+    </span><span class="kw">pub </span>limits: Limits,
+}
+
+<span class="doccomment">/// Configuration for the STUN server.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub struct </span>StunConfig {
+    <span class="doccomment">/// The socket address on which the STUN server should bind.
+    ///
+    /// Normally you'd chose port `3478`, see [`crate::defaults::DEFAULT_STUN_PORT`].
+    </span><span class="kw">pub </span>bind_addr: SocketAddr,
+}
+
+<span class="doccomment">/// TLS configuration for Relay server.
+///
+/// Normally the Relay server accepts connections on both HTTPS and HTTP.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub struct </span>TlsConfig&lt;EC: fmt::Debug, EA: fmt::Debug = EC&gt; {
+    <span class="doccomment">/// The socket address on which to serve the HTTPS server.
+    ///
+    /// Since the captive portal probe has to run over plain text HTTP and TLS is used for
+    /// the main relay server this has to be on a different port.  When TLS is not enabled
+    /// this is served on the [`RelayConfig::http_bind_addr`] socket address.
+    ///
+    /// Normally you'd choose port `80`.
+    </span><span class="kw">pub </span>https_bind_addr: SocketAddr,
+    <span class="doccomment">/// Mode for getting a cert.
+    </span><span class="kw">pub </span>cert: CertConfig&lt;EC, EA&gt;,
+}
+
+<span class="doccomment">/// Rate limits.
+</span><span class="attr">#[derive(Debug, Default)]
+</span><span class="kw">pub struct </span>Limits {
+    <span class="doccomment">/// Rate limit for accepting new connection. Unlimited if not set.
+    </span><span class="kw">pub </span>accept_conn_limit: <span class="prelude-ty">Option</span>&lt;f64&gt;,
+    <span class="doccomment">/// Burst limit for accepting new connection. Unlimited if not set.
+    </span><span class="kw">pub </span>accept_conn_burst: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+}
+
+<span class="doccomment">/// TLS certificate configuration.
+</span><span class="attr">#[derive(derive_more::Debug)]
+</span><span class="kw">pub enum </span>CertConfig&lt;EC: fmt::Debug, EA: fmt::Debug = EC&gt; {
+    <span class="doccomment">/// Use Let's Encrypt.
+    </span>LetsEncrypt {
+        <span class="doccomment">/// Configuration for Let's Encrypt certificates.
+        </span><span class="attr">#[debug(<span class="string">"AcmeConfig"</span>)]
+        </span>config: tokio_rustls_acme::AcmeConfig&lt;EC, EA&gt;,
+    },
+    <span class="doccomment">/// Use a static TLS key and certificate chain.
+    </span>Manual {
+        <span class="doccomment">/// The TLS private key.
+        </span>private_key: rustls::PrivateKey,
+        <span class="doccomment">/// The TLS certificate chain.
+        </span>certs: Vec&lt;rustls::Certificate&gt;,
+    },
+}
+
+<span class="doccomment">/// A running Relay + STUN server.
+///
+/// This is a full Relay server, including STUN, Relay and various associated HTTP services.
+///
+/// Dropping this will stop the server.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>Server {
-    <span class="doccomment">/// Optionally specifies how long to wait before failing when writing
-    /// to a client
-    </span>write_timeout: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
-    <span class="doccomment">/// secret_key of the client
-    </span>secret_key: SecretKey,
-    <span class="doccomment">/// The DER encoded x509 cert to send after `LetsEncrypt` cert+intermediate.
-    </span>meta_cert: Vec&lt;u8&gt;,
-    <span class="doccomment">/// Channel on which to communicate to the [`ServerActor`]
-    </span>server_channel: mpsc::Sender&lt;ServerMessage&gt;,
-    <span class="doccomment">/// When true, the server has been shutdown.
-    </span>closed: bool,
-    <span class="doccomment">/// Server loop handler
-    </span>loop_handler: JoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
-    <span class="doccomment">/// Done token, forces a hard shutdown. To gracefully shutdown, use [`Server::close`]
-    </span>cancel: CancellationToken,
-    <span class="comment">// TODO: stats collection
-</span>}
+    <span class="doccomment">/// The address of the HTTP server, if configured.
+    </span>http_addr: <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;,
+    <span class="doccomment">/// The address of the STUN server, if configured.
+    </span>stun_addr: <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;,
+    <span class="doccomment">/// The address of the HTTPS server, if the relay server is using TLS.
+    ///
+    /// If the Relay server is not using TLS then it is served from the
+    /// [`Server::http_addr`].
+    </span>https_addr: <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;,
+    <span class="doccomment">/// Handle to the relay server.
+    </span>relay_handle: <span class="prelude-ty">Option</span>&lt;http_server::ServerHandle&gt;,
+    <span class="doccomment">/// The main task running the server.
+    </span>supervisor: AbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
+}
 
 <span class="kw">impl </span>Server {
-    <span class="doccomment">/// TODO: replace with builder
-    </span><span class="kw">pub fn </span>new(key: SecretKey) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>(server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
-        <span class="kw">let </span>server_actor = ServerActor::new(key.public(), server_channel_r);
-        <span class="kw">let </span>cancel_token = CancellationToken::new();
-        <span class="kw">let </span>done = cancel_token.clone();
-        <span class="kw">let </span>server_task = tokio::spawn(
-            <span class="kw">async move </span>{ server_actor.run(done).<span class="kw">await </span>}
-                .instrument(<span class="macro">info_span!</span>(<span class="string">"relay.server"</span>, me = %key.public().fmt_short())),
-        );
-        <span class="kw">let </span>meta_cert = init_meta_cert(<span class="kw-2">&amp;</span>key.public());
-        <span class="self">Self </span>{
-            write_timeout: <span class="prelude-val">Some</span>(WRITE_TIMEOUT),
-            secret_key: key,
-            meta_cert,
-            server_channel: server_channel_s,
-            closed: <span class="bool-val">false</span>,
-            loop_handler: server_task,
-            cancel: cancel_token,
-        }
-    }
+    <span class="doccomment">/// Starts the server.
+    </span><span class="kw">pub async fn </span>spawn&lt;EC, EA&gt;(config: ServerConfig&lt;EC, EA&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt;
+    <span class="kw">where
+        </span>EC: fmt::Debug + <span class="lifetime">'static</span>,
+        EA: fmt::Debug + <span class="lifetime">'static</span>,
+    {
+        <span class="kw">let </span><span class="kw-2">mut </span>tasks = JoinSet::new();
 
-    <span class="doccomment">/// Returns the server's secret key.
-    </span><span class="kw">pub fn </span>secret_key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>SecretKey {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key
-    }
+        <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = config.metrics_addr {
+            <span class="macro">debug!</span>(<span class="string">"Starting metrics server"</span>);
+            <span class="kw">use </span>iroh_metrics::core::Metric;
 
-    <span class="doccomment">/// Returns the server's public key.
-    </span><span class="kw">pub fn </span>public_key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PublicKey {
-        <span class="self">self</span>.secret_key.public()
-    }
-
-    <span class="doccomment">/// Closes the server and waits for the connections to disconnect.
-    </span><span class="kw">pub async fn </span>close(<span class="kw-2">mut </span><span class="self">self</span>) {
-        <span class="kw">if </span>!<span class="self">self</span>.closed {
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.server_channel.send(ServerMessage::Shutdown).<span class="kw">await </span>{
-                <span class="macro">tracing::warn!</span>(
-                    <span class="string">"could not shutdown the server gracefully, doing a forced shutdown: {:?}"</span>,
-                    err
-                );
-                <span class="self">self</span>.cancel.cancel();
-            }
-            <span class="kw">match </span><span class="self">self</span>.loop_handler.<span class="kw">await </span>{
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(())) =&gt; {}
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(e)) =&gt; <span class="macro">tracing::warn!</span>(<span class="string">"error shutting down server: {e:?}"</span>),
-                <span class="prelude-val">Err</span>(e) =&gt; <span class="macro">tracing::warn!</span>(<span class="string">"error waiting for the server process to close: {e:?}"</span>),
-            }
-            <span class="self">self</span>.closed = <span class="bool-val">true</span>;
-        }
-    }
-
-    <span class="doccomment">/// Aborts the server.
-    ///
-    /// You should prefer to use [`Server::close`] for a graceful shutdown.
-    </span><span class="kw">pub fn </span>abort(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="self">self</span>.cancel.cancel();
-    }
-
-    <span class="doccomment">/// Whether or not the relay [Server] is closed.
-    </span><span class="kw">pub fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.closed
-    }
-
-    <span class="doccomment">/// Create a [`ClientConnHandler`], which can verify connections and add them to the
-    /// [`Server`].
-    </span><span class="kw">pub fn </span>client_conn_handler(<span class="kw-2">&amp;</span><span class="self">self</span>, default_headers: HeaderMap) -&gt; ClientConnHandler {
-        ClientConnHandler {
-            server_channel: <span class="self">self</span>.server_channel.clone(),
-            secret_key: <span class="self">self</span>.secret_key.clone(),
-            write_timeout: <span class="self">self</span>.write_timeout,
-            default_headers: Arc::new(default_headers),
-        }
-    }
-
-    <span class="doccomment">/// Returns the server metadata cert that can be sent by the TLS server to
-    /// let the client skip a round trip during start-up.
-    </span><span class="kw">pub fn </span>meta_cert(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[u8] {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.meta_cert
-    }
-}
-
-<span class="doccomment">/// Handle incoming connections to the Server.
-///
-/// Created by the [`Server`] by calling [`Server::client_conn_handler`].
-///
-/// Can be cheaply cloned.
-</span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>ClientConnHandler {
-    server_channel: mpsc::Sender&lt;ServerMessage&gt;,
-    secret_key: SecretKey,
-    write_timeout: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
-    <span class="kw">pub</span>(<span class="kw">super</span>) default_headers: Arc&lt;HeaderMap&gt;,
-}
-
-<span class="kw">impl </span>Clone <span class="kw">for </span>ClientConnHandler {
-    <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            server_channel: <span class="self">self</span>.server_channel.clone(),
-            secret_key: <span class="self">self</span>.secret_key.clone(),
-            write_timeout: <span class="self">self</span>.write_timeout,
-            default_headers: Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.default_headers),
-        }
-    }
-}
-
-<span class="kw">impl </span>ClientConnHandler {
-    <span class="doccomment">/// Adds a new connection to the server and serves it.
-    ///
-    /// Will error if it takes too long (10 sec) to write or read to the connection, if there is
-    /// some read or write error to the connection,  if the server is meant to verify clients,
-    /// and is unable to verify this one, or if there is some issue communicating with the server.
-    ///
-    /// The provided [`AsyncRead`] and [`AsyncWrite`] must be already connected to the connection.
-    </span><span class="kw">pub async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, protocol: Protocol, io: MaybeTlsStream) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="macro">trace!</span>(<span class="question-mark">?</span>protocol, <span class="string">"accept: start"</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>io = <span class="kw">match </span>protocol {
-            Protocol::Relay =&gt; {
-                <span class="macro">inc!</span>(Metrics, derp_accepts);
-                RelayIo::Derp(Framed::new(io, DerpCodec))
-            }
-            Protocol::Websocket =&gt; {
-                <span class="macro">inc!</span>(Metrics, websocket_accepts);
-                RelayIo::Ws(WebSocketStream::from_raw_socket(io, Role::Server, <span class="prelude-val">None</span>).<span class="kw">await</span>)
-            }
-        };
-        <span class="macro">trace!</span>(<span class="string">"accept: recv client key"</span>);
-        <span class="kw">let </span>(client_key, info) = recv_client_key(<span class="kw-2">&amp;mut </span>io)
-            .<span class="kw">await
-            </span>.context(<span class="string">"unable to receive client information"</span>)<span class="question-mark">?</span>;
-
-        <span class="kw">if </span>info.version != PROTOCOL_VERSION {
-            <span class="macro">bail!</span>(
-                <span class="string">"unexpected client version {}, expected {}"</span>,
-                info.version,
-                PROTOCOL_VERSION
+            iroh_metrics::core::Core::init(|reg, metrics| {
+                metrics.insert(<span class="kw">crate</span>::metrics::RelayMetrics::new(reg));
+                metrics.insert(StunMetrics::new(reg));
+            });
+            tasks.spawn(
+                iroh_metrics::metrics::start_metrics_server(addr)
+                    .instrument(<span class="macro">info_span!</span>(<span class="string">"metrics-server"</span>)),
             );
         }
 
-        <span class="macro">trace!</span>(<span class="string">"accept: build client conn"</span>);
-        <span class="kw">let </span>client_conn_builder = ClientConnBuilder {
-            key: client_key,
-            conn_num: new_conn_num(),
-            io,
-            write_timeout: <span class="self">self</span>.write_timeout,
-            channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
-            server_channel: <span class="self">self</span>.server_channel.clone(),
+        <span class="comment">// Start the STUN server.
+        </span><span class="kw">let </span>stun_addr = <span class="kw">match </span>config.stun {
+            <span class="prelude-val">Some</span>(stun) =&gt; {
+                <span class="macro">debug!</span>(<span class="string">"Starting STUN server"</span>);
+                <span class="kw">match </span>UdpSocket::bind(stun.bind_addr).<span class="kw">await </span>{
+                    <span class="prelude-val">Ok</span>(sock) =&gt; {
+                        <span class="kw">let </span>addr = sock.local_addr()<span class="question-mark">?</span>;
+                        <span class="macro">info!</span>(<span class="string">"STUN server bound on {addr}"</span>);
+                        tasks.spawn(
+                            server_stun_listener(sock).instrument(<span class="macro">info_span!</span>(<span class="string">"stun-server"</span>, %addr)),
+                        );
+                        <span class="prelude-val">Some</span>(addr)
+                    }
+                    <span class="prelude-val">Err</span>(err) =&gt; <span class="macro">bail!</span>(<span class="string">"failed to bind STUN listener: {err:#?}"</span>),
+                }
+            }
+            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
         };
-        <span class="macro">trace!</span>(<span class="string">"accept: create client"</span>);
-        <span class="self">self</span>.server_channel
-            .send(ServerMessage::CreateClient(client_conn_builder))
-            .<span class="kw">await
-            </span>.map_err(|<span class="kw">_</span>| {
-                <span class="macro">anyhow::anyhow!</span>(<span class="string">"server channel closed, the server is probably shutdown"</span>)
-            })<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
+
+        <span class="comment">// Start the Relay server.
+        </span><span class="kw">let </span>(relay_server, http_addr) = <span class="kw">match </span>config.relay {
+            <span class="prelude-val">Some</span>(relay_config) =&gt; {
+                <span class="macro">debug!</span>(<span class="string">"Starting Relay server"</span>);
+                <span class="kw">let </span><span class="kw-2">mut </span>headers = HeaderMap::new();
+                <span class="kw">for </span>(name, value) <span class="kw">in </span>TLS_HEADERS.iter() {
+                    headers.insert(<span class="kw-2">*</span>name, value.parse()<span class="question-mark">?</span>);
+                }
+                <span class="kw">let </span>relay_bind_addr = <span class="kw">match </span>relay_config.tls {
+                    <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>tls) =&gt; tls.https_bind_addr,
+                    <span class="prelude-val">None </span>=&gt; relay_config.http_bind_addr,
+                };
+                <span class="kw">let </span><span class="kw-2">mut </span>builder = http_server::ServerBuilder::new(relay_bind_addr)
+                    .secret_key(<span class="prelude-val">Some</span>(relay_config.secret_key))
+                    .headers(headers)
+                    .relay_override(Box::new(relay_disabled_handler))
+                    .request_handler(Method::GET, <span class="string">"/"</span>, Box::new(root_handler))
+                    .request_handler(Method::GET, <span class="string">"/index.html"</span>, Box::new(root_handler))
+                    .request_handler(
+                        Method::GET,
+                        LEGACY_RELAY_PROBE_PATH,
+                        Box::new(probe_handler),
+                    ) <span class="comment">// backwards compat
+                    </span>.request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
+                    .request_handler(Method::GET, <span class="string">"/robots.txt"</span>, Box::new(robots_handler));
+                <span class="kw">let </span>http_addr = <span class="kw">match </span>relay_config.tls {
+                    <span class="prelude-val">Some</span>(tls_config) =&gt; {
+                        <span class="kw">let </span>server_config = rustls::ServerConfig::builder()
+                            .with_safe_defaults()
+                            .with_no_client_auth();
+                        <span class="kw">let </span>server_tls_config = <span class="kw">match </span>tls_config.cert {
+                            CertConfig::LetsEncrypt { config } =&gt; {
+                                <span class="kw">let </span><span class="kw-2">mut </span>state = config.state();
+                                <span class="kw">let </span>server_config =
+                                    server_config.with_cert_resolver(state.resolver());
+                                <span class="kw">let </span>acceptor =
+                                    http_server::TlsAcceptor::LetsEncrypt(state.acceptor());
+                                tasks.spawn(
+                                    <span class="kw">async move </span>{
+                                        <span class="kw">while let </span><span class="prelude-val">Some</span>(event) = state.next().<span class="kw">await </span>{
+                                            <span class="kw">match </span>event {
+                                                <span class="prelude-val">Ok</span>(ok) =&gt; <span class="macro">debug!</span>(<span class="string">"acme event: {ok:?}"</span>),
+                                                <span class="prelude-val">Err</span>(err) =&gt; <span class="macro">error!</span>(<span class="string">"error: {err:?}"</span>),
+                                            }
+                                        }
+                                        <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"acme event stream finished"</span>))
+                                    }
+                                    .instrument(<span class="macro">info_span!</span>(<span class="string">"acme"</span>)),
+                                );
+                                <span class="prelude-val">Some</span>(http_server::TlsConfig {
+                                    config: Arc::new(server_config),
+                                    acceptor,
+                                })
+                            }
+                            CertConfig::Manual { private_key, certs } =&gt; {
+                                <span class="kw">let </span>server_config = server_config
+                                    .with_single_cert(certs.clone(), private_key.clone())<span class="question-mark">?</span>;
+                                <span class="kw">let </span>server_config = Arc::new(server_config);
+                                <span class="kw">let </span>acceptor =
+                                    tokio_rustls::TlsAcceptor::from(server_config.clone());
+                                <span class="kw">let </span>acceptor = http_server::TlsAcceptor::Manual(acceptor);
+                                <span class="prelude-val">Some</span>(http_server::TlsConfig {
+                                    config: server_config,
+                                    acceptor,
+                                })
+                            }
+                        };
+                        builder = builder.tls_config(server_tls_config);
+
+                        <span class="comment">// Some services always need to be served over HTTP without TLS.  Run
+                        // these standalone.
+                        </span><span class="kw">let </span>http_listener = TcpListener::bind(<span class="kw-2">&amp;</span>relay_config.http_bind_addr)
+                            .<span class="kw">await
+                            </span>.context(<span class="string">"failed to bind http"</span>)<span class="question-mark">?</span>;
+                        <span class="kw">let </span>http_addr = http_listener.local_addr()<span class="question-mark">?</span>;
+                        tasks.spawn(
+                            run_captive_portal_service(http_listener)
+                                .instrument(<span class="macro">info_span!</span>(<span class="string">"http-service"</span>, addr = %http_addr)),
+                        );
+                        <span class="prelude-val">Some</span>(http_addr)
+                    }
+                    <span class="prelude-val">None </span>=&gt; {
+                        <span class="comment">// If running Relay without TLS add the plain HTTP server directly
+                        // to the Relay server.
+                        </span>builder = builder.request_handler(
+                            Method::GET,
+                            <span class="string">"/generate_204"</span>,
+                            Box::new(serve_no_content_handler),
+                        );
+                        <span class="prelude-val">None
+                    </span>}
+                };
+                <span class="kw">let </span>relay_server = builder.spawn().<span class="kw">await</span><span class="question-mark">?</span>;
+                (<span class="prelude-val">Some</span>(relay_server), http_addr)
+            }
+            <span class="prelude-val">None </span>=&gt; (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>),
+        };
+        <span class="comment">// If http_addr is Some then relay_server is serving HTTPS.  If http_addr is None
+        // relay_server is serving HTTP, including the /generate_204 service.
+        </span><span class="kw">let </span>relay_addr = relay_server.as_ref().map(|srv| srv.addr());
+        <span class="kw">let </span>relay_handle = relay_server.as_ref().map(|srv| srv.handle());
+        <span class="kw">let </span>task = tokio::spawn(relay_supervisor(tasks, relay_server));
+        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+            http_addr: http_addr.or(relay_addr),
+            stun_addr,
+            https_addr: http_addr.and(relay_addr),
+            relay_handle,
+            supervisor: AbortingJoinHandle::from(task),
+        })
     }
-}
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ServerActor {
-    key: PublicKey,
-    receiver: mpsc::Receiver&lt;ServerMessage&gt;,
-    <span class="doccomment">/// All clients connected to this server
-    </span>clients: Clients,
-    client_counter: ClientCounter,
-}
-
-<span class="kw">impl </span>ServerActor {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(key: PublicKey, receiver: mpsc::Receiver&lt;ServerMessage&gt;) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            key,
-            receiver,
-            clients: Clients::new(),
-            client_counter: ClientCounter::default(),
+    <span class="doccomment">/// Requests graceful shutdown.
+    ///
+    /// Returns once all server tasks have stopped.
+    </span><span class="kw">pub async fn </span>shutdown(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="comment">// Only the Relay server needs shutting down, the supervisor will abort the tasks in
+        // the JoinSet when the server terminates.
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(handle) = <span class="self">self</span>.relay_handle {
+            handle.shutdown();
         }
+        <span class="self">self</span>.supervisor.<span class="kw">await</span><span class="question-mark">?
+    </span>}
+
+    <span class="doccomment">/// Returns the handle for the task.
+    ///
+    /// This allows waiting for the server's supervisor task to finish.  Can be useful in
+    /// case there is an error in the server before it is shut down.
+    </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>.supervisor
     }
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, done: CancellationToken) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">loop </span>{
+    <span class="doccomment">/// The socket address the HTTPS server is listening on.
+    </span><span class="kw">pub fn </span>https_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
+        <span class="self">self</span>.https_addr
+    }
+
+    <span class="doccomment">/// The socket address the HTTP server is listening on.
+    </span><span class="kw">pub fn </span>http_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
+        <span class="self">self</span>.http_addr
+    }
+
+    <span class="doccomment">/// The socket address the STUN server is listening on.
+    </span><span class="kw">pub fn </span>stun_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
+        <span class="self">self</span>.stun_addr
+    }
+}
+
+<span class="doccomment">/// Supervisor for the relay server tasks.
+///
+/// As soon as one of the tasks exits, all other tasks are stopped and the server stops.
+/// The supervisor finishes once all tasks are finished.
+</span><span class="attr">#[instrument(skip_all)]
+</span><span class="kw">async fn </span>relay_supervisor(
+    <span class="kw-2">mut </span>tasks: JoinSet&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
+    <span class="kw-2">mut </span>relay_http_server: <span class="prelude-ty">Option</span>&lt;http_server::Server&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">let </span>res = <span class="kw">match </span>(relay_http_server.as_mut(), tasks.len()) {
+        (<span class="prelude-val">None</span>, <span class="kw">_</span>) =&gt; tasks
+            .join_next()
+            .<span class="kw">await
+            </span>.unwrap_or_else(|| <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Nothing to supervise"</span>)))),
+        (<span class="prelude-val">Some</span>(relay), <span class="number">0</span>) =&gt; relay.task_handle().<span class="kw">await</span>.map(anyhow::Ok),
+        (<span class="prelude-val">Some</span>(relay), <span class="kw">_</span>) =&gt; {
             <span class="macro">tokio::select!</span> {
                 biased;
-                <span class="kw">_ </span>= done.cancelled() =&gt; {
-                    <span class="macro">tracing::warn!</span>(<span class="string">"server actor loop cancelled, closing loop"</span>);
-                    <span class="comment">// TODO: stats: drain channel &amp; count dropped packets etc
-                    // close all client connections and client read/write loops
-                    </span><span class="self">self</span>.clients.shutdown().<span class="kw">await</span>;
-                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-                }
-                msg = <span class="self">self</span>.receiver.recv() =&gt; {
-                    <span class="kw">let </span>msg = <span class="kw">match </span>msg {
-                        <span class="prelude-val">Some</span>(m) =&gt; m,
-                        <span class="prelude-val">None </span>=&gt; {
-                            <span class="macro">tracing::warn!</span>(<span class="string">"server channel sender closed unexpectedly, shutting down server loop"</span>);
-                            <span class="self">self</span>.clients.shutdown().<span class="kw">await</span>;
-                            <span class="macro">anyhow::bail!</span>(<span class="string">"server channel sender closed unexpectedly, closed client connections, and shutting down server loop"</span>);
-                        }
-                    };
-                    <span class="kw">match </span>msg {
-                        ServerMessage::SendPacket((key, packet)) =&gt; {
-                            <span class="macro">tracing::trace!</span>(<span class="string">"send packet from: {:?} to: {:?} ({}b)"</span>, packet.src, key, packet.bytes.len());
-                            <span class="kw">let </span>src = packet.src;
-                            <span class="kw">if </span><span class="self">self</span>.clients.contains_key(<span class="kw-2">&amp;</span>key) {
-                                <span class="comment">// if this client is in our local network, just try to send the
-                                // packet
-                                </span><span class="kw">if </span><span class="self">self</span>.clients.send_packet(<span class="kw-2">&amp;</span>key, packet).is_ok() {
-                                    <span class="self">self</span>.clients.record_send(<span class="kw-2">&amp;</span>src, key);
-                                }
-                            } <span class="kw">else </span>{
-                                <span class="macro">tracing::warn!</span>(<span class="string">"send packet: no way to reach client {key:?}, dropped packet"</span>);
-                                <span class="macro">inc!</span>(Metrics, send_packets_dropped);
-                            }
-                        }
-                        ServerMessage::SendDiscoPacket((key, packet)) =&gt; {
-                            <span class="macro">tracing::trace!</span>(<span class="string">"send disco packet from: {:?} to: {:?} ({}b)"</span>, packet.src, key, packet.bytes.len());
-                            <span class="kw">let </span>src = packet.src;
-                            <span class="kw">if </span><span class="self">self</span>.clients.contains_key(<span class="kw-2">&amp;</span>key) {
-                                <span class="comment">// if this client is in our local network, just try to send the
-                                // packet
-                                </span><span class="kw">if </span><span class="self">self</span>.clients.send_disco_packet(<span class="kw-2">&amp;</span>key, packet).is_ok() {
-                                    <span class="self">self</span>.clients.record_send(<span class="kw-2">&amp;</span>src, key);
-                                }
-                            } <span class="kw">else </span>{
-                                <span class="macro">tracing::warn!</span>(<span class="string">"send disco packet: no way to reach client {key:?}, dropped packet"</span>);
-                                <span class="macro">inc!</span>(Metrics, disco_packets_dropped);
-                            }
-                        }
-                        ServerMessage::CreateClient(client_builder) =&gt; {
-                            <span class="macro">inc!</span>(Metrics, accepts);
+                <span class="prelude-val">Some</span>(ret) = tasks.join_next() =&gt; ret,
+                ret = relay.task_handle() =&gt; ret.map(anyhow::Ok),
+                <span class="kw">else </span>=&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Empty JoinSet (unreachable)"</span>))),
+            }
+        }
+    };
+    <span class="kw">let </span>ret = <span class="kw">match </span>res {
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(())) =&gt; {
+            <span class="macro">debug!</span>(<span class="string">"Task exited"</span>);
+            <span class="prelude-val">Ok</span>(())
+        }
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
+            <span class="macro">error!</span>(%err, <span class="string">"Task failed"</span>);
+            <span class="prelude-val">Err</span>(err.context(<span class="string">"task failed"</span>))
+        }
+        <span class="prelude-val">Err</span>(err) =&gt; {
+            <span class="kw">if let </span><span class="prelude-val">Ok</span>(panic) = err.try_into_panic() {
+                <span class="macro">error!</span>(<span class="string">"Task panicked"</span>);
+                std::panic::resume_unwind(panic);
+            }
+            <span class="macro">debug!</span>(<span class="string">"Task cancelled"</span>);
+            <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"task cancelled"</span>))
+        }
+    };
 
-                            <span class="macro">tracing::trace!</span>(<span class="string">"create client: {:?}"</span>, client_builder.key);
-                            <span class="kw">let </span>key = client_builder.key;
+    <span class="comment">// Ensure the HTTP server terminated, there is no harm in calling this after it is
+    // already shut down.  The JoinSet is aborted on drop.
+    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(server) = relay_http_server {
+        server.shutdown();
+    }
 
-                            report_usage_stats(<span class="kw-2">&amp;</span>UsageStatsReport::new(
-                                <span class="string">"relay_accepts"</span>.to_string(),
-                                <span class="self">self</span>.key.to_string(),
-                                <span class="number">1</span>,
-                                <span class="prelude-val">None</span>, <span class="comment">// TODO(arqu): attribute to user id; possibly with the re-introduction of request tokens or other auth
-                                </span><span class="prelude-val">Some</span>(key.to_string()),
-                            )).<span class="kw">await</span>;
-                            <span class="kw">let </span>nc = <span class="self">self</span>.client_counter.update(key);
-                            <span class="macro">inc_by!</span>(Metrics, unique_client_keys, nc);
+    tasks.shutdown().<span class="kw">await</span>;
 
-                            <span class="comment">// build and register client, starting up read &amp; write loops for the
-                            // client connection
-                            </span><span class="self">self</span>.clients.register(client_builder);
+    ret
+}
 
+<span class="doccomment">/// Runs a STUN server.
+///
+/// When the future is dropped, the server stops.
+</span><span class="kw">async fn </span>server_stun_listener(sock: UdpSocket) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="macro">info!</span>(addr = <span class="question-mark">?</span>sock.local_addr().ok(), <span class="string">"running STUN server"</span>);
+    <span class="kw">let </span>sock = Arc::new(sock);
+    <span class="kw">let </span><span class="kw-2">mut </span>buffer = <span class="macro">vec!</span>[<span class="number">0u8</span>; <span class="number">64 </span>&lt;&lt; <span class="number">10</span>];
+    <span class="kw">let </span><span class="kw-2">mut </span>tasks = JoinSet::new();
+    <span class="kw">loop </span>{
+        <span class="macro">tokio::select!</span> {
+            biased;
+            <span class="kw">_ </span>= tasks.join_next(), <span class="kw">if </span>!tasks.is_empty() =&gt; (),
+            res = sock.recv_from(<span class="kw-2">&amp;mut </span>buffer) =&gt; {
+                <span class="kw">match </span>res {
+                    <span class="prelude-val">Ok</span>((n, src_addr)) =&gt; {
+                        <span class="macro">inc!</span>(StunMetrics, requests);
+                        <span class="kw">let </span>pkt = <span class="kw-2">&amp;</span>buffer[..n];
+                        <span class="kw">if </span>!stun::is(pkt) {
+                            <span class="macro">debug!</span>(%src_addr, <span class="string">"STUN: ignoring non stun packet"</span>);
+                            <span class="macro">inc!</span>(StunMetrics, bad_requests);
+                            <span class="kw">continue</span>;
                         }
-                        ServerMessage::RemoveClient((key, conn_num)) =&gt; {
-                            <span class="macro">inc!</span>(Metrics, disconnects);
-                            <span class="macro">tracing::trace!</span>(<span class="string">"remove client: {:?}"</span>, key);
-                            <span class="comment">// ensure we still have the client in question
-                            </span><span class="kw">if </span><span class="self">self</span>.clients.has_client(<span class="kw-2">&amp;</span>key, conn_num) {
-                                <span class="comment">// remove the client from the map of clients, &amp; notify any peers that it
-                                // has sent messages that it has left the network
-                                </span><span class="self">self</span>.clients.unregister(<span class="kw-2">&amp;</span>key);
-                            }
-                        }
-                        ServerMessage::Shutdown =&gt; {
-                            <span class="macro">tracing::info!</span>(<span class="string">"server gracefully shutting down..."</span>);
-                            <span class="comment">// close all client connections and client read/write loops
-                            </span><span class="self">self</span>.clients.shutdown().<span class="kw">await</span>;
-                            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-                        }
+                        <span class="kw">let </span>pkt = pkt.to_vec();
+                        tasks.spawn(handle_stun_request(src_addr, pkt, sock.clone()));
+                    }
+                    <span class="prelude-val">Err</span>(err) =&gt; {
+                        <span class="macro">inc!</span>(StunMetrics, failures);
+                        <span class="macro">warn!</span>(<span class="string">"failed to recv: {err:#}"</span>);
                     }
                 }
             }
@@ -1243,567 +1511,585 @@
     }
 }
 
-<span class="doccomment">/// Initializes the [`Server`] with a self-signed x509 cert
-/// encoding this server's public key and protocol version. "cmd/relay_server
-/// then sends this after the Let's Encrypt leaf + intermediate certs after
-/// the ServerHello (encrypted in TLS 1.3, not that is matters much).
-///
-/// Then the client can save a round trime getting that and can start speaking
-/// relay right away. (we don't use ALPN because that's sent in the clear and
-/// we're being paranoid to not look too weird to any middleboxes, given that
-/// relay is an ultimate fallback path). But since the post-ServerHello certs
-/// are encrypted we can have the client also use them as a signal to be able
-/// to start speaking relay right away, starting with its identity proof,
-/// encrypted to the server's public key.
-///
-/// This RTT optimization fails where there's a corp-mandated TLS proxy with
-/// corp-mandated root certs on employee machines and TLS proxy cleans up
-/// unnecessary certs. In that case we just fall back to the extra RTT.
-</span><span class="kw">fn </span>init_meta_cert(server_key: <span class="kw-2">&amp;</span>PublicKey) -&gt; Vec&lt;u8&gt; {
-    <span class="kw">let </span><span class="kw-2">mut </span>params =
-        rcgen::CertificateParams::new([<span class="macro">format!</span>(<span class="string">"derpkey{}"</span>, hex::encode(server_key.as_bytes()))]);
-    params.serial_number = <span class="prelude-val">Some</span>((PROTOCOL_VERSION <span class="kw">as </span>u64).into());
-    <span class="comment">// Windows requires not_after and not_before set:
-    </span>params.not_after = time::OffsetDateTime::now_utc().saturating_add(<span class="number">30 </span>* time::Duration::DAY);
-    params.not_before = time::OffsetDateTime::now_utc().saturating_sub(<span class="number">30 </span>* time::Duration::DAY);
-
-    rcgen::Certificate::from_params(params)
-        .expect(<span class="string">"fixed inputs"</span>)
-        .serialize_der()
-        .expect(<span class="string">"fixed allocations"</span>)
-}
-
-<span class="attr">#[derive(Debug)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>RelayIo {
-    Derp(Framed&lt;MaybeTlsStream, DerpCodec&gt;),
-    Ws(WebSocketStream&lt;MaybeTlsStream&gt;),
-}
-
-<span class="kw">fn </span>tung_to_io_err(e: tungstenite::Error) -&gt; std::io::Error {
-    <span class="kw">match </span>e {
-        tungstenite::Error::Io(io_err) =&gt; io_err,
-        <span class="kw">_ </span>=&gt; std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
-    }
-}
-
-<span class="kw">impl </span>Sink&lt;Frame&gt; <span class="kw">for </span>RelayIo {
-    <span class="kw">type </span>Error = std::io::Error;
-
-    <span class="kw">fn </span>poll_ready(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
-        <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
-            <span class="self">Self</span>::Derp(<span class="kw-2">ref mut </span>framed) =&gt; Pin::new(framed).poll_ready(cx),
-            <span class="self">Self</span>::Ws(<span class="kw-2">ref mut </span>ws) =&gt; Pin::new(ws).poll_ready(cx).map_err(tung_to_io_err),
+<span class="doccomment">/// Handles a single STUN request, doing all logging required.
+</span><span class="kw">async fn </span>handle_stun_request(src_addr: SocketAddr, pkt: Vec&lt;u8&gt;, sock: Arc&lt;UdpSocket&gt;) {
+    <span class="kw">let </span>handle = AbortingJoinHandle::from(tokio::task::spawn_blocking(<span class="kw">move </span>|| {
+        <span class="kw">match </span>stun::parse_binding_request(<span class="kw-2">&amp;</span>pkt) {
+            <span class="prelude-val">Ok</span>(txid) =&gt; {
+                <span class="macro">debug!</span>(%src_addr, %txid, <span class="string">"STUN: received binding request"</span>);
+                <span class="prelude-val">Some</span>((txid, stun::response(txid, src_addr)))
+            }
+            <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="macro">inc!</span>(StunMetrics, bad_requests);
+                <span class="macro">warn!</span>(%src_addr, <span class="string">"STUN: invalid binding request: {:?}"</span>, err);
+                <span class="prelude-val">None
+            </span>}
         }
-    }
-
-    <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, item: Frame) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
-        <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
-            <span class="self">Self</span>::Derp(<span class="kw-2">ref mut </span>framed) =&gt; Pin::new(framed).start_send(item),
-            <span class="self">Self</span>::Ws(<span class="kw-2">ref mut </span>ws) =&gt; Pin::new(ws)
-                .start_send(tungstenite::Message::Binary(item.encode_for_ws_msg()))
-                .map_err(tung_to_io_err),
+    }));
+    <span class="kw">let </span>(txid, response) = <span class="kw">match </span>handle.<span class="kw">await </span>{
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(val)) =&gt; val,
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; <span class="kw">return</span>,
+        <span class="prelude-val">Err</span>(err) =&gt; {
+            <span class="macro">error!</span>(<span class="string">"{err:#}"</span>);
+            <span class="kw">return</span>;
         }
-    }
-
-    <span class="kw">fn </span>poll_flush(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
-        <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
-            <span class="self">Self</span>::Derp(<span class="kw-2">ref mut </span>framed) =&gt; Pin::new(framed).poll_flush(cx),
-            <span class="self">Self</span>::Ws(<span class="kw-2">ref mut </span>ws) =&gt; Pin::new(ws).poll_flush(cx).map_err(tung_to_io_err),
-        }
-    }
-
-    <span class="kw">fn </span>poll_close(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
-        <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
-            <span class="self">Self</span>::Derp(<span class="kw-2">ref mut </span>framed) =&gt; Pin::new(framed).poll_close(cx),
-            <span class="self">Self</span>::Ws(<span class="kw-2">ref mut </span>ws) =&gt; Pin::new(ws).poll_close(cx).map_err(tung_to_io_err),
-        }
-    }
-}
-
-<span class="kw">impl </span>Stream <span class="kw">for </span>RelayIo {
-    <span class="kw">type </span>Item = anyhow::Result&lt;Frame&gt;;
-
-    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
-        <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
-            <span class="self">Self</span>::Derp(<span class="kw-2">ref mut </span>framed) =&gt; Pin::new(framed).poll_next(cx),
-            <span class="self">Self</span>::Ws(<span class="kw-2">ref mut </span>ws) =&gt; <span class="kw">match </span>Pin::new(ws).poll_next(cx) {
-                Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(tungstenite::Message::Binary(vec)))) =&gt; {
-                    Poll::Ready(<span class="prelude-val">Some</span>(Frame::decode_from_ws_msg(vec)))
+    };
+    <span class="kw">match </span>sock.send_to(<span class="kw-2">&amp;</span>response, src_addr).<span class="kw">await </span>{
+        <span class="prelude-val">Ok</span>(len) =&gt; {
+            <span class="kw">if </span>len != response.len() {
+                <span class="macro">warn!</span>(
+                    %src_addr,
+                    %txid,
+                    <span class="string">"failed to write response, {len}/{} bytes sent"</span>,
+                    response.len()
+                );
+            } <span class="kw">else </span>{
+                <span class="kw">match </span>src_addr {
+                    SocketAddr::V4(<span class="kw">_</span>) =&gt; <span class="macro">inc!</span>(StunMetrics, ipv4_success),
+                    SocketAddr::V6(<span class="kw">_</span>) =&gt; <span class="macro">inc!</span>(StunMetrics, ipv6_success),
                 }
-                Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg))) =&gt; {
-                    <span class="macro">tracing::warn!</span>(<span class="question-mark">?</span>msg, <span class="string">"Got websocket message of unsupported type, skipping."</span>);
-                    Poll::Pending
-                }
-                Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e))) =&gt; Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e.into()))),
-                Poll::Ready(<span class="prelude-val">None</span>) =&gt; Poll::Ready(<span class="prelude-val">None</span>),
-                Poll::Pending =&gt; Poll::Pending,
-            },
+            }
+            <span class="macro">trace!</span>(%src_addr, %txid, <span class="string">"sent {len} bytes"</span>);
+        }
+        <span class="prelude-val">Err</span>(err) =&gt; {
+            <span class="macro">inc!</span>(StunMetrics, failures);
+            <span class="macro">warn!</span>(%src_addr, %txid, <span class="string">"failed to write response: {err:#}"</span>);
         }
     }
 }
 
-<span class="doccomment">/// Whether or not the underlying [`tokio::net::TcpStream`] is served over Tls
-</span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub enum </span>MaybeTlsStream {
-    <span class="doccomment">/// A plain non-Tls [`tokio::net::TcpStream`]
-    </span>Plain(tokio::net::TcpStream),
-    <span class="doccomment">/// A Tls wrapped [`tokio::net::TcpStream`]
-    </span>Tls(tokio_rustls::server::TlsStream&lt;tokio::net::TcpStream&gt;),
-    <span class="attr">#[cfg(test)]
-    </span>Test(tokio::io::DuplexStream),
+<span class="kw">fn </span>relay_disabled_handler(
+    _r: Request&lt;Incoming&gt;,
+    response: ResponseBuilder,
+) -&gt; HyperResult&lt;Response&lt;BytesBody&gt;&gt; {
+    response
+        .status(StatusCode::NOT_FOUND)
+        .body(RELAY_DISABLED.into())
+        .map_err(|err| Box::new(err) <span class="kw">as </span>HyperError)
 }
 
-<span class="kw">impl </span>AsyncRead <span class="kw">for </span>MaybeTlsStream {
-    <span class="kw">fn </span>poll_read(
-        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
-        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
-        buf: <span class="kw-2">&amp;mut </span>tokio::io::ReadBuf&lt;<span class="lifetime">'_</span>&gt;,
-    ) -&gt; Poll&lt;std::io::Result&lt;()&gt;&gt; {
-        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
-            MaybeTlsStream::Plain(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_read(cx, buf),
-            MaybeTlsStream::Tls(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_read(cx, buf),
-            <span class="attr">#[cfg(test)]
-            </span>MaybeTlsStream::Test(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_read(cx, buf),
+<span class="kw">fn </span>root_handler(
+    _r: Request&lt;Incoming&gt;,
+    response: ResponseBuilder,
+) -&gt; HyperResult&lt;Response&lt;BytesBody&gt;&gt; {
+    response
+        .status(StatusCode::OK)
+        .header(<span class="string">"Content-Type"</span>, <span class="string">"text/html; charset=utf-8"</span>)
+        .body(INDEX.into())
+        .map_err(|err| Box::new(err) <span class="kw">as </span>HyperError)
+}
+
+<span class="doccomment">/// HTTP latency queries
+</span><span class="kw">fn </span>probe_handler(
+    _r: Request&lt;Incoming&gt;,
+    response: ResponseBuilder,
+) -&gt; HyperResult&lt;Response&lt;BytesBody&gt;&gt; {
+    response
+        .status(StatusCode::OK)
+        .header(<span class="string">"Access-Control-Allow-Origin"</span>, <span class="string">"*"</span>)
+        .body(body_empty())
+        .map_err(|err| Box::new(err) <span class="kw">as </span>HyperError)
+}
+
+<span class="kw">fn </span>robots_handler(
+    _r: Request&lt;Incoming&gt;,
+    response: ResponseBuilder,
+) -&gt; HyperResult&lt;Response&lt;BytesBody&gt;&gt; {
+    response
+        .status(StatusCode::OK)
+        .body(ROBOTS_TXT.into())
+        .map_err(|err| Box::new(err) <span class="kw">as </span>HyperError)
+}
+
+<span class="doccomment">/// For captive portal detection.
+</span><span class="kw">fn </span>serve_no_content_handler&lt;B: hyper::body::Body&gt;(
+    r: Request&lt;B&gt;,
+    <span class="kw-2">mut </span>response: ResponseBuilder,
+) -&gt; HyperResult&lt;Response&lt;BytesBody&gt;&gt; {
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER) {
+        <span class="kw">if </span>!challenge.is_empty()
+            &amp;&amp; challenge.len() &lt; <span class="number">64
+            </span>&amp;&amp; challenge
+                .as_bytes()
+                .iter()
+                .all(|c| is_challenge_char(<span class="kw-2">*</span>c <span class="kw">as </span>char))
+        {
+            response = response.header(
+                NO_CONTENT_RESPONSE_HEADER,
+                <span class="macro">format!</span>(<span class="string">"response {}"</span>, challenge.to_str()<span class="question-mark">?</span>),
+            );
+        }
+    }
+
+    response
+        .status(StatusCode::NO_CONTENT)
+        .body(body_empty())
+        .map_err(|err| Box::new(err) <span class="kw">as </span>HyperError)
+}
+
+<span class="kw">fn </span>is_challenge_char(c: char) -&gt; bool {
+    <span class="comment">// Semi-randomly chosen as a limited set of valid characters
+    </span>c.is_ascii_lowercase()
+        || c.is_ascii_uppercase()
+        || c.is_ascii_digit()
+        || c == <span class="string">'.'
+        </span>|| c == <span class="string">'-'
+        </span>|| c == <span class="string">'_'
+</span>}
+
+<span class="doccomment">/// This is a future that never returns, drop it to cancel/abort.
+</span><span class="kw">async fn </span>run_captive_portal_service(http_listener: TcpListener) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="macro">info!</span>(<span class="string">"serving"</span>);
+
+    <span class="comment">// If this future is cancelled, this is dropped and all tasks are aborted.
+    </span><span class="kw">let </span><span class="kw-2">mut </span>tasks = JoinSet::new();
+
+    <span class="kw">loop </span>{
+        <span class="kw">match </span>http_listener.accept().<span class="kw">await </span>{
+            <span class="prelude-val">Ok</span>((stream, peer_addr)) =&gt; {
+                <span class="macro">debug!</span>(%peer_addr, <span class="string">"Connection opened"</span>,);
+                <span class="kw">let </span>handler = CaptivePortalService;
+
+                tasks.spawn(<span class="kw">async move </span>{
+                    <span class="kw">let </span>stream = <span class="kw">crate</span>::relay::server::streams::MaybeTlsStream::Plain(stream);
+                    <span class="kw">let </span>stream = hyper_util::rt::TokioIo::new(stream);
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(stream, handler)
+                        .with_upgrades()
+                        .<span class="kw">await
+                    </span>{
+                        <span class="macro">error!</span>(<span class="string">"Failed to serve connection: {err:?}"</span>);
+                    }
+                });
+            }
+            <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="macro">error!</span>(
+                    <span class="string">"[CaptivePortalService] failed to accept connection: {:#?}"</span>,
+                    err
+                );
+            }
         }
     }
 }
 
-<span class="kw">impl </span>AsyncWrite <span class="kw">for </span>MaybeTlsStream {
-    <span class="kw">fn </span>poll_flush(
-        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
-        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
-    ) -&gt; Poll&lt;std::result::Result&lt;(), std::io::Error&gt;&gt; {
-        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
-            MaybeTlsStream::Plain(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_flush(cx),
-            MaybeTlsStream::Tls(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_flush(cx),
-            <span class="attr">#[cfg(test)]
-            </span>MaybeTlsStream::Test(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_flush(cx),
-        }
-    }
+<span class="attr">#[derive(Clone)]
+</span><span class="kw">struct </span>CaptivePortalService;
 
-    <span class="kw">fn </span>poll_shutdown(
-        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
-        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
-    ) -&gt; Poll&lt;std::result::Result&lt;(), std::io::Error&gt;&gt; {
-        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
-            MaybeTlsStream::Plain(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_shutdown(cx),
-            MaybeTlsStream::Tls(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_shutdown(cx),
-            <span class="attr">#[cfg(test)]
-            </span>MaybeTlsStream::Test(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_shutdown(cx),
-        }
-    }
+<span class="kw">impl </span>hyper::service::Service&lt;Request&lt;Incoming&gt;&gt; <span class="kw">for </span>CaptivePortalService {
+    <span class="kw">type </span>Response = Response&lt;BytesBody&gt;;
+    <span class="kw">type </span>Error = HyperError;
+    <span class="kw">type </span>Future = Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Response, <span class="self">Self</span>::Error&gt;&gt; + Send&gt;&gt;;
 
-    <span class="kw">fn </span>poll_write(
-        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
-        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
-        buf: <span class="kw-2">&amp;</span>[u8],
-    ) -&gt; Poll&lt;std::result::Result&lt;usize, std::io::Error&gt;&gt; {
-        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
-            MaybeTlsStream::Plain(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write(cx, buf),
-            MaybeTlsStream::Tls(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write(cx, buf),
-            <span class="attr">#[cfg(test)]
-            </span>MaybeTlsStream::Test(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write(cx, buf),
-        }
-    }
-
-    <span class="kw">fn </span>poll_write_vectored(
-        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
-        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
-        bufs: <span class="kw-2">&amp;</span>[std::io::IoSlice&lt;<span class="lifetime">'_</span>&gt;],
-    ) -&gt; Poll&lt;std::result::Result&lt;usize, std::io::Error&gt;&gt; {
-        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
-            MaybeTlsStream::Plain(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write_vectored(cx, bufs),
-            MaybeTlsStream::Tls(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write_vectored(cx, bufs),
-            <span class="attr">#[cfg(test)]
-            </span>MaybeTlsStream::Test(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write_vectored(cx, bufs),
+    <span class="kw">fn </span>call(<span class="kw-2">&amp;</span><span class="self">self</span>, req: Request&lt;Incoming&gt;) -&gt; <span class="self">Self</span>::Future {
+        <span class="kw">match </span>(req.method(), req.uri().path()) {
+            <span class="comment">// Captive Portal checker
+            </span>(<span class="kw-2">&amp;</span>Method::GET, <span class="string">"/generate_204"</span>) =&gt; {
+                Box::pin(<span class="kw">async move </span>{ serve_no_content_handler(req, Response::builder()) })
+            }
+            <span class="kw">_ </span>=&gt; {
+                <span class="comment">// Return 404 not found response.
+                </span><span class="kw">let </span>r = Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(NOTFOUND.into())
+                    .map_err(|err| Box::new(err) <span class="kw">as </span>HyperError);
+                Box::pin(<span class="kw">async move </span>{ r })
+            }
         }
     }
 }
 
-<span class="kw">struct </span>ClientCounter {
-    clients: HashMap&lt;PublicKey, usize&gt;,
-    last_clear_date: Date,
-}
+<span class="kw">mod </span>stun_metrics {
+    <span class="kw">use </span>iroh_metrics::{
+        core::{Counter, Metric},
+        struct_iterable::Iterable,
+    };
 
-<span class="kw">impl </span>Default <span class="kw">for </span>ClientCounter {
-    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            clients: HashMap::new(),
-            last_clear_date: OffsetDateTime::now_utc().date(),
+    <span class="doccomment">/// StunMetrics tracked for the DERPER
+    </span><span class="attr">#[allow(missing_docs)]
+    #[derive(Debug, Clone, Iterable)]
+    </span><span class="kw">pub struct </span>StunMetrics {
+        <span class="comment">/*
+         * Metrics about STUN requests over ipv6
+         */
+        </span><span class="doccomment">/// Number of stun requests made
+        </span><span class="kw">pub </span>requests: Counter,
+        <span class="doccomment">/// Number of successful requests over ipv4
+        </span><span class="kw">pub </span>ipv4_success: Counter,
+        <span class="doccomment">/// Number of successful requests over ipv6
+        </span><span class="kw">pub </span>ipv6_success: Counter,
+
+        <span class="doccomment">/// Number of bad requests, either non-stun packets or incorrect binding request
+        </span><span class="kw">pub </span>bad_requests: Counter,
+        <span class="doccomment">/// Number of failures
+        </span><span class="kw">pub </span>failures: Counter,
+    }
+
+    <span class="kw">impl </span>Default <span class="kw">for </span>StunMetrics {
+        <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+            <span class="self">Self </span>{
+                <span class="comment">/*
+                 * Metrics about STUN requests
+                 */
+                </span>requests: Counter::new(<span class="string">"Number of STUN requests made to the server."</span>),
+                ipv4_success: Counter::new(<span class="string">"Number of successful ipv4 STUN requests served."</span>),
+                ipv6_success: Counter::new(<span class="string">"Number of successful ipv6 STUN requests served."</span>),
+                bad_requests: Counter::new(<span class="string">"Number of bad requests made to the STUN endpoint."</span>),
+                failures: Counter::new(<span class="string">"Number of STUN requests that end in failure."</span>),
+            }
         }
     }
-}
 
-<span class="kw">impl </span>ClientCounter {
-    <span class="kw">fn </span>check_and_clear(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="kw">let </span>today = OffsetDateTime::now_utc().date();
-        <span class="kw">if </span>today != <span class="self">self</span>.last_clear_date {
-            <span class="self">self</span>.clients.clear();
-            <span class="self">self</span>.last_clear_date = today;
-        }
-    }
-
-    <span class="doccomment">/// Updates the client counter.
-    </span><span class="kw">pub fn </span>update(<span class="kw-2">&amp;mut </span><span class="self">self</span>, client: PublicKey) -&gt; u64 {
-        <span class="self">self</span>.check_and_clear();
-        <span class="kw">let </span>new_conn = !<span class="self">self</span>.clients.contains_key(<span class="kw-2">&amp;</span>client);
-        <span class="kw">let </span>counter = <span class="self">self</span>.clients.entry(client).or_insert(<span class="number">0</span>);
-        <span class="kw-2">*</span>counter += <span class="number">1</span>;
-        new_conn <span class="kw">as </span>u64
+    <span class="kw">impl </span>Metric <span class="kw">for </span>StunMetrics {
+        <span class="kw">fn </span>name() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
+            <span class="string">"stun"
+        </span>}
     }
 }
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-
-    <span class="kw">use </span><span class="kw">crate</span>::relay::{
-        client::{ClientBuilder, ConnReader, ConnWriter},
-        codec::{recv_frame, FrameType},
-        http::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
-        types::ClientInfo,
-        ReceivedMessage,
-    };
-    <span class="kw">use </span>tokio_util::codec::{FramedRead, FramedWrite};
-    <span class="kw">use </span>tracing_subscriber::{prelude::<span class="kw-2">*</span>, EnvFilter};
+    <span class="kw">use </span>std::net::Ipv4Addr;
+    <span class="kw">use </span>std::time::Duration;
 
     <span class="kw">use </span>bytes::Bytes;
-    <span class="kw">use </span>tokio::io::DuplexStream;
+    <span class="kw">use </span>http::header::UPGRADE;
+    <span class="kw">use </span>iroh_base::node_addr::RelayUrl;
 
-    <span class="kw">fn </span>test_client_builder(
-        key: PublicKey,
-        conn_num: usize,
-        server_channel: mpsc::Sender&lt;ServerMessage&gt;,
-    ) -&gt; (ClientConnBuilder, Framed&lt;DuplexStream, DerpCodec&gt;) {
-        <span class="kw">let </span>(test_io, io) = tokio::io::duplex(<span class="number">1024</span>);
-        (
-            ClientConnBuilder {
-                key,
-                conn_num,
-                io: RelayIo::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
-                write_timeout: <span class="prelude-val">None</span>,
-                channel_capacity: <span class="number">10</span>,
-                server_channel,
-            },
-            Framed::new(test_io, DerpCodec),
-        )
-    }
+    <span class="kw">use </span><span class="kw">crate</span>::relay::client::conn::ReceivedMessage;
+    <span class="kw">use </span><span class="kw">crate</span>::relay::client::ClientBuilder;
+    <span class="kw">use </span><span class="kw">crate</span>::relay::http::{Protocol, HTTP_UPGRADE_PROTOCOL};
 
-    <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_server_actor() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>server_key = SecretKey::generate().public();
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
-        <span class="comment">// make server actor
-        </span><span class="kw">let </span>(server_channel, server_channel_r) = mpsc::channel(<span class="number">20</span>);
-        <span class="kw">let </span>server_actor: ServerActor = ServerActor::new(server_key, server_channel_r);
-        <span class="kw">let </span>done = CancellationToken::new();
-        <span class="kw">let </span>server_done = done.clone();
-
-        <span class="comment">// run server actor
-        </span><span class="kw">let </span>server_task = tokio::spawn(
-            <span class="kw">async move </span>{ server_actor.run(server_done).<span class="kw">await </span>}
-                .instrument(<span class="macro">info_span!</span>(<span class="string">"relay.server"</span>)),
-        );
-
-        <span class="kw">let </span>key_a = SecretKey::generate().public();
-        <span class="kw">let </span>(client_a, <span class="kw-2">mut </span>a_io) = test_client_builder(key_a, <span class="number">1</span>, server_channel.clone());
-
-        <span class="comment">// create client a
-        </span>server_channel
-            .send(ServerMessage::CreateClient(client_a))
-            .<span class="kw">await
-            </span>.map_err(|<span class="kw">_</span>| <span class="macro">anyhow::anyhow!</span>(<span class="string">"server gone"</span>))<span class="question-mark">?</span>;
-
-        <span class="comment">// server message: create client b
-        </span><span class="kw">let </span>key_b = SecretKey::generate().public();
-        <span class="kw">let </span>(client_b, <span class="kw-2">mut </span>b_io) = test_client_builder(key_b, <span class="number">2</span>, server_channel.clone());
-        server_channel
-            .send(ServerMessage::CreateClient(client_b))
-            .<span class="kw">await
-            </span>.map_err(|<span class="kw">_</span>| <span class="macro">anyhow::anyhow!</span>(<span class="string">"server gone"</span>))<span class="question-mark">?</span>;
-
-        <span class="comment">// write message from b to a
-        </span><span class="kw">let </span>msg = <span class="string">b"hello world!"</span>;
-        <span class="kw">crate</span>::relay::client::send_packet(<span class="kw-2">&amp;mut </span>b_io, <span class="kw-2">&amp;</span><span class="prelude-val">None</span>, key_a, Bytes::from_static(msg)).<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="comment">// get message on a's reader
-        </span><span class="kw">let </span>frame = recv_frame(FrameType::RecvPacket, <span class="kw-2">&amp;mut </span>a_io).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="macro">assert_eq!</span>(
-            frame,
-            Frame::RecvPacket {
-                src_key: key_b,
-                content: msg.to_vec().into()
-            }
-        );
-
-        <span class="comment">// remove b
-        </span>server_channel
-            .send(ServerMessage::RemoveClient((key_b, <span class="number">2</span>)))
-            .<span class="kw">await
-            </span>.map_err(|<span class="kw">_</span>| <span class="macro">anyhow::anyhow!</span>(<span class="string">"server gone"</span>))<span class="question-mark">?</span>;
-
-        <span class="comment">// get peer gone message on a about b leaving the network
-        // (we get this message because b has sent us a packet before)
-        </span><span class="kw">let </span>frame = recv_frame(FrameType::PeerGone, <span class="kw-2">&amp;mut </span>a_io).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="macro">assert_eq!</span>(Frame::PeerGone { peer: key_b }, frame);
-
-        <span class="comment">// close gracefully
-        </span>server_channel
-            .send(ServerMessage::Shutdown)
-            .<span class="kw">await
-            </span>.map_err(|<span class="kw">_</span>| <span class="macro">anyhow::anyhow!</span>(<span class="string">"server gone"</span>))<span class="question-mark">?</span>;
-        server_task.<span class="kw">await</span><span class="question-mark">??</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
+    <span class="kw">async fn </span>spawn_local_relay() -&gt; <span class="prelude-ty">Result</span>&lt;Server&gt; {
+        Server::spawn(ServerConfig::&lt;(), ()&gt; {
+            relay: <span class="prelude-val">Some</span>(RelayConfig {
+                secret_key: SecretKey::generate(),
+                http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
+                tls: <span class="prelude-val">None</span>,
+                limits: Default::default(),
+            }),
+            stun: <span class="prelude-val">None</span>,
+            metrics_addr: <span class="prelude-val">None</span>,
+        })
+        .<span class="kw">await
+    </span>}
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_client_conn_handler() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="comment">// create client connection handler
-        </span><span class="kw">let </span>(server_channel_s, <span class="kw-2">mut </span>server_channel_r) = mpsc::channel(<span class="number">10</span>);
-        <span class="kw">let </span>client_key = SecretKey::generate();
-        <span class="kw">let </span>handler = ClientConnHandler {
-            secret_key: client_key.clone(),
-            write_timeout: <span class="prelude-val">None</span>,
-            server_channel: server_channel_s,
-            default_headers: Default::default(),
-        };
-
-        <span class="comment">// create the parts needed for a client
-        </span><span class="kw">let </span>(client, server_io) = tokio::io::duplex(<span class="number">10</span>);
-        <span class="kw">let </span>(client_reader, client_writer) = tokio::io::split(client);
-        <span class="kw">let </span>_client_reader = FramedRead::new(client_reader, DerpCodec);
-        <span class="kw">let </span><span class="kw-2">mut </span>client_writer = FramedWrite::new(client_writer, DerpCodec);
-
-        <span class="comment">// start a task as if a client is doing the "accept" handshake
-        </span><span class="kw">let </span>pub_client_key = client_key.public();
-        <span class="kw">let </span>client_task: JoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; = tokio::spawn(<span class="kw">async move </span>{
-            <span class="comment">// send the client info
-            </span><span class="kw">let </span>client_info = ClientInfo {
-                version: PROTOCOL_VERSION,
-            };
-            <span class="kw">crate</span>::relay::codec::send_client_key(<span class="kw-2">&amp;mut </span>client_writer, <span class="kw-2">&amp;</span>client_key, <span class="kw-2">&amp;</span>client_info)
-                .<span class="kw">await</span><span class="question-mark">?</span>;
-
-            <span class="prelude-val">Ok</span>(())
-        });
-
-        <span class="comment">// attempt to add the connection to the server
-        </span>handler
-            .accept(Protocol::Relay, MaybeTlsStream::Test(server_io))
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-        client_task.<span class="kw">await</span><span class="question-mark">??</span>;
-
-        <span class="comment">// ensure we inform the server to create the client from the connection!
-        </span><span class="kw">match </span>server_channel_r.recv().<span class="kw">await</span>.unwrap() {
-            ServerMessage::CreateClient(builder) =&gt; {
-                <span class="macro">assert_eq!</span>(pub_client_key, builder.key);
-            }
-            <span class="kw">_ </span>=&gt; <span class="macro">anyhow::bail!</span>(<span class="string">"unexpected server message"</span>),
-        }
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="kw">fn </span>make_test_client(secret_key: SecretKey) -&gt; (tokio::io::DuplexStream, ClientBuilder) {
-        <span class="kw">let </span>(client, server) = tokio::io::duplex(<span class="number">10</span>);
-        <span class="kw">let </span>(client_reader, client_writer) = tokio::io::split(client);
-
-        <span class="kw">let </span>client_reader = MaybeTlsStreamReader::Mem(client_reader);
-        <span class="kw">let </span>client_writer = MaybeTlsStreamWriter::Mem(client_writer);
-
-        <span class="kw">let </span>client_reader = ConnReader::Derp(FramedRead::new(client_reader, DerpCodec));
-        <span class="kw">let </span>client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, DerpCodec));
-
-        (
-            server,
-            ClientBuilder::new(secret_key, <span class="prelude-val">None</span>, client_reader, client_writer),
-        )
-    }
-
-    <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_server_basic() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_no_services() {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
-        <span class="comment">// create the server!
-        </span><span class="kw">let </span>server_key = SecretKey::generate();
-        <span class="kw">let </span>server: Server = Server::new(server_key);
-
-        <span class="comment">// create client a and connect it to the server
-        </span><span class="kw">let </span>key_a = SecretKey::generate();
-        <span class="kw">let </span>public_key_a = key_a.public();
-        <span class="kw">let </span>(rw_a, client_a_builder) = make_test_client(key_a);
-        <span class="kw">let </span>handler = server.client_conn_handler(Default::default());
-        <span class="kw">let </span>handler_task = tokio::spawn(<span class="kw">async move </span>{
-            handler
-                .accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
-                .<span class="kw">await
-        </span>});
-        <span class="kw">let </span>(client_a, <span class="kw-2">mut </span>client_receiver_a) = client_a_builder.build().<span class="kw">await</span><span class="question-mark">?</span>;
-        handler_task.<span class="kw">await</span><span class="question-mark">??</span>;
-
-        <span class="comment">// create client b and connect it to the server
-        </span><span class="kw">let </span>key_b = SecretKey::generate();
-        <span class="kw">let </span>public_key_b = key_b.public();
-        <span class="kw">let </span>(rw_b, client_b_builder) = make_test_client(key_b);
-        <span class="kw">let </span>handler = server.client_conn_handler(Default::default());
-        <span class="kw">let </span>handler_task = tokio::spawn(<span class="kw">async move </span>{
-            handler
-                .accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
-                .<span class="kw">await
-        </span>});
-        <span class="kw">let </span>(client_b, <span class="kw-2">mut </span>client_receiver_b) = client_b_builder.build().<span class="kw">await</span><span class="question-mark">?</span>;
-        handler_task.<span class="kw">await</span><span class="question-mark">??</span>;
-
-        <span class="comment">// send message from a to b!
-        </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"hello client b!!"</span>);
-        client_a.send(public_key_b, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">match </span>client_receiver_b.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_a, source);
-                <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
-            }
-            msg =&gt; {
-                <span class="macro">anyhow::bail!</span>(<span class="string">"expected ReceivedPacket msg, got {msg:?}"</span>);
-            }
-        }
-
-        <span class="comment">// send message from b to a!
-        </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"nice to meet you client a!!"</span>);
-        client_b.send(public_key_a, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">match </span>client_receiver_a.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_b, source);
-                <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
-            }
-            msg =&gt; {
-                <span class="macro">anyhow::bail!</span>(<span class="string">"expected ReceivedPacket msg, got {msg:?}"</span>);
-            }
-        }
-
-        <span class="comment">// close the server and clients
-        </span>server.close().<span class="kw">await</span>;
-
-        <span class="comment">// client connections have been shutdown
-        </span><span class="kw">let </span>res = client_a
-            .send(public_key_b, Bytes::from_static(<span class="string">b"try to send"</span>))
-            .<span class="kw">await</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt;::default())
+            .<span class="kw">await
+            </span>.unwrap();
+        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), server.task_handle())
+            .<span class="kw">await
+            </span>.expect(<span class="string">"timeout, server not finished"</span>)
+            .expect(<span class="string">"server task JoinError"</span>);
         <span class="macro">assert!</span>(res.is_err());
-        <span class="macro">assert!</span>(client_receiver_b.recv().<span class="kw">await</span>.is_err());
-        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_server_replace_client() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+    </span><span class="kw">async fn </span>test_conflicting_bind() {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+        <span class="kw">let </span><span class="kw-2">mut </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt; {
+            relay: <span class="prelude-val">Some</span>(RelayConfig {
+                secret_key: SecretKey::generate(),
+                http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">1234</span>).into(),
+                tls: <span class="prelude-val">None</span>,
+                limits: Default::default(),
+            }),
+            stun: <span class="prelude-val">None</span>,
+            metrics_addr: <span class="prelude-val">Some</span>((Ipv4Addr::LOCALHOST, <span class="number">1234</span>).into()),
+        })
+        .<span class="kw">await
+        </span>.unwrap();
+        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), server.task_handle())
+            .<span class="kw">await
+            </span>.expect(<span class="string">"timeout, server not finished"</span>)
+            .expect(<span class="string">"server task JoinError"</span>);
+        <span class="macro">assert!</span>(res.is_err()); <span class="comment">// AddrInUse
+    </span>}
 
-        <span class="comment">// create the server!
-        </span><span class="kw">let </span>server_key = SecretKey::generate();
-        <span class="kw">let </span>server: Server = Server::new(server_key);
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_root_handler() {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
 
-        <span class="comment">// create client a and connect it to the server
-        </span><span class="kw">let </span>key_a = SecretKey::generate();
-        <span class="kw">let </span>public_key_a = key_a.public();
-        <span class="kw">let </span>(rw_a, client_a_builder) = make_test_client(key_a);
-        <span class="kw">let </span>handler = server.client_conn_handler(Default::default());
-        <span class="kw">let </span>handler_task = tokio::spawn(<span class="kw">async move </span>{
-            handler
-                .accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
-                .<span class="kw">await
-        </span>});
-        <span class="kw">let </span>(client_a, <span class="kw-2">mut </span>client_receiver_a) = client_a_builder.build().<span class="kw">await</span><span class="question-mark">?</span>;
-        handler_task.<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="kw">let </span>response = reqwest::get(<span class="kw-2">&amp;</span>url).<span class="kw">await</span>.unwrap();
+        <span class="macro">assert_eq!</span>(response.status(), <span class="number">200</span>);
+        <span class="kw">let </span>body = response.text().<span class="kw">await</span>.unwrap();
+        <span class="macro">assert!</span>(body.contains(<span class="string">"iroh.computer"</span>));
+    }
 
-        <span class="comment">// create client b and connect it to the server
-        </span><span class="kw">let </span>key_b = SecretKey::generate();
-        <span class="kw">let </span>public_key_b = key_b.public();
-        <span class="kw">let </span>(rw_b, client_b_builder) = make_test_client(key_b.clone());
-        <span class="kw">let </span>handler = server.client_conn_handler(Default::default());
-        <span class="kw">let </span>handler_task = tokio::spawn(<span class="kw">async move </span>{
-            handler
-                .accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
-                .<span class="kw">await
-        </span>});
-        <span class="kw">let </span>(client_b, <span class="kw-2">mut </span>client_receiver_b) = client_b_builder.build().<span class="kw">await</span><span class="question-mark">?</span>;
-        handler_task.<span class="kw">await</span><span class="question-mark">??</span>;
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_captive_portal_service() {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>url = <span class="macro">format!</span>(<span class="string">"http://{}/generate_204"</span>, server.http_addr().unwrap());
+        <span class="kw">let </span>challenge = <span class="string">"123az__."</span>;
 
-        <span class="comment">// send message from a to b!
-        </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"hello client b!!"</span>);
-        client_a.send(public_key_b, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">match </span>client_receiver_b.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_a, source);
-                <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
+        <span class="kw">let </span>client = reqwest::Client::new();
+        <span class="kw">let </span>response = client
+            .get(<span class="kw-2">&amp;</span>url)
+            .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
+            .send()
+            .<span class="kw">await
+            </span>.unwrap();
+        <span class="macro">assert_eq!</span>(response.status(), StatusCode::NO_CONTENT);
+        <span class="kw">let </span>header = response.headers().get(NO_CONTENT_RESPONSE_HEADER).unwrap();
+        <span class="macro">assert_eq!</span>(header.to_str().unwrap(), <span class="macro">format!</span>(<span class="string">"response {challenge}"</span>));
+        <span class="kw">let </span>body = response.text().<span class="kw">await</span>.unwrap();
+        <span class="macro">assert!</span>(body.is_empty());
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_relay_client_legacy_route() {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
+        <span class="comment">// We're testing the legacy endpoint at `/derp`
+        </span><span class="kw">let </span>endpoint_url = <span class="macro">format!</span>(<span class="string">"http://{}/derp"</span>, server.http_addr().unwrap());
+
+        <span class="kw">let </span>client = reqwest::Client::new();
+        <span class="kw">let </span>result = client
+            .get(endpoint_url)
+            .header(UPGRADE, HTTP_UPGRADE_PROTOCOL)
+            .send()
+            .<span class="kw">await
+            </span>.unwrap();
+
+        <span class="macro">assert_eq!</span>(result.status(), StatusCode::SWITCHING_PROTOCOLS);
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_relay_clients_both_derp() {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
+        <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse().unwrap();
+
+        <span class="comment">// set up client a
+        </span><span class="kw">let </span>a_secret_key = SecretKey::generate();
+        <span class="kw">let </span>a_key = a_secret_key.public();
+        <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
+        <span class="kw">let </span>(client_a, <span class="kw-2">mut </span>client_a_receiver) =
+            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
+        <span class="kw">let </span>connect_client = client_a.clone();
+
+        <span class="comment">// give the relay server some time to accept connections
+        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), <span class="kw">async move </span>{
+            <span class="kw">loop </span>{
+                <span class="kw">match </span>connect_client.connect().<span class="kw">await </span>{
+                    <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
+                    <span class="prelude-val">Err</span>(err) =&gt; {
+                        <span class="macro">warn!</span>(<span class="string">"client unable to connect to relay server: {err:#}"</span>);
+                        tokio::time::sleep(Duration::from_millis(<span class="number">100</span>)).<span class="kw">await</span>;
+                    }
+                }
             }
-            msg =&gt; {
-                <span class="macro">anyhow::bail!</span>(<span class="string">"expected ReceivedPacket msg, got {msg:?}"</span>);
-            }
+        })
+        .<span class="kw">await
+        </span>{
+            <span class="macro">panic!</span>(<span class="string">"error connecting to relay server: {err:#}"</span>);
         }
 
-        <span class="comment">// send message from b to a!
-        </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"nice to meet you client a!!"</span>);
-        client_b.send(public_key_a, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">match </span>client_receiver_a.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_b, source);
-                <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
-            }
-            msg =&gt; {
-                <span class="macro">anyhow::bail!</span>(<span class="string">"expected ReceivedPacket msg, got {msg:?}"</span>);
-            }
+        <span class="comment">// set up client b
+        </span><span class="kw">let </span>b_secret_key = SecretKey::generate();
+        <span class="kw">let </span>b_key = b_secret_key.public();
+        <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
+        <span class="kw">let </span>(client_b, <span class="kw-2">mut </span>client_b_receiver) =
+            ClientBuilder::new(relay_url.clone()).build(b_secret_key, resolver);
+        client_b.connect().<span class="kw">await</span>.unwrap();
+
+        <span class="comment">// send message from a to b
+        </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
+        client_a.send(b_key, msg.clone()).<span class="kw">await</span>.unwrap();
+
+        <span class="kw">let </span>(res, <span class="kw">_</span>) = client_b_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
+            <span class="macro">assert_eq!</span>(a_key, source);
+            <span class="macro">assert_eq!</span>(msg, data);
+        } <span class="kw">else </span>{
+            <span class="macro">panic!</span>(<span class="string">"client_b received unexpected message {res:?}"</span>);
         }
 
-        <span class="comment">// create client b and connect it to the server
-        </span><span class="kw">let </span>(new_rw_b, new_client_b_builder) = make_test_client(key_b);
-        <span class="kw">let </span>handler = server.client_conn_handler(Default::default());
-        <span class="kw">let </span>handler_task = tokio::spawn(<span class="kw">async move </span>{
-            handler
-                .accept(Protocol::Relay, MaybeTlsStream::Test(new_rw_b))
-                .<span class="kw">await
-        </span>});
-        <span class="kw">let </span>(new_client_b, <span class="kw-2">mut </span>new_client_receiver_b) = new_client_b_builder.build().<span class="kw">await</span><span class="question-mark">?</span>;
-        handler_task.<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="comment">// send message from b to a
+        </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"howdy, a"</span>);
+        client_b.send(a_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
-        <span class="comment">// assert!(client_b.recv().await.is_err());
+        <span class="kw">let </span>(res, <span class="kw">_</span>) = client_a_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
+            <span class="macro">assert_eq!</span>(b_key, source);
+            <span class="macro">assert_eq!</span>(msg, data);
+        } <span class="kw">else </span>{
+            <span class="macro">panic!</span>(<span class="string">"client_a received unexpected message {res:?}"</span>);
+        }
+    }
 
-        // send message from a to b!
-        </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"are you still there, b?!"</span>);
-        client_a.send(public_key_b, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">match </span>new_client_receiver_b.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_a, source);
-                <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_relay_clients_both_websockets() {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
+
+        <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
+        <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse().unwrap();
+
+        <span class="comment">// set up client a
+        </span><span class="kw">let </span>a_secret_key = SecretKey::generate();
+        <span class="kw">let </span>a_key = a_secret_key.public();
+        <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
+        <span class="kw">let </span>(client_a, <span class="kw-2">mut </span>client_a_receiver) = ClientBuilder::new(relay_url.clone())
+            .protocol(Protocol::Websocket)
+            .build(a_secret_key, resolver);
+        <span class="kw">let </span>connect_client = client_a.clone();
+
+        <span class="comment">// give the relay server some time to accept connections
+        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), <span class="kw">async move </span>{
+            <span class="kw">loop </span>{
+                <span class="kw">match </span>connect_client.connect().<span class="kw">await </span>{
+                    <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
+                    <span class="prelude-val">Err</span>(err) =&gt; {
+                        <span class="macro">warn!</span>(<span class="string">"client unable to connect to relay server: {err:#}"</span>);
+                        tokio::time::sleep(Duration::from_millis(<span class="number">100</span>)).<span class="kw">await</span>;
+                    }
+                }
             }
-            msg =&gt; {
-                <span class="macro">anyhow::bail!</span>(<span class="string">"expected ReceivedPacket msg, got {msg:?}"</span>);
-            }
+        })
+        .<span class="kw">await
+        </span>{
+            <span class="macro">panic!</span>(<span class="string">"error connecting to relay server: {err:#}"</span>);
         }
 
-        <span class="comment">// send message from b to a!
-        </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"just had a spot of trouble but I'm back now,a!!"</span>);
-        new_client_b.send(public_key_a, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">match </span>client_receiver_a.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_b, source);
-                <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
-            }
-            msg =&gt; {
-                <span class="macro">anyhow::bail!</span>(<span class="string">"expected ReceivedPacket msg, got {msg:?}"</span>);
-            }
+        <span class="comment">// set up client b
+        </span><span class="kw">let </span>b_secret_key = SecretKey::generate();
+        <span class="kw">let </span>b_key = b_secret_key.public();
+        <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
+        <span class="kw">let </span>(client_b, <span class="kw-2">mut </span>client_b_receiver) = ClientBuilder::new(relay_url.clone())
+            .protocol(Protocol::Websocket) <span class="comment">// another websocket client
+            </span>.build(b_secret_key, resolver);
+        client_b.connect().<span class="kw">await</span>.unwrap();
+
+        <span class="comment">// send message from a to b
+        </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
+        client_a.send(b_key, msg.clone()).<span class="kw">await</span>.unwrap();
+
+        <span class="kw">let </span>(res, <span class="kw">_</span>) = client_b_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
+            <span class="macro">assert_eq!</span>(a_key, source);
+            <span class="macro">assert_eq!</span>(msg, data);
+        } <span class="kw">else </span>{
+            <span class="macro">panic!</span>(<span class="string">"client_b received unexpected message {res:?}"</span>);
         }
 
-        <span class="comment">// close the server and clients
-        </span>server.close().<span class="kw">await</span>;
+        <span class="comment">// send message from b to a
+        </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"howdy, a"</span>);
+        client_b.send(a_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
-        <span class="comment">// client connections have been shutdown
-        </span><span class="kw">let </span>res = client_a
-            .send(public_key_b, Bytes::from_static(<span class="string">b"try to send"</span>))
-            .<span class="kw">await</span>;
-        <span class="macro">assert!</span>(res.is_err());
-        <span class="macro">assert!</span>(new_client_receiver_b.recv().<span class="kw">await</span>.is_err());
-        <span class="prelude-val">Ok</span>(())
+        <span class="kw">let </span>(res, <span class="kw">_</span>) = client_a_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
+            <span class="macro">assert_eq!</span>(b_key, source);
+            <span class="macro">assert_eq!</span>(msg, data);
+        } <span class="kw">else </span>{
+            <span class="macro">panic!</span>(<span class="string">"client_a received unexpected message {res:?}"</span>);
+        }
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_relay_clients_websocket_and_derp() {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
+
+        <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
+        <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse().unwrap();
+
+        <span class="comment">// set up client a
+        </span><span class="kw">let </span>a_secret_key = SecretKey::generate();
+        <span class="kw">let </span>a_key = a_secret_key.public();
+        <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
+        <span class="kw">let </span>(client_a, <span class="kw-2">mut </span>client_a_receiver) =
+            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
+        <span class="kw">let </span>connect_client = client_a.clone();
+
+        <span class="comment">// give the relay server some time to accept connections
+        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), <span class="kw">async move </span>{
+            <span class="kw">loop </span>{
+                <span class="kw">match </span>connect_client.connect().<span class="kw">await </span>{
+                    <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
+                    <span class="prelude-val">Err</span>(err) =&gt; {
+                        <span class="macro">warn!</span>(<span class="string">"client unable to connect to relay server: {err:#}"</span>);
+                        tokio::time::sleep(Duration::from_millis(<span class="number">100</span>)).<span class="kw">await</span>;
+                    }
+                }
+            }
+        })
+        .<span class="kw">await
+        </span>{
+            <span class="macro">panic!</span>(<span class="string">"error connecting to relay server: {err:#}"</span>);
+        }
+
+        <span class="comment">// set up client b
+        </span><span class="kw">let </span>b_secret_key = SecretKey::generate();
+        <span class="kw">let </span>b_key = b_secret_key.public();
+        <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
+        <span class="kw">let </span>(client_b, <span class="kw-2">mut </span>client_b_receiver) = ClientBuilder::new(relay_url.clone())
+            .protocol(Protocol::Websocket) <span class="comment">// Use websockets
+            </span>.build(b_secret_key, resolver);
+        client_b.connect().<span class="kw">await</span>.unwrap();
+
+        <span class="comment">// send message from a to b
+        </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
+        client_a.send(b_key, msg.clone()).<span class="kw">await</span>.unwrap();
+
+        <span class="kw">let </span>(res, <span class="kw">_</span>) = client_b_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
+            <span class="macro">assert_eq!</span>(a_key, source);
+            <span class="macro">assert_eq!</span>(msg, data);
+        } <span class="kw">else </span>{
+            <span class="macro">panic!</span>(<span class="string">"client_b received unexpected message {res:?}"</span>);
+        }
+
+        <span class="comment">// send message from b to a
+        </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"howdy, a"</span>);
+        client_b.send(a_key, msg.clone()).<span class="kw">await</span>.unwrap();
+
+        <span class="kw">let </span>(res, <span class="kw">_</span>) = client_a_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
+            <span class="macro">assert_eq!</span>(b_key, source);
+            <span class="macro">assert_eq!</span>(msg, data);
+        } <span class="kw">else </span>{
+            <span class="macro">panic!</span>(<span class="string">"client_a received unexpected message {res:?}"</span>);
+        }
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_stun() {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+        <span class="kw">let </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt; {
+            relay: <span class="prelude-val">None</span>,
+            stun: <span class="prelude-val">Some</span>(StunConfig {
+                bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
+            }),
+            metrics_addr: <span class="prelude-val">None</span>,
+        })
+        .<span class="kw">await
+        </span>.unwrap();
+
+        <span class="kw">let </span>txid = stun::TransactionId::default();
+        <span class="kw">let </span>req = stun::request(txid);
+        <span class="kw">let </span>socket = UdpSocket::bind(<span class="string">"127.0.0.1:0"</span>).<span class="kw">await</span>.unwrap();
+        socket
+            .send_to(<span class="kw-2">&amp;</span>req, server.stun_addr().unwrap())
+            .<span class="kw">await
+            </span>.unwrap();
+
+        <span class="comment">// get response
+        </span><span class="kw">let </span><span class="kw-2">mut </span>buf = <span class="macro">vec!</span>[<span class="number">0u8</span>; <span class="number">64000</span>];
+        <span class="kw">let </span>(len, addr) = socket.recv_from(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span>.unwrap();
+        <span class="macro">assert_eq!</span>(addr, server.stun_addr().unwrap());
+        buf.truncate(len);
+        <span class="kw">let </span>(txid_back, response_addr) = stun::parse_response(<span class="kw-2">&amp;</span>buf).unwrap();
+        <span class="macro">assert_eq!</span>(txid, txid_back);
+        <span class="macro">assert_eq!</span>(response_addr, socket.local_addr().unwrap());
     }
 }
 </code></pre></div></section></main></body></html>

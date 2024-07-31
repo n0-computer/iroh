@@ -540,8 +540,6 @@
 <a href="#540" id="540">540</a>
 <a href="#541" id="541">541</a>
 <a href="#542" id="542">542</a>
-<a href="#543" id="543">543</a>
-<a href="#544" id="544">544</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! STUN packets sending and receiving.
 
 </span><span class="kw">use </span>std::net::SocketAddr;
@@ -554,8 +552,6 @@
     attributes::StunAttribute, error::StunDecodeError, methods, MessageClass, MessageDecoder,
     TransactionId,
 };
-
-<span class="kw">use </span><span class="kw">crate</span>::net::ip::to_canonical;
 
 <span class="doccomment">/// Errors that can occur when handling a STUN packet.
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
@@ -670,12 +666,12 @@
         <span class="kw">match </span>attr {
             StunAttribute::XorMappedAddress(a) =&gt; {
                 <span class="kw">let </span><span class="kw-2">mut </span>a = <span class="kw-2">*</span>a.socket_address();
-                a.set_ip(to_canonical(a.ip()));
+                a.set_ip(a.ip().to_canonical());
                 addr = <span class="prelude-val">Some</span>(a);
             }
             StunAttribute::MappedAddress(a) =&gt; {
                 <span class="kw">let </span><span class="kw-2">mut </span>a = <span class="kw-2">*</span>a.socket_address();
-                a.set_ip(to_canonical(a.ip()));
+                a.set_ip(a.ip().to_canonical());
                 fallback_addr = <span class="prelude-val">Some</span>(a);
             }
             <span class="kw">_ </span>=&gt; {}
