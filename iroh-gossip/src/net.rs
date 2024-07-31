@@ -652,27 +652,26 @@ async fn connection_loop(
     };
     let mut send_buf = BytesMut::new();
     let mut recv_buf = BytesMut::new();
-    loop {
-        tokio::select! {
-            biased;
-            // If `send_rx` is closed,
-            // stop selecting it but don't quit.
-            // We are not going to use connection for sending anymore,
-            // but the other side may still want to use it to
-            // send data to us.
-            Some(msg) = send_rx.recv(), if !send_rx.is_closed() => {
-                write_message(&mut send, &mut send_buf, &msg, max_message_size).await?
-            }
+    let send_loop = async {
+        while let Some(msg) = send_rx.recv().await {
+            write_message(&mut send, &mut send_buf, &msg, max_message_size).await?
+        }
+        Ok::<_, anyhow::Error>(())
+    };
 
-            msg = read_message(&mut recv, &mut recv_buf, max_message_size) => {
-                let msg = msg?;
-                match msg {
-                    None => break,
-                    Some(msg) => in_event_tx.send(InEvent::RecvMessage(from, msg)).await?
-                }
+    let recv_loop = async {
+        loop {
+            let msg = read_message(&mut recv, &mut recv_buf, max_message_size).await?;
+            match msg {
+                None => break,
+                Some(msg) => in_event_tx.send(InEvent::RecvMessage(from, msg)).await?,
             }
         }
-    }
+        Ok::<_, anyhow::Error>(())
+    };
+
+    tokio::try_join!(send_loop, recv_loop)?;
+
     Ok(())
 }
 
