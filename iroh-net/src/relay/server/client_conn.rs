@@ -1,3 +1,5 @@
+//! The server-side representation of an ongoing client relaying connection.
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,15 +17,18 @@ use crate::{disco::looks_like_disco_wrapper, key::PublicKey};
 
 use iroh_metrics::{inc, inc_by};
 
-use super::codec::Frame;
-use super::server::RelayIo;
-use super::{
+use crate::relay::codec::Frame;
+use crate::relay::server::streams::RelayIo;
+use crate::relay::server::types::{Packet, ServerMessage};
+use crate::relay::{
     codec::{write_frame, KEEP_ALIVE},
-    metrics::Metrics,
-    types::{Packet, ServerMessage},
+    server::metrics::Metrics,
 };
 
-/// The [`super::server::Server`] side representation of a [`super::client::Client`]'s connection
+/// The [`Server`] side representation of a [`Client`]'s connection.
+///
+/// [`Server`]: crate::relay::server::Server
+/// [`Client`]: crate::relay::client::Client
 #[derive(Debug)]
 pub(crate) struct ClientConnManager {
     /// Static after construction, process-wide unique counter, incremented each time we accept
@@ -452,8 +457,9 @@ impl ClientConnIo {
 #[cfg(test)]
 mod tests {
     use crate::key::SecretKey;
+    use crate::relay::client::conn;
     use crate::relay::codec::{recv_frame, DerpCodec, FrameType};
-    use crate::relay::server::MaybeTlsStream;
+    use crate::relay::server::streams::MaybeTlsStream;
 
     use super::*;
 
@@ -555,8 +561,7 @@ mod tests {
         // send packet
         println!("  send packet");
         let data = b"hello world!";
-        crate::relay::client::send_packet(&mut io_rw, &None, target, Bytes::from_static(data))
-            .await?;
+        conn::send_packet(&mut io_rw, &None, target, Bytes::from_static(data)).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
@@ -575,8 +580,7 @@ mod tests {
         let mut disco_data = crate::disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        crate::relay::client::send_packet(&mut io_rw, &None, target, disco_data.clone().into())
-            .await?;
+        conn::send_packet(&mut io_rw, &None, target, disco_data.clone().into()).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendDiscoPacket((got_target, packet)) => {
@@ -630,8 +634,7 @@ mod tests {
         let data = b"hello world!";
         let target = SecretKey::generate().public();
 
-        crate::relay::client::send_packet(&mut io_rw, &None, target, Bytes::from_static(data))
-            .await?;
+        conn::send_packet(&mut io_rw, &None, target, Bytes::from_static(data)).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
