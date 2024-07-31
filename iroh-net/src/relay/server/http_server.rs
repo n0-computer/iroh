@@ -94,7 +94,6 @@ impl Server {
     /// the server, in particular it allows gracefully shutting down the server.
     pub fn handle(&self) -> ServerHandle {
         ServerHandle {
-            addr: self.addr,
             cancel_token: self.cancel_server_loop.clone(),
         }
     }
@@ -124,7 +123,6 @@ impl Server {
 /// This does not allow access to the task but can communicate with it.
 #[derive(Debug, Clone)]
 pub struct ServerHandle {
-    addr: SocketAddr,
     cancel_token: CancellationToken,
 }
 
@@ -132,11 +130,6 @@ impl ServerHandle {
     /// Gracefully shut down the server.
     pub fn shutdown(&self) {
         self.cancel_token.cancel()
-    }
-
-    /// Returns the address the server is bound on.
-    pub fn addr(&self) -> SocketAddr {
-        self.addr
     }
 }
 
@@ -230,6 +223,7 @@ impl ServerBuilder {
     }
 
     /// Sets a custom "404" handler.
+    #[allow(unused)]
     pub fn not_found_handler(mut self, handler: HyperHandler) -> Self {
         self.not_found_fn = Some(handler);
         self
