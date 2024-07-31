@@ -107,7 +107,7 @@ impl GossipState {
         while let Some(res) = self.active_tasks.join_next().await {
             match res {
                 Err(err) if err.is_cancelled() => continue,
-                Err(err) => return Err(err).context("gossip receive loop paniced"),
+                Err(err) => return Err(err).context("gossip receive loop panicked"),
                 Ok((namespace, res)) => {
                     self.active.remove(&namespace);
                     if let Err(err) = res {

@@ -190,7 +190,7 @@ impl Gossip {
     /// Join a gossip topic with options and an externally-created update stream.
     ///
     /// This method differs from [`Self::join_pending`] by letting you pass in a `updates` command stream yourself,
-    /// and setting custom [`SubscribeOptions`].
+    /// and setting custom [JoinOptions`].
     ///
     /// It returns a stream of events. If you want to wait for the topic to become active, wait for
     /// the [`GossipEvent::Joined`] event.
@@ -376,7 +376,7 @@ impl Actor {
                 Some(res) = self.connection_tasks.join_next(), if !self.connection_tasks.is_empty() => {
                     if let Err(err) = res {
                         if !err.is_cancelled() {
-                            tracing::warn!("connection task paniced: {err:?}");
+                            warn!("connection task panicked: {err:?}");
                         }
                     }
                 }
