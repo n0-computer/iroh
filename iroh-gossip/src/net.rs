@@ -170,7 +170,7 @@ impl Gossip {
     /// Messages will be queued until a first connection is available. If the internal channel becomes full,
     /// the oldest messages will be dropped from the channel.
     ///
-    /// To wait for at least one connection, use [`GossipTopic::join`].
+    /// To wait for at least one connection to be established, await [`GossipTopic::joined`].
     pub fn join_pending(&self, topic_id: TopicId, bootstrap: Vec<NodeId>) -> GossipTopic {
         let opts = JoinOptions {
             bootstrap: bootstrap.into_iter().collect(),
