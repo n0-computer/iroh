@@ -1040,7 +1040,12 @@
 <a href="#1040" id="1040">1040</a>
 <a href="#1041" id="1041">1041</a>
 <a href="#1042" id="1042">1042</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! A full-fledged iroh-relay server.
+<a href="#1043" id="1043">1043</a>
+<a href="#1044" id="1044">1044</a>
+<a href="#1045" id="1045">1045</a>
+<a href="#1046" id="1046">1046</a>
+<a href="#1047" id="1047">1047</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -1073,14 +1078,19 @@
 <span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
 
 <span class="comment">// Module defined in this file.
-</span><span class="kw">use </span>metrics::StunMetrics;
+</span><span class="kw">use </span>stun_metrics::StunMetrics;
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>actor;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>client_conn;
 <span class="kw">mod </span>clients;
 <span class="kw">mod </span>http_server;
+<span class="kw">mod </span>metrics;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>streams;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>types;
+
+<span class="kw">pub use </span><span class="self">self</span>::actor::{ClientConnHandler, ServerActorTask};
+<span class="kw">pub use </span><span class="self">self</span>::metrics::Metrics;
+<span class="kw">pub use </span><span class="self">self</span>::streams::MaybeTlsStream <span class="kw">as </span>MaybeTlsStreamServer;
 
 <span class="kw">const </span>NO_CONTENT_CHALLENGE_HEADER: <span class="kw-2">&amp;</span>str = <span class="string">"X-Tailscale-Challenge"</span>;
 <span class="kw">const </span>NO_CONTENT_RESPONSE_HEADER: <span class="kw-2">&amp;</span>str = <span class="string">"X-Tailscale-Response"</span>;
@@ -1688,7 +1698,7 @@
     }
 }
 
-<span class="kw">mod </span>metrics {
+<span class="kw">mod </span>stun_metrics {
     <span class="kw">use </span>iroh_metrics::{
         core::{Counter, Metric},
         struct_iterable::Iterable,

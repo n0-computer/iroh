@@ -351,8 +351,8 @@
 <span class="kw">use </span><span class="kw">crate</span>::key::PublicKey;
 
 <span class="kw">use </span><span class="kw">super</span>::client_conn::{ClientConnBuilder, ClientConnManager};
+<span class="kw">use </span><span class="kw">super</span>::metrics::Metrics;
 <span class="kw">use </span><span class="kw">super</span>::types::Packet;
-<span class="kw">use </span><span class="kw">crate</span>::relay::metrics::Metrics;
 
 <span class="doccomment">/// Number of times we try to send to a client connection before dropping the data;
 </span><span class="kw">const </span>RETRIES: usize = <span class="number">3</span>;

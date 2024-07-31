@@ -3,9 +3,11 @@
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
 <a href="#5" id="5">5</a>
+<a href="#6" id="6">6</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Co-locating all of the iroh-net metrics structs
 </span><span class="kw">pub use </span><span class="kw">crate</span>::magicsock::Metrics <span class="kw">as </span>MagicsockMetrics;
 <span class="kw">pub use </span><span class="kw">crate</span>::netcheck::Metrics <span class="kw">as </span>NetcheckMetrics;
 <span class="kw">pub use </span><span class="kw">crate</span>::portmapper::Metrics <span class="kw">as </span>PortmapMetrics;
-<span class="kw">pub use </span><span class="kw">crate</span>::relay::Metrics <span class="kw">as </span>RelayMetrics;
+<span class="attr">#[cfg(feature = <span class="string">"iroh-relay"</span>)]
+</span><span class="kw">pub use </span><span class="kw">crate</span>::relay::server::Metrics <span class="kw">as </span>RelayMetrics;
 </code></pre></div></section></main></body></html>

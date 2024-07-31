@@ -667,7 +667,11 @@
 <a href="#667" id="667">667</a>
 <a href="#668" id="668">668</a>
 <a href="#669" id="669">669</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::atomic::{AtomicBool, Ordering};
+<a href="#670" id="670">670</a>
+<a href="#671" id="671">671</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+
+</span><span class="kw">use </span>std::sync::atomic::{AtomicBool, Ordering};
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Duration;
 
@@ -689,7 +693,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::relay::server::types::{Packet, ServerMessage};
 <span class="kw">use </span><span class="kw">crate</span>::relay::{
     codec::{write_frame, KEEP_ALIVE},
-    metrics::Metrics,
+    server::metrics::Metrics,
 };
 
 <span class="doccomment">/// The [`Server`] side representation of a [`Client`]'s connection.

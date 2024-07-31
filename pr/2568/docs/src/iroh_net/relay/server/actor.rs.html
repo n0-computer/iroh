@@ -756,7 +756,13 @@
 <a href="#756" id="756">756</a>
 <a href="#757" id="757">757</a>
 <a href="#758" id="758">758</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/derp/derp_server.go
+<a href="#759" id="759">759</a>
+<a href="#760" id="760">760</a>
+<a href="#761" id="761">761</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
+//!
+//! based on tailscale/derp/derp_server.go
+
 </span><span class="kw">use </span>std::collections::HashMap;
 <span class="kw">use </span>std::sync::atomic::{AtomicUsize, Ordering};
 <span class="kw">use </span>std::sync::Arc;
@@ -783,9 +789,9 @@
         recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
         SERVER_CHANNEL_SIZE,
     },
-    metrics::Metrics,
     server::client_conn::ClientConnBuilder,
     server::clients::Clients,
+    server::metrics::Metrics,
 };
 <span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
 
