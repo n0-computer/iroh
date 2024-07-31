@@ -777,10 +777,6 @@
 <a href="#777" id="777">777</a>
 <a href="#778" id="778">778</a>
 <a href="#779" id="779">779</a>
-<a href="#780" id="780">780</a>
-<a href="#781" id="781">781</a>
-<a href="#782" id="782">782</a>
-<a href="#783" id="783">783</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{BTreeMap, HashSet},
     future::Future,
@@ -803,7 +799,7 @@
 
 <span class="kw">use crate</span>::{
     key::{PublicKey, PUBLIC_KEY_LENGTH},
-    relay::{<span class="self">self</span>, http::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE},
+    relay::{<span class="self">self</span>, client::conn::ReceivedMessage, client::ClientError, RelayUrl, MAX_PACKET_SIZE},
 };
 
 <span class="kw">use super</span>::{ActorMessage, MagicSock};
@@ -841,8 +837,8 @@
     /// use instead of creating a new relay connection back to their home.
     </span>relay_routes: Vec&lt;PublicKey&gt;,
     url: RelayUrl,
-    relay_client: relay::http::Client,
-    relay_client_receiver: relay::http::ClientReceiver,
+    relay_client: relay::client::Client,
+    relay_client_receiver: relay::client::ClientReceiver,
     <span class="doccomment">/// The set of senders we know are present on this connection, based on
     /// messages we've received from the server.
     </span>peer_present: HashSet&lt;PublicKey&gt;,
@@ -857,8 +853,8 @@
     GetLastWrite(oneshot::Sender&lt;Instant&gt;),
     Ping(oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Duration, ClientError&gt;&gt;),
     GetLocalAddr(oneshot::Sender&lt;<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;&gt;),
-    GetPeerRoute(PublicKey, oneshot::Sender&lt;<span class="prelude-ty">Option</span>&lt;relay::http::Client&gt;&gt;),
-    GetClient(oneshot::Sender&lt;relay::http::Client&gt;),
+    GetPeerRoute(PublicKey, oneshot::Sender&lt;<span class="prelude-ty">Option</span>&lt;relay::client::Client&gt;&gt;),
+    GetClient(oneshot::Sender&lt;relay::client::Client&gt;),
     NotePreferred(bool),
     Shutdown,
 }
@@ -866,8 +862,8 @@
 <span class="kw">impl </span>ActiveRelay {
     <span class="kw">fn </span>new(
         url: RelayUrl,
-        relay_client: relay::http::Client,
-        relay_client_receiver: relay::http::ClientReceiver,
+        relay_client: relay::client::Client,
+        relay_client_receiver: relay::client::ClientReceiver,
         msg_sender: mpsc::Sender&lt;ActorMessage&gt;,
     ) -&gt; <span class="self">Self </span>{
         ActiveRelay {
@@ -962,7 +958,7 @@
 
                 <span class="kw">if </span><span class="macro">matches!</span>(
                     err,
-                    relay::http::ClientError::Closed | relay::http::ClientError::IPDisabled
+                    relay::client::ClientError::Closed | relay::client::ClientError::IPDisabled
                 ) {
                     <span class="comment">// drop client
                     </span><span class="kw">return </span>ReadResult::Break;
@@ -983,7 +979,7 @@
                     <span class="prelude-val">None </span>=&gt; ReadResult::Break,
                 }
             }
-            <span class="prelude-val">Ok</span>((msg, conn_gen)) =&gt; {
+            <span class="prelude-val">Ok</span>((msg, _conn_gen)) =&gt; {
                 <span class="comment">// reset
                 </span><span class="self">self</span>.backoff.reset();
                 <span class="kw">let </span>now = Instant::now();
@@ -997,11 +993,7 @@
                 }
 
                 <span class="kw">match </span>msg {
-                    relay::ReceivedMessage::ServerInfo { .. } =&gt; {
-                        <span class="macro">info!</span>(%conn_gen, <span class="string">"connected"</span>);
-                        ReadResult::Continue
-                    }
-                    relay::ReceivedMessage::ReceivedPacket { source, data } =&gt; {
+                    relay::client::conn::ReceivedMessage::ReceivedPacket { source, data } =&gt; {
                         <span class="macro">trace!</span>(len=%data.len(), <span class="string">"received msg"</span>);
                         <span class="comment">// If this is a new sender we hadn't seen before, remember it and
                         // register a route for this peer.
@@ -1031,7 +1023,7 @@
 
                         ReadResult::Continue
                     }
-                    relay::ReceivedMessage::Ping(data) =&gt; {
+                    relay::client::conn::ReceivedMessage::Ping(data) =&gt; {
                         <span class="comment">// Best effort reply to the ping.
                         </span><span class="kw">let </span>dc = <span class="self">self</span>.relay_client.clone();
                         tokio::task::spawn(<span class="kw">async move </span>{
@@ -1041,8 +1033,8 @@
                         });
                         ReadResult::Continue
                     }
-                    relay::ReceivedMessage::Health { .. } =&gt; ReadResult::Continue,
-                    relay::ReceivedMessage::PeerGone(key) =&gt; {
+                    relay::client::conn::ReceivedMessage::Health { .. } =&gt; ReadResult::Continue,
+                    relay::client::conn::ReceivedMessage::PeerGone(key) =&gt; {
                         <span class="self">self</span>.relay_routes.retain(|peer| peer != <span class="kw-2">&amp;</span>key);
                         ReadResult::Continue
                     }
@@ -1205,7 +1197,7 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         url: <span class="kw-2">&amp;</span>RelayUrl,
         peer: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>PublicKey&gt;,
-    ) -&gt; relay::http::Client {
+    ) -&gt; relay::client::Client {
         <span class="macro">debug!</span>(<span class="string">"connect relay {} for peer {:?}"</span>, url, peer);
         <span class="comment">// See if we have a connection open to that relay node ID first. If so, might as
         // well use it. (It's a little arbitrary whether we use this one vs. the reverse route
@@ -1262,7 +1254,7 @@
         <span class="kw">let </span>url1 = url.clone();
 
         <span class="comment">// building a client dials the relay
-        </span><span class="kw">let </span><span class="kw-2">mut </span>builder = relay::http::ClientBuilder::new(url1.clone());
+        </span><span class="kw">let </span><span class="kw-2">mut </span>builder = relay::client::ClientBuilder::new(url1.clone());
         <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = <span class="self">self</span>.msock.proxy_url() {
             builder = builder.proxy_url(url.clone());
         }
