@@ -539,12 +539,7 @@ where
         trace!("endpoint address: {addr:?}");
 
         // Initialize the gossip protocol.
-        let gossip_config = iroh_gossip::proto::Config {
-            membership: Default::default(),
-            broadcast: Default::default(),
-            max_message_size: 1024 * 16,
-        };
-        let gossip = Gossip::from_endpoint(endpoint.clone(), gossip_config, &addr.info);
+        let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
         // Initialize the downloader.
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
 

@@ -5,10 +5,9 @@ use bytes::Bytes;
 use clap::Parser;
 use ed25519_dalek::Signature;
 use futures_lite::StreamExt;
-use futures_util::Stream;
 use iroh_base::base32;
 use iroh_gossip::{
-    net::{Event, Gossip, GossipEvent, GOSSIP_ALPN},
+    net::{Event, Gossip, GossipEvent, GossipReceiver, GOSSIP_ALPN},
     proto::TopicId,
 };
 use iroh_net::{
@@ -136,18 +135,18 @@ async fn main() -> Result<()> {
             endpoint.add_node_addr(peer)?;
         }
     };
-    let (send, recv) = gossip.join(topic, peer_ids).await?.split();
+    let (sender, receiver) = gossip.join(topic, peer_ids).await?.split();
     println!("> connected!");
 
     // broadcast our name, if set
     if let Some(name) = args.name {
         let message = Message::AboutMe { name };
         let encoded_message = SignedMessage::sign_and_encode(endpoint.secret_key(), &message)?;
-        send.broadcast(encoded_message).await?;
+        sender.broadcast(encoded_message).await?;
     }
 
     // subscribe and print loop
-    tokio::spawn(subscribe_loop(recv));
+    tokio::spawn(subscribe_loop(receiver));
 
     // spawn an input thread that reads stdin
     // not using tokio here because they recommend this for "technical reasons"
@@ -159,19 +158,17 @@ async fn main() -> Result<()> {
     while let Some(text) = line_rx.recv().await {
         let message = Message::Message { text: text.clone() };
         let encoded_message = SignedMessage::sign_and_encode(endpoint.secret_key(), &message)?;
-        send.broadcast(encoded_message).await?;
+        sender.broadcast(encoded_message).await?;
         println!("> sent: {text}");
     }
 
     Ok(())
 }
 
-async fn subscribe_loop(
-    mut events: impl Stream<Item = Result<Event>> + Unpin + 'static,
-) -> Result<()> {
+async fn subscribe_loop(mut receiver: GossipReceiver) -> Result<()> {
     // init a peerid -> name hashmap
     let mut names = HashMap::new();
-    while let Some(event) = events.try_next().await? {
+    while let Some(event) = receiver.try_next().await? {
         if let Event::Gossip(GossipEvent::Received(msg)) = event {
             let (from, message) = SignedMessage::verify_and_decode(&msg.content)?;
             match message {

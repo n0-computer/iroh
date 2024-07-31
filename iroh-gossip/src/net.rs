@@ -267,7 +267,7 @@ enum ToActor {
     },
 }
 
-// Actor that sends and handles messages between the connection and main state loops
+/// Actor that sends and handles messages between the connection and main state loops
 struct Actor {
     /// Protocol state
     state: proto::State<PublicKey, StdRng>,
@@ -909,9 +909,6 @@ mod test {
         .unwrap();
 
         let (sink1, _stream1) = sub1.split();
-        // let
-        // let (_sink2, mut stream2) = go2.join(topic, vec![pi1]).await.unwrap().split();
-        // let (_sink3, mut stream3) = go3.join(topic, vec![pi2]).await.unwrap().split();
 
         let len = 2;
 

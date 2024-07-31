@@ -24,7 +24,6 @@ ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
 futures-concurrency = { version = "7.6.1", optional = true }
 futures-lite = { version = "2.3", optional = true }
 futures-util = { version = "0.3.30", optional = true }
-genawaiter = { version = "0.99.1", default-features = false, features = ["futures03"] }
 indexmap = "2.0"
 iroh-base = { version = "0.21.0", path = "../iroh-base" }
 iroh-metrics = { version = "0.21.0", path = "../iroh-metrics" }

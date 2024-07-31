@@ -434,7 +434,6 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
     }
 
     async fn join_peers(&mut self, namespace: NamespaceId, peers: Vec<NodeAddr>) -> Result<()> {
-        tracing::warn!(?namespace, ?peers, "join_peers");
         let mut peer_ids = Vec::new();
 
         // add addresses of peers to our endpoint address book
@@ -457,7 +456,6 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         }
 
         // tell gossip to join
-        tracing::warn!(?namespace, ?peer_ids, "gossip.join");
         self.gossip.join(namespace, peer_ids.clone()).await?;
 
         if !peer_ids.is_empty() {
@@ -695,7 +693,6 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 // A new entry was inserted locally. Broadcast a gossip message.
                 if self.state.is_syncing(&namespace) {
                     let op = Op::Put(entry.clone());
-                    tracing::info!("BROADCAST {op:?}");
                     let message = postcard::to_stdvec(&op)?.into();
                     self.gossip.broadcast(&namespace, message).await;
                 }

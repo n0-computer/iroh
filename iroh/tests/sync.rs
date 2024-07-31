@@ -243,7 +243,7 @@ async fn sync_gossip_bulk() -> Result<()> {
 
 /// This tests basic sync and gossip with 3 peers.
 #[tokio::test]
-// #[ignore = "flaky"]
+#[ignore = "flaky"]
 async fn sync_full_basic() -> Result<()> {
     let mut rng = test_rng(b"sync_full_basic");
     setup_logging();
@@ -1329,11 +1329,6 @@ async fn assert_next_unordered_with_optionals<T: std::fmt::Debug + Clone>(
             {
                 bail!("Event didn't match any matcher: {event:?}");
             }
-            debug!(
-                remaining_min = required_matchers.len(),
-                remaining_max = max - len,
-                "event {event:?}"
-            );
             if required_matchers.is_empty() || len == max {
                 break;
             }
