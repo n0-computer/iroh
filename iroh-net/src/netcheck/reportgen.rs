@@ -34,7 +34,6 @@ use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_STUN_PORT;
 use crate::dns::{DnsResolver, ResolverExt};
 use crate::net::interfaces;
-use crate::net::ip;
 use crate::net::UdpSocket;
 use crate::netcheck::{self, Report};
 use crate::ping::{PingError, Pinger};
@@ -953,7 +952,7 @@ async fn get_relay_addr(
                 {
                     Ok(mut addrs) => addrs
                         .next()
-                        .map(ip::to_canonical)
+                        .map(|ip| ip.to_canonical())
                         .map(|addr| SocketAddr::new(addr, port))
                         .ok_or(anyhow!("No suitable relay addr found")),
                     Err(err) => Err(err.context("No suitable relay addr found")),
@@ -973,7 +972,7 @@ async fn get_relay_addr(
                 {
                     Ok(mut addrs) => addrs
                         .next()
-                        .map(ip::to_canonical)
+                        .map(|ip| ip.to_canonical())
                         .map(|addr| SocketAddr::new(addr, port))
                         .ok_or(anyhow!("No suitable relay addr found")),
                     Err(err) => Err(err.context("No suitable relay addr found")),
