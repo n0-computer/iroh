@@ -981,6 +981,27 @@
 <a href="#981" id="981">981</a>
 <a href="#982" id="982">982</a>
 <a href="#983" id="983">983</a>
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
+<a href="#997" id="997">997</a>
+<a href="#998" id="998">998</a>
+<a href="#999" id="999">999</a>
+<a href="#1000" id="1000">1000</a>
+<a href="#1001" id="1001">1001</a>
+<a href="#1002" id="1002">1002</a>
+<a href="#1003" id="1003">1003</a>
+<a href="#1004" id="1004">1004</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Networking for the `iroh-gossip` protocol
 
 </span><span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
@@ -1271,10 +1292,10 @@
     <span class="doccomment">/// Map of topics to their state.
     </span>topics: HashMap&lt;TopicId, TopicState&gt;,
     <span class="doccomment">/// Map of peers to their state.
-    </span>peers: HashMap&lt;NodeId, PeerState&gt;,
+    </span>peers: HashMap&lt;NodeId, PeerInfo&gt;,
     <span class="doccomment">/// Stream of commands from topic handles.
     </span>command_rx: stream_group::Keyed&lt;TopicCommandStream&gt;,
-    <span class="doccomment">/// Internal queue of nodes to disconnect from.
+    <span class="doccomment">/// Internal queue of topic to close because all handles were dropped.
     </span>quit_queue: VecDeque&lt;TopicId&gt;,
     <span class="doccomment">/// Tasks for the connection loops, to keep track of panics.
     </span>connection_tasks: JoinSet&lt;()&gt;,
@@ -1330,7 +1351,7 @@
                         <span class="prelude-val">Ok</span>(conn) =&gt; {
                             <span class="macro">debug!</span>(peer = <span class="question-mark">?</span>peer_id, <span class="string">"dial successful"</span>);
                             <span class="macro">inc!</span>(Metrics, actor_tick_dialer_success);
-                            <span class="self">self</span>.handle_to_actor_msg(ToActor::HandleConnection(peer_id, ConnOrigin::Dial, conn), Instant::now()).<span class="kw">await</span>.context(<span class="string">"dialer.next -&gt; conn -&gt; handle_to_actor_msg"</span>)<span class="question-mark">?</span>;
+                            <span class="self">self</span>.handle_connection(peer_id, ConnOrigin::Dial, conn);
                         }
                         <span class="prelude-val">Err</span>(err) =&gt; {
                             <span class="macro">warn!</span>(peer = <span class="question-mark">?</span>peer_id, <span class="string">"dial failed: {err}"</span>);
@@ -1408,13 +1429,37 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>init_peer_conn(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        peer_id: NodeId,
-        origin: ConnOrigin,
-        conn: Connection,
-        queue: Vec&lt;ProtoMessage&gt;,
-    ) -&gt; mpsc::Sender&lt;ProtoMessage&gt; {
+    <span class="kw">fn </span>handle_connection(<span class="kw-2">&amp;mut </span><span class="self">self</span>, peer_id: NodeId, origin: ConnOrigin, conn: Connection) {
+        <span class="comment">// Check that we only keep one connection per peer per direction.
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(peer_info) = <span class="self">self</span>.peers.get(<span class="kw-2">&amp;</span>peer_id) {
+            <span class="kw">if </span><span class="macro">matches!</span>(origin, ConnOrigin::Dial) &amp;&amp; peer_info.conn_dialed.is_some() {
+                <span class="macro">warn!</span>(<span class="question-mark">?</span>peer_id, <span class="question-mark">?</span>origin, <span class="string">"ignoring connection: already accepted"</span>);
+                <span class="kw">return</span>;
+            }
+            <span class="kw">if </span><span class="macro">matches!</span>(origin, ConnOrigin::Accept) &amp;&amp; peer_info.conn_accepted.is_some() {
+                <span class="macro">warn!</span>(<span class="question-mark">?</span>peer_id, <span class="question-mark">?</span>origin, <span class="string">"ignoring connection: already accepted"</span>);
+                <span class="kw">return</span>;
+            }
+        }
+
+        <span class="kw">let </span><span class="kw-2">mut </span>peer_info = <span class="self">self</span>.peers.remove(<span class="kw-2">&amp;</span>peer_id).unwrap_or_default();
+
+        <span class="comment">// Store the connection so that we can terminate it when the peer is removed.
+        </span><span class="kw">match </span>origin {
+            ConnOrigin::Dial =&gt; {
+                peer_info.conn_dialed = <span class="prelude-val">Some</span>(conn.clone());
+            }
+            ConnOrigin::Accept =&gt; {
+                peer_info.conn_accepted = <span class="prelude-val">Some</span>(conn.clone());
+            }
+        }
+
+        <span class="comment">// Extract the queue of pending messages.
+        </span><span class="kw">let </span>queue = <span class="kw">match </span><span class="kw-2">&amp;mut </span>peer_info.state {
+            PeerState::Pending { queue } =&gt; std::mem::replace(queue, Vec::new()),
+            PeerState::Active { .. } =&gt; <span class="macro">vec!</span>[],
+        };
+
         <span class="kw">let </span>(send_tx, send_rx) = mpsc::channel(SEND_QUEUE_CAP);
         <span class="kw">let </span>max_message_size = <span class="self">self</span>.state.max_message_size();
         <span class="kw">let </span>in_event_tx = <span class="self">self</span>.in_event_tx.clone();
@@ -1443,26 +1488,20 @@
             }
             .instrument(<span class="macro">error_span!</span>(<span class="string">"gossip_conn"</span>, peer = %peer_id.fmt_short())),
         );
-        send_tx
+
+        peer_info.state = <span class="kw">match </span>peer_info.state {
+            PeerState::Pending { .. } =&gt; PeerState::Active { send_tx },
+            PeerState::Active { send_tx } =&gt; PeerState::Active { send_tx },
+        };
+
+        <span class="self">self</span>.peers.insert(peer_id, peer_info);
     }
 
     <span class="kw">async fn </span>handle_to_actor_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ToActor, now: Instant) -&gt; anyhow::Result&lt;()&gt; {
         <span class="macro">trace!</span>(<span class="string">"handle to_actor  {msg:?}"</span>);
         <span class="kw">match </span>msg {
             ToActor::HandleConnection(peer_id, origin, conn) =&gt; {
-                <span class="kw">let </span>queue = <span class="kw">match </span><span class="self">self</span>.peers.remove(<span class="kw-2">&amp;</span>peer_id) {
-                    <span class="prelude-val">Some</span>(state @ PeerState::Active { .. }) =&gt; {
-                        <span class="macro">debug!</span>(<span class="question-mark">?</span>peer_id, <span class="question-mark">?</span>origin, <span class="string">"ignoring connection: already active"</span>);
-                        <span class="self">self</span>.peers.insert(peer_id, state);
-                        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-                    }
-                    <span class="prelude-val">Some</span>(PeerState::Pending { queue }) =&gt; queue,
-                    <span class="prelude-val">None </span>=&gt; <span class="macro">vec!</span>[],
-                };
-                <span class="self">self</span>.dialer.abort_dial(peer_id);
-                <span class="kw">let </span>send_tx = <span class="self">self</span>.init_peer_conn(peer_id, origin, conn.clone(), queue);
-                <span class="self">self</span>.peers
-                    .insert(peer_id, PeerState::Active { conn, send_tx });
+                <span class="self">self</span>.handle_connection(peer_id, origin, conn)
             }
             ToActor::Join {
                 topic_id,
@@ -1537,22 +1576,20 @@
             };
             <span class="kw">match </span>event {
                 OutEvent::SendMessage(peer_id, message) =&gt; {
-                    <span class="kw">match </span><span class="self">self</span>.peers.get_mut(<span class="kw-2">&amp;</span>peer_id) {
-                        <span class="prelude-val">Some</span>(PeerState::Active { send_tx, .. }) =&gt; {
+                    <span class="kw">let </span>info = <span class="self">self</span>.peers.entry(peer_id).or_default();
+                    <span class="kw">match </span><span class="kw-2">&amp;mut </span>info.state {
+                        PeerState::Active { send_tx } =&gt; {
                             <span class="kw">if let </span><span class="prelude-val">Err</span>(_err) = send_tx.send(message).<span class="kw">await </span>{
                                 <span class="comment">// Removing the peer is handled by the in_event PeerDisconnected sent
                                 // at the end of the connection task.
                                 </span><span class="macro">warn!</span>(<span class="string">"connection loop for {peer_id:?} dropped"</span>);
                             }
                         }
-                        <span class="prelude-val">Some</span>(PeerState::Pending { queue }) =&gt; {
+                        PeerState::Pending { queue } =&gt; {
+                            <span class="kw">if </span>queue.is_empty() {
+                                <span class="self">self</span>.dialer.queue_dial(peer_id, GOSSIP_ALPN);
+                            }
                             queue.push(message);
-                        }
-                        <span class="prelude-val">None </span>=&gt; {
-                            <span class="kw">let </span>queue = <span class="macro">vec!</span>[message];
-                            <span class="self">self</span>.peers.insert(peer_id, PeerState::Pending { queue });
-                            <span class="macro">debug!</span>(peer = <span class="question-mark">?</span>peer_id, <span class="string">"dial"</span>);
-                            <span class="self">self</span>.dialer.queue_dial(peer_id, GOSSIP_ALPN);
                         }
                     }
                 }
@@ -1588,15 +1625,13 @@
                 }
                 OutEvent::DisconnectPeer(peer_id) =&gt; {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(peer) = <span class="self">self</span>.peers.remove(<span class="kw-2">&amp;</span>peer_id) {
-                        <span class="kw">match </span>peer {
-                            PeerState::Pending { .. } =&gt; {
-                                <span class="self">self</span>.dialer.abort_dial(peer_id);
-                            }
-                            PeerState::Active { conn, send_tx } =&gt; {
-                                conn.close(<span class="number">0u8</span>.into(), <span class="string">b"close from disconnect"</span>);
-                                drop(send_tx);
-                            }
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(conn) = peer.conn_dialed {
+                            conn.close(<span class="number">0u8</span>.into(), <span class="string">b"close from disconnect"</span>);
                         }
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(conn) = peer.conn_accepted {
+                            conn.close(<span class="number">0u8</span>.into(), <span class="string">b"close from disconnect"</span>);
+                        }
+                        drop(peer.state);
                     }
                 }
                 OutEvent::PeerData(node_id, data) =&gt; <span class="kw">match </span>decode_peer_data(<span class="kw-2">&amp;</span>data) {
@@ -1618,16 +1653,23 @@
     }
 }
 
-<span class="attr">#[derive(derive_more::Debug)]
+<span class="attr">#[derive(Debug, Default)]
+</span><span class="kw">struct </span>PeerInfo {
+    state: PeerState,
+    conn_dialed: <span class="prelude-ty">Option</span>&lt;Connection&gt;,
+    conn_accepted: <span class="prelude-ty">Option</span>&lt;Connection&gt;,
+}
+
+<span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>PeerState {
-    Pending {
-        queue: Vec&lt;ProtoMessage&gt;,
-    },
-    Active {
-        <span class="attr">#[debug(<span class="string">"Connection"</span>)]
-        </span>conn: Connection,
-        send_tx: mpsc::Sender&lt;ProtoMessage&gt;,
-    },
+    Pending { queue: Vec&lt;ProtoMessage&gt; },
+    Active { send_tx: mpsc::Sender&lt;ProtoMessage&gt; },
+}
+
+<span class="kw">impl </span>Default <span class="kw">for </span>PeerState {
+    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+        PeerState::Pending { queue: Vec::new() }
+    }
 }
 
 <span class="attr">#[derive(Debug, Default)]
