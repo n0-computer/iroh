@@ -1,6 +1,5 @@
-//! An http specific relay Client and relay Server. Allows for using tls or non tls connection
-//! upgrades.
-//!
+//! HTTP-specific constants for the relay server and client.
+
 pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
 pub(crate) const WEBSOCKET_UPGRADE_PROTOCOL: &str = "websocket";
 #[cfg(feature = "iroh-relay")] // only used in the server for now

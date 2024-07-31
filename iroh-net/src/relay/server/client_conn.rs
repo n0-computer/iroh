@@ -1,3 +1,5 @@
+//! The server-side representation of an ongoing client relaying connection.
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,7 +22,7 @@ use crate::relay::server::streams::RelayIo;
 use crate::relay::server::types::{Packet, ServerMessage};
 use crate::relay::{
     codec::{write_frame, KEEP_ALIVE},
-    metrics::Metrics,
+    server::metrics::Metrics,
 };
 
 /// The [`Server`] side representation of a [`Client`]'s connection.

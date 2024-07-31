@@ -1,3 +1,5 @@
+//! Streams used in the server-side implementation of iroh relays.
+
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -80,7 +82,9 @@ impl Stream for RelayIo {
     }
 }
 
-/// Whether or not the underlying [`tokio::net::TcpStream`] is served over Tls
+/// The main underlying IO stream type used for the relay server.
+///
+/// Allows choosing whether or not the underlying [`tokio::net::TcpStream`] is served over Tls
 #[derive(Debug)]
 pub enum MaybeTlsStream {
     /// A plain non-Tls [`tokio::net::TcpStream`]

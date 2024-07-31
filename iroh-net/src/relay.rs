@@ -14,7 +14,6 @@ pub(crate) mod client;
 pub(crate) mod codec;
 pub mod http;
 mod map;
-mod metrics;
 #[cfg(feature = "iroh-relay")]
 pub mod server;
 
@@ -25,9 +24,4 @@ pub use self::client::{
 };
 pub use self::codec::MAX_PACKET_SIZE;
 pub use self::map::{RelayMap, RelayMode, RelayNode};
-pub use self::metrics::Metrics;
-#[cfg(feature = "iroh-relay")]
-pub use self::server::actor::{ClientConnHandler, ServerActorTask};
-#[cfg(feature = "iroh-relay")]
-pub use self::server::streams::MaybeTlsStream as MaybeTlsStreamServer;
 pub use iroh_base::node_addr::RelayUrl;

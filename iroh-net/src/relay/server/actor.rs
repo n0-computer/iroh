@@ -1,4 +1,7 @@
+//! The main event loop for the relay server.
+//!
 //! based on tailscale/derp/derp_server.go
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -25,9 +28,9 @@ use crate::relay::{
         recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
         SERVER_CHANNEL_SIZE,
     },
-    metrics::Metrics,
     server::client_conn::ClientConnBuilder,
     server::clients::Clients,
+    server::metrics::Metrics,
 };
 use crate::util::AbortingJoinHandle;
 

@@ -1,3 +1,5 @@
+//! Types that are shared between [`super::actor`] and [`super::client_conn`].
+
 use bytes::Bytes;
 
 use crate::key::PublicKey;

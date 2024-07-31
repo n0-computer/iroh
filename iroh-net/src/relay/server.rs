@@ -1,4 +1,4 @@
-//! A full-fledged iroh-relay server.
+//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -31,14 +31,19 @@ use crate::stun;
 use crate::util::AbortingJoinHandle;
 
 // Module defined in this file.
-use metrics::StunMetrics;
+use stun_metrics::StunMetrics;
 
 pub(crate) mod actor;
 pub(crate) mod client_conn;
 mod clients;
 mod http_server;
+mod metrics;
 pub(crate) mod streams;
 pub(crate) mod types;
+
+pub use self::actor::{ClientConnHandler, ServerActorTask};
+pub use self::metrics::Metrics;
+pub use self::streams::MaybeTlsStream as MaybeTlsStreamServer;
 
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
 const NO_CONTENT_RESPONSE_HEADER: &str = "X-Tailscale-Response";
@@ -646,7 +651,7 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
     }
 }
 
-mod metrics {
+mod stun_metrics {
     use iroh_metrics::{
         core::{Counter, Metric},
         struct_iterable::Iterable,

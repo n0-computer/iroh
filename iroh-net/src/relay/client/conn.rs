@@ -1,4 +1,7 @@
+//! Manages client-side connections to the relay server.
+//!
 //! based on tailscale/derp/derp_client.go
+
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
 use std::pin::Pin;
