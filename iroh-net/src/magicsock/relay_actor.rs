@@ -20,7 +20,7 @@ use tracing::{debug, info, info_span, trace, warn, Instrument};
 
 use crate::{
     key::{PublicKey, PUBLIC_KEY_LENGTH},
-    relay::{self, http::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE},
+    relay::{self, client::ReceivedMessage, http::ClientError, RelayUrl, MAX_PACKET_SIZE},
 };
 
 use super::{ActorMessage, MagicSock};
@@ -200,7 +200,7 @@ impl ActiveRelay {
                     None => ReadResult::Break,
                 }
             }
-            Ok((msg, conn_gen)) => {
+            Ok((msg, _conn_gen)) => {
                 // reset
                 self.backoff.reset();
                 let now = Instant::now();
@@ -214,11 +214,7 @@ impl ActiveRelay {
                 }
 
                 match msg {
-                    relay::ReceivedMessage::ServerInfo { .. } => {
-                        info!(%conn_gen, "connected");
-                        ReadResult::Continue
-                    }
-                    relay::ReceivedMessage::ReceivedPacket { source, data } => {
+                    relay::client::ReceivedMessage::ReceivedPacket { source, data } => {
                         trace!(len=%data.len(), "received msg");
                         // If this is a new sender we hadn't seen before, remember it and
                         // register a route for this peer.
@@ -248,7 +244,7 @@ impl ActiveRelay {
 
                         ReadResult::Continue
                     }
-                    relay::ReceivedMessage::Ping(data) => {
+                    relay::client::ReceivedMessage::Ping(data) => {
                         // Best effort reply to the ping.
                         let dc = self.relay_client.clone();
                         tokio::task::spawn(async move {
@@ -258,8 +254,8 @@ impl ActiveRelay {
                         });
                         ReadResult::Continue
                     }
-                    relay::ReceivedMessage::Health { .. } => ReadResult::Continue,
-                    relay::ReceivedMessage::PeerGone(key) => {
+                    relay::client::ReceivedMessage::Health { .. } => ReadResult::Continue,
+                    relay::client::ReceivedMessage::PeerGone(key) => {
                         self.relay_routes.retain(|peer| peer != &key);
                         ReadResult::Continue
                     }

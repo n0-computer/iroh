@@ -439,7 +439,7 @@ impl ClientBuilder {
 }
 
 #[derive(derive_more::Debug, Clone)]
-/// The type of message received by the [`Client`] from the [`super::server::Server`].
+/// The type of message received by the [`Client`] from a relay server.
 pub enum ReceivedMessage {
     /// Represents an incoming packet.
     ReceivedPacket {
@@ -452,18 +452,6 @@ pub enum ReceivedMessage {
     /// Indicates that the client identified by the underlying public key had previously sent you a
     /// packet but has now disconnected from the server.
     PeerGone(PublicKey),
-    /// Sent by the server upon first connect.
-    ServerInfo {
-        /// How many bytes per second the server says it will accept, including all framing bytes.
-        ///
-        /// Zero means unspecified. There might be a limit, but the client need not try to respect it.
-        token_bucket_bytes_per_second: usize,
-        /// How many bytes the server will allow in one burst, temporarily violating
-        /// `token_bucket_bytes_per_second`.
-        ///
-        /// Zero means unspecified. There might be a limit, but the [`Client`] need not try to respect it.
-        token_bucket_bytes_burst: usize,
-    },
     /// Request from a client or server to reply to the
     /// other side with a [`ReceivedMessage::Pong`] with the given payload.
     Ping([u8; 8]),
@@ -471,7 +459,7 @@ pub enum ReceivedMessage {
     /// with the payload sent previously in the ping.
     Pong([u8; 8]),
     /// A one-way empty message from server to client, just to
-    /// keep the connection alive. It's like a [ReceivedMessage::Ping], but doesn't solicit
+    /// keep the connection alive. It's like a [`ReceivedMessage::Ping`], but doesn't solicit
     /// a reply from the client.
     KeepAlive,
     /// A one-way message from server to client, declaring the connection health state.

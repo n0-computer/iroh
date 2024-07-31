@@ -554,11 +554,10 @@ mod tests {
     use super::*;
 
     use crate::relay::{
-        client::{ClientBuilder, ConnReader, ConnWriter},
+        client::{ClientBuilder, ConnReader, ConnWriter, ReceivedMessage},
         codec::{recv_frame, FrameType},
         http::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         types::ClientInfo,
-        ReceivedMessage,
     };
     use tokio_util::codec::{FramedRead, FramedWrite};
     use tracing_subscriber::{prelude::*, EnvFilter};

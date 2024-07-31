@@ -453,7 +453,7 @@ impl ClientConnIo {
 mod tests {
     use crate::key::SecretKey;
     use crate::relay::codec::{recv_frame, DerpCodec, FrameType};
-    use crate::relay::MaybeTlsStreamServer as MaybeTlsStream;
+    use crate::relay::server::MaybeTlsStream;
 
     use super::*;
 
