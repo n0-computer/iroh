@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{hash_map, HashMap};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -43,38 +43,29 @@ impl GossipState {
     }
 
     pub async fn join(&mut self, namespace: NamespaceId, bootstrap: Vec<NodeId>) -> Result<()> {
-        if let Some(state) = self.active.get(&namespace) {
-            if !bootstrap.is_empty() {
-                state.sender.join_peers(bootstrap).await?;
+        match self.active.entry(namespace) {
+            hash_map::Entry::Occupied(entry) => {
+                if !bootstrap.is_empty() {
+                    entry.get().sender.join_peers(bootstrap).await?;
+                }
             }
-        } else {
-            let sub = self.gossip.join_pending(namespace.into(), bootstrap);
-            let (sender, stream) = sub.split();
-            // let to_live_actor = self.to_live_actor.clone();
-            // let sync_handle = self.sync.clone();
-            // let abort_handle = self.active_tasks.spawn(async move {
-            //     if let Err(err) = receive_loop(namespace, stream, to_live_actor, sync_handle).await
-            //     {
-            //         warn!(?err, ?namespace, "gossip subscribe loop failed");
-            //     }
-            //     namespace
-            // });
-            let abort_handle = self.active_tasks.spawn(
-                receive_loop(
-                    namespace,
-                    stream,
-                    self.to_live_actor.clone(),
-                    self.sync.clone(),
-                )
-                .map(move |res| (namespace, res)),
-            );
-            self.active.insert(
-                namespace,
-                ActiveState {
+            hash_map::Entry::Vacant(entry) => {
+                let sub = self.gossip.join_pending(namespace.into(), bootstrap);
+                let (sender, stream) = sub.split();
+                let abort_handle = self.active_tasks.spawn(
+                    receive_loop(
+                        namespace,
+                        stream,
+                        self.to_live_actor.clone(),
+                        self.sync.clone(),
+                    )
+                    .map(move |res| (namespace, res)),
+                );
+                entry.insert(ActiveState {
                     sender,
                     abort_handle,
-                },
-            );
+                });
+            }
         }
         Ok(())
     }
