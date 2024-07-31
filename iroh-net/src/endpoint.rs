@@ -1259,7 +1259,7 @@ mod tests {
                     let incoming = ep.accept().await.unwrap();
                     let conn = incoming.await.unwrap();
                     let mut stream = conn.accept_uni().await.unwrap();
-                    let mut buf = [0u8, 5];
+                    let mut buf = [0u8; 5];
                     stream.read_exact(&mut buf).await.unwrap();
                     info!("Accepted 1 stream, received {buf:?}.  Closing now.");
                     // close the connection
