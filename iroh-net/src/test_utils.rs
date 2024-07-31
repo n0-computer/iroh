@@ -24,7 +24,7 @@ pub struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 /// Runs a relay server with STUN enabled suitable for tests.
 ///
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
-/// When dropped, the returned [`Server`] does will stop running.
+/// When dropped, the returned [`Server`] will stop running.
 ///
 /// [`Server`]: crate::relay::iroh_relay::Server
 pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, crate::relay::iroh_relay::Server)> {

@@ -437,6 +437,9 @@ impl Endpoint {
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
+        let ep_span = info_span!("magic_ep", me = %self.node_id().fmt_short());
+        let span = info_span!(parent: &ep_span, "connect");
+        let _guard = span.enter();
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
             bail!(
@@ -516,7 +519,9 @@ impl Endpoint {
             .endpoint
             .connect_with(client_config, addr, "localhost")?;
 
-        let connection = connect.await.context("failed connecting to provider")?;
+        let connection = connect
+            .await
+            .context("failed connecting to remote endpoint")?;
 
         let rtt_msg = RttMessage::NewConnection {
             connection: connection.weak_handle(),
@@ -1429,6 +1434,7 @@ mod tests {
                             send.write_all(&buf).await.unwrap();
                         }
                         send.finish().unwrap();
+                        send.stopped().await.unwrap();
                         recv.read_to_end(0).await.unwrap();
                         info!(%i, peer = %peer_id.fmt_short(), "finished");
                         println!("[server] round {} done in {:?}", i + 1, now.elapsed());
@@ -1473,6 +1479,7 @@ mod tests {
                     assert_eq!(buf, vec![i; chunk_size]);
                 }
                 send.finish().unwrap();
+                send.stopped().await.unwrap();
                 recv.read_to_end(0).await.unwrap();
                 info!("client finished");
                 ep.close(0u32.into(), &[]).await.unwrap();

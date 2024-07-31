@@ -195,6 +195,7 @@ impl NodeMap {
         let mut inner = self.inner.lock();
         let ep = inner.get_mut(NodeStateKey::QuicMappedAddr(addr))?;
         let public_key = *ep.public_key();
+        trace!(dest = %addr, node_id = %public_key.fmt_short(), "dst mapped to NodeId");
         let (udp_addr, relay_url, msgs) = ep.get_send_addrs();
         Some((public_key, udp_addr, relay_url, msgs))
     }

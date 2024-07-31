@@ -445,7 +445,8 @@ impl MagicSock {
         // instead of the existing .try_send() because then we would have control over this.
         //
         // Right now however we have one single poller behaving the same for each
-        // connection.  It checks all paths and only returns Poll::Ready if all are ready.
+        // connection.  It checks all paths returns Poll::Ready as soon as any path is
+        // ready.
         let ipv4_poller = Arc::new(self.pconn4.clone()).create_io_poller();
         let ipv6_poller = self
             .pconn6
@@ -461,7 +462,7 @@ impl MagicSock {
     }
 
     /// Implementation for AsyncUdpSocket::try_send
-    #[instrument(skip_all, fields(me = %self.me))]
+    #[instrument(skip_all)]
     fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
         inc_by!(MagicsockMetrics, send_data, transmit.contents.len() as _);
 
@@ -674,7 +675,7 @@ impl MagicSock {
     }
 
     /// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
-    #[instrument(skip_all, fields(me = %self.me))]
+    #[instrument(skip_all)]
     fn poll_recv(
         &self,
         cx: &mut Context,
@@ -787,7 +788,7 @@ impl MagicSock {
         Poll::Ready(Ok(msgs))
     }
 
-    #[instrument(skip_all, fields(name = %self.me))]
+    #[instrument(skip_all)]
     fn poll_recv_relay(
         &self,
         cx: &mut Context,
@@ -1710,7 +1711,7 @@ struct IoPoller {
 
 impl quinn::UdpPoller for IoPoller {
     fn poll_writable(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        // This version only returns Ready if any of them are ready.
+        // This version returns Ready as soon as any of them are ready.
         let this = &mut *self;
         match this.ipv4_poller.as_mut().poll_writable(cx) {
             Poll::Ready(_) => return Poll::Ready(Ok(())),
