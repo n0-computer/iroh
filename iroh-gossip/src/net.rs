@@ -2,7 +2,10 @@
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::BytesMut;
-use futures_concurrency::stream::stream_group;
+use futures_concurrency::{
+    future::TryJoin,
+    stream::{stream_group, StreamGroup},
+};
 use futures_lite::{stream::Stream, StreamExt};
 use futures_util::TryFutureExt;
 use iroh_metrics::inc;
@@ -117,7 +120,7 @@ impl Gossip {
             in_event_tx,
             on_direct_addr_rx: on_endpoints_rx,
             timers: Timers::new(),
-            command_rx: futures_concurrency::stream::StreamGroup::new().keyed(),
+            command_rx: StreamGroup::new().keyed(),
             peers: Default::default(),
             topics: Default::default(),
             quit_queue: Default::default(),
@@ -719,31 +722,28 @@ async fn connection_loop(
     let mut send_buf = BytesMut::new();
     let mut recv_buf = BytesMut::new();
 
-    for msg in queue {
-        write_message(&mut send, &mut send_buf, &msg, max_message_size).await?
-    }
+    let send_loop = async {
+        for msg in queue {
+            write_message(&mut send, &mut send_buf, &msg, max_message_size).await?
+        }
+        while let Some(msg) = send_rx.recv().await {
+            write_message(&mut send, &mut send_buf, &msg, max_message_size).await?
+        }
+        Ok::<_, anyhow::Error>(())
+    };
 
-    loop {
-        tokio::select! {
-            biased;
-            // If `send_rx` is closed,
-            // stop selecting it but don't quit.
-            // We are not going to use connection for sending anymore,
-            // but the other side may still want to use it to
-            // send data to us.
-            Some(msg) = send_rx.recv(), if !send_rx.is_closed() => {
-                write_message(&mut send, &mut send_buf, &msg, max_message_size).await?
-            }
-
-            msg = read_message(&mut recv, &mut recv_buf, max_message_size) => {
-                let msg = msg?;
-                match msg {
-                    None => break,
-                    Some(msg) => in_event_tx.send(InEvent::RecvMessage(from, msg)).await?
-                }
+    let recv_loop = async {
+        loop {
+            let msg = read_message(&mut recv, &mut recv_buf, max_message_size).await?;
+            match msg {
+                None => break,
+                Some(msg) => in_event_tx.send(InEvent::RecvMessage(from, msg)).await?,
             }
         }
-    }
+        Ok::<_, anyhow::Error>(())
+    };
+
+    (send_loop, recv_loop).try_join().await?;
     Ok(())
 }
 
