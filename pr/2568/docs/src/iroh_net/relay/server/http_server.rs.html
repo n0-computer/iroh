@@ -907,12 +907,6 @@
 <a href="#907" id="907">907</a>
 <a href="#908" id="908">908</a>
 <a href="#909" id="909">909</a>
-<a href="#910" id="910">910</a>
-<a href="#911" id="911">911</a>
-<a href="#912" id="912">912</a>
-<a href="#913" id="913">913</a>
-<a href="#914" id="914">914</a>
-<a href="#915" id="915">915</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::HashMap;
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::net::SocketAddr;
@@ -1009,7 +1003,6 @@
     /// the server, in particular it allows gracefully shutting down the server.
     </span><span class="kw">pub fn </span>handle(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ServerHandle {
         ServerHandle {
-            addr: <span class="self">self</span>.addr,
             cancel_token: <span class="self">self</span>.cancel_server_loop.clone(),
         }
     }
@@ -1039,7 +1032,6 @@
 /// This does not allow access to the task but can communicate with it.
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>ServerHandle {
-    addr: SocketAddr,
     cancel_token: CancellationToken,
 }
 
@@ -1047,11 +1039,6 @@
     <span class="doccomment">/// Gracefully shut down the server.
     </span><span class="kw">pub fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="self">self</span>.cancel_token.cancel()
-    }
-
-    <span class="doccomment">/// Returns the address the server is bound on.
-    </span><span class="kw">pub fn </span>addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
-        <span class="self">self</span>.addr
     }
 }
 
@@ -1145,6 +1132,7 @@
     </span>}
 
     <span class="doccomment">/// Sets a custom "404" handler.
+    </span><span class="attr">#[allow(unused)]
     </span><span class="kw">pub fn </span>not_found_handler(<span class="kw-2">mut </span><span class="self">self</span>, handler: HyperHandler) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.not_found_fn = <span class="prelude-val">Some</span>(handler);
         <span class="self">self
