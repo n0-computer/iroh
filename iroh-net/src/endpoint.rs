@@ -42,8 +42,8 @@ mod rtt_actor;
 use self::rtt_actor::RttMessage;
 
 pub use quinn::{
-    Connection, ConnectionError, ReadError, RecvStream, RetryError, SendStream, ServerConfig,
-    TransportConfig, VarInt, WriteError,
+    ApplicationClose, Connection, ConnectionClose, ConnectionError, ReadError, RecvStream,
+    RetryError, SendStream, ServerConfig, TransportConfig, VarInt, WriteError,
 };
 
 pub use super::magicsock::{
@@ -1533,6 +1533,7 @@ mod tests {
             info!("receiving world");
             let m = recv.read_to_end(100).await.unwrap();
             assert_eq!(m, b"world");
+            conn.close(1u8.into(), b"done");
         }
 
         async fn accept_world(ep: Endpoint, src: NodeId) {
@@ -1550,7 +1551,12 @@ mod tests {
             info!("sending hello");
             send.write_all(b"world").await.unwrap();
             send.finish().unwrap();
-            send.stopped().await.unwrap();
+            match conn.closed().await {
+                ConnectionError::ApplicationClosed(closed) => {
+                    assert_eq!(closed.error_code, 1u8.into());
+                }
+                _ => panic!("wrong close error"),
+            }
         }
 
         let p1_accept = tokio::spawn(accept_world(ep1.clone(), ep2_nodeid).instrument(info_span!(
