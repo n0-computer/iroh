@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_lite::StreamExt;
+use futures_util::FutureExt;
 use iroh_gossip::net::{Event, Gossip, GossipEvent, GossipReceiver, GossipSender};
 use iroh_net::NodeId;
 use tokio::{
@@ -27,7 +28,9 @@ pub struct GossipState {
     sync: SyncHandle,
     to_live_actor: mpsc::Sender<ToLiveActor>,
     active: HashMap<NamespaceId, ActiveState>,
-    active_tasks: JoinSet<()>,
+    active_tasks: JoinSet<NamespaceId>,
+    joining: HashSet<NamespaceId>,
+    joining_tasks: JoinSet<(NamespaceId, Result<GossipTopic>)>,
 }
 
 impl GossipState {
@@ -38,28 +41,25 @@ impl GossipState {
             to_live_actor,
             active: Default::default(),
             active_tasks: Default::default(),
+            joining: Default::default(),
+            joining_tasks: Default::default(),
         }
     }
 
     pub fn join(&mut self, namespace: NamespaceId, bootstrap: Vec<NodeId>) {
-        let (sender, stream) = self
-            .gossip
-            .join_pending(namespace.into(), bootstrap)
-            .split();
-        let to_live_actor = self.to_live_actor.clone();
-        let sync_handle = self.sync.clone();
-        let abort_handle = self.active_tasks.spawn(async move {
-            if let Err(err) = receive_loop(namespace, stream, to_live_actor, sync_handle).await {
-                warn!(?err, ?namespace, "gossip subscribe loop failed");
-            }
-        });
-        self.active.insert(
-            namespace,
-            ActiveState {
-                sender,
-                abort_handle,
-            },
-        );
+        if self.active.contains_key(&namespace) {
+            return;
+        }
+        let sub = self.gossip.join_pending(namespace.into(), bootstrap);
+        self.on_join(namespace, Ok(sub))
+        // if self.active.contains_key(&namespace) || self.joining.contains(&namespace) {
+        //     return;
+        // }
+        // let gossip = self.gossip.clone();
+        // let fut = async move { gossip.join(namespace.into(), bootstrap).await }
+        //     .map(move |res| (namespace, res));
+        // self.joining.insert(namespace);
+        // self.joining_tasks.spawn(fut);
     }
 
     pub fn quit(&mut self, topic: &NamespaceId) {
@@ -84,6 +84,34 @@ impl GossipState {
         self.gossip.max_message_size()
     }
 
+    fn on_join(&mut self, namespace: NamespaceId, res: Result<GossipTopic>) {
+        match res {
+            Err(err) => {
+                tracing::warn!(namespace=%namespace.fmt_short(), "joining gossip topic failed: {err}");
+            }
+            Ok(sub) => {
+                let (sender, stream) = sub.split();
+                let to_live_actor = self.to_live_actor.clone();
+                let sync_handle = self.sync.clone();
+                let abort_handle = self.active_tasks.spawn(async move {
+                    if let Err(err) =
+                        receive_loop(namespace, stream, to_live_actor, sync_handle).await
+                    {
+                        warn!(?err, ?namespace, "gossip subscribe loop failed");
+                    }
+                    namespace
+                });
+                self.active.insert(
+                    namespace,
+                    ActiveState {
+                        sender,
+                        abort_handle,
+                    },
+                );
+            }
+        }
+    }
+
     /// Progress the internal task queues.
     ///
     /// This future is cancel-safe, so it may be dropped and recreated at any time.
@@ -96,8 +124,14 @@ impl GossipState {
                     match res {
                         Err(err) if err.is_cancelled() => continue,
                         Err(err) => break Err(err.into()),
-                        Ok(()) => continue,
+                        Ok(namespace) => {
+                            self.active.remove(&namespace);
+                        }
                     }
+                }
+                Some(res) = self.joining_tasks.join_next(), if !self.joining_tasks.is_empty() => {
+                    let (namespace, res) = res.context("joining gossip topic paniced")?;
+                    self.on_join(namespace, res);
                 }
                 else => std::future::pending().await
             }
@@ -118,11 +152,10 @@ async fn receive_loop(
             .await?;
     }
     while let Some(event) = recv.try_next().await? {
-        warn!(?event, "event");
         let event = match event {
             Event::Gossip(event) => event,
             Event::Lagged => {
-                warn!("gossip loop lagged - dropping gossip event");
+                debug!("gossip loop lagged - dropping gossip event");
                 continue;
             }
         };
@@ -143,8 +176,12 @@ async fn receive_loop(
                             false => ContentStatus::Missing,
                         };
                         let from = *msg.delivered_from.as_bytes();
-                        sync.insert_remote(namespace, entry, from, content_status)
-                            .await?;
+                        if let Err(err) = sync
+                            .insert_remote(namespace, entry, from, content_status)
+                            .await
+                        {
+                            debug!("ignoring entry received via gossip: {err}");
+                        }
                     }
                     Op::ContentReady(hash) => {
                         to_sync_actor

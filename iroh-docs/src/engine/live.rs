@@ -276,9 +276,9 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                     let (namespace, hash, res) = res.context("pending_downloads closed")?;
                     self.on_download_ready(namespace, hash, res).await;
                 }
-                res = self.gossip.progress() => {
+                res = self.gossip.progress(), if !self.gossip.is_empty() => {
                     if let Err(error) = res {
-                        warn!(?error, "gossip state produced error");
+                        warn!(?error, "gossip state failed");
                     }
                 }
             }
@@ -409,7 +409,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 warn!(%e, "db error reading peers per document")
             }
         }
-        self.join_peers(namespace, peers);
+        self.join_peers(namespace, peers).await?;
         Ok(())
     }
 
@@ -433,7 +433,8 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         Ok(())
     }
 
-    fn join_peers(&mut self, namespace: NamespaceId, peers: Vec<NodeAddr>) {
+    async fn join_peers(&mut self, namespace: NamespaceId, peers: Vec<NodeAddr>) -> Result<()> {
+        tracing::warn!(?namespace, ?peers, "join_peers");
         let mut peer_ids = Vec::new();
 
         // add addresses of peers to our endpoint address book
@@ -456,7 +457,8 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         }
 
         // tell gossip to join
-        self.gossip.join(namespace, peer_ids.clone());
+        tracing::warn!(?namespace, ?peer_ids, "gossip.join");
+        self.gossip.join(namespace, peer_ids.clone()).await?;
 
         if !peer_ids.is_empty() {
             // trigger initial sync with initial peers
@@ -464,6 +466,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 self.sync_with_peer(namespace, peer, SyncReason::DirectJoin);
             }
         }
+        Ok(())
     }
 
     #[instrument("connect", skip_all, fields(peer = %peer.fmt_short(), namespace = %namespace.fmt_short()))]
@@ -692,6 +695,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 // A new entry was inserted locally. Broadcast a gossip message.
                 if self.state.is_syncing(&namespace) {
                     let op = Op::Put(entry.clone());
+                    tracing::info!("BROADCAST {op:?}");
                     let message = postcard::to_stdvec(&op)?.into();
                     self.gossip.broadcast(&namespace, message).await;
                 }

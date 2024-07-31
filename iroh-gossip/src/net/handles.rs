@@ -40,53 +40,17 @@ impl GossipSender {
             .await
             .map_err(|_| anyhow!("Gossip actor dropped"))
     }
+
+    /// Join a set of peers.
+    pub async fn join_peers(&self, peers: Vec<NodeId>) -> anyhow::Result<()> {
+        self.0
+            .send(Command::JoinPeers(peers))
+            .await
+            .map_err(|_| anyhow!("Gossip actor dropped"))
+    }
 }
 
 type EventStream = Pin<Box<dyn Stream<Item = Result<Event>> + Send + 'static>>;
-
-// /// Gossip topic where we are not yet connected to any other peer.
-// #[derive(Debug)]
-// pub struct PendingTopic {
-//     receiver: GossipReceiver,
-//     sender: GossipSender,
-// }
-//
-// impl PendingTopic {
-//     pub(crate) fn new(sender: async_channel::Sender<Command>, receiver: EventStream) -> Self {
-//         Self {
-//             sender: GossipSender::new(sender),
-//             receiver: GossipReceiver::new(Box::pin(receiver)),
-//         }
-//     }
-//
-//     /// Split into sender and receiver parts.
-//     ///
-//     /// You can already queue messages to be sent into the sender, as the channel capacity permits.
-//     /// Messages will only be sent out after we managed to connect to at least one node from the
-//     /// bootstrap nodes.
-//     ///
-//     /// If you want to wait for at least one connection, wait for the first event on the
-//     /// [`GossipReceiver`], which will be a [`GossipEvent::Joined`].
-//     pub fn split(self) -> (GossipSender, GossipReceiver) {
-//         (self.sender, self.receiver)
-//     }
-//
-//     /// Wait for at least one connection to a node to be established.
-//     pub async fn joined(mut self) -> Result<SubscribedTopic> {
-//         self.receiver.joined().await?;
-//         Ok(SubscribedTopic {
-//             sender: self.sender,
-//             receiver: self.receiver,
-//         })
-//     }
-// }
-//
-// impl Stream for PendingTopic {
-//     type Item = Result<Event>;
-//     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-//         Pin::new(&mut self.receiver).poll_next(cx)
-//     }
-// }
 
 /// Subscribed gossip topic.
 ///
@@ -94,12 +58,12 @@ type EventStream = Pin<Box<dyn Stream<Item = Result<Event>> + Send + 'static>>;
 ///
 /// It may be split into sender and receiver parts with [`Self::split`].
 #[derive(Debug)]
-pub struct SubscribedTopic {
+pub struct GossipTopic {
     sender: GossipSender,
     receiver: GossipReceiver,
 }
 
-impl SubscribedTopic {
+impl GossipTopic {
     pub(crate) fn new(sender: async_channel::Sender<Command>, receiver: EventStream) -> Self {
         Self {
             sender: GossipSender::new(sender),
@@ -133,7 +97,7 @@ impl SubscribedTopic {
     }
 }
 
-impl Stream for SubscribedTopic {
+impl Stream for GossipTopic {
     type Item = Result<Event>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.receiver).poll_next(cx)
@@ -200,7 +164,7 @@ impl Stream for GossipReceiver {
 }
 
 /// Update from a subscribed gossip topic.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub enum Event {
     /// A message was received.
     Gossip(GossipEvent),
@@ -259,11 +223,13 @@ pub enum Command {
     Broadcast(#[debug("Bytes({})", _0.len())] Bytes),
     /// Broadcast a message to all direct neighbors
     BroadcastNeighbors(#[debug("Bytes({})", _0.len())] Bytes),
+    /// Connect to a set of peers
+    JoinPeers(Vec<NodeId>),
 }
 
-/// Join a gossip topic
+/// Options for joining a gossip topic.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct SubscribeOptions {
+pub struct JoinOptions {
     /// The initial bootstrap nodes
     pub bootstrap: BTreeSet<NodeId>,
     /// The maximum number of messages that can be buffered in a subscription.

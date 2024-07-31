@@ -19,7 +19,7 @@ use iroh_net::{
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
 use std::{
-    collections::{hash_map, BTreeSet, HashMap, HashSet, VecDeque},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     pin::Pin,
     task::{Context, Poll},
     time::Instant,
@@ -37,8 +37,8 @@ mod handles;
 pub mod util;
 
 pub use self::handles::{
-    Command, CommandStream, Event, GossipEvent, GossipReceiver, GossipSender, Message,
-    SubscribeOptions, SubscribedTopic,
+    Command, CommandStream, Event, GossipEvent, GossipReceiver, GossipSender, GossipTopic,
+    JoinOptions, Message,
 };
 
 /// ALPN protocol name
@@ -158,39 +158,46 @@ impl Gossip {
         Ok(())
     }
 
-    /// Join a gossip topic with the default options.
-    ///
-    /// Messages will be queued until a first connection is available. Once the queue is full,
-    /// calls to [`SubscribedTopic::broadcast`] will block until a connection is available.
-    pub fn join_pending(&self, topic: TopicId, bootstrap: Vec<NodeId>) -> SubscribedTopic {
-        let (command_tx, command_rx) = async_channel::bounded(TOPIC_COMMANDS_DEFAULT_CAP);
-        let opts = SubscribeOptions {
-            bootstrap: bootstrap.into_iter().collect(),
-            subscription_capacity: TOPIC_EVENTS_DEFAULT_CAP,
-        };
-        let command_rx: CommandStream = Box::pin(command_rx);
-        let event_rx = self.join_with_opts(topic, opts, command_rx);
-        SubscribedTopic::new(command_tx, Box::pin(event_rx))
-    }
-
     /// Join a gossip topic with the default options and wait for at least one active connection.
-    pub async fn join(&self, topic: TopicId, bootstrap: Vec<NodeId>) -> Result<SubscribedTopic> {
-        let mut sub = self.join_pending(topic, bootstrap);
+    pub async fn join(&self, topic_id: TopicId, bootstrap: Vec<NodeId>) -> Result<GossipTopic> {
+        let mut sub = self.join_pending(topic_id, bootstrap);
         sub.joined().await?;
         Ok(sub)
     }
 
-    /// Subscribe to a gossip topic with options.
+    /// Join a gossip topic with the default options.
+    ///
+    /// Messages will be queued until a first connection is available. If the internal channel becomes full,
+    /// the oldest messages will be dropped from the channel.
+    ///
+    /// To wait for at least one connection, use [`GossipTopic::join`].
+    pub fn join_pending(&self, topic_id: TopicId, bootstrap: Vec<NodeId>) -> GossipTopic {
+        let opts = JoinOptions {
+            bootstrap: bootstrap.into_iter().collect(),
+            subscription_capacity: TOPIC_EVENTS_DEFAULT_CAP,
+        };
+        self.join_pending_with_opts(topic_id, opts)
+    }
+
+    /// Join a gossip topic with options.
+    pub fn join_pending_with_opts(&self, topic_id: TopicId, opts: JoinOptions) -> GossipTopic {
+        let (command_tx, command_rx) = async_channel::bounded(TOPIC_COMMANDS_DEFAULT_CAP);
+        let command_rx: CommandStream = Box::pin(command_rx);
+        let event_rx = self.join_with_opts_and_update_stream(topic_id, opts, command_rx);
+        GossipTopic::new(command_tx, Box::pin(event_rx))
+    }
+
+    /// Join a gossip topic with options and an externally-created update stream.
     ///
     /// This method differs from [`Self::join_pending`] by letting you pass in a `updates` command stream yourself,
     /// and setting custom [`SubscribeOptions`].
     ///
     /// It returns a stream of events. If you want to wait for the topic to become active, wait for
     /// the [`GossipEvent::Joined`] event.
-    pub fn join_with_opts(
+    pub fn join_with_opts_and_update_stream(
         &self,
-        topic: TopicId,
-        options: SubscribeOptions,
+        topic_id: TopicId,
+        options: JoinOptions,
         updates: CommandStream,
     ) -> impl Stream<Item = Result<Event>> + Send + 'static {
         let (event_tx, event_rx) = async_channel::bounded(options.subscription_capacity);
@@ -207,7 +214,7 @@ impl Gossip {
         let task = tokio::task::spawn(async move {
             to_actor_tx
                 .send(ToActor::Join {
-                    topic,
+                    topic_id,
                     bootstrap: options.bootstrap,
                     channels,
                 })
@@ -254,7 +261,7 @@ enum ToActor {
     /// (happens internally in the actor).
     HandleConnection(PublicKey, ConnOrigin, #[debug("Connection")] Connection),
     Join {
-        topic: TopicId,
+        topic_id: TopicId,
         bootstrap: BTreeSet<NodeId>,
         channels: SubscriberChannels,
     },
@@ -390,27 +397,22 @@ impl Actor {
             warn!("received command for unknown topic");
             return Ok(());
         };
-        let TopicState::Active {
+        let TopicState {
             command_rx_keys,
             event_senders,
             ..
-        } = state
-        else {
-            // TODO: unreachable?
-            warn!("received command for pending topic");
-            return Ok(());
-        };
+        } = state;
         match command {
             Some(command) => {
-                let (message, scope) = match command {
-                    Command::Broadcast(message) => (message, Scope::Swarm),
-                    Command::BroadcastNeighbors(message) => (message, Scope::Neighbors),
+                let command = match command {
+                    Command::Broadcast(message) => ProtoCommand::Broadcast(message, Scope::Swarm),
+                    Command::BroadcastNeighbors(message) => {
+                        ProtoCommand::Broadcast(message, Scope::Neighbors)
+                    }
+                    Command::JoinPeers(peers) => ProtoCommand::Join(peers),
                 };
-                self.handle_in_event(
-                    proto::InEvent::Command(topic, ProtoCommand::Broadcast(message, scope)),
-                    Instant::now(),
-                )
-                .await?;
+                self.handle_in_event(proto::InEvent::Command(topic, command), Instant::now())
+                    .await?;
             }
             None => {
                 command_rx_keys.remove(&key);
@@ -449,7 +451,7 @@ impl Actor {
                 .await
                 {
                     Ok(()) => debug!("connection closed without error"),
-                    Err(err) => debug!("connection closed: {err:?}"),
+                    Err(err) => warn!("connection closed: {err:?}"),
                 }
                 in_event_tx
                     .send(InEvent::PeerDisconnected(peer_id))
@@ -480,57 +482,39 @@ impl Actor {
                     .insert(peer_id, PeerState::Active { conn, send_tx });
             }
             ToActor::Join {
-                topic,
+                topic_id,
                 bootstrap,
                 channels,
             } => {
-                match self.topics.entry(topic) {
-                    hash_map::Entry::Occupied(mut entry) => match entry.get_mut() {
-                        TopicState::Pending {
-                            bootstrap: bootstrap_nodes,
-                            subscribers,
-                        } => {
-                            debug!("subscribe: topic is pending, save for later");
-                            bootstrap_nodes.extend(bootstrap.into_iter());
-                            // TODO: subit new bootstrap nodes to state
-                            subscribers.push(channels);
-                        }
-                        TopicState::Active {
-                            neighbors,
-                            event_senders,
-                            command_rx_keys,
-                        } => {
-                            debug!("subscribe: topic is active, attach");
-                            let neighbors = neighbors.iter().copied().collect();
-                            channels
-                                .event_tx
-                                .try_send(Ok(Event::Gossip(GossipEvent::Joined(neighbors))))
-                                .ok();
-                            event_senders.push(channels.event_tx);
-                            let command_rx = TopicCommandStream::new(topic, channels.command_rx);
-                            let key = self.command_rx.insert(command_rx);
-                            command_rx_keys.insert(key);
-                        }
-                    },
-                    hash_map::Entry::Vacant(entry) => {
-                        debug!("subscribe: topic is unknown, init and join");
-                        let state = TopicState::Pending {
-                            bootstrap: bootstrap.clone(),
-                            subscribers: vec![channels],
-                        };
-                        entry.insert(state);
-                        self.handle_in_event(
-                            InEvent::Command(
-                                topic,
-                                ProtoCommand::Join(bootstrap.into_iter().collect()),
-                            ),
-                            now,
-                        )
-                        .await?;
-                    }
+                let state = self.topics.entry(topic_id).or_default();
+                let TopicState {
+                    neighbors,
+                    event_senders,
+                    command_rx_keys,
+                } = state;
+                if !neighbors.is_empty() {
+                    let neighbors = neighbors.iter().copied().collect();
+                    channels
+                        .event_tx
+                        .try_send(Ok(Event::Gossip(GossipEvent::Joined(neighbors))))
+                        .ok();
                 }
+
+                event_senders.push(channels.event_tx);
+                let command_rx = TopicCommandStream::new(topic_id, channels.command_rx);
+                let key = self.command_rx.insert(command_rx);
+                command_rx_keys.insert(key);
+
+                self.handle_in_event(
+                    InEvent::Command(
+                        topic_id,
+                        ProtoCommand::Join(bootstrap.into_iter().collect()),
+                    ),
+                    now,
+                )
+                .await?;
             }
-        };
+        }
         Ok(())
     }
 
@@ -595,41 +579,25 @@ impl Actor {
                         warn!(?topic_id, "gossip state emitted event for unknown topic");
                         continue;
                     };
-                    match state {
-                        TopicState::Active {
-                            event_senders,
-                            command_rx_keys,
-                            ..
-                        } => {
-                            event_senders.send(&event.into());
-                            if event_senders.is_empty() && command_rx_keys.is_empty() {
-                                self.quit_queue.push_back(topic_id);
-                            }
+                    let TopicState {
+                        neighbors,
+                        event_senders,
+                        command_rx_keys,
+                    } = state;
+                    let event = if let ProtoEvent::NeighborUp(neighbor) = event {
+                        let was_empty = neighbors.is_empty();
+                        neighbors.insert(neighbor);
+                        if was_empty {
+                            GossipEvent::Joined(vec![neighbor])
+                        } else {
+                            GossipEvent::NeighborUp(neighbor)
                         }
-                        TopicState::Pending { subscribers, .. } => {
-                            if let ProtoEvent::NeighborUp(neighbor) = event {
-                                // We are in pending state and received the first
-                                // NeighborUp event: move to active state.
-                                let mut event_senders = EventSenders::default();
-                                let mut command_rx_keys = HashSet::new();
-                                for sub in subscribers.drain(..) {
-                                    event_senders.push(sub.event_tx);
-                                    let command_rx =
-                                        TopicCommandStream::new(topic_id, sub.command_rx);
-                                    let key = self.command_rx.insert(command_rx);
-                                    command_rx_keys.insert(key);
-                                }
-                                event_senders.send(&GossipEvent::Joined(vec![neighbor]));
-                                *state = TopicState::Active {
-                                    neighbors: [neighbor].into_iter().collect(),
-                                    event_senders,
-                                    command_rx_keys,
-                                };
-                            } else {
-                                // TODO: unreachable?:
-                                warn!(?topic_id, "gossip state emitted event for pending topic");
-                            }
-                        }
+                    } else {
+                        event.into()
+                    };
+                    event_senders.send(&event);
+                    if event_senders.is_empty() && command_rx_keys.is_empty() {
+                        self.quit_queue.push_back(topic_id);
                     }
                 }
                 OutEvent::ScheduleTimer(delay, timer) => {
@@ -679,17 +647,11 @@ enum PeerState {
     },
 }
 
-#[derive(Debug)]
-enum TopicState {
-    Pending {
-        bootstrap: BTreeSet<NodeId>,
-        subscribers: Vec<SubscriberChannels>,
-    },
-    Active {
-        neighbors: BTreeSet<NodeId>,
-        event_senders: EventSenders,
-        command_rx_keys: HashSet<stream_group::Key>,
-    },
+#[derive(Debug, Default)]
+struct TopicState {
+    neighbors: BTreeSet<NodeId>,
+    event_senders: EventSenders,
+    command_rx_keys: HashSet<stream_group::Key>,
 }
 
 /// Whether a connection is initiated by us (Dial) or by the remote peer (Accept)
@@ -809,16 +771,16 @@ impl EventSenders {
 
 #[derive(derive_more::Debug)]
 struct TopicCommandStream {
-    topic: TopicId,
+    topic_id: TopicId,
     #[debug("CommandStream")]
     stream: CommandStream,
     closed: bool,
 }
 
 impl TopicCommandStream {
-    fn new(topic: TopicId, stream: CommandStream) -> Self {
+    fn new(topic_id: TopicId, stream: CommandStream) -> Self {
         Self {
-            topic,
+            topic_id,
             stream,
             closed: false,
         }
@@ -832,10 +794,10 @@ impl Stream for TopicCommandStream {
             return Poll::Ready(None);
         }
         match Pin::new(&mut self.stream).poll_next(cx) {
-            Poll::Ready(Some(item)) => Poll::Ready(Some((self.topic, Some(item)))),
+            Poll::Ready(Some(item)) => Poll::Ready(Some((self.topic_id, Some(item)))),
             Poll::Ready(None) => {
                 self.closed = true;
-                Poll::Ready(Some((self.topic, None)))
+                Poll::Ready(Some((self.topic_id, None)))
             }
             Poll::Pending => Poll::Pending,
         }

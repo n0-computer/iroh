@@ -210,9 +210,9 @@ impl<D: BaoStore> Handler<D> {
         match msg {
             Subscribe(msg) => {
                 chan.bidi_streaming(msg, self, |handler, req, updates| {
-                    let stream = handler.inner.gossip.join_with_opts(
+                    let stream = handler.inner.gossip.join_with_opts_and_update_stream(
                         req.topic,
-                        iroh_gossip::net::SubscribeOptions {
+                        iroh_gossip::net::JoinOptions {
                             bootstrap: req.bootstrap,
                             subscription_capacity: req.subscription_capacity,
                         },

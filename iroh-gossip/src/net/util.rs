@@ -2,14 +2,13 @@
 
 use std::{io, pin::Pin, time::Instant};
 
+use crate::proto::util::TimerMap;
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     time::{sleep_until, Sleep},
 };
-
-use crate::proto::util::TimerMap;
 
 use super::ProtoMessage;
 
@@ -25,8 +24,10 @@ pub async fn write_message<W: AsyncWrite + Unpin>(
     buffer.clear();
     buffer.resize(len, 0u8);
     let slice = postcard::to_slice(&frame, buffer)?;
-    writer.write_u32(len as u32).await?;
+    tracing::warn!("WRITE {len} {}", slice.len());
+    writer.write_u32(slice.len() as u32).await?;
     writer.write_all(slice).await?;
+    tracing::warn!("WRITE {len} DONE");
     Ok(())
 }
 
@@ -61,10 +62,19 @@ pub async fn read_lp(
         Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
         Err(err) => return Err(err.into()),
     };
+    tracing::warn!("READ {size}");
+    // let size = usize::try_from(size).context("frame larger than usize")?;
+    // if size > max_message_size {
+    //     bail!("Incoming message with {size}b exceeds the maximum message size of {max_message_size} bytes");
+    // }
+    // let mut buf = vec![0u8; size];
+    // reader.read_exact(&mut buf).await?;
+    // Ok(Some(buf.into()))
+
     let mut reader = reader.take(size as u64);
     let size = usize::try_from(size).context("frame larger than usize")?;
     if size > max_message_size {
-        bail!("Incoming message exceeds the maximum message size of {max_message_size} bytes");
+        bail!("Incoming message with {size}b exceeds the maximum message size of {max_message_size} bytes");
     }
     buffer.reserve(size);
     loop {
@@ -73,6 +83,7 @@ pub async fn read_lp(
             break;
         }
     }
+    tracing::warn!("READ {size} DONE: {}", buffer.len());
     Ok(Some(buffer.split_to(size).freeze()))
 }
 

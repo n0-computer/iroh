@@ -3,7 +3,7 @@ use futures_lite::{Stream, StreamExt};
 use futures_util::SinkExt;
 use iroh::client::Iroh;
 use iroh_gossip::{
-    dispatcher::{Command, Event, GossipEvent},
+    net::{Command, Event, GossipEvent},
     proto::TopicId,
 };
 use iroh_net::{key::SecretKey, NodeAddr};
@@ -68,7 +68,13 @@ async fn gossip_smoke() -> TestResult {
     node2.add_node_addr(addr1.clone()).await?;
     let topic = TopicId::from([0u8; 32]);
     let (mut sink1, _stream1) = gossip1.subscribe(topic, [addr2.node_id]).await?;
-    let (_sink2, stream2) = gossip2.subscribe(topic, [addr1.node_id]).await?;
+    let (_sink2, mut stream2) = gossip2.subscribe(topic, [addr1.node_id]).await?;
+
+    assert_eq!(
+        stream2.next().await.unwrap().unwrap(),
+        Event::Gossip(GossipEvent::Joined(vec![addr1.node_id]))
+    );
+
     sink1.send(Command::Broadcast("hello".into())).await?;
     let msgs = await_messages(stream2, 1).await?;
     assert_eq!(msgs, vec![Bytes::from("hello")]);
@@ -76,7 +82,6 @@ async fn gossip_smoke() -> TestResult {
 }
 
 #[tokio::test]
-#[ignore = "flaky"]
 async fn gossip_drop_sink() -> TestResult {
     let _ = tracing_subscriber::fmt::try_init();
     let (addr1, node1) = spawn_node();
@@ -88,8 +93,13 @@ async fn gossip_drop_sink() -> TestResult {
 
     let topic = TopicId::from([0u8; 32]);
 
-    let (mut sink1, stream1) = gossip1.subscribe(topic, [addr2.node_id]).await?;
+    let (mut sink1, mut stream1) = gossip1.subscribe(topic, [addr2.node_id]).await?;
     let (sink2, stream2) = gossip2.subscribe(topic, [addr1.node_id]).await?;
+
+    assert_eq!(
+        stream1.next().await.unwrap().unwrap(),
+        Event::Gossip(GossipEvent::Joined(vec![addr2.node_id]))
+    );
 
     drop(stream1);
     drop(sink2);
