@@ -23,7 +23,6 @@ use tracing::{error, error_span, Instrument};
 use crate::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
 use crate::{Author, AuthorId};
 
-use self::gossip::GossipActor;
 use self::live::{LiveActor, ToLiveActor};
 
 pub use self::live::SyncEvent;
@@ -69,7 +68,6 @@ impl Engine {
         default_author_storage: DefaultAuthorStorage,
     ) -> anyhow::Result<Self> {
         let (live_actor_tx, to_live_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
-        let (to_gossip_actor, to_gossip_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
         let me = endpoint.node_id().fmt_short();
 
         let content_status_cb = {
@@ -86,17 +84,10 @@ impl Engine {
             downloader,
             to_live_actor_recv,
             live_actor_tx.clone(),
-            to_gossip_actor,
-        );
-        let gossip_actor = GossipActor::new(
-            to_gossip_actor_recv,
-            sync.clone(),
-            gossip,
-            live_actor_tx.clone(),
         );
         let actor_handle = tokio::task::spawn(
             async move {
-                if let Err(err) = actor.run(gossip_actor).await {
+                if let Err(err) = actor.run().await {
                     error!("sync actor failed: {err:?}");
                 }
             }

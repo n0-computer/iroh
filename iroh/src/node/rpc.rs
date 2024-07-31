@@ -210,14 +210,15 @@ impl<D: BaoStore> Handler<D> {
         match msg {
             Subscribe(msg) => {
                 chan.bidi_streaming(msg, self, |handler, req, updates| {
-                    handler.inner.gossip_dispatcher.subscribe_with_opts(
+                    let stream = handler.inner.gossip.join_with_opts(
                         req.topic,
-                        iroh_gossip::dispatcher::SubscribeOptions {
+                        iroh_gossip::net::SubscribeOptions {
                             bootstrap: req.bootstrap,
                             subscription_capacity: req.subscription_capacity,
                         },
-                        Box::new(updates),
-                    )
+                        Box::pin(updates),
+                    );
+                    futures_util::TryStreamExt::map_err(stream, RpcError::from)
                 })
                 .await
             }

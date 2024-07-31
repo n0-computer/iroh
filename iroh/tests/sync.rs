@@ -1329,6 +1329,7 @@ async fn assert_next_unordered_with_optionals<T: std::fmt::Debug + Clone>(
             {
                 bail!("Event didn't match any matcher: {event:?}");
             }
+            debug!(remaining_min = required_matchers.len(), remaining_max = max - len, "event {event:?}");
             if required_matchers.is_empty() || len == max {
                 break;
             }
