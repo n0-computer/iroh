@@ -1456,8 +1456,8 @@
 
         <span class="comment">// Extract the queue of pending messages.
         </span><span class="kw">let </span>queue = <span class="kw">match </span><span class="kw-2">&amp;mut </span>peer_info.state {
-            PeerState::Pending { queue } =&gt; std::mem::replace(queue, Vec::new()),
-            PeerState::Active { .. } =&gt; <span class="macro">vec!</span>[],
+            PeerState::Pending { queue } =&gt; std::mem::take(queue),
+            PeerState::Active { .. } =&gt; Default::default(),
         };
 
         <span class="kw">let </span>(send_tx, send_rx) = mpsc::channel(SEND_QUEUE_CAP);
