@@ -20,7 +20,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::dns::DnsResolver;
-use crate::net::ip::to_canonical;
 use crate::net::{IpFamily, UdpSocket};
 use crate::relay::RelayUrl;
 use crate::util::CancelOnDrop;
@@ -764,7 +763,7 @@ async fn recv_stun_once(sock: &UdpSocket, buf: &mut [u8], actor_addr: &Addr) -> 
         .await
         .context("Error reading from stun socket")?;
     let payload = &buf[..count];
-    from_addr.set_ip(to_canonical(from_addr.ip()));
+    from_addr.set_ip(from_addr.ip().to_canonical());
     let msg = Message::StunPacket {
         payload: Bytes::from(payload.to_vec()),
         from_addr,
