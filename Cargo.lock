@@ -393,8 +393,9 @@ dependencies = [
 
 [[package]]
 name = "axum-server"
-version = "0.6.0"
-source = "git+https://github.com/n0-computer/axum-server?branch=rustls-0.23#920685aa6699e0f6cf1a0525cb0f1c548085618d"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56bac90848f6a9393ac03c63c640925c4b7c8ca21654de40d53f55964667c7d8"
 dependencies = [
  "arc-swap",
  "bytes",
@@ -407,6 +408,7 @@ dependencies = [
  "pin-project-lite",
  "rustls 0.23.10",
  "rustls-pemfile 2.1.2",
+ "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.26.0",
  "tower",
@@ -5948,7 +5950,7 @@ dependencies = [
 [[package]]
 name = "tokio-rustls-acme"
 version = "0.3.0"
-source = "git+https://github.com/n0-computer/tokio-rustls-acme?branch=rustls-23#3107e1755275677f0549d3a1f798c0d75794bbbe"
+source = "git+https://github.com/n0-computer/tokio-rustls-acme?branch=rustls-23#996ae78b70b1d2cc338cfc2bf36a37caefc8bf2c"
 dependencies = [
  "async-trait",
  "axum-server",

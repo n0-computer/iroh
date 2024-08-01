@@ -11,7 +11,6 @@ use axum_server::{
     tls_rustls::{RustlsAcceptor, RustlsConfig},
 };
 use futures_lite::{future::Boxed as BoxFuture, FutureExt};
-use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls_acme::{axum::AxumAcceptor, caches::DirCache, AcmeConfig};
@@ -76,8 +75,7 @@ impl<I: AsyncRead + AsyncWrite + Unpin + Send + 'static, S: Send + 'static> Acce
 impl TlsAcceptor {
     async fn self_signed(domains: Vec<String>) -> Result<Self> {
         let tls_cert = rcgen::generate_simple_self_signed(domains)?;
-        let key: PrivateKeyDer =
-            PrivatePkcs8KeyDer::from(tls_cert.serialize_private_key_der()).into();
+        let key = tls_cert.serialize_private_key_der();
         let config = RustlsConfig::from_der(vec![tls_cert.serialize_der()?], key).await?;
         let acceptor = RustlsAcceptor::new(config);
         Ok(Self::Manual(acceptor))
