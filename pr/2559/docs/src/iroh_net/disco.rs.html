@@ -533,7 +533,7 @@
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>url::Url;
 
-<span class="kw">use crate</span>::{key, net::ip::to_canonical, relay::RelayUrl};
+<span class="kw">use crate</span>::{key, relay::RelayUrl};
 
 <span class="kw">use super</span>::{key::PublicKey, stun};
 
@@ -775,7 +775,7 @@
     <span class="kw">let </span>raw_src_ip: [u8; <span class="number">16</span>] = p[..<span class="number">16</span>].try_into().expect(<span class="string">"array long enough"</span>);
     <span class="kw">let </span>raw_port: [u8; <span class="number">2</span>] = p[<span class="number">16</span>..].try_into().expect(<span class="string">"array long enough"</span>);
 
-    <span class="kw">let </span>src_ip = to_canonical(IpAddr::from(raw_src_ip));
+    <span class="kw">let </span>src_ip = IpAddr::from(raw_src_ip).to_canonical();
     <span class="kw">let </span>src_port = u16::from_le_bytes(raw_port);
 
     SocketAddr::new(src_ip, src_port)

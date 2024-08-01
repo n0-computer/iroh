@@ -441,16 +441,13 @@
 <a href="#441" id="441">441</a>
 <a href="#442" id="442">442</a>
 <a href="#443" id="443">443</a>
-<a href="#444" id="444">444</a>
-<a href="#445" id="445">445</a>
-<a href="#446" id="446">446</a>
-<a href="#447" id="447">447</a>
-<a href="#448" id="448">448</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
+</span><span class="kw">use </span>std::net::Ipv4Addr;
 
-</span><span class="kw">use </span>anyhow::Result;
+<span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>tokio::sync::oneshot;
 
+<span class="kw">use </span><span class="kw">crate</span>::relay::server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig};
 <span class="kw">use crate</span>::{
     key::SecretKey,
     relay::{RelayMap, RelayNode, RelayUrl},
@@ -473,12 +470,7 @@
 ///
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
-///
-/// [`Server`]: crate::relay::iroh_relay::Server
-</span><span class="kw">pub async fn </span>run_relay_server() -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, <span class="kw">crate</span>::relay::iroh_relay::Server)&gt; {
-    <span class="kw">use </span><span class="kw">crate</span>::relay::iroh_relay::{CertConfig, RelayConfig, ServerConfig, StunConfig, TlsConfig};
-    <span class="kw">use </span>std::net::Ipv4Addr;
-
+</span><span class="kw">pub async fn </span>run_relay_server() -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
     <span class="kw">let </span>secret_key = SecretKey::generate();
     <span class="kw">let </span>cert = rcgen::generate_simple_self_signed(<span class="macro">vec!</span>[<span class="string">"localhost"</span>.to_string()]).unwrap();
     <span class="kw">let </span>rustls_cert = rustls::Certificate(cert.serialize_der().unwrap());
@@ -503,9 +495,7 @@
         <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
         </span>metrics_addr: <span class="prelude-val">None</span>,
     };
-    <span class="kw">let </span>server = <span class="kw">crate</span>::relay::iroh_relay::Server::spawn(config)
-        .<span class="kw">await
-        </span>.unwrap();
+    <span class="kw">let </span>server = Server::spawn(config).<span class="kw">await</span>.unwrap();
     <span class="kw">let </span>url: RelayUrl = <span class="macro">format!</span>(<span class="string">"https://localhost:{}"</span>, server.https_addr().unwrap().port())
         .parse()
         .unwrap();
