@@ -21,11 +21,11 @@ pub type InterestMap = HashMap<ReadAuthorisation, HashSet<AreaOfInterest>>;
 #[derive(Debug, Clone)]
 pub struct DelegateTo {
     pub user: UserId,
-    pub restrict_area: Option<Area>,
+    pub restrict_area: RestrictArea,
 }
 
 impl DelegateTo {
-    pub fn new(user: UserId, restrict_area: Option<Area>) -> Self {
+    pub fn new(user: UserId, restrict_area: RestrictArea) -> Self {
         Self {
             user,
             restrict_area,
@@ -33,10 +33,29 @@ impl DelegateTo {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum RestrictArea {
+    None,
+    Restrict(Area)
+}
+
+impl RestrictArea {
+    pub fn with_default(self, default: Area) -> Area {
+        match self {
+            RestrictArea::None => default.clone(),
+            RestrictArea::Restrict(area) => area
+        }
+    }
+}
+
+/// Selector for a capability.
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct CapSelector {
+    /// The namespace to which the capability must grant access.
     pub namespace_id: NamespaceId,
+    /// Select the user who may use the capability.
     pub receiver: ReceiverSelector,
+    /// Select the area to which the capability grants access.
     pub granted_area: AreaSelector,
 }
 
@@ -47,12 +66,14 @@ impl From<NamespaceId> for CapSelector {
 }
 
 impl CapSelector {
+    /// Checks if the provided capability is matched by this [`CapSelector`].
     pub fn is_covered_by(&self, cap: &McCapability) -> bool {
         self.namespace_id == cap.granted_namespace().id()
             && self.receiver.includes(&cap.receiver().id())
             && self.granted_area.is_covered_by(&cap.granted_area())
     }
 
+    /// Creates a new [`CapSelector`].
     pub fn new(
         namespace_id: NamespaceId,
         receiver: ReceiverSelector,
@@ -65,6 +86,8 @@ impl CapSelector {
         }
     }
 
+    /// Creates a [`CapSelector`] which selects the widest capability for the provided namespace
+    /// and user.
     pub fn with_user(namespace_id: NamespaceId, user_id: UserId) -> Self {
         Self::new(
             namespace_id,
@@ -73,48 +96,17 @@ impl CapSelector {
         )
     }
 
-    pub fn widest(namespace_id: NamespaceId) -> Self {
-        Self::new(namespace_id, ReceiverSelector::Any, AreaSelector::Widest)
+    /// Creates a [`CapSelector`] which selects the widest capability for the provided namespace.
+    ///
+    /// Will use any user available in our secret store and select the capability which grants the
+    /// widest area.
+    // TODO: Document exact selection process if there are capabilities with distinct areas.
+    pub fn widest(namespace: NamespaceId) -> Self {
+        Self::new(namespace, ReceiverSelector::Any, AreaSelector::Widest)
     }
-}
 
-#[derive(
-    Debug, Default, Clone, Copy, Eq, PartialEq, derive_more::From, Serialize, Deserialize, Hash,
-)]
-pub enum ReceiverSelector {
-    #[default]
-    Any,
-    Exact(UserId),
-}
-
-impl ReceiverSelector {
-    fn includes(&self, user: &UserId) -> bool {
-        match self {
-            Self::Any => true,
-            Self::Exact(u) => u == user,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, Hash, Eq, PartialEq)]
-pub enum AreaSelector {
-    #[default]
-    Widest,
-    ContainsArea(Area),
-    ContainsPoint(Point),
-}
-
-impl AreaSelector {
-    pub fn is_covered_by(&self, other: &Area) -> bool {
-        match self {
-            AreaSelector::Widest => true,
-            AreaSelector::ContainsArea(area) => other.includes_area(area),
-            AreaSelector::ContainsPoint(point) => other.includes_point(point),
-        }
-    }
-}
-
-impl CapSelector {
+    /// Select a capability which authorises writing the provided `entry` on behalf of the provided
+    /// `user_id`.
     pub fn for_entry(entry: &Entry, user_id: ReceiverSelector) -> Self {
         let granted_area = AreaSelector::ContainsPoint(Point::from_entry(entry));
         Self {
@@ -125,9 +117,56 @@ impl CapSelector {
     }
 }
 
+/// Select the receiver for a capability.
+#[derive(
+    Debug, Default, Clone, Copy, Eq, PartialEq, derive_more::From, Serialize, Deserialize, Hash,
+)]
+pub enum ReceiverSelector {
+    /// The receiver may be any user for which we have a secret key stored.
+    #[default]
+    Any,
+    /// The receiver must be the provided user.
+    Exact(UserId),
+}
+
+impl ReceiverSelector {
+    pub fn includes(&self, user: &UserId) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Exact(u) => u == user,
+        }
+    }
+}
+
+/// Selector for the area to which a capability must grant access.
+#[derive(Debug, Clone, Default, Hash, Eq, PartialEq)]
+pub enum AreaSelector {
+    /// Use the capability which covers the biggest area.
+    #[default]
+    Widest,
+    /// Use any capability that covers the provided area.
+    ContainsArea(Area),
+    /// Use any capability that covers the provided point.
+    ContainsPoint(Point),
+}
+
+impl AreaSelector {
+    /// Checks whether the provided [`Area`] is matched by this [`AreaSelector`].
+    pub fn is_covered_by(&self, other: &Area) -> bool {
+        match self {
+            AreaSelector::Widest => true,
+            AreaSelector::ContainsArea(area) => other.includes_area(area),
+            AreaSelector::ContainsPoint(point) => other.includes_point(point),
+        }
+    }
+}
+
+/// A serializable capability.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum CapabilityPack {
+    /// A read authorisation.
     Read(ReadAuthorisation),
+    /// A write authorisation.
     Write(WriteCapability),
 }
 
@@ -153,9 +192,6 @@ impl CapabilityPack {
         Ok(())
     }
 }
-
-#[derive(Debug, Eq, PartialEq, Clone, Copy, Hash)]
-pub struct CapabilityHash(iroh_base::hash::Hash);
 
 #[derive(Debug, Clone)]
 pub struct Auth<S: Storage> {
@@ -284,10 +320,10 @@ impl<S: Storage> Auth<S> {
                     .secrets
                     .get_namespace(&namespace_id)
                     .ok_or(AuthError::MissingNamespaceSecret(namespace_id))?;
-                McCapability::new_owned(&namespace_secret, user_key, AccessMode::Read)
+                McCapability::new_owned(&namespace_secret, user_key, AccessMode::ReadOnly)
             }
             NamespaceKind::Communal => {
-                McCapability::new_communal(namespace_key, user_key, AccessMode::Read)
+                McCapability::new_communal(namespace_key, user_key, AccessMode::ReadOnly)
             }
         };
         // TODO: Subspace capability.
@@ -307,10 +343,10 @@ impl<S: Storage> Auth<S> {
                     .secrets
                     .get_namespace(&namespace_id)
                     .ok_or(AuthError::MissingNamespaceSecret(namespace_id))?;
-                McCapability::new_owned(&namespace_secret, user_key, AccessMode::Write)
+                McCapability::new_owned(&namespace_secret, user_key, AccessMode::ReadWrite)
             }
             NamespaceKind::Communal => {
-                McCapability::new_communal(namespace_key, user_key, AccessMode::Write)
+                McCapability::new_communal(namespace_key, user_key, AccessMode::ReadWrite)
             }
         };
         let pack = CapabilityPack::Write(cap);
@@ -332,7 +368,7 @@ impl<S: Storage> Auth<S> {
         let restrict_area = to.restrict_area;
         let read_cap = self.delegate_read_cap(&from, user_key, restrict_area.clone())?;
         out.push(read_cap);
-        if access_mode == AccessMode::Write {
+        if access_mode == AccessMode::ReadWrite {
             let write_cap = self.delegate_write_cap(&from, user_key, restrict_area)?;
             out.push(write_cap);
         }
@@ -346,7 +382,7 @@ impl<S: Storage> Auth<S> {
         &self,
         from: &CapSelector,
         to: UserPublicKey,
-        restrict_area: Option<Area>,
+        restrict_area: RestrictArea,
     ) -> Result<CapabilityPack, AuthError> {
         let auth = self.get_read_cap(from)?.ok_or(AuthError::NoCapability)?;
         let read_cap = auth.read_cap();
@@ -356,7 +392,7 @@ impl<S: Storage> Auth<S> {
             .secrets
             .get_user(&user_id)
             .ok_or(AuthError::MissingUserSecret(user_id))?;
-        let area = restrict_area.unwrap_or(read_cap.granted_area());
+        let area = restrict_area.with_default(read_cap.granted_area());
         let new_read_cap = read_cap.delegate(&user_secret, to, area)?;
         // TODO: Subspace capability
         let new_subspace_cap = None;
@@ -368,14 +404,14 @@ impl<S: Storage> Auth<S> {
         &self,
         from: &CapSelector,
         to: UserPublicKey,
-        restrict_area: Option<Area>,
+        restrict_area: RestrictArea,
     ) -> Result<CapabilityPack, AuthError> {
         let cap = self.get_write_cap(from)?.ok_or(AuthError::NoCapability)?;
         let user_secret = self
             .secrets
             .get_user(&cap.receiver().id())
             .ok_or(AuthError::MissingUserSecret(cap.receiver().id()))?;
-        let area = restrict_area.unwrap_or(cap.granted_area());
+        let area = restrict_area.with_default(cap.granted_area());
         let new_cap = cap.delegate(&user_secret, to, area)?;
         Ok(CapabilityPack::Write(new_cap))
     }

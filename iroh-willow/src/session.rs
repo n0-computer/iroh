@@ -75,7 +75,7 @@ pub enum Interests {
 }
 
 impl Interests {
-    pub fn select() -> SelectBuilder {
+    pub fn builder() -> SelectBuilder {
         SelectBuilder::default()
     }
 }
@@ -84,13 +84,13 @@ impl Interests {
 pub struct SelectBuilder(HashMap<CapSelector, AreaOfInterestSelector>);
 
 impl SelectBuilder {
-    pub fn add_full(mut self, cap: impl Into<CapSelector>) -> Self {
+    pub fn add_full_cap(mut self, cap: impl Into<CapSelector>) -> Self {
         let cap = cap.into();
         self.0.insert(cap, AreaOfInterestSelector::Widest);
         self
     }
 
-    pub fn area(
+    pub fn add_area(
         mut self,
         cap: impl Into<CapSelector>,
         aois: impl IntoIterator<Item = impl Into<AreaOfInterest>>,

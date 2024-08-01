@@ -27,7 +27,7 @@ pub fn is_authorised_write(entry: &Entry, token: &MeadowcapAuthorisationToken) -
     let (capability, signature) = token.as_parts();
 
     capability.is_valid()
-        && capability.access_mode() == AccessMode::Write
+        && capability.access_mode() == AccessMode::ReadWrite
         && capability.granted_area().includes_entry(entry)
         && capability
             .receiver()
@@ -52,7 +52,7 @@ pub fn attach_authorisation(
     capability: McCapability,
     secret_key: &UserSecretKey,
 ) -> Result<AuthorisedEntry, InvalidParams> {
-    if capability.access_mode() != AccessMode::Write
+    if capability.access_mode() != AccessMode::ReadWrite
         || capability.granted_namespace().id() != entry.namespace_id
         || !capability.granted_area().includes_entry(&entry)
         || capability.receiver() != &secret_key.public_key()
@@ -276,8 +276,8 @@ impl Encoder for McSubspaceCapability {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum AccessMode {
-    Read,
-    Write,
+    ReadOnly,
+    ReadWrite,
 }
 
 /// A capability that authorizes reads or writes in communal namespaces.
@@ -398,8 +398,8 @@ impl CommunalCapability {
             1 + NamespacePublicKey::LENGTH + area_in_area.encoded_len() + UserPublicKey::LENGTH;
         let mut out = std::io::Cursor::new(vec![0u8; len]);
         let init = match self.access_mode {
-            AccessMode::Read => 0x00,
-            AccessMode::Write => 0x01,
+            AccessMode::ReadOnly => 0x00,
+            AccessMode::ReadWrite => 0x01,
         };
         out.write_all(&[init])?;
         out.write_all(&self.namespace_key.to_bytes())?;
@@ -507,8 +507,8 @@ impl OwnedCapability {
         // or the byte 0x03 (if access_mode is write),
         // followed by the user_key (encoded via encode_user_pk).
         signable[0] = match access_mode {
-            AccessMode::Read => 0x02,
-            AccessMode::Write => 0x03,
+            AccessMode::ReadOnly => 0x02,
+            AccessMode::ReadWrite => 0x03,
         };
         signable[1..].copy_from_slice(user_key.as_bytes());
         signable
@@ -714,7 +714,7 @@ mod tests {
         let betty_secret = UserSecretKey::generate(&mut rng);
         let alfie_public = alfie_secret.public_key();
         let betty_public = betty_secret.public_key();
-        let cap = McCapability::new_owned(&namespace_secret, alfie_public, AccessMode::Write);
+        let cap = McCapability::new_owned(&namespace_secret, alfie_public, AccessMode::ReadWrite);
         cap.validate().expect("cap to be valid");
         let cap_betty = cap
             .delegate(&alfie_secret, betty_public, Area::full())

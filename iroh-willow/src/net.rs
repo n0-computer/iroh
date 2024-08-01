@@ -330,7 +330,7 @@ mod tests {
     use tracing::info;
 
     use crate::{
-        auth::{CapSelector, DelegateTo},
+        auth::{CapSelector, DelegateTo, RestrictArea},
         engine::ActorHandle,
         form::{AuthForm, EntryForm, PayloadForm, SubspaceForm, TimestampForm},
         net::WillowConn,
@@ -390,8 +390,8 @@ mod tests {
         let cap_for_betty = handle_alfie
             .delegate_caps(
                 CapSelector::widest(namespace_id),
-                AccessMode::Write,
-                DelegateTo::new(user_betty, None),
+                AccessMode::ReadWrite,
+                DelegateTo::new(user_betty, RestrictArea::None),
             )
             .await?;
 
@@ -507,8 +507,8 @@ mod tests {
         let cap_for_betty = handle_alfie
             .delegate_caps(
                 CapSelector::widest(namespace_id),
-                AccessMode::Write,
-                DelegateTo::new(user_betty, None),
+                AccessMode::ReadWrite,
+                DelegateTo::new(user_betty, RestrictArea::None),
             )
             .await?;
 
