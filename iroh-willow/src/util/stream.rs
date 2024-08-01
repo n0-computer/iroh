@@ -14,7 +14,6 @@ use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 #[derive(Debug)]
 pub struct Cancelable<S> {
     stream: S,
-    // TODO: Don't allocate here.
     cancelled: Pin<Box<WaitForCancellationFutureOwned>>,
     is_cancelled: bool,
 }

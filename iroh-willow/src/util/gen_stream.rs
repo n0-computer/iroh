@@ -4,31 +4,36 @@ use std::{
     task::{Context, Poll},
 };
 
+use futures_lite::Stream;
 use genawaiter::{
     rc::{Co, Gen},
     GeneratorState,
 };
 
+/// Wraps a [`Gen`] into a [`Stream`].
+///
+/// The stream yields the items yielded by the generator.
+/// The generator's final output can be retrieved via [`Self::final_output`].
 #[derive(derive_more::Debug)]
-pub struct GenStream<Y, E, Fut, O = ()>
+pub struct GenStream<Yield, Err, Fut, FinalOutput = ()>
 where
-    Fut: Future<Output = Result<O, E>>,
+    Fut: Future<Output = Result<FinalOutput, Err>>,
 {
     #[debug("Gen")]
-    gen: Gen<Y, (), Fut>,
+    gen: Gen<Yield, (), Fut>,
     is_complete: bool,
-    final_output: Option<O>,
+    final_output: Option<FinalOutput>,
 }
 
-impl<Y, E, Fut, O> GenStream<Y, E, Fut, O>
+impl<Yield, Err, Fut, FinalOutput> GenStream<Yield, Err, Fut, FinalOutput>
 where
-    Fut: Future<Output = Result<O, E>>,
+    Fut: Future<Output = Result<FinalOutput, Err>>,
 {
-    pub fn new(producer: impl FnOnce(Co<Y, ()>) -> Fut) -> Self {
+    pub fn new(producer: impl FnOnce(Co<Yield, ()>) -> Fut) -> Self {
         Self::from_gen(Gen::new(producer))
     }
 
-    pub fn from_gen(gen: Gen<Y, (), Fut>) -> Self {
+    pub fn from_gen(gen: Gen<Yield, (), Fut>) -> Self {
         Self {
             gen,
             is_complete: false,
@@ -36,17 +41,17 @@ where
         }
     }
 
-    pub fn final_output(self) -> Option<O> {
+    pub fn final_output(self) -> Option<FinalOutput> {
         self.final_output
     }
 }
 
-impl<Y, E, Fut, O> futures_lite::Stream for GenStream<Y, E, Fut, O>
+impl<Yield, Err, Fut, FinalOutput> Stream for GenStream<Yield, Err, Fut, FinalOutput>
 where
-    Fut: Future<Output = Result<O, E>>,
-    O: Unpin,
+    Fut: Future<Output = Result<FinalOutput, Err>>,
+    FinalOutput: Unpin,
 {
-    type Item = Result<Y, E>;
+    type Item = Result<Yield, Err>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.is_complete {
@@ -56,7 +61,7 @@ where
             let mut fut = self.gen.async_resume();
             let out = std::task::ready!(Pin::new(&mut fut).poll(cx));
             match out {
-                GeneratorState::Yielded(output) => (Some(Ok(output)), Option::None),
+                GeneratorState::Yielded(output) => (Some(Ok(output)), None),
                 GeneratorState::Complete(Ok(final_output)) => (None, Some(final_output)),
                 GeneratorState::Complete(Err(err)) => (Some(Err(err)), None),
             }
