@@ -469,10 +469,10 @@ where
     /// Handle a [`Message::Shuffle`]
     ///
     /// > A node q that receives a Shuffle request will first decrease its time to live. If the time
-    /// to live of the message is greater than zero and the number of nodes in q’s active view is
-    /// greater than 1, the node will select a random node from its active view, different from the
-    /// one he received this shuffle message from, and simply forwards the Shuffle request.
-    /// Otherwise, node q accepts the Shuffle request and send back (p.8)
+    /// > to live of the message is greater than zero and the number of nodes in q’s active view is
+    /// > greater than 1, the node will select a random node from its active view, different from the
+    /// > one he received this shuffle message from, and simply forwards the Shuffle request.
+    /// > Otherwise, node q accepts the Shuffle request and send back (p.8)
     fn on_shuffle(&mut self, from: PI, shuffle: Shuffle<PI>, io: &mut impl IO<PI>) {
         if shuffle.ttl.expired() || self.active_view.len() <= 1 {
             let len = shuffle.nodes.len();

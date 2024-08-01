@@ -1,7 +1,7 @@
 //! A simple relay server for iroh-net.
 //!
 //! This handles only the CLI and config file loading, the server implementation lives in
-//! [`iroh_net::relay::iroh_relay`].
+//! [`iroh_net::relay::server`].
 
 use std::net::{Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use iroh_net::defaults::{
     DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT,
 };
 use iroh_net::key::SecretKey;
-use iroh_net::relay::iroh_relay;
+use iroh_net::relay::server as iroh_relay;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};

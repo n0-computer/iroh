@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
 use pin_project::pin_project;
@@ -28,12 +28,11 @@ use tracing::{debug, info_span, trace, warn};
 use url::Url;
 
 use crate::{
-    defaults,
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
     magicsock::{self, Handle},
-    relay::{RelayMap, RelayMode, RelayUrl},
+    relay::{RelayMode, RelayUrl},
     tls, NodeId,
 };
 
@@ -60,6 +59,10 @@ pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 /// is still no connection the configured [`Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
+/// Environment variable to force the use of staging relays.
+#[cfg(not(any(test, feature = "test-utils")))]
+const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
+
 /// Builder for [`Endpoint`].
 ///
 /// By default the endpoint will generate a new random [`SecretKey`], which will result in a
@@ -84,15 +87,9 @@ pub struct Builder {
 
 impl Default for Builder {
     fn default() -> Self {
-        // Use staging in testing
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let relay_mode = RelayMode::Default;
-        #[cfg(any(test, feature = "test-utils"))]
-        let relay_mode = RelayMode::Staging;
-
         Self {
             secret_key: Default::default(),
-            relay_mode,
+            relay_mode: default_relay_mode(),
             alpn_protocols: Default::default(),
             transport_config: Default::default(),
             keylog: Default::default(),
@@ -120,15 +117,7 @@ impl Builder {
     ///
     /// NOTE: This will be improved soon to add support for binding on specific addresses.
     pub async fn bind(self, bind_port: u16) -> Result<Endpoint> {
-        let relay_map = match self.relay_mode {
-            RelayMode::Disabled => RelayMap::empty(),
-            RelayMode::Default => defaults::prod::default_relay_map(),
-            RelayMode::Staging => defaults::staging::default_relay_map(),
-            RelayMode::Custom(relay_map) => {
-                ensure!(!relay_map.is_empty(), "Empty custom relay server map",);
-                relay_map
-            }
-        };
+        let relay_map = self.relay_mode.relay_map();
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config.unwrap_or_default()),
@@ -188,7 +177,7 @@ impl Builder {
     /// By default the Number0 relay servers are used.
     ///
     /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
-    /// configured relay node.  If an invalid [`RelayMap`] is provided [`bind`]
+    /// configured relay node.  If an invalid RelayMap is provided [`bind`]
     /// will result in an error.
     ///
     /// [`bind`]: Builder::bind
@@ -832,7 +821,7 @@ impl Endpoint {
     /// This will launch discovery in all cases except if:
     /// 1) we do not have discovery enabled
     /// 2) we have discovery enabled, but already have at least one verified, unexpired
-    /// addresses for this `node_id`
+    ///    addresses for this `node_id`
     ///
     /// # Errors
     ///
@@ -1180,6 +1169,26 @@ fn proxy_url_from_env() -> Option<Url> {
     }
 
     None
+}
+
+/// Returns the default relay mode.
+///
+/// If the `IROH_FORCE_STAGING_RELAYS` environment variable is set to `1`, it will return `RelayMode::Staging`.
+/// Otherwise, it will return `RelayMode::Default`.
+pub fn default_relay_mode() -> RelayMode {
+    // Use staging in testing
+    #[cfg(not(any(test, feature = "test-utils")))]
+    let force_staging_relays = match std::env::var(ENV_FORCE_STAGING_RELAYS) {
+        Ok(value) => value == "1",
+        Err(_) => false,
+    };
+    #[cfg(any(test, feature = "test-utils"))]
+    let force_staging_relays = true;
+
+    match force_staging_relays {
+        true => RelayMode::Staging,
+        false => RelayMode::Default,
+    }
 }
 
 /// Check if we are being executed in a CGI context.

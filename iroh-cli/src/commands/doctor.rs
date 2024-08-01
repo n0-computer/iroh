@@ -866,7 +866,7 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     let mut clients = HashMap::new();
     for node in &config.relay_nodes {
         let secret_key = key.clone();
-        let client = iroh::net::relay::http::ClientBuilder::new(node.url.clone())
+        let client = iroh::net::relay::HttpClientBuilder::new(node.url.clone())
             .build(secret_key, dns_resolver.clone());
 
         clients.insert(node.url.clone(), client);

@@ -2,6 +2,8 @@
 //!
 //! The main entry point is the [`Client`].
 //!
+//! You obtain a [`Client`] via [`Iroh::blobs()`](crate::client::Iroh::blobs).
+//!
 //! ## Interacting with the local blob store
 //!
 //! ### Importing data

@@ -18,8 +18,8 @@
 //! Aljoscha Meyer:
 //!
 //! > Range-based set reconciliation is a simple approach to efficiently compute the union of two
-//! sets over a network, based on recursively partitioning the sets and comparing fingerprints of
-//! the partitions to probabilistically detect whether a partition requires further work.
+//! > sets over a network, based on recursively partitioning the sets and comparing fingerprints of
+//! > the partitions to probabilistically detect whether a partition requires further work.
 //!
 //! The crate exposes a [generic storage interface](store::Store). There is an implementation
 //! of this interface, [store::fs::Store], that can be used either

@@ -177,7 +177,7 @@ pub(crate) struct MagicSock {
     proxy_url: Option<Url>,
 
     /// Used for receiving relay messages.
-    relay_recv_receiver: flume::Receiver<RelayRecvResult>,
+    relay_recv_receiver: async_channel::Receiver<RelayRecvResult>,
     /// Stores wakers, to be called when relay_recv_ch receives new data.
     network_recv_wakers: parking_lot::Mutex<Option<Waker>>,
     network_send_wakers: Arc<parking_lot::Mutex<Option<Waker>>>,
@@ -801,11 +801,11 @@ impl MagicSock {
                 break;
             }
             match self.relay_recv_receiver.try_recv() {
-                Err(flume::TryRecvError::Empty) => {
+                Err(async_channel::TryRecvError::Empty) => {
                     self.network_recv_wakers.lock().replace(cx.waker().clone());
                     break;
                 }
-                Err(flume::TryRecvError::Disconnected) => {
+                Err(async_channel::TryRecvError::Closed) => {
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::NotConnected,
                         "connection closed",
@@ -1397,7 +1397,7 @@ impl Handle {
             insecure_skip_relay_cert_verify,
         } = opts;
 
-        let (relay_recv_sender, relay_recv_receiver) = flume::bounded(128);
+        let (relay_recv_sender, relay_recv_receiver) = async_channel::bounded(128);
 
         let (pconn4, pconn6) = bind(port)?;
         let port = pconn4.port();
@@ -1573,7 +1573,7 @@ impl Stream for DirectAddrsStream {
                         // When we start up we might initially have empty local endpoints as
                         // the magic socket has not yet figured this out.  Later on this set
                         // should never be empty.  However even if it was the magicsock
-                        // would be in a state not very useable so skipping those events is
+                        // would be in a state not very usable so skipping those events is
                         // probably fine.
                         // To make sure we install the right waker we loop rather than
                         // returning Poll::Pending immediately here.
@@ -1751,7 +1751,7 @@ struct Actor {
     relay_actor_sender: mpsc::Sender<RelayActorMessage>,
     relay_actor_cancel_token: CancellationToken,
     /// Channel to send received relay messages on, for processing.
-    relay_recv_sender: flume::Sender<RelayRecvResult>,
+    relay_recv_sender: async_channel::Sender<RelayRecvResult>,
     /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
@@ -1905,7 +1905,7 @@ impl Actor {
                 let passthroughs = self.process_relay_read_result(read_result);
                 for passthrough in passthroughs {
                     self.relay_recv_sender
-                        .send_async(passthrough)
+                        .send(passthrough)
                         .await
                         .expect("missing recv sender");
                     let mut wakers = self.msock.network_recv_wakers.lock();

@@ -17,6 +17,7 @@ workspace = true
 
 [dependencies]
 anyhow = { version = "1" }
+async-channel = "2.3.1"
 bao-tree = {  version = "0.13", features = ["tokio_fsm", "validate"], default-features = false }
 bytes = { version = "1.4", features = ["serde"] }
 chrono = "0.4.31"

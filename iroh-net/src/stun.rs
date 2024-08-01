@@ -11,8 +11,6 @@ pub use stun_rs::{
     TransactionId,
 };
 
-use crate::net::ip::to_canonical;
-
 /// Errors that can occur when handling a STUN packet.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -126,12 +124,12 @@ pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), Error> {
         match attr {
             StunAttribute::XorMappedAddress(a) => {
                 let mut a = *a.socket_address();
-                a.set_ip(to_canonical(a.ip()));
+                a.set_ip(a.ip().to_canonical());
                 addr = Some(a);
             }
             StunAttribute::MappedAddress(a) => {
                 let mut a = *a.socket_address();
-                a.set_ip(to_canonical(a.ip()));
+                a.set_ip(a.ip().to_canonical());
                 fallback_addr = Some(a);
             }
             _ => {}

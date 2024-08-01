@@ -31,6 +31,7 @@ env:
   SCCACHE_CACHE_SIZE: "50G"
   BIN_NAMES: "iroh,iroh-relay,iroh-dns-server"
   RELEASE_VERSION: ${{ github.event.inputs.release_version }}
+  IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
     create-release:

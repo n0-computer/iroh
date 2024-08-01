@@ -11,7 +11,7 @@ use x509_parser::prelude::*;
 use crate::key::{PublicKey, SecretKey, Signature};
 
 /// The libp2p Public Key Extension is a X.509 extension
-/// with the Object Identier 1.3.6.1.4.1.53594.1.1,
+/// with the Object Identifier 1.3.6.1.4.1.53594.1.1,
 /// allocated by IANA to the libp2p project at Protocol Labs.
 const P2P_EXT_OID: [u64; 9] = [1, 3, 6, 1, 4, 1, 53594, 1, 1];
 
