@@ -631,7 +631,7 @@
     <span class="attr">#[tokio::test]
     </span><span class="comment">// #[ignore = "flaky"]
     </span><span class="kw">async fn </span>test_local_swarm_discovery() -&gt; TestResult {
-        <span class="kw">let </span>_guard = tracing::logging::setup();
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>(node_id_a, discovery_a) = make_discoverer()<span class="question-mark">?</span>;
         <span class="kw">let </span>(<span class="kw">_</span>, discovery_b) = make_discoverer()<span class="question-mark">?</span>;
 
