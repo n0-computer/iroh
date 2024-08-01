@@ -320,6 +320,7 @@ mod tests {
         // resolve twice to ensure we can create separate streams for the same node_id
         let mut s1 = discovery_b.resolve(ep.clone(), node_id_a).unwrap();
         let mut s2 = discovery_b.resolve(ep, node_id_a).unwrap();
+        tracing::debug!(?node_id_a, "Discovering node id a");
         // publish discovery_a's address
         discovery_a.publish(&addr_info);
         let s1_res = tokio::time::timeout(Duration::from_secs(2), s1.next())

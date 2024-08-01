@@ -1,0 +1,168 @@
+2024-08-01T19:37:01.520667Z DEBUG iroh_net::discovery::local_swarm_discovery: 64: Creating new LocalSwarmDiscovery service
+2024-08-01T19:37:01.520990Z DEBUG acto::tokio: 133: creating name=swarm-discovery
+2024-08-01T19:37:01.521425Z DEBUG iroh_net::discovery::local_swarm_discovery: 64: Creating new LocalSwarmDiscovery service
+2024-08-01T19:37:01.521511Z DEBUG acto::tokio: 133: creating name=swarm-discovery
+2024-08-01T19:37:01.522746Z DEBUG magic_ep{me=oqunsf4ofr3yn642}:magicsock{me=oqunsf4ofr3yn642}: iroh_net::magicsock::udp_conn: 109: binding network=V4 port=0
+2024-08-01T19:37:01.522804Z DEBUG magic_ep{me=oqunsf4ofr3yn642}:magicsock{me=oqunsf4ofr3yn642}: iroh_net::magicsock::udp_conn: 124: candidate ports ports=[0]
+2024-08-01T19:37:01.522875Z DEBUG magic_ep{me=oqunsf4ofr3yn642}:magicsock{me=oqunsf4ofr3yn642}: iroh_net::magicsock::udp_conn: 130: successfully bound network=V4 local_addr=0.0.0.0:58132
+2024-08-01T19:37:01.522914Z DEBUG magic_ep{me=oqunsf4ofr3yn642}:magicsock{me=oqunsf4ofr3yn642}: iroh_net::magicsock::udp_conn: 109: binding network=V6 port=58133
+2024-08-01T19:37:01.522935Z DEBUG magic_ep{me=oqunsf4ofr3yn642}:magicsock{me=oqunsf4ofr3yn642}: iroh_net::magicsock::udp_conn: 124: candidate ports ports=[58133, 0]
+2024-08-01T19:37:01.522976Z DEBUG magic_ep{me=oqunsf4ofr3yn642}:magicsock{me=oqunsf4ofr3yn642}: iroh_net::magicsock::udp_conn: 130: successfully bound network=V6 local_addr=[::]:58133
+2024-08-01T19:37:01.524474Z DEBUG magic_ep{me=oqunsf4ofr3yn642}:magicsock{me=oqunsf4ofr3yn642}:portmapper.service: iroh_net::portmapper: 446: portmap starting
+2024-08-01T19:37:01.525172Z DEBUG magic_ep{me=oqunsf4ofr3yn642}:magicsock{me=oqunsf4ofr3yn642}:portmapper.service: iroh_net::portmapper: 591: getting a port mapping for 65.109.33.212:58132 -> None
+2024-08-01T19:37:01.525260Z DEBUG magic_ep{me=oqunsf4ofr3yn642}:magicsock{me=oqunsf4ofr3yn642}:netcheck.actor: iroh_net::netcheck: 445: netcheck actor starting
+2024-08-01T19:37:01.525447Z  INFO magic_ep{me=oqunsf4ofr3yn642}:poll{actor=sender(swarm-discovery/3)}: swarm_discovery::sender: 198: no addresses for peer, not announcing
+2024-08-01T19:37:01.525604Z  INFO magic_ep{me=oqunsf4ofr3yn642}:poll{actor=sender(swarm-discovery/6)}: swarm_discovery::sender: 198: no addresses for peer, not announcing
+2024-08-01T19:37:01.525736Z DEBUG magic_ep{me=oqunsf4ofr3yn642}:magicsock{me=oqunsf4ofr3yn642}:portmapper.service:upnp: igd_next::aio::tokio: 79: sending broadcast request to: 239.255.255.250:1900 on interface: Ok(0.0.0.0:36970)    
+2024-08-01T19:37:01.525849Z DEBUG magic_ep{me=oqunsf4ofr3yn642}: swarm_discovery::sender: 55: waiting for query delay=702.29733ms
+2024-08-01T19:37:01.525914Z DEBUG magic_ep{me=oqunsf4ofr3yn642}: swarm_discovery::sender: 55: waiting for query delay=742.06552ms
+2024-08-01T19:37:01.527378Z DEBUG netlink_proto::connection: 309: reading incoming messages    
+2024-08-01T19:37:01.527399Z DEBUG netlink_proto::codecs: 51: NetlinkCodec: decoding next message    
+2024-08-01T19:37:01.527414Z DEBUG netlink_proto::connection: 312: forwarding unsolicited messages to the connection handle    
+2024-08-01T19:37:01.527427Z DEBUG netlink_proto::connection: 315: forwarding responses to previous requests to the connection handle    
+2024-08-01T19:37:01.527438Z DEBUG netlink_proto::connection: 320: handling requests    
+2024-08-01T19:37:01.527453Z DEBUG netlink_proto::connection: 323: sending messages    
+2024-08-01T19:37:01.527517Z DEBUG magic_ep{me=oqunsf4ofr3yn642}:magicsock{me=oqunsf4ofr3yn642}:actor: iroh_net::magicsock: 2393: scheduling periodic_stun to run immediately and in 24s
+2024-08-01T19:37:01.528030Z DEBUG acto::tokio: 241: aborting name=ActoId(0) handle=true
+2024-08-01T19:37:01.528132Z DEBUG acto::tokio: 133: creating name=swarm-discovery
+2024-08-01T19:37:01.528292Z DEBUG acto::tokio: 241: aborting name=ActoId(2) handle=true
+2024-08-01T19:37:01.528314Z DEBUG acto::tokio: 241: aborting name=ActoId(3) handle=true
+2024-08-01T19:37:01.528327Z DEBUG acto::tokio: 241: aborting name=ActoId(4) handle=true
+2024-08-01T19:37:01.528869Z DEBUG swarm_discovery::sender: 55: waiting for query delay=725.36422ms
+2024-08-01T19:37:01.740555Z DEBUG poll{actor=receiver_v4(swarm-discovery/b)}: swarm_discovery::receiver: 57: received mDNS query for _iroh.local.swarm._udp.local.
+2024-08-01T19:37:01.740690Z DEBUG poll{actor=receiver_v4(swarm-discovery/7)}: swarm_discovery::receiver: 57: received mDNS query for _iroh.local.swarm._udp.local.
+2024-08-01T19:37:01.740834Z DEBUG swarm_discovery::sender: 105: waiting to respond delay=21.5648ms
+2024-08-01T19:37:01.740869Z DEBUG swarm_discovery::sender: 105: waiting to respond delay=15.34715ms
+2024-08-01T19:37:01.758171Z DEBUG swarm_discovery::sender: 55: waiting for query delay=730.62913ms
+2024-08-01T19:37:01.763454Z DEBUG poll{actor=sender(swarm-discovery/a)}: swarm_discovery::socket: 110: sent 193 bytes q=0 an=1 ad=1
+2024-08-01T19:37:01.763531Z DEBUG swarm_discovery::sender: 55: waiting for query delay=714.40551ms
+2024-08-01T19:37:01.763661Z DEBUG poll{actor=receiver_v4(swarm-discovery/b)}: swarm_discovery::receiver: 80: received mDNS response for dlcpjxlnlj7jpa3bib4bx4c3po65bud46r2g6tbqgvocna64glzq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:01.763786Z DEBUG poll{actor=receiver_v4(swarm-discovery/7)}: swarm_discovery::receiver: 80: received mDNS response for dlcpjxlnlj7jpa3bib4bx4c3po65bud46r2g6tbqgvocna64glzq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:01.764305Z DEBUG iroh_net::discovery::local_swarm_discovery: 64: Creating new LocalSwarmDiscovery service
+2024-08-01T19:37:01.764500Z DEBUG acto::tokio: 133: creating name=swarm-discovery
+2024-08-01T19:37:01.764736Z DEBUG iroh_net::discovery::local_swarm_discovery: 64: Creating new LocalSwarmDiscovery service
+2024-08-01T19:37:01.764797Z DEBUG acto::tokio: 133: creating name=swarm-discovery
+2024-08-01T19:37:01.765182Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}:magicsock{me=ucfglq4xqlzuayq5}: iroh_net::magicsock::udp_conn: 109: binding network=V4 port=0
+2024-08-01T19:37:01.765207Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}:magicsock{me=ucfglq4xqlzuayq5}: iroh_net::magicsock::udp_conn: 124: candidate ports ports=[0]
+2024-08-01T19:37:01.765240Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}:magicsock{me=ucfglq4xqlzuayq5}: iroh_net::magicsock::udp_conn: 130: successfully bound network=V4 local_addr=0.0.0.0:50875
+2024-08-01T19:37:01.765261Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}:magicsock{me=ucfglq4xqlzuayq5}: iroh_net::magicsock::udp_conn: 109: binding network=V6 port=50876
+2024-08-01T19:37:01.765273Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}:magicsock{me=ucfglq4xqlzuayq5}: iroh_net::magicsock::udp_conn: 124: candidate ports ports=[50876, 0]
+2024-08-01T19:37:01.765299Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}:magicsock{me=ucfglq4xqlzuayq5}: iroh_net::magicsock::udp_conn: 130: successfully bound network=V6 local_addr=[::]:50876
+2024-08-01T19:37:01.765941Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}: acto::tokio: 241: aborting name=ActoId(1) handle=true
+2024-08-01T19:37:01.765979Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}: acto::tokio: 241: aborting name=ActoId(8) handle=true
+2024-08-01T19:37:01.766223Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}:magicsock{me=ucfglq4xqlzuayq5}:portmapper.service: iroh_net::portmapper: 446: portmap starting
+2024-08-01T19:37:01.766821Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}:magicsock{me=ucfglq4xqlzuayq5}:portmapper.service: iroh_net::portmapper: 591: getting a port mapping for 65.109.33.212:50875 -> None
+2024-08-01T19:37:01.766874Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}:magicsock{me=ucfglq4xqlzuayq5}:netcheck.actor: iroh_net::netcheck: 445: netcheck actor starting
+2024-08-01T19:37:01.766930Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}: acto::tokio: 241: aborting name=ActoId(5) handle=true
+2024-08-01T19:37:01.766948Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}: acto::tokio: 241: aborting name=ActoId(6) handle=true
+2024-08-01T19:37:01.766961Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}: acto::tokio: 241: aborting name=ActoId(7) handle=true
+2024-08-01T19:37:01.766988Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}: acto::tokio: 241: aborting name=ActoId(9) handle=true
+2024-08-01T19:37:01.767000Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}: acto::tokio: 241: aborting name=ActoId(10) handle=true
+2024-08-01T19:37:01.767012Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}: acto::tokio: 241: aborting name=ActoId(11) handle=true
+2024-08-01T19:37:01.767072Z  INFO magic_ep{me=ucfglq4xqlzuayq5}:poll{actor=sender(swarm-discovery/f)}: swarm_discovery::sender: 198: no addresses for peer, not announcing
+2024-08-01T19:37:01.767144Z  INFO magic_ep{me=ucfglq4xqlzuayq5}:poll{actor=sender(swarm-discovery/12)}: swarm_discovery::sender: 198: no addresses for peer, not announcing
+2024-08-01T19:37:01.767212Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}:magicsock{me=ucfglq4xqlzuayq5}:portmapper.service:upnp: igd_next::aio::tokio: 79: sending broadcast request to: 239.255.255.250:1900 on interface: Ok(0.0.0.0:37553)    
+2024-08-01T19:37:01.767412Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}: swarm_discovery::sender: 55: waiting for query delay=727.43097ms
+2024-08-01T19:37:01.767457Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}: swarm_discovery::sender: 55: waiting for query delay=741.00586ms
+2024-08-01T19:37:01.768255Z DEBUG netlink_proto::connection: 309: reading incoming messages    
+2024-08-01T19:37:01.768279Z DEBUG netlink_proto::codecs: 51: NetlinkCodec: decoding next message    
+2024-08-01T19:37:01.768289Z DEBUG netlink_proto::connection: 312: forwarding unsolicited messages to the connection handle    
+2024-08-01T19:37:01.768297Z DEBUG netlink_proto::connection: 315: forwarding responses to previous requests to the connection handle    
+2024-08-01T19:37:01.768304Z DEBUG netlink_proto::connection: 320: handling requests    
+2024-08-01T19:37:01.768315Z DEBUG netlink_proto::connection: 323: sending messages    
+2024-08-01T19:37:01.768347Z DEBUG magic_ep{me=ucfglq4xqlzuayq5}:magicsock{me=ucfglq4xqlzuayq5}:actor: iroh_net::magicsock: 2393: scheduling periodic_stun to run immediately and in 23s
+2024-08-01T19:37:01.768643Z DEBUG acto::tokio: 241: aborting name=ActoId(12) handle=true
+2024-08-01T19:37:01.768718Z DEBUG acto::tokio: 133: creating name=swarm-discovery
+2024-08-01T19:37:01.768831Z DEBUG acto::tokio: 241: aborting name=ActoId(14) handle=true
+2024-08-01T19:37:01.768846Z DEBUG acto::tokio: 241: aborting name=ActoId(15) handle=true
+2024-08-01T19:37:01.768854Z DEBUG acto::tokio: 241: aborting name=ActoId(16) handle=true
+2024-08-01T19:37:01.769227Z DEBUG swarm_discovery::sender: 55: waiting for query delay=762.265ms
+2024-08-01T19:37:01.820426Z DEBUG poll{actor=receiver_v4(swarm-discovery/13)}: swarm_discovery::receiver: 80: received mDNS response for meieyflvrmb4tp44dpz32ocv5asxac7xwrr6up4oepovyu43uieq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:01.820523Z DEBUG poll{actor=receiver_v4(swarm-discovery/13)}: swarm_discovery::receiver: 80: received mDNS response for meieyflvrmb4tp44dpz32ocv5asxac7xwrr6up4oepovyu43uieq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:01.821084Z DEBUG poll{actor=receiver_v4(swarm-discovery/17)}: swarm_discovery::receiver: 80: received mDNS response for meieyflvrmb4tp44dpz32ocv5asxac7xwrr6up4oepovyu43uieq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:01.821137Z DEBUG poll{actor=receiver_v4(swarm-discovery/17)}: swarm_discovery::receiver: 80: received mDNS response for meieyflvrmb4tp44dpz32ocv5asxac7xwrr6up4oepovyu43uieq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:02.509942Z DEBUG poll{actor=sender(swarm-discovery/12)}: swarm_discovery::socket: 110: sent 46 bytes q=1 an=0 ad=0
+2024-08-01T19:37:02.510061Z DEBUG swarm_discovery::sender: 105: waiting to respond delay=42.7068ms
+2024-08-01T19:37:02.510196Z DEBUG poll{actor=receiver_v4(swarm-discovery/17)}: swarm_discovery::receiver: 57: received mDNS query for _iroh.local.swarm._udp.local.
+2024-08-01T19:37:02.510339Z DEBUG poll{actor=receiver_v4(swarm-discovery/13)}: swarm_discovery::receiver: 57: received mDNS query for _iroh.local.swarm._udp.local.
+2024-08-01T19:37:02.510534Z DEBUG swarm_discovery::sender: 105: waiting to respond delay=15.74715ms
+2024-08-01T19:37:02.528321Z DEBUG poll{actor=sender(swarm-discovery/16)}: swarm_discovery::socket: 110: sent 193 bytes q=0 an=1 ad=1
+2024-08-01T19:37:02.528510Z DEBUG swarm_discovery::sender: 55: waiting for query delay=762.48445ms
+2024-08-01T19:37:02.528739Z DEBUG poll{actor=receiver_v4(swarm-discovery/17)}: swarm_discovery::receiver: 80: received mDNS response for s6zgzkai2dxeireotrbjcz4sgs6bmnj4zyvy3tk2h4wmixprntta._iroh.local.swarm._udp.local.
+2024-08-01T19:37:02.528915Z DEBUG poll{actor=receiver_v4(swarm-discovery/13)}: swarm_discovery::receiver: 80: received mDNS response for s6zgzkai2dxeireotrbjcz4sgs6bmnj4zyvy3tk2h4wmixprntta._iroh.local.swarm._udp.local.
+2024-08-01T19:37:02.529597Z DEBUG iroh_net::discovery::local_swarm_discovery: 64: Creating new LocalSwarmDiscovery service
+2024-08-01T19:37:02.529700Z DEBUG acto::tokio: 133: creating name=swarm-discovery
+2024-08-01T19:37:02.530098Z DEBUG iroh_net::discovery::local_swarm_discovery: 64: Creating new LocalSwarmDiscovery service
+2024-08-01T19:37:02.530217Z DEBUG acto::tokio: 133: creating name=swarm-discovery
+2024-08-01T19:37:02.530777Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}:magicsock{me=tufbtkf5ybom6zgv}: iroh_net::magicsock::udp_conn: 109: binding network=V4 port=0
+2024-08-01T19:37:02.530810Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}:magicsock{me=tufbtkf5ybom6zgv}: iroh_net::magicsock::udp_conn: 124: candidate ports ports=[0]
+2024-08-01T19:37:02.530851Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}:magicsock{me=tufbtkf5ybom6zgv}: iroh_net::magicsock::udp_conn: 130: successfully bound network=V4 local_addr=0.0.0.0:47568
+2024-08-01T19:37:02.530877Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}:magicsock{me=tufbtkf5ybom6zgv}: iroh_net::magicsock::udp_conn: 109: binding network=V6 port=47569
+2024-08-01T19:37:02.530895Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}:magicsock{me=tufbtkf5ybom6zgv}: iroh_net::magicsock::udp_conn: 124: candidate ports ports=[47569, 0]
+2024-08-01T19:37:02.530927Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}:magicsock{me=tufbtkf5ybom6zgv}: iroh_net::magicsock::udp_conn: 130: successfully bound network=V6 local_addr=[::]:47569
+2024-08-01T19:37:02.531677Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}: acto::tokio: 241: aborting name=ActoId(13) handle=true
+2024-08-01T19:37:02.531718Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}: acto::tokio: 241: aborting name=ActoId(20) handle=true
+2024-08-01T19:37:02.531970Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}:magicsock{me=tufbtkf5ybom6zgv}:portmapper.service: iroh_net::portmapper: 446: portmap starting
+2024-08-01T19:37:02.532559Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}:magicsock{me=tufbtkf5ybom6zgv}:portmapper.service: iroh_net::portmapper: 591: getting a port mapping for 65.109.33.212:47568 -> None
+2024-08-01T19:37:02.532624Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}:magicsock{me=tufbtkf5ybom6zgv}:netcheck.actor: iroh_net::netcheck: 445: netcheck actor starting
+2024-08-01T19:37:02.532693Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}: acto::tokio: 241: aborting name=ActoId(17) handle=true
+2024-08-01T19:37:02.532716Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}: acto::tokio: 241: aborting name=ActoId(18) handle=true
+2024-08-01T19:37:02.532733Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}: acto::tokio: 241: aborting name=ActoId(19) handle=true
+2024-08-01T19:37:02.532762Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}: acto::tokio: 241: aborting name=ActoId(21) handle=true
+2024-08-01T19:37:02.532779Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}: acto::tokio: 241: aborting name=ActoId(22) handle=true
+2024-08-01T19:37:02.532795Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}: acto::tokio: 241: aborting name=ActoId(23) handle=true
+2024-08-01T19:37:02.532855Z  INFO magic_ep{me=tufbtkf5ybom6zgv}:poll{actor=sender(swarm-discovery/1b)}: swarm_discovery::sender: 198: no addresses for peer, not announcing
+2024-08-01T19:37:02.532934Z  INFO magic_ep{me=tufbtkf5ybom6zgv}:poll{actor=sender(swarm-discovery/1e)}: swarm_discovery::sender: 198: no addresses for peer, not announcing
+2024-08-01T19:37:02.533013Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}:magicsock{me=tufbtkf5ybom6zgv}:portmapper.service:upnp: igd_next::aio::tokio: 79: sending broadcast request to: 239.255.255.250:1900 on interface: Ok(0.0.0.0:49252)    
+2024-08-01T19:37:02.533159Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}: swarm_discovery::sender: 55: waiting for query delay=746.22961ms
+2024-08-01T19:37:02.533209Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}: swarm_discovery::sender: 55: waiting for query delay=763.79513ms
+2024-08-01T19:37:02.535100Z DEBUG netlink_proto::connection: 309: reading incoming messages    
+2024-08-01T19:37:02.535116Z DEBUG netlink_proto::codecs: 51: NetlinkCodec: decoding next message    
+2024-08-01T19:37:02.535127Z DEBUG netlink_proto::connection: 312: forwarding unsolicited messages to the connection handle    
+2024-08-01T19:37:02.535137Z DEBUG netlink_proto::connection: 315: forwarding responses to previous requests to the connection handle    
+2024-08-01T19:37:02.535146Z DEBUG netlink_proto::connection: 320: handling requests    
+2024-08-01T19:37:02.535158Z DEBUG netlink_proto::connection: 323: sending messages    
+2024-08-01T19:37:02.535195Z DEBUG magic_ep{me=tufbtkf5ybom6zgv}:magicsock{me=tufbtkf5ybom6zgv}:actor: iroh_net::magicsock: 2393: scheduling periodic_stun to run immediately and in 21s
+2024-08-01T19:37:02.535508Z DEBUG acto::tokio: 241: aborting name=ActoId(24) handle=true
+2024-08-01T19:37:02.535592Z DEBUG acto::tokio: 133: creating name=swarm-discovery
+2024-08-01T19:37:02.535707Z DEBUG acto::tokio: 241: aborting name=ActoId(26) handle=true
+2024-08-01T19:37:02.535725Z DEBUG acto::tokio: 241: aborting name=ActoId(27) handle=true
+2024-08-01T19:37:02.535736Z DEBUG acto::tokio: 241: aborting name=ActoId(28) handle=true
+2024-08-01T19:37:02.536139Z DEBUG swarm_discovery::sender: 55: waiting for query delay=710.57903ms
+2024-08-01T19:37:02.536426Z DEBUG poll{actor=receiver_v4(swarm-discovery/1f)}: swarm_discovery::receiver: 80: received mDNS response for vka7fq5hfdmmeasblp6qsusiz4jqnkzilwxs6ueq2i4e42kdqora._iroh.local.swarm._udp.local.
+2024-08-01T19:37:02.536483Z DEBUG poll{actor=receiver_v4(swarm-discovery/1f)}: swarm_discovery::receiver: 80: received mDNS response for vka7fq5hfdmmeasblp6qsusiz4jqnkzilwxs6ueq2i4e42kdqora._iroh.local.swarm._udp.local.
+2024-08-01T19:37:02.536880Z DEBUG poll{actor=receiver_v4(swarm-discovery/23)}: swarm_discovery::receiver: 80: received mDNS response for vka7fq5hfdmmeasblp6qsusiz4jqnkzilwxs6ueq2i4e42kdqora._iroh.local.swarm._udp.local.
+2024-08-01T19:37:02.536918Z DEBUG poll{actor=receiver_v4(swarm-discovery/23)}: swarm_discovery::receiver: 80: received mDNS response for vka7fq5hfdmmeasblp6qsusiz4jqnkzilwxs6ueq2i4e42kdqora._iroh.local.swarm._udp.local.
+2024-08-01T19:37:02.644007Z DEBUG poll{actor=receiver_v4(swarm-discovery/23)}: swarm_discovery::receiver: 80: received mDNS response for lfjoyufk6jouwsohctecic4a2ufwkto27hvubkljfxgpyrbum6ea._iroh.local.swarm._udp.local.
+2024-08-01T19:37:02.644127Z DEBUG poll{actor=receiver_v4(swarm-discovery/23)}: swarm_discovery::receiver: 80: received mDNS response for lfjoyufk6jouwsohctecic4a2ufwkto27hvubkljfxgpyrbum6ea._iroh.local.swarm._udp.local.
+2024-08-01T19:37:02.644382Z DEBUG poll{actor=receiver_v4(swarm-discovery/1f)}: swarm_discovery::receiver: 80: received mDNS response for lfjoyufk6jouwsohctecic4a2ufwkto27hvubkljfxgpyrbum6ea._iroh.local.swarm._udp.local.
+2024-08-01T19:37:02.644426Z DEBUG poll{actor=receiver_v4(swarm-discovery/1f)}: swarm_discovery::receiver: 80: received mDNS response for lfjoyufk6jouwsohctecic4a2ufwkto27hvubkljfxgpyrbum6ea._iroh.local.swarm._udp.local.
+2024-08-01T19:37:03.248006Z DEBUG poll{actor=sender(swarm-discovery/22)}: swarm_discovery::socket: 110: sent 46 bytes q=1 an=0 ad=0
+2024-08-01T19:37:03.248130Z DEBUG swarm_discovery::sender: 105: waiting to respond delay=97.8333ms
+2024-08-01T19:37:03.248284Z DEBUG poll{actor=receiver_v4(swarm-discovery/23)}: swarm_discovery::receiver: 57: received mDNS query for _iroh.local.swarm._udp.local.
+2024-08-01T19:37:03.248425Z DEBUG poll{actor=receiver_v4(swarm-discovery/1f)}: swarm_discovery::receiver: 57: received mDNS query for _iroh.local.swarm._udp.local.
+2024-08-01T19:37:03.248572Z DEBUG swarm_discovery::sender: 105: waiting to respond delay=55.0096ms
+2024-08-01T19:37:03.255885Z DEBUG poll{actor=receiver_v4(swarm-discovery/23)}: swarm_discovery::receiver: 80: received mDNS response for qfauizhudlgpe7spqdxg6sjpxeojceqqfu777rjmh76w46sk6quq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:03.255941Z DEBUG poll{actor=receiver_v4(swarm-discovery/23)}: swarm_discovery::receiver: 80: received mDNS response for qfauizhudlgpe7spqdxg6sjpxeojceqqfu777rjmh76w46sk6quq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:03.256136Z DEBUG poll{actor=receiver_v4(swarm-discovery/1f)}: swarm_discovery::receiver: 80: received mDNS response for qfauizhudlgpe7spqdxg6sjpxeojceqqfu777rjmh76w46sk6quq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:03.256183Z DEBUG poll{actor=receiver_v4(swarm-discovery/1f)}: swarm_discovery::receiver: 80: received mDNS response for qfauizhudlgpe7spqdxg6sjpxeojceqqfu777rjmh76w46sk6quq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:03.260299Z DEBUG poll{actor=receiver_v4(swarm-discovery/23)}: swarm_discovery::receiver: 80: received mDNS response for ulmux6efpnk2qylpaltylzphrzwqqwcy7ufhk3zaihkzzxrpjlkq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:03.260348Z DEBUG poll{actor=receiver_v4(swarm-discovery/23)}: swarm_discovery::receiver: 80: received mDNS response for ulmux6efpnk2qylpaltylzphrzwqqwcy7ufhk3zaihkzzxrpjlkq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:03.260543Z DEBUG poll{actor=receiver_v4(swarm-discovery/1f)}: swarm_discovery::receiver: 80: received mDNS response for ulmux6efpnk2qylpaltylzphrzwqqwcy7ufhk3zaihkzzxrpjlkq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:03.260613Z DEBUG poll{actor=receiver_v4(swarm-discovery/1f)}: swarm_discovery::receiver: 80: received mDNS response for ulmux6efpnk2qylpaltylzphrzwqqwcy7ufhk3zaihkzzxrpjlkq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:03.260853Z DEBUG swarm_discovery::sender: 55: waiting for query delay=733.13275ms
+2024-08-01T19:37:03.260911Z DEBUG swarm_discovery::sender: 55: waiting for query delay=793.9057ms
+2024-08-01T19:37:03.971983Z DEBUG poll{actor=receiver_v4(swarm-discovery/23)}: swarm_discovery::receiver: 57: received mDNS query for _iroh.local.swarm._udp.local.
+2024-08-01T19:37:03.972137Z DEBUG poll{actor=receiver_v4(swarm-discovery/1f)}: swarm_discovery::receiver: 57: received mDNS query for _iroh.local.swarm._udp.local.
+2024-08-01T19:37:03.972316Z DEBUG swarm_discovery::sender: 105: waiting to respond delay=59.246ms
+2024-08-01T19:37:03.972349Z DEBUG swarm_discovery::sender: 105: waiting to respond delay=9.9034ms
+2024-08-01T19:37:03.983868Z DEBUG swarm_discovery::sender: 55: waiting for query delay=926.14564ms
+2024-08-01T19:37:04.008099Z DEBUG poll{actor=receiver_v4(swarm-discovery/23)}: swarm_discovery::receiver: 80: received mDNS response for spyybh7f6qadsagzxehaidy3d74xwheczkmuhd3ekmsnoohtmeoq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:04.008180Z DEBUG poll{actor=receiver_v4(swarm-discovery/23)}: swarm_discovery::receiver: 80: received mDNS response for spyybh7f6qadsagzxehaidy3d74xwheczkmuhd3ekmsnoohtmeoq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:04.008412Z DEBUG poll{actor=receiver_v4(swarm-discovery/1f)}: swarm_discovery::receiver: 80: received mDNS response for spyybh7f6qadsagzxehaidy3d74xwheczkmuhd3ekmsnoohtmeoq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:04.008469Z DEBUG poll{actor=receiver_v4(swarm-discovery/1f)}: swarm_discovery::receiver: 80: received mDNS response for spyybh7f6qadsagzxehaidy3d74xwheczkmuhd3ekmsnoohtmeoq._iroh.local.swarm._udp.local.
+2024-08-01T19:37:04.015049Z DEBUG poll{actor=receiver_v4(swarm-discovery/23)}: swarm_discovery::receiver: 80: received mDNS response for 676egtw6dvne5y6vp2fqdeep75am7zljto3dznjastwmigeeuhwa._iroh.local.swarm._udp.local.
+2024-08-01T19:37:04.015112Z DEBUG poll{actor=receiver_v4(swarm-discovery/23)}: swarm_discovery::receiver: 80: received mDNS response for 676egtw6dvne5y6vp2fqdeep75am7zljto3dznjastwmigeeuhwa._iroh.local.swarm._udp.local.
+2024-08-01T19:37:04.015298Z DEBUG poll{actor=receiver_v4(swarm-discovery/1f)}: swarm_discovery::receiver: 80: received mDNS response for 676egtw6dvne5y6vp2fqdeep75am7zljto3dznjastwmigeeuhwa._iroh.local.swarm._udp.local.
+2024-08-01T19:37:04.015352Z DEBUG poll{actor=receiver_v4(swarm-discovery/1f)}: swarm_discovery::receiver: 80: received mDNS response for 676egtw6dvne5y6vp2fqdeep75am7zljto3dznjastwmigeeuhwa._iroh.local.swarm._udp.local.
+2024-08-01T19:37:04.015578Z DEBUG swarm_discovery::sender: 55: waiting for query delay=796.48555ms
