@@ -518,7 +518,7 @@ impl<T: Send + Sync + 'static> ProgressSender for FlumeProgressSender<T> {
     }
 }
 
-/// A progress sender that uses a flume channel.
+/// A progress sender that uses an async channel.
 pub struct AsyncChannelProgressSender<T> {
     sender: async_channel::Sender<T>,
     id: std::sync::Arc<std::sync::atomic::AtomicU64>,
