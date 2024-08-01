@@ -126,7 +126,7 @@ impl ReadAuthorisation {
     }
 
     pub fn new_owned(namespace_secret: &NamespaceSecretKey, user_key: UserPublicKey) -> Self {
-        let read_cap = ReadCapability::new_owned(namespace_secret, user_key, AccessMode::Read);
+        let read_cap = ReadCapability::new_owned(namespace_secret, user_key, AccessMode::ReadOnly);
         let subspace_cap = Arc::new(meadowcap::McSubspaceCapability::new(
             namespace_secret,
             user_key,

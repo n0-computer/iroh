@@ -25,7 +25,7 @@ const PEER_MANAGER_INBOX_CAP: usize = 128;
 pub struct Engine {
     actor_handle: ActorHandle,
     peer_manager_inbox: mpsc::Sender<peer_manager::Input>,
-    _peer_manager_handle: SharedAbortingJoinHandle<Result<(), String>>,
+    _peer_manager_task: SharedAbortingJoinHandle<Result<(), String>>,
 }
 
 impl Engine {
@@ -35,17 +35,17 @@ impl Engine {
         accept_opts: AcceptOpts,
     ) -> Self {
         let me = endpoint.node_id();
-        let actor = ActorHandle::spawn(create_store, me);
+        let actor_handle = ActorHandle::spawn(create_store, me);
         let (pm_inbox_tx, pm_inbox_rx) = mpsc::channel(PEER_MANAGER_INBOX_CAP);
-        let peer_manager = PeerManager::new(actor.clone(), endpoint, pm_inbox_rx, accept_opts);
-        let peer_manager_handle = tokio::task::spawn(
+        let peer_manager = PeerManager::new(actor_handle.clone(), endpoint, pm_inbox_rx, accept_opts);
+        let peer_manager_task = tokio::task::spawn(
             async move { peer_manager.run().await.map_err(|err| format!("{err:?}")) }
                 .instrument(error_span!("peer_manager", me = me.fmt_short())),
         );
         Engine {
-            actor_handle: actor,
+            actor_handle,
             peer_manager_inbox: pm_inbox_tx,
-            _peer_manager_handle: peer_manager_handle.into(),
+            _peer_manager_task: peer_manager_task.into(),
         }
     }
 
@@ -88,7 +88,7 @@ mod tests {
     use tokio::task::JoinHandle;
 
     use crate::{
-        auth::{CapSelector, DelegateTo},
+        auth::{CapSelector, DelegateTo, RestrictArea},
         engine::{AcceptOpts, Engine},
         form::EntryForm,
         net::ALPN,
@@ -124,7 +124,7 @@ mod tests {
             async move {
                 let path = Path::new(&[b"foo"]).unwrap();
 
-                let interests = Interests::select().area(namespace, [Area::path(path.clone())]);
+                let interests = Interests::builder().add_area(namespace, [Area::path(path.clone())]);
                 let init = SessionInit::new(interests, SessionMode::ReconcileOnce);
                 let mut intent = alfie.sync_with_peer(betty_node_id, init).await.unwrap();
 
@@ -163,7 +163,7 @@ mod tests {
             async move {
                 let path = Path::new(&[b"bar"]).unwrap();
 
-                let interests = Interests::select().area(namespace, [Area::path(path.clone())]);
+                let interests = Interests::builder().add_area(namespace, [Area::path(path.clone())]);
                 let init = SessionInit::new(interests, SessionMode::ReconcileOnce);
 
                 let mut intent = alfie.sync_with_peer(betty_node_id, init).await.unwrap();
@@ -219,7 +219,7 @@ mod tests {
         insert(&betty, namespace, betty_user, &[b"bar"], "bar 1").await?;
 
         let path = Path::new(&[b"foo"]).unwrap();
-        let interests = Interests::select().area(namespace, [Area::path(path.clone())]);
+        let interests = Interests::builder().add_area(namespace, [Area::path(path.clone())]);
         let init = SessionInit::new(interests, SessionMode::Live);
         let mut intent = alfie.sync_with_peer(betty_node_id, init).await.unwrap();
 
@@ -247,7 +247,7 @@ mod tests {
         assert_eq!(intent.next().await.unwrap(), EventKind::ReconciledAll);
 
         let path = Path::new(&[b"bar"]).unwrap();
-        let interests = Interests::select().area(namespace, [Area::path(path.clone())]);
+        let interests = Interests::builder().add_area(namespace, [Area::path(path.clone())]);
         intent.add_interests(interests).await?;
 
         assert_eq!(
@@ -379,8 +379,8 @@ mod tests {
         let cap_for_betty = alfie
             .delegate_caps(
                 CapSelector::widest(namespace_id),
-                AccessMode::Write,
-                DelegateTo::new(user_betty, None),
+                AccessMode::ReadWrite,
+                DelegateTo::new(user_betty, RestrictArea::None),
             )
             .await?;
 
