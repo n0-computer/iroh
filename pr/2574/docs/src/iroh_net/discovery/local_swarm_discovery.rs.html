@@ -338,6 +338,7 @@
 <a href="#338" id="338">338</a>
 <a href="#339" id="339">339</a>
 <a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
@@ -660,6 +661,7 @@
         <span class="comment">// resolve twice to ensure we can create separate streams for the same node_id
         </span><span class="kw">let </span><span class="kw-2">mut </span>s1 = discovery_b.resolve(ep.clone(), node_id_a).unwrap();
         <span class="kw">let </span><span class="kw-2">mut </span>s2 = discovery_b.resolve(ep, node_id_a).unwrap();
+        <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>node_id_a, <span class="string">"Discovering node id a"</span>);
         <span class="comment">// publish discovery_a's address
         </span>discovery_a.publish(<span class="kw-2">&amp;</span>addr_info);
         <span class="kw">let </span>s1_res = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), s1.next())
