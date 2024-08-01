@@ -259,7 +259,7 @@ impl Server {
                             rustls::crypto::ring::default_provider(),
                         ))
                         .with_safe_default_protocol_versions()
-                        .expect("static versions")
+                        .expect("protocols supported by ring")
                         .with_no_client_auth();
                         let server_tls_config = match tls_config.cert {
                             CertConfig::LetsEncrypt { config } => {

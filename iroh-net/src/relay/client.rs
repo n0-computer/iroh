@@ -316,7 +316,7 @@ impl ClientBuilder {
             rustls::crypto::ring::default_provider(),
         ))
         .with_safe_default_protocol_versions()
-        .expect("default versions")
+        .expect("protocols supported by ring")
         .with_root_certificates(roots)
         .with_no_client_auth();
         #[cfg(any(test, feature = "test-utils"))]

@@ -707,7 +707,7 @@ mod tests {
             rustls::crypto::ring::default_provider(),
         ))
         .with_safe_default_protocol_versions()
-        .expect("static versions")
+        .expect("protocols supported by ring")
         .with_no_client_auth()
         .with_single_cert(vec![(rustls_certificate)], rustls_key)
         .expect("cert is right");
