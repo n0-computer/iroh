@@ -296,7 +296,7 @@ mod tests {
     use testresult::TestResult;
 
     #[tokio::test]
-    #[ignore = "flaky"]
+    // #[ignore = "flaky"]
     async fn test_local_swarm_discovery() -> TestResult {
         let _guard = tracing::logging::setup();
         let (node_id_a, discovery_a) = make_discoverer()?;
