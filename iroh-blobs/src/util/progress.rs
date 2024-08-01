@@ -543,7 +543,7 @@ impl<T> Clone for AsyncChannelProgressSender<T> {
 }
 
 impl<T> AsyncChannelProgressSender<T> {
-    /// Create a new progress sender from a flume sender.
+    /// Create a new progress sender from an async channel sender.
     pub fn new(sender: async_channel::Sender<T>) -> Self {
         Self {
             sender,
