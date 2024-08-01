@@ -664,10 +664,10 @@
         <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>node_id_a, <span class="string">"Discovering node id a"</span>);
         <span class="comment">// publish discovery_a's address
         </span>discovery_a.publish(<span class="kw-2">&amp;</span>addr_info);
-        <span class="kw">let </span>s1_res = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), s1.next())
+        <span class="kw">let </span>s1_res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), s1.next())
             .<span class="kw">await</span><span class="question-mark">?
             </span>.unwrap()<span class="question-mark">?</span>;
-        <span class="kw">let </span>s2_res = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), s2.next())
+        <span class="kw">let </span>s2_res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), s2.next())
             .<span class="kw">await</span><span class="question-mark">?
             </span>.unwrap()<span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(s1_res.addr_info, addr_info);
