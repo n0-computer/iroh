@@ -892,7 +892,6 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     ) {
         self.progress_tracker.remove(&kind);
         self.remove_hash_if_not_queued(&kind.hash());
-        let result = result.map_err(|_| DownloadError::DownloadFailed);
         for (_id, handlers) in intents.into_iter() {
             handlers.on_finish.send(result.clone()).ok();
         }

@@ -3,7 +3,7 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, Result};
 use futures_buffered::BufferedStreamExt;
 use futures_lite::{Stream, StreamExt};
 use genawaiter::sync::{Co, Gen};
@@ -1201,10 +1201,13 @@ async fn download_direct_from_nodes<D>(
 where
     D: BaoStore,
 {
-    ensure!(!nodes.is_empty(), "No nodes to download from provided.");
     let mut last_err = None;
     for node in nodes {
         let node_id = node.node_id;
+        // never attempt to download from ourselves.
+        if node_id == endpoint.node_id() {
+            continue;
+        }
         match download_direct(
             db,
             endpoint.clone(),
@@ -1221,7 +1224,10 @@ where
             }
         }
     }
-    Err(last_err.unwrap())
+    match last_err {
+        Some(err) => Err(err),
+        None => Err(anyhow!("No nodes to download from provided"))
+    }
 }
 
 async fn download_direct<D>(
