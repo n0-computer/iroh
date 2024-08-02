@@ -206,13 +206,13 @@
 
 <span class="kw">use crate</span>::{
     get::{db::DownloadProgress, progress::TransferState},
-    util::progress::{FlumeProgressSender, IdGenerator, ProgressSendError, ProgressSender},
+    util::progress::{AsyncChannelProgressSender, IdGenerator, ProgressSendError, ProgressSender},
 };
 
 <span class="kw">use </span><span class="kw">super</span>::DownloadKind;
 
 <span class="doccomment">/// The channel that can be used to subscribe to progress updates.
-</span><span class="kw">pub type </span>ProgressSubscriber = FlumeProgressSender&lt;DownloadProgress&gt;;
+</span><span class="kw">pub type </span>ProgressSubscriber = AsyncChannelProgressSender&lt;DownloadProgress&gt;;
 
 <span class="doccomment">/// Track the progress of downloads.
 ///
