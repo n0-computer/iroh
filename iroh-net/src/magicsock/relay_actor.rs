@@ -20,7 +20,7 @@ use tracing::{debug, info, info_span, trace, warn, Instrument};
 
 use crate::{
     key::{PublicKey, PUBLIC_KEY_LENGTH},
-    relay::{self, http::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE},
+    relay::{self, client::conn::ReceivedMessage, client::ClientError, RelayUrl, MAX_PACKET_SIZE},
 };
 
 use super::{ActorMessage, MagicSock};
@@ -58,8 +58,8 @@ struct ActiveRelay {
     /// use instead of creating a new relay connection back to their home.
     relay_routes: Vec<PublicKey>,
     url: RelayUrl,
-    relay_client: relay::http::Client,
-    relay_client_receiver: relay::http::ClientReceiver,
+    relay_client: relay::client::Client,
+    relay_client_receiver: relay::client::ClientReceiver,
     /// The set of senders we know are present on this connection, based on
     /// messages we've received from the server.
     peer_present: HashSet<PublicKey>,
@@ -74,8 +74,8 @@ enum ActiveRelayMessage {
     GetLastWrite(oneshot::Sender<Instant>),
     Ping(oneshot::Sender<Result<Duration, ClientError>>),
     GetLocalAddr(oneshot::Sender<Option<SocketAddr>>),
-    GetPeerRoute(PublicKey, oneshot::Sender<Option<relay::http::Client>>),
-    GetClient(oneshot::Sender<relay::http::Client>),
+    GetPeerRoute(PublicKey, oneshot::Sender<Option<relay::client::Client>>),
+    GetClient(oneshot::Sender<relay::client::Client>),
     NotePreferred(bool),
     Shutdown,
 }
@@ -83,8 +83,8 @@ enum ActiveRelayMessage {
 impl ActiveRelay {
     fn new(
         url: RelayUrl,
-        relay_client: relay::http::Client,
-        relay_client_receiver: relay::http::ClientReceiver,
+        relay_client: relay::client::Client,
+        relay_client_receiver: relay::client::ClientReceiver,
         msg_sender: mpsc::Sender<ActorMessage>,
     ) -> Self {
         ActiveRelay {
@@ -179,7 +179,7 @@ impl ActiveRelay {
 
                 if matches!(
                     err,
-                    relay::http::ClientError::Closed | relay::http::ClientError::IPDisabled
+                    relay::client::ClientError::Closed | relay::client::ClientError::IPDisabled
                 ) {
                     // drop client
                     return ReadResult::Break;
@@ -200,7 +200,7 @@ impl ActiveRelay {
                     None => ReadResult::Break,
                 }
             }
-            Ok((msg, conn_gen)) => {
+            Ok((msg, _conn_gen)) => {
                 // reset
                 self.backoff.reset();
                 let now = Instant::now();
@@ -214,11 +214,7 @@ impl ActiveRelay {
                 }
 
                 match msg {
-                    relay::ReceivedMessage::ServerInfo { .. } => {
-                        info!(%conn_gen, "connected");
-                        ReadResult::Continue
-                    }
-                    relay::ReceivedMessage::ReceivedPacket { source, data } => {
+                    relay::client::conn::ReceivedMessage::ReceivedPacket { source, data } => {
                         trace!(len=%data.len(), "received msg");
                         // If this is a new sender we hadn't seen before, remember it and
                         // register a route for this peer.
@@ -248,7 +244,7 @@ impl ActiveRelay {
 
                         ReadResult::Continue
                     }
-                    relay::ReceivedMessage::Ping(data) => {
+                    relay::client::conn::ReceivedMessage::Ping(data) => {
                         // Best effort reply to the ping.
                         let dc = self.relay_client.clone();
                         tokio::task::spawn(async move {
@@ -258,8 +254,8 @@ impl ActiveRelay {
                         });
                         ReadResult::Continue
                     }
-                    relay::ReceivedMessage::Health { .. } => ReadResult::Continue,
-                    relay::ReceivedMessage::PeerGone(key) => {
+                    relay::client::conn::ReceivedMessage::Health { .. } => ReadResult::Continue,
+                    relay::client::conn::ReceivedMessage::PeerGone(key) => {
                         self.relay_routes.retain(|peer| peer != &key);
                         ReadResult::Continue
                     }
@@ -422,7 +418,7 @@ impl RelayActor {
         &mut self,
         url: &RelayUrl,
         peer: Option<&PublicKey>,
-    ) -> relay::http::Client {
+    ) -> relay::client::Client {
         debug!("connect relay {} for peer {:?}", url, peer);
         // See if we have a connection open to that relay node ID first. If so, might as
         // well use it. (It's a little arbitrary whether we use this one vs. the reverse route
@@ -479,7 +475,7 @@ impl RelayActor {
         let url1 = url.clone();
 
         // building a client dials the relay
-        let mut builder = relay::http::ClientBuilder::new(url1.clone());
+        let mut builder = relay::client::ClientBuilder::new(url1.clone());
         if let Some(url) = self.msock.proxy_url() {
             builder = builder.proxy_url(url.clone());
         }

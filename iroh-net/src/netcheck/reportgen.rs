@@ -34,7 +34,6 @@ use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_STUN_PORT;
 use crate::dns::{DnsResolver, ResolverExt};
 use crate::net::interfaces;
-use crate::net::ip;
 use crate::net::UdpSocket;
 use crate::netcheck::{self, Report};
 use crate::ping::{PingError, Pinger};
@@ -210,9 +209,8 @@ impl Actor {
         match self.run_inner().await {
             Ok(_) => debug!("reportgen actor finished"),
             Err(err) => {
-                error!("reportgen actor failed: {err:#}");
                 self.netcheck
-                    .send(netcheck::Message::ReportAborted)
+                    .send(netcheck::Message::ReportAborted { err })
                     .await
                     .ok();
             }
@@ -954,7 +952,7 @@ async fn get_relay_addr(
                 {
                     Ok(mut addrs) => addrs
                         .next()
-                        .map(ip::to_canonical)
+                        .map(|ip| ip.to_canonical())
                         .map(|addr| SocketAddr::new(addr, port))
                         .ok_or(anyhow!("No suitable relay addr found")),
                     Err(err) => Err(err.context("No suitable relay addr found")),
@@ -974,7 +972,7 @@ async fn get_relay_addr(
                 {
                     Ok(mut addrs) => addrs
                         .next()
-                        .map(ip::to_canonical)
+                        .map(|ip| ip.to_canonical())
                         .map(|addr| SocketAddr::new(addr, port))
                         .ok_or(anyhow!("No suitable relay addr found")),
                     Err(err) => Err(err.context("No suitable relay addr found")),
@@ -1339,7 +1337,7 @@ mod tests {
             node: Arc::new(relay),
         };
 
-        // A singe ICMP packet might get lost.  Try several and take the first.
+        // A single ICMP packet might get lost.  Try several and take the first.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut tasks = JoinSet::new();
         for i in 0..8 {

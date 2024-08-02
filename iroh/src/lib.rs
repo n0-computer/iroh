@@ -77,10 +77,10 @@
 //! ## Reexports
 //!
 //! The iroh crate re-exports the following crates:
-//! - [iroh_base](iroh_base) as [`base`]
-//! - [iroh_blobs](iroh_blobs) as [`blobs`]
-//! - [iroh_docs](iroh_docs) as [`docs`]
-//! - [iroh_net](iroh_net) as [`net`]
+//! - [iroh_base] as [`base`]
+//! - [iroh_blobs] as [`blobs`]
+//! - [iroh_docs] as [`docs`]
+//! - [iroh_net] as [`net`]
 //!
 //! ## Feature Flags
 //!

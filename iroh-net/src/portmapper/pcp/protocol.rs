@@ -26,7 +26,7 @@ pub enum Version {
 }
 
 /// Opcode as defined in [RFC 6887 IANA Considerations](https://datatracker.ietf.org/doc/html/rfc6887#section-19)
-// NOTE: PEER is not used, therefor not implemented.
+// NOTE: PEER is not used, therefore not implemented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
 #[repr(u8)]
 pub enum Opcode {

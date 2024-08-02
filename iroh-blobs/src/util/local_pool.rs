@@ -634,20 +634,20 @@ mod tests {
         assert_eq!(c2.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
-    #[tokio::test]
-    #[should_panic]
-    #[ignore = "todo"]
-    async fn test_panic() {
-        let _ = tracing_subscriber::fmt::try_init();
-        let pool = LocalPool::new(Config {
-            threads: 2,
-            ..Config::default()
-        });
-        pool.spawn_detached(|| async {
-            panic!("test panic");
-        });
-        // we can't use shutdown here, because we need to allow time for the
-        // panic to happen.
-        pool.finish().await;
-    }
+    // #[tokio::test]
+    // #[should_panic]
+    // #[ignore = "todo"]
+    // async fn test_panic() {
+    //     let _ = tracing_subscriber::fmt::try_init();
+    //     let pool = LocalPool::new(Config {
+    //         threads: 2,
+    //         ..Config::default()
+    //     });
+    //     pool.spawn_detached(|| async {
+    //         panic!("test panic");
+    //     });
+    //     // we can't use shutdown here, because we need to allow time for the
+    //     // panic to happen.
+    //     pool.finish().await;
+    // }
 }

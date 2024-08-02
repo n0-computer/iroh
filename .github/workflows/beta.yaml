@@ -12,6 +12,9 @@ concurrency:
   group: beta-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  IROH_FORCE_STAGING_RELAYS: "1"
+
 jobs:
   tests:
     uses: './.github/workflows/tests.yaml'

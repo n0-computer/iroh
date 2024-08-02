@@ -34,7 +34,7 @@ Code contributions to Iroh are greatly appreciated. Here is the general workflow
 
    - **General code guidelines**
 
-     - When possible, please document relevant pieces of code following the [rust documentation conventions][docconventions]. For more information on how the rust documentation system works check the [rustdoc docummentation][rustdoc].
+     - When possible, please document relevant pieces of code following the [rust documentation conventions][docconventions]. For more information on how the rust documentation system works check the [rustdoc documentation][rustdoc].
      - Comment your code. It will be useful for your reviewer and future contributors.
 
    - **Pull request titles**
