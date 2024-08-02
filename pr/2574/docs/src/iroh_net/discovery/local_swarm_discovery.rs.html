@@ -338,7 +338,6 @@
 <a href="#338" id="338">338</a>
 <a href="#339" id="339">339</a>
 <a href="#340" id="340">340</a>
-<a href="#341" id="341">341</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
@@ -637,7 +636,6 @@
     <span class="kw">use </span>testresult::TestResult;
 
     <span class="attr">#[tokio::test]
-    </span><span class="comment">// #[ignore = "flaky"]
     </span><span class="kw">async fn </span>test_local_swarm_discovery() -&gt; TestResult {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">for </span>_i <span class="kw">in </span><span class="number">0</span>..<span class="number">10 </span>{
