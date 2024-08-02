@@ -948,6 +948,7 @@ mod tests {
     use iroh_net::NodeId;
     use rand::RngCore;
     use tokio::io::AsyncWriteExt;
+    use testresult::TestResult;
 
     #[tokio::test]
     async fn test_blob_create_collection() -> Result<()> {
@@ -1253,7 +1254,7 @@ mod tests {
 
     /// Download a existing blob from oneself
     #[tokio::test]
-    async fn test_blob_get_self_existing() -> Result<()> {
+    async fn test_blob_get_self_existing() -> TestResult<()> {
         let _guard = iroh_test::logging::setup();
 
         let node = crate::node::Node::memory().spawn().await?;
@@ -1261,7 +1262,7 @@ mod tests {
         let client = node.client();
 
         let AddOutcome { hash, size, .. } =
-            client.blobs().add_bytes("foo").await.context("add bytes")?;
+            client.blobs().add_bytes("foo").await?;
 
         // Direct
         let res = client
@@ -1276,8 +1277,7 @@ mod tests {
                 },
             )
             .await?
-            .await
-            .context("direct (download)")?;
+            .await?;
 
         assert_eq!(res.local_size, size);
         assert_eq!(res.downloaded_size, 0);
@@ -1295,8 +1295,7 @@ mod tests {
                 },
             )
             .await?
-            .await
-            .context("queued")?;
+            .await?;
 
         assert_eq!(res.local_size, size);
         assert_eq!(res.downloaded_size, 0);
@@ -1306,7 +1305,7 @@ mod tests {
 
     /// Download a missing blob from oneself
     #[tokio::test]
-    async fn test_blob_get_self_missing() -> Result<()> {
+    async fn test_blob_get_self_missing() -> TestResult<()> {
         let _guard = iroh_test::logging::setup();
 
         let node = crate::node::Node::memory().spawn().await?;
@@ -1360,7 +1359,7 @@ mod tests {
 
     /// Download a existing collection. Check that things succeed and no download is performed.
     #[tokio::test]
-    async fn test_blob_get_existing_collection() -> Result<()> {
+    async fn test_blob_get_existing_collection() -> TestResult<()> {
         let _guard = iroh_test::logging::setup();
 
         let node = crate::node::Node::memory().spawn().await?;
