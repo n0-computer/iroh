@@ -589,15 +589,15 @@
 
         <span class="comment">// Subscribe to insert events from the replica.
         </span><span class="kw">let </span>a = {
-            <span class="kw">let </span>(s, r) = flume::bounded(SUBSCRIBE_CHANNEL_CAP);
+            <span class="kw">let </span>(s, r) = async_channel::bounded(SUBSCRIBE_CHANNEL_CAP);
             this.sync.subscribe(namespace, s).<span class="kw">await</span><span class="question-mark">?</span>;
-            r.into_stream()
-                .map(<span class="kw">move </span>|ev| LiveEvent::from_replica_event(ev, <span class="kw-2">&amp;</span>content_status_cb))
+            Box::pin(r).map(<span class="kw">move </span>|ev| LiveEvent::from_replica_event(ev, <span class="kw-2">&amp;</span>content_status_cb))
         };
 
         <span class="comment">// Subscribe to events from the [`live::Actor`].
         </span><span class="kw">let </span>b = {
-            <span class="kw">let </span>(s, r) = flume::bounded(SUBSCRIBE_CHANNEL_CAP);
+            <span class="kw">let </span>(s, r) = async_channel::bounded(SUBSCRIBE_CHANNEL_CAP);
+            <span class="kw">let </span>r = Box::pin(r);
             <span class="kw">let </span>(reply, reply_rx) = oneshot::channel();
             this.to_live_actor
                 .send(ToLiveActor::Subscribe {
@@ -607,7 +607,7 @@
                 })
                 .<span class="kw">await</span><span class="question-mark">?</span>;
             reply_rx.<span class="kw">await</span><span class="question-mark">??</span>;
-            r.into_stream().map(|event| <span class="prelude-val">Ok</span>(LiveEvent::from(event)))
+            r.map(|event| <span class="prelude-val">Ok</span>(LiveEvent::from(event)))
         };
 
         <span class="prelude-val">Ok</span>(a.or(b))

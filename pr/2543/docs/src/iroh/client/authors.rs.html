@@ -128,7 +128,17 @@
 <a href="#128" id="128">128</a>
 <a href="#129" id="129">129</a>
 <a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for author management.
+//!
+//! The main entry point is the [`Client`].
+//!
+//! You obtain a [`Client`] via [`Iroh::authors()`](crate::client::Iroh::authors).
 
 </span><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::{stream::StreamExt, Stream};
@@ -150,7 +160,7 @@
 }
 
 <span class="kw">impl </span>Client {
-    <span class="doccomment">/// Create a new document author.
+    <span class="doccomment">/// Creates a new document author.
     ///
     /// You likely want to save the returned [`AuthorId`] somewhere so that you can use this author
     /// again.
@@ -172,7 +182,7 @@
         <span class="prelude-val">Ok</span>(res.author_id)
     }
 
-    <span class="doccomment">/// Set the node-wide default author.
+    <span class="doccomment">/// Sets the node-wide default author.
     ///
     /// If the author does not exist, an error is returned.
     ///
@@ -183,23 +193,25 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="doccomment">/// List document authors for which we have a secret key.
+    <span class="doccomment">/// Lists document authors for which we have a secret key.
+    ///
+    /// It's only possible to create writes from authors that we have the secret key of.
     </span><span class="kw">pub async fn </span>list(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;AuthorId&gt;&gt;&gt; {
         <span class="kw">let </span>stream = <span class="self">self</span>.rpc.server_streaming(ListRequest {}).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(flatten(stream).map(|res| res.map(|res| res.author_id)))
     }
 
-    <span class="doccomment">/// Export the given author.
+    <span class="doccomment">/// Exports the given author.
     ///
-    /// Warning: This contains sensitive data.
+    /// Warning: The [`Author`] struct contains sensitive data.
     </span><span class="kw">pub async fn </span>export(<span class="kw-2">&amp;</span><span class="self">self</span>, author: AuthorId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Author&gt;&gt; {
         <span class="kw">let </span>res = <span class="self">self</span>.rpc.rpc(ExportRequest { author }).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(res.author)
     }
 
-    <span class="doccomment">/// Import the given author.
+    <span class="doccomment">/// Imports the given author.
     ///
-    /// Warning: This contains sensitive data.
+    /// Warning: The [`Author`] struct contains sensitive data.
     </span><span class="kw">pub async fn </span>import(<span class="kw-2">&amp;</span><span class="self">self</span>, author: Author) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="self">self</span>.rpc.rpc(ImportRequest { author }).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(())

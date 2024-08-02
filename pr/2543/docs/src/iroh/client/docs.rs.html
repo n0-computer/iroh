@@ -862,7 +862,18 @@
 <a href="#862" id="862">862</a>
 <a href="#863" id="863">863</a>
 <a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a>
+<a href="#869" id="869">869</a>
+<a href="#870" id="870">870</a>
+<a href="#871" id="871">871</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for document management.
+//!
+//! The main entry point is the [`Client`].
+//!
+//! You obtain a [`Client`] via [`Iroh::docs()`](crate::client::Iroh::docs).
 
 </span><span class="kw">use </span>std::{
     path::{Path, PathBuf},
@@ -911,14 +922,14 @@
 }
 
 <span class="kw">impl </span>Client {
-    <span class="doccomment">/// Create a new document.
+    <span class="doccomment">/// Creates a new document.
     </span><span class="kw">pub async fn </span>create(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Doc&gt; {
         <span class="kw">let </span>res = <span class="self">self</span>.rpc.rpc(CreateRequest {}).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="kw">let </span>doc = Doc::new(<span class="self">self</span>.rpc.clone(), res.id);
         <span class="prelude-val">Ok</span>(doc)
     }
 
-    <span class="doccomment">/// Delete a document from the local node.
+    <span class="doccomment">/// Deletes a document from the local node.
     ///
     /// This is a destructive operation. Both the document secret key and all entries in the
     /// document will be permanently deleted from the node's storage. Content blobs will be deleted
@@ -928,7 +939,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="doccomment">/// Import a document from a namespace capability.
+    <span class="doccomment">/// Imports a document from a namespace capability.
     ///
     /// This does not start sync automatically. Use [`Doc::start_sync`] to start sync.
     </span><span class="kw">pub async fn </span>import_namespace(<span class="kw-2">&amp;</span><span class="self">self</span>, capability: Capability) -&gt; <span class="prelude-ty">Result</span>&lt;Doc&gt; {
@@ -937,7 +948,7 @@
         <span class="prelude-val">Ok</span>(doc)
     }
 
-    <span class="doccomment">/// Import a document from a ticket and join all peers in the ticket.
+    <span class="doccomment">/// Imports a document from a ticket and joins all peers in the ticket.
     </span><span class="kw">pub async fn </span>import(<span class="kw-2">&amp;</span><span class="self">self</span>, ticket: DocTicket) -&gt; <span class="prelude-ty">Result</span>&lt;Doc&gt; {
         <span class="kw">let </span>DocTicket { capability, nodes } = ticket;
         <span class="kw">let </span>doc = <span class="self">self</span>.import_namespace(capability).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -945,9 +956,9 @@
         <span class="prelude-val">Ok</span>(doc)
     }
 
-    <span class="doccomment">/// Import a document from a ticket, create a subscription stream and join all peers in the ticket.
+    <span class="doccomment">/// Imports a document from a ticket, creates a subscription stream and joins all peers in the ticket.
     ///
-    /// Returns the [`Doc`] and a [`Stream`] of [`LiveEvent`]s
+    /// Returns the [`Doc`] and a [`Stream`] of [`LiveEvent`]s.
     ///
     /// The subscription stream is created before the sync is started, so the first call to this
     /// method after starting the node is guaranteed to not miss any sync events.
@@ -963,13 +974,15 @@
         <span class="prelude-val">Ok</span>((doc, events))
     }
 
-    <span class="doccomment">/// List all documents.
+    <span class="doccomment">/// Lists all documents.
     </span><span class="kw">pub async fn </span>list(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;(NamespaceId, CapabilityKind)&gt;&gt;&gt; {
         <span class="kw">let </span>stream = <span class="self">self</span>.rpc.server_streaming(DocListRequest {}).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(flatten(stream).map(|res| res.map(|res| (res.id, res.capability))))
     }
 
-    <span class="doccomment">/// Get a [`Doc`] client for a single document. Return None if the document cannot be found.
+    <span class="doccomment">/// Returns a [`Doc`] client for a single document.
+    ///
+    /// Returns None if the document cannot be found.
     </span><span class="kw">pub async fn </span>open(<span class="kw-2">&amp;</span><span class="self">self</span>, id: NamespaceId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Doc&gt;&gt; {
         <span class="self">self</span>.rpc.rpc(OpenRequest { doc_id: id }).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="kw">let </span>doc = Doc::new(<span class="self">self</span>.rpc.clone(), id);
@@ -1027,12 +1040,12 @@
         <span class="prelude-val">Ok</span>(res)
     }
 
-    <span class="doccomment">/// Get the document id of this doc.
+    <span class="doccomment">/// Returns the document id of this doc.
     </span><span class="kw">pub fn </span>id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NamespaceId {
         <span class="self">self</span>.<span class="number">0</span>.id
     }
 
-    <span class="doccomment">/// Close the document.
+    <span class="doccomment">/// Closes the document.
     </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">if </span>!<span class="self">self</span>.<span class="number">0</span>.closed.swap(<span class="bool-val">true</span>, Ordering::Relaxed) {
             <span class="self">self</span>.rpc(CloseRequest { doc_id: <span class="self">self</span>.id() }).<span class="kw">await</span><span class="question-mark">??</span>;
@@ -1048,7 +1061,7 @@
         }
     }
 
-    <span class="doccomment">/// Set the content of a key to a byte array.
+    <span class="doccomment">/// Sets the content of a key to a byte array.
     </span><span class="kw">pub async fn </span>set_bytes(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         author_id: AuthorId,
@@ -1067,7 +1080,7 @@
         <span class="prelude-val">Ok</span>(res.entry.content_hash())
     }
 
-    <span class="doccomment">/// Set an entries on the doc via its key, hash, and size.
+    <span class="doccomment">/// Sets an entries on the doc via its key, hash, and size.
     </span><span class="kw">pub async fn </span>set_hash(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         author_id: AuthorId,
@@ -1087,7 +1100,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="doccomment">/// Add an entry from an absolute file path
+    <span class="doccomment">/// Adds an entry from an absolute file path
     </span><span class="kw">pub async fn </span>import_file(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         author: AuthorId,
@@ -1110,7 +1123,7 @@
         <span class="prelude-val">Ok</span>(ImportFileProgress::new(stream))
     }
 
-    <span class="doccomment">/// Export an entry as a file to a given absolute path.
+    <span class="doccomment">/// Exports an entry as a file to a given absolute path.
     </span><span class="kw">pub async fn </span>export_file(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         entry: Entry,
@@ -1130,7 +1143,7 @@
         <span class="prelude-val">Ok</span>(ExportFileProgress::new(stream))
     }
 
-    <span class="doccomment">/// Delete entries that match the given `author` and key `prefix`.
+    <span class="doccomment">/// Deletes entries that match the given `author` and key `prefix`.
     ///
     /// This inserts an empty entry with the key set to `prefix`, effectively clearing all other
     /// entries whose key starts with or is equal to the given `prefix`.
@@ -1149,9 +1162,9 @@
         <span class="prelude-val">Ok</span>(removed)
     }
 
-    <span class="doccomment">/// Get an entry for a key and author.
+    <span class="doccomment">/// Returns an entry for a key and author.
     ///
-    /// Optionally also get the entry if it is empty (i.e. a deletion marker).
+    /// Optionally also returns the entry unless it is empty (i.e. a deletion marker).
     </span><span class="kw">pub async fn </span>get_exact(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         author: AuthorId,
@@ -1170,7 +1183,7 @@
         <span class="prelude-val">Ok</span>(res.entry.map(|entry| entry.into()))
     }
 
-    <span class="doccomment">/// Get entries.
+    <span class="doccomment">/// Returns all entries matching the query.
     </span><span class="kw">pub async fn </span>get_many(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         query: <span class="kw">impl </span>Into&lt;Query&gt;,
@@ -1187,12 +1200,12 @@
         <span class="prelude-val">Ok</span>(flatten(stream).map(|res| res.map(|res| res.entry.into())))
     }
 
-    <span class="doccomment">/// Get a single entry.
+    <span class="doccomment">/// Returns a single entry.
     </span><span class="kw">pub async fn </span>get_one(<span class="kw-2">&amp;</span><span class="self">self</span>, query: <span class="kw">impl </span>Into&lt;Query&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Entry&gt;&gt; {
         <span class="self">self</span>.get_many(query).<span class="kw">await</span><span class="question-mark">?</span>.next().<span class="kw">await</span>.transpose()
     }
 
-    <span class="doccomment">/// Share this document with peers over a ticket.
+    <span class="doccomment">/// Shares this document with peers over a ticket.
     </span><span class="kw">pub async fn </span>share(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         mode: ShareMode,
@@ -1209,7 +1222,7 @@
         <span class="prelude-val">Ok</span>(res.<span class="number">0</span>)
     }
 
-    <span class="doccomment">/// Start to sync this document with a list of peers.
+    <span class="doccomment">/// Starts to sync this document with a list of peers.
     </span><span class="kw">pub async fn </span>start_sync(<span class="kw-2">&amp;</span><span class="self">self</span>, peers: Vec&lt;NodeAddr&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="self">self</span>.ensure_open()<span class="question-mark">?</span>;
         <span class="kw">let </span>_res = <span class="self">self
@@ -1221,14 +1234,14 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="doccomment">/// Stop the live sync for this document.
+    <span class="doccomment">/// Stops the live sync for this document.
     </span><span class="kw">pub async fn </span>leave(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="self">self</span>.ensure_open()<span class="question-mark">?</span>;
         <span class="kw">let </span>_res = <span class="self">self</span>.rpc(LeaveRequest { doc_id: <span class="self">self</span>.id() }).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="doccomment">/// Subscribe to events for this document.
+    <span class="doccomment">/// Subscribes to events for this document.
     </span><span class="kw">pub async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; anyhow::Result&lt;<span class="kw">impl </span>Stream&lt;Item = anyhow::Result&lt;LiveEvent&gt;&gt;&gt; {
         <span class="self">self</span>.ensure_open()<span class="question-mark">?</span>;
         <span class="kw">let </span>stream = <span class="self">self
@@ -1242,14 +1255,14 @@
         }))
     }
 
-    <span class="doccomment">/// Get status info for this document
+    <span class="doccomment">/// Returns status info for this document
     </span><span class="kw">pub async fn </span>status(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; anyhow::Result&lt;OpenState&gt; {
         <span class="self">self</span>.ensure_open()<span class="question-mark">?</span>;
         <span class="kw">let </span>res = <span class="self">self</span>.rpc(StatusRequest { doc_id: <span class="self">self</span>.id() }).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(res.status)
     }
 
-    <span class="doccomment">/// Set the download policy for this document
+    <span class="doccomment">/// Sets the download policy for this document
     </span><span class="kw">pub async fn </span>set_download_policy(<span class="kw-2">&amp;</span><span class="self">self</span>, policy: DownloadPolicy) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="self">self</span>.rpc(SetDownloadPolicyRequest {
             doc_id: <span class="self">self</span>.id(),
@@ -1259,7 +1272,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="doccomment">/// Get the download policy for this document
+    <span class="doccomment">/// Returns the download policy for this document
     </span><span class="kw">pub async fn </span>get_download_policy(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;DownloadPolicy&gt; {
         <span class="kw">let </span>res = <span class="self">self
             </span>.rpc(GetDownloadPolicyRequest { doc_id: <span class="self">self</span>.id() })
@@ -1267,7 +1280,7 @@
         <span class="prelude-val">Ok</span>(res.policy)
     }
 
-    <span class="doccomment">/// Get sync peers for this document
+    <span class="doccomment">/// Returns sync peers for this document
     </span><span class="kw">pub async fn </span>get_sync_peers(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;PeerIdBytes&gt;&gt;&gt; {
         <span class="kw">let </span>res = <span class="self">self
             </span>.rpc(GetSyncPeersRequest { doc_id: <span class="self">self</span>.id() })
@@ -1299,44 +1312,44 @@
 }
 
 <span class="kw">impl </span>Entry {
-    <span class="doccomment">/// Get the [`RecordIdentifier`] for this entry.
+    <span class="doccomment">/// Returns the [`RecordIdentifier`] for this entry.
     </span><span class="kw">pub fn </span>id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>RecordIdentifier {
         <span class="self">self</span>.<span class="number">0</span>.id()
     }
 
-    <span class="doccomment">/// Get the [`AuthorId`] of this entry.
+    <span class="doccomment">/// Returns the [`AuthorId`] of this entry.
     </span><span class="kw">pub fn </span>author(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; AuthorId {
         <span class="self">self</span>.<span class="number">0</span>.author()
     }
 
-    <span class="doccomment">/// Get the [`struct@Hash`] of the content data of this record.
+    <span class="doccomment">/// Returns the [`struct@Hash`] of the content data of this record.
     </span><span class="kw">pub fn </span>content_hash(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Hash {
         <span class="self">self</span>.<span class="number">0</span>.content_hash()
     }
 
-    <span class="doccomment">/// Get the length of the data addressed by this record's content hash.
+    <span class="doccomment">/// Returns the length of the data addressed by this record's content hash.
     </span><span class="kw">pub fn </span>content_len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
         <span class="self">self</span>.<span class="number">0</span>.content_len()
     }
 
-    <span class="doccomment">/// Get the key of this entry.
+    <span class="doccomment">/// Returns the key of this entry.
     </span><span class="kw">pub fn </span>key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[u8] {
         <span class="self">self</span>.<span class="number">0</span>.key()
     }
 
-    <span class="doccomment">/// Get the timestamp of this entry.
+    <span class="doccomment">/// Returns the timestamp of this entry.
     </span><span class="kw">pub fn </span>timestamp(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
         <span class="self">self</span>.<span class="number">0</span>.timestamp()
     }
 
-    <span class="doccomment">/// Read the content of an [`Entry`] as a streaming [`blobs::Reader`].
+    <span class="doccomment">/// Reads the content of an [`Entry`] as a streaming [`blobs::Reader`].
     ///
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
     </span><span class="kw">pub async fn </span>content_reader(<span class="kw-2">&amp;</span><span class="self">self</span>, client: <span class="kw">impl </span>Into&lt;<span class="kw-2">&amp;</span>RpcClient&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;blobs::Reader&gt; {
         blobs::Reader::from_rpc_read(client.into(), <span class="self">self</span>.content_hash()).<span class="kw">await
     </span>}
 
-    <span class="doccomment">/// Read all content of an [`Entry`] into a buffer.
+    <span class="doccomment">/// Reads all content of an [`Entry`] into a buffer.
     ///
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
     </span><span class="kw">pub async fn </span>content_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, client: <span class="kw">impl </span>Into&lt;<span class="kw-2">&amp;</span>RpcClient&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;Bytes&gt; {
@@ -1354,7 +1367,7 @@
 /// file as an entry in the doc.
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
 </span><span class="kw">pub enum </span>ImportProgress {
-    <span class="doccomment">/// An item was found with name `name`, from now on referred to via `id`
+    <span class="doccomment">/// An item was found with name `name`, from now on referred to via `id`.
     </span>Found {
         <span class="doccomment">/// A new unique id for this entry.
         </span>id: u64,
@@ -1377,7 +1390,7 @@
         <span class="doccomment">/// The hash of the entry.
         </span>hash: Hash,
     },
-    <span class="doccomment">/// We are done setting the entry to the doc
+    <span class="doccomment">/// We are done setting the entry to the doc.
     </span>AllDone {
         <span class="doccomment">/// The key of the entry
         </span>key: Bytes,
@@ -1485,7 +1498,7 @@
         }
     }
 
-    <span class="doccomment">/// Finish writing the stream, ignoring all intermediate progress events.
+    <span class="doccomment">/// Finishes writing the stream, ignoring all intermediate progress events.
     ///
     /// Returns a [`ImportFileOutcome`] which contains a tag, key, and hash and the size of the
     /// content.
@@ -1557,8 +1570,9 @@
             stream: Box::pin(stream),
         }
     }
-    <span class="doccomment">/// Iterate through the export progress stream, returning when the stream has completed.
 
+    <span class="doccomment">/// Iterates through the export progress stream, returning when the stream has completed.
+    ///
     /// Returns a [`ExportFileOutcome`] which contains a file path the data was written to and the size of the content.
     </span><span class="kw">pub async fn </span>finish(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;ExportFileOutcome&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>total_size = <span class="number">0</span>;

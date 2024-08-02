@@ -1102,12 +1102,12 @@
     <span class="attr">#[display(<span class="string">"ListAuthors"</span>)]
     </span>ListAuthors {
         <span class="attr">#[debug(<span class="string">"reply"</span>)]
-        </span>reply: flume::Sender&lt;<span class="prelude-ty">Result</span>&lt;AuthorId&gt;&gt;,
+        </span>reply: async_channel::Sender&lt;<span class="prelude-ty">Result</span>&lt;AuthorId&gt;&gt;,
     },
     <span class="attr">#[display(<span class="string">"ListReplicas"</span>)]
     </span>ListReplicas {
         <span class="attr">#[debug(<span class="string">"reply"</span>)]
-        </span>reply: flume::Sender&lt;<span class="prelude-ty">Result</span>&lt;(NamespaceId, CapabilityKind)&gt;&gt;,
+        </span>reply: async_channel::Sender&lt;<span class="prelude-ty">Result</span>&lt;(NamespaceId, CapabilityKind)&gt;&gt;,
     },
     <span class="attr">#[display(<span class="string">"ContentHashes"</span>)]
     </span>ContentHashes {
@@ -1149,12 +1149,12 @@
         </span>reply: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
     },
     Subscribe {
-        sender: flume::Sender&lt;Event&gt;,
+        sender: async_channel::Sender&lt;Event&gt;,
         <span class="attr">#[debug(<span class="string">"reply"</span>)]
         </span>reply: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
     },
     Unsubscribe {
-        sender: flume::Sender&lt;Event&gt;,
+        sender: async_channel::Sender&lt;Event&gt;,
         <span class="attr">#[debug(<span class="string">"reply"</span>)]
         </span>reply: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
     },
@@ -1207,7 +1207,7 @@
     },
     GetMany {
         query: Query,
-        reply: flume::Sender&lt;<span class="prelude-ty">Result</span>&lt;SignedEntry&gt;&gt;,
+        reply: async_channel::Sender&lt;<span class="prelude-ty">Result</span>&lt;SignedEntry&gt;&gt;,
     },
     DropReplica {
         reply: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
@@ -1263,7 +1263,7 @@
 /// [`SyncHandle::drop`] will not block.
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>SyncHandle {
-    tx: flume::Sender&lt;Action&gt;,
+    tx: async_channel::Sender&lt;Action&gt;,
     join_handle: Arc&lt;<span class="prelude-ty">Option</span>&lt;JoinHandle&lt;()&gt;&gt;&gt;,
 }
 
@@ -1273,7 +1273,7 @@
     <span class="doccomment">/// Set to true to set sync state to true.
     </span><span class="kw">pub </span>sync: bool,
     <span class="doccomment">/// Optionally subscribe to replica events.
-    </span><span class="kw">pub </span>subscribe: <span class="prelude-ty">Option</span>&lt;flume::Sender&lt;Event&gt;&gt;,
+    </span><span class="kw">pub </span>subscribe: <span class="prelude-ty">Option</span>&lt;async_channel::Sender&lt;Event&gt;&gt;,
 }
 <span class="kw">impl </span>OpenOpts {
     <span class="doccomment">/// Set sync state to true.
@@ -1282,7 +1282,7 @@
         <span class="self">self
     </span>}
     <span class="doccomment">/// Subscribe to replica events.
-    </span><span class="kw">pub fn </span>subscribe(<span class="kw-2">mut </span><span class="self">self</span>, subscribe: flume::Sender&lt;Event&gt;) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>subscribe(<span class="kw-2">mut </span><span class="self">self</span>, subscribe: async_channel::Sender&lt;Event&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.subscribe = <span class="prelude-val">Some</span>(subscribe);
         <span class="self">self
     </span>}
@@ -1296,7 +1296,7 @@
         content_status_callback: <span class="prelude-ty">Option</span>&lt;ContentStatusCallback&gt;,
         me: String,
     ) -&gt; SyncHandle {
-        <span class="kw">let </span>(action_tx, action_rx) = flume::bounded(ACTION_CAP);
+        <span class="kw">let </span>(action_tx, action_rx) = async_channel::bounded(ACTION_CAP);
         <span class="kw">let </span>actor = Actor {
             store,
             states: Default::default(),
@@ -1339,7 +1339,7 @@
     <span class="kw">pub async fn </span>subscribe(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         namespace: NamespaceId,
-        sender: flume::Sender&lt;Event&gt;,
+        sender: async_channel::Sender&lt;Event&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>(reply, rx) = oneshot::channel();
         <span class="self">self</span>.send_replica(namespace, ReplicaAction::Subscribe { sender, reply })
@@ -1350,7 +1350,7 @@
     <span class="kw">pub async fn </span>unsubscribe(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         namespace: NamespaceId,
-        sender: flume::Sender&lt;Event&gt;,
+        sender: async_channel::Sender&lt;Event&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>(reply, rx) = oneshot::channel();
         <span class="self">self</span>.send_replica(namespace, ReplicaAction::Unsubscribe { sender, reply })
@@ -1476,7 +1476,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         namespace: NamespaceId,
         query: Query,
-        reply: flume::Sender&lt;<span class="prelude-ty">Result</span>&lt;SignedEntry&gt;&gt;,
+        reply: async_channel::Sender&lt;<span class="prelude-ty">Result</span>&lt;SignedEntry&gt;&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>action = ReplicaAction::GetMany { query, reply };
         <span class="self">self</span>.send_replica(namespace, action).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1530,13 +1530,13 @@
         <span class="prelude-val">Ok</span>(store)
     }
 
-    <span class="kw">pub async fn </span>list_authors(<span class="kw-2">&amp;</span><span class="self">self</span>, reply: flume::Sender&lt;<span class="prelude-ty">Result</span>&lt;AuthorId&gt;&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">pub async fn </span>list_authors(<span class="kw-2">&amp;</span><span class="self">self</span>, reply: async_channel::Sender&lt;<span class="prelude-ty">Result</span>&lt;AuthorId&gt;&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="self">self</span>.send(Action::ListAuthors { reply }).<span class="kw">await
     </span>}
 
     <span class="kw">pub async fn </span>list_replicas(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        reply: flume::Sender&lt;<span class="prelude-ty">Result</span>&lt;(NamespaceId, CapabilityKind)&gt;&gt;,
+        reply: async_channel::Sender&lt;<span class="prelude-ty">Result</span>&lt;(NamespaceId, CapabilityKind)&gt;&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="self">self</span>.send(Action::ListReplicas { reply }).<span class="kw">await
     </span>}
@@ -1607,7 +1607,7 @@
 
     <span class="kw">async fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, action: Action) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="self">self</span>.tx
-            .send_async(action)
+            .send(action)
             .<span class="kw">await
             </span>.context(<span class="string">"sending to iroh_docs actor failed"</span>)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
@@ -1622,7 +1622,10 @@
     <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="comment">// this means we're dropping the last reference
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(handle) = Arc::get_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>.join_handle) {
-            <span class="self">self</span>.tx.send(Action::Shutdown { reply: <span class="prelude-val">None </span>}).ok();
+            <span class="comment">// this call is the reason tx can not be a tokio mpsc channel.
+            // we have no control about where drop is called, yet tokio send_blocking panics
+            // when called from inside a tokio runtime.
+            </span><span class="self">self</span>.tx.send_blocking(Action::Shutdown { reply: <span class="prelude-val">None </span>}).ok();
             <span class="kw">let </span>handle = handle.take().expect(<span class="string">"this can only run once"</span>);
             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = handle.join() {
                 <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"Failed to join sync actor"</span>);
@@ -1634,7 +1637,7 @@
 <span class="kw">struct </span>Actor {
     store: Store,
     states: OpenReplicas,
-    action_rx: flume::Receiver&lt;Action&gt;,
+    action_rx: async_channel::Receiver&lt;Action&gt;,
     content_status_callback: <span class="prelude-ty">Option</span>&lt;ContentStatusCallback&gt;,
     tasks: JoinSet&lt;()&gt;,
 }
@@ -1660,10 +1663,10 @@
                     }
                     <span class="kw">continue</span>;
                 }
-                action = <span class="self">self</span>.action_rx.recv_async() =&gt; {
+                action = <span class="self">self</span>.action_rx.recv() =&gt; {
                     <span class="kw">match </span>action {
                         <span class="prelude-val">Ok</span>(action) =&gt; action,
-                        <span class="prelude-val">Err</span>(flume::RecvError::Disconnected) =&gt; {
+                        <span class="prelude-val">Err</span>(async_channel::RecvError) =&gt; {
                             <span class="macro">debug!</span>(<span class="string">"action channel disconnected"</span>);
                             <span class="kw">break </span><span class="prelude-val">None</span>;
                         }
@@ -2020,17 +2023,14 @@
 }
 
 <span class="kw">async fn </span>iter_to_channel_async&lt;T: Send + <span class="lifetime">'static</span>&gt;(
-    channel: flume::Sender&lt;<span class="prelude-ty">Result</span>&lt;T&gt;&gt;,
+    channel: async_channel::Sender&lt;<span class="prelude-ty">Result</span>&lt;T&gt;&gt;,
     iter: <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;T&gt;&gt;&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendReplyError&gt; {
     <span class="kw">match </span>iter {
-        <span class="prelude-val">Err</span>(err) =&gt; channel
-            .send_async(<span class="prelude-val">Err</span>(err))
-            .<span class="kw">await
-            </span>.map_err(send_reply_error)<span class="question-mark">?</span>,
+        <span class="prelude-val">Err</span>(err) =&gt; channel.send(<span class="prelude-val">Err</span>(err)).<span class="kw">await</span>.map_err(send_reply_error)<span class="question-mark">?</span>,
         <span class="prelude-val">Ok</span>(iter) =&gt; {
             <span class="kw">for </span>item <span class="kw">in </span>iter {
-                channel.send_async(item).<span class="kw">await</span>.map_err(send_reply_error)<span class="question-mark">?</span>;
+                channel.send(item).<span class="kw">await</span>.map_err(send_reply_error)<span class="question-mark">?</span>;
             }
         }
     }
@@ -2073,10 +2073,10 @@
         <span class="kw">let </span>id = namespace.id();
         sync.import_namespace(namespace.into()).<span class="kw">await</span><span class="question-mark">?</span>;
         sync.open(id, Default::default()).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">10</span>);
+        <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">10</span>);
         sync.subscribe(id, tx).<span class="kw">await</span><span class="question-mark">?</span>;
         sync.close(id).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="macro">assert!</span>(rx.recv_async().<span class="kw">await</span>.is_err());
+        <span class="macro">assert!</span>(rx.recv().<span class="kw">await</span>.is_err());
         <span class="prelude-val">Ok</span>(())
     }
 }

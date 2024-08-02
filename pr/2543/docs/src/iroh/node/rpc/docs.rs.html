@@ -304,14 +304,15 @@
 <a href="#304" id="304">304</a>
 <a href="#305" id="305">305</a>
 <a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This module contains an impl block on [`DocsEngine`] with handlers for RPC requests
 
 </span><span class="kw">use </span>anyhow::anyhow;
-<span class="kw">use </span>futures_lite::Stream;
+<span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>iroh_base::rpc::RpcResult;
 <span class="kw">use </span>iroh_blobs::{store::Store <span class="kw">as </span>BaoStore, BlobFormat};
 <span class="kw">use </span>iroh_docs::{Author, DocTicket, NamespaceSecret};
-<span class="kw">use </span>tokio_stream::StreamExt;
 
 <span class="kw">use </span><span class="kw">crate</span>::client::docs::ShareMode;
 <span class="kw">use </span><span class="kw">crate</span>::node::DocsEngine;
@@ -366,18 +367,18 @@
     <span class="kw">pub fn </span>author_list(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         _req: AuthorListRequest,
-    ) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;AuthorListResponse&gt;&gt; {
-        <span class="kw">let </span>(tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
+    ) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;AuthorListResponse&gt;&gt; + Unpin {
+        <span class="kw">let </span>(tx, rx) = async_channel::bounded(ITER_CHANNEL_CAP);
         <span class="kw">let </span>sync = <span class="self">self</span>.sync.clone();
         <span class="comment">// we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
         </span>tokio::task::spawn(<span class="kw">async move </span>{
             <span class="kw">let </span>tx2 = tx.clone();
             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = sync.list_authors(tx).<span class="kw">await </span>{
-                tx2.send_async(<span class="prelude-val">Err</span>(err)).<span class="kw">await</span>.ok();
+                tx2.send(<span class="prelude-val">Err</span>(err)).<span class="kw">await</span>.ok();
             }
         });
-        rx.into_stream().map(|r| {
+        rx.boxed().map(|r| {
             r.map(|author_id| AuthorListResponse { author_id })
                 .map_err(Into::into)
         })
@@ -417,18 +418,21 @@
         <span class="prelude-val">Ok</span>(DropResponse {})
     }
 
-    <span class="kw">pub fn </span>doc_list(<span class="kw-2">&amp;</span><span class="self">self</span>, _req: DocListRequest) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;DocListResponse&gt;&gt; {
-        <span class="kw">let </span>(tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
+    <span class="kw">pub fn </span>doc_list(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        _req: DocListRequest,
+    ) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;DocListResponse&gt;&gt; + Unpin {
+        <span class="kw">let </span>(tx, rx) = async_channel::bounded(ITER_CHANNEL_CAP);
         <span class="kw">let </span>sync = <span class="self">self</span>.sync.clone();
         <span class="comment">// we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
         </span>tokio::task::spawn(<span class="kw">async move </span>{
             <span class="kw">let </span>tx2 = tx.clone();
             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = sync.list_replicas(tx).<span class="kw">await </span>{
-                tx2.send_async(<span class="prelude-val">Err</span>(err)).<span class="kw">await</span>.ok();
+                tx2.send(<span class="prelude-val">Err</span>(err)).<span class="kw">await</span>.ok();
             }
         });
-        rx.into_stream().map(|r| {
+        rx.boxed().map(|r| {
             r.map(|(id, capability)| DocListResponse { id, capability })
                 .map_err(Into::into)
         })
@@ -555,19 +559,19 @@
     <span class="kw">pub fn </span>doc_get_many(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         req: GetManyRequest,
-    ) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;GetManyResponse&gt;&gt; {
+    ) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;GetManyResponse&gt;&gt; + Unpin {
         <span class="kw">let </span>GetManyRequest { doc_id, query } = req;
-        <span class="kw">let </span>(tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
+        <span class="kw">let </span>(tx, rx) = async_channel::bounded(ITER_CHANNEL_CAP);
         <span class="kw">let </span>sync = <span class="self">self</span>.sync.clone();
         <span class="comment">// we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
         </span>tokio::task::spawn(<span class="kw">async move </span>{
             <span class="kw">let </span>tx2 = tx.clone();
             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = sync.get_many(doc_id, query, tx).<span class="kw">await </span>{
-                tx2.send_async(<span class="prelude-val">Err</span>(err)).<span class="kw">await</span>.ok();
+                tx2.send(<span class="prelude-val">Err</span>(err)).<span class="kw">await</span>.ok();
             }
         });
-        rx.into_stream()
+        rx.boxed()
             .map(|r| r.map(|entry| GetManyResponse { entry }).map_err(Into::into))
     }
 

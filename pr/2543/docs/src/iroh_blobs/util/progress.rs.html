@@ -1276,7 +1276,7 @@
     }
 }
 
-<span class="doccomment">/// A progress sender that uses a flume channel.
+<span class="doccomment">/// A progress sender that uses an async channel.
 </span><span class="kw">pub struct </span>AsyncChannelProgressSender&lt;T&gt; {
     sender: async_channel::Sender&lt;T&gt;,
     id: std::sync::Arc&lt;std::sync::atomic::AtomicU64&gt;,
@@ -1301,7 +1301,7 @@
 }
 
 <span class="kw">impl</span>&lt;T&gt; AsyncChannelProgressSender&lt;T&gt; {
-    <span class="doccomment">/// Create a new progress sender from a flume sender.
+    <span class="doccomment">/// Create a new progress sender from an async channel sender.
     </span><span class="kw">pub fn </span>new(sender: async_channel::Sender&lt;T&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             sender,
@@ -1322,7 +1322,7 @@
     <span class="kw">if </span>mem::size_of::&lt;T&gt;() == std::mem::size_of::&lt;usize&gt;()
         &amp;&amp; mem::align_of::&lt;T&gt;() == mem::align_of::&lt;usize&gt;()
     {
-        <span class="comment">// Safe only if size and alignment requirements are met
+        <span class="comment">// SAFETY: size and alignment requirements are checked and met
         </span><span class="kw">unsafe </span>{ <span class="prelude-val">Some</span>(mem::transmute_copy(value)) }
     } <span class="kw">else </span>{
         <span class="prelude-val">None

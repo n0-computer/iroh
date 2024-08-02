@@ -2508,6 +2508,31 @@
 <a href="#2508" id="2508">2508</a>
 <a href="#2509" id="2509">2509</a>
 <a href="#2510" id="2510">2510</a>
+<a href="#2511" id="2511">2511</a>
+<a href="#2512" id="2512">2512</a>
+<a href="#2513" id="2513">2513</a>
+<a href="#2514" id="2514">2514</a>
+<a href="#2515" id="2515">2515</a>
+<a href="#2516" id="2516">2516</a>
+<a href="#2517" id="2517">2517</a>
+<a href="#2518" id="2518">2518</a>
+<a href="#2519" id="2519">2519</a>
+<a href="#2520" id="2520">2520</a>
+<a href="#2521" id="2521">2521</a>
+<a href="#2522" id="2522">2522</a>
+<a href="#2523" id="2523">2523</a>
+<a href="#2524" id="2524">2524</a>
+<a href="#2525" id="2525">2525</a>
+<a href="#2526" id="2526">2526</a>
+<a href="#2527" id="2527">2527</a>
+<a href="#2528" id="2528">2528</a>
+<a href="#2529" id="2529">2529</a>
+<a href="#2530" id="2530">2530</a>
+<a href="#2531" id="2531">2531</a>
+<a href="#2532" id="2532">2532</a>
+<a href="#2533" id="2533">2533</a>
+<a href="#2534" id="2534">2534</a>
+<a href="#2535" id="2535">2535</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for iroh-docs replicas
 
 </span><span class="comment">// Names and concepts are roughly based on Willows design at the moment:
@@ -2618,17 +2643,34 @@
     </span><span class="kw">pub </span>num_sent: usize,
 }
 
+<span class="kw">fn </span>get_as_ptr&lt;T&gt;(value: <span class="kw-2">&amp;</span>T) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
+    <span class="kw">use </span>std::mem;
+    <span class="kw">if </span>mem::size_of::&lt;T&gt;() == std::mem::size_of::&lt;usize&gt;()
+        &amp;&amp; mem::align_of::&lt;T&gt;() == mem::align_of::&lt;usize&gt;()
+    {
+        <span class="comment">// Safe only if size and alignment requirements are met
+        </span><span class="kw">unsafe </span>{ <span class="prelude-val">Some</span>(mem::transmute_copy(value)) }
+    } <span class="kw">else </span>{
+        <span class="prelude-val">None
+    </span>}
+}
+
+<span class="kw">fn </span>same_channel&lt;T&gt;(a: <span class="kw-2">&amp;</span>async_channel::Sender&lt;T&gt;, b: <span class="kw-2">&amp;</span>async_channel::Sender&lt;T&gt;) -&gt; bool {
+    get_as_ptr(a).unwrap() == get_as_ptr(b).unwrap()
+}
+
 <span class="attr">#[derive(Debug, Default)]
-</span><span class="kw">struct </span>Subscribers(Vec&lt;flume::Sender&lt;Event&gt;&gt;);
+</span><span class="kw">struct </span>Subscribers(Vec&lt;async_channel::Sender&lt;Event&gt;&gt;);
 <span class="kw">impl </span>Subscribers {
-    <span class="kw">pub fn </span>subscribe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, sender: flume::Sender&lt;Event&gt;) {
+    <span class="kw">pub fn </span>subscribe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, sender: async_channel::Sender&lt;Event&gt;) {
         <span class="self">self</span>.<span class="number">0</span>.push(sender)
     }
-    <span class="kw">pub fn </span>unsubscribe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, sender: <span class="kw-2">&amp;</span>flume::Sender&lt;Event&gt;) {
-        <span class="self">self</span>.<span class="number">0</span>.retain(|s| !s.same_channel(sender));
+    <span class="kw">pub fn </span>unsubscribe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, sender: <span class="kw-2">&amp;</span>async_channel::Sender&lt;Event&gt;) {
+        <span class="self">self</span>.<span class="number">0</span>.retain(|s| !same_channel(s, sender));
     }
     <span class="kw">pub fn </span>send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, event: Event) {
-        <span class="self">self</span>.<span class="number">0</span>.retain(|sender| sender.send(event.clone()).is_ok())
+        <span class="self">self</span>.<span class="number">0
+            </span>.retain(|sender| sender.send_blocking(event.clone()).is_ok())
     }
     <span class="kw">pub fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.<span class="number">0</span>.len()
@@ -2773,10 +2815,10 @@
 
     <span class="doccomment">/// Subscribe to insert events.
     ///
-    /// When subscribing to a replica, you must ensure that the corresponding [`flume::Receiver`] is
+    /// When subscribing to a replica, you must ensure that the corresponding [`async_channel::Receiver`] is
     /// received from in a loop. If not receiving, local and remote inserts will hang waiting for
     /// the receiver to be received from.
-    </span><span class="kw">pub fn </span>subscribe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, sender: flume::Sender&lt;Event&gt;) {
+    </span><span class="kw">pub fn </span>subscribe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, sender: async_channel::Sender&lt;Event&gt;) {
         <span class="self">self</span>.subscribers.subscribe(sender)
     }
 
@@ -2785,7 +2827,7 @@
     /// Simply dropping the receiver is fine too. If you cloned a single sender to subscribe to
     /// multiple replicas, you can use this method to explicitly unsubscribe the sender from
     /// this replica without having to drop the receiver.
-    </span><span class="kw">pub fn </span>unsubscribe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, sender: <span class="kw-2">&amp;</span>flume::Sender&lt;Event&gt;) {
+    </span><span class="kw">pub fn </span>unsubscribe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, sender: <span class="kw-2">&amp;</span>async_channel::Sender&lt;Event&gt;) {
         <span class="self">self</span>.subscribers.unsubscribe(sender)
     }
 
@@ -4666,6 +4708,14 @@
         <span class="prelude-val">Ok</span>(())
     }
 
+    <span class="kw">fn </span>drain(events: async_channel::Receiver&lt;Event&gt;) -&gt; Vec&lt;Event&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>res = <span class="macro">vec!</span>[];
+        <span class="kw">while let </span><span class="prelude-val">Ok</span>(ev) = events.try_recv() {
+            res.push(ev);
+        }
+        res
+    }
+
     <span class="doccomment">/// This tests that no events are emitted for entries received during sync which are obsolete
     /// (too old) by the time they are actually inserted in the store.
     </span><span class="attr">#[test]
@@ -4683,8 +4733,8 @@
         <span class="kw">let </span><span class="kw-2">mut </span>replica1 = store1.new_replica(namespace.clone())<span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>replica2 = store2.new_replica(namespace.clone())<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>(events1_sender, events1) = flume::bounded(<span class="number">32</span>);
-        <span class="kw">let </span>(events2_sender, events2) = flume::bounded(<span class="number">32</span>);
+        <span class="kw">let </span>(events1_sender, events1) = async_channel::bounded(<span class="number">32</span>);
+        <span class="kw">let </span>(events2_sender, events2) = async_channel::bounded(<span class="number">32</span>);
 
         replica1.info.subscribe(events1_sender);
         replica2.info.subscribe(events2_sender);
@@ -4708,8 +4758,8 @@
             .sync_process_message(from1, peer1, <span class="kw-2">&amp;mut </span>state2)
             .unwrap();
         <span class="macro">assert!</span>(from2.is_none());
-        <span class="kw">let </span>events1 = events1.drain().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-        <span class="kw">let </span>events2 = events2.drain().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        <span class="kw">let </span>events1 = drain(events1);
+        <span class="kw">let </span>events2 = drain(events2);
         <span class="macro">assert_eq!</span>(events1.len(), <span class="number">1</span>);
         <span class="macro">assert_eq!</span>(events2.len(), <span class="number">1</span>);
         <span class="macro">assert!</span>(<span class="macro">matches!</span>(events1[<span class="number">0</span>], Event::LocalInsert { .. }));

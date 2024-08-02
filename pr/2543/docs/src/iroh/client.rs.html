@@ -89,7 +89,28 @@
 <a href="#89" id="89">89</a>
 <a href="#90" id="90">90</a>
 <a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Client to an Iroh node.
+//!
+//! See the documentation for [`Iroh`] for more information.
 
 </span><span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>ref_cast::RefCast;
@@ -112,11 +133,23 @@
 <span class="kw">pub mod </span>node;
 <span class="kw">pub mod </span>tags;
 
-<span class="doccomment">/// Iroh rpc client - boxed so that we can have a concrete type.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>RpcClient =
+<span class="comment">// Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
+// will show up as `RpcClient&lt;RpcService, Connection&lt;RpcService&gt;&gt;` in the docs.
+</span><span class="doccomment">/// Iroh rpc client - boxed so that we can have a concrete type.
+</span><span class="kw">pub type </span>RpcClient =
     quic_rpc::RpcClient&lt;RpcService, quic_rpc::transport::boxed::Connection&lt;RpcService&gt;&gt;;
 
-<span class="doccomment">/// Iroh client.
+<span class="doccomment">/// An iroh client.
+///
+/// There are three ways to obtain this client, depending on which context
+/// you're running in relative to the main [`Node`](crate::node::Node):
+///
+/// 1. If you just spawned the client in rust the same process and have a reference to it:
+///    Use [`Node::client()`](crate::node::Node::client).
+/// 2. If the main node wasn't spawned in the same process, but on the same machine:
+///    Use [`Iroh::connect_path`].
+/// 3. If the main node was spawned somewhere else and has been made accessible via IP:
+///    Use [`Iroh::connect_addr`].
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>Iroh {
     rpc: RpcClient,
@@ -131,37 +164,42 @@
 }
 
 <span class="kw">impl </span>Iroh {
-    <span class="doccomment">/// Create a new high-level client to a Iroh node from the low-level RPC client.
+    <span class="doccomment">/// Creates a new high-level client to a Iroh node from the low-level RPC client.
+    ///
+    /// Prefer using [`Node::client()`](crate::node::Node::client), [`Iroh::connect_path`]
+    /// or [`Iroh::connect_addr`] instead of calling this function.
+    ///
+    /// See also the [`Iroh`] struct documentation.
     </span><span class="kw">pub fn </span>new(rpc: RpcClient) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{ rpc }
     }
 
-    <span class="doccomment">/// Blobs client
+    <span class="doccomment">/// Returns the blobs client.
     </span><span class="kw">pub fn </span>blobs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>blobs::Client {
         blobs::Client::ref_cast(<span class="kw-2">&amp;</span><span class="self">self</span>.rpc)
     }
 
-    <span class="doccomment">/// Docs client
+    <span class="doccomment">/// Returns the docs client.
     </span><span class="kw">pub fn </span>docs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>docs::Client {
         docs::Client::ref_cast(<span class="kw-2">&amp;</span><span class="self">self</span>.rpc)
     }
 
-    <span class="doccomment">/// Authors client
+    <span class="doccomment">/// Returns the authors client.
     </span><span class="kw">pub fn </span>authors(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>authors::Client {
         authors::Client::ref_cast(<span class="kw-2">&amp;</span><span class="self">self</span>.rpc)
     }
 
-    <span class="doccomment">/// Tags client
+    <span class="doccomment">/// Returns the tags client.
     </span><span class="kw">pub fn </span>tags(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>tags::Client {
         tags::Client::ref_cast(<span class="kw-2">&amp;</span><span class="self">self</span>.rpc)
     }
 
-    <span class="doccomment">/// Gossip client
+    <span class="doccomment">/// Returns the gossip client.
     </span><span class="kw">pub fn </span>gossip(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>gossip::Client {
         gossip::Client::ref_cast(<span class="kw-2">&amp;</span><span class="self">self</span>.rpc)
     }
 
-    <span class="doccomment">/// Node client
+    <span class="doccomment">/// Returns the node client.
     </span><span class="kw">pub fn </span>node(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>node::Client {
         node::Client::ref_cast(<span class="kw-2">&amp;</span><span class="self">self</span>.rpc)
     }

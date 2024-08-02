@@ -108,11 +108,15 @@
 <a href="#108" id="108">108</a>
 <a href="#109" id="109">109</a>
 <a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Gossip client.
 //!
 //! The gossip client allows you to subscribe to gossip topics and send updates to them.
 //!
 //! The main entry point is the [`Client`].
+//!
+//! You obtain a [`Client`] via [`Iroh::gossip()`](crate::client::Iroh::gossip).
 //!
 //! The gossip API is extremely simple. You use [`subscribe`](Client::subscribe)
 //! to subscribe to a topic. This returns a sink to send updates to the topic
@@ -159,7 +163,7 @@
 }
 
 <span class="kw">impl </span>Client {
-    <span class="doccomment">/// Subscribe to a gossip topic.
+    <span class="doccomment">/// Subscribes to a gossip topic.
     ///
     /// Returns a sink to send updates to the topic and a stream of responses.
     ///
@@ -176,7 +180,7 @@
     /// immediate neighbors of the node.
     ///
     /// A Lagged event indicates that the gossip stream has not been consumed quickly enough.
-    /// You can adjust the buffer size with the [] option.
+    /// You can adjust the buffer size with the [`SubscribeOpts::subscription_capacity`] option.
     </span><span class="kw">pub async fn </span>subscribe_with_opts(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         topic: TopicId,
@@ -198,7 +202,7 @@
         <span class="prelude-val">Ok</span>((sink, stream))
     }
 
-    <span class="doccomment">/// Subscribe to a gossip topic with default options.
+    <span class="doccomment">/// Subscribes to a gossip topic with default options.
     </span><span class="kw">pub async fn </span>subscribe(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         topic: <span class="kw">impl </span>Into&lt;TopicId&gt;,

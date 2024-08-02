@@ -862,7 +862,6 @@
 <a href="#862" id="862">862</a>
 <a href="#863" id="863">863</a>
 <a href="#864" id="864">864</a>
-<a href="#865" id="865">865</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Networking for the `iroh-gossip` protocol
 
 </span><span class="kw">use </span>anyhow::{anyhow, Context};
@@ -1517,27 +1516,26 @@
     };
     <span class="kw">let </span><span class="kw-2">mut </span>send_buf = BytesMut::new();
     <span class="kw">let </span><span class="kw-2">mut </span>recv_buf = BytesMut::new();
-    <span class="kw">loop </span>{
-        <span class="macro">tokio::select!</span> {
-            biased;
-            <span class="comment">// If `send_rx` is closed,
-            // stop selecting it but don't quit.
-            // We are not going to use connection for sending anymore,
-            // but the other side may still want to use it to
-            // send data to us.
-            </span><span class="prelude-val">Some</span>(msg) = send_rx.recv(), <span class="kw">if </span>!send_rx.is_closed() =&gt; {
-                write_message(<span class="kw-2">&amp;mut </span>send, <span class="kw-2">&amp;mut </span>send_buf, <span class="kw-2">&amp;</span>msg, max_message_size).<span class="kw">await</span><span class="question-mark">?
-            </span>}
+    <span class="kw">let </span>send_loop = <span class="kw">async </span>{
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(msg) = send_rx.recv().<span class="kw">await </span>{
+            write_message(<span class="kw-2">&amp;mut </span>send, <span class="kw-2">&amp;mut </span>send_buf, <span class="kw-2">&amp;</span>msg, max_message_size).<span class="kw">await</span><span class="question-mark">?
+        </span>}
+        <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, anyhow::Error&gt;(())
+    };
 
-            msg = read_message(<span class="kw-2">&amp;mut </span>recv, <span class="kw-2">&amp;mut </span>recv_buf, max_message_size) =&gt; {
-                <span class="kw">let </span>msg = msg<span class="question-mark">?</span>;
-                <span class="kw">match </span>msg {
-                    <span class="prelude-val">None </span>=&gt; <span class="kw">break</span>,
-                    <span class="prelude-val">Some</span>(msg) =&gt; in_event_tx.send(InEvent::RecvMessage(from, msg)).<span class="kw">await</span><span class="question-mark">?
-                </span>}
+    <span class="kw">let </span>recv_loop = <span class="kw">async </span>{
+        <span class="kw">loop </span>{
+            <span class="kw">let </span>msg = read_message(<span class="kw-2">&amp;mut </span>recv, <span class="kw-2">&amp;mut </span>recv_buf, max_message_size).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">match </span>msg {
+                <span class="prelude-val">None </span>=&gt; <span class="kw">break</span>,
+                <span class="prelude-val">Some</span>(msg) =&gt; in_event_tx.send(InEvent::RecvMessage(from, msg)).<span class="kw">await</span><span class="question-mark">?</span>,
             }
         }
-    }
+        <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, anyhow::Error&gt;(())
+    };
+
+    <span class="macro">tokio::try_join!</span>(send_loop, recv_loop)<span class="question-mark">?</span>;
+
     <span class="prelude-val">Ok</span>(())
 }
 

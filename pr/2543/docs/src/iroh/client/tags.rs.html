@@ -55,17 +55,23 @@
 <a href="#55" id="55">55</a>
 <a href="#56" id="56">56</a>
 <a href="#57" id="57">57</a>
+<a href="#58" id="58">58</a>
+<a href="#59" id="59">59</a>
+<a href="#60" id="60">60</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for tag management.
 //!
-//! The purpose of tags is to mark information as important. Currently this is
-//! used for blobs.
+//! The purpose of tags is to mark information as important to prevent it
+//! from being garbage-collected (if the garbage collector is turned on).
+//! Currently this is used for blobs.
 //!
-//! The main entry point is the [Client].
+//! The main entry point is the [`Client`].
 //!
-//! [Client::list] can be used to list all tags.
-//! [Client::list_hash_seq] can be used to list all tags with a hash_seq format.
+//! You obtain a [`Client`] via [`Iroh::tags()`](crate::client::Iroh::tags).
 //!
-//! [Client::delete] can be used to delete a tag.
+//! [`Client::list`] can be used to list all tags.
+//! [`Client::list_hash_seq`] can be used to list all tags with a hash_seq format.
+//!
+//! [`Client::delete`] can be used to delete a tag.
 </span><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>iroh_blobs::{BlobFormat, Hash, Tag};
@@ -83,19 +89,19 @@
 }
 
 <span class="kw">impl </span>Client {
-    <span class="doccomment">/// List all tags.
+    <span class="doccomment">/// Lists all tags.
     </span><span class="kw">pub async fn </span>list(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;TagInfo&gt;&gt;&gt; {
         <span class="kw">let </span>stream = <span class="self">self</span>.rpc.server_streaming(ListRequest::all()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(stream.map(|res| res.map_err(anyhow::Error::from)))
     }
 
-    <span class="doccomment">/// List all tags with a hash_seq format.
+    <span class="doccomment">/// Lists all tags with a hash_seq format.
     </span><span class="kw">pub async fn </span>list_hash_seq(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;TagInfo&gt;&gt;&gt; {
         <span class="kw">let </span>stream = <span class="self">self</span>.rpc.server_streaming(ListRequest::hash_seq()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(stream.map(|res| res.map_err(anyhow::Error::from)))
     }
 
-    <span class="doccomment">/// Delete a tag.
+    <span class="doccomment">/// Deletes a tag.
     </span><span class="kw">pub async fn </span>delete(<span class="kw-2">&amp;</span><span class="self">self</span>, name: Tag) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="self">self</span>.rpc.rpc(DeleteRequest { name }).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(())

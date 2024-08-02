@@ -1376,8 +1376,6 @@
 <a href="#1376" id="1376">1376</a>
 <a href="#1377" id="1377">1377</a>
 <a href="#1378" id="1378">1378</a>
-<a href="#1379" id="1379">1379</a>
-<a href="#1380" id="1380">1380</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single netcheck report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
@@ -1414,7 +1412,6 @@
 <span class="kw">use </span><span class="kw">crate</span>::defaults::DEFAULT_STUN_PORT;
 <span class="kw">use </span><span class="kw">crate</span>::dns::{DnsResolver, ResolverExt};
 <span class="kw">use </span><span class="kw">crate</span>::net::interfaces;
-<span class="kw">use </span><span class="kw">crate</span>::net::ip;
 <span class="kw">use </span><span class="kw">crate</span>::net::UdpSocket;
 <span class="kw">use </span><span class="kw">crate</span>::netcheck::{<span class="self">self</span>, Report};
 <span class="kw">use </span><span class="kw">crate</span>::ping::{PingError, Pinger};
@@ -1590,9 +1587,8 @@
         <span class="kw">match </span><span class="self">self</span>.run_inner().<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="macro">debug!</span>(<span class="string">"reportgen actor finished"</span>),
             <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="macro">error!</span>(<span class="string">"reportgen actor failed: {err:#}"</span>);
                 <span class="self">self</span>.netcheck
-                    .send(netcheck::Message::ReportAborted)
+                    .send(netcheck::Message::ReportAborted { err })
                     .<span class="kw">await
                     </span>.ok();
             }
@@ -2334,7 +2330,7 @@
                 </span>{
                     <span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>addrs) =&gt; addrs
                         .next()
-                        .map(ip::to_canonical)
+                        .map(|ip| ip.to_canonical())
                         .map(|addr| SocketAddr::new(addr, port))
                         .ok_or(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
                     <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err.context(<span class="string">"No suitable relay addr found"</span>)),
@@ -2354,7 +2350,7 @@
                 </span>{
                     <span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>addrs) =&gt; addrs
                         .next()
-                        .map(ip::to_canonical)
+                        .map(|ip| ip.to_canonical())
                         .map(|addr| SocketAddr::new(addr, port))
                         .ok_or(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
                     <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err.context(<span class="string">"No suitable relay addr found"</span>)),

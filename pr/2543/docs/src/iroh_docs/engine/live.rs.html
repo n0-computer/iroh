@@ -1067,7 +1067,7 @@
     Subscribe {
         namespace: NamespaceId,
         <span class="attr">#[debug(<span class="string">"sender"</span>)]
-        </span>sender: flume::Sender&lt;Event&gt;,
+        </span>sender: async_channel::Sender&lt;Event&gt;,
         <span class="attr">#[debug(<span class="string">"oneshot::Sender"</span>)]
         </span>reply: sync::oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
     },
@@ -1142,8 +1142,8 @@
     gossip: Gossip,
     bao_store: B,
     downloader: Downloader,
-    replica_events_tx: flume::Sender&lt;<span class="kw">crate</span>::Event&gt;,
-    replica_events_rx: flume::Receiver&lt;<span class="kw">crate</span>::Event&gt;,
+    replica_events_tx: async_channel::Sender&lt;<span class="kw">crate</span>::Event&gt;,
+    replica_events_rx: async_channel::Receiver&lt;<span class="kw">crate</span>::Event&gt;,
 
     <span class="doccomment">/// Send messages to self.
     /// Note: Must not be used in methods called from `Self::run` directly to prevent deadlocks.
@@ -1181,7 +1181,7 @@
         sync_actor_tx: mpsc::Sender&lt;ToLiveActor&gt;,
         gossip_actor_tx: mpsc::Sender&lt;ToGossipActor&gt;,
     ) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>(replica_events_tx, replica_events_rx) = flume::bounded(<span class="number">1024</span>);
+        <span class="kw">let </span>(replica_events_tx, replica_events_rx) = async_channel::bounded(<span class="number">1024</span>);
         <span class="self">Self </span>{
             inbox,
             sync,
@@ -1251,7 +1251,7 @@
                         }
                     }
                 }
-                event = <span class="self">self</span>.replica_events_rx.recv_async() =&gt; {
+                event = <span class="self">self</span>.replica_events_rx.recv() =&gt; {
                     <span class="macro">trace!</span>(<span class="question-mark">?</span>i, <span class="string">"tick: replica_event"</span>);
                     <span class="macro">inc!</span>(Metrics, doc_live_tick_replica_event);
                     <span class="kw">let </span>event = event.context(<span class="string">"replica_events closed"</span>)<span class="question-mark">?</span>;
@@ -1854,7 +1854,7 @@
 </span><span class="kw">struct </span>SubscribersMap(HashMap&lt;NamespaceId, Subscribers&gt;);
 
 <span class="kw">impl </span>SubscribersMap {
-    <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, namespace: NamespaceId, sender: flume::Sender&lt;Event&gt;) {
+    <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, namespace: NamespaceId, sender: async_channel::Sender&lt;Event&gt;) {
         <span class="self">self</span>.<span class="number">0</span>.entry(namespace).or_default().subscribe(sender);
     }
 
@@ -1919,15 +1919,15 @@
 }
 
 <span class="attr">#[derive(Debug, Default)]
-</span><span class="kw">struct </span>Subscribers(Vec&lt;flume::Sender&lt;Event&gt;&gt;);
+</span><span class="kw">struct </span>Subscribers(Vec&lt;async_channel::Sender&lt;Event&gt;&gt;);
 
 <span class="kw">impl </span>Subscribers {
-    <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, sender: flume::Sender&lt;Event&gt;) {
+    <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, sender: async_channel::Sender&lt;Event&gt;) {
         <span class="self">self</span>.<span class="number">0</span>.push(sender)
     }
 
     <span class="kw">async fn </span>send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, event: Event) -&gt; bool {
-        <span class="kw">let </span>futs = <span class="self">self</span>.<span class="number">0</span>.iter().map(|sender| sender.send_async(event.clone()));
+        <span class="kw">let </span>futs = <span class="self">self</span>.<span class="number">0</span>.iter().map(|sender| sender.send(event.clone()));
         <span class="kw">let </span>res = futures_buffered::join_all(futs).<span class="kw">await</span>;
         <span class="comment">// reverse the order so removing does not shift remaining indices
         </span><span class="kw">for </span>(i, res) <span class="kw">in </span>res.into_iter().enumerate().rev() {
@@ -1966,8 +1966,8 @@
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_sync_remove() {
         <span class="kw">let </span>pk = PublicKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1</span>; <span class="number">32</span>]).unwrap();
-        <span class="kw">let </span>(a_tx, a_rx) = flume::unbounded();
-        <span class="kw">let </span>(b_tx, b_rx) = flume::unbounded();
+        <span class="kw">let </span>(a_tx, a_rx) = async_channel::unbounded();
+        <span class="kw">let </span>(b_tx, b_rx) = async_channel::unbounded();
         <span class="kw">let </span><span class="kw-2">mut </span>subscribers = Subscribers::default();
         subscribers.subscribe(a_tx);
         subscribers.subscribe(b_tx);

@@ -1172,7 +1172,6 @@
 <a href="#1172" id="1172">1172</a>
 <a href="#1173" id="1173">1173</a>
 <a href="#1174" id="1174">1174</a>
-<a href="#1175" id="1175">1175</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! Netcheck is responsible for finding out the network conditions of the current host, like
@@ -1195,7 +1194,6 @@
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
 <span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
-<span class="kw">use </span><span class="kw">crate</span>::net::ip::to_canonical;
 <span class="kw">use </span><span class="kw">crate</span>::net::{IpFamily, UdpSocket};
 <span class="kw">use </span><span class="kw">crate</span>::relay::RelayUrl;
 <span class="kw">use </span><span class="kw">crate</span>::util::CancelOnDrop;
@@ -1502,7 +1500,7 @@
     <span class="doccomment">/// A report produced by the [`reportgen`] actor.
     </span>ReportReady { report: Box&lt;Report&gt; },
     <span class="doccomment">/// The [`reportgen`] actor failed to produce a report.
-    </span>ReportAborted,
+    </span>ReportAborted { err: anyhow::Error },
     <span class="doccomment">/// An incoming STUN packet to parse.
     </span>StunPacket {
         <span class="doccomment">/// The raw UDP payload.
@@ -1633,8 +1631,8 @@
                 Message::ReportReady { report } =&gt; {
                     <span class="self">self</span>.handle_report_ready(report);
                 }
-                Message::ReportAborted =&gt; {
-                    <span class="self">self</span>.handle_report_aborted();
+                Message::ReportAborted { err } =&gt; {
+                    <span class="self">self</span>.handle_report_aborted(err);
                 }
                 Message::StunPacket { payload, from_addr } =&gt; {
                     <span class="self">self</span>.handle_stun_packet(<span class="kw-2">&amp;</span>payload, from_addr);
@@ -1722,10 +1720,10 @@
         }
     }
 
-    <span class="kw">fn </span>handle_report_aborted(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+    <span class="kw">fn </span>handle_report_aborted(<span class="kw-2">&amp;mut </span><span class="self">self</span>, err: anyhow::Error) {
         <span class="self">self</span>.in_flight_stun_requests.clear();
         <span class="kw">if let </span><span class="prelude-val">Some</span>(ReportRun { report_tx, .. }) = <span class="self">self</span>.current_report_run.take() {
-            report_tx.send(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"report aborted"</span>))).ok();
+            report_tx.send(<span class="prelude-val">Err</span>(err.context(<span class="string">"report aborted"</span>))).ok();
         }
     }
 
@@ -1939,7 +1937,7 @@
         .<span class="kw">await
         </span>.context(<span class="string">"Error reading from stun socket"</span>)<span class="question-mark">?</span>;
     <span class="kw">let </span>payload = <span class="kw-2">&amp;</span>buf[..count];
-    from_addr.set_ip(to_canonical(from_addr.ip()));
+    from_addr.set_ip(from_addr.ip().to_canonical());
     <span class="kw">let </span>msg = Message::StunPacket {
         payload: Bytes::from(payload.to_vec()),
         from_addr,

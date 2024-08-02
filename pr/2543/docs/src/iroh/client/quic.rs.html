@@ -95,7 +95,7 @@
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>RPC_ALPN: [u8; <span class="number">17</span>] = <span class="kw-2">*</span><span class="string">b"n0/provider-rpc/1"</span>;
 
 <span class="kw">impl </span>Iroh {
-    <span class="doccomment">/// Connect to an iroh node running on the same computer, but in a different process.
+    <span class="doccomment">/// Connects to an iroh node running on the same computer, but in a different process.
     </span><span class="kw">pub async fn </span>connect_path(root: <span class="kw">impl </span>AsRef&lt;Path&gt;) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>rpc_status = RpcStatus::load(root).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>rpc_status {
@@ -106,7 +106,7 @@
         }
     }
 
-    <span class="doccomment">/// Connect to an iroh node at the given RPC address.
+    <span class="doccomment">/// Connects to an iroh node at the given RPC address.
     </span><span class="kw">pub async fn </span>connect_addr(addr: SocketAddr) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>client = connect_raw(addr).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(Iroh::new(client))
