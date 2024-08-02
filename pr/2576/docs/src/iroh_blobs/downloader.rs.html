@@ -1434,6 +1434,42 @@
 <a href="#1434" id="1434">1434</a>
 <a href="#1435" id="1435">1435</a>
 <a href="#1436" id="1436">1436</a>
+<a href="#1437" id="1437">1437</a>
+<a href="#1438" id="1438">1438</a>
+<a href="#1439" id="1439">1439</a>
+<a href="#1440" id="1440">1440</a>
+<a href="#1441" id="1441">1441</a>
+<a href="#1442" id="1442">1442</a>
+<a href="#1443" id="1443">1443</a>
+<a href="#1444" id="1444">1444</a>
+<a href="#1445" id="1445">1445</a>
+<a href="#1446" id="1446">1446</a>
+<a href="#1447" id="1447">1447</a>
+<a href="#1448" id="1448">1448</a>
+<a href="#1449" id="1449">1449</a>
+<a href="#1450" id="1450">1450</a>
+<a href="#1451" id="1451">1451</a>
+<a href="#1452" id="1452">1452</a>
+<a href="#1453" id="1453">1453</a>
+<a href="#1454" id="1454">1454</a>
+<a href="#1455" id="1455">1455</a>
+<a href="#1456" id="1456">1456</a>
+<a href="#1457" id="1457">1457</a>
+<a href="#1458" id="1458">1458</a>
+<a href="#1459" id="1459">1459</a>
+<a href="#1460" id="1460">1460</a>
+<a href="#1461" id="1461">1461</a>
+<a href="#1462" id="1462">1462</a>
+<a href="#1463" id="1463">1463</a>
+<a href="#1464" id="1464">1464</a>
+<a href="#1465" id="1465">1465</a>
+<a href="#1466" id="1466">1466</a>
+<a href="#1467" id="1467">1467</a>
+<a href="#1468" id="1468">1468</a>
+<a href="#1469" id="1469">1469</a>
+<a href="#1470" id="1470">1470</a>
+<a href="#1471" id="1471">1471</a>
+<a href="#1472" id="1472">1472</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Handle downloading blobs and collections concurrently and from nodes.
 //!
 //! The [`Downloader`] interacts with four main components to this end.
@@ -1465,6 +1501,7 @@
 </span><span class="kw">use </span>std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     fmt,
+    future::Future,
     num::NonZeroUsize,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -1486,7 +1523,10 @@
 <span class="kw">use </span>tracing::{debug, error_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
-    get::{db::DownloadProgress, Stats},
+    get::{
+        db::{BlobId, DownloadProgress},
+        Stats,
+    },
     metrics::Metrics,
     store::Store,
     util::{local_pool::LocalPoolHandle, progress::ProgressSender},
@@ -1518,6 +1558,8 @@
     </span><span class="kw">fn </span>pending_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize;
     <span class="doccomment">/// Check if a node is being dialed.
     </span><span class="kw">fn </span>is_pending(<span class="kw-2">&amp;</span><span class="self">self</span>, node: NodeId) -&gt; bool;
+    <span class="doccomment">/// Get the node id of our node.
+    </span><span class="kw">fn </span>node_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeId;
 }
 
 <span class="doccomment">/// Signals what should be done with the request when it fails.
@@ -1547,6 +1589,9 @@
         conn: <span class="self">Self</span>::Connection,
         progress_sender: BroadcastProgressSender,
     ) -&gt; GetFut;
+
+    <span class="doccomment">/// Checks if a blob is available in the local store.
+    </span><span class="kw">fn </span>has_complete(<span class="kw-2">&amp;mut </span><span class="self">self</span>, kind: DownloadKind) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Option</span>&lt;u64&gt;&gt;;
 }
 
 <span class="doccomment">/// Concurrency limits for the [`Downloader`].
@@ -1716,7 +1761,7 @@
     </span>receiver: oneshot::Receiver&lt;ExternalDownloadResult&gt;,
 }
 
-<span class="kw">impl </span>std::future::Future <span class="kw">for </span>DownloadHandle {
+<span class="kw">impl </span>Future <span class="kw">for </span>DownloadHandle {
     <span class="kw">type </span>Output = ExternalDownloadResult;
 
     <span class="kw">fn </span>poll(
@@ -2102,8 +2147,36 @@
             on_progress: progress,
         };
 
+        <span class="comment">// early exit if the hash is already available.
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(local_size) = <span class="self">self</span>.getter.has_complete(kind).<span class="kw">await </span>{
+            intent_handlers
+                .on_progress
+                .send(DownloadProgress::FoundLocal {
+                    child: BlobId::Root,
+                    hash: kind.hash(),
+                    size: <span class="kw">crate</span>::store::BaoBlobSize::Verified(local_size),
+                    valid_ranges: <span class="kw">crate</span>::protocol::RangeSpec::all(),
+                })
+                .<span class="kw">await
+                </span>.ok();
+            <span class="self">self</span>.finalize_download(
+                kind,
+                [(intent_id, intent_handlers)].into(),
+                <span class="prelude-val">Ok</span>(Default::default()),
+            );
+            <span class="kw">return</span>;
+        }
+
+        <span class="comment">// add the nodes to the provider map
+        // (skip the node id of our own node - we should never attempt to download from ourselves)
+        </span><span class="kw">let </span>node_ids = nodes
+            .iter()
+            .map(|n| n.node_id)
+            .filter(|node_id| <span class="kw-2">*</span>node_id != <span class="self">self</span>.dialer.node_id());
+        <span class="kw">let </span>updated = <span class="self">self</span>.providers.add_hash_with_nodes(kind.hash(), node_ids);
+
         <span class="comment">// early exit if no providers.
-        </span><span class="kw">if </span>nodes.is_empty() &amp;&amp; <span class="self">self</span>.providers.get_candidates(<span class="kw-2">&amp;</span>kind.hash()).next().is_none() {
+        </span><span class="kw">if </span><span class="self">self</span>.providers.get_candidates(<span class="kw-2">&amp;</span>kind.hash()).next().is_none() {
             <span class="self">self</span>.finalize_download(
                 kind,
                 [(intent_id, intent_handlers)].into(),
@@ -2111,11 +2184,6 @@
             );
             <span class="kw">return</span>;
         }
-
-        <span class="comment">// add the nodes to the provider map
-        </span><span class="kw">let </span>updated = <span class="self">self
-            </span>.providers
-            .add_hash_with_nodes(kind.hash(), nodes.iter().map(|n| n.node_id));
 
         <span class="comment">// queue the transfer (if not running) or attach to transfer progress (if already running)
         </span><span class="kw">if </span><span class="self">self</span>.active_requests.contains_key(<span class="kw-2">&amp;</span>kind) {
@@ -2868,6 +2936,10 @@
 
     <span class="kw">fn </span>is_pending(<span class="kw-2">&amp;</span><span class="self">self</span>, node: NodeId) -&gt; bool {
         <span class="self">self</span>.is_pending(node)
+    }
+
+    <span class="kw">fn </span>node_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeId {
+        <span class="self">self</span>.endpoint().node_id()
     }
 }
 </code></pre></div></section></main></body></html>
