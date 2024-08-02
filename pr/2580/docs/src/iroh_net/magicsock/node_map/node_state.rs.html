@@ -1861,57 +1861,6 @@
 <a href="#1861" id="1861">1861</a>
 <a href="#1862" id="1862">1862</a>
 <a href="#1863" id="1863">1863</a>
-<a href="#1864" id="1864">1864</a>
-<a href="#1865" id="1865">1865</a>
-<a href="#1866" id="1866">1866</a>
-<a href="#1867" id="1867">1867</a>
-<a href="#1868" id="1868">1868</a>
-<a href="#1869" id="1869">1869</a>
-<a href="#1870" id="1870">1870</a>
-<a href="#1871" id="1871">1871</a>
-<a href="#1872" id="1872">1872</a>
-<a href="#1873" id="1873">1873</a>
-<a href="#1874" id="1874">1874</a>
-<a href="#1875" id="1875">1875</a>
-<a href="#1876" id="1876">1876</a>
-<a href="#1877" id="1877">1877</a>
-<a href="#1878" id="1878">1878</a>
-<a href="#1879" id="1879">1879</a>
-<a href="#1880" id="1880">1880</a>
-<a href="#1881" id="1881">1881</a>
-<a href="#1882" id="1882">1882</a>
-<a href="#1883" id="1883">1883</a>
-<a href="#1884" id="1884">1884</a>
-<a href="#1885" id="1885">1885</a>
-<a href="#1886" id="1886">1886</a>
-<a href="#1887" id="1887">1887</a>
-<a href="#1888" id="1888">1888</a>
-<a href="#1889" id="1889">1889</a>
-<a href="#1890" id="1890">1890</a>
-<a href="#1891" id="1891">1891</a>
-<a href="#1892" id="1892">1892</a>
-<a href="#1893" id="1893">1893</a>
-<a href="#1894" id="1894">1894</a>
-<a href="#1895" id="1895">1895</a>
-<a href="#1896" id="1896">1896</a>
-<a href="#1897" id="1897">1897</a>
-<a href="#1898" id="1898">1898</a>
-<a href="#1899" id="1899">1899</a>
-<a href="#1900" id="1900">1900</a>
-<a href="#1901" id="1901">1901</a>
-<a href="#1902" id="1902">1902</a>
-<a href="#1903" id="1903">1903</a>
-<a href="#1904" id="1904">1904</a>
-<a href="#1905" id="1905">1905</a>
-<a href="#1906" id="1906">1906</a>
-<a href="#1907" id="1907">1907</a>
-<a href="#1908" id="1908">1908</a>
-<a href="#1909" id="1909">1909</a>
-<a href="#1910" id="1910">1910</a>
-<a href="#1911" id="1911">1911</a>
-<a href="#1912" id="1912">1912</a>
-<a href="#1913" id="1913">1913</a>
-<a href="#1914" id="1914">1914</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap},
     hash::Hash,
@@ -2184,9 +2133,6 @@
             <span class="macro">debug!</span>(<span class="string">"in `DEV_relay_ONLY` mode, giving the relay address as the only viable address for this endpoint"</span>);
             <span class="kw">return </span>(<span class="prelude-val">None</span>, <span class="self">self</span>.relay_url());
         }
-        <span class="comment">// Update our best addr from candidate addresses (only if it is empty and if we have
-        // recent pongs).
-        </span><span class="self">self</span>.assign_best_addr_from_candidates_if_empty();
         <span class="kw">let </span>(best_addr, relay_url) = <span class="kw">match </span><span class="self">self</span>.udp_paths.send_addr(<span class="kw-2">*</span>now, have_ipv6) {
             <span class="kw">super</span>::udp_paths::UdpSendAddr::Valid(addr) =&gt; {
                 <span class="comment">// If we have a valid address we use it.
@@ -2290,54 +2236,6 @@
             reason,
             <span class="self">self</span>.relay_url.is_some(),
         );
-    }
-
-    <span class="doccomment">/// Fixup best_adrr from candidates.
-    ///
-    /// If somehow we end up in a state where we failed to set a best_addr, while we do have
-    /// valid candidates, this will chose a candidate and set best_addr again.  Most likely
-    /// this is a bug elsewhere though.
-    </span><span class="kw">fn </span>assign_best_addr_from_candidates_if_empty(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="kw">if </span>!<span class="self">self</span>.udp_paths.best_addr.is_empty() {
-            <span class="kw">return</span>;
-        }
-
-        <span class="comment">// The highest acceptable latency for an endpoint path.  If the latency is higher
-        // then this the path will be ignored.
-        </span><span class="kw">const </span>MAX_LATENCY: Duration = Duration::from_secs(<span class="number">60 </span>* <span class="number">60</span>);
-        <span class="kw">let </span>best_pong = <span class="self">self
-            </span>.udp_paths
-            .paths
-            .iter()
-            .fold(<span class="prelude-val">None</span>, |best_pong, (ipp, state)| {
-                <span class="kw">let </span>best_latency = best_pong
-                    .map(|p: <span class="kw-2">&amp;</span>PongReply| p.latency)
-                    .unwrap_or(MAX_LATENCY);
-                <span class="kw">match </span>state.recent_pong() {
-                    <span class="comment">// This pong is better if it has a lower latency, or if it has the same
-                    // latency but on an IPv6 path.
-                    </span><span class="prelude-val">Some</span>(pong)
-                        <span class="kw">if </span>pong.latency &lt; best_latency
-                            || (pong.latency == best_latency &amp;&amp; ipp.ip().is_ipv6()) =&gt;
-                    {
-                        <span class="prelude-val">Some</span>(pong)
-                    }
-                    <span class="kw">_ </span>=&gt; best_pong,
-                }
-            });
-
-        <span class="comment">// If we found a candidate, set to best addr
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(pong) = best_pong {
-            <span class="kw">if let </span>SendAddr::Udp(addr) = pong.from {
-                <span class="macro">warn!</span>(%addr, <span class="string">"No best_addr was set, choose candidate with lowest latency"</span>);
-                <span class="self">self</span>.udp_paths.best_addr.insert_if_better_or_reconfirm(
-                    addr,
-                    pong.latency,
-                    best_addr::Source::BestCandidate,
-                    pong.pong_at,
-                )
-            }
-        }
     }
 
     <span class="doccomment">/// Whether we need to send another call-me-maybe to the endpoint.
