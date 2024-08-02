@@ -306,27 +306,47 @@ impl NodeState {
             info!(%typ, "new connection type");
 
             // Update some metrics
-            if matches!(prev_typ, ConnectionType::Direct(_)) {
-                inc!(MagicsockMetrics, num_direct_conns_removed);
-            }
-            if matches!(typ, ConnectionType::Direct(_)) {
-                inc!(MagicsockMetrics, num_direct_conns_added);
-            }
-            if matches!(typ, ConnectionType::Relay(_) | ConnectionType::Mixed(_, _))
-                && !matches!(
-                    prev_typ,
-                    ConnectionType::Relay(_) | ConnectionType::Mixed(_, _)
-                )
-            {
-                inc!(MagicsockMetrics, num_relay_conns_added);
-            }
-            if matches!(typ, ConnectionType::Direct(_) | ConnectionType::None)
-                && matches!(
-                    prev_typ,
-                    ConnectionType::Relay(_) | ConnectionType::Mixed(_, _)
-                )
-            {
-                inc!(MagicsockMetrics, num_relay_conns_removed);
+            match (prev_typ, typ) {
+                (ConnectionType::Direct(_), ConnectionType::Direct(_)) => (),
+                (ConnectionType::Direct(_), ConnectionType::Relay(_)) => {
+                    inc!(MagicsockMetrics, num_direct_conns_removed);
+                    inc!(MagicsockMetrics, num_relay_conns_added);
+                }
+                (ConnectionType::Direct(_), ConnectionType::Mixed(_, _)) => {
+                    inc!(MagicsockMetrics, num_direct_conns_removed);
+                    inc!(MagicsockMetrics, num_relay_conns_added);
+                }
+                (ConnectionType::Direct(_), ConnectionType::None) => {
+                    inc!(MagicsockMetrics, num_direct_conns_removed)
+                }
+                (ConnectionType::Relay(_), ConnectionType::Direct(_)) => {
+                    inc!(MagicsockMetrics, num_direct_conns_added);
+                    inc!(MagicsockMetrics, num_relay_conns_removed);
+                }
+                (ConnectionType::Relay(_), ConnectionType::Relay(_)) => (),
+                (ConnectionType::Relay(_), ConnectionType::Mixed(_, _)) => (),
+                (ConnectionType::Relay(_), ConnectionType::None) => {
+                    inc!(MagicsockMetrics, num_relay_conns_removed)
+                }
+                (ConnectionType::Mixed(_, _), ConnectionType::Direct(_)) => {
+                    inc!(MagicsockMetrics, num_direct_conns_added);
+                    inc!(MagicsockMetrics, num_relay_conns_removed);
+                }
+                (ConnectionType::Mixed(_, _), ConnectionType::Relay(_)) => (),
+                (ConnectionType::Mixed(_, _), ConnectionType::Mixed(_, _)) => (),
+                (ConnectionType::Mixed(_, _), ConnectionType::None) => {
+                    inc!(MagicsockMetrics, num_relay_conns_removed)
+                }
+                (ConnectionType::None, ConnectionType::Direct(_)) => {
+                    inc!(MagicsockMetrics, num_direct_conns_added)
+                }
+                (ConnectionType::None, ConnectionType::Relay(_)) => {
+                    inc!(MagicsockMetrics, num_relay_conns_added)
+                }
+                (ConnectionType::None, ConnectionType::Mixed(_, _)) => {
+                    inc!(MagicsockMetrics, num_relay_conns_added)
+                }
+                (ConnectionType::None, ConnectionType::None) => (),
             }
         }
         (best_addr, relay_url)
