@@ -947,8 +947,8 @@ mod tests {
     use iroh_blobs::hashseq::HashSeq;
     use iroh_net::NodeId;
     use rand::RngCore;
-    use tokio::io::AsyncWriteExt;
     use testresult::TestResult;
+    use tokio::io::AsyncWriteExt;
 
     #[tokio::test]
     async fn test_blob_create_collection() -> Result<()> {
@@ -1261,8 +1261,7 @@ mod tests {
         let node_id = node.node_id();
         let client = node.client();
 
-        let AddOutcome { hash, size, .. } =
-            client.blobs().add_bytes("foo").await?;
+        let AddOutcome { hash, size, .. } = client.blobs().add_bytes("foo").await?;
 
         // Direct
         let res = client
@@ -1371,7 +1370,7 @@ mod tests {
         let mut collection = Collection::default();
         let mut tags = Vec::new();
         let mut size = 0;
-        for value in ["f", "fo", "foo"] {
+        for value in ["iroh", "is", "cool"] {
             let import_outcome = client.blobs().add_bytes(value).await.context("add bytes")?;
             collection.push(value.to_string(), import_outcome.hash);
             tags.push(import_outcome.tag);
