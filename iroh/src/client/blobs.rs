@@ -1248,4 +1248,91 @@ mod tests {
 
         Ok(())
     }
+
+    /// Download a blob from oneself
+    #[tokio::test]
+    async fn test_blob_get_self() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let node = crate::node::Node::memory().spawn().await?;
+
+        // create temp file
+        let temp_dir = tempfile::tempdir().context("tempdir")?;
+
+        let in_root = temp_dir.path().join("in");
+        tokio::fs::create_dir_all(in_root.clone())
+            .await
+            .context("create dir all")?;
+
+        let path = in_root.join("test-blob");
+        let size = 1024 * 128;
+        let buf: Vec<u8> = (0..size).map(|i| i as u8).collect();
+        let mut file = tokio::fs::File::create(path.clone())
+            .await
+            .context("create file")?;
+        file.write_all(&buf.clone()).await.context("write_all")?;
+        file.flush().await.context("flush")?;
+
+        let client = node.client();
+
+        let import_outcome = client
+            .blobs()
+            .add_from_path(
+                path.to_path_buf(),
+                false,
+                SetTagOption::Auto,
+                WrapOption::NoWrap,
+            )
+            .await
+            .context("import file")?
+            .finish()
+            .await
+            .context("import finish")?;
+
+        let hash = import_outcome.hash;
+
+        let node_id = node.node_id();
+
+        // Direct
+        let res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::Raw,
+                    nodes: vec![node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Direct,
+                },
+            )
+            .await
+            .context("direct")?
+            .await
+            .context("direct")?;
+
+        assert_eq!(res.local_size, size);
+        assert_eq!(res.downloaded_size, 0);
+
+        // Queued
+        let res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::Raw,
+                    nodes: vec![node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Queued,
+                },
+            )
+            .await
+            .context("queued")?
+            .await
+            .context("queued")?;
+
+        assert_eq!(res.local_size, size);
+        assert_eq!(res.downloaded_size, 0);
+
+        Ok(())
+    }
 }
