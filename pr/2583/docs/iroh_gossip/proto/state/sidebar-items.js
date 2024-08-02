@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["InEvent","MessageKind","OutEvent"],"struct":["Message","State","Timer","TopicId"]};
