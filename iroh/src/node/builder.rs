@@ -44,7 +44,9 @@ use crate::{
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-use super::{docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, Node, NodeInner};
+use super::{
+    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, MockEventSender, Node, NodeInner,
+};
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
@@ -84,9 +86,10 @@ pub enum DocsStorage {
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(derive_more::Debug)]
-pub struct Builder<D>
+pub struct Builder<D, E = MockEventSender>
 where
     D: Map,
+    E: iroh_blobs::provider::EventSender,
 {
     storage: StorageConfig,
     bind_port: Option<u16>,
@@ -105,6 +108,7 @@ where
     /// Callback to register when a gc loop is done
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
+    blob_events: E,
 }
 
 /// Configuration for storage.
@@ -206,6 +210,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
+            blob_events: MockEventSender,
         }
     }
 }
@@ -239,19 +244,52 @@ impl<D: Map> Builder<D> {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
+            blob_events: MockEventSender,
         }
     }
 }
 
-impl<D> Builder<D>
+impl<D, E> Builder<D, E>
 where
     D: BaoStore,
+    E: iroh_blobs::provider::EventSender,
+{
+    /// Set the blobs event sender.
+    pub fn set_blobs_events<F: iroh_blobs::provider::EventSender>(
+        self,
+        blob_events: F,
+    ) -> Builder<D, F> {
+        Builder {
+            storage: self.storage,
+            bind_port: self.bind_port,
+            secret_key: self.secret_key,
+            blobs_store: self.blobs_store,
+            keylog: self.keylog,
+            rpc_endpoint: self.rpc_endpoint,
+            rpc_addr: self.rpc_addr,
+            relay_mode: self.relay_mode,
+            dns_resolver: self.dns_resolver,
+            gc_policy: self.gc_policy,
+            docs_storage: self.docs_storage,
+            node_discovery: self.node_discovery,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
+            gc_done_callback: self.gc_done_callback,
+            blob_events,
+        }
+    }
+}
+
+impl<D, E> Builder<D, E>
+where
+    D: BaoStore,
+    E: iroh_blobs::provider::EventSender,
 {
     /// Persist all node data in the provided directory.
     pub async fn persist(
         self,
         root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_blobs::store::fs::Store>> {
+    ) -> Result<Builder<iroh_blobs::store::fs::Store, E>> {
         let root = root.as_ref();
         let blob_dir = IrohPaths::BaoStoreDir.with_root(root);
 
@@ -303,6 +341,7 @@ where
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: self.gc_done_callback,
+            blob_events: self.blob_events,
         })
     }
 
@@ -316,12 +355,12 @@ where
     }
 
     /// Configure the default iroh rpc endpoint, on the default address.
-    pub async fn enable_rpc(self) -> Result<Builder<D>> {
+    pub async fn enable_rpc(self) -> Result<Builder<D, E>> {
         self.enable_rpc_with_addr(DEFAULT_RPC_ADDR).await
     }
 
     /// Configure the default iroh rpc endpoint.
-    pub async fn enable_rpc_with_addr(self, mut rpc_addr: SocketAddr) -> Result<Builder<D>> {
+    pub async fn enable_rpc_with_addr(self, mut rpc_addr: SocketAddr) -> Result<Builder<D, E>> {
         let (ep, actual_rpc_port) = make_rpc_endpoint(&self.secret_key, rpc_addr)?;
         rpc_addr.set_port(actual_rpc_port);
 
@@ -592,7 +631,7 @@ where
             local_pool: lp,
         };
 
-        let protocol_builder = protocol_builder.register_iroh_protocols();
+        let protocol_builder = protocol_builder.register_iroh_protocols(self.blob_events);
 
         Ok(protocol_builder)
     }
@@ -715,10 +754,16 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     }
 
     /// Registers the core iroh protocols (blobs, gossip, docs).
-    fn register_iroh_protocols(mut self) -> Self {
+    fn register_iroh_protocols<E: iroh_blobs::provider::EventSender>(
+        mut self,
+        blob_events: E,
+    ) -> Self {
         // Register blobs.
-        let blobs_proto =
-            BlobsProtocol::new(self.blobs_db().clone(), self.local_pool_handle().clone());
+        let blobs_proto = BlobsProtocol::new_with_events(
+            self.blobs_db().clone(),
+            self.local_pool_handle().clone(),
+            blob_events,
+        );
         self = self.accept(iroh_blobs::protocol::ALPN, Arc::new(blobs_proto));
 
         // Register gossip.

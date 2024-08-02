@@ -274,7 +274,7 @@ pub async fn transfer_collection<D: Map, E: EventSender>(
 }
 
 /// Trait for sending events.
-pub trait EventSender: Clone + Sync + Send + 'static {
+pub trait EventSender: std::fmt::Debug + Clone + Sync + Send + 'static {
     /// Send an event.
     fn send(&self, event: Event) -> BoxFuture<()>;
 }

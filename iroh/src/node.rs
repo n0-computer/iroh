@@ -75,7 +75,7 @@ pub use self::builder::{
     DEFAULT_RPC_ADDR,
 };
 pub use self::rpc_status::RpcStatus;
-pub use protocol::ProtocolHandler;
+pub use protocol::{MockEventSender, ProtocolHandler};
 
 /// How often to save node data.
 const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
