@@ -518,6 +518,98 @@ impl<T: Send + Sync + 'static> ProgressSender for FlumeProgressSender<T> {
     }
 }
 
+/// A progress sender that uses an async channel.
+pub struct AsyncChannelProgressSender<T> {
+    sender: async_channel::Sender<T>,
+    id: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl<T> std::fmt::Debug for AsyncChannelProgressSender<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AsyncChannelProgressSender")
+            .field("id", &self.id)
+            .field("sender", &self.sender)
+            .finish()
+    }
+}
+
+impl<T> Clone for AsyncChannelProgressSender<T> {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            id: self.id.clone(),
+        }
+    }
+}
+
+impl<T> AsyncChannelProgressSender<T> {
+    /// Create a new progress sender from an async channel sender.
+    pub fn new(sender: async_channel::Sender<T>) -> Self {
+        Self {
+            sender,
+            id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
+    }
+
+    /// Returns true if `other` sends on the same `async_channel` channel as `self`.
+    pub fn same_channel(&self, other: &AsyncChannelProgressSender<T>) -> bool {
+        same_channel(&self.sender, &other.sender)
+    }
+}
+
+/// Given a value that is aligned and sized like a pointer, return the value of
+/// the pointer as a usize.
+fn get_as_ptr<T>(value: &T) -> Option<usize> {
+    use std::mem;
+    if mem::size_of::<T>() == std::mem::size_of::<usize>()
+        && mem::align_of::<T>() == mem::align_of::<usize>()
+    {
+        // SAFETY: size and alignment requirements are checked and met
+        unsafe { Some(mem::transmute_copy(value)) }
+    } else {
+        None
+    }
+}
+
+fn same_channel<T>(a: &async_channel::Sender<T>, b: &async_channel::Sender<T>) -> bool {
+    // This relies on async_channel::Sender being just a newtype wrapper around
+    // an Arc<Channel<T>>, so if two senders point to the same channel, the
+    // pointers will be the same.
+    get_as_ptr(a).unwrap() == get_as_ptr(b).unwrap()
+}
+
+impl<T> IdGenerator for AsyncChannelProgressSender<T> {
+    fn new_id(&self) -> u64 {
+        self.id.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl<T: Send + Sync + 'static> ProgressSender for AsyncChannelProgressSender<T> {
+    type Msg = T;
+
+    async fn send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
+        self.sender
+            .send(msg)
+            .await
+            .map_err(|_| ProgressSendError::ReceiverDropped)
+    }
+
+    fn try_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
+        match self.sender.try_send(msg) {
+            Ok(_) => Ok(()),
+            Err(async_channel::TrySendError::Full(_)) => Ok(()),
+            Err(async_channel::TrySendError::Closed(_)) => Err(ProgressSendError::ReceiverDropped),
+        }
+    }
+
+    fn blocking_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
+        match self.sender.send_blocking(msg) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(ProgressSendError::ReceiverDropped),
+        }
+    }
+}
+
 /// An error that can occur when sending progress messages.
 ///
 /// Really the only error that can occur is if the receiver is dropped.
@@ -626,5 +718,41 @@ impl<W: AsyncSliceWriter + 'static, F: Fn(u64, usize) -> io::Result<()> + 'stati
 
     async fn set_len(&mut self, size: u64) -> io::Result<()> {
         self.0.set_len(size).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    #[test]
+    fn get_as_ptr_works() {
+        struct Wrapper(Arc<u64>);
+        let x = Wrapper(Arc::new(1u64));
+        assert_eq!(
+            get_as_ptr(&x).unwrap(),
+            Arc::as_ptr(&x.0) as usize - 2 * std::mem::size_of::<usize>()
+        );
+    }
+
+    #[test]
+    fn get_as_ptr_wrong_use() {
+        struct Wrapper(#[allow(dead_code)] u8);
+        let x = Wrapper(1);
+        assert!(get_as_ptr(&x).is_none());
+    }
+
+    #[test]
+    fn test_sender_is_ptr() {
+        assert_eq!(
+            std::mem::size_of::<usize>(),
+            std::mem::size_of::<async_channel::Sender<u8>>()
+        );
+        assert_eq!(
+            std::mem::align_of::<usize>(),
+            std::mem::align_of::<async_channel::Sender<u8>>()
+        );
     }
 }
