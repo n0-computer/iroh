@@ -898,6 +898,7 @@ impl Endpoint {
 #[pin_project::pin_project]
 pub struct Accept<'a> {
     #[pin]
+    #[debug("quinn::Accept")]
     inner: quinn::Accept<'a>,
     magic_ep: Endpoint,
 }
