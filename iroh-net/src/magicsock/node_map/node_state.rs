@@ -270,9 +270,6 @@ impl NodeState {
             debug!("in `DEV_relay_ONLY` mode, giving the relay address as the only viable address for this endpoint");
             return (None, self.relay_url());
         }
-        // Update our best addr from candidate addresses (only if it is empty and if we have
-        // recent pongs).
-        self.assign_best_addr_from_candidates_if_empty();
         let (best_addr, relay_url) = match self.udp_paths.send_addr(*now, have_ipv6) {
             super::udp_paths::UdpSendAddr::Valid(addr) => {
                 // If we have a valid address we use it.
@@ -376,54 +373,6 @@ impl NodeState {
             reason,
             self.relay_url.is_some(),
         );
-    }
-
-    /// Fixup best_adrr from candidates.
-    ///
-    /// If somehow we end up in a state where we failed to set a best_addr, while we do have
-    /// valid candidates, this will chose a candidate and set best_addr again.  Most likely
-    /// this is a bug elsewhere though.
-    fn assign_best_addr_from_candidates_if_empty(&mut self) {
-        if !self.udp_paths.best_addr.is_empty() {
-            return;
-        }
-
-        // The highest acceptable latency for an endpoint path.  If the latency is higher
-        // then this the path will be ignored.
-        const MAX_LATENCY: Duration = Duration::from_secs(60 * 60);
-        let best_pong = self
-            .udp_paths
-            .paths
-            .iter()
-            .fold(None, |best_pong, (ipp, state)| {
-                let best_latency = best_pong
-                    .map(|p: &PongReply| p.latency)
-                    .unwrap_or(MAX_LATENCY);
-                match state.recent_pong() {
-                    // This pong is better if it has a lower latency, or if it has the same
-                    // latency but on an IPv6 path.
-                    Some(pong)
-                        if pong.latency < best_latency
-                            || (pong.latency == best_latency && ipp.ip().is_ipv6()) =>
-                    {
-                        Some(pong)
-                    }
-                    _ => best_pong,
-                }
-            });
-
-        // If we found a candidate, set to best addr
-        if let Some(pong) = best_pong {
-            if let SendAddr::Udp(addr) = pong.from {
-                warn!(%addr, "No best_addr was set, choose candidate with lowest latency");
-                self.udp_paths.best_addr.insert_if_better_or_reconfirm(
-                    addr,
-                    pong.latency,
-                    best_addr::Source::BestCandidate,
-                    pong.pong_at,
-                )
-            }
-        }
     }
 
     /// Whether we need to send another call-me-maybe to the endpoint.
