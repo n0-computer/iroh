@@ -1434,7 +1434,6 @@
 <a href="#1434" id="1434">1434</a>
 <a href="#1435" id="1435">1435</a>
 <a href="#1436" id="1436">1436</a>
-<a href="#1437" id="1437">1437</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for blobs management.
 //!
 //! The main entry point is the [`Client`].
@@ -2385,6 +2384,7 @@
     <span class="kw">use </span>iroh_net::NodeId;
     <span class="kw">use </span>rand::RngCore;
     <span class="kw">use </span>tokio::io::AsyncWriteExt;
+    <span class="kw">use </span>testresult::TestResult;
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_blob_create_collection() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
@@ -2690,7 +2690,7 @@
 
     <span class="doccomment">/// Download a existing blob from oneself
     </span><span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_blob_get_self_existing() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_blob_get_self_existing() -&gt; TestResult&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
         <span class="kw">let </span>node = <span class="kw">crate</span>::node::Node::memory().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2698,7 +2698,7 @@
         <span class="kw">let </span>client = node.client();
 
         <span class="kw">let </span>AddOutcome { hash, size, .. } =
-            client.blobs().add_bytes(<span class="string">"foo"</span>).<span class="kw">await</span>.context(<span class="string">"add bytes"</span>)<span class="question-mark">?</span>;
+            client.blobs().add_bytes(<span class="string">"foo"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// Direct
         </span><span class="kw">let </span>res = client
@@ -2713,8 +2713,7 @@
                 },
             )
             .<span class="kw">await</span><span class="question-mark">?
-            </span>.<span class="kw">await
-            </span>.context(<span class="string">"direct (download)"</span>)<span class="question-mark">?</span>;
+            </span>.<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">assert_eq!</span>(res.local_size, size);
         <span class="macro">assert_eq!</span>(res.downloaded_size, <span class="number">0</span>);
@@ -2732,8 +2731,7 @@
                 },
             )
             .<span class="kw">await</span><span class="question-mark">?
-            </span>.<span class="kw">await
-            </span>.context(<span class="string">"queued"</span>)<span class="question-mark">?</span>;
+            </span>.<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">assert_eq!</span>(res.local_size, size);
         <span class="macro">assert_eq!</span>(res.downloaded_size, <span class="number">0</span>);
@@ -2743,7 +2741,7 @@
 
     <span class="doccomment">/// Download a missing blob from oneself
     </span><span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_blob_get_self_missing() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_blob_get_self_missing() -&gt; TestResult&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
         <span class="kw">let </span>node = <span class="kw">crate</span>::node::Node::memory().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2797,7 +2795,7 @@
 
     <span class="doccomment">/// Download a existing collection. Check that things succeed and no download is performed.
     </span><span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_blob_get_existing_collection() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_blob_get_existing_collection() -&gt; TestResult&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
         <span class="kw">let </span>node = <span class="kw">crate</span>::node::Node::memory().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
