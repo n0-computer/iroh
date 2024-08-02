@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AuthorFilter","DownloadPolicy","FilterKind","ImportNamespaceOutcome","KeyFilter","OpenError","SortBy","SortDirection"],"mod":["fs"],"struct":["FlatQuery","MemPublicKeyStore","Query","QueryBuilder","SingleLatestPerKeyQuery"],"trait":["DownloadPolicyStore","PublicKeyStore"]};
