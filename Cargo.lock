@@ -2629,6 +2629,7 @@ name = "iroh-cli"
 version = "0.21.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "bao-tree",
  "bytes",
  "clap",
@@ -2640,7 +2641,6 @@ dependencies = [
  "dialoguer",
  "dirs-next",
  "duct",
- "flume",
  "futures-buffered",
  "futures-lite 2.3.0",
  "futures-util",
