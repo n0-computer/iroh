@@ -296,7 +296,6 @@ mod tests {
     use testresult::TestResult;
 
     #[tokio::test]
-    // #[ignore = "flaky"]
     async fn test_local_swarm_discovery() -> TestResult {
         let _guard = iroh_test::logging::setup();
         for _i in 0..10 {
