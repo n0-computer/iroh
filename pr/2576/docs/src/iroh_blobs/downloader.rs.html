@@ -1467,9 +1467,6 @@
 <a href="#1467" id="1467">1467</a>
 <a href="#1468" id="1468">1468</a>
 <a href="#1469" id="1469">1469</a>
-<a href="#1470" id="1470">1470</a>
-<a href="#1471" id="1471">1471</a>
-<a href="#1472" id="1472">1472</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Handle downloading blobs and collections concurrently and from nodes.
 //!
 //! The [`Downloader`] interacts with four main components to this end.
@@ -1523,10 +1520,7 @@
 <span class="kw">use </span>tracing::{debug, error_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
-    get::{
-        db::{BlobId, DownloadProgress},
-        Stats,
-    },
+    get::{db::DownloadProgress, Stats},
     metrics::Metrics,
     store::Store,
     util::{local_pool::LocalPoolHandle, progress::ProgressSender},
@@ -1591,7 +1585,13 @@
     ) -&gt; GetFut;
 
     <span class="doccomment">/// Checks if a blob is available in the local store.
-    </span><span class="kw">fn </span>has_complete(<span class="kw-2">&amp;mut </span><span class="self">self</span>, kind: DownloadKind) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Option</span>&lt;u64&gt;&gt;;
+    ///
+    /// If it exists and is fully complete, emit progress events as if we downloaded the blob.
+    </span><span class="kw">fn </span>check_local(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        kind: DownloadKind,
+        progress: <span class="prelude-ty">Option</span>&lt;ProgressSubscriber&gt;,
+    ) -&gt; <span class="kw">impl </span>Future&lt;Output = anyhow::Result&lt;bool&gt;&gt;;
 }
 
 <span class="doccomment">/// Concurrency limits for the [`Downloader`].
@@ -2147,18 +2147,13 @@
             on_progress: progress,
         };
 
-        <span class="comment">// early exit if the hash is already available.
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(local_size) = <span class="self">self</span>.getter.has_complete(kind).<span class="kw">await </span>{
-            intent_handlers
-                .on_progress
-                .send(DownloadProgress::FoundLocal {
-                    child: BlobId::Root,
-                    hash: kind.hash(),
-                    size: <span class="kw">crate</span>::store::BaoBlobSize::Verified(local_size),
-                    valid_ranges: <span class="kw">crate</span>::protocol::RangeSpec::all(),
-                })
-                .<span class="kw">await
-                </span>.ok();
+        <span class="comment">// early exit if the blob/collection is already complete locally.
+        </span><span class="kw">if </span><span class="self">self
+            </span>.getter
+            .check_local(kind, intent_handlers.on_progress.clone())
+            .<span class="kw">await
+            </span>.unwrap_or(<span class="bool-val">false</span>)
+        {
             <span class="self">self</span>.finalize_download(
                 kind,
                 [(intent_id, intent_handlers)].into(),
@@ -2364,7 +2359,6 @@
     ) {
         <span class="self">self</span>.progress_tracker.remove(<span class="kw-2">&amp;</span>kind);
         <span class="self">self</span>.remove_hash_if_not_queued(<span class="kw-2">&amp;</span>kind.hash());
-        <span class="kw">let </span>result = result.map_err(|<span class="kw">_</span>| DownloadError::DownloadFailed);
         <span class="kw">for </span>(_id, handlers) <span class="kw">in </span>intents.into_iter() {
             handlers.on_finish.send(result.clone()).ok();
         }

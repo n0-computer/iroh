@@ -1336,6 +1336,26 @@
 <a href="#1336" id="1336">1336</a>
 <a href="#1337" id="1337">1337</a>
 <a href="#1338" id="1338">1338</a>
+<a href="#1339" id="1339">1339</a>
+<a href="#1340" id="1340">1340</a>
+<a href="#1341" id="1341">1341</a>
+<a href="#1342" id="1342">1342</a>
+<a href="#1343" id="1343">1343</a>
+<a href="#1344" id="1344">1344</a>
+<a href="#1345" id="1345">1345</a>
+<a href="#1346" id="1346">1346</a>
+<a href="#1347" id="1347">1347</a>
+<a href="#1348" id="1348">1348</a>
+<a href="#1349" id="1349">1349</a>
+<a href="#1350" id="1350">1350</a>
+<a href="#1351" id="1351">1351</a>
+<a href="#1352" id="1352">1352</a>
+<a href="#1353" id="1353">1353</a>
+<a href="#1354" id="1354">1354</a>
+<a href="#1355" id="1355">1355</a>
+<a href="#1356" id="1356">1356</a>
+<a href="#1357" id="1357">1357</a>
+<a href="#1358" id="1358">1358</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for blobs management.
 //!
 //! The main entry point is the [`Client`].
@@ -2587,49 +2607,17 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="doccomment">/// Download a blob from oneself
+    <span class="doccomment">/// Download a existing blob from oneself
     </span><span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_blob_get_self() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_blob_get_self_existing() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
         <span class="kw">let </span>node = <span class="kw">crate</span>::node::Node::memory().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="comment">// create temp file
-        </span><span class="kw">let </span>temp_dir = tempfile::tempdir().context(<span class="string">"tempdir"</span>)<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>in_root = temp_dir.path().join(<span class="string">"in"</span>);
-        tokio::fs::create_dir_all(in_root.clone())
-            .<span class="kw">await
-            </span>.context(<span class="string">"create dir all"</span>)<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>path = in_root.join(<span class="string">"test-blob"</span>);
-        <span class="kw">let </span>size = <span class="number">1024 </span>* <span class="number">128</span>;
-        <span class="kw">let </span>buf: Vec&lt;u8&gt; = (<span class="number">0</span>..size).map(|i| i <span class="kw">as </span>u8).collect();
-        <span class="kw">let </span><span class="kw-2">mut </span>file = tokio::fs::File::create(path.clone())
-            .<span class="kw">await
-            </span>.context(<span class="string">"create file"</span>)<span class="question-mark">?</span>;
-        file.write_all(<span class="kw-2">&amp;</span>buf.clone()).<span class="kw">await</span>.context(<span class="string">"write_all"</span>)<span class="question-mark">?</span>;
-        file.flush().<span class="kw">await</span>.context(<span class="string">"flush"</span>)<span class="question-mark">?</span>;
-
+        <span class="kw">let </span>node_id = node.node_id();
         <span class="kw">let </span>client = node.client();
 
-        <span class="kw">let </span>import_outcome = client
-            .blobs()
-            .add_from_path(
-                path.to_path_buf(),
-                <span class="bool-val">false</span>,
-                SetTagOption::Auto,
-                WrapOption::NoWrap,
-            )
-            .<span class="kw">await
-            </span>.context(<span class="string">"import file"</span>)<span class="question-mark">?
-            </span>.finish()
-            .<span class="kw">await
-            </span>.context(<span class="string">"import finish"</span>)<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>hash = import_outcome.hash;
-
-        <span class="kw">let </span>node_id = node.node_id();
+        <span class="kw">let </span>AddOutcome { hash, size, .. } =
+            client.blobs().add_bytes(<span class="string">"foo"</span>).<span class="kw">await</span>.context(<span class="string">"add bytes"</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// Direct
         </span><span class="kw">let </span>res = client
@@ -2643,10 +2631,9 @@
                     mode: DownloadMode::Direct,
                 },
             )
-            .<span class="kw">await
-            </span>.context(<span class="string">"direct"</span>)<span class="question-mark">?
+            .<span class="kw">await</span><span class="question-mark">?
             </span>.<span class="kw">await
-            </span>.context(<span class="string">"direct"</span>)<span class="question-mark">?</span>;
+            </span>.context(<span class="string">"direct (download)"</span>)<span class="question-mark">?</span>;
 
         <span class="macro">assert_eq!</span>(res.local_size, size);
         <span class="macro">assert_eq!</span>(res.downloaded_size, <span class="number">0</span>);
@@ -2663,13 +2650,66 @@
                     mode: DownloadMode::Queued,
                 },
             )
-            .<span class="kw">await
-            </span>.context(<span class="string">"queued"</span>)<span class="question-mark">?
+            .<span class="kw">await</span><span class="question-mark">?
             </span>.<span class="kw">await
             </span>.context(<span class="string">"queued"</span>)<span class="question-mark">?</span>;
 
         <span class="macro">assert_eq!</span>(res.local_size, size);
         <span class="macro">assert_eq!</span>(res.downloaded_size, <span class="number">0</span>);
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="doccomment">/// Download a missing blob from oneself
+    </span><span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_blob_get_self_missing() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+
+        <span class="kw">let </span>node = <span class="kw">crate</span>::node::Node::memory().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>node_id = node.node_id();
+        <span class="kw">let </span>client = node.client();
+
+        <span class="kw">let </span>hash = Hash::from_bytes([<span class="number">0u8</span>; <span class="number">32</span>]);
+
+        <span class="comment">// Direct
+        </span><span class="kw">let </span>res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::Raw,
+                    nodes: <span class="macro">vec!</span>[node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Direct,
+                },
+            )
+            .<span class="kw">await</span><span class="question-mark">?
+            </span>.<span class="kw">await</span>;
+        <span class="macro">assert!</span>(res.is_err());
+        <span class="macro">assert_eq!</span>(
+            res.err().unwrap().to_string().as_str(),
+            <span class="string">"No nodes to download from provided"
+        </span>);
+
+        <span class="comment">// Queued
+        </span><span class="kw">let </span>res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::Raw,
+                    nodes: <span class="macro">vec!</span>[node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Queued,
+                },
+            )
+            .<span class="kw">await</span><span class="question-mark">?
+            </span>.<span class="kw">await</span>;
+        <span class="macro">assert!</span>(res.is_err());
+        <span class="macro">assert_eq!</span>(
+            res.err().unwrap().to_string().as_str(),
+            <span class="string">"No provider nodes found"
+        </span>);
 
         <span class="prelude-val">Ok</span>(())
     }

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["BlobId","BlobInfo","DownloadProgress"],"fn":["blob_info","get_to_db","valid_ranges"]};
+window.SIDEBAR_ITEMS = {"enum":["BlobId","BlobInfo","DownloadProgress"],"fn":["blob_info","check_local_with_progress_if_complete","get_to_db","valid_ranges"]};

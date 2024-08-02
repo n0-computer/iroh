@@ -91,13 +91,20 @@
 <a href="#91" id="91">91</a>
 <a href="#92" id="92">92</a>
 <a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! [`Getter`] implementation that performs requests over [`Connection`]s.
 //!
 //! [`Connection`]: iroh_net::endpoint::Connection
 
 </span><span class="kw">use crate</span>::{
-    get::{db::get_to_db, error::GetError},
-    store::{MapEntry, Store},
+    downloader::progress::ProgressSubscriber,
+    get::{
+        db::{check_local_with_progress_if_complete, get_to_db},
+        error::GetError,
+    },
+    store::Store,
 };
 <span class="kw">use </span>futures_lite::FutureExt;
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
@@ -175,13 +182,12 @@
         fut.boxed_local()
     }
 
-    <span class="kw">async fn </span>has_complete(<span class="kw-2">&amp;mut </span><span class="self">self</span>, kind: DownloadKind) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
-        <span class="kw">let </span>entry = <span class="self">self</span>.store.get(<span class="kw-2">&amp;</span>kind.hash()).<span class="kw">await</span>.ok().flatten()<span class="question-mark">?</span>;
-        <span class="kw">if </span>entry.is_complete() {
-            <span class="prelude-val">Some</span>(entry.size().value())
-        } <span class="kw">else </span>{
-            <span class="prelude-val">None
-        </span>}
-    }
+    <span class="kw">async fn </span>check_local(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        kind: DownloadKind,
+        progress: <span class="prelude-ty">Option</span>&lt;ProgressSubscriber&gt;,
+    ) -&gt; anyhow::Result&lt;bool&gt; {
+        check_local_with_progress_if_complete(<span class="kw-2">&amp;</span><span class="self">self</span>.store, <span class="kw-2">&amp;</span>kind.hash_and_format(), progress).<span class="kw">await
+    </span>}
 }
 </code></pre></div></section></main></body></html>
