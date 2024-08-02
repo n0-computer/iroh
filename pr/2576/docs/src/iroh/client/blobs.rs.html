@@ -1429,6 +1429,9 @@
 <a href="#1429" id="1429">1429</a>
 <a href="#1430" id="1430">1430</a>
 <a href="#1431" id="1431">1431</a>
+<a href="#1432" id="1432">1432</a>
+<a href="#1433" id="1433">1433</a>
+<a href="#1434" id="1434">1434</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for blobs management.
 //!
 //! The main entry point is the [`Client`].
@@ -2816,8 +2819,11 @@
         </span><span class="kw">let </span>hashseq_bytes = client.blobs().read_to_bytes(hash).<span class="kw">await</span><span class="question-mark">?</span>;
         size += hashseq_bytes.len() <span class="kw">as </span>u64;
         <span class="kw">let </span>hashseq = HashSeq::try_from(hashseq_bytes)<span class="question-mark">?</span>;
-        <span class="kw">let </span>collection_header_bytes = client.blobs().read_to_bytes(hashseq.into_iter().next().expect(<span class="string">"header to exist"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
-        size += collection_header_bytes.len()  <span class="kw">as </span>u64;
+        <span class="kw">let </span>collection_header_bytes = client
+            .blobs()
+            .read_to_bytes(hashseq.into_iter().next().expect(<span class="string">"header to exist"</span>))
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        size += collection_header_bytes.len() <span class="kw">as </span>u64;
 
         <span class="comment">// Direct
         </span><span class="kw">let </span>res = client
