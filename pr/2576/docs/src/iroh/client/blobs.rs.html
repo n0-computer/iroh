@@ -1432,6 +1432,9 @@
 <a href="#1432" id="1432">1432</a>
 <a href="#1433" id="1433">1433</a>
 <a href="#1434" id="1434">1434</a>
+<a href="#1435" id="1435">1435</a>
+<a href="#1436" id="1436">1436</a>
+<a href="#1437" id="1437">1437</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for blobs management.
 //!
 //! The main entry point is the [`Client`].
@@ -2379,6 +2382,7 @@
 
     <span class="kw">use </span>anyhow::Context <span class="kw">as _</span>;
     <span class="kw">use </span>iroh_blobs::hashseq::HashSeq;
+    <span class="kw">use </span>iroh_net::NodeId;
     <span class="kw">use </span>rand::RngCore;
     <span class="kw">use </span>tokio::io::AsyncWriteExt;
 
@@ -2797,7 +2801,9 @@
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
         <span class="kw">let </span>node = <span class="kw">crate</span>::node::Node::memory().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>node_id = node.node_id();
+        <span class="comment">// We use a nonexisting node id because we just want to check that this succeeds without
+        // hitting the network.
+        </span><span class="kw">let </span>node_id = NodeId::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>])<span class="question-mark">?</span>;
         <span class="kw">let </span>client = node.client();
 
         <span class="kw">let </span><span class="kw-2">mut </span>collection = Collection::default();
