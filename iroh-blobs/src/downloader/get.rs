@@ -4,7 +4,7 @@
 
 use crate::{
     get::{db::get_to_db, error::GetError},
-    store::Store,
+    store::{MapEntry, Store},
 };
 use futures_lite::FutureExt;
 #[cfg(feature = "metrics")]
@@ -80,5 +80,14 @@ impl<S: Store> Getter for IoGetter<S> {
             }
         };
         fut.boxed_local()
+    }
+
+    async fn has_complete(&mut self, kind: DownloadKind) -> Option<u64> {
+        let entry = self.store.get(&kind.hash()).await.ok().flatten()?;
+        if entry.is_complete() {
+            Some(entry.size().value())
+        } else {
+            None
+        }
     }
 }

@@ -29,6 +29,7 @@
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     fmt,
+    future::Future,
     num::NonZeroUsize,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -50,7 +51,10 @@ use tokio_util::{sync::CancellationToken, time::delay_queue};
 use tracing::{debug, error_span, trace, warn, Instrument};
 
 use crate::{
-    get::{db::DownloadProgress, Stats},
+    get::{
+        db::{BlobId, DownloadProgress},
+        Stats,
+    },
     metrics::Metrics,
     store::Store,
     util::{local_pool::LocalPoolHandle, progress::ProgressSender},
@@ -82,6 +86,8 @@ pub trait Dialer: Stream<Item = (NodeId, anyhow::Result<Self::Connection>)> + Un
     fn pending_count(&self) -> usize;
     /// Check if a node is being dialed.
     fn is_pending(&self, node: NodeId) -> bool;
+    /// Get the node id of our node.
+    fn node_id(&self) -> NodeId;
 }
 
 /// Signals what should be done with the request when it fails.
@@ -111,6 +117,9 @@ pub trait Getter {
         conn: Self::Connection,
         progress_sender: BroadcastProgressSender,
     ) -> GetFut;
+
+    /// Checks if a blob is available in the local store.
+    fn has_complete(&mut self, kind: DownloadKind) -> impl Future<Output = Option<u64>>;
 }
 
 /// Concurrency limits for the [`Downloader`].
@@ -280,7 +289,7 @@ pub struct DownloadHandle {
     receiver: oneshot::Receiver<ExternalDownloadResult>,
 }
 
-impl std::future::Future for DownloadHandle {
+impl Future for DownloadHandle {
     type Output = ExternalDownloadResult;
 
     fn poll(
@@ -666,8 +675,36 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             on_progress: progress,
         };
 
+        // early exit if the hash is already available.
+        if let Some(local_size) = self.getter.has_complete(kind).await {
+            intent_handlers
+                .on_progress
+                .send(DownloadProgress::FoundLocal {
+                    child: BlobId::Root,
+                    hash: kind.hash(),
+                    size: crate::store::BaoBlobSize::Verified(local_size),
+                    valid_ranges: crate::protocol::RangeSpec::all(),
+                })
+                .await
+                .ok();
+            self.finalize_download(
+                kind,
+                [(intent_id, intent_handlers)].into(),
+                Ok(Default::default()),
+            );
+            return;
+        }
+
+        // add the nodes to the provider map
+        // (skip the node id of our own node - we should never attempt to download from ourselves)
+        let node_ids = nodes
+            .iter()
+            .map(|n| n.node_id)
+            .filter(|node_id| *node_id != self.dialer.node_id());
+        let updated = self.providers.add_hash_with_nodes(kind.hash(), node_ids);
+
         // early exit if no providers.
-        if nodes.is_empty() && self.providers.get_candidates(&kind.hash()).next().is_none() {
+        if self.providers.get_candidates(&kind.hash()).next().is_none() {
             self.finalize_download(
                 kind,
                 [(intent_id, intent_handlers)].into(),
@@ -675,11 +712,6 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             );
             return;
         }
-
-        // add the nodes to the provider map
-        let updated = self
-            .providers
-            .add_hash_with_nodes(kind.hash(), nodes.iter().map(|n| n.node_id));
 
         // queue the transfer (if not running) or attach to transfer progress (if already running)
         if self.active_requests.contains_key(&kind) {
@@ -1432,5 +1464,9 @@ impl Dialer for iroh_net::dialer::Dialer {
 
     fn is_pending(&self, node: NodeId) -> bool {
         self.is_pending(node)
+    }
+
+    fn node_id(&self) -> NodeId {
+        self.endpoint().node_id()
     }
 }

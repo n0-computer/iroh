@@ -55,6 +55,10 @@ impl Getter for TestingGetter {
         }
         .boxed_local()
     }
+
+    async fn has_complete(&mut self, _kind: DownloadKind) -> Option<u64> {
+        None
+    }
 }
 
 impl TestingGetter {
