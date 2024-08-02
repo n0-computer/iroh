@@ -51,10 +51,7 @@ use tokio_util::{sync::CancellationToken, time::delay_queue};
 use tracing::{debug, error_span, trace, warn, Instrument};
 
 use crate::{
-    get::{
-        db::{BlobId, DownloadProgress},
-        Stats,
-    },
+    get::{db::DownloadProgress, Stats},
     metrics::Metrics,
     store::Store,
     util::{local_pool::LocalPoolHandle, progress::ProgressSender},
@@ -119,7 +116,13 @@ pub trait Getter {
     ) -> GetFut;
 
     /// Checks if a blob is available in the local store.
-    fn has_complete(&mut self, kind: DownloadKind) -> impl Future<Output = Option<u64>>;
+    ///
+    /// If it exists and is fully complete, emit progress events as if we downloaded the blob.
+    fn check_local(
+        &mut self,
+        kind: DownloadKind,
+        progress: Option<ProgressSubscriber>,
+    ) -> impl Future<Output = anyhow::Result<bool>>;
 }
 
 /// Concurrency limits for the [`Downloader`].
@@ -675,18 +678,13 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             on_progress: progress,
         };
 
-        // early exit if the hash is already available.
-        if let Some(local_size) = self.getter.has_complete(kind).await {
-            intent_handlers
-                .on_progress
-                .send(DownloadProgress::FoundLocal {
-                    child: BlobId::Root,
-                    hash: kind.hash(),
-                    size: crate::store::BaoBlobSize::Verified(local_size),
-                    valid_ranges: crate::protocol::RangeSpec::all(),
-                })
-                .await
-                .ok();
+        // early exit if the blob/collection is already complete locally.
+        if self
+            .getter
+            .check_local(kind, intent_handlers.on_progress.clone())
+            .await
+            .unwrap_or(false)
+        {
             self.finalize_download(
                 kind,
                 [(intent_id, intent_handlers)].into(),

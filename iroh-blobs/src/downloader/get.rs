@@ -3,8 +3,12 @@
 //! [`Connection`]: iroh_net::endpoint::Connection
 
 use crate::{
-    get::{db::get_to_db, error::GetError},
-    store::{MapEntry, Store},
+    downloader::progress::ProgressSubscriber,
+    get::{
+        db::{check_local_with_progress_if_complete, get_to_db},
+        error::GetError,
+    },
+    store::Store,
 };
 use futures_lite::FutureExt;
 #[cfg(feature = "metrics")]
@@ -82,12 +86,11 @@ impl<S: Store> Getter for IoGetter<S> {
         fut.boxed_local()
     }
 
-    async fn has_complete(&mut self, kind: DownloadKind) -> Option<u64> {
-        let entry = self.store.get(&kind.hash()).await.ok().flatten()?;
-        if entry.is_complete() {
-            Some(entry.size().value())
-        } else {
-            None
-        }
+    async fn check_local(
+        &mut self,
+        kind: DownloadKind,
+        progress: Option<ProgressSubscriber>,
+    ) -> anyhow::Result<bool> {
+        check_local_with_progress_if_complete(&self.store, &kind.hash_and_format(), progress).await
     }
 }

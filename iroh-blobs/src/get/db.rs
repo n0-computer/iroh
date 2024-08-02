@@ -59,6 +59,73 @@ pub async fn get_to_db<
     }
 }
 
+/// Checks if a blob or collection exists fully in the local store.
+///
+/// Returns `true` if the blob is complete (and for hashseqs if all children are complete too).
+///
+/// Emits the same sequence of progress events as if we were downloading the blob, but only if the
+/// return value is `true`, i.e. if the blob (and all children for hashseqs) are fully available in
+/// the store. If the return value is `false`, no events will be emitted at all.
+pub async fn check_local_with_progress_if_complete<D: BaoStore>(
+    db: &D,
+    hash_and_format: &HashAndFormat,
+    progress: Option<impl ProgressSender<Msg = DownloadProgress> + IdGenerator>,
+) -> anyhow::Result<bool> {
+    // We collect all progress events that should be emitted if the blob/hashseq is complete.
+    // We do not emit them right away because we don't want to emit any events in case the
+    // blob/hashseq is not complete.
+    let mut progress_events = vec![];
+
+    // Check if the root blob is fully available.
+    let HashAndFormat { hash, format } = *hash_and_format;
+    let entry = match db.get(&hash).await? {
+        Some(entry) if entry.is_complete() => entry,
+        _ => return Ok(false),
+    };
+    progress_events.push(DownloadProgress::FoundLocal {
+        child: BlobId::Root,
+        hash,
+        size: entry.size(),
+        valid_ranges: RangeSpec::all(),
+    });
+
+    match format {
+        BlobFormat::Raw => {
+            // For a raw blob, we're done.
+        }
+        BlobFormat::HashSeq => {
+            // For a hashseq, check if all children are complete.
+            let reader = entry.data_reader().await?;
+            let (mut hash_seq, children) = parse_hash_seq(reader).await.map_err(|err| {
+                GetError::NoncompliantNode(anyhow!("Failed to parse downloaded HashSeq: {err}"))
+            })?;
+            progress_events.push(DownloadProgress::FoundHashSeq { hash, children });
+
+            let mut children: Vec<Hash> = vec![];
+            while let Some(hash) = hash_seq.next().await? {
+                children.push(hash);
+            }
+            for hash in children {
+                let entry = match db.get(&hash).await? {
+                    Some(entry) if entry.is_complete() => entry,
+                    _ => return Ok(false),
+                };
+                progress_events.push(DownloadProgress::FoundLocal {
+                    child: BlobId::Root,
+                    hash,
+                    size: entry.size(),
+                    valid_ranges: RangeSpec::all(),
+                });
+            }
+        }
+    }
+
+    for event in progress_events {
+        progress.send(event).await?;
+    }
+    Ok(true)
+}
+
 /// Get a blob that was requested completely.
 ///
 /// We need to create our own files and handle the case where an outboard

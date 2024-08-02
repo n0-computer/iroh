@@ -56,8 +56,12 @@ impl Getter for TestingGetter {
         .boxed_local()
     }
 
-    async fn has_complete(&mut self, _kind: DownloadKind) -> Option<u64> {
-        None
+    async fn check_local(
+        &mut self,
+        _kind: DownloadKind,
+        _progress: Option<ProgressSubscriber>,
+    ) -> anyhow::Result<bool> {
+        Ok(false)
     }
 }
 

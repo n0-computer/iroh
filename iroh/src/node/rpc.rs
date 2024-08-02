@@ -9,7 +9,6 @@ use futures_lite::{Stream, StreamExt};
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_blobs::downloader::{DownloadRequest, Downloader};
-use iroh_blobs::export::ExportProgress;
 use iroh_blobs::format::collection::Collection;
 use iroh_blobs::get::db::DownloadProgress;
 use iroh_blobs::get::Stats;
@@ -18,6 +17,7 @@ use iroh_blobs::util::local_pool::LocalPoolHandle;
 use iroh_blobs::util::progress::{AsyncChannelProgressSender, ProgressSender};
 use iroh_blobs::util::SetTagOption;
 use iroh_blobs::BlobFormat;
+use iroh_blobs::{export::ExportProgress, get::db::check_local_with_progress_if_complete};
 use iroh_blobs::{
     provider::AddProgress,
     store::{Store as BaoStore, ValidateProgress},
@@ -1201,6 +1201,9 @@ async fn download_direct_from_nodes<D>(
 where
     D: BaoStore,
 {
+    if check_local_with_progress_if_complete(db, &hash_and_format, Some(progress.clone())).await? {
+        return Ok(Default::default());
+    }
     let mut last_err = None;
     for node in nodes {
         let node_id = node.node_id;
@@ -1226,7 +1229,7 @@ where
     }
     match last_err {
         Some(err) => Err(err),
-        None => Err(anyhow!("No nodes to download from provided"))
+        None => Err(anyhow!("No nodes to download from provided")),
     }
 }
 
