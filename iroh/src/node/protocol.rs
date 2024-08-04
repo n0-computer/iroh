@@ -78,24 +78,32 @@ impl ProtocolMap {
 }
 
 #[derive(Debug)]
-pub(crate) struct BlobsProtocol<S> {
+pub(crate) struct BlobsProtocol<S, E = MockEventSender> {
     rt: LocalPoolHandle,
     store: S,
+    events: E,
 }
 
 impl<S: iroh_blobs::store::Store> BlobsProtocol<S> {
     pub fn new(store: S, rt: LocalPoolHandle) -> Self {
-        Self { rt, store }
+        Self::new_with_events(store, rt, MockEventSender)
+    }
+}
+impl<S: iroh_blobs::store::Store, E: iroh_blobs::provider::EventSender> BlobsProtocol<S, E> {
+    pub fn new_with_events(store: S, rt: LocalPoolHandle, events: E) -> Self {
+        Self { rt, store, events }
     }
 }
 
-impl<S: iroh_blobs::store::Store> ProtocolHandler for BlobsProtocol<S> {
+impl<S: iroh_blobs::store::Store, E: iroh_blobs::provider::EventSender> ProtocolHandler
+    for BlobsProtocol<S, E>
+{
     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move {
             iroh_blobs::provider::handle_connection(
                 conn.await?,
                 self.store.clone(),
-                MockEventSender,
+                self.events.clone(),
                 self.rt.clone(),
             )
             .await;
@@ -104,8 +112,9 @@ impl<S: iroh_blobs::store::Store> ProtocolHandler for BlobsProtocol<S> {
     }
 }
 
+/// An event sender that consumes all events without doing anything with them.
 #[derive(Debug, Clone)]
-struct MockEventSender;
+pub struct MockEventSender;
 
 impl iroh_blobs::provider::EventSender for MockEventSender {
     fn send(&self, _event: iroh_blobs::provider::Event) -> futures_lite::future::Boxed<()> {

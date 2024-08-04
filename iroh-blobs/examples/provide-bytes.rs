@@ -115,7 +115,7 @@ async fn main() -> Result<()> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct MockEventSender;
 
 use futures_lite::future::FutureExt;
