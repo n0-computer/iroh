@@ -657,6 +657,9 @@
 <a href="#657" id="657">657</a>
 <a href="#658" id="658">658</a>
 <a href="#659" id="659">659</a>
+<a href="#660" id="660">660</a>
+<a href="#661" id="661">661</a>
+<a href="#662" id="662">662</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A local task pool with proper shutdown
 </span><span class="kw">use </span>futures_lite::FutureExt;
 <span class="kw">use </span>std::{
@@ -673,13 +676,15 @@
     sync::{Notify, Semaphore},
     task::{JoinError, JoinSet, LocalSet},
 };
+<span class="kw">use </span>tracing::trace;
 
 <span class="kw">type </span>BoxedFut&lt;T = ()&gt; = Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = T&gt;&gt;&gt;;
 <span class="kw">type </span>SpawnFn&lt;T = ()&gt; = Box&lt;<span class="kw">dyn </span>FnOnce() -&gt; BoxedFut&lt;T&gt; + Send + <span class="lifetime">'static</span>&gt;;
 
-<span class="kw">enum </span>Message {
+<span class="attr">#[derive(derive_more::Debug)]
+</span><span class="kw">enum </span>Message {
     <span class="doccomment">/// Create a new task and execute it locally
-    </span>Execute(SpawnFn),
+    </span>Execute(<span class="attr">#[debug(skip)] </span>SpawnFn),
     <span class="doccomment">/// Shutdown the thread after finishing all tasks
     </span>Finish,
 }
@@ -859,6 +864,7 @@
                             </span><span class="kw">_ </span>= cancel_token.cancelled() =&gt; <span class="kw">break </span>ShutdownMode::Stop,
                             <span class="comment">// if we receive a message, execute it
                             </span>msg = recv.recv() =&gt; {
+                                <span class="macro">trace!</span>(<span class="string">"pool thread msg received {:?}"</span>, msg);
                                 <span class="kw">match </span>msg {
                                     <span class="comment">// just push into the join set
                                     </span><span class="prelude-val">Ok</span>(Message::Execute(f)) =&gt; {
@@ -1240,7 +1246,7 @@
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_drop() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+        iroh_test::logging::setup_global();
         <span class="kw">let </span>pool = LocalPool::new(Config::default());
         <span class="kw">let </span>counter = Arc::new(AtomicU64::new(<span class="number">0</span>));
         <span class="kw">let </span>n = <span class="number">4</span>;

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["setup","setup_multithreaded","testing_subscriber"]};
+window.SIDEBAR_ITEMS = {"fn":["setup","setup_global","setup_multithreaded","testing_subscriber"]};

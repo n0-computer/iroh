@@ -129,6 +129,21 @@
 <a href="#129" id="129">129</a>
 <a href="#130" id="130">130</a>
 <a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Logging during tests.
 
 </span><span class="kw">use </span>tokio::runtime::RuntimeFlavor;
@@ -169,6 +184,21 @@
         }
     }
     testing_subscriber().set_default()
+}
+
+<span class="doccomment">/// Enable test tracing on all threads.
+</span><span class="kw">pub fn </span>setup_global() {
+    <span class="kw">if let </span><span class="prelude-val">Ok</span>(handle) = tokio::runtime::Handle::try_current() {
+        <span class="kw">match </span>handle.runtime_flavor() {
+            RuntimeFlavor::CurrentThread =&gt; (),
+            RuntimeFlavor::MultiThread =&gt; {
+                <span class="macro">panic!</span>(<span class="string">"setup_logging() does not work in a multi-threaded tokio runtime"</span>);
+            }
+            <span class="kw">_ </span>=&gt; <span class="macro">panic!</span>(<span class="string">"unknown runtime flavour"</span>),
+        }
+    }
+    <span class="comment">// Errors when a global one has already been set before.
+    </span>tracing::subscriber::set_global_default(testing_subscriber()).ok();
 }
 
 <span class="doccomment">/// The first call to this function will install a global logger.

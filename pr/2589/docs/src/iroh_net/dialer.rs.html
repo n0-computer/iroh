@@ -121,6 +121,11 @@
 <a href="#121" id="121">121</a>
 <a href="#122" id="122">122</a>
 <a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A dialer to conveniently dial many nodes.
 
 </span><span class="kw">use </span>std::{collections::HashMap, pin::Pin, task::Poll};
@@ -221,6 +226,11 @@
     <span class="doccomment">/// Number of pending connections to be opened.
     </span><span class="kw">pub fn </span>pending_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.pending_dials.len()
+    }
+
+    <span class="doccomment">/// Returns a reference to the endpoint used in this dialer.
+    </span><span class="kw">pub fn </span>endpoint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Endpoint {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.endpoint
     }
 }
 
