@@ -133,7 +133,7 @@ impl NodeUdpPaths {
         }
     }
 
-    /// Fixup best_adrr from candidates.
+    /// Fixup best_addr from candidates.
     ///
     /// If somehow we end up in a state where we failed to set a best_addr, while we do have
     /// valid candidates, this will chose a candidate and set best_addr again.  Most likely
