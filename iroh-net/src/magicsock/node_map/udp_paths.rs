@@ -103,9 +103,9 @@ impl NodeUdpPaths {
             best_addr::State::Outdated(addr) => UdpSendAddr::Outdated(addr.addr),
             best_addr::State::Empty => {
                 // No direct connection has been used before.  If we know of any possible
-                // candidate addresses, randomlly try to use one.  This path is most
+                // candidate addresses, randomly try to use one.  This path is most
                 // effective when folks use a NodeAddr with exactly one direct address which
-                // they know to work, effectively like using a traditional socket or quic
+                // they know to work, effectively like using a traditional socket or QUIC
                 // endpoint.
                 let addr = self
                     .chosen_candidate
