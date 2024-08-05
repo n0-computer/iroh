@@ -1591,7 +1591,7 @@
     /// This does not start the actor, see [`Actor::run`] for this.  You should not
     /// normally create this directly but rather create a [`Client`].
     </span><span class="kw">fn </span>new(port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;, dns_resolver: DnsResolver) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="comment">// TODO: consider an instrumented flume channel so we have metrics.
+        <span class="comment">// TODO: consider an instrumented channel so we have metrics.
         </span><span class="kw">let </span>(sender, receiver) = mpsc::channel(<span class="number">32</span>);
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             receiver,

@@ -185,6 +185,13 @@
 <a href="#185" id="185">185</a>
 <a href="#186" id="186">186</a>
 <a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     fs::OpenOptions,
     io::{<span class="self">self</span>, Write},
@@ -256,16 +263,16 @@
     <span class="prelude-val">Ok</span>(data)
 }
 
-<span class="doccomment">/// A wrapper for a flume receiver that allows peeking at the next message.
+<span class="doccomment">/// A wrapper for a `async_channel` receiver that allows peeking at the next message.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PeekableFlumeReceiver&lt;T&gt; {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PeekableAsyncChannelReceiver&lt;T&gt; {
     msg: <span class="prelude-ty">Option</span>&lt;T&gt;,
-    recv: flume::Receiver&lt;T&gt;,
+    recv: async_channel::Receiver&lt;T&gt;,
 }
 
 <span class="attr">#[allow(dead_code)]
-</span><span class="kw">impl</span>&lt;T&gt; PeekableFlumeReceiver&lt;T&gt; {
-    <span class="kw">pub fn </span>new(recv: flume::Receiver&lt;T&gt;) -&gt; <span class="self">Self </span>{
+</span><span class="kw">impl</span>&lt;T&gt; PeekableAsyncChannelReceiver&lt;T&gt; {
+    <span class="kw">pub fn </span>new(recv: async_channel::Receiver&lt;T&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{ msg: <span class="prelude-val">None</span>, recv }
     }
 
@@ -275,7 +282,7 @@
     /// Returns None only if there are no more messages (sender is dropped).
     </span><span class="kw">pub fn </span>peek(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>T&gt; {
         <span class="kw">if </span><span class="self">self</span>.msg.is_none() {
-            <span class="self">self</span>.msg = <span class="self">self</span>.recv.recv().ok();
+            <span class="self">self</span>.msg = <span class="self">self</span>.recv.recv_blocking().ok();
         }
         <span class="self">self</span>.msg.as_ref()
     }
@@ -288,7 +295,7 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(msg) = <span class="self">self</span>.msg.take() {
             <span class="kw">return </span><span class="prelude-val">Some</span>(msg);
         }
-        <span class="self">self</span>.recv.recv().ok()
+        <span class="self">self</span>.recv.recv_blocking().ok()
     }
 
     <span class="doccomment">/// Try to peek at the next message.
@@ -313,12 +320,15 @@
         <span class="self">self</span>.recv.try_recv().ok()
     }
 
-    <span class="kw">pub fn </span>recv_timeout(<span class="kw-2">&amp;mut </span><span class="self">self</span>, timeout: std::time::Duration) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
+    <span class="kw">pub fn </span>recv_timeout(<span class="kw-2">&amp;mut </span><span class="self">self</span>, _timeout: std::time::Duration) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(msg) = <span class="self">self</span>.msg.take() {
             <span class="kw">return </span><span class="prelude-val">Some</span>(msg);
         }
-        <span class="self">self</span>.recv.recv_timeout(timeout).ok()
-    }
+
+        <span class="self">self</span>.recv.recv_blocking().ok()
+        <span class="comment">// TODO: timeout
+        // self.recv.recv_timeout(timeout).ok()
+    </span>}
 
     <span class="doccomment">/// Create an iterator that pulls messages from the receiver for at most
     /// `count` messages or `max_duration` time.
@@ -339,14 +349,18 @@
 }
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>BatchIter&lt;<span class="lifetime">'a</span>, T&gt; {
-    recv: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>PeekableFlumeReceiver&lt;T&gt;,
+    recv: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>PeekableAsyncChannelReceiver&lt;T&gt;,
     start: Instant,
     remaining: usize,
     max_duration: Duration,
 }
 
 <span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, T&gt; BatchIter&lt;<span class="lifetime">'a</span>, T&gt; {
-    <span class="kw">fn </span>new(recv: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>PeekableFlumeReceiver&lt;T&gt;, count: usize, max_duration: Duration) -&gt; <span class="self">Self </span>{
+    <span class="kw">fn </span>new(
+        recv: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>PeekableAsyncChannelReceiver&lt;T&gt;,
+        count: usize,
+        max_duration: Duration,
+    ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             recv,
             start: Instant::now(),

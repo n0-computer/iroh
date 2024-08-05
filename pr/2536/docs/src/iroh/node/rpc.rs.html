@@ -1251,7 +1251,6 @@
 <a href="#1251" id="1251">1251</a>
 <a href="#1252" id="1252">1252</a>
 <a href="#1253" id="1253">1253</a>
-<a href="#1254" id="1254">1254</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::{Arc, Mutex};
@@ -1269,13 +1268,12 @@
 <span class="kw">use </span>iroh_blobs::get::Stats;
 <span class="kw">use </span>iroh_blobs::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
 <span class="kw">use </span>iroh_blobs::util::local_pool::LocalPoolHandle;
-<span class="kw">use </span>iroh_blobs::util::progress::ProgressSender;
+<span class="kw">use </span>iroh_blobs::util::progress::{AsyncChannelProgressSender, ProgressSender};
 <span class="kw">use </span>iroh_blobs::util::SetTagOption;
 <span class="kw">use </span>iroh_blobs::BlobFormat;
 <span class="kw">use </span>iroh_blobs::{
     provider::AddProgress,
     store::{Store <span class="kw">as </span>BaoStore, ValidateProgress},
-    util::progress::FlumeProgressSender,
     HashAndFormat,
 };
 <span class="kw">use </span>iroh_io::AsyncSliceReader;
@@ -1786,7 +1784,7 @@
         <span class="kw">let </span>db = <span class="self">self</span>.inner.db.clone();
         tokio::task::spawn(<span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = db
-                .validate(msg.repair, FlumeProgressSender::new(tx).boxed())
+                .validate(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
                 .<span class="kw">await
             </span>{
                 tx2.send(ValidateProgress::Abort(e.into())).<span class="kw">await</span>.ok();
@@ -1805,7 +1803,7 @@
         <span class="kw">let </span>db = <span class="self">self</span>.inner.db.clone();
         tokio::task::spawn(<span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = db
-                .consistency_check(msg.repair, FlumeProgressSender::new(tx).boxed())
+                .consistency_check(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
                 .<span class="kw">await
             </span>{
                 tx2.send(ConsistencyCheckProgress::Abort(e.into()))
@@ -1852,7 +1850,7 @@
         <span class="kw">use </span>iroh_blobs::store::ImportMode;
         <span class="kw">use </span>std::collections::BTreeMap;
 
-        <span class="kw">let </span>progress = FlumeProgressSender::new(progress);
+        <span class="kw">let </span>progress = AsyncChannelProgressSender::new(progress);
         <span class="kw">let </span>names = Arc::new(Mutex::new(BTreeMap::new()));
         <span class="comment">// convert import progress to provide progress
         </span><span class="kw">let </span>import_progress = progress.clone().with_filter_map(<span class="kw">move </span>|x| <span class="kw">match </span>x {
@@ -1930,7 +1928,7 @@
         progress: async_channel::Sender&lt;ExportProgress&gt;,
     ) -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>_docs = <span class="self">self</span>.docs().ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"docs are disabled"</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>progress = FlumeProgressSender::new(progress);
+        <span class="kw">let </span>progress = AsyncChannelProgressSender::new(progress);
         <span class="kw">let </span>ExportFileRequest { entry, path, mode } = msg;
         <span class="kw">let </span>key = bytes::Bytes::from(entry.key().to_vec());
         <span class="kw">let </span>export_progress = progress.clone().with_map(<span class="kw">move </span>|<span class="kw-2">mut </span>x| {
@@ -1958,7 +1956,7 @@
         <span class="kw">let </span>db = <span class="self">self</span>.inner.db.clone();
         <span class="kw">let </span>downloader = <span class="self">self</span>.inner.downloader.clone();
         <span class="kw">let </span>endpoint = <span class="self">self</span>.inner.endpoint.clone();
-        <span class="kw">let </span>progress = FlumeProgressSender::new(sender);
+        <span class="kw">let </span>progress = AsyncChannelProgressSender::new(sender);
         <span class="self">self</span>.local_pool_handle().spawn_detached(<span class="kw">move </span>|| <span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = download(<span class="kw-2">&amp;</span>db, endpoint, <span class="kw-2">&amp;</span>downloader, msg, progress.clone()).<span class="kw">await </span>{
                 progress
@@ -1973,7 +1971,7 @@
 
     <span class="kw">fn </span>blob_export(<span class="self">self</span>, msg: ExportRequest) -&gt; <span class="kw">impl </span>Stream&lt;Item = ExportResponse&gt; {
         <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1024</span>);
-        <span class="kw">let </span>progress = FlumeProgressSender::new(tx);
+        <span class="kw">let </span>progress = AsyncChannelProgressSender::new(tx);
         <span class="self">self</span>.local_pool_handle().spawn_detached(<span class="kw">move </span>|| <span class="kw">async move </span>{
             <span class="kw">let </span>res = iroh_blobs::export::export(
                 <span class="kw-2">&amp;</span><span class="self">self</span>.inner.db,
@@ -2000,7 +1998,7 @@
         <span class="kw">use </span>iroh_blobs::store::ImportMode;
         <span class="kw">use </span>std::collections::BTreeMap;
 
-        <span class="kw">let </span>progress = FlumeProgressSender::new(progress);
+        <span class="kw">let </span>progress = AsyncChannelProgressSender::new(progress);
         <span class="kw">let </span>names = Arc::new(Mutex::new(BTreeMap::new()));
         <span class="comment">// convert import progress to provide progress
         </span><span class="kw">let </span>import_progress = progress.clone().with_filter_map(<span class="kw">move </span>|x| <span class="kw">match </span>x {
@@ -2195,7 +2193,7 @@
         stream: <span class="kw">impl </span>Stream&lt;Item = AddStreamUpdate&gt; + Send + Unpin + <span class="lifetime">'static</span>,
         progress: async_channel::Sender&lt;AddProgress&gt;,
     ) -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">let </span>progress = FlumeProgressSender::new(progress);
+        <span class="kw">let </span>progress = AsyncChannelProgressSender::new(progress);
 
         <span class="kw">let </span>stream = stream.map(|item| <span class="kw">match </span>item {
             AddStreamUpdate::Chunk(chunk) =&gt; <span class="prelude-val">Ok</span>(chunk),
@@ -2377,7 +2375,7 @@
     endpoint: Endpoint,
     downloader: <span class="kw-2">&amp;</span>Downloader,
     req: BlobDownloadRequest,
-    progress: FlumeProgressSender&lt;DownloadProgress&gt;,
+    progress: AsyncChannelProgressSender&lt;DownloadProgress&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt;
 <span class="kw">where
     </span>D: iroh_blobs::store::Store,
@@ -2427,7 +2425,7 @@
     downloader: <span class="kw-2">&amp;</span>Downloader,
     hash_and_format: HashAndFormat,
     nodes: Vec&lt;NodeAddr&gt;,
-    progress: FlumeProgressSender&lt;DownloadProgress&gt;,
+    progress: AsyncChannelProgressSender&lt;DownloadProgress&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Stats&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>node_ids = Vec::with_capacity(nodes.len());
     <span class="kw">let </span><span class="kw-2">mut </span>any_added = <span class="bool-val">false</span>;
@@ -2451,7 +2449,7 @@
     endpoint: Endpoint,
     hash_and_format: HashAndFormat,
     nodes: Vec&lt;NodeAddr&gt;,
-    progress: FlumeProgressSender&lt;DownloadProgress&gt;,
+    progress: AsyncChannelProgressSender&lt;DownloadProgress&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Stats&gt;
 <span class="kw">where
     </span>D: BaoStore,
@@ -2484,7 +2482,7 @@
     endpoint: Endpoint,
     hash_and_format: HashAndFormat,
     node: NodeAddr,
-    progress: FlumeProgressSender&lt;DownloadProgress&gt;,
+    progress: AsyncChannelProgressSender&lt;DownloadProgress&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Stats&gt;
 <span class="kw">where
     </span>D: BaoStore,

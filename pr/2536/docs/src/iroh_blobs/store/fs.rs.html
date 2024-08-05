@@ -2533,20 +2533,6 @@
 <a href="#2533" id="2533">2533</a>
 <a href="#2534" id="2534">2534</a>
 <a href="#2535" id="2535">2535</a>
-<a href="#2536" id="2536">2536</a>
-<a href="#2537" id="2537">2537</a>
-<a href="#2538" id="2538">2538</a>
-<a href="#2539" id="2539">2539</a>
-<a href="#2540" id="2540">2540</a>
-<a href="#2541" id="2541">2541</a>
-<a href="#2542" id="2542">2542</a>
-<a href="#2543" id="2543">2543</a>
-<a href="#2544" id="2544">2544</a>
-<a href="#2545" id="2545">2545</a>
-<a href="#2546" id="2546">2546</a>
-<a href="#2547" id="2547">2547</a>
-<a href="#2548" id="2548">2548</a>
-<a href="#2549" id="2549">2549</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! redb backed storage
 //!
 //! Data can get into the store in two ways:
@@ -2601,7 +2587,7 @@
 //! Design:
 //!
 //! The redb store is accessed in a single threaded way by an actor that runs
-//! on its own std thread. Communication with this actor is via a flume channel,
+//! on its own std thread. Communication with this actor is via a async_channel,
 //! with oneshot channels for the return values if needed.
 //!
 //! Errors:
@@ -2665,7 +2651,7 @@
 };
 <span class="kw">use </span>tables::{ReadOnlyTables, ReadableTables, Tables};
 
-<span class="kw">use </span><span class="self">self</span>::{tables::DeleteSet, util::PeekableFlumeReceiver};
+<span class="kw">use </span><span class="self">self</span>::{tables::DeleteSet, util::PeekableAsyncChannelReceiver};
 
 <span class="kw">use </span><span class="self">self</span>::test_support::EntryData;
 
@@ -3124,7 +3110,7 @@
     /// At this point the size, hash and outboard must already be known.
     </span>Import {
         cmd: Import,
-        tx: flume::Sender&lt;ActorResult&lt;(TempTag, u64)&gt;&gt;,
+        tx: async_channel::Sender&lt;ActorResult&lt;(TempTag, u64)&gt;&gt;,
     },
     <span class="doccomment">/// Modification method: export data from a redb store
     ///
@@ -3321,7 +3307,7 @@
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>StoreInner {
-    tx: flume::Sender&lt;ActorMessage&gt;,
+    tx: async_channel::Sender&lt;ActorMessage&gt;,
     temp: Arc&lt;RwLock&lt;TempCounterMap&gt;&gt;,
     handle: <span class="prelude-ty">Option</span>&lt;std::thread::JoinHandle&lt;()&gt;&gt;,
     path_options: Arc&lt;PathOptions&gt;,
@@ -3376,15 +3362,13 @@
 
     <span class="kw">pub async fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: Hash) -&gt; OuterResult&lt;<span class="prelude-ty">Option</span>&lt;BaoFileHandle&gt;&gt; {
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
-        <span class="self">self</span>.tx.send_async(ActorMessage::Get { hash, tx }).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.tx.send(ActorMessage::Get { hash, tx }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">??</span>)
     }
 
     <span class="kw">async fn </span>get_or_create(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: Hash) -&gt; OuterResult&lt;BaoFileHandle&gt; {
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
-        <span class="self">self</span>.tx
-            .send_async(ActorMessage::GetOrCreate { hash, tx })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.tx.send(ActorMessage::GetOrCreate { hash, tx }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">??</span>)
     }
 
@@ -3398,9 +3382,7 @@
                 <span class="prelude-val">None
             </span>}
         });
-        <span class="self">self</span>.tx
-            .send_async(ActorMessage::Blobs { filter, tx })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.tx.send(ActorMessage::Blobs { filter, tx }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>blobs = rx.<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>res = blobs<span class="question-mark">?
             </span>.into_iter()
@@ -3422,9 +3404,7 @@
                 <span class="prelude-val">None
             </span>}
         });
-        <span class="self">self</span>.tx
-            .send_async(ActorMessage::Blobs { filter, tx })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.tx.send(ActorMessage::Blobs { filter, tx }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>blobs = rx.<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>res = blobs<span class="question-mark">?
             </span>.into_iter()
@@ -3440,9 +3420,7 @@
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="kw">let </span>filter: FilterPredicate&lt;Tag, HashAndFormat&gt; =
             Box::new(|_i, k, v| <span class="prelude-val">Some</span>((k.value(), v.value())));
-        <span class="self">self</span>.tx
-            .send_async(ActorMessage::Tags { filter, tx })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.tx.send(ActorMessage::Tags { filter, tx }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>tags = rx.<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="comment">// transform the internal error type into io::Error
         </span><span class="kw">let </span>tags = tags<span class="question-mark">?
@@ -3455,37 +3433,33 @@
     <span class="kw">async fn </span>set_tag(<span class="kw-2">&amp;</span><span class="self">self</span>, tag: Tag, value: <span class="prelude-ty">Option</span>&lt;HashAndFormat&gt;) -&gt; OuterResult&lt;()&gt; {
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="self">self</span>.tx
-            .send_async(ActorMessage::SetTag { tag, value, tx })
+            .send(ActorMessage::SetTag { tag, value, tx })
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">??</span>)
     }
 
     <span class="kw">async fn </span>create_tag(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: HashAndFormat) -&gt; OuterResult&lt;Tag&gt; {
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
-        <span class="self">self</span>.tx
-            .send_async(ActorMessage::CreateTag { hash, tx })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.tx.send(ActorMessage::CreateTag { hash, tx }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">??</span>)
     }
 
     <span class="kw">async fn </span>delete(<span class="kw-2">&amp;</span><span class="self">self</span>, hashes: Vec&lt;Hash&gt;) -&gt; OuterResult&lt;()&gt; {
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
-        <span class="self">self</span>.tx
-            .send_async(ActorMessage::Delete { hashes, tx })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.tx.send(ActorMessage::Delete { hashes, tx }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">??</span>)
     }
 
     <span class="kw">async fn </span>gc_start(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; OuterResult&lt;()&gt; {
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
-        <span class="self">self</span>.tx.send_async(ActorMessage::GcStart { tx }).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.tx.send(ActorMessage::GcStart { tx }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">?</span>)
     }
 
     <span class="kw">async fn </span>entry_status(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: <span class="kw-2">&amp;</span>Hash) -&gt; OuterResult&lt;EntryStatus&gt; {
         <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
         <span class="self">self</span>.tx
-            .send_async(ActorMessage::EntryStatus { hash: <span class="kw-2">*</span>hash, tx })
+            .send(ActorMessage::EntryStatus { hash: <span class="kw-2">*</span>hash, tx })
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.recv().<span class="kw">await</span><span class="question-mark">??</span>)
     }
@@ -3493,13 +3467,13 @@
     <span class="kw">fn </span>entry_status_sync(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: <span class="kw-2">&amp;</span>Hash) -&gt; OuterResult&lt;EntryStatus&gt; {
         <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
         <span class="self">self</span>.tx
-            .send(ActorMessage::EntryStatus { hash: <span class="kw-2">*</span>hash, tx })<span class="question-mark">?</span>;
+            .send_blocking(ActorMessage::EntryStatus { hash: <span class="kw-2">*</span>hash, tx })<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.recv_blocking()<span class="question-mark">??</span>)
     }
 
     <span class="kw">async fn </span>complete(<span class="kw-2">&amp;</span><span class="self">self</span>, entry: Entry) -&gt; OuterResult&lt;()&gt; {
         <span class="self">self</span>.tx
-            .send_async(ActorMessage::OnComplete { handle: entry })
+            .send(ActorMessage::OnComplete { handle: entry })
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
@@ -3534,7 +3508,7 @@
         <span class="kw">let </span>temp_tag = <span class="self">self</span>.temp.temp_tag(HashAndFormat::raw(hash));
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="self">self</span>.tx
-            .send_async(ActorMessage::Export {
+            .send(ActorMessage::Export {
                 cmd: Export {
                     temp_tag,
                     target,
@@ -3554,7 +3528,7 @@
     ) -&gt; OuterResult&lt;()&gt; {
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="self">self</span>.tx
-            .send_async(ActorMessage::Fsck {
+            .send(ActorMessage::Fsck {
                 repair,
                 progress,
                 tx,
@@ -3566,7 +3540,7 @@
     <span class="kw">async fn </span>import_flat_store(<span class="kw-2">&amp;</span><span class="self">self</span>, paths: FlatStorePaths) -&gt; OuterResult&lt;bool&gt; {
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="self">self</span>.tx
-            .send_async(ActorMessage::ImportFlatStore { paths, tx })
+            .send(ActorMessage::ImportFlatStore { paths, tx })
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">?</span>)
     }
@@ -3578,7 +3552,7 @@
     ) -&gt; OuterResult&lt;()&gt; {
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="self">self</span>.tx
-            .send_async(ActorMessage::UpdateInlineOptions {
+            .send(ActorMessage::UpdateInlineOptions {
                 inline_options,
                 reapply,
                 tx,
@@ -3588,13 +3562,13 @@
     }
 
     <span class="kw">async fn </span>dump(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; OuterResult&lt;()&gt; {
-        <span class="self">self</span>.tx.send_async(ActorMessage::Dump).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.tx.send(ActorMessage::Dump).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">async fn </span>sync(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; OuterResult&lt;()&gt; {
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
-        <span class="self">self</span>.tx.send_async(ActorMessage::Sync { tx }).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.tx.send(ActorMessage::Sync { tx }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">?</span>)
     }
 
@@ -3690,8 +3664,8 @@
         </span><span class="kw">let </span>tag = <span class="self">self</span>.temp.temp_tag(HashAndFormat { hash, format });
         <span class="kw">let </span>hash = <span class="kw-2">*</span>tag.hash();
         <span class="comment">// blocking send for the import
-        </span><span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">1</span>);
-        <span class="self">self</span>.tx.send(ActorMessage::Import {
+        </span><span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
+        <span class="self">self</span>.tx.send_blocking(ActorMessage::Import {
             cmd: Import {
                 content_id: HashAndFormat { hash, format },
                 source: file,
@@ -3700,7 +3674,7 @@
             },
             tx,
         })<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(rx.recv()<span class="question-mark">??</span>)
+        <span class="prelude-val">Ok</span>(rx.recv_blocking()<span class="question-mark">??</span>)
     }
 
     <span class="kw">fn </span>temp_file_name(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PathBuf {
@@ -3710,7 +3684,7 @@
     <span class="kw">async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="self">self</span>.tx
-            .send_async(ActorMessage::Shutdown { tx: <span class="prelude-val">Some</span>(tx) })
+            .send(ActorMessage::Shutdown { tx: <span class="prelude-val">Some</span>(tx) })
             .<span class="kw">await
             </span>.ok();
         rx.<span class="kw">await</span>.ok();
@@ -3720,7 +3694,9 @@
 <span class="kw">impl </span>Drop <span class="kw">for </span>StoreInner {
     <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(handle) = <span class="self">self</span>.handle.take() {
-            <span class="self">self</span>.tx.send(ActorMessage::Shutdown { tx: <span class="prelude-val">None </span>}).ok();
+            <span class="self">self</span>.tx
+                .send_blocking(ActorMessage::Shutdown { tx: <span class="prelude-val">None </span>})
+                .ok();
             handle.join().ok();
         }
     }
@@ -3730,7 +3706,7 @@
     handles: BTreeMap&lt;Hash, BaoFileHandleWeak&gt;,
     protected: BTreeSet&lt;Hash&gt;,
     temp: Arc&lt;RwLock&lt;TempCounterMap&gt;&gt;,
-    msgs: flume::Receiver&lt;ActorMessage&gt;,
+    msgs: async_channel::Receiver&lt;ActorMessage&gt;,
     create_options: Arc&lt;BaoFileConfig&gt;,
     options: Options,
     rt: tokio::runtime::Handle,
@@ -3793,14 +3769,10 @@
     </span>Inner(<span class="attr">#[from] </span>ActorError),
     <span class="attr">#[error(<span class="string">"send error: {0}"</span>)]
     </span>Send1(<span class="attr">#[from] </span>async_channel::SendError&lt;ActorMessage&gt;),
-    <span class="attr">#[error(<span class="string">"send error: {0}"</span>)]
-    </span>Send2(<span class="attr">#[from] </span>flume::SendError&lt;ActorMessage&gt;),
     <span class="attr">#[error(<span class="string">"progress send error: {0}"</span>)]
     </span>ProgressSend(<span class="attr">#[from] </span>ProgressSendError),
     <span class="attr">#[error(<span class="string">"recv error: {0}"</span>)]
     </span>Recv(<span class="attr">#[from] </span>oneshot::error::RecvError),
-    <span class="attr">#[error(<span class="string">"recv error: {0}"</span>)]
-    </span>FlumeRecv(<span class="attr">#[from] </span>flume::RecvError),
     <span class="attr">#[error(<span class="string">"recv error: {0}"</span>)]
     </span>AsyncChannelRecv(<span class="attr">#[from] </span>async_channel::RecvError),
     <span class="attr">#[error(<span class="string">"join error: {0}"</span>)]
@@ -3987,7 +3959,7 @@
         options: Options,
         temp: Arc&lt;RwLock&lt;TempCounterMap&gt;&gt;,
         rt: tokio::runtime::Handle,
-    ) -&gt; ActorResult&lt;(<span class="self">Self</span>, flume::Sender&lt;ActorMessage&gt;)&gt; {
+    ) -&gt; ActorResult&lt;(<span class="self">Self</span>, async_channel::Sender&lt;ActorMessage&gt;)&gt; {
         <span class="kw">let </span>db = <span class="kw">match </span>redb::Database::create(path) {
             <span class="prelude-val">Ok</span>(db) =&gt; db,
             <span class="prelude-val">Err</span>(DatabaseError::UpgradeRequired(<span class="number">1</span>)) =&gt; {
@@ -4004,11 +3976,11 @@
         txn.commit()<span class="question-mark">?</span>;
         <span class="comment">// make the channel relatively large. there are some messages that don't
         // require a response, it's fine if they pile up a bit.
-        </span><span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">1024</span>);
+        </span><span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1024</span>);
         <span class="kw">let </span>tx2 = tx.clone();
         <span class="kw">let </span>on_file_create: CreateCb = Arc::new(<span class="kw">move </span>|hash| {
             <span class="comment">// todo: make the callback allow async
-            </span>tx2.send(ActorMessage::OnMemSizeExceeded { hash: <span class="kw-2">*</span>hash })
+            </span>tx2.send_blocking(ActorMessage::OnMemSizeExceeded { hash: <span class="kw-2">*</span>hash })
                 .ok();
             <span class="prelude-val">Ok</span>(())
         });
@@ -4035,7 +4007,7 @@
     }
 
     <span class="kw">fn </span>run_batched(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; ActorResult&lt;()&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>msgs = PeekableFlumeReceiver::new(<span class="self">self</span>.state.msgs.clone());
+        <span class="kw">let </span><span class="kw-2">mut </span>msgs = PeekableAsyncChannelReceiver::new(<span class="self">self</span>.state.msgs.clone());
         <span class="kw">while let </span><span class="prelude-val">Some</span>(msg) = msgs.recv() {
             <span class="kw">if let </span>ActorMessage::Shutdown { tx } = msg {
                 <span class="comment">// Make sure the database is dropped before we send the reply.
@@ -4809,7 +4781,7 @@
         <span class="kw">match </span>msg {
             ActorMessage::Import { cmd, tx } =&gt; {
                 <span class="kw">let </span>res = <span class="self">self</span>.import(tables, cmd);
-                tx.send(res).ok();
+                tx.send_blocking(res).ok();
             }
             ActorMessage::SetTag { tag, value, tx } =&gt; {
                 <span class="kw">let </span>res = <span class="self">self</span>.set_tag(tables, tag, value);

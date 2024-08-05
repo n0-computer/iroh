@@ -340,7 +340,7 @@
         <span class="kw">let </span>interface_state = State::new().<span class="kw">await</span>;
         <span class="kw">let </span>wall_time = Instant::now();
 
-        <span class="comment">// Use flume channels, as tokio::mpsc is not safe to use across ffi boundaries.
+        <span class="comment">// Use async channels, as tokio::mpsc is not safe to use across ffi boundaries.
         </span><span class="kw">let </span>(mon_sender, mon_receiver) = async_channel::bounded(MON_CHAN_CAPACITY);
         <span class="kw">let </span>route_monitor = RouteMonitor::new(mon_sender)<span class="question-mark">?</span>;
         <span class="kw">let </span>(actor_sender, actor_receiver) = mpsc::channel(ACTOR_CHAN_CAPACITY);

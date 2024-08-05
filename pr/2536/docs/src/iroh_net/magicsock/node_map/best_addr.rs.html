@@ -221,27 +221,6 @@
 <a href="#221" id="221">221</a>
 <a href="#222" id="222">222</a>
 <a href="#223" id="223">223</a>
-<a href="#224" id="224">224</a>
-<a href="#225" id="225">225</a>
-<a href="#226" id="226">226</a>
-<a href="#227" id="227">227</a>
-<a href="#228" id="228">228</a>
-<a href="#229" id="229">229</a>
-<a href="#230" id="230">230</a>
-<a href="#231" id="231">231</a>
-<a href="#232" id="232">232</a>
-<a href="#233" id="233">233</a>
-<a href="#234" id="234">234</a>
-<a href="#235" id="235">235</a>
-<a href="#236" id="236">236</a>
-<a href="#237" id="237">237</a>
-<a href="#238" id="238">238</a>
-<a href="#239" id="239">239</a>
-<a href="#240" id="240">240</a>
-<a href="#241" id="241">241</a>
-<a href="#242" id="242">242</a>
-<a href="#243" id="243">243</a>
-<a href="#244" id="244">244</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`BestAddr`] is the currently active best address for UDP sends.
 
 </span><span class="kw">use </span>std::{
@@ -249,10 +228,7 @@
     time::{Duration, Instant},
 };
 
-<span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>tracing::{debug, info};
-
-<span class="kw">use </span><span class="kw">crate</span>::magicsock::metrics::Metrics <span class="kw">as </span>MagicsockMetrics;
 
 <span class="doccomment">/// How long we trust a UDP address as the exclusive path (without using relay) without having heard a Pong reply.
 </span><span class="kw">const </span>TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(<span class="number">6500</span>);
@@ -337,12 +313,6 @@
         <span class="kw">let </span>old = <span class="self">self</span>.<span class="number">0</span>.take();
         <span class="kw">if let </span><span class="prelude-val">Some</span>(old_addr) = old.as_ref().map(BestAddrInner::addr) {
             <span class="macro">info!</span>(<span class="question-mark">?</span>reason, <span class="question-mark">?</span>has_relay, %old_addr, <span class="string">"clearing best_addr"</span>);
-            <span class="comment">// no longer relying on the direct connection
-            </span><span class="macro">inc!</span>(MagicsockMetrics, num_direct_conns_removed);
-            <span class="kw">if </span>has_relay {
-                <span class="comment">// we are now relying on the relay connection, add a relay conn
-                </span><span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
-            }
         }
     }
 
@@ -370,16 +340,15 @@
         latency: Duration,
         source: Source,
         confirmed_at: Instant,
-        has_relay: bool,
     ) {
         <span class="kw">match </span><span class="self">self</span>.<span class="number">0</span>.as_mut() {
             <span class="prelude-val">None </span>=&gt; {
-                <span class="self">self</span>.insert(addr, latency, source, confirmed_at, has_relay);
+                <span class="self">self</span>.insert(addr, latency, source, confirmed_at);
             }
             <span class="prelude-val">Some</span>(state) =&gt; {
                 <span class="kw">let </span>candidate = AddrLatency { addr, latency };
                 <span class="kw">if </span>!state.is_trusted(confirmed_at) || candidate.is_better_than(<span class="kw-2">&amp;</span>state.addr) {
-                    <span class="self">self</span>.insert(addr, latency, source, confirmed_at, has_relay);
+                    <span class="self">self</span>.insert(addr, latency, source, confirmed_at);
                 } <span class="kw">else if </span>state.addr.addr == addr {
                     state.confirmed_at = confirmed_at;
                     state.trust_until = <span class="prelude-val">Some</span>(source.trust_until(confirmed_at));
@@ -404,7 +373,6 @@
         latency: Duration,
         source: Source,
         confirmed_at: Instant,
-        has_relay: bool,
     ) {
         <span class="kw">let </span>trust_until = source.trust_until(confirmed_at);
 
@@ -428,22 +396,12 @@
                <span class="string">"selecting new direct path for node"
             </span>);
         }
-        <span class="kw">let </span>was_empty = <span class="self">self</span>.is_empty();
         <span class="kw">let </span>inner = BestAddrInner {
             addr: AddrLatency { addr, latency },
             trust_until: <span class="prelude-val">Some</span>(trust_until),
             confirmed_at,
         };
         <span class="self">self</span>.<span class="number">0 </span>= <span class="prelude-val">Some</span>(inner);
-        <span class="kw">if </span>was_empty &amp;&amp; has_relay {
-            <span class="comment">// we now have a direct connection, adjust direct connection count
-            </span><span class="macro">inc!</span>(MagicsockMetrics, num_direct_conns_added);
-            <span class="kw">if </span>has_relay {
-                <span class="comment">// we no longer rely on the relay connection, decrease the relay connection
-                // count
-                </span><span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed);
-            }
-        }
     }
 
     <span class="kw">pub fn </span>state(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; State {

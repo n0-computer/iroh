@@ -43,7 +43,7 @@ The inline_outboard table contains the actual outboard for complete entries.
 The tags table contains a mapping from tag to hash.</p>
 <p>Design:</p>
 <p>The redb store is accessed in a single threaded way by an actor that runs
-on its own std thread. Communication with this actor is via a flume channel,
+on its own std thread. Communication with this actor is via a async_channel,
 with oneshot channels for the return values if needed.</p>
 <p>Errors:</p>
 <p>ActorError is an enum containing errors that can happen inside message

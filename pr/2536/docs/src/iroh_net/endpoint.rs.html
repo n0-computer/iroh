@@ -1549,6 +1549,7 @@
 <a href="#1549" id="1549">1549</a>
 <a href="#1550" id="1550">1550</a>
 <a href="#1551" id="1551">1551</a>
+<a href="#1552" id="1552">1552</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -2449,6 +2450,7 @@
 #[pin_project::pin_project]
 </span><span class="kw">pub struct </span>Accept&lt;<span class="lifetime">'a</span>&gt; {
     <span class="attr">#[pin]
+    #[debug(<span class="string">"quinn::Accept"</span>)]
     </span>inner: quinn::Accept&lt;<span class="lifetime">'a</span>&gt;,
     magic_ep: Endpoint,
 }

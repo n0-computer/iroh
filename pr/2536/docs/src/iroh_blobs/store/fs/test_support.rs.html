@@ -391,10 +391,6 @@
 <a href="#391" id="391">391</a>
 <a href="#392" id="392">392</a>
 <a href="#393" id="393">393</a>
-<a href="#394" id="394">394</a>
-<a href="#395" id="395">395</a>
-<a href="#396" id="396">396</a>
-<a href="#397" id="397">397</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! DB functions to support testing
 //!
 //! For some tests we need to modify the state of the store in ways that are not
@@ -504,16 +500,14 @@
     <span class="attr">#[cfg(test)]
     </span><span class="kw">async fn </span>entry_state(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: Hash) -&gt; OuterResult&lt;EntryStateResponse&gt; {
         <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
-        <span class="self">self</span>.tx
-            .send_async(ActorMessage::EntryState { hash, tx })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.tx.send(ActorMessage::EntryState { hash, tx }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.recv().<span class="kw">await</span><span class="question-mark">??</span>)
     }
 
     <span class="kw">async fn </span>set_full_entry_state(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: Hash, entry: <span class="prelude-ty">Option</span>&lt;EntryData&gt;) -&gt; OuterResult&lt;()&gt; {
         <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
         <span class="self">self</span>.tx
-            .send_async(ActorMessage::SetFullEntryState { hash, entry, tx })
+            .send(ActorMessage::SetFullEntryState { hash, entry, tx })
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.recv().<span class="kw">await</span><span class="question-mark">??</span>)
     }
@@ -521,7 +515,7 @@
     <span class="kw">async fn </span>get_full_entry_state(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: Hash) -&gt; OuterResult&lt;<span class="prelude-ty">Option</span>&lt;EntryData&gt;&gt; {
         <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
         <span class="self">self</span>.tx
-            .send_async(ActorMessage::GetFullEntryState { hash, tx })
+            .send(ActorMessage::GetFullEntryState { hash, tx })
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.recv().<span class="kw">await</span><span class="question-mark">??</span>)
     }
@@ -530,9 +524,7 @@
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="kw">let </span>filter: FilterPredicate&lt;Hash, EntryState&gt; =
             Box::new(|_i, k, v| <span class="prelude-val">Some</span>((k.value(), v.value())));
-        <span class="self">self</span>.tx
-            .send_async(ActorMessage::Blobs { filter, tx })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.tx.send(ActorMessage::Blobs { filter, tx }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>blobs = rx.<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>res = blobs<span class="question-mark">?
             </span>.into_iter()
