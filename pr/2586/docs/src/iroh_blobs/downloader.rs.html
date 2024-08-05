@@ -1511,7 +1511,6 @@
 <a href="#1511" id="1511">1511</a>
 <a href="#1512" id="1512">1512</a>
 <a href="#1513" id="1513">1513</a>
-<a href="#1514" id="1514">1514</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Handle downloading blobs and collections concurrently and from nodes.
 //!
 //! The [`Downloader`] interacts with four main components to this end.
@@ -1564,7 +1563,7 @@
     sync::{mpsc, oneshot},
     task::JoinSet,
 };
-<span class="kw">use </span>tokio_util::{sync::CancellationToken, time::delay_queue};
+<span class="kw">use </span>tokio_util::{either::Either, sync::CancellationToken, time::delay_queue};
 <span class="kw">use </span>tracing::{debug, error_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
@@ -1963,10 +1962,12 @@
 }
 
 <span class="doccomment">/// Information about a request.
-</span><span class="attr">#[derive(Debug, Default)]
-</span><span class="kw">struct </span>RequestInfo {
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>RequestInfo&lt;NC&gt; {
     <span class="doccomment">/// Registered intents with progress senders and result callbacks.
     </span>intents: HashMap&lt;IntentId, IntentHandlers&gt;,
+    progress_sender: BroadcastProgressSender,
+    get_state: <span class="prelude-ty">Option</span>&lt;NC&gt;,
 }
 
 <span class="doccomment">/// Information about a request in progress.
@@ -2068,11 +2069,9 @@
     <span class="doccomment">/// Queue of pending downloads.
     </span>queue: Queue,
     <span class="doccomment">/// Information about pending and active requests.
-    </span>requests: HashMap&lt;DownloadKind, RequestInfo&gt;,
+    </span>requests: HashMap&lt;DownloadKind, RequestInfo&lt;G::NeedsConn&gt;&gt;,
     <span class="doccomment">/// State of running downloads.
     </span>active_requests: HashMap&lt;DownloadKind, ActiveRequestInfo&gt;,
-    <span class="doccomment">/// State of queued downloads.
-    </span>queued_requests: HashMap&lt;DownloadKind, G::NeedsConn&gt;,
     <span class="doccomment">/// Tasks for currently running downloads.
     </span>in_progress_downloads: JoinSet&lt;(DownloadKind, InternalDownloadResult)&gt;,
     <span class="doccomment">/// Progress tracker
@@ -2099,7 +2098,6 @@
             retry_nodes_queue: delay_queue::DelayQueue::default(),
             goodbye_nodes_queue: delay_queue::DelayQueue::default(),
             active_requests: Default::default(),
-            queued_requests: Default::default(),
             in_progress_downloads: Default::default(),
             progress_tracker: ProgressTracker::new(),
             queue: Default::default(),
@@ -2217,91 +2215,76 @@
         <span class="kw">let </span>updated = <span class="self">self</span>.providers.add_hash_with_nodes(kind.hash(), node_ids);
 
         <span class="comment">// queue the transfer (if not running) or attach to transfer progress (if already running)
-        </span><span class="kw">if </span><span class="self">self</span>.active_requests.contains_key(<span class="kw-2">&amp;</span>kind) {
-            <span class="comment">// the transfer is already running, so attach the progress sender
-            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(on_progress) = <span class="kw-2">&amp;</span>intent_handlers.on_progress {
-                <span class="comment">// this is async because it sends the current state over the progress channel
-                </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self
-                    </span>.progress_tracker
-                    .subscribe(kind, on_progress.clone())
-                    .<span class="kw">await
-                </span>{
-                    <span class="macro">debug!</span>(<span class="question-mark">?</span>err, %kind, <span class="string">"failed to subscribe progress sender to transfer"</span>);
-                }
-            }
-        } <span class="kw">else </span>{
-            <span class="kw">match </span><span class="self">self</span>.queued_requests.entry(kind) {
-                hash_map::Entry::Occupied(_entry) =&gt; {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(on_progress) = <span class="kw-2">&amp;</span>intent_handlers.on_progress {
-                        <span class="comment">// this is async because it sends the current state over the progress channel
-                        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self
-                            </span>.progress_tracker
-                            .subscribe(kind, on_progress.clone())
-                            .<span class="kw">await
-                        </span>{
-                            <span class="macro">debug!</span>(<span class="question-mark">?</span>err, %kind, <span class="string">"failed to subscribe progress sender to transfer"</span>);
-                        }
+        </span><span class="kw">match </span><span class="self">self</span>.requests.entry(kind) {
+            hash_map::Entry::Occupied(<span class="kw-2">mut </span>entry) =&gt; {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(on_progress) = <span class="kw-2">&amp;</span>intent_handlers.on_progress {
+                    <span class="comment">// this is async because it sends the current state over the progress channel
+                    </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self
+                        </span>.progress_tracker
+                        .subscribe(kind, on_progress.clone())
+                        .<span class="kw">await
+                    </span>{
+                        <span class="macro">debug!</span>(<span class="question-mark">?</span>err, %kind, <span class="string">"failed to subscribe progress sender to transfer"</span>);
                     }
                 }
-                hash_map::Entry::Vacant(entry) =&gt; {
-                    <span class="kw">let </span>progress_sender = <span class="self">self</span>.progress_tracker.track(
-                        kind,
-                        intent_handlers
-                            .on_progress
-                            .clone()
-                            .into_iter()
-                            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-                    );
+                entry.get_mut().intents.insert(intent_id, intent_handlers);
+            }
+            hash_map::Entry::Vacant(entry) =&gt; {
+                <span class="macro">tracing::warn!</span>(<span class="string">"is new, queue"</span>);
+                <span class="kw">let </span>progress_sender = <span class="self">self</span>.progress_tracker.track(
+                    kind,
+                    intent_handlers
+                        .on_progress
+                        .clone()
+                        .into_iter()
+                        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+                );
 
-                    <span class="kw">let </span>state = <span class="kw">match </span><span class="self">self</span>.getter.get(kind, progress_sender).<span class="kw">await </span>{
-                        <span class="prelude-val">Err</span>(_err) =&gt; {
+                <span class="kw">let </span>get_state = <span class="kw">match </span><span class="self">self</span>.getter.get(kind, progress_sender.clone()).<span class="kw">await </span>{
+                    <span class="prelude-val">Err</span>(_err) =&gt; {
+                        <span class="self">self</span>.finalize_download(
+                            kind,
+                            [(intent_id, intent_handlers)].into(),
+                            <span class="comment">// TODO: add better error variant? this is only triggered if the local
+                            // store failed with local IO.
+                            </span><span class="prelude-val">Err</span>(DownloadError::DownloadFailed),
+                        );
+                        <span class="kw">return</span>;
+                    }
+                    <span class="prelude-val">Ok</span>(GetOutput::Complete(stats)) =&gt; {
+                        <span class="self">self</span>.finalize_download(
+                            kind,
+                            [(intent_id, intent_handlers)].into(),
+                            <span class="prelude-val">Ok</span>(stats),
+                        );
+                        <span class="kw">return</span>;
+                    }
+                    <span class="prelude-val">Ok</span>(GetOutput::NeedsConn(state)) =&gt; {
+                        <span class="comment">// early exit if no providers.
+                        </span><span class="kw">if </span><span class="self">self</span>.providers.get_candidates(<span class="kw-2">&amp;</span>kind.hash()).next().is_none() {
                             <span class="self">self</span>.finalize_download(
                                 kind,
                                 [(intent_id, intent_handlers)].into(),
-                                <span class="comment">// TODO: add better error variant? this is only triggered if the local
-                                // store failed with local IO.
-                                </span><span class="prelude-val">Err</span>(DownloadError::DownloadFailed),
+                                <span class="prelude-val">Err</span>(DownloadError::NoProviders),
                             );
                             <span class="kw">return</span>;
                         }
-                        <span class="prelude-val">Ok</span>(GetOutput::Complete(stats)) =&gt; {
-                            <span class="self">self</span>.finalize_download(
-                                kind,
-                                [(intent_id, intent_handlers)].into(),
-                                <span class="prelude-val">Ok</span>(stats),
-                            );
-                            <span class="kw">return</span>;
-                        }
-                        <span class="prelude-val">Ok</span>(GetOutput::NeedsConn(state)) =&gt; {
-                            <span class="comment">// early exit if no providers.
-                            </span><span class="kw">if </span><span class="self">self</span>.providers.get_candidates(<span class="kw-2">&amp;</span>kind.hash()).next().is_none() {
-                                <span class="self">self</span>.finalize_download(
-                                    kind,
-                                    [(intent_id, intent_handlers)].into(),
-                                    <span class="prelude-val">Err</span>(DownloadError::NoProviders),
-                                );
-                                <span class="kw">return</span>;
-                            }
-                            state
-                        }
-                    };
-                    entry.insert(state);
-                }
+                        state
+                    }
+                };
+                entry.insert(RequestInfo {
+                    intents: [(intent_id, intent_handlers)].into_iter().collect(),
+                    progress_sender,
+                    get_state: <span class="prelude-val">Some</span>(get_state),
+                });
+                <span class="self">self</span>.queue.insert(kind);
             }
         }
 
-        <span class="comment">// the transfer is not running.
-        </span><span class="kw">if </span>updated &amp;&amp; <span class="self">self</span>.queue.is_parked(<span class="kw-2">&amp;</span>kind) {
+        <span class="kw">if </span>updated &amp;&amp; <span class="self">self</span>.queue.is_parked(<span class="kw-2">&amp;</span>kind) {
             <span class="comment">// the transfer is on hold for pending retries, and we added new nodes, so move back to queue.
             </span><span class="self">self</span>.queue.unpark(<span class="kw-2">&amp;</span>kind);
-        } <span class="kw">else if </span>!<span class="self">self</span>.queue.contains(<span class="kw-2">&amp;</span>kind) {
-            <span class="comment">// the transfer is not yet queued: add to queue.
-            </span><span class="self">self</span>.queue.insert(kind);
         }
-
-        <span class="comment">// store the request info
-        </span><span class="kw">let </span>request_info = <span class="self">self</span>.requests.entry(kind).or_default();
-        request_info.intents.insert(intent_id, intent_handlers);
     }
 
     <span class="doccomment">/// Cancels a download intent.
@@ -2675,18 +2658,26 @@
     /// Panics if hash is not in self.requests or node is not in self.nodes.
     </span><span class="kw">fn </span>start_download(<span class="kw-2">&amp;mut </span><span class="self">self</span>, kind: DownloadKind, node: NodeId) {
         <span class="kw">let </span>node_info = <span class="self">self</span>.connected_nodes.get_mut(<span class="kw-2">&amp;</span>node).expect(<span class="string">"node exists"</span>);
-        <span class="kw">let </span>get_state = <span class="self">self
-            </span>.queued_requests
-            .remove(<span class="kw-2">&amp;</span>kind)
-            .expect(<span class="string">"queued state exists"</span>);
+        <span class="kw">let </span>request_info = <span class="self">self</span>.requests.get_mut(<span class="kw-2">&amp;</span>kind).expect(<span class="string">"request exists"</span>);
+        <span class="kw">let </span>progress = request_info.progress_sender.clone();
+        <span class="comment">// .expect("queued state exists");
 
-        <span class="comment">// create the active request state
+        // create the active request state
         </span><span class="kw">let </span>cancellation = CancellationToken::new();
         <span class="kw">let </span>state = ActiveRequestInfo {
             cancellation: cancellation.clone(),
             node,
         };
         <span class="kw">let </span>conn = node_info.conn.clone();
+
+        <span class="comment">// If this is the first provider node we try, we have an initial state
+        // from starting the generator in Self::handle_queue_new_download.
+        // If this not the first provider node we try, we have to recreate the generator, because
+        // we can only resume it once.
+        </span><span class="kw">let </span>get_state = <span class="kw">match </span>request_info.get_state.take() {
+            <span class="prelude-val">Some</span>(state) =&gt; Either::Left(<span class="kw">async move </span>{ <span class="prelude-val">Ok</span>(GetOutput::NeedsConn(state)) }),
+            <span class="prelude-val">None </span>=&gt; Either::Right(<span class="self">self</span>.getter.get(kind, progress)),
+        };
         <span class="kw">let </span>fut = <span class="kw">async move </span>{
             <span class="comment">// NOTE: it's an open question if we should do timeouts at this point. Considerations from @Frando:
             // &gt; at this stage we do not know the size of the download, so the timeout would have
@@ -2694,9 +2685,16 @@
             // &gt; this means that a super slow node would block a download from succeeding for a long
             // &gt; time, while faster nodes could be readily available.
             // As a conclusion, timeouts should be added only after downloads are known to be bounded
-            </span><span class="kw">let </span>res = <span class="macro">tokio::select!</span> {
+            </span><span class="kw">let </span>fut = <span class="kw">async move </span>{
+                <span class="kw">match </span>get_state.<span class="kw">await</span><span class="question-mark">? </span>{
+                    GetOutput::Complete(stats) =&gt; <span class="prelude-val">Ok</span>(stats),
+                    GetOutput::NeedsConn(state) =&gt; state.proceed(conn).<span class="kw">await</span>,
+                }
+            };
+            <span class="macro">tokio::pin!</span>(fut);
+            <span class="kw">let </span>res = <span class="macro">tokio::select!</span> {
                 <span class="kw">_ </span>= cancellation.cancelled() =&gt; <span class="prelude-val">Err</span>(FailureAction::AllIntentsDropped),
-                res = get_state.proceed(conn) =&gt; res
+                res = <span class="kw-2">&amp;mut </span>fut =&gt; res
             };
             <span class="macro">trace!</span>(<span class="string">"transfer finished"</span>);
 
