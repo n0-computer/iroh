@@ -15,13 +15,12 @@ use iroh_blobs::get::db::DownloadProgress;
 use iroh_blobs::get::Stats;
 use iroh_blobs::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
 use iroh_blobs::util::local_pool::LocalPoolHandle;
-use iroh_blobs::util::progress::ProgressSender;
+use iroh_blobs::util::progress::{AsyncChannelProgressSender, ProgressSender};
 use iroh_blobs::util::SetTagOption;
 use iroh_blobs::BlobFormat;
 use iroh_blobs::{
     provider::AddProgress,
     store::{Store as BaoStore, ValidateProgress},
-    util::progress::FlumeProgressSender,
     HashAndFormat,
 };
 use iroh_io::AsyncSliceReader;
@@ -532,7 +531,7 @@ impl<D: BaoStore> Handler<D> {
         let db = self.inner.db.clone();
         tokio::task::spawn(async move {
             if let Err(e) = db
-                .validate(msg.repair, FlumeProgressSender::new(tx).boxed())
+                .validate(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
                 .await
             {
                 tx2.send(ValidateProgress::Abort(e.into())).await.ok();
@@ -551,7 +550,7 @@ impl<D: BaoStore> Handler<D> {
         let db = self.inner.db.clone();
         tokio::task::spawn(async move {
             if let Err(e) = db
-                .consistency_check(msg.repair, FlumeProgressSender::new(tx).boxed())
+                .consistency_check(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
                 .await
             {
                 tx2.send(ConsistencyCheckProgress::Abort(e.into()))
@@ -598,7 +597,7 @@ impl<D: BaoStore> Handler<D> {
         use iroh_blobs::store::ImportMode;
         use std::collections::BTreeMap;
 
-        let progress = FlumeProgressSender::new(progress);
+        let progress = AsyncChannelProgressSender::new(progress);
         let names = Arc::new(Mutex::new(BTreeMap::new()));
         // convert import progress to provide progress
         let import_progress = progress.clone().with_filter_map(move |x| match x {
@@ -676,7 +675,7 @@ impl<D: BaoStore> Handler<D> {
         progress: async_channel::Sender<ExportProgress>,
     ) -> anyhow::Result<()> {
         let _docs = self.docs().ok_or_else(|| anyhow!("docs are disabled"))?;
-        let progress = FlumeProgressSender::new(progress);
+        let progress = AsyncChannelProgressSender::new(progress);
         let ExportFileRequest { entry, path, mode } = msg;
         let key = bytes::Bytes::from(entry.key().to_vec());
         let export_progress = progress.clone().with_map(move |mut x| {
@@ -704,7 +703,7 @@ impl<D: BaoStore> Handler<D> {
         let db = self.inner.db.clone();
         let downloader = self.inner.downloader.clone();
         let endpoint = self.inner.endpoint.clone();
-        let progress = FlumeProgressSender::new(sender);
+        let progress = AsyncChannelProgressSender::new(sender);
         self.local_pool_handle().spawn_detached(move || async move {
             if let Err(err) = download(&db, endpoint, &downloader, msg, progress.clone()).await {
                 progress
@@ -719,7 +718,8 @@ impl<D: BaoStore> Handler<D> {
 
     fn blob_export(self, msg: ExportRequest) -> impl Stream<Item = ExportResponse> {
         let (tx, rx) = async_channel::bounded(1024);
-        let progress = FlumeProgressSender::new(tx);
+        let progress = AsyncChannelProgressSender::new(tx);
+
         self.local_pool_handle().spawn_detached(move || async move {
             let res = iroh_blobs::export::export(
                 &self.inner.db,
@@ -746,7 +746,7 @@ impl<D: BaoStore> Handler<D> {
         use iroh_blobs::store::ImportMode;
         use std::collections::BTreeMap;
 
-        let progress = FlumeProgressSender::new(progress);
+        let progress = AsyncChannelProgressSender::new(progress);
         let names = Arc::new(Mutex::new(BTreeMap::new()));
         // convert import progress to provide progress
         let import_progress = progress.clone().with_filter_map(move |x| match x {
@@ -941,7 +941,7 @@ impl<D: BaoStore> Handler<D> {
         stream: impl Stream<Item = AddStreamUpdate> + Send + Unpin + 'static,
         progress: async_channel::Sender<AddProgress>,
     ) -> anyhow::Result<()> {
-        let progress = FlumeProgressSender::new(progress);
+        let progress = AsyncChannelProgressSender::new(progress);
 
         let stream = stream.map(|item| match item {
             AddStreamUpdate::Chunk(chunk) => Ok(chunk),
@@ -1123,7 +1123,7 @@ async fn download<D>(
     endpoint: Endpoint,
     downloader: &Downloader,
     req: BlobDownloadRequest,
-    progress: FlumeProgressSender<DownloadProgress>,
+    progress: AsyncChannelProgressSender<DownloadProgress>,
 ) -> Result<()>
 where
     D: iroh_blobs::store::Store,
@@ -1173,7 +1173,7 @@ async fn download_queued(
     downloader: &Downloader,
     hash_and_format: HashAndFormat,
     nodes: Vec<NodeAddr>,
-    progress: FlumeProgressSender<DownloadProgress>,
+    progress: AsyncChannelProgressSender<DownloadProgress>,
 ) -> Result<Stats> {
     let mut node_ids = Vec::with_capacity(nodes.len());
     let mut any_added = false;
@@ -1197,7 +1197,7 @@ async fn download_direct_from_nodes<D>(
     endpoint: Endpoint,
     hash_and_format: HashAndFormat,
     nodes: Vec<NodeAddr>,
-    progress: FlumeProgressSender<DownloadProgress>,
+    progress: AsyncChannelProgressSender<DownloadProgress>,
 ) -> Result<Stats>
 where
     D: BaoStore,
@@ -1230,7 +1230,7 @@ async fn download_direct<D>(
     endpoint: Endpoint,
     hash_and_format: HashAndFormat,
     node: NodeAddr,
-    progress: FlumeProgressSender<DownloadProgress>,
+    progress: AsyncChannelProgressSender<DownloadProgress>,
 ) -> Result<Stats>
 where
     D: BaoStore,

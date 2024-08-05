@@ -194,7 +194,7 @@ mod file {
 
     use iroh_blobs::{
         store::{BaoBatchWriter, ConsistencyCheckProgress, Map, MapEntryMut, ReportLevel},
-        util::progress::{FlumeProgressSender, ProgressSender as _},
+        util::progress::{AsyncChannelProgressSender, ProgressSender as _},
         TempTag,
     };
     use tokio::io::AsyncReadExt;
@@ -224,7 +224,7 @@ mod file {
             }
         });
         store
-            .consistency_check(false, FlumeProgressSender::new(tx).boxed())
+            .consistency_check(false, AsyncChannelProgressSender::new(tx).boxed())
             .await?;
         task.await?;
         Ok(max_level)

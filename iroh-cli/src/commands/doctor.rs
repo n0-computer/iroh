@@ -23,7 +23,7 @@ use iroh::{
     base::ticket::{BlobTicket, Ticket},
     blobs::{
         store::{ReadableStore, Store as _},
-        util::progress::{FlumeProgressSender, ProgressSender},
+        util::progress::{AsyncChannelProgressSender, ProgressSender},
     },
     docs::{Capability, DocTicket},
     net::{
@@ -1152,7 +1152,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
                 }
             });
             blob_store
-                .consistency_check(repair, FlumeProgressSender::new(send).boxed())
+                .consistency_check(repair, AsyncChannelProgressSender::new(send).boxed())
                 .await?;
             task.await?;
             Ok(())
@@ -1166,7 +1166,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
                 }
             });
             blob_store
-                .validate(repair, FlumeProgressSender::new(send).boxed())
+                .validate(repair, AsyncChannelProgressSender::new(send).boxed())
                 .await?;
             task.await?;
             Ok(())

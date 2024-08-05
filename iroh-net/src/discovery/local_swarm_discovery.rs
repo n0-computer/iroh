@@ -296,8 +296,8 @@ mod tests {
     use testresult::TestResult;
 
     #[tokio::test]
-    #[ignore = "flaky"]
     async fn test_local_swarm_discovery() -> TestResult {
+        let _guard = iroh_test::logging::setup();
         let (node_id_a, discovery_a) = make_discoverer()?;
         let (_, discovery_b) = make_discoverer()?;
 
@@ -312,12 +312,13 @@ mod tests {
         // resolve twice to ensure we can create separate streams for the same node_id
         let mut s1 = discovery_b.resolve(ep.clone(), node_id_a).unwrap();
         let mut s2 = discovery_b.resolve(ep, node_id_a).unwrap();
+        tracing::debug!(?node_id_a, "Discovering node id a");
         // publish discovery_a's address
         discovery_a.publish(&addr_info);
-        let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
+        let s1_res = tokio::time::timeout(Duration::from_secs(10), s1.next())
             .await?
             .unwrap()?;
-        let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
+        let s2_res = tokio::time::timeout(Duration::from_secs(10), s2.next())
             .await?
             .unwrap()?;
         assert_eq!(s1_res.addr_info, addr_info);

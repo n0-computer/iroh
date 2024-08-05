@@ -12,7 +12,7 @@ use crate::{
     get::{db::BlobId, progress::TransferState},
     util::{
         local_pool::LocalPool,
-        progress::{FlumeProgressSender, IdGenerator},
+        progress::{AsyncChannelProgressSender, IdGenerator},
     },
 };
 
@@ -277,12 +277,12 @@ async fn concurrent_progress() {
     let kind_1 = HashAndFormat::raw(hash);
 
     let (prog_a_tx, prog_a_rx) = async_channel::bounded(64);
-    let prog_a_tx = FlumeProgressSender::new(prog_a_tx);
+    let prog_a_tx = AsyncChannelProgressSender::new(prog_a_tx);
     let req = DownloadRequest::new(kind_1, vec![peer]).progress_sender(prog_a_tx);
     let handle_a = downloader.queue(req).await;
 
     let (prog_b_tx, prog_b_rx) = async_channel::bounded(64);
-    let prog_b_tx = FlumeProgressSender::new(prog_b_tx);
+    let prog_b_tx = AsyncChannelProgressSender::new(prog_b_tx);
     let req = DownloadRequest::new(kind_1, vec![peer]).progress_sender(prog_b_tx);
     let handle_b = downloader.queue(req).await;
 
@@ -302,7 +302,7 @@ async fn concurrent_progress() {
     assert_eq!(state_a, state_b);
 
     let (prog_c_tx, prog_c_rx) = async_channel::bounded(64);
-    let prog_c_tx = FlumeProgressSender::new(prog_c_tx);
+    let prog_c_tx = AsyncChannelProgressSender::new(prog_c_tx);
     let req = DownloadRequest::new(kind_1, vec![peer]).progress_sender(prog_c_tx);
     let handle_c = downloader.queue(req).await;
 
