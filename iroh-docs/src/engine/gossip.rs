@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_lite::StreamExt;
 use futures_util::FutureExt;
-use iroh_gossip::net::{Event, Gossip, GossipEvent, GossipReceiver, GossipSender};
+use iroh_gossip::net::{Event, Gossip, GossipEvent, GossipReceiver, GossipSender, JoinOptions};
 use iroh_net::NodeId;
 use tokio::{
     sync::mpsc,
@@ -50,7 +50,9 @@ impl GossipState {
                 }
             }
             hash_map::Entry::Vacant(entry) => {
-                let sub = self.gossip.join_pending(namespace.into(), bootstrap);
+                let sub = self
+                    .gossip
+                    .join_with_opts(namespace.into(), JoinOptions::with_bootstrap(bootstrap));
                 let (sender, stream) = sub.split();
                 let abort_handle = self.active_tasks.spawn(
                     receive_loop(

@@ -160,41 +160,33 @@ impl Gossip {
 
     /// Join a gossip topic with the default options and wait for at least one active connection.
     pub async fn join(&self, topic_id: TopicId, bootstrap: Vec<NodeId>) -> Result<GossipTopic> {
-        let mut sub = self.join_pending(topic_id, bootstrap);
+        let mut sub = self.join_with_opts(topic_id, JoinOptions::with_bootstrap(bootstrap));
         sub.joined().await?;
         Ok(sub)
     }
 
-    /// Join a gossip topic with the default options.
+    /// Join a gossip topic with options.
+    ///
+    /// Returns a [`GossipTopic`] instantly. To wait for at least one connection to be established,
+    /// you can await [`GossipTopic::joined`].
     ///
     /// Messages will be queued until a first connection is available. If the internal channel becomes full,
     /// the oldest messages will be dropped from the channel.
-    ///
-    /// To wait for at least one connection to be established, await [`GossipTopic::joined`].
-    pub fn join_pending(&self, topic_id: TopicId, bootstrap: Vec<NodeId>) -> GossipTopic {
-        let opts = JoinOptions {
-            bootstrap: bootstrap.into_iter().collect(),
-            subscription_capacity: TOPIC_EVENTS_DEFAULT_CAP,
-        };
-        self.join_pending_with_opts(topic_id, opts)
-    }
-
-    /// Join a gossip topic with options.
-    pub fn join_pending_with_opts(&self, topic_id: TopicId, opts: JoinOptions) -> GossipTopic {
+    pub fn join_with_opts(&self, topic_id: TopicId, opts: JoinOptions) -> GossipTopic {
         let (command_tx, command_rx) = async_channel::bounded(TOPIC_COMMANDS_DEFAULT_CAP);
         let command_rx: CommandStream = Box::pin(command_rx);
-        let event_rx = self.join_with_opts_and_update_stream(topic_id, opts, command_rx);
+        let event_rx = self.join_with_stream(topic_id, opts, command_rx);
         GossipTopic::new(command_tx, Box::pin(event_rx))
     }
 
     /// Join a gossip topic with options and an externally-created update stream.
     ///
-    /// This method differs from [`Self::join_pending`] by letting you pass in a `updates` command stream yourself,
-    /// and setting custom [JoinOptions`].
+    /// This method differs from [`Self::join_with_opts`] by letting you pass in a `updates` command stream yourself
+    /// instead of using a channel created for you.
     ///
     /// It returns a stream of events. If you want to wait for the topic to become active, wait for
     /// the [`GossipEvent::Joined`] event.
-    pub fn join_with_opts_and_update_stream(
+    pub fn join_with_stream(
         &self,
         topic_id: TopicId,
         options: JoinOptions,

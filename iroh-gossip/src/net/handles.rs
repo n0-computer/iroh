@@ -14,7 +14,7 @@ use futures_lite::{Stream, StreamExt};
 use iroh_net::NodeId;
 use serde::{Deserialize, Serialize};
 
-use crate::proto::DeliveryScope;
+use crate::{net::TOPIC_EVENTS_DEFAULT_CAP, proto::DeliveryScope};
 
 /// Sender for a gossip topic.
 #[derive(Debug)]
@@ -240,4 +240,15 @@ pub struct JoinOptions {
     /// This is to prevent a single slow subscriber from blocking the dispatch loop.
     /// If a subscriber is lagging, it should be closed and re-opened.
     pub subscription_capacity: usize,
+}
+
+impl JoinOptions {
+    /// Creates [`JoinOptions`] with the provided bootstrap nodes and the default subscription
+    /// capacity.
+    pub fn with_bootstrap(nodes: impl IntoIterator<Item = NodeId>) -> Self {
+        Self {
+            bootstrap: nodes.into_iter().collect(),
+            subscription_capacity: TOPIC_EVENTS_DEFAULT_CAP,
+        }
+    }
 }
