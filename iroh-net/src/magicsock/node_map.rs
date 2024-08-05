@@ -30,6 +30,7 @@ use crate::{
 
 mod best_addr;
 mod node_state;
+mod udp_paths;
 
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, NodeInfo};
 pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
@@ -186,6 +187,7 @@ impl NodeMap {
     pub(super) fn get_send_addrs(
         &self,
         addr: QuicMappedAddr,
+        have_ipv6: bool,
     ) -> Option<(
         PublicKey,
         Option<SocketAddr>,
@@ -195,7 +197,7 @@ impl NodeMap {
         let mut inner = self.inner.lock();
         let ep = inner.get_mut(NodeStateKey::QuicMappedAddr(addr))?;
         let public_key = *ep.public_key();
-        let (udp_addr, relay_url, msgs) = ep.get_send_addrs();
+        let (udp_addr, relay_url, msgs) = ep.get_send_addrs(have_ipv6);
         Some((public_key, udp_addr, relay_url, msgs))
     }
 
