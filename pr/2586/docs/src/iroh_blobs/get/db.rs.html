@@ -766,9 +766,9 @@
     db: <span class="kw-2">&amp;</span>D,
     get_conn: C,
     hash_and_format: <span class="kw-2">&amp;</span>HashAndFormat,
-    progress: <span class="kw">impl </span>ProgressSender&lt;Msg = DownloadProgress&gt; + IdGenerator,
+    progress_sender: <span class="kw">impl </span>ProgressSender&lt;Msg = DownloadProgress&gt; + IdGenerator,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Stats, GetError&gt; {
-    <span class="kw">match </span>get_to_db_in_steps(db.clone(), <span class="kw-2">*</span>hash_and_format, progress).<span class="kw">await</span><span class="question-mark">? </span>{
+    <span class="kw">match </span>get_to_db_in_steps(db.clone(), <span class="kw-2">*</span>hash_and_format, progress_sender).<span class="kw">await</span><span class="question-mark">? </span>{
         GetState::Complete(res) =&gt; <span class="prelude-val">Ok</span>(res),
         GetState::NeedsConn(state) =&gt; {
             <span class="kw">let </span>conn = get_conn().<span class="kw">await</span>.map_err(GetError::Io)<span class="question-mark">?</span>;
@@ -793,10 +793,10 @@
 &gt;(
     db: D,
     hash_and_format: HashAndFormat,
-    progress: P,
+    progress_sender: P,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;GetState, GetError&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>gen: GetGenerator = genawaiter::rc::Gen::new(<span class="kw">move </span>|co| {
-        <span class="kw">let </span>fut = <span class="kw">async move </span>{ producer(co, <span class="kw-2">&amp;</span>db, <span class="kw-2">&amp;</span>hash_and_format, progress).<span class="kw">await </span>};
+        <span class="kw">let </span>fut = <span class="kw">async move </span>{ producer(co, <span class="kw-2">&amp;</span>db, <span class="kw-2">&amp;</span>hash_and_format, progress_sender).<span class="kw">await </span>};
         <span class="kw">let </span>fut: GetFuture = Box::pin(fut);
         fut
     });

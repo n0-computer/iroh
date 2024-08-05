@@ -1511,7 +1511,6 @@
 <a href="#1511" id="1511">1511</a>
 <a href="#1512" id="1512">1512</a>
 <a href="#1513" id="1513">1513</a>
-<a href="#1514" id="1514">1514</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Handle downloading blobs and collections concurrently and from nodes.
 //!
 //! The [`Downloader`] interacts with four main components to this end.
@@ -1639,7 +1638,7 @@
 
 <span class="doccomment">/// Trait modelling the intermediary state when a connection is needed to proceed.
 </span><span class="kw">pub trait </span>NeedsConn&lt;C&gt;: std::fmt::Debug + <span class="lifetime">'static </span>{
-    <span class="doccomment">/// Proceeds the download with the given conneciton.
+    <span class="doccomment">/// Proceeds the download with the given connection. 
     </span><span class="kw">fn </span>proceed(<span class="self">self</span>, conn: C) -&gt; GetProceedFut;
 }
 
@@ -1648,7 +1647,7 @@
 </span><span class="kw">pub enum </span>GetOutput&lt;N&gt; {
     <span class="doccomment">/// The request is already complete in the local store.
     </span>Complete(Stats),
-    <span class="doccomment">/// The request needs a connetion to continue.
+    <span class="doccomment">/// The request needs a connection to continue.
     </span>NeedsConn(N),
 }
 
@@ -2693,10 +2692,9 @@
             // &gt; this means that a super slow node would block a download from succeeding for a long
             // &gt; time, while faster nodes could be readily available.
             // As a conclusion, timeouts should be added only after downloads are known to be bounded
-            </span><span class="kw">let </span>fut = get_state.proceed(conn);
-            <span class="kw">let </span>res = <span class="macro">tokio::select!</span> {
+            </span><span class="kw">let </span>res = <span class="macro">tokio::select!</span> {
                 <span class="kw">_ </span>= cancellation.cancelled() =&gt; <span class="prelude-val">Err</span>(FailureAction::AllIntentsDropped),
-                res = fut =&gt; res
+                res = get_state.proceed(conn) =&gt; res
             };
             <span class="macro">trace!</span>(<span class="string">"transfer finished"</span>);
 
