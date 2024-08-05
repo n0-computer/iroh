@@ -59,6 +59,9 @@ indicatif = { version = "0.17", features = ["tokio"], optional = true }
 ref-cast = "1.0.23"
 console = { version = "0.15.5", optional = true }
 
+# Documentation tests
+url = { version = "2.5.0", features = ["serde"] }
+
 [features]
 default = ["metrics", "fs-store"]
 metrics = ["iroh-metrics", "iroh-blobs/metrics"]
