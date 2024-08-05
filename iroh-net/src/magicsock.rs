@@ -499,7 +499,10 @@ impl MagicSock {
         let dest = QuicMappedAddr(dest);
 
         let mut transmits_sent = 0;
-        match self.node_map.get_send_addrs(dest) {
+        match self
+            .node_map
+            .get_send_addrs(dest, self.ipv6_reported.load(Ordering::Relaxed))
+        {
             Some((public_key, udp_addr, relay_url, mut msgs)) => {
                 let mut pings_sent = false;
                 // If we have pings to send, we *have* to send them out first.
