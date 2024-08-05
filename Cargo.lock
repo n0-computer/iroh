@@ -2581,7 +2581,6 @@ dependencies = [
  "bytes",
  "chrono",
  "derive_more",
- "flume",
  "futures-buffered",
  "futures-lite 2.3.0",
  "futures-util",

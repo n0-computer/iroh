@@ -52,7 +52,7 @@
 //! Design:
 //!
 //! The redb store is accessed in a single threaded way by an actor that runs
-//! on its own std thread. Communication with this actor is via a flume channel,
+//! on its own std thread. Communication with this actor is via a async_channel,
 //! with oneshot channels for the return values if needed.
 //!
 //! Errors:
@@ -116,7 +116,7 @@ use crate::{
 };
 use tables::{ReadOnlyTables, ReadableTables, Tables};
 
-use self::{tables::DeleteSet, util::PeekableFlumeReceiver};
+use self::{tables::DeleteSet, util::PeekableAsyncChannelReceiver};
 
 use self::test_support::EntryData;
 
@@ -575,7 +575,7 @@ pub(crate) enum ActorMessage {
     /// At this point the size, hash and outboard must already be known.
     Import {
         cmd: Import,
-        tx: flume::Sender<ActorResult<(TempTag, u64)>>,
+        tx: async_channel::Sender<ActorResult<(TempTag, u64)>>,
     },
     /// Modification method: export data from a redb store
     ///
@@ -772,7 +772,7 @@ impl Store {
 
 #[derive(Debug)]
 struct StoreInner {
-    tx: flume::Sender<ActorMessage>,
+    tx: async_channel::Sender<ActorMessage>,
     temp: Arc<RwLock<TempCounterMap>>,
     handle: Option<std::thread::JoinHandle<()>>,
     path_options: Arc<PathOptions>,
@@ -827,15 +827,13 @@ impl StoreInner {
 
     pub async fn get(&self, hash: Hash) -> OuterResult<Option<BaoFileHandle>> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send_async(ActorMessage::Get { hash, tx }).await?;
+        self.tx.send(ActorMessage::Get { hash, tx }).await?;
         Ok(rx.await??)
     }
 
     async fn get_or_create(&self, hash: Hash) -> OuterResult<BaoFileHandle> {
         let (tx, rx) = oneshot::channel();
-        self.tx
-            .send_async(ActorMessage::GetOrCreate { hash, tx })
-            .await?;
+        self.tx.send(ActorMessage::GetOrCreate { hash, tx }).await?;
         Ok(rx.await??)
     }
 
@@ -849,9 +847,7 @@ impl StoreInner {
                 None
             }
         });
-        self.tx
-            .send_async(ActorMessage::Blobs { filter, tx })
-            .await?;
+        self.tx.send(ActorMessage::Blobs { filter, tx }).await?;
         let blobs = rx.await?;
         let res = blobs?
             .into_iter()
@@ -873,9 +869,7 @@ impl StoreInner {
                 None
             }
         });
-        self.tx
-            .send_async(ActorMessage::Blobs { filter, tx })
-            .await?;
+        self.tx.send(ActorMessage::Blobs { filter, tx }).await?;
         let blobs = rx.await?;
         let res = blobs?
             .into_iter()
@@ -891,9 +885,7 @@ impl StoreInner {
         let (tx, rx) = oneshot::channel();
         let filter: FilterPredicate<Tag, HashAndFormat> =
             Box::new(|_i, k, v| Some((k.value(), v.value())));
-        self.tx
-            .send_async(ActorMessage::Tags { filter, tx })
-            .await?;
+        self.tx.send(ActorMessage::Tags { filter, tx }).await?;
         let tags = rx.await?;
         // transform the internal error type into io::Error
         let tags = tags?
@@ -906,37 +898,33 @@ impl StoreInner {
     async fn set_tag(&self, tag: Tag, value: Option<HashAndFormat>) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::SetTag { tag, value, tx })
+            .send(ActorMessage::SetTag { tag, value, tx })
             .await?;
         Ok(rx.await??)
     }
 
     async fn create_tag(&self, hash: HashAndFormat) -> OuterResult<Tag> {
         let (tx, rx) = oneshot::channel();
-        self.tx
-            .send_async(ActorMessage::CreateTag { hash, tx })
-            .await?;
+        self.tx.send(ActorMessage::CreateTag { hash, tx }).await?;
         Ok(rx.await??)
     }
 
     async fn delete(&self, hashes: Vec<Hash>) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
-        self.tx
-            .send_async(ActorMessage::Delete { hashes, tx })
-            .await?;
+        self.tx.send(ActorMessage::Delete { hashes, tx }).await?;
         Ok(rx.await??)
     }
 
     async fn gc_start(&self) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send_async(ActorMessage::GcStart { tx }).await?;
+        self.tx.send(ActorMessage::GcStart { tx }).await?;
         Ok(rx.await?)
     }
 
     async fn entry_status(&self, hash: &Hash) -> OuterResult<EntryStatus> {
         let (tx, rx) = async_channel::bounded(1);
         self.tx
-            .send_async(ActorMessage::EntryStatus { hash: *hash, tx })
+            .send(ActorMessage::EntryStatus { hash: *hash, tx })
             .await?;
         Ok(rx.recv().await??)
     }
@@ -944,13 +932,13 @@ impl StoreInner {
     fn entry_status_sync(&self, hash: &Hash) -> OuterResult<EntryStatus> {
         let (tx, rx) = async_channel::bounded(1);
         self.tx
-            .send(ActorMessage::EntryStatus { hash: *hash, tx })?;
+            .send_blocking(ActorMessage::EntryStatus { hash: *hash, tx })?;
         Ok(rx.recv_blocking()??)
     }
 
     async fn complete(&self, entry: Entry) -> OuterResult<()> {
         self.tx
-            .send_async(ActorMessage::OnComplete { handle: entry })
+            .send(ActorMessage::OnComplete { handle: entry })
             .await?;
         Ok(())
     }
@@ -985,7 +973,7 @@ impl StoreInner {
         let temp_tag = self.temp.temp_tag(HashAndFormat::raw(hash));
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::Export {
+            .send(ActorMessage::Export {
                 cmd: Export {
                     temp_tag,
                     target,
@@ -1005,7 +993,7 @@ impl StoreInner {
     ) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::Fsck {
+            .send(ActorMessage::Fsck {
                 repair,
                 progress,
                 tx,
@@ -1017,7 +1005,7 @@ impl StoreInner {
     async fn import_flat_store(&self, paths: FlatStorePaths) -> OuterResult<bool> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::ImportFlatStore { paths, tx })
+            .send(ActorMessage::ImportFlatStore { paths, tx })
             .await?;
         Ok(rx.await?)
     }
@@ -1029,7 +1017,7 @@ impl StoreInner {
     ) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::UpdateInlineOptions {
+            .send(ActorMessage::UpdateInlineOptions {
                 inline_options,
                 reapply,
                 tx,
@@ -1039,13 +1027,13 @@ impl StoreInner {
     }
 
     async fn dump(&self) -> OuterResult<()> {
-        self.tx.send_async(ActorMessage::Dump).await?;
+        self.tx.send(ActorMessage::Dump).await?;
         Ok(())
     }
 
     async fn sync(&self) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send_async(ActorMessage::Sync { tx }).await?;
+        self.tx.send(ActorMessage::Sync { tx }).await?;
         Ok(rx.await?)
     }
 
@@ -1141,8 +1129,8 @@ impl StoreInner {
         let tag = self.temp.temp_tag(HashAndFormat { hash, format });
         let hash = *tag.hash();
         // blocking send for the import
-        let (tx, rx) = flume::bounded(1);
-        self.tx.send(ActorMessage::Import {
+        let (tx, rx) = async_channel::bounded(1);
+        self.tx.send_blocking(ActorMessage::Import {
             cmd: Import {
                 content_id: HashAndFormat { hash, format },
                 source: file,
@@ -1151,7 +1139,7 @@ impl StoreInner {
             },
             tx,
         })?;
-        Ok(rx.recv()??)
+        Ok(rx.recv_blocking()??)
     }
 
     fn temp_file_name(&self) -> PathBuf {
@@ -1161,7 +1149,7 @@ impl StoreInner {
     async fn shutdown(&self) {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::Shutdown { tx: Some(tx) })
+            .send(ActorMessage::Shutdown { tx: Some(tx) })
             .await
             .ok();
         rx.await.ok();
@@ -1171,7 +1159,9 @@ impl StoreInner {
 impl Drop for StoreInner {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
-            self.tx.send(ActorMessage::Shutdown { tx: None }).ok();
+            self.tx
+                .send_blocking(ActorMessage::Shutdown { tx: None })
+                .ok();
             handle.join().ok();
         }
     }
@@ -1181,7 +1171,7 @@ struct ActorState {
     handles: BTreeMap<Hash, BaoFileHandleWeak>,
     protected: BTreeSet<Hash>,
     temp: Arc<RwLock<TempCounterMap>>,
-    msgs: flume::Receiver<ActorMessage>,
+    msgs: async_channel::Receiver<ActorMessage>,
     create_options: Arc<BaoFileConfig>,
     options: Options,
     rt: tokio::runtime::Handle,
@@ -1244,14 +1234,10 @@ pub(crate) enum OuterError {
     Inner(#[from] ActorError),
     #[error("send error: {0}")]
     Send1(#[from] async_channel::SendError<ActorMessage>),
-    #[error("send error: {0}")]
-    Send2(#[from] flume::SendError<ActorMessage>),
     #[error("progress send error: {0}")]
     ProgressSend(#[from] ProgressSendError),
     #[error("recv error: {0}")]
     Recv(#[from] oneshot::error::RecvError),
-    #[error("recv error: {0}")]
-    FlumeRecv(#[from] flume::RecvError),
     #[error("recv error: {0}")]
     AsyncChannelRecv(#[from] async_channel::RecvError),
     #[error("join error: {0}")]
@@ -1438,7 +1424,7 @@ impl Actor {
         options: Options,
         temp: Arc<RwLock<TempCounterMap>>,
         rt: tokio::runtime::Handle,
-    ) -> ActorResult<(Self, flume::Sender<ActorMessage>)> {
+    ) -> ActorResult<(Self, async_channel::Sender<ActorMessage>)> {
         let db = match redb::Database::create(path) {
             Ok(db) => db,
             Err(DatabaseError::UpgradeRequired(1)) => {
@@ -1455,11 +1441,11 @@ impl Actor {
         txn.commit()?;
         // make the channel relatively large. there are some messages that don't
         // require a response, it's fine if they pile up a bit.
-        let (tx, rx) = flume::bounded(1024);
+        let (tx, rx) = async_channel::bounded(1024);
         let tx2 = tx.clone();
         let on_file_create: CreateCb = Arc::new(move |hash| {
             // todo: make the callback allow async
-            tx2.send(ActorMessage::OnMemSizeExceeded { hash: *hash })
+            tx2.send_blocking(ActorMessage::OnMemSizeExceeded { hash: *hash })
                 .ok();
             Ok(())
         });
@@ -1486,7 +1472,7 @@ impl Actor {
     }
 
     fn run_batched(mut self) -> ActorResult<()> {
-        let mut msgs = PeekableFlumeReceiver::new(self.state.msgs.clone());
+        let mut msgs = PeekableAsyncChannelReceiver::new(self.state.msgs.clone());
         while let Some(msg) = msgs.recv() {
             if let ActorMessage::Shutdown { tx } = msg {
                 // Make sure the database is dropped before we send the reply.
@@ -2260,7 +2246,7 @@ impl ActorState {
         match msg {
             ActorMessage::Import { cmd, tx } => {
                 let res = self.import(tables, cmd);
-                tx.send(res).ok();
+                tx.send_blocking(res).ok();
             }
             ActorMessage::SetTag { tag, value, tx } => {
                 let res = self.set_tag(tables, tag, value);

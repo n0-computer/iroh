@@ -70,9 +70,9 @@ use iroh_io::AsyncSliceWriter;
 ///
 /// If you don't want to report progress, you can use the [IgnoreProgressSender] type.
 ///
-/// # Flume progress sender
+/// # Async channel progress sender
 ///
-/// If you want to use a flume channel, you can use the [FlumeProgressSender] type.
+/// If you want to use an async channel, you can use the [AsyncChannelProgressSender] type.
 ///
 /// # Implementing your own progress sender
 ///
@@ -443,93 +443,6 @@ impl<
             self.0.blocking_send(msg)
         } else {
             Ok(())
-        }
-    }
-}
-
-/// A progress sender that uses a flume channel.
-pub struct FlumeProgressSender<T> {
-    sender: async_channel::Sender<T>,
-    id: std::sync::Arc<std::sync::atomic::AtomicU64>,
-}
-
-impl<T> std::fmt::Debug for FlumeProgressSender<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FlumeProgressSender")
-            .field("id", &self.id)
-            .field("sender", &self.sender)
-            .finish()
-    }
-}
-
-impl<T> Clone for FlumeProgressSender<T> {
-    fn clone(&self) -> Self {
-        Self {
-            sender: self.sender.clone(),
-            id: self.id.clone(),
-        }
-    }
-}
-
-impl<T> FlumeProgressSender<T> {
-    /// Create a new progress sender from a flume sender.
-    pub fn new(sender: async_channel::Sender<T>) -> Self {
-        Self {
-            sender,
-            id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        }
-    }
-
-    /// Returns true if `other` sends on the same `flume` channel as `self`.
-    pub fn same_channel(&self, other: &FlumeProgressSender<T>) -> bool {
-        same_channel(&self.sender, &other.sender)
-    }
-}
-
-fn get_as_ptr<T>(value: &T) -> Option<usize> {
-    use std::mem;
-    if mem::size_of::<T>() == std::mem::size_of::<usize>()
-        && mem::align_of::<T>() == mem::align_of::<usize>()
-    {
-        // Safe only if size and alignment requirements are met
-        unsafe { Some(mem::transmute_copy(value)) }
-    } else {
-        None
-    }
-}
-
-fn same_channel<T>(a: &async_channel::Sender<T>, b: &async_channel::Sender<T>) -> bool {
-    get_as_ptr(a).unwrap() == get_as_ptr(b).unwrap()
-}
-
-impl<T> IdGenerator for FlumeProgressSender<T> {
-    fn new_id(&self) -> u64 {
-        self.id.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-    }
-}
-
-impl<T: Send + Sync + 'static> ProgressSender for FlumeProgressSender<T> {
-    type Msg = T;
-
-    async fn send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
-        self.sender
-            .send(msg)
-            .await
-            .map_err(|_| ProgressSendError::ReceiverDropped)
-    }
-
-    fn try_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
-        match self.sender.try_send(msg) {
-            Ok(_) => Ok(()),
-            Err(async_channel::TrySendError::Full(_)) => Ok(()),
-            Err(async_channel::TrySendError::Closed(_)) => Err(ProgressSendError::ReceiverDropped),
-        }
-    }
-
-    fn blocking_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
-        match self.sender.send_blocking(msg) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(ProgressSendError::ReceiverDropped),
         }
     }
 }

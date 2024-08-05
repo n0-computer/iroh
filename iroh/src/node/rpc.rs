@@ -719,7 +719,6 @@ impl<D: BaoStore> Handler<D> {
     fn blob_export(self, msg: ExportRequest) -> impl Stream<Item = ExportResponse> {
         let (tx, rx) = async_channel::bounded(1024);
         let progress = AsyncChannelProgressSender::new(tx);
-
         self.local_pool_handle().spawn_detached(move || async move {
             let res = iroh_blobs::export::export(
                 &self.inner.db,

@@ -83,7 +83,7 @@ impl Actor {
         let interface_state = State::new().await;
         let wall_time = Instant::now();
 
-        // Use flume channels, as tokio::mpsc is not safe to use across ffi boundaries.
+        // Use async channels, as tokio::mpsc is not safe to use across ffi boundaries.
         let (mon_sender, mon_receiver) = async_channel::bounded(MON_CHAN_CAPACITY);
         let route_monitor = RouteMonitor::new(mon_sender)?;
         let (actor_sender, actor_receiver) = mpsc::channel(ACTOR_CHAN_CAPACITY);
