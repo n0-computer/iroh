@@ -76,7 +76,7 @@ use super::{flatten, RpcClient};
 /// # Ok(())
 /// # }
 /// ```
-/// You can also use the `node:Client` methods from the `Iroh` client:
+/// You can also use the `node::Client` methods from the `Iroh` client:
 ///
 /// ```
 /// use std::str::FromStr;
