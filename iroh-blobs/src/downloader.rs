@@ -125,7 +125,7 @@ pub trait Getter {
 
 /// Trait modelling the intermediary state when a connection is needed to proceed.
 pub trait NeedsConn<C>: std::fmt::Debug + 'static {
-    /// Proceeds the download with the given connection. 
+    /// Proceeds the download with the given connection.
     fn proceed(self, conn: C) -> GetProceedFut;
 }
 

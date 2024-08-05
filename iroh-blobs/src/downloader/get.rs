@@ -7,12 +7,7 @@ use crate::{
     store::Store,
 };
 use futures_lite::FutureExt;
-#[cfg(feature = "metrics")]
-use iroh_metrics::{inc, inc_by};
 use iroh_net::endpoint;
-
-#[cfg(feature = "metrics")]
-use crate::metrics::Metrics;
 
 use super::{progress::BroadcastProgressSender, DownloadKind, FailureAction, GetStartFut, Getter};
 
@@ -77,7 +72,10 @@ impl super::NeedsConn<endpoint::Connection> for crate::get::db::GetStateNeedsCon
     }
 }
 
+#[cfg(feature = "metrics")]
 fn track_metrics(res: &Result<Stats, GetError>) {
+    use crate::metrics::Metrics;
+    use iroh_metrics::{inc, inc_by};
     match res {
         Ok(stats) => {
             let crate::get::Stats {
