@@ -14,13 +14,15 @@ use tokio::{
     sync::{Notify, Semaphore},
     task::{JoinError, JoinSet, LocalSet},
 };
+use tracing::trace;
 
 type BoxedFut<T = ()> = Pin<Box<dyn Future<Output = T>>>;
 type SpawnFn<T = ()> = Box<dyn FnOnce() -> BoxedFut<T> + Send + 'static>;
 
+#[derive(derive_more::Debug)]
 enum Message {
     /// Create a new task and execute it locally
-    Execute(SpawnFn),
+    Execute(#[debug(skip)] SpawnFn),
     /// Shutdown the thread after finishing all tasks
     Finish,
 }
@@ -200,6 +202,7 @@ impl LocalPool {
                             _ = cancel_token.cancelled() => break ShutdownMode::Stop,
                             // if we receive a message, execute it
                             msg = recv.recv() => {
+                                trace!("pool thread msg received {:?}", msg);
                                 match msg {
                                     // just push into the join set
                                     Ok(Message::Execute(f)) => {
@@ -581,7 +584,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop() {
-        let _guard = iroh_test::logging::setup();
+        iroh_test::logging::setup_global();
         let pool = LocalPool::new(Config::default());
         let counter = Arc::new(AtomicU64::new(0));
         let n = 4;
