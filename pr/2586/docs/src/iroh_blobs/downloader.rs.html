@@ -1511,6 +1511,7 @@
 <a href="#1511" id="1511">1511</a>
 <a href="#1512" id="1512">1512</a>
 <a href="#1513" id="1513">1513</a>
+<a href="#1514" id="1514">1514</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Handle downloading blobs and collections concurrently and from nodes.
 //!
 //! The [`Downloader`] interacts with four main components to this end.
@@ -2215,16 +2216,6 @@
             .filter(|node_id| <span class="kw-2">*</span>node_id != <span class="self">self</span>.dialer.node_id());
         <span class="kw">let </span>updated = <span class="self">self</span>.providers.add_hash_with_nodes(kind.hash(), node_ids);
 
-        <span class="comment">// early exit if no providers.
-        </span><span class="kw">if </span><span class="self">self</span>.providers.get_candidates(<span class="kw-2">&amp;</span>kind.hash()).next().is_none() {
-            <span class="self">self</span>.finalize_download(
-                kind,
-                [(intent_id, intent_handlers)].into(),
-                <span class="prelude-val">Err</span>(DownloadError::NoProviders),
-            );
-            <span class="kw">return</span>;
-        }
-
         <span class="comment">// queue the transfer (if not running) or attach to transfer progress (if already running)
         </span><span class="kw">if </span><span class="self">self</span>.active_requests.contains_key(<span class="kw-2">&amp;</span>kind) {
             <span class="comment">// the transfer is already running, so attach the progress sender
@@ -2281,7 +2272,18 @@
                             );
                             <span class="kw">return</span>;
                         }
-                        <span class="prelude-val">Ok</span>(GetOutput::NeedsConn(state)) =&gt; state,
+                        <span class="prelude-val">Ok</span>(GetOutput::NeedsConn(state)) =&gt; {
+                            <span class="comment">// early exit if no providers.
+                            </span><span class="kw">if </span><span class="self">self</span>.providers.get_candidates(<span class="kw-2">&amp;</span>kind.hash()).next().is_none() {
+                                <span class="self">self</span>.finalize_download(
+                                    kind,
+                                    [(intent_id, intent_handlers)].into(),
+                                    <span class="prelude-val">Err</span>(DownloadError::NoProviders),
+                                );
+                                <span class="kw">return</span>;
+                            }
+                            state
+                        }
                     };
                     entry.insert(state);
                 }
