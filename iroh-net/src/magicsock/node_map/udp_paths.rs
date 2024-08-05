@@ -122,7 +122,7 @@ impl NodeUdpPaths {
                             .filter_map(|path| path.udp_addr())
                             .filter(|addr| addr.is_ipv4() || have_ipv6)
                             .choose(&mut rand::thread_rng());
-                        self.chosen_candidate = addr.as_ref().map(|addr| IpPort::from(*addr));
+                        self.chosen_candidate = addr.clone().map(IpPort::from);
                         addr
                     });
                 match addr {
