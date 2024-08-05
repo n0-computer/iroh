@@ -54,7 +54,7 @@ use super::{flatten, RpcClient};
 /// // Create an iroh node:
 /// let iroh = iroh::node::Node::memory().spawn().await?;
 /// // Create a node client, a client that gives you access to `node` subsystem
-/// let node_client = node.client().node();
+/// let node_client = iroh.client().node();
 /// // Get the node status, including its node id, addresses, the version of iroh
 /// // it is running, and more.
 /// let status = node_client.status().await?;
@@ -87,7 +87,7 @@ use super::{flatten, RpcClient};
 /// // Create an iroh node:
 /// let iroh = iroh::node::Node::memory().spawn().await?;
 /// // Create a client:
-/// let client = node.client();
+/// let client = iroh.client();
 /// // Get the node status, including its node id, addresses, the version of iroh
 /// // it is running, and more.
 /// let status = client.status().await?;
