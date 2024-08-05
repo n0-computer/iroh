@@ -24,6 +24,7 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   SCCACHE_CACHE_SIZE: "50G"
   CRATES_LIST: "iroh,iroh-blobs,iroh-gossip,iroh-metrics,iroh-net,iroh-net-bench,iroh-docs,iroh-test,iroh-cli,iroh-dns-server"
+  IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
   build_and_test_nix:

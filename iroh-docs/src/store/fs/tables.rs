@@ -118,6 +118,7 @@ pub struct Tables<'tx> {
     pub records_by_key: Table<'tx, RecordsByKeyId<'static>, ()>,
     pub namespaces: Table<'tx, &'static [u8; 32], (u8, &'static [u8; 32])>,
     pub latest_per_author: Table<'tx, LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>>,
+    #[debug("MultimapTable")]
     pub namespace_peers: MultimapTable<'tx, &'static [u8; 32], (Nanos, &'static PeerIdBytes)>,
     pub download_policy: Table<'tx, &'static [u8; 32], &'static [u8]>,
     pub authors: Table<'tx, &'static [u8; 32], &'static [u8; 32]>,

@@ -16,6 +16,8 @@ pub enum RpcCommands {
     ///
     /// Documents are mutable, syncable key-value stores.
     /// For more on docs see https://iroh.computer/docs/layers/documents
+    ///
+    /// For general configuration options see <https://iroh.computer/docs/reference/config>.
     Docs {
         #[clap(subcommand)]
         command: DocCommands,
@@ -24,6 +26,8 @@ pub enum RpcCommands {
     /// Manage document authors
     ///
     /// Authors are keypairs that identify writers to documents.
+    ///
+    /// For general configuration options see <https://iroh.computer/docs/reference/config>.
     Authors {
         #[clap(subcommand)]
         command: AuthorCommands,
@@ -32,6 +36,8 @@ pub enum RpcCommands {
     ///
     /// Blobs are immutable, opaque chunks of arbitrary-sized data.
     /// For more on blobs see https://iroh.computer/docs/layers/blobs
+    ///
+    /// For general configuration options see <https://iroh.computer/docs/reference/config>.
     Blobs {
         #[clap(subcommand)]
         command: BlobCommands,
@@ -44,6 +50,8 @@ pub enum RpcCommands {
     /// Manage gossip
     ///
     /// Gossip is a way to broadcast messages to a group of nodes.
+    ///
+    /// For general configuration options see <https://iroh.computer/docs/reference/config>.
     Gossip {
         #[clap(subcommand)]
         command: GossipCommands,
@@ -57,6 +65,8 @@ pub enum RpcCommands {
     /// a tag.
     ///
     /// Any data iroh fetches without a tag will be periodically deleted.
+    ///
+    /// For general configuration options see <https://iroh.computer/docs/reference/config>.
     Tags {
         #[clap(subcommand)]
         command: TagCommands,

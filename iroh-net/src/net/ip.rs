@@ -46,7 +46,7 @@ impl LocalAddresses {
                 .chain(iface.ipv6.iter().map(|a| IpAddr::V6(a.addr)));
 
             for ip in addrs {
-                let ip = to_canonical(ip);
+                let ip = ip.to_canonical();
 
                 if ip.is_loopback() || ifc_is_loopback {
                     loopback.push(ip);
@@ -125,24 +125,6 @@ pub(super) fn is_link_local(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => ip.is_link_local(),
         IpAddr::V6(ip) => is_unicast_link_local(ip),
-    }
-}
-
-/// Converts IPv4-mappend IPv6 addresses to IPv4.
-///
-/// Converts this address to an [`IpAddr::V4`] if it is an IPv4-mapped IPv6 addresses,
-/// otherwise it return self as-is.
-// TODO: replace with IpAddr::to_canonical once stabilized.
-pub fn to_canonical(ip: IpAddr) -> IpAddr {
-    match ip {
-        ip @ IpAddr::V4(_) => ip,
-        IpAddr::V6(ip) => {
-            if let Some(ip) = ip.to_ipv4_mapped() {
-                IpAddr::V4(ip)
-            } else {
-                IpAddr::V6(ip)
-            }
-        }
     }
 }
 

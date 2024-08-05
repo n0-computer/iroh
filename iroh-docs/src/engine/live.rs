@@ -78,7 +78,7 @@ pub enum ToLiveActor {
     Subscribe {
         namespace: NamespaceId,
         #[debug("sender")]
-        sender: flume::Sender<Event>,
+        sender: async_channel::Sender<Event>,
         #[debug("oneshot::Sender")]
         reply: sync::oneshot::Sender<Result<()>>,
     },
@@ -153,8 +153,8 @@ pub struct LiveActor<B: iroh_blobs::store::Store> {
     gossip: Gossip,
     bao_store: B,
     downloader: Downloader,
-    replica_events_tx: flume::Sender<crate::Event>,
-    replica_events_rx: flume::Receiver<crate::Event>,
+    replica_events_tx: async_channel::Sender<crate::Event>,
+    replica_events_rx: async_channel::Receiver<crate::Event>,
 
     /// Send messages to self.
     /// Note: Must not be used in methods called from `Self::run` directly to prevent deadlocks.
@@ -192,7 +192,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         sync_actor_tx: mpsc::Sender<ToLiveActor>,
         gossip_actor_tx: mpsc::Sender<ToGossipActor>,
     ) -> Self {
-        let (replica_events_tx, replica_events_rx) = flume::bounded(1024);
+        let (replica_events_tx, replica_events_rx) = async_channel::bounded(1024);
         Self {
             inbox,
             sync,
@@ -262,7 +262,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                         }
                     }
                 }
-                event = self.replica_events_rx.recv_async() => {
+                event = self.replica_events_rx.recv() => {
                     trace!(?i, "tick: replica_event");
                     inc!(Metrics, doc_live_tick_replica_event);
                     let event = event.context("replica_events closed")?;
@@ -865,7 +865,7 @@ impl From<&SyncFinished> for SyncDetails {
 struct SubscribersMap(HashMap<NamespaceId, Subscribers>);
 
 impl SubscribersMap {
-    fn subscribe(&mut self, namespace: NamespaceId, sender: flume::Sender<Event>) {
+    fn subscribe(&mut self, namespace: NamespaceId, sender: async_channel::Sender<Event>) {
         self.0.entry(namespace).or_default().subscribe(sender);
     }
 
@@ -930,15 +930,15 @@ impl QueuedHashes {
 }
 
 #[derive(Debug, Default)]
-struct Subscribers(Vec<flume::Sender<Event>>);
+struct Subscribers(Vec<async_channel::Sender<Event>>);
 
 impl Subscribers {
-    fn subscribe(&mut self, sender: flume::Sender<Event>) {
+    fn subscribe(&mut self, sender: async_channel::Sender<Event>) {
         self.0.push(sender)
     }
 
     async fn send(&mut self, event: Event) -> bool {
-        let futs = self.0.iter().map(|sender| sender.send_async(event.clone()));
+        let futs = self.0.iter().map(|sender| sender.send(event.clone()));
         let res = futures_buffered::join_all(futs).await;
         // reverse the order so removing does not shift remaining indices
         for (i, res) in res.into_iter().enumerate().rev() {
@@ -977,8 +977,8 @@ mod tests {
     #[tokio::test]
     async fn test_sync_remove() {
         let pk = PublicKey::from_bytes(&[1; 32]).unwrap();
-        let (a_tx, a_rx) = flume::unbounded();
-        let (b_tx, b_rx) = flume::unbounded();
+        let (a_tx, a_rx) = async_channel::unbounded();
+        let (b_tx, b_rx) = async_channel::unbounded();
         let mut subscribers = Subscribers::default();
         subscribers.subscribe(a_tx);
         subscribers.subscribe(b_tx);

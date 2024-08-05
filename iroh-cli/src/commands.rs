@@ -81,6 +81,8 @@ pub(crate) enum Commands {
     /// start optionally takes a `--add SOURCE` option, which can be a file or a folder
     /// to serve on startup. Data can also be added after startup with commands like
     /// `iroh blob add` or by adding content to documents.
+    ///
+    /// For general configuration options see <https://iroh.computer/docs/reference/config>.
     Start {
         /// Optionally add a file or folder to the node.
         ///
@@ -99,6 +101,8 @@ pub(crate) enum Commands {
     ///
     /// The console is a REPL for interacting with a running iroh node.
     /// For more info on available commands, see https://iroh.computer/docs/api
+    ///
+    /// For general configuration options see <https://iroh.computer/docs/reference/config>.
     Console,
 
     #[clap(flatten)]

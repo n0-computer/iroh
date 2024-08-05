@@ -295,8 +295,8 @@ impl NodeState {
             (None, Some(relay_url)) => ConnectionType::Relay(relay_url),
             (None, None) => ConnectionType::None,
         };
-        if self.conn_type.update(typ).is_ok() {
-            let typ = self.conn_type.get();
+        if let Ok(prev_typ) = self.conn_type.update(typ.clone()) {
+            // The connection type has changed.
             event!(
                 target: "events.net.conn_type.changed",
                 Level::DEBUG,
@@ -304,6 +304,50 @@ impl NodeState {
                 conn_type = ?typ,
             );
             info!(%typ, "new connection type");
+
+            // Update some metrics
+            match (prev_typ, typ) {
+                (ConnectionType::Direct(_), ConnectionType::Direct(_)) => (),
+                (ConnectionType::Direct(_), ConnectionType::Relay(_)) => {
+                    inc!(MagicsockMetrics, num_direct_conns_removed);
+                    inc!(MagicsockMetrics, num_relay_conns_added);
+                }
+                (ConnectionType::Direct(_), ConnectionType::Mixed(_, _)) => {
+                    inc!(MagicsockMetrics, num_direct_conns_removed);
+                    inc!(MagicsockMetrics, num_relay_conns_added);
+                }
+                (ConnectionType::Direct(_), ConnectionType::None) => {
+                    inc!(MagicsockMetrics, num_direct_conns_removed)
+                }
+                (ConnectionType::Relay(_), ConnectionType::Direct(_)) => {
+                    inc!(MagicsockMetrics, num_direct_conns_added);
+                    inc!(MagicsockMetrics, num_relay_conns_removed);
+                }
+                (ConnectionType::Relay(_), ConnectionType::Relay(_)) => (),
+                (ConnectionType::Relay(_), ConnectionType::Mixed(_, _)) => (),
+                (ConnectionType::Relay(_), ConnectionType::None) => {
+                    inc!(MagicsockMetrics, num_relay_conns_removed)
+                }
+                (ConnectionType::Mixed(_, _), ConnectionType::Direct(_)) => {
+                    inc!(MagicsockMetrics, num_direct_conns_added);
+                    inc!(MagicsockMetrics, num_relay_conns_removed);
+                }
+                (ConnectionType::Mixed(_, _), ConnectionType::Relay(_)) => (),
+                (ConnectionType::Mixed(_, _), ConnectionType::Mixed(_, _)) => (),
+                (ConnectionType::Mixed(_, _), ConnectionType::None) => {
+                    inc!(MagicsockMetrics, num_relay_conns_removed)
+                }
+                (ConnectionType::None, ConnectionType::Direct(_)) => {
+                    inc!(MagicsockMetrics, num_direct_conns_added)
+                }
+                (ConnectionType::None, ConnectionType::Relay(_)) => {
+                    inc!(MagicsockMetrics, num_relay_conns_added)
+                }
+                (ConnectionType::None, ConnectionType::Mixed(_, _)) => {
+                    inc!(MagicsockMetrics, num_relay_conns_added)
+                }
+                (ConnectionType::None, ConnectionType::None) => (),
+            }
         }
         (best_addr, relay_url)
     }
@@ -367,7 +411,6 @@ impl NodeState {
                     pong.latency,
                     best_addr::Source::BestCandidate,
                     pong.pong_at,
-                    self.relay_url.is_some(),
                 )
             }
         }
@@ -916,7 +959,6 @@ impl NodeState {
                         latency,
                         best_addr::Source::ReceivedPong,
                         now,
-                        self.relay_url.is_some(),
                     );
                 }
 
