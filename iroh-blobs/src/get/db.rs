@@ -59,9 +59,9 @@ pub async fn get_to_db<
     db: &D,
     get_conn: C,
     hash_and_format: &HashAndFormat,
-    progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+    progress_sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<Stats, GetError> {
-    match get_to_db_in_steps(db.clone(), *hash_and_format, progress).await? {
+    match get_to_db_in_steps(db.clone(), *hash_and_format, progress_sender).await? {
         GetState::Complete(res) => Ok(res),
         GetState::NeedsConn(state) => {
             let conn = get_conn().await.map_err(GetError::Io)?;
@@ -86,10 +86,10 @@ pub async fn get_to_db_in_steps<
 >(
     db: D,
     hash_and_format: HashAndFormat,
-    progress: P,
+    progress_sender: P,
 ) -> Result<GetState, GetError> {
     let mut gen: GetGenerator = genawaiter::rc::Gen::new(move |co| {
-        let fut = async move { producer(co, &db, &hash_and_format, progress).await };
+        let fut = async move { producer(co, &db, &hash_and_format, progress_sender).await };
         let fut: GetFuture = Box::pin(fut);
         fut
     });

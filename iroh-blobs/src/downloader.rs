@@ -125,7 +125,7 @@ pub trait Getter {
 
 /// Trait modelling the intermediary state when a connection is needed to proceed.
 pub trait NeedsConn<C>: std::fmt::Debug + 'static {
-    /// Proceeds the download with the given conneciton.
+    /// Proceeds the download with the given connection. 
     fn proceed(self, conn: C) -> GetProceedFut;
 }
 
@@ -134,7 +134,7 @@ pub trait NeedsConn<C>: std::fmt::Debug + 'static {
 pub enum GetOutput<N> {
     /// The request is already complete in the local store.
     Complete(Stats),
-    /// The request needs a connetion to continue.
+    /// The request needs a connection to continue.
     NeedsConn(N),
 }
 
@@ -1179,10 +1179,9 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             // > this means that a super slow node would block a download from succeeding for a long
             // > time, while faster nodes could be readily available.
             // As a conclusion, timeouts should be added only after downloads are known to be bounded
-            let fut = get_state.proceed(conn);
             let res = tokio::select! {
                 _ = cancellation.cancelled() => Err(FailureAction::AllIntentsDropped),
-                res = fut => res
+                res = get_state.proceed(conn) => res
             };
             trace!("transfer finished");
 
