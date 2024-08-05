@@ -793,6 +793,8 @@
 <a href="#793" id="793">793</a>
 <a href="#794" id="794">794</a>
 <a href="#795" id="795">795</a>
+<a href="#796" id="796">796</a>
+<a href="#797" id="797">797</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, HashMap},
     hash::Hash,
@@ -825,6 +827,7 @@
 
 <span class="kw">mod </span>best_addr;
 <span class="kw">mod </span>node_state;
+<span class="kw">mod </span>udp_paths;
 
 <span class="kw">pub use </span>node_state::{ConnectionType, ControlMsg, DirectAddrInfo, NodeInfo};
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">use </span>node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
@@ -981,6 +984,7 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>get_send_addrs(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         addr: QuicMappedAddr,
+        have_ipv6: bool,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;(
         PublicKey,
         <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;,
@@ -990,7 +994,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock();
         <span class="kw">let </span>ep = inner.get_mut(NodeStateKey::QuicMappedAddr(addr))<span class="question-mark">?</span>;
         <span class="kw">let </span>public_key = <span class="kw-2">*</span>ep.public_key();
-        <span class="kw">let </span>(udp_addr, relay_url, msgs) = ep.get_send_addrs();
+        <span class="kw">let </span>(udp_addr, relay_url, msgs) = ep.get_send_addrs(have_ipv6);
         <span class="prelude-val">Some</span>((public_key, udp_addr, relay_url, msgs))
     }
 

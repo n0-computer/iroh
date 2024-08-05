@@ -3536,6 +3536,9 @@
 <a href="#3536" id="3536">3536</a>
 <a href="#3537" id="3537">3537</a>
 <a href="#3538" id="3538">3538</a>
+<a href="#3539" id="3539">3539</a>
+<a href="#3540" id="3540">3540</a>
+<a href="#3541" id="3541">3541</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4037,7 +4040,10 @@
         <span class="kw">let </span>dest = QuicMappedAddr(dest);
 
         <span class="kw">let </span><span class="kw-2">mut </span>transmits_sent = <span class="number">0</span>;
-        <span class="kw">match </span><span class="self">self</span>.node_map.get_send_addrs(dest) {
+        <span class="kw">match </span><span class="self">self
+            </span>.node_map
+            .get_send_addrs(dest, <span class="self">self</span>.ipv6_reported.load(Ordering::Relaxed))
+        {
             <span class="prelude-val">Some</span>((public_key, udp_addr, relay_url, <span class="kw-2">mut </span>msgs)) =&gt; {
                 <span class="kw">let </span><span class="kw-2">mut </span>pings_sent = <span class="bool-val">false</span>;
                 <span class="comment">// If we have pings to send, we *have* to send them out first.

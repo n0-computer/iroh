@@ -16,7 +16,7 @@ provide address information about <em>other</em> nodes to your node.</p>
 <span class="comment">// Create an iroh node:
 </span><span class="kw">let </span>iroh = iroh::node::Node::memory().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
 <span class="comment">// Create a node client, a client that gives you access to `node` subsystem
-</span><span class="kw">let </span>node_client = node.client().node();
+</span><span class="kw">let </span>node_client = iroh.client().node();
 <span class="comment">// Get the node status, including its node id, addresses, the version of iroh
 // it is running, and more.
 </span><span class="kw">let </span>status = node_client.status().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -44,7 +44,7 @@ node_client.add_node_addr(addr).<span class="kw">await</span><span class="questi
 <span class="comment">// Create an iroh node:
 </span><span class="kw">let </span>iroh = iroh::node::Node::memory().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
 <span class="comment">// Create a client:
-</span><span class="kw">let </span>client = node.client();
+</span><span class="kw">let </span>client = iroh.client();
 <span class="comment">// Get the node status, including its node id, addresses, the version of iroh
 // it is running, and more.
 </span><span class="kw">let </span>status = client.status().<span class="kw">await</span><span class="question-mark">?</span>;
