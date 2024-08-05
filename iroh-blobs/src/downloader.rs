@@ -702,16 +702,6 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             .filter(|node_id| *node_id != self.dialer.node_id());
         let updated = self.providers.add_hash_with_nodes(kind.hash(), node_ids);
 
-        // early exit if no providers.
-        if self.providers.get_candidates(&kind.hash()).next().is_none() {
-            self.finalize_download(
-                kind,
-                [(intent_id, intent_handlers)].into(),
-                Err(DownloadError::NoProviders),
-            );
-            return;
-        }
-
         // queue the transfer (if not running) or attach to transfer progress (if already running)
         if self.active_requests.contains_key(&kind) {
             // the transfer is already running, so attach the progress sender
@@ -768,7 +758,18 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                             );
                             return;
                         }
-                        Ok(GetOutput::NeedsConn(state)) => state,
+                        Ok(GetOutput::NeedsConn(state)) => {
+                            // early exit if no providers.
+                            if self.providers.get_candidates(&kind.hash()).next().is_none() {
+                                self.finalize_download(
+                                    kind,
+                                    [(intent_id, intent_handlers)].into(),
+                                    Err(DownloadError::NoProviders),
+                                );
+                                return;
+                            }
+                            state
+                        }
                     };
                     entry.insert(state);
                 }
