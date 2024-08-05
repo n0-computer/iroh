@@ -3,9 +3,12 @@
 use futures_lite::{future::Boxed as BoxFuture, FutureExt};
 use parking_lot::RwLock;
 
+use crate::downloader;
+
 use super::*;
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, derive_more::Debug)]
+#[debug("TestingGetter")]
 pub(super) struct TestingGetter(Arc<RwLock<TestingGetterInner>>);
 
 pub(super) type RequestHandlerFn = Arc<
@@ -34,14 +37,29 @@ impl Getter for TestingGetter {
     // since for testing we don't need a real connection, just keep track of what peer is the
     // request being sent to
     type Connection = NodeId;
+    type NeedsConn = GetStateNeedsConn;
 
     fn get(
         &mut self,
         kind: DownloadKind,
-        peer: NodeId,
         progress_sender: BroadcastProgressSender,
-    ) -> GetFut {
-        let mut inner = self.0.write();
+    ) -> GetStartFut<Self::NeedsConn> {
+        std::future::ready(Ok(downloader::GetOutput::NeedsConn(GetStateNeedsConn(
+            self.clone(),
+            kind,
+            progress_sender,
+        ))))
+        .boxed_local()
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct GetStateNeedsConn(TestingGetter, DownloadKind, BroadcastProgressSender);
+
+impl downloader::NeedsConn<NodeId> for GetStateNeedsConn {
+    fn proceed(self, peer: NodeId) -> super::GetProceedFut {
+        let GetStateNeedsConn(getter, kind, progress_sender) = self;
+        let mut inner = getter.0.write();
         inner.request_history.push((kind, peer));
         let request_duration = inner.request_duration;
         let handler = inner.request_handler.clone();

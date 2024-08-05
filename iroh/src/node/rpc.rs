@@ -3,12 +3,11 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, Result};
 use futures_buffered::BufferedStreamExt;
 use futures_lite::{Stream, StreamExt};
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::{RpcError, RpcResult};
-use iroh_blobs::downloader::{DownloadRequest, Downloader};
 use iroh_blobs::export::ExportProgress;
 use iroh_blobs::format::collection::Collection;
 use iroh_blobs::get::db::DownloadProgress;
@@ -18,6 +17,10 @@ use iroh_blobs::util::local_pool::LocalPoolHandle;
 use iroh_blobs::util::progress::{AsyncChannelProgressSender, ProgressSender};
 use iroh_blobs::util::SetTagOption;
 use iroh_blobs::BlobFormat;
+use iroh_blobs::{
+    downloader::{DownloadRequest, Downloader},
+    get::db::GetState,
+};
 use iroh_blobs::{
     provider::AddProgress,
     store::{Store as BaoStore, ValidateProgress},
@@ -1191,6 +1194,7 @@ async fn download_queued(
     Ok(stats)
 }
 
+#[tracing::instrument("download_direct", skip_all, fields(hash=%hash_and_format.hash.fmt_short()))]
 async fn download_direct_from_nodes<D>(
     db: &D,
     endpoint: Endpoint,
@@ -1201,51 +1205,61 @@ async fn download_direct_from_nodes<D>(
 where
     D: BaoStore,
 {
-    ensure!(!nodes.is_empty(), "No nodes to download from provided.");
     let mut last_err = None;
-    for node in nodes {
-        let node_id = node.node_id;
-        match download_direct(
-            db,
-            endpoint.clone(),
-            hash_and_format,
-            node,
-            progress.clone(),
-        )
-        .await
+    let mut remaining_nodes = nodes.len();
+    let mut nodes_iter = nodes.into_iter();
+    'outer: loop {
+        match iroh_blobs::get::db::get_to_db_in_steps(db.clone(), hash_and_format, progress.clone())
+            .await?
         {
-            Ok(stats) => return Ok(stats),
-            Err(err) => {
-                debug!(?err, node = &node_id.fmt_short(), "Download failed");
-                last_err = Some(err)
+            GetState::Complete(stats) => return Ok(stats),
+            GetState::NeedsConn(needs_conn) => {
+                let (conn, node_id) = 'inner: loop {
+                    match nodes_iter.next() {
+                        None => break 'outer,
+                        Some(node) => {
+                            remaining_nodes -= 1;
+                            let node_id = node.node_id;
+                            if node_id == endpoint.node_id() {
+                                debug!(
+                                    ?remaining_nodes,
+                                    "skip node {} (it is the node id of ourselves)",
+                                    node_id.fmt_short()
+                                );
+                                continue 'inner;
+                            }
+                            match endpoint.connect(node, iroh_blobs::protocol::ALPN).await {
+                                Ok(conn) => break 'inner (conn, node_id),
+                                Err(err) => {
+                                    debug!(
+                                        ?remaining_nodes,
+                                        "failed to connect to {}: {err}",
+                                        node_id.fmt_short()
+                                    );
+                                    continue 'inner;
+                                }
+                            }
+                        }
+                    }
+                };
+                match needs_conn.proceed(conn).await {
+                    Ok(stats) => return Ok(stats),
+                    Err(err) => {
+                        warn!(
+                            ?remaining_nodes,
+                            "failed to download from {}: {err}",
+                            node_id.fmt_short()
+                        );
+                        last_err = Some(err);
+                    }
+                }
             }
         }
     }
-    Err(last_err.unwrap())
-}
-
-async fn download_direct<D>(
-    db: &D,
-    endpoint: Endpoint,
-    hash_and_format: HashAndFormat,
-    node: NodeAddr,
-    progress: AsyncChannelProgressSender<DownloadProgress>,
-) -> Result<Stats>
-where
-    D: BaoStore,
-{
-    let get_conn = {
-        let progress = progress.clone();
-        move || async move {
-            let conn = endpoint.connect(node, iroh_blobs::protocol::ALPN).await?;
-            progress.send(DownloadProgress::Connected).await?;
-            Ok(conn)
-        }
-    };
-
-    let res = iroh_blobs::get::db::get_to_db(db, get_conn, &hash_and_format, progress).await;
-
-    res.map_err(Into::into)
+    match last_err {
+        Some(err) => Err(err.into()),
+        None => Err(anyhow!("No nodes to download from provided")),
+    }
 }
 
 fn docs_disabled() -> RpcError {
