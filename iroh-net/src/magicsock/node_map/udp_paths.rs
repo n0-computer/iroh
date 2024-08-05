@@ -18,11 +18,41 @@ use super::best_addr::{self, BestAddr};
 use super::node_state::{PathState, PongReply};
 use super::IpPort;
 
+/// The address on which to send datagrams over UDP.
+///
+/// The [`MagicSock`] sends packets to zero or one UDP address, depending on the known paths
+/// to the remote node.  This conveys the UDP address to send on from the [`NodeUdpPaths`]
+/// to the [`NodeState`].
+///
+/// [`NodeUdpPaths`] contains all the UDP path states, while [`NodeState`] has to decide the
+/// bigger picture including the relay server.
+///
+/// See [`NodeUdpPaths::send_addr`].
+///
+/// [`MagicSock`]: crate::magicsocket::MagicSock
+/// [`NodeState`]: super::node_state::NodeState
 #[derive(Debug)]
 pub(super) enum UdpSendAddr {
+    /// The UDP address can be relied on to deliver data to the remote node.
+    ///
+    /// This means this path is usable with a reasonable latency and can be fully trusted to
+    /// transport payload data to the remote node.
     Valid(SocketAddr),
+    /// The UDP address is highly likely to work, but has not been used for a while.
+    ///
+    /// The path should be usable but has not carried DISCO or payload data for a little too
+    /// long.  It is best to also use a backup, i.e. relay, path if possible.
     Outdated(SocketAddr),
+    /// The UDP address is not known to work, but it might.
+    ///
+    /// We know this UDP address belongs to the remote node, but we do not know if the path
+    /// already works or may need holepunching before it will start to work.  It migt even
+    /// never work.  It is still useful to send to this together with backup path,
+    /// i.e. relay, in case the path works: if the path does not need holepunching it might
+    /// be much faster.  And if there is no relay path at all it might be the only way to
+    /// establish a connection.
     Unconfirmed(SocketAddr),
+    /// No known UDP path exists to the remote node.
     None,
 }
 
