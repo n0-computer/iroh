@@ -1252,9 +1252,6 @@
 <a href="#1252" id="1252">1252</a>
 <a href="#1253" id="1253">1253</a>
 <a href="#1254" id="1254">1254</a>
-<a href="#1255" id="1255">1255</a>
-<a href="#1256" id="1256">1256</a>
-<a href="#1257" id="1257">1257</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::{Arc, Mutex};
@@ -1272,13 +1269,12 @@
 <span class="kw">use </span>iroh_blobs::get::Stats;
 <span class="kw">use </span>iroh_blobs::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
 <span class="kw">use </span>iroh_blobs::util::local_pool::LocalPoolHandle;
-<span class="kw">use </span>iroh_blobs::util::progress::ProgressSender;
+<span class="kw">use </span>iroh_blobs::util::progress::{AsyncChannelProgressSender, ProgressSender};
 <span class="kw">use </span>iroh_blobs::util::SetTagOption;
 <span class="kw">use </span>iroh_blobs::BlobFormat;
 <span class="kw">use </span>iroh_blobs::{
     provider::AddProgress,
     store::{Store <span class="kw">as </span>BaoStore, ValidateProgress},
-    util::progress::FlumeProgressSender,
     HashAndFormat,
 };
 <span class="kw">use </span>iroh_io::AsyncSliceReader;
@@ -1467,7 +1463,7 @@
         <span class="kw">match </span>msg {
             Subscribe(msg) =&gt; {
                 chan.bidi_streaming(msg, <span class="self">self</span>, |handler, req, updates| {
-                    <span class="kw">let </span>stream = handler.inner.gossip.join_with_opts_and_update_stream(
+                    <span class="kw">let </span>stream = handler.inner.gossip.join_with_stream(
                         req.topic,
                         iroh_gossip::net::JoinOptions {
                             bootstrap: req.bootstrap,
@@ -1785,18 +1781,18 @@
         <span class="self">self</span>,
         msg: ValidateRequest,
     ) -&gt; <span class="kw">impl </span>Stream&lt;Item = ValidateProgress&gt; + Send + <span class="lifetime">'static </span>{
-        <span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">1</span>);
+        <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
         <span class="kw">let </span>tx2 = tx.clone();
         <span class="kw">let </span>db = <span class="self">self</span>.inner.db.clone();
         tokio::task::spawn(<span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = db
-                .validate(msg.repair, FlumeProgressSender::new(tx).boxed())
+                .validate(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
                 .<span class="kw">await
             </span>{
-                tx2.send_async(ValidateProgress::Abort(e.into())).<span class="kw">await</span>.ok();
+                tx2.send(ValidateProgress::Abort(e.into())).<span class="kw">await</span>.ok();
             }
         });
-        rx.into_stream()
+        rx
     }
 
     <span class="doccomment">/// Invoke validate on the database and stream out the result
@@ -1804,59 +1800,59 @@
         <span class="self">self</span>,
         msg: ConsistencyCheckRequest,
     ) -&gt; <span class="kw">impl </span>Stream&lt;Item = ConsistencyCheckProgress&gt; + Send + <span class="lifetime">'static </span>{
-        <span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">1</span>);
+        <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
         <span class="kw">let </span>tx2 = tx.clone();
         <span class="kw">let </span>db = <span class="self">self</span>.inner.db.clone();
         tokio::task::spawn(<span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = db
-                .consistency_check(msg.repair, FlumeProgressSender::new(tx).boxed())
+                .consistency_check(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
                 .<span class="kw">await
             </span>{
-                tx2.send_async(ConsistencyCheckProgress::Abort(e.into()))
+                tx2.send(ConsistencyCheckProgress::Abort(e.into()))
                     .<span class="kw">await
                     </span>.ok();
             }
         });
-        rx.into_stream()
+        rx
     }
 
     <span class="kw">fn </span>blob_add_from_path(<span class="self">self</span>, msg: AddPathRequest) -&gt; <span class="kw">impl </span>Stream&lt;Item = AddPathResponse&gt; {
         <span class="comment">// provide a little buffer so that we don't slow down the sender
-        </span><span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">32</span>);
+        </span><span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">32</span>);
         <span class="kw">let </span>tx2 = tx.clone();
         <span class="self">self</span>.local_pool_handle().spawn_detached(|| <span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.blob_add_from_path0(msg, tx).<span class="kw">await </span>{
-                tx2.send_async(AddProgress::Abort(e.into())).<span class="kw">await</span>.ok();
+                tx2.send(AddProgress::Abort(e.into())).<span class="kw">await</span>.ok();
             }
         });
-        rx.into_stream().map(AddPathResponse)
+        rx.map(AddPathResponse)
     }
 
     <span class="kw">fn </span>doc_import_file(<span class="self">self</span>, msg: ImportFileRequest) -&gt; <span class="kw">impl </span>Stream&lt;Item = ImportFileResponse&gt; {
         <span class="comment">// provide a little buffer so that we don't slow down the sender
-        </span><span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">32</span>);
+        </span><span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">32</span>);
         <span class="kw">let </span>tx2 = tx.clone();
         <span class="self">self</span>.local_pool_handle().spawn_detached(|| <span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.doc_import_file0(msg, tx).<span class="kw">await </span>{
-                tx2.send_async(<span class="kw">crate</span>::client::docs::ImportProgress::Abort(e.into()))
+                tx2.send(<span class="kw">crate</span>::client::docs::ImportProgress::Abort(e.into()))
                     .<span class="kw">await
                     </span>.ok();
             }
         });
-        rx.into_stream().map(ImportFileResponse)
+        rx.map(ImportFileResponse)
     }
 
     <span class="kw">async fn </span>doc_import_file0(
         <span class="self">self</span>,
         msg: ImportFileRequest,
-        progress: flume::Sender&lt;<span class="kw">crate</span>::client::docs::ImportProgress&gt;,
+        progress: async_channel::Sender&lt;<span class="kw">crate</span>::client::docs::ImportProgress&gt;,
     ) -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>docs = <span class="self">self</span>.docs().ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"docs are disabled"</span>))<span class="question-mark">?</span>;
         <span class="kw">use </span><span class="kw">crate</span>::client::docs::ImportProgress <span class="kw">as </span>DocImportProgress;
         <span class="kw">use </span>iroh_blobs::store::ImportMode;
         <span class="kw">use </span>std::collections::BTreeMap;
 
-        <span class="kw">let </span>progress = FlumeProgressSender::new(progress);
+        <span class="kw">let </span>progress = AsyncChannelProgressSender::new(progress);
         <span class="kw">let </span>names = Arc::new(Mutex::new(BTreeMap::new()));
         <span class="comment">// convert import progress to provide progress
         </span><span class="kw">let </span>import_progress = progress.clone().with_filter_map(<span class="kw">move </span>|x| <span class="kw">match </span>x {
@@ -1918,23 +1914,23 @@
     }
 
     <span class="kw">fn </span>doc_export_file(<span class="self">self</span>, msg: ExportFileRequest) -&gt; <span class="kw">impl </span>Stream&lt;Item = ExportFileResponse&gt; {
-        <span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">1024</span>);
+        <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1024</span>);
         <span class="kw">let </span>tx2 = tx.clone();
         <span class="self">self</span>.local_pool_handle().spawn_detached(|| <span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.doc_export_file0(msg, tx).<span class="kw">await </span>{
-                tx2.send_async(ExportProgress::Abort(e.into())).<span class="kw">await</span>.ok();
+                tx2.send(ExportProgress::Abort(e.into())).<span class="kw">await</span>.ok();
             }
         });
-        rx.into_stream().map(ExportFileResponse)
+        rx.map(ExportFileResponse)
     }
 
     <span class="kw">async fn </span>doc_export_file0(
         <span class="self">self</span>,
         msg: ExportFileRequest,
-        progress: flume::Sender&lt;ExportProgress&gt;,
+        progress: async_channel::Sender&lt;ExportProgress&gt;,
     ) -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>_docs = <span class="self">self</span>.docs().ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"docs are disabled"</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>progress = FlumeProgressSender::new(progress);
+        <span class="kw">let </span>progress = AsyncChannelProgressSender::new(progress);
         <span class="kw">let </span>ExportFileRequest { entry, path, mode } = msg;
         <span class="kw">let </span>key = bytes::Bytes::from(entry.key().to_vec());
         <span class="kw">let </span>export_progress = progress.clone().with_map(<span class="kw">move </span>|<span class="kw-2">mut </span>x| {
@@ -1958,11 +1954,11 @@
     }
 
     <span class="kw">fn </span>blob_download(<span class="self">self</span>, msg: BlobDownloadRequest) -&gt; <span class="kw">impl </span>Stream&lt;Item = DownloadResponse&gt; {
-        <span class="kw">let </span>(sender, receiver) = flume::bounded(<span class="number">1024</span>);
+        <span class="kw">let </span>(sender, receiver) = async_channel::bounded(<span class="number">1024</span>);
         <span class="kw">let </span>db = <span class="self">self</span>.inner.db.clone();
         <span class="kw">let </span>downloader = <span class="self">self</span>.inner.downloader.clone();
         <span class="kw">let </span>endpoint = <span class="self">self</span>.inner.endpoint.clone();
-        <span class="kw">let </span>progress = FlumeProgressSender::new(sender);
+        <span class="kw">let </span>progress = AsyncChannelProgressSender::new(sender);
         <span class="self">self</span>.local_pool_handle().spawn_detached(<span class="kw">move </span>|| <span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = download(<span class="kw-2">&amp;</span>db, endpoint, <span class="kw-2">&amp;</span>downloader, msg, progress.clone()).<span class="kw">await </span>{
                 progress
@@ -1972,12 +1968,12 @@
             }
         });
 
-        receiver.into_stream().map(DownloadResponse)
+        receiver.map(DownloadResponse)
     }
 
     <span class="kw">fn </span>blob_export(<span class="self">self</span>, msg: ExportRequest) -&gt; <span class="kw">impl </span>Stream&lt;Item = ExportResponse&gt; {
-        <span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">1024</span>);
-        <span class="kw">let </span>progress = FlumeProgressSender::new(tx);
+        <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1024</span>);
+        <span class="kw">let </span>progress = AsyncChannelProgressSender::new(tx);
         <span class="self">self</span>.local_pool_handle().spawn_detached(<span class="kw">move </span>|| <span class="kw">async move </span>{
             <span class="kw">let </span>res = iroh_blobs::export::export(
                 <span class="kw-2">&amp;</span><span class="self">self</span>.inner.db,
@@ -1993,18 +1989,18 @@
                 <span class="prelude-val">Err</span>(err) =&gt; progress.send(ExportProgress::Abort(err.into())).<span class="kw">await</span>.ok(),
             };
         });
-        rx.into_stream().map(ExportResponse)
+        rx.map(ExportResponse)
     }
 
     <span class="kw">async fn </span>blob_add_from_path0(
         <span class="self">self</span>,
         msg: AddPathRequest,
-        progress: flume::Sender&lt;AddProgress&gt;,
+        progress: async_channel::Sender&lt;AddProgress&gt;,
     ) -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">use </span>iroh_blobs::store::ImportMode;
         <span class="kw">use </span>std::collections::BTreeMap;
 
-        <span class="kw">let </span>progress = FlumeProgressSender::new(progress);
+        <span class="kw">let </span>progress = AsyncChannelProgressSender::new(progress);
         <span class="kw">let </span>names = Arc::new(Mutex::new(BTreeMap::new()));
         <span class="comment">// convert import progress to provide progress
         </span><span class="kw">let </span>import_progress = progress.clone().with_filter_map(<span class="kw">move </span>|x| <span class="kw">match </span>x {
@@ -2181,25 +2177,25 @@
         msg: AddStreamRequest,
         stream: <span class="kw">impl </span>Stream&lt;Item = AddStreamUpdate&gt; + Send + Unpin + <span class="lifetime">'static</span>,
     ) -&gt; <span class="kw">impl </span>Stream&lt;Item = AddStreamResponse&gt; {
-        <span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">32</span>);
+        <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">32</span>);
         <span class="kw">let </span>this = <span class="self">self</span>.clone();
 
         <span class="self">self</span>.local_pool_handle().spawn_detached(|| <span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = this.blob_add_stream0(msg, stream, tx.clone()).<span class="kw">await </span>{
-                tx.send_async(AddProgress::Abort(err.into())).<span class="kw">await</span>.ok();
+                tx.send(AddProgress::Abort(err.into())).<span class="kw">await</span>.ok();
             }
         });
 
-        rx.into_stream().map(AddStreamResponse)
+        rx.map(AddStreamResponse)
     }
 
     <span class="kw">async fn </span>blob_add_stream0(
         <span class="self">self</span>,
         msg: AddStreamRequest,
         stream: <span class="kw">impl </span>Stream&lt;Item = AddStreamUpdate&gt; + Send + Unpin + <span class="lifetime">'static</span>,
-        progress: flume::Sender&lt;AddProgress&gt;,
+        progress: async_channel::Sender&lt;AddProgress&gt;,
     ) -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">let </span>progress = FlumeProgressSender::new(progress);
+        <span class="kw">let </span>progress = AsyncChannelProgressSender::new(progress);
 
         <span class="kw">let </span>stream = stream.map(|item| <span class="kw">match </span>item {
             AddStreamUpdate::Chunk(chunk) =&gt; <span class="prelude-val">Ok</span>(chunk),
@@ -2251,24 +2247,24 @@
         <span class="self">self</span>,
         req: ReadAtRequest,
     ) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;ReadAtResponse&gt;&gt; + Send + <span class="lifetime">'static </span>{
-        <span class="kw">let </span>(tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
+        <span class="kw">let </span>(tx, rx) = async_channel::bounded(RPC_BLOB_GET_CHANNEL_CAP);
         <span class="kw">let </span>db = <span class="self">self</span>.inner.db.clone();
         <span class="self">self</span>.local_pool_handle().spawn_detached(<span class="kw">move </span>|| <span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = read_loop(req, db, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).<span class="kw">await </span>{
-                tx.send_async(RpcResult::Err(err.into())).<span class="kw">await</span>.ok();
+                tx.send(RpcResult::Err(err.into())).<span class="kw">await</span>.ok();
             }
         });
 
         <span class="kw">async fn </span>read_loop&lt;D: iroh_blobs::store::Store&gt;(
             req: ReadAtRequest,
             db: D,
-            tx: flume::Sender&lt;RpcResult&lt;ReadAtResponse&gt;&gt;,
+            tx: async_channel::Sender&lt;RpcResult&lt;ReadAtResponse&gt;&gt;,
             max_chunk_size: usize,
         ) -&gt; anyhow::Result&lt;()&gt; {
             <span class="kw">let </span>entry = db.get(<span class="kw-2">&amp;</span>req.hash).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span>entry = entry.ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"Blob not found"</span>))<span class="question-mark">?</span>;
             <span class="kw">let </span>size = entry.size();
-            tx.send_async(<span class="prelude-val">Ok</span>(ReadAtResponse::Entry {
+            tx.send(<span class="prelude-val">Ok</span>(ReadAtResponse::Entry {
                 size,
                 is_complete: entry.is_complete(),
             }))
@@ -2295,7 +2291,7 @@
                 <span class="kw">let </span>chunk = reader.read_at(req.offset + read, chunk_size).<span class="kw">await</span><span class="question-mark">?</span>;
                 <span class="kw">let </span>chunk_len = chunk.len();
                 <span class="kw">if </span>!chunk.is_empty() {
-                    tx.send_async(<span class="prelude-val">Ok</span>(ReadAtResponse::Data { chunk })).<span class="kw">await</span><span class="question-mark">?</span>;
+                    tx.send(<span class="prelude-val">Ok</span>(ReadAtResponse::Data { chunk })).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 <span class="kw">if </span>chunk_len &lt; chunk_size {
                     <span class="kw">break</span>;
@@ -2306,7 +2302,7 @@
             <span class="prelude-val">Ok</span>(())
         }
 
-        rx.into_stream()
+        rx
     }
 
     <span class="kw">fn </span>node_connections(
@@ -2314,17 +2310,15 @@
         <span class="kw">_</span>: ConnectionsRequest,
     ) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;ConnectionsResponse&gt;&gt; + Send + <span class="lifetime">'static </span>{
         <span class="comment">// provide a little buffer so that we don't slow down the sender
-        </span><span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">32</span>);
+        </span><span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">32</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>conn_infos = <span class="self">self</span>.inner.endpoint.connection_infos();
         conn_infos.sort_by_key(|n| n.node_id.to_string());
         <span class="self">self</span>.local_pool_handle().spawn_detached(|| <span class="kw">async move </span>{
             <span class="kw">for </span>conn_info <span class="kw">in </span>conn_infos {
-                tx.send_async(<span class="prelude-val">Ok</span>(ConnectionsResponse { conn_info }))
-                    .<span class="kw">await
-                    </span>.ok();
+                tx.send(<span class="prelude-val">Ok</span>(ConnectionsResponse { conn_info })).<span class="kw">await</span>.ok();
             }
         });
-        rx.into_stream()
+        rx
     }
 
     <span class="comment">// This method is called as an RPC method, which have to be async
@@ -2383,7 +2377,7 @@
     endpoint: Endpoint,
     downloader: <span class="kw-2">&amp;</span>Downloader,
     req: BlobDownloadRequest,
-    progress: FlumeProgressSender&lt;DownloadProgress&gt;,
+    progress: AsyncChannelProgressSender&lt;DownloadProgress&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt;
 <span class="kw">where
     </span>D: iroh_blobs::store::Store,
@@ -2433,7 +2427,7 @@
     downloader: <span class="kw-2">&amp;</span>Downloader,
     hash_and_format: HashAndFormat,
     nodes: Vec&lt;NodeAddr&gt;,
-    progress: FlumeProgressSender&lt;DownloadProgress&gt;,
+    progress: AsyncChannelProgressSender&lt;DownloadProgress&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Stats&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>node_ids = Vec::with_capacity(nodes.len());
     <span class="kw">let </span><span class="kw-2">mut </span>any_added = <span class="bool-val">false</span>;
@@ -2457,7 +2451,7 @@
     endpoint: Endpoint,
     hash_and_format: HashAndFormat,
     nodes: Vec&lt;NodeAddr&gt;,
-    progress: FlumeProgressSender&lt;DownloadProgress&gt;,
+    progress: AsyncChannelProgressSender&lt;DownloadProgress&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Stats&gt;
 <span class="kw">where
     </span>D: BaoStore,
@@ -2490,7 +2484,7 @@
     endpoint: Endpoint,
     hash_and_format: HashAndFormat,
     node: NodeAddr,
-    progress: FlumeProgressSender&lt;DownloadProgress&gt;,
+    progress: AsyncChannelProgressSender&lt;DownloadProgress&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Stats&gt;
 <span class="kw">where
     </span>D: BaoStore,

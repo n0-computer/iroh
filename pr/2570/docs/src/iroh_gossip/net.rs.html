@@ -995,13 +995,6 @@
 <a href="#995" id="995">995</a>
 <a href="#996" id="996">996</a>
 <a href="#997" id="997">997</a>
-<a href="#998" id="998">998</a>
-<a href="#999" id="999">999</a>
-<a href="#1000" id="1000">1000</a>
-<a href="#1001" id="1001">1001</a>
-<a href="#1002" id="1002">1002</a>
-<a href="#1003" id="1003">1003</a>
-<a href="#1004" id="1004">1004</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Networking for the `iroh-gossip` protocol
 
 </span><span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
@@ -1164,41 +1157,33 @@
 
     <span class="doccomment">/// Join a gossip topic with the default options and wait for at least one active connection.
     </span><span class="kw">pub async fn </span>join(<span class="kw-2">&amp;</span><span class="self">self</span>, topic_id: TopicId, bootstrap: Vec&lt;NodeId&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;GossipTopic&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>sub = <span class="self">self</span>.join_pending(topic_id, bootstrap);
+        <span class="kw">let </span><span class="kw-2">mut </span>sub = <span class="self">self</span>.join_with_opts(topic_id, JoinOptions::with_bootstrap(bootstrap));
         sub.joined().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(sub)
     }
 
-    <span class="doccomment">/// Join a gossip topic with the default options.
+    <span class="doccomment">/// Join a gossip topic with options.
+    ///
+    /// Returns a [`GossipTopic`] instantly. To wait for at least one connection to be established,
+    /// you can await [`GossipTopic::joined`].
     ///
     /// Messages will be queued until a first connection is available. If the internal channel becomes full,
     /// the oldest messages will be dropped from the channel.
-    ///
-    /// To wait for at least one connection to be established, await [`GossipTopic::joined`].
-    </span><span class="kw">pub fn </span>join_pending(<span class="kw-2">&amp;</span><span class="self">self</span>, topic_id: TopicId, bootstrap: Vec&lt;NodeId&gt;) -&gt; GossipTopic {
-        <span class="kw">let </span>opts = JoinOptions {
-            bootstrap: bootstrap.into_iter().collect(),
-            subscription_capacity: TOPIC_EVENTS_DEFAULT_CAP,
-        };
-        <span class="self">self</span>.join_pending_with_opts(topic_id, opts)
-    }
-
-    <span class="doccomment">/// Join a gossip topic with options.
-    </span><span class="kw">pub fn </span>join_pending_with_opts(<span class="kw-2">&amp;</span><span class="self">self</span>, topic_id: TopicId, opts: JoinOptions) -&gt; GossipTopic {
+    </span><span class="kw">pub fn </span>join_with_opts(<span class="kw-2">&amp;</span><span class="self">self</span>, topic_id: TopicId, opts: JoinOptions) -&gt; GossipTopic {
         <span class="kw">let </span>(command_tx, command_rx) = async_channel::bounded(TOPIC_COMMANDS_DEFAULT_CAP);
         <span class="kw">let </span>command_rx: CommandStream = Box::pin(command_rx);
-        <span class="kw">let </span>event_rx = <span class="self">self</span>.join_with_opts_and_update_stream(topic_id, opts, command_rx);
+        <span class="kw">let </span>event_rx = <span class="self">self</span>.join_with_stream(topic_id, opts, command_rx);
         GossipTopic::new(command_tx, Box::pin(event_rx))
     }
 
     <span class="doccomment">/// Join a gossip topic with options and an externally-created update stream.
     ///
-    /// This method differs from [`Self::join_pending`] by letting you pass in a `updates` command stream yourself,
-    /// and setting custom [JoinOptions`].
+    /// This method differs from [`Self::join_with_opts`] by letting you pass in a `updates` command stream yourself
+    /// instead of using a channel created for you.
     ///
     /// It returns a stream of events. If you want to wait for the topic to become active, wait for
     /// the [`GossipEvent::Joined`] event.
-    </span><span class="kw">pub fn </span>join_with_opts_and_update_stream(
+    </span><span class="kw">pub fn </span>join_with_stream(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         topic_id: TopicId,
         options: JoinOptions,
@@ -1731,6 +1716,7 @@
     };
 
     (send_loop, recv_loop).try_join().<span class="kw">await</span><span class="question-mark">?</span>;
+
     <span class="prelude-val">Ok</span>(())
 }
 

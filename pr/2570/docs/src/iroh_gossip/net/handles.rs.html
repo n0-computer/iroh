@@ -241,6 +241,17 @@
 <a href="#241" id="241">241</a>
 <a href="#242" id="242">242</a>
 <a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Topic handles for sending and receiving on a gossip topic.
 //!
 //! These are returned from [`super::Gossip`].
@@ -257,7 +268,7 @@
 <span class="kw">use </span>iroh_net::NodeId;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use </span><span class="kw">crate</span>::proto::DeliveryScope;
+<span class="kw">use crate</span>::{net::TOPIC_EVENTS_DEFAULT_CAP, proto::DeliveryScope};
 
 <span class="doccomment">/// Sender for a gossip topic.
 </span><span class="attr">#[derive(Debug)]
@@ -483,5 +494,16 @@
     /// This is to prevent a single slow subscriber from blocking the dispatch loop.
     /// If a subscriber is lagging, it should be closed and re-opened.
     </span><span class="kw">pub </span>subscription_capacity: usize,
+}
+
+<span class="kw">impl </span>JoinOptions {
+    <span class="doccomment">/// Creates [`JoinOptions`] with the provided bootstrap nodes and the default subscription
+    /// capacity.
+    </span><span class="kw">pub fn </span>with_bootstrap(nodes: <span class="kw">impl </span>IntoIterator&lt;Item = NodeId&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            bootstrap: nodes.into_iter().collect(),
+            subscription_capacity: TOPIC_EVENTS_DEFAULT_CAP,
+        }
+    }
 }
 </code></pre></div></section></main></body></html>

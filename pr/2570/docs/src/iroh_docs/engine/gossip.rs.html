@@ -204,13 +204,15 @@
 <a href="#204" id="204">204</a>
 <a href="#205" id="205">205</a>
 <a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{hash_map, HashMap};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::StreamExt;
 <span class="kw">use </span>futures_util::FutureExt;
-<span class="kw">use </span>iroh_gossip::net::{Event, Gossip, GossipEvent, GossipReceiver, GossipSender};
+<span class="kw">use </span>iroh_gossip::net::{Event, Gossip, GossipEvent, GossipReceiver, GossipSender, JoinOptions};
 <span class="kw">use </span>iroh_net::NodeId;
 <span class="kw">use </span>tokio::{
     sync::mpsc,
@@ -256,7 +258,9 @@
                 }
             }
             hash_map::Entry::Vacant(entry) =&gt; {
-                <span class="kw">let </span>sub = <span class="self">self</span>.gossip.join_pending(namespace.into(), bootstrap);
+                <span class="kw">let </span>sub = <span class="self">self
+                    </span>.gossip
+                    .join_with_opts(namespace.into(), JoinOptions::with_bootstrap(bootstrap));
                 <span class="kw">let </span>(sender, stream) = sub.split();
                 <span class="kw">let </span>abort_handle = <span class="self">self</span>.active_tasks.spawn(
                     receive_loop(
