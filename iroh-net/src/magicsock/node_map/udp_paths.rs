@@ -3,7 +3,8 @@
 //! This started as simply moving the [`NodeState`]'s `direct_addresses` and `best_addr`
 //! into one place together.  The aim is for external places to not directly interact with
 //! the inside and instead only notifies this struct of state changes to each path.
-
+//!
+//! [`NodeState`]: super::node_state::NodeState
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
