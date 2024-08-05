@@ -118,6 +118,7 @@ impl LocalPool {
     /// This will use the current tokio runtime handle, so it must be called
     /// from within a tokio runtime.
     pub fn new(config: Config) -> Self {
+        tracing::trace!("Creating new LocalPool");
         let Config {
             threads,
             thread_name_prefix,
@@ -568,6 +569,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
         // drop x at the end. we will never get here when the future is
         // no longer polled, but drop should still be called
+        tracing::debug!("Dropping {x:?}");
         drop(x);
     }
 
@@ -579,13 +581,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop() {
-        let _ = tracing_subscriber::fmt::try_init();
+        let _guard = iroh_test::logging::setup();
         let pool = LocalPool::new(Config::default());
         let counter = Arc::new(AtomicU64::new(0));
         let n = 4;
         for _ in 0..n {
             let td = TestDrop::new(counter.clone());
-            pool.spawn_detached(move || delay_then_drop(td));
+            tracing::debug!("Spawning task in LocalPool, TestDrop {td:?}");
+            pool.spawn_detached(move || {
+                tracing::debug!("I can't see this debug?");
+                delay_then_drop(td)
+            })
         }
         drop(pool);
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), n);
