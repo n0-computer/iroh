@@ -3,7 +3,7 @@
 //! [`Connection`]: iroh_net::endpoint::Connection
 
 use crate::{
-    get::{db::get_to_db_in_steps, error::GetError, Stats},
+    get::{db::get_to_db_in_steps, error::GetError},
     store::Store,
 };
 use futures_lite::FutureExt;
@@ -73,7 +73,7 @@ impl super::NeedsConn<endpoint::Connection> for crate::get::db::GetStateNeedsCon
 }
 
 #[cfg(feature = "metrics")]
-fn track_metrics(res: &Result<Stats, GetError>) {
+fn track_metrics(res: &Result<crate::get::Stats, GetError>) {
     use crate::metrics::Metrics;
     use iroh_metrics::{inc, inc_by};
     match res {
