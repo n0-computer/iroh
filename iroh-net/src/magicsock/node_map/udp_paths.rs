@@ -29,7 +29,7 @@ use super::IpPort;
 ///
 /// See [`NodeUdpPaths::send_addr`].
 ///
-/// [`MagicSock`]: crate::magicsocket::MagicSock
+/// [`MagicSock`]: crate::magicsock::MagicSock
 /// [`NodeState`]: super::node_state::NodeState
 #[derive(Debug)]
 pub(super) enum UdpSendAddr {
