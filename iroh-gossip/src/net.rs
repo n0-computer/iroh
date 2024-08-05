@@ -719,6 +719,7 @@ async fn connection_loop(
     };
 
     (send_loop, recv_loop).try_join().await?;
+
     Ok(())
 }
 
