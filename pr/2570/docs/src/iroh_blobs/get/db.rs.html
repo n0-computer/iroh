@@ -607,17 +607,121 @@
 <a href="#607" id="607">607</a>
 <a href="#608" id="608">608</a>
 <a href="#609" id="609">609</a>
+<a href="#610" id="610">610</a>
+<a href="#611" id="611">611</a>
+<a href="#612" id="612">612</a>
+<a href="#613" id="613">613</a>
+<a href="#614" id="614">614</a>
+<a href="#615" id="615">615</a>
+<a href="#616" id="616">616</a>
+<a href="#617" id="617">617</a>
+<a href="#618" id="618">618</a>
+<a href="#619" id="619">619</a>
+<a href="#620" id="620">620</a>
+<a href="#621" id="621">621</a>
+<a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
+<a href="#624" id="624">624</a>
+<a href="#625" id="625">625</a>
+<a href="#626" id="626">626</a>
+<a href="#627" id="627">627</a>
+<a href="#628" id="628">628</a>
+<a href="#629" id="629">629</a>
+<a href="#630" id="630">630</a>
+<a href="#631" id="631">631</a>
+<a href="#632" id="632">632</a>
+<a href="#633" id="633">633</a>
+<a href="#634" id="634">634</a>
+<a href="#635" id="635">635</a>
+<a href="#636" id="636">636</a>
+<a href="#637" id="637">637</a>
+<a href="#638" id="638">638</a>
+<a href="#639" id="639">639</a>
+<a href="#640" id="640">640</a>
+<a href="#641" id="641">641</a>
+<a href="#642" id="642">642</a>
+<a href="#643" id="643">643</a>
+<a href="#644" id="644">644</a>
+<a href="#645" id="645">645</a>
+<a href="#646" id="646">646</a>
+<a href="#647" id="647">647</a>
+<a href="#648" id="648">648</a>
+<a href="#649" id="649">649</a>
+<a href="#650" id="650">650</a>
+<a href="#651" id="651">651</a>
+<a href="#652" id="652">652</a>
+<a href="#653" id="653">653</a>
+<a href="#654" id="654">654</a>
+<a href="#655" id="655">655</a>
+<a href="#656" id="656">656</a>
+<a href="#657" id="657">657</a>
+<a href="#658" id="658">658</a>
+<a href="#659" id="659">659</a>
+<a href="#660" id="660">660</a>
+<a href="#661" id="661">661</a>
+<a href="#662" id="662">662</a>
+<a href="#663" id="663">663</a>
+<a href="#664" id="664">664</a>
+<a href="#665" id="665">665</a>
+<a href="#666" id="666">666</a>
+<a href="#667" id="667">667</a>
+<a href="#668" id="668">668</a>
+<a href="#669" id="669">669</a>
+<a href="#670" id="670">670</a>
+<a href="#671" id="671">671</a>
+<a href="#672" id="672">672</a>
+<a href="#673" id="673">673</a>
+<a href="#674" id="674">674</a>
+<a href="#675" id="675">675</a>
+<a href="#676" id="676">676</a>
+<a href="#677" id="677">677</a>
+<a href="#678" id="678">678</a>
+<a href="#679" id="679">679</a>
+<a href="#680" id="680">680</a>
+<a href="#681" id="681">681</a>
+<a href="#682" id="682">682</a>
+<a href="#683" id="683">683</a>
+<a href="#684" id="684">684</a>
+<a href="#685" id="685">685</a>
+<a href="#686" id="686">686</a>
+<a href="#687" id="687">687</a>
+<a href="#688" id="688">688</a>
+<a href="#689" id="689">689</a>
+<a href="#690" id="690">690</a>
+<a href="#691" id="691">691</a>
+<a href="#692" id="692">692</a>
+<a href="#693" id="693">693</a>
+<a href="#694" id="694">694</a>
+<a href="#695" id="695">695</a>
+<a href="#696" id="696">696</a>
+<a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
+<a href="#699" id="699">699</a>
+<a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
+<a href="#704" id="704">704</a>
+<a href="#705" id="705">705</a>
+<a href="#706" id="706">706</a>
+<a href="#707" id="707">707</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Functions that use the iroh-blobs protocol in conjunction with a bao store.
 
 </span><span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::num::NonZeroU64;
+<span class="kw">use </span>std::pin::Pin;
 
 <span class="kw">use </span>futures_lite::StreamExt;
+<span class="kw">use </span>genawaiter::{
+    rc::{Co, Gen},
+    GeneratorState,
+};
 <span class="kw">use </span>iroh_base::hash::Hash;
 <span class="kw">use </span>iroh_base::rpc::RpcError;
 <span class="kw">use </span>iroh_net::endpoint::Connection;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
+<span class="kw">use </span>tokio::sync::oneshot;
 
 <span class="kw">use </span><span class="kw">crate</span>::hashseq::parse_hash_seq;
 <span class="kw">use </span><span class="kw">crate</span>::protocol::RangeSpec;
@@ -643,6 +747,9 @@
 <span class="kw">use </span>iroh_io::AsyncSliceReader;
 <span class="kw">use </span>tracing::trace;
 
+<span class="kw">type </span>GetGenerator = Gen&lt;Yield, (), Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Stats, GetError&gt;&gt;&gt;&gt;&gt;;
+<span class="kw">type </span>GetFuture = Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Stats, GetError&gt;&gt; + <span class="lifetime">'static</span>&gt;&gt;;
+
 <span class="doccomment">/// Get a blob or collection into a store.
 ///
 /// This considers data that is already in the store, and will only request
@@ -659,12 +766,105 @@
     db: <span class="kw-2">&amp;</span>D,
     get_conn: C,
     hash_and_format: <span class="kw-2">&amp;</span>HashAndFormat,
-    sender: <span class="kw">impl </span>ProgressSender&lt;Msg = DownloadProgress&gt; + IdGenerator,
+    progress_sender: <span class="kw">impl </span>ProgressSender&lt;Msg = DownloadProgress&gt; + IdGenerator,
+) -&gt; <span class="prelude-ty">Result</span>&lt;Stats, GetError&gt; {
+    <span class="kw">match </span>get_to_db_in_steps(db.clone(), <span class="kw-2">*</span>hash_and_format, progress_sender).<span class="kw">await</span><span class="question-mark">? </span>{
+        GetState::Complete(res) =&gt; <span class="prelude-val">Ok</span>(res),
+        GetState::NeedsConn(state) =&gt; {
+            <span class="kw">let </span>conn = get_conn().<span class="kw">await</span>.map_err(GetError::Io)<span class="question-mark">?</span>;
+            state.proceed(conn).<span class="kw">await
+        </span>}
+    }
+}
+
+<span class="doccomment">/// Get a blob or collection into a store, yielding if a connection is needed.
+///
+/// This checks a get request against a local store, and returns [`GetState`],
+/// which is either `Complete` in case the requested data is fully available in the local store, or
+/// `NeedsConn`, once a connection is needed to proceed downloading the missing data.
+///
+/// In the latter case, call [`GetStateNeedsConn::proceed`] with a connection to a provider to
+/// proceed with the download.
+///
+/// Progress reporting works in the same way as documented in [`get_to_db`].
+</span><span class="kw">pub async fn </span>get_to_db_in_steps&lt;
+    D: BaoStore,
+    P: ProgressSender&lt;Msg = DownloadProgress&gt; + IdGenerator,
+&gt;(
+    db: D,
+    hash_and_format: HashAndFormat,
+    progress_sender: P,
+) -&gt; <span class="prelude-ty">Result</span>&lt;GetState, GetError&gt; {
+    <span class="kw">let </span><span class="kw-2">mut </span>gen: GetGenerator = genawaiter::rc::Gen::new(<span class="kw">move </span>|co| {
+        <span class="kw">let </span>fut = <span class="kw">async move </span>{ producer(co, <span class="kw-2">&amp;</span>db, <span class="kw-2">&amp;</span>hash_and_format, progress_sender).<span class="kw">await </span>};
+        <span class="kw">let </span>fut: GetFuture = Box::pin(fut);
+        fut
+    });
+    <span class="kw">match </span>gen.async_resume().<span class="kw">await </span>{
+        GeneratorState::Yielded(Yield::NeedConn(reply)) =&gt; {
+            <span class="prelude-val">Ok</span>(GetState::NeedsConn(GetStateNeedsConn(gen, reply)))
+        }
+        GeneratorState::Complete(res) =&gt; res.map(GetState::Complete),
+    }
+}
+
+<span class="doccomment">/// Intermediary state returned from [`get_to_db_in_steps`] for a download request that needs a
+/// connection to proceed.
+</span><span class="attr">#[derive(derive_more::Debug)]
+#[debug(<span class="string">"GetStateNeedsConn"</span>)]
+</span><span class="kw">pub struct </span>GetStateNeedsConn(GetGenerator, oneshot::Sender&lt;Connection&gt;);
+
+<span class="kw">impl </span>GetStateNeedsConn {
+    <span class="doccomment">/// Proceed with the download by providing a connection to a provider.
+    </span><span class="kw">pub async fn </span>proceed(<span class="kw-2">mut </span><span class="self">self</span>, conn: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;Stats, GetError&gt; {
+        <span class="self">self</span>.<span class="number">1</span>.send(conn).expect(<span class="string">"receiver is not dropped"</span>);
+        <span class="kw">match </span><span class="self">self</span>.<span class="number">0</span>.async_resume().<span class="kw">await </span>{
+            GeneratorState::Yielded(y) =&gt; <span class="kw">match </span>y {
+                Yield::NeedConn(<span class="kw">_</span>) =&gt; <span class="macro">panic!</span>(<span class="string">"NeedsConn may only be yielded once"</span>),
+            },
+            GeneratorState::Complete(res) =&gt; res,
+        }
+    }
+}
+
+<span class="doccomment">/// Output of [`get_to_db_in_steps`].
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub enum </span>GetState {
+    <span class="doccomment">/// The requested data is completely available in the local store, no network requests are
+    /// needed.
+    </span>Complete(Stats),
+    <span class="doccomment">/// The requested data is not fully available in the local store, we need a connection to
+    /// proceed.
+    ///
+    /// Once a connection is available, call [`GetStateNeedsConn::proceed`] to continue.
+    </span>NeedsConn(GetStateNeedsConn),
+}
+
+<span class="kw">struct </span>GetCo(Co&lt;Yield&gt;);
+
+<span class="kw">impl </span>GetCo {
+    <span class="kw">async fn </span>get_conn(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Connection {
+        <span class="kw">let </span>(tx, rx) = oneshot::channel();
+        <span class="self">self</span>.<span class="number">0</span>.yield_(Yield::NeedConn(tx)).<span class="kw">await</span>;
+        rx.<span class="kw">await</span>.expect(<span class="string">"sender may not be dropped"</span>)
+    }
+}
+
+<span class="kw">enum </span>Yield {
+    NeedConn(oneshot::Sender&lt;Connection&gt;),
+}
+
+<span class="kw">async fn </span>producer&lt;D: BaoStore&gt;(
+    co: Co&lt;Yield, ()&gt;,
+    db: <span class="kw-2">&amp;</span>D,
+    hash_and_format: <span class="kw-2">&amp;</span>HashAndFormat,
+    progress: <span class="kw">impl </span>ProgressSender&lt;Msg = DownloadProgress&gt; + IdGenerator,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Stats, GetError&gt; {
     <span class="kw">let </span>HashAndFormat { hash, format } = hash_and_format;
+    <span class="kw">let </span>co = GetCo(co);
     <span class="kw">match </span>format {
-        BlobFormat::Raw =&gt; get_blob(db, get_conn, hash, sender).<span class="kw">await</span>,
-        BlobFormat::HashSeq =&gt; get_hash_seq(db, get_conn, hash, sender).<span class="kw">await</span>,
+        BlobFormat::Raw =&gt; get_blob(db, co, hash, progress).<span class="kw">await</span>,
+        BlobFormat::HashSeq =&gt; get_hash_seq(db, co, hash, progress).<span class="kw">await</span>,
     }
 }
 
@@ -672,9 +872,9 @@
 ///
 /// We need to create our own files and handle the case where an outboard
 /// is not needed.
-</span><span class="kw">async fn </span>get_blob&lt;D: BaoStore, C: FnOnce() -&gt; F, F: Future&lt;Output = anyhow::Result&lt;Connection&gt;&gt;&gt;(
+</span><span class="kw">async fn </span>get_blob&lt;D: BaoStore&gt;(
     db: <span class="kw-2">&amp;</span>D,
-    get_conn: C,
+    co: GetCo,
     hash: <span class="kw-2">&amp;</span>Hash,
     progress: <span class="kw">impl </span>ProgressSender&lt;Msg = DownloadProgress&gt; + IdGenerator,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Stats, GetError&gt; {
@@ -709,7 +909,7 @@
 
             <span class="kw">let </span>request = GetRequest::new(<span class="kw-2">*</span>hash, RangeSpecSeq::from_ranges([required_ranges]));
             <span class="comment">// full request
-            </span><span class="kw">let </span>conn = get_conn().<span class="kw">await</span>.map_err(GetError::Io)<span class="question-mark">?</span>;
+            </span><span class="kw">let </span>conn = co.get_conn().<span class="kw">await</span>;
             <span class="kw">let </span>request = get::fsm::start(conn, request);
             <span class="comment">// create a new bidi stream
             </span><span class="kw">let </span>connected = request.next().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -725,7 +925,7 @@
         </span>}
         <span class="prelude-val">None </span>=&gt; {
             <span class="comment">// full request
-            </span><span class="kw">let </span>conn = get_conn().<span class="kw">await</span>.map_err(GetError::Io)<span class="question-mark">?</span>;
+            </span><span class="kw">let </span>conn = co.get_conn().<span class="kw">await</span>;
             <span class="kw">let </span>request = get::fsm::start(conn, GetRequest::single(<span class="kw-2">*</span>hash));
             <span class="comment">// create a new bidi stream
             </span><span class="kw">let </span>connected = request.next().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -908,13 +1108,9 @@
 }
 
 <span class="doccomment">/// Get a sequence of hashes
-</span><span class="kw">async fn </span>get_hash_seq&lt;
-    D: BaoStore,
-    C: FnOnce() -&gt; F,
-    F: Future&lt;Output = anyhow::Result&lt;Connection&gt;&gt;,
-&gt;(
+</span><span class="kw">async fn </span>get_hash_seq&lt;D: BaoStore&gt;(
     db: <span class="kw-2">&amp;</span>D,
-    get_conn: C,
+    co: GetCo,
     root_hash: <span class="kw-2">&amp;</span>Hash,
     sender: <span class="kw">impl </span>ProgressSender&lt;Msg = DownloadProgress&gt; + IdGenerator,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Stats, GetError&gt; {
@@ -973,7 +1169,7 @@
                 .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
             <span class="macro">log!</span>(<span class="string">"requesting chunks {:?}"</span>, missing_iter);
             <span class="kw">let </span>request = GetRequest::new(<span class="kw-2">*</span>root_hash, RangeSpecSeq::from_ranges(missing_iter));
-            <span class="kw">let </span>conn = get_conn().<span class="kw">await</span>.map_err(GetError::Io)<span class="question-mark">?</span>;
+            <span class="kw">let </span>conn = co.get_conn().<span class="kw">await</span>;
             <span class="kw">let </span>request = get::fsm::start(conn, request);
             <span class="comment">// create a new bidi stream
             </span><span class="kw">let </span>connected = request.next().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1019,7 +1215,7 @@
         <span class="kw">_ </span>=&gt; {
             <span class="macro">tracing::debug!</span>(<span class="string">"don't have collection - doing full download"</span>);
             <span class="comment">// don't have the collection, so probably got nothing
-            </span><span class="kw">let </span>conn = get_conn().<span class="kw">await</span>.map_err(GetError::Io)<span class="question-mark">?</span>;
+            </span><span class="kw">let </span>conn = co.get_conn().<span class="kw">await</span>;
             <span class="kw">let </span>request = get::fsm::start(conn, GetRequest::all(<span class="kw-2">*</span>root_hash));
             <span class="comment">// create a new bidi stream
             </span><span class="kw">let </span>connected = request.next().<span class="kw">await</span><span class="question-mark">?</span>;

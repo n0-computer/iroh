@@ -240,8 +240,8 @@
         <span class="comment">// check that the count of futures we are polling for downloads is consistent with the
         // number of requests
         </span><span class="macro">assert_eq!</span>(
-            <span class="self">self</span>.in_progress_downloads.len(),
             <span class="self">self</span>.active_requests.len(),
+            <span class="self">self</span>.in_progress_downloads.len(),
             <span class="string">"active_requests and in_progress_downloads are out of sync"
         </span>);
         <span class="comment">// check that the count of requests per peer matches the number of requests that have that

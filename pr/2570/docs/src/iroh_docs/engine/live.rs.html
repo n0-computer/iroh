@@ -951,6 +951,13 @@
 <a href="#951" id="951">951</a>
 <a href="#952" id="952">952</a>
 <a href="#953" id="953">953</a>
+<a href="#954" id="954">954</a>
+<a href="#955" id="955">955</a>
+<a href="#956" id="956">956</a>
+<a href="#957" id="957">957</a>
+<a href="#958" id="958">958</a>
+<a href="#959" id="959">959</a>
+<a href="#960" id="960">960</a>
 </pre></div><pre class="rust"><code><span class="attr">#![allow(missing_docs)]
 
 </span><span class="kw">use </span>std::collections::HashSet;
@@ -1323,9 +1330,16 @@
     <span class="kw">async fn </span>shutdown(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
         <span class="comment">// cancel all subscriptions
         </span><span class="self">self</span>.subscribers.clear();
-        <span class="comment">// shutdown sync thread
-        </span><span class="kw">let </span>_store = <span class="self">self</span>.sync.shutdown().<span class="kw">await</span>;
-        <span class="prelude-val">Ok</span>(())
+        <span class="kw">let </span>(gossip_shutdown_res, _store) = <span class="macro">tokio::join!</span>(
+            <span class="comment">// quit the gossip topics and task loops.
+            </span><span class="self">self</span>.gossip.shutdown(),
+            <span class="comment">// shutdown sync thread
+            </span><span class="self">self</span>.sync.shutdown()
+        );
+        gossip_shutdown_res<span class="question-mark">?</span>;
+        <span class="comment">// TODO: abort_all and join_next all JoinSets to catch panics
+        // (they are aborted on drop, but that swallows panics)
+        </span><span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">async fn </span>start_sync(<span class="kw-2">&amp;mut </span><span class="self">self</span>, namespace: NamespaceId, <span class="kw-2">mut </span>peers: Vec&lt;NodeAddr&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
