@@ -370,8 +370,15 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
     async fn shutdown(&mut self) -> anyhow::Result<()> {
         // cancel all subscriptions
         self.subscribers.clear();
-        // shutdown sync thread
-        let _store = self.sync.shutdown().await;
+        let (gossip_shutdown_res, _store) = tokio::join!(
+            // quit the gossip topics and task loops.
+            self.gossip.shutdown(),
+            // shutdown sync thread
+            self.sync.shutdown()
+        );
+        gossip_shutdown_res?;
+        // TODO: abort_all and join_next all JoinSets to catch panics
+        // (they are aborted on drop, but that swallows panics)
         Ok(())
     }
 

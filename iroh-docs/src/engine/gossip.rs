@@ -78,6 +78,13 @@ impl GossipState {
         }
     }
 
+    pub async fn shutdown(&mut self) -> Result<()> {
+        for (_, state) in self.active.drain() {
+            state.abort_handle.abort();
+        }
+        self.progress().await
+    }
+
     pub async fn broadcast(&self, namespace: &NamespaceId, message: Bytes) {
         if let Some(state) = self.active.get(namespace) {
             state.sender.broadcast(message).await.ok();
