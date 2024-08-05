@@ -1,9 +1,7 @@
-use std::{
-    collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap},
-    hash::Hash,
-    net::{IpAddr, SocketAddr},
-    time::{Duration, Instant},
-};
+use std::collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap};
+use std::hash::Hash;
+use std::net::{IpAddr, SocketAddr};
+use std::time::{Duration, Instant};
 
 use iroh_metrics::inc;
 use serde::{Deserialize, Serialize};
@@ -11,22 +9,17 @@ use tokio::sync::mpsc;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
 use watchable::{Watchable, WatcherStream};
 
-use crate::{
-    disco::{self, SendAddr},
-    endpoint::AddrInfo,
-    key::PublicKey,
-    magicsock::{Timer, HEARTBEAT_INTERVAL},
-    net::ip::is_unicast_link_local,
-    relay::RelayUrl,
-    stun,
-    util::relay_only_mode,
-    NodeAddr, NodeId,
-};
-
-use crate::magicsock::{metrics::Metrics as MagicsockMetrics, ActorMessage, QuicMappedAddr};
+use crate::disco::{self, SendAddr};
+use crate::endpoint::AddrInfo;
+use crate::key::PublicKey;
+use crate::magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL};
+use crate::net::ip::is_unicast_link_local;
+use crate::relay::RelayUrl;
+use crate::util::relay_only_mode;
+use crate::{stun, NodeAddr, NodeId};
 
 use super::best_addr::{self, ClearReason, Source};
-use super::udp_paths::NodeUdpPaths;
+use super::udp_paths::{NodeUdpPaths, UdpSendAddr};
 use super::IpPort;
 
 /// Number of addresses that are not active that we keep around per node.
@@ -271,23 +264,23 @@ impl NodeState {
             return (None, self.relay_url());
         }
         let (best_addr, relay_url) = match self.udp_paths.send_addr(*now, have_ipv6) {
-            super::udp_paths::UdpSendAddr::Valid(addr) => {
+            UdpSendAddr::Valid(addr) => {
                 // If we have a valid address we use it.
                 trace!(%addr, "UdpSendAddr is valid, use it");
                 (Some(addr), None)
             }
-            super::udp_paths::UdpSendAddr::Outdated(addr) => {
+            UdpSendAddr::Outdated(addr) => {
                 // If the address is outdated we use it, but send via relay at the same time.
                 // We also send disco pings so that it will become valid again if it still
                 // works (i.e. we don't need to holepunch again).
                 trace!(%addr, "UdpSendAddr is outdated, use it together with relay");
                 (Some(addr), self.relay_url())
             }
-            super::udp_paths::UdpSendAddr::Unconfirmed(addr) => {
+            UdpSendAddr::Unconfirmed(addr) => {
                 trace!(%addr, "UdpSendAddr is unconfirmed, use it together with relay");
                 (Some(addr), self.relay_url())
             }
-            super::udp_paths::UdpSendAddr::None => {
+            UdpSendAddr::None => {
                 trace!("No UdpSendAddr, use relay");
                 (None, self.relay_url())
             }
