@@ -330,6 +330,7 @@
 <a href="#330" id="330">330</a>
 <a href="#331" id="331">331</a>
 <a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
@@ -628,8 +629,8 @@
     <span class="kw">use </span>testresult::TestResult;
 
     <span class="attr">#[tokio::test]
-    #[ignore = <span class="string">"flaky"</span>]
     </span><span class="kw">async fn </span>test_local_swarm_discovery() -&gt; TestResult {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>(node_id_a, discovery_a) = make_discoverer()<span class="question-mark">?</span>;
         <span class="kw">let </span>(<span class="kw">_</span>, discovery_b) = make_discoverer()<span class="question-mark">?</span>;
 
@@ -644,12 +645,13 @@
         <span class="comment">// resolve twice to ensure we can create separate streams for the same node_id
         </span><span class="kw">let </span><span class="kw-2">mut </span>s1 = discovery_b.resolve(ep.clone(), node_id_a).unwrap();
         <span class="kw">let </span><span class="kw-2">mut </span>s2 = discovery_b.resolve(ep, node_id_a).unwrap();
+        <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>node_id_a, <span class="string">"Discovering node id a"</span>);
         <span class="comment">// publish discovery_a's address
         </span>discovery_a.publish(<span class="kw-2">&amp;</span>addr_info);
-        <span class="kw">let </span>s1_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
+        <span class="kw">let </span>s1_res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), s1.next())
             .<span class="kw">await</span><span class="question-mark">?
             </span>.unwrap()<span class="question-mark">?</span>;
-        <span class="kw">let </span>s2_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s2.next())
+        <span class="kw">let </span>s2_res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), s2.next())
             .<span class="kw">await</span><span class="question-mark">?
             </span>.unwrap()<span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(s1_res.addr_info, addr_info);

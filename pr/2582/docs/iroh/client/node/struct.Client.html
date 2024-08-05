@@ -35,7 +35,7 @@ node_client.add_node_addr(addr).<span class="kw">await</span><span class="questi
 <span class="comment">// Shut down the node. Passing `true` will force the shutdown, passing in
 // `false` will allow the node to shut down gracefully.
 </span>node_client.shutdown(<span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div>
-<p>You can also use the <code>node:Client</code> methods from the <code>Iroh</code> client:</p>
+<p>You can also use the <code>node::Client</code> methods from the <code>Iroh</code> client:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>std::str::FromStr;
 <span class="kw">use </span>iroh_base::{key::NodeId, node_addr::{RelayUrl, NodeAddr}};
