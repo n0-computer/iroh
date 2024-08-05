@@ -1638,7 +1638,7 @@
 
 <span class="doccomment">/// Trait modelling the intermediary state when a connection is needed to proceed.
 </span><span class="kw">pub trait </span>NeedsConn&lt;C&gt;: std::fmt::Debug + <span class="lifetime">'static </span>{
-    <span class="doccomment">/// Proceeds the download with the given connection. 
+    <span class="doccomment">/// Proceeds the download with the given connection.
     </span><span class="kw">fn </span>proceed(<span class="self">self</span>, conn: C) -&gt; GetProceedFut;
 }
 
