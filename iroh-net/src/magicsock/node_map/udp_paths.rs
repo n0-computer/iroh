@@ -46,7 +46,7 @@ pub(super) enum UdpSendAddr {
     /// The UDP address is not known to work, but it might.
     ///
     /// We know this UDP address belongs to the remote node, but we do not know if the path
-    /// already works or may need holepunching before it will start to work.  It migt even
+    /// already works or may need holepunching before it will start to work.  It might even
     /// never work.  It is still useful to send to this together with backup path,
     /// i.e. relay, in case the path works: if the path does not need holepunching it might
     /// be much faster.  And if there is no relay path at all it might be the only way to
