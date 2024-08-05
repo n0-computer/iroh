@@ -3,12 +3,18 @@
 use std::future::Future;
 use std::io;
 use std::num::NonZeroU64;
+use std::pin::Pin;
 
 use futures_lite::StreamExt;
+use genawaiter::{
+    rc::{Co, Gen},
+    GeneratorState,
+};
 use iroh_base::hash::Hash;
 use iroh_base::rpc::RpcError;
 use iroh_net::endpoint::Connection;
 use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
 
 use crate::hashseq::parse_hash_seq;
 use crate::protocol::RangeSpec;
@@ -34,6 +40,9 @@ use bao_tree::{ChunkNum, ChunkRanges};
 use iroh_io::AsyncSliceReader;
 use tracing::trace;
 
+type GetGenerator = Gen<Yield, (), Pin<Box<dyn Future<Output = Result<Stats, GetError>>>>>;
+type GetFuture = Pin<Box<dyn Future<Output = Result<Stats, GetError>> + 'static>>;
+
 /// Get a blob or collection into a store.
 ///
 /// This considers data that is already in the store, and will only request
@@ -50,89 +59,115 @@ pub async fn get_to_db<
     db: &D,
     get_conn: C,
     hash_and_format: &HashAndFormat,
-    sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+    progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<Stats, GetError> {
-    let HashAndFormat { hash, format } = hash_and_format;
-    match format {
-        BlobFormat::Raw => get_blob(db, get_conn, hash, sender).await,
-        BlobFormat::HashSeq => get_hash_seq(db, get_conn, hash, sender).await,
+    match get_to_db_in_steps(db.clone(), *hash_and_format, progress).await? {
+        GetState::Complete(res) => Ok(res),
+        GetState::NeedsConn(state) => {
+            let conn = get_conn().await.map_err(GetError::Io)?;
+            state.proceed(conn).await
+        }
     }
 }
 
-/// Checks if a blob or collection exists fully in the local store.
+/// Get a blob or collection into a store, yielding if a connection is needed.
 ///
-/// Returns `true` if the blob is complete (and for hashseqs if all children are complete too).
+/// This checks a get request against a local store, and returns [`GetState`],
+/// which is either `Complete` in case the requested data is fully available in the local store, or
+/// `NeedsConn`, once a connection is needed to proceed downloading the missing data.
 ///
-/// Emits the same sequence of progress events as if we were downloading the blob, but only if the
-/// return value is `true`, i.e. if the blob (and all children for hashseqs) are fully available in
-/// the store. If the return value is `false`, no events will be emitted at all.
-pub async fn check_local_with_progress_if_complete<D: BaoStore>(
+/// In the latter case, call [`GetStateNeedsConn::proceed`] with a connection to a provider to
+/// proceed with the download.
+///
+/// Progress reporting works in the same way as documented in [`get_to_db`].
+pub async fn get_to_db_in_steps<
+    D: BaoStore,
+    P: ProgressSender<Msg = DownloadProgress> + IdGenerator,
+>(
+    db: D,
+    hash_and_format: HashAndFormat,
+    progress: P,
+) -> Result<GetState, GetError> {
+    let mut gen: GetGenerator = genawaiter::rc::Gen::new(move |co| {
+        let fut = async move { producer(co, &db, &hash_and_format, progress).await };
+        let fut: GetFuture = Box::pin(fut);
+        fut
+    });
+    match gen.async_resume().await {
+        GeneratorState::Yielded(Yield::NeedConn(reply)) => {
+            Ok(GetState::NeedsConn(GetStateNeedsConn(gen, reply)))
+        }
+        GeneratorState::Complete(res) => res.map(GetState::Complete),
+    }
+}
+
+/// Intermediary state returned from [`get_to_db_in_steps`] for a download request that needs a
+/// connection to proceed.
+#[derive(derive_more::Debug)]
+#[debug("GetStateNeedsConn")]
+pub struct GetStateNeedsConn(GetGenerator, oneshot::Sender<Connection>);
+
+impl GetStateNeedsConn {
+    /// Proceed with the download by providing a connection to a provider.
+    pub async fn proceed(mut self, conn: Connection) -> Result<Stats, GetError> {
+        self.1.send(conn).expect("receiver is not dropped");
+        match self.0.async_resume().await {
+            GeneratorState::Yielded(y) => match y {
+                Yield::NeedConn(_) => panic!("NeedsConn may only be yielded once"),
+            },
+            GeneratorState::Complete(res) => res,
+        }
+    }
+}
+
+/// Output of [`get_to_db_in_steps`].
+#[derive(Debug)]
+pub enum GetState {
+    /// The requested data is completely available in the local store, no network requests are
+    /// needed.
+    Complete(Stats),
+    /// The requested data is not fully available in the local store, we need a connection to
+    /// proceed.
+    ///
+    /// Once a connection is available, call [`GetStateNeedsConn::proceed`] to continue.
+    NeedsConn(GetStateNeedsConn),
+}
+
+struct GetCo(Co<Yield>);
+
+impl GetCo {
+    async fn get_conn(&self) -> Connection {
+        let (tx, rx) = oneshot::channel();
+        self.0.yield_(Yield::NeedConn(tx)).await;
+        rx.await.expect("sender may not be dropped")
+    }
+}
+
+enum Yield {
+    NeedConn(oneshot::Sender<Connection>),
+}
+
+async fn producer<D: BaoStore>(
+    co: Co<Yield, ()>,
     db: &D,
     hash_and_format: &HashAndFormat,
-    progress: Option<impl ProgressSender<Msg = DownloadProgress> + IdGenerator>,
-) -> anyhow::Result<bool> {
-    // We collect all progress events that should be emitted if the blob/hashseq is complete.
-    // We do not emit them right away because we don't want to emit any events in case the
-    // blob/hashseq is not complete.
-    let mut progress_events = vec![];
-
-    // Check if the root blob is fully available.
-    let HashAndFormat { hash, format } = *hash_and_format;
-    let entry = match db.get(&hash).await? {
-        Some(entry) if entry.is_complete() => entry,
-        _ => return Ok(false),
-    };
-    progress_events.push(DownloadProgress::FoundLocal {
-        child: BlobId::Root,
-        hash,
-        size: entry.size(),
-        valid_ranges: RangeSpec::all(),
-    });
-
+    progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+) -> Result<Stats, GetError> {
+    let HashAndFormat { hash, format } = hash_and_format;
+    let co = GetCo(co);
     match format {
-        BlobFormat::Raw => {
-            // For a raw blob, we're done.
-        }
-        BlobFormat::HashSeq => {
-            // For a hashseq, check if all children are complete.
-            let reader = entry.data_reader().await?;
-            let (mut hash_seq, children) = parse_hash_seq(reader).await.map_err(|err| {
-                GetError::NoncompliantNode(anyhow!("Failed to parse downloaded HashSeq: {err}"))
-            })?;
-            progress_events.push(DownloadProgress::FoundHashSeq { hash, children });
-
-            let mut children: Vec<Hash> = vec![];
-            while let Some(hash) = hash_seq.next().await? {
-                children.push(hash);
-            }
-            for hash in children {
-                let entry = match db.get(&hash).await? {
-                    Some(entry) if entry.is_complete() => entry,
-                    _ => return Ok(false),
-                };
-                progress_events.push(DownloadProgress::FoundLocal {
-                    child: BlobId::Root,
-                    hash,
-                    size: entry.size(),
-                    valid_ranges: RangeSpec::all(),
-                });
-            }
-        }
+        BlobFormat::Raw => get_blob(db, co, hash, progress).await,
+        BlobFormat::HashSeq => get_hash_seq(db, co, hash, progress).await,
     }
-
-    for event in progress_events {
-        progress.send(event).await?;
-    }
-    Ok(true)
 }
 
 /// Get a blob that was requested completely.
 ///
 /// We need to create our own files and handle the case where an outboard
 /// is not needed.
-async fn get_blob<D: BaoStore, C: FnOnce() -> F, F: Future<Output = anyhow::Result<Connection>>>(
+async fn get_blob<D: BaoStore>(
     db: &D,
-    get_conn: C,
+    co: GetCo,
     hash: &Hash,
     progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<Stats, GetError> {
@@ -167,7 +202,7 @@ async fn get_blob<D: BaoStore, C: FnOnce() -> F, F: Future<Output = anyhow::Resu
 
             let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
             // full request
-            let conn = get_conn().await.map_err(GetError::Io)?;
+            let conn = co.get_conn().await;
             let request = get::fsm::start(conn, request);
             // create a new bidi stream
             let connected = request.next().await?;
@@ -183,7 +218,7 @@ async fn get_blob<D: BaoStore, C: FnOnce() -> F, F: Future<Output = anyhow::Resu
         }
         None => {
             // full request
-            let conn = get_conn().await.map_err(GetError::Io)?;
+            let conn = co.get_conn().await;
             let request = get::fsm::start(conn, GetRequest::single(*hash));
             // create a new bidi stream
             let connected = request.next().await?;
@@ -366,13 +401,9 @@ async fn blob_infos<D: BaoStore>(db: &D, hash_seq: &[Hash]) -> io::Result<Vec<Bl
 }
 
 /// Get a sequence of hashes
-async fn get_hash_seq<
-    D: BaoStore,
-    C: FnOnce() -> F,
-    F: Future<Output = anyhow::Result<Connection>>,
->(
+async fn get_hash_seq<D: BaoStore>(
     db: &D,
-    get_conn: C,
+    co: GetCo,
     root_hash: &Hash,
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<Stats, GetError> {
@@ -431,7 +462,7 @@ async fn get_hash_seq<
                 .collect::<Vec<_>>();
             log!("requesting chunks {:?}", missing_iter);
             let request = GetRequest::new(*root_hash, RangeSpecSeq::from_ranges(missing_iter));
-            let conn = get_conn().await.map_err(GetError::Io)?;
+            let conn = co.get_conn().await;
             let request = get::fsm::start(conn, request);
             // create a new bidi stream
             let connected = request.next().await?;
@@ -477,7 +508,7 @@ async fn get_hash_seq<
         _ => {
             tracing::debug!("don't have collection - doing full download");
             // don't have the collection, so probably got nothing
-            let conn = get_conn().await.map_err(GetError::Io)?;
+            let conn = co.get_conn().await;
             let request = get::fsm::start(conn, GetRequest::all(*root_hash));
             // create a new bidi stream
             let connected = request.next().await?;
