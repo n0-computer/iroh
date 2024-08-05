@@ -1221,7 +1221,11 @@ where
                             remaining_nodes -= 1;
                             let node_id = node.node_id;
                             if node_id == endpoint.node_id() {
-                                debug!(?remaining_nodes, "skip node {} (it is the node id of ourselves)",                                    node_id.fmt_short());
+                                debug!(
+                                    ?remaining_nodes,
+                                    "skip node {} (it is the node id of ourselves)",
+                                    node_id.fmt_short()
+                                );
                                 continue 'inner;
                             }
                             match endpoint.connect(node, iroh_blobs::protocol::ALPN).await {
