@@ -2,7 +2,64 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.21.0](https://github.com/n0-computer/iroh/compare/v0.20.0..0.21.0) - 2024-07-22
+## [0.22.0](https://github.com/n0-computer/iroh/compare/v0.21.0..0.22.0) - 2024-08-05
+
+### ⛰️  Features
+
+- *(iroh)* Improve documentation and canonicalize docs in `iroh::client` ([#2553](https://github.com/n0-computer/iroh/issues/2553)) - ([d937234](https://github.com/n0-computer/iroh/commit/d937234621791338a65338678badc35345784296))
+- Override to staging relays ([#2551](https://github.com/n0-computer/iroh/issues/2551)) - ([ed4420b](https://github.com/n0-computer/iroh/commit/ed4420b5df75d4cfe3623c3e722f33a8a19449ce))
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Do not set low max streams in builder ([#2593](https://github.com/n0-computer/iroh/issues/2593)) - ([215cd1d](https://github.com/n0-computer/iroh/commit/215cd1d8ffdc4b7fbaeceb792da981c40f59b41a))
+- *(iroh-blobs)* Use async_channel instead of flume for local_pool ([#2533](https://github.com/n0-computer/iroh/issues/2533)) - ([9052905](https://github.com/n0-computer/iroh/commit/9052905d0d75d62c761139f02294d6abc1c53af6))
+- *(iroh-blobs)* Do not hit the network when downloading blobs which are complete ([#2586](https://github.com/n0-computer/iroh/issues/2586)) - ([0784403](https://github.com/n0-computer/iroh/commit/07844031c3e568e34c64a825803c9cd3f91a2035))
+- *(iroh-cli)* [**breaking**] Improve cli and configuration file ([#2532](https://github.com/n0-computer/iroh/issues/2532)) - ([0fc3794](https://github.com/n0-computer/iroh/commit/0fc37942be3d68399fbe45401ba7d67be43a83a6))
+- *(iroh-gossip)* Connection loop misuses `tokio::select!` leading to read errors ([#2572](https://github.com/n0-computer/iroh/issues/2572)) - ([32bb0f3](https://github.com/n0-computer/iroh/commit/32bb0f3be432676ca49473e75c7eb00db32a3673))
+- *(iroh-net)* Fix a compiler error with newer `derive_more` versions ([#2578](https://github.com/n0-computer/iroh/issues/2578)) - ([3f3fec5](https://github.com/n0-computer/iroh/commit/3f3fec5010a97f7d11f00b9c3eb2f05e167a1472))
+- *(iroh-net)* Make a single direct address in NodeAddr instant ([#2580](https://github.com/n0-computer/iroh/issues/2580)) - ([f5b3918](https://github.com/n0-computer/iroh/commit/f5b3918b8d4a0077334980b91ca6339acaa1c55f))
+- Docker image builds ([#2530](https://github.com/n0-computer/iroh/issues/2530)) - ([5c60a52](https://github.com/n0-computer/iroh/commit/5c60a52dd442525852f1b1a0b0f5fc62b463060e))
+- Disable docs preview on forks ([#2558](https://github.com/n0-computer/iroh/issues/2558)) - ([741b42f](https://github.com/n0-computer/iroh/commit/741b42fa4260c94b4e80b633bffdf5add6ee24aa))
+- Force CI to use staging relays ([#2560](https://github.com/n0-computer/iroh/issues/2560)) - ([ffeb1a9](https://github.com/n0-computer/iroh/commit/ffeb1a901387a56a1544ef058a86843f500eb84a))
+- Pin derive_more to avoid sudden breakages ([#2584](https://github.com/n0-computer/iroh/issues/2584)) - ([1ba033c](https://github.com/n0-computer/iroh/commit/1ba033cf0cc601c7ffd4c09822190ddbb2fb8197))
+
+### 🚜 Refactor
+
+- *(iroh)* Remove flume from iroh gossip ([#2542](https://github.com/n0-computer/iroh/issues/2542)) - ([2964569](https://github.com/n0-computer/iroh/commit/29645698ca794d88314ff9c1117e962ec6260650))
+- *(iroh)* Remove flume from iroh-cli and iroh ([#2543](https://github.com/n0-computer/iroh/issues/2543)) - ([347d45c](https://github.com/n0-computer/iroh/commit/347d45c3de3bcba878657566a67f4e1825b03bc4))
+- *(iroh-docs)* Replace flume with async_channel in docs ([#2540](https://github.com/n0-computer/iroh/issues/2540)) - ([e7a7552](https://github.com/n0-computer/iroh/commit/e7a7552191b71b476cab0a75544f129e657d8dfe))
+- *(iroh-net)* Replace flume in iroh-net with async_channel ([#2539](https://github.com/n0-computer/iroh/issues/2539)) - ([22314a1](https://github.com/n0-computer/iroh/commit/22314a18228799e26de8ba2c0e44b45aec3b2af4))
+- *(iroh-net)* Move more server code behind `iroh-relay` feature flag ([#2566](https://github.com/n0-computer/iroh/issues/2566)) - ([1dda2f7](https://github.com/n0-computer/iroh/commit/1dda2f7ab706cf794d2c8f4e6b47b24caf2f1c78))
+- *(iroh-net)* [**breaking**] Improve server modules structure & rename structs ([#2568](https://github.com/n0-computer/iroh/issues/2568)) - ([29d2e82](https://github.com/n0-computer/iroh/commit/29d2e82a577ebc8cb4029c0df0138fe662031d5c))
+- *(iroh-net)* Switch to (now stable) `IpAddr::to_canonical` ([#2569](https://github.com/n0-computer/iroh/issues/2569)) - ([7fdd6cb](https://github.com/n0-computer/iroh/commit/7fdd6cb64f24c908862ccdf59fb5ca466e0b508f))
+
+### 📚 Documentation
+
+- *(iroh)* Add documentations and examples for the `iroh::node::Client` ([#2582](https://github.com/n0-computer/iroh/issues/2582)) - ([55836fa](https://github.com/n0-computer/iroh/commit/55836fa5ca56fe6964be52046bb0c7f77e62b647))
+- *(iroh-cli)* Point to the configuration refernce from each iroh subcommand ([#2571](https://github.com/n0-computer/iroh/issues/2571)) - ([8e4e586](https://github.com/n0-computer/iroh/commit/8e4e586cece3968700a13562058f3a5c152c1805))
+- Fix typos discovered by codespell ([#2534](https://github.com/n0-computer/iroh/issues/2534)) - ([8435a45](https://github.com/n0-computer/iroh/commit/8435a45e3ee273d5a8dcb083eadc333426024b8b))
+- Update description in cargo.toml - ([7259ab5](https://github.com/n0-computer/iroh/commit/7259ab584d509bde8f45654700a4bd9e74e4405c))
+
+### 🧪 Testing
+
+- *(iroh-blobs)* Comment out ignored test (that is not a flaky test) ([#2559](https://github.com/n0-computer/iroh/issues/2559)) - ([15f36b3](https://github.com/n0-computer/iroh/commit/15f36b373ec3dc86d9a81caeef54f8a165c10001))
+- *(iroh-cli)* Update to new api ([#2549](https://github.com/n0-computer/iroh/issues/2549)) - ([f97c1c0](https://github.com/n0-computer/iroh/commit/f97c1c0858161a8c0e0f64b862aaceea0035d371))
+- *(iroh-cli)* Remove flaky mark from 5 tests and improve logs ([#2562](https://github.com/n0-computer/iroh/issues/2562)) - ([14fccee](https://github.com/n0-computer/iroh/commit/14fcceed53e9633402ba1b978f2002901b615ba8))
+- *(iroh-cli)* Reduce flakyness of cli_provide_file_resume ([#2563](https://github.com/n0-computer/iroh/issues/2563)) - ([f085e63](https://github.com/n0-computer/iroh/commit/f085e633c82531b7d24a70703ae48a2562eccfdd))
+- *(iroh-cli)* Make cli resumption tests not flaky ([#2564](https://github.com/n0-computer/iroh/issues/2564)) - ([9e6b1e0](https://github.com/n0-computer/iroh/commit/9e6b1e0897b15ea7096c95143e11e09e948c862e))
+- *(iroh-net)* Increase timeout for local swarm discovery test ([#2574](https://github.com/n0-computer/iroh/issues/2574)) - ([605a85d](https://github.com/n0-computer/iroh/commit/605a85d9c121f8d2b48f91c2eb1e86cfa451bd22))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(iroh-net)* Remove need for relay info in best_addr ([#2579](https://github.com/n0-computer/iroh/issues/2579)) - ([d662bfc](https://github.com/n0-computer/iroh/commit/d662bfc663ad956bbb38716bd5b8022a699bfce4))
+- Fix clippy warnings ([#2550](https://github.com/n0-computer/iroh/issues/2550)) - ([73de21b](https://github.com/n0-computer/iroh/commit/73de21b35d6b83def03f51caca06c1931ea8ee77))
+- Generate docs for each PR ([#2547](https://github.com/n0-computer/iroh/issues/2547)) - ([0812333](https://github.com/n0-computer/iroh/commit/081233357d4dbe0cabe890009d674839d9de18be))
+
+### Ref
+
+- *(iroh-net)* Don't write the match as fully exhaustive ([#2585](https://github.com/n0-computer/iroh/issues/2585)) - ([43ef8b6](https://github.com/n0-computer/iroh/commit/43ef8b6e87048f7f28ddb4c2b97d7bf4fe853b90))
+
+## [0.21.0](https://github.com/n0-computer/iroh/compare/v0.20.0..v0.21.0) - 2024-07-22
 
 ### ⛰️  Features
 
@@ -42,6 +99,7 @@ All notable changes to iroh will be documented in this file.
 - *(bytes)* Bytes v1.6.0 was yanked so upgrade to bytes v1.6.1 ([#2503](https://github.com/n0-computer/iroh/issues/2503)) - ([ecfbed3](https://github.com/n0-computer/iroh/commit/ecfbed3d5e1bdaca36ab1ddd2ebcd01a6b286a94))
 - Add a flaky tests failure report to our discord notification ([#2496](https://github.com/n0-computer/iroh/issues/2496)) - ([f84c06e](https://github.com/n0-computer/iroh/commit/f84c06eb87ed8b93b1bce71c8502732db7faeedb))
 - Keep GitHub Actions up to date with GitHub's Dependabot ([#2498](https://github.com/n0-computer/iroh/issues/2498)) - ([538efbf](https://github.com/n0-computer/iroh/commit/538efbfc6575733114292ddcfdc040adb50a246c))
+- Release - ([1145b34](https://github.com/n0-computer/iroh/commit/1145b34a2f8001a37bcf907626dc8ebd8dd77da4))
 
 ### Deprecation
 
