@@ -1854,19 +1854,10 @@
 <a href="#1854" id="1854">1854</a>
 <a href="#1855" id="1855">1855</a>
 <a href="#1856" id="1856">1856</a>
-<a href="#1857" id="1857">1857</a>
-<a href="#1858" id="1858">1858</a>
-<a href="#1859" id="1859">1859</a>
-<a href="#1860" id="1860">1860</a>
-<a href="#1861" id="1861">1861</a>
-<a href="#1862" id="1862">1862</a>
-<a href="#1863" id="1863">1863</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
-    collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap},
-    hash::Hash,
-    net::{IpAddr, SocketAddr},
-    time::{Duration, Instant},
-};
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap};
+<span class="kw">use </span>std::hash::Hash;
+<span class="kw">use </span>std::net::{IpAddr, SocketAddr};
+<span class="kw">use </span>std::time::{Duration, Instant};
 
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
@@ -1874,22 +1865,17 @@
 <span class="kw">use </span>tracing::{debug, event, info, instrument, trace, warn, Level};
 <span class="kw">use </span>watchable::{Watchable, WatcherStream};
 
-<span class="kw">use crate</span>::{
-    disco::{<span class="self">self</span>, SendAddr},
-    endpoint::AddrInfo,
-    key::PublicKey,
-    magicsock::{Timer, HEARTBEAT_INTERVAL},
-    net::ip::is_unicast_link_local,
-    relay::RelayUrl,
-    stun,
-    util::relay_only_mode,
-    NodeAddr, NodeId,
-};
-
-<span class="kw">use </span><span class="kw">crate</span>::magicsock::{metrics::Metrics <span class="kw">as </span>MagicsockMetrics, ActorMessage, QuicMappedAddr};
+<span class="kw">use </span><span class="kw">crate</span>::disco::{<span class="self">self</span>, SendAddr};
+<span class="kw">use </span><span class="kw">crate</span>::endpoint::AddrInfo;
+<span class="kw">use </span><span class="kw">crate</span>::key::PublicKey;
+<span class="kw">use </span><span class="kw">crate</span>::magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL};
+<span class="kw">use </span><span class="kw">crate</span>::net::ip::is_unicast_link_local;
+<span class="kw">use </span><span class="kw">crate</span>::relay::RelayUrl;
+<span class="kw">use </span><span class="kw">crate</span>::util::relay_only_mode;
+<span class="kw">use crate</span>::{stun, NodeAddr, NodeId};
 
 <span class="kw">use </span><span class="kw">super</span>::best_addr::{<span class="self">self</span>, ClearReason, Source};
-<span class="kw">use </span><span class="kw">super</span>::udp_paths::NodeUdpPaths;
+<span class="kw">use </span><span class="kw">super</span>::udp_paths::{NodeUdpPaths, UdpSendAddr};
 <span class="kw">use </span><span class="kw">super</span>::IpPort;
 
 <span class="doccomment">/// Number of addresses that are not active that we keep around per node.
@@ -2134,23 +2120,23 @@
             <span class="kw">return </span>(<span class="prelude-val">None</span>, <span class="self">self</span>.relay_url());
         }
         <span class="kw">let </span>(best_addr, relay_url) = <span class="kw">match </span><span class="self">self</span>.udp_paths.send_addr(<span class="kw-2">*</span>now, have_ipv6) {
-            <span class="kw">super</span>::udp_paths::UdpSendAddr::Valid(addr) =&gt; {
+            UdpSendAddr::Valid(addr) =&gt; {
                 <span class="comment">// If we have a valid address we use it.
                 </span><span class="macro">trace!</span>(%addr, <span class="string">"UdpSendAddr is valid, use it"</span>);
                 (<span class="prelude-val">Some</span>(addr), <span class="prelude-val">None</span>)
             }
-            <span class="kw">super</span>::udp_paths::UdpSendAddr::Outdated(addr) =&gt; {
+            UdpSendAddr::Outdated(addr) =&gt; {
                 <span class="comment">// If the address is outdated we use it, but send via relay at the same time.
                 // We also send disco pings so that it will become valid again if it still
                 // works (i.e. we don't need to holepunch again).
                 </span><span class="macro">trace!</span>(%addr, <span class="string">"UdpSendAddr is outdated, use it together with relay"</span>);
                 (<span class="prelude-val">Some</span>(addr), <span class="self">self</span>.relay_url())
             }
-            <span class="kw">super</span>::udp_paths::UdpSendAddr::Unconfirmed(addr) =&gt; {
+            UdpSendAddr::Unconfirmed(addr) =&gt; {
                 <span class="macro">trace!</span>(%addr, <span class="string">"UdpSendAddr is unconfirmed, use it together with relay"</span>);
                 (<span class="prelude-val">Some</span>(addr), <span class="self">self</span>.relay_url())
             }
-            <span class="kw">super</span>::udp_paths::UdpSendAddr::None =&gt; {
+            UdpSendAddr::None =&gt; {
                 <span class="macro">trace!</span>(<span class="string">"No UdpSendAddr, use relay"</span>);
                 (<span class="prelude-val">None</span>, <span class="self">self</span>.relay_url())
             }

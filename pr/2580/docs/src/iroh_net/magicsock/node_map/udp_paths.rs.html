@@ -146,12 +146,44 @@
 <a href="#146" id="146">146</a>
 <a href="#147" id="147">147</a>
 <a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Path state for UDP addresses of a single peer node.
 //!
 //! This started as simply moving the [`NodeState`]'s `direct_addresses` and `best_addr`
 //! into one place together.  The aim is for external places to not directly interact with
 //! the inside and instead only notifies this struct of state changes to each path.
-
+//!
+//! [`NodeState`]: super::node_state::NodeState
 </span><span class="kw">use </span>std::collections::BTreeMap;
 <span class="kw">use </span>std::net::SocketAddr;
 <span class="kw">use </span>std::time::{Duration, Instant};
@@ -165,12 +197,42 @@
 <span class="kw">use </span><span class="kw">super</span>::node_state::{PathState, PongReply};
 <span class="kw">use </span><span class="kw">super</span>::IpPort;
 
-<span class="attr">#[derive(Debug)]
+<span class="doccomment">/// The address on which to send datagrams over UDP.
+///
+/// The [`MagicSock`] sends packets to zero or one UDP address, depending on the known paths
+/// to the remote node.  This conveys the UDP address to send on from the [`NodeUdpPaths`]
+/// to the [`NodeState`].
+///
+/// [`NodeUdpPaths`] contains all the UDP path states, while [`NodeState`] has to decide the
+/// bigger picture including the relay server.
+///
+/// See [`NodeUdpPaths::send_addr`].
+///
+/// [`MagicSock`]: crate::magicsocket::MagicSock
+/// [`NodeState`]: super::node_state::NodeState
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>UdpSendAddr {
-    Valid(SocketAddr),
-    Outdated(SocketAddr),
-    Unconfirmed(SocketAddr),
-    <span class="prelude-val">None</span>,
+    <span class="doccomment">/// The UDP address can be relied on to deliver data to the remote node.
+    ///
+    /// This means this path is usable with a reasonable latency and can be fully trusted to
+    /// transport payload data to the remote node.
+    </span>Valid(SocketAddr),
+    <span class="doccomment">/// The UDP address is highly likely to work, but has not been used for a while.
+    ///
+    /// The path should be usable but has not carried DISCO or payload data for a little too
+    /// long.  It is best to also use a backup, i.e. relay, path if possible.
+    </span>Outdated(SocketAddr),
+    <span class="doccomment">/// The UDP address is not known to work, but it might.
+    ///
+    /// We know this UDP address belongs to the remote node, but we do not know if the path
+    /// already works or may need holepunching before it will start to work.  It migt even
+    /// never work.  It is still useful to send to this together with backup path,
+    /// i.e. relay, in case the path works: if the path does not need holepunching it might
+    /// be much faster.  And if there is no relay path at all it might be the only way to
+    /// establish a connection.
+    </span>Unconfirmed(SocketAddr),
+    <span class="doccomment">/// No known UDP path exists to the remote node.
+    </span><span class="prelude-val">None</span>,
 }
 
 <span class="doccomment">/// The UDP paths for a single node.
@@ -220,9 +282,9 @@
             best_addr::State::Outdated(addr) =&gt; UdpSendAddr::Outdated(addr.addr),
             best_addr::State::Empty =&gt; {
                 <span class="comment">// No direct connection has been used before.  If we know of any possible
-                // candidate addresses, randomlly try to use one.  This path is most
+                // candidate addresses, randomly try to use one.  This path is most
                 // effective when folks use a NodeAddr with exactly one direct address which
-                // they know to work, effectively like using a traditional socket or quic
+                // they know to work, effectively like using a traditional socket or QUIC
                 // endpoint.
                 </span><span class="kw">let </span>addr = <span class="self">self
                     </span>.chosen_candidate
@@ -239,7 +301,7 @@
                             .filter_map(|path| path.udp_addr())
                             .filter(|addr| addr.is_ipv4() || have_ipv6)
                             .choose(<span class="kw-2">&amp;mut </span>rand::thread_rng());
-                        <span class="self">self</span>.chosen_candidate = addr.as_ref().map(|addr| IpPort::from(<span class="kw-2">*</span>addr));
+                        <span class="self">self</span>.chosen_candidate = addr.clone().map(IpPort::from);
                         addr
                     });
                 <span class="kw">match </span>addr {
@@ -250,7 +312,7 @@
         }
     }
 
-    <span class="doccomment">/// Fixup best_adrr from candidates.
+    <span class="doccomment">/// Fixup best_addr from candidates.
     ///
     /// If somehow we end up in a state where we failed to set a best_addr, while we do have
     /// valid candidates, this will chose a candidate and set best_addr again.  Most likely
