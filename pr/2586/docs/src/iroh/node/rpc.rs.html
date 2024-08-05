@@ -1261,6 +1261,10 @@
 <a href="#1261" id="1261">1261</a>
 <a href="#1262" id="1262">1262</a>
 <a href="#1263" id="1263">1263</a>
+<a href="#1264" id="1264">1264</a>
+<a href="#1265" id="1265">1265</a>
+<a href="#1266" id="1266">1266</a>
+<a href="#1267" id="1267">1267</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::{Arc, Mutex};
@@ -2484,7 +2488,11 @@
                             remaining_nodes -= <span class="number">1</span>;
                             <span class="kw">let </span>node_id = node.node_id;
                             <span class="kw">if </span>node_id == endpoint.node_id() {
-                                <span class="macro">debug!</span>(<span class="question-mark">?</span>remaining_nodes, <span class="string">"skip node {} (it is the node id of ourselves)"</span>,                                    node_id.fmt_short());
+                                <span class="macro">debug!</span>(
+                                    <span class="question-mark">?</span>remaining_nodes,
+                                    <span class="string">"skip node {} (it is the node id of ourselves)"</span>,
+                                    node_id.fmt_short()
+                                );
                                 <span class="kw">continue </span><span class="lifetime">'inner</span>;
                             }
                             <span class="kw">match </span>endpoint.connect(node, iroh_blobs::protocol::ALPN).<span class="kw">await </span>{
