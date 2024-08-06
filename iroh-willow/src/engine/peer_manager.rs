@@ -268,7 +268,7 @@ impl PeerManager {
                 let abort_handle = self.tasks.spawn({
                     let endpoint = self.endpoint.clone();
                     async move {
-                        let conn = endpoint.connect_by_node_id(&peer, ALPN).await?;
+                        let conn = endpoint.connect_by_node_id(peer, ALPN).await?;
                         WillowConn::alfie(conn, endpoint.node_id(), our_nonce).await
                     }
                     .map(move |res| (peer, res))

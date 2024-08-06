@@ -1,0 +1,59 @@
+name: Docs Preview
+
+on:
+  pull_request:
+
+env:
+  IROH_FORCE_STAGING_RELAYS: "1"
+
+jobs:
+  preview_docs:
+    timeout-minutes: 30
+    name: Docs preview
+    if: "github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork"
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+      SCCACHE_CACHE_SIZE: "50G"
+      PREVIEW_PATH: pr/${{ github.event.pull_request.number }}/docs
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: nightly-2024-05-02
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.5
+
+    - name: Generate Docs
+      run: cargo doc --workspace --all-features --no-deps
+      env:
+        RUSTDOCFLAGS: --cfg docsrs
+
+    - name: Deploy Docs to Preview Branch
+      uses: peaceiris/actions-gh-pages@v4
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./target/doc/
+        destination_dir: ${{ env.PREVIEW_PATH }}
+        publish_branch: generated-docs-preview
+
+    - name: Find Docs Comment
+      uses: peter-evans/find-comment@v3
+      id: fc
+      with:
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-author: 'github-actions[bot]'
+        body-includes: Documentation for this PR has been generated
+
+    - name: Create or Update Docs Comment
+      uses: peter-evans/create-or-update-comment@v4
+      with:
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-id: ${{ steps.fc.outputs.comment-id }}
+        body: |
+          Documentation for this PR has been generated and is available at: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/${{ env.PREVIEW_PATH }}/iroh/
+          
+          Last updated: ${{ github.event.pull_request.updated_at }}
+        edit-mode: replace

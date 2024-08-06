@@ -18,6 +18,7 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.76"
   SCCACHE_CACHE_SIZE: "50G"
+  IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
   tests:
@@ -36,12 +37,13 @@ jobs:
         target:
            # cross tests are currently broken vor armv7 and aarch64
            # see https://github.com/cross-rs/cross/issues/1311
-          - armv7-linux-androideabi
-          - aarch64-linux-android
+          # - armv7-linux-androideabi
+          # - aarch64-linux-android
           # Freebsd execution fails in cross
           # - i686-unknown-freebsd # Linking fails :/
           - x86_64-unknown-freebsd
-          - x86_64-unknown-netbsd
+          # Netbsd execution fails to link in cross
+          # - x86_64-unknown-netbsd
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -56,9 +58,8 @@ jobs:
       run: |
         docker kill $(docker ps -q)
 
-    - name: Install cross
       # See https://github.com/cross-rs/cross/issues/1222
-      run: cargo install cross --git https://github.com/cross-rs/cross
+    - uses: taiki-e/install-action@cross
 
     - name: build
       # cross tests are currently broken vor armv7 and aarch64
@@ -67,6 +68,52 @@ jobs:
       run: cross build --all --target ${{ matrix.target }}
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
+
+  android_build:
+    name: Android Build Only
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    timeout-minutes: 30
+    # runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-linux-android
+          - armv7-linux-androideabi
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        target: ${{ matrix.target }}
+    - name: Install rustup target
+      run: rustup target add ${{ matrix.target }}
+
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+    
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+
+    - name: Setup Android NDK
+      uses: arqu/setup-ndk@main
+      id: setup-ndk
+      with:
+        ndk-version: r23
+        add-to-path: true
+
+    - name: Build
+      env:
+        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      run: | 
+        cargo install cargo-ndk
+        cargo ndk --target ${{ matrix.target }} build
 
   cross_test:
     name: Cross Test
@@ -92,9 +139,8 @@ jobs:
       run: |
         docker kill $(docker ps -q)
 
-    - name: Install cross
       # See https://github.com/cross-rs/cross/issues/1222
-      run: cargo install cross --git https://github.com/cross-rs/cross
+    - uses: taiki-e/install-action@cross
 
     - name: test
       run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
@@ -128,7 +174,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
+        uses: mozilla-actions/sccache-action@v0.0.5
 
       - name: Setup Environment (PR)
         if: ${{ github.event_name == 'pull_request' }}
@@ -163,7 +209,7 @@ jobs:
         components: rustfmt
 
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.4
+      uses: mozilla-actions/sccache-action@v0.0.5
 
     - name: fmt
       run: cargo fmt --all -- --check
@@ -181,7 +227,7 @@ jobs:
       with:
         toolchain: nightly-2024-05-02
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.4
+      uses: mozilla-actions/sccache-action@v0.0.5
 
     - name: Docs
       run: cargo doc --workspace --all-features --no-deps --document-private-items
@@ -200,7 +246,7 @@ jobs:
       with:
         components: clippy
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.4
+      uses: mozilla-actions/sccache-action@v0.0.5
 
     # TODO: We have a bunch of platform-dependent code so should
     #    probably run this job on the full platform matrix
@@ -212,6 +258,20 @@ jobs:
 
     - name: clippy check (default features)
       run: cargo clippy --workspace --all-targets
+
+  check_typos:
+    timeout-minutes: 30
+    name: Checking typos
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+    steps:
+    - uses: actions/checkout@v4
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: typos-cli
+    - run: typos
 
   msrv:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
@@ -227,7 +287,7 @@ jobs:
       with:
         toolchain: ${{ env.MSRV }}
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.4
+      uses: mozilla-actions/sccache-action@v0.0.5
 
     - name: Check MSRV all features
       run: |
@@ -264,7 +324,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.4
+      uses: mozilla-actions/sccache-action@v0.0.5
 
     - name: Build iroh
       run: |
@@ -350,3 +410,51 @@ jobs:
         d=$(cat report_metro_integration.txt)
         metro_data=$(printf "%s\n " "$d")
         echo "$metro_data"
+
+  docker_build_and_test:
+    name: Docker Test
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    timeout-minutes: 30
+    runs-on: [self-hosted, linux, X64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: n0computer/iroh-test:latest
+          target: iroh
+          platforms: linux/amd64
+          file: docker/Dockerfile
+  
+      - name: Run Docker image & node stats test
+        run: |
+          docker run -p 9090:9090 -p 4919:4919/udp -Pd n0computer/iroh-test:latest --rpc-addr 0.0.0.0:4919 start
+          cargo run --bin iroh -- --rpc-addr 127.0.0.1:4919 node stats
+
+      - name: Cleanup Docker
+        continue-on-error: true
+        run: |
+          docker kill $(docker ps -q)
+
+  codespell:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - run: pip install --user codespell[toml]
+    - run: codespell --ignore-words-list=ans,crate,inout,ratatui,ser,stayin,swarmin,worl --skip=CHANGELOG.md
