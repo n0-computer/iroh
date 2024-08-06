@@ -1702,6 +1702,39 @@ impl AsyncUdpSocket for Handle {
             (_, Some(ipv6)) => Ok(*ipv6),
         }
     }
+
+    fn max_transmit_segments(&self) -> usize {
+        // TODO(matheus23): Do we need to account for the relay somehow?
+        if let Some(pconn6) = self.pconn6.as_ref() {
+            std::cmp::max(
+                pconn6.max_transmit_segments(),
+                self.pconn4.max_transmit_segments(),
+            )
+        } else {
+            self.pconn4.max_transmit_segments()
+        }
+    }
+
+    fn max_receive_segments(&self) -> usize {
+        // TODO(matheus23): Do we need to account for the relay somehow?
+        if let Some(pconn6) = self.pconn6.as_ref() {
+            std::cmp::max(
+                pconn6.max_receive_segments(),
+                self.pconn4.max_receive_segments(),
+            )
+        } else {
+            self.pconn4.max_receive_segments()
+        }
+    }
+
+    fn may_fragment(&self) -> bool {
+        // TODO(matheus23): Do we need to account for the relay somehow?
+        if let Some(pconn6) = self.pconn6.as_ref() {
+            pconn6.may_fragment() || self.pconn4.may_fragment()
+        } else {
+            self.pconn4.may_fragment()
+        }
+    }
 }
 
 #[derive(Debug)]

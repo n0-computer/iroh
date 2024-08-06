@@ -97,6 +97,18 @@ impl AsyncUdpSocket for UdpConn {
     fn local_addr(&self) -> io::Result<SocketAddr> {
         self.io.local_addr()
     }
+
+    fn may_fragment(&self) -> bool {
+        self.inner.may_fragment()
+    }
+
+    fn max_transmit_segments(&self) -> usize {
+        self.inner.max_gso_segments()
+    }
+
+    fn max_receive_segments(&self) -> usize {
+        self.inner.gro_segments()
+    }
 }
 
 fn bind(port: u16, network: IpFamily) -> anyhow::Result<UdpSocket> {
