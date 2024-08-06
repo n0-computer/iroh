@@ -1015,7 +1015,7 @@ fn bold<T: Display>(x: T) -> String {
 }
 
 fn to_z32(node_id: NodeId) -> String {
-    pkarr::PublicKey::try_from(*node_id.as_bytes())
+    pkarr::PublicKey::try_from(node_id.as_bytes())
         .unwrap()
         .to_z32()
 }
