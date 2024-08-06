@@ -65,7 +65,7 @@ impl GossipCommands {
                         line = input_lines.next_line() => {
                             let line = line.context("failed to read from stdin")?;
                             if let Some(line) = line {
-                                sink.send(iroh_gossip::dispatcher::Command::Broadcast(line.into())).await?;
+                                sink.send(iroh_gossip::net::Command::Broadcast(line.into())).await?;
                             } else {
                                 break;
                             }
@@ -73,14 +73,14 @@ impl GossipCommands {
                         res = stream.next() => {
                             let res = res.context("gossip stream ended")?.context("failed to read gossip stream")?;
                             match res {
-                                iroh_gossip::dispatcher::Event::Gossip(event) => {
+                                iroh_gossip::net::Event::Gossip(event) => {
                                     if verbose {
                                         println!("{:?}", event);
-                                    } else if let iroh_gossip::dispatcher::GossipEvent::Received(iroh_gossip::dispatcher::Message { content, .. }) = event {
+                                    } else if let iroh_gossip::net::GossipEvent::Received(iroh_gossip::net::Message { content, .. }) = event {
                                         println!("{:?}", content);
                                     }
                                 }
-                                iroh_gossip::dispatcher::Event::Lagged => {
+                                iroh_gossip::net::Event::Lagged => {
                                     anyhow::bail!("gossip stream lagged");
                                 }
                             };

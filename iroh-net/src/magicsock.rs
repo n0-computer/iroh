@@ -486,7 +486,10 @@ impl MagicSock {
             "sending",
         );
         let mut transmit = transmit.clone();
-        match self.node_map.get_send_addrs(dest) {
+        match self
+            .node_map
+            .get_send_addrs(dest, self.ipv6_reported.load(Ordering::Relaxed))
+        {
             Some((node_id, udp_addr, relay_url, msgs)) => {
                 let mut pings_sent = false;
                 // If we have pings to send, we *have* to send them out first.

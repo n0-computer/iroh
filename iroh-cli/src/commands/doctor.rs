@@ -23,7 +23,7 @@ use iroh::{
     base::ticket::{BlobTicket, Ticket},
     blobs::{
         store::{ReadableStore, Store as _},
-        util::progress::{FlumeProgressSender, ProgressSender},
+        util::progress::{AsyncChannelProgressSender, ProgressSender},
     },
     docs::{Capability, DocTicket},
     net::{
@@ -1145,28 +1145,28 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
         Commands::TicketInspect { ticket, zbase32 } => inspect_ticket(&ticket, zbase32),
         Commands::BlobConsistencyCheck { path, repair } => {
             let blob_store = iroh::blobs::store::fs::Store::load(path).await?;
-            let (send, recv) = flume::bounded(1);
+            let (send, recv) = async_channel::bounded(1);
             let task = tokio::spawn(async move {
-                while let Ok(msg) = recv.recv_async().await {
+                while let Ok(msg) = recv.recv().await {
                     println!("{:?}", msg);
                 }
             });
             blob_store
-                .consistency_check(repair, FlumeProgressSender::new(send).boxed())
+                .consistency_check(repair, AsyncChannelProgressSender::new(send).boxed())
                 .await?;
             task.await?;
             Ok(())
         }
         Commands::BlobValidate { path, repair } => {
             let blob_store = iroh::blobs::store::fs::Store::load(path).await?;
-            let (send, recv) = flume::bounded(1);
+            let (send, recv) = async_channel::bounded(1);
             let task = tokio::spawn(async move {
-                while let Ok(msg) = recv.recv_async().await {
+                while let Ok(msg) = recv.recv().await {
                     println!("{:?}", msg);
                 }
             });
             blob_store
-                .validate(repair, FlumeProgressSender::new(send).boxed())
+                .validate(repair, AsyncChannelProgressSender::new(send).boxed())
                 .await?;
             task.await?;
             Ok(())

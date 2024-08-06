@@ -27,8 +27,12 @@
 //!   requests to a single node is also limited.
 
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{
+        hash_map::{self, Entry},
+        HashMap, HashSet,
+    },
     fmt,
+    future::Future,
     num::NonZeroUsize,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -46,7 +50,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
 };
-use tokio_util::{sync::CancellationToken, time::delay_queue};
+use tokio_util::{either::Either, sync::CancellationToken, time::delay_queue};
 use tracing::{debug, error_span, trace, warn, Instrument};
 
 use crate::{
@@ -75,13 +79,15 @@ pub struct IntentId(pub u64);
 /// Trait modeling a dialer. This allows for IO-less testing.
 pub trait Dialer: Stream<Item = (NodeId, anyhow::Result<Self::Connection>)> + Unpin {
     /// Type of connections returned by the Dialer.
-    type Connection: Clone;
+    type Connection: Clone + 'static;
     /// Dial a node.
     fn queue_dial(&mut self, node_id: NodeId);
     /// Get the number of dialing nodes.
     fn pending_count(&self) -> usize;
     /// Check if a node is being dialed.
     fn is_pending(&self, node: NodeId) -> bool;
+    /// Get the node id of our node.
+    fn node_id(&self) -> NodeId;
 }
 
 /// Signals what should be done with the request when it fails.
@@ -97,20 +103,39 @@ pub enum FailureAction {
     RetryLater(anyhow::Error),
 }
 
-/// Future of a get request.
-type GetFut = BoxedLocal<InternalDownloadResult>;
+/// Future of a get request, for the checking stage.
+type GetStartFut<N> = BoxedLocal<Result<GetOutput<N>, FailureAction>>;
+/// Future of a get request, for the downloading stage.
+type GetProceedFut = BoxedLocal<InternalDownloadResult>;
 
 /// Trait modelling performing a single request over a connection. This allows for IO-less testing.
 pub trait Getter {
     /// Type of connections the Getter requires to perform a download.
-    type Connection;
-    /// Return a future that performs the download using the given connection.
+    type Connection: 'static;
+    /// Type of the intermediary state returned from [`Self::get`] if a connection is needed.
+    type NeedsConn: NeedsConn<Self::Connection>;
+    /// Returns a future that checks the local store if the request is already complete, returning
+    /// a struct implementing [`NeedsConn`] if we need a network connection to proceed.
     fn get(
         &mut self,
         kind: DownloadKind,
-        conn: Self::Connection,
         progress_sender: BroadcastProgressSender,
-    ) -> GetFut;
+    ) -> GetStartFut<Self::NeedsConn>;
+}
+
+/// Trait modelling the intermediary state when a connection is needed to proceed.
+pub trait NeedsConn<C>: std::fmt::Debug + 'static {
+    /// Proceeds the download with the given connection.
+    fn proceed(self, conn: C) -> GetProceedFut;
+}
+
+/// Output returned from [`Getter::get`].
+#[derive(Debug)]
+pub enum GetOutput<N> {
+    /// The request is already complete in the local store.
+    Complete(Stats),
+    /// The request needs a connection to continue.
+    NeedsConn(N),
 }
 
 /// Concurrency limits for the [`Downloader`].
@@ -280,7 +305,7 @@ pub struct DownloadHandle {
     receiver: oneshot::Receiver<ExternalDownloadResult>,
 }
 
-impl std::future::Future for DownloadHandle {
+impl Future for DownloadHandle {
     type Output = ExternalDownloadResult;
 
     fn poll(
@@ -424,10 +449,12 @@ struct IntentHandlers {
 }
 
 /// Information about a request.
-#[derive(Debug, Default)]
-struct RequestInfo {
+#[derive(Debug)]
+struct RequestInfo<NC> {
     /// Registered intents with progress senders and result callbacks.
     intents: HashMap<IntentId, IntentHandlers>,
+    progress_sender: BroadcastProgressSender,
+    get_state: Option<NC>,
 }
 
 /// Information about a request in progress.
@@ -529,7 +556,7 @@ struct Service<G: Getter, D: Dialer> {
     /// Queue of pending downloads.
     queue: Queue,
     /// Information about pending and active requests.
-    requests: HashMap<DownloadKind, RequestInfo>,
+    requests: HashMap<DownloadKind, RequestInfo<G::NeedsConn>>,
     /// State of running downloads.
     active_requests: HashMap<DownloadKind, ActiveRequestInfo>,
     /// Tasks for currently running downloads.
@@ -666,48 +693,85 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             on_progress: progress,
         };
 
-        // early exit if no providers.
-        if nodes.is_empty() && self.providers.get_candidates(&kind.hash()).next().is_none() {
-            self.finalize_download(
-                kind,
-                [(intent_id, intent_handlers)].into(),
-                Err(DownloadError::NoProviders),
-            );
-            return;
-        }
-
         // add the nodes to the provider map
-        let updated = self
-            .providers
-            .add_hash_with_nodes(kind.hash(), nodes.iter().map(|n| n.node_id));
+        // (skip the node id of our own node - we should never attempt to download from ourselves)
+        let node_ids = nodes
+            .iter()
+            .map(|n| n.node_id)
+            .filter(|node_id| *node_id != self.dialer.node_id());
+        let updated = self.providers.add_hash_with_nodes(kind.hash(), node_ids);
 
         // queue the transfer (if not running) or attach to transfer progress (if already running)
-        if self.active_requests.contains_key(&kind) {
-            // the transfer is already running, so attach the progress sender
-            if let Some(on_progress) = &intent_handlers.on_progress {
-                // this is async because it sends the current state over the progress channel
-                if let Err(err) = self
-                    .progress_tracker
-                    .subscribe(kind, on_progress.clone())
-                    .await
-                {
-                    debug!(?err, %kind, "failed to subscribe progress sender to transfer");
+        match self.requests.entry(kind) {
+            hash_map::Entry::Occupied(mut entry) => {
+                if let Some(on_progress) = &intent_handlers.on_progress {
+                    // this is async because it sends the current state over the progress channel
+                    if let Err(err) = self
+                        .progress_tracker
+                        .subscribe(kind, on_progress.clone())
+                        .await
+                    {
+                        debug!(?err, %kind, "failed to subscribe progress sender to transfer");
+                    }
                 }
+                entry.get_mut().intents.insert(intent_id, intent_handlers);
             }
-        } else {
-            // the transfer is not running.
-            if updated && self.queue.is_parked(&kind) {
-                // the transfer is on hold for pending retries, and we added new nodes, so move back to queue.
-                self.queue.unpark(&kind);
-            } else if !self.queue.contains(&kind) {
-                // the transfer is not yet queued: add to queue.
+            hash_map::Entry::Vacant(entry) => {
+                tracing::warn!("is new, queue");
+                let progress_sender = self.progress_tracker.track(
+                    kind,
+                    intent_handlers
+                        .on_progress
+                        .clone()
+                        .into_iter()
+                        .collect::<Vec<_>>(),
+                );
+
+                let get_state = match self.getter.get(kind, progress_sender.clone()).await {
+                    Err(_err) => {
+                        self.finalize_download(
+                            kind,
+                            [(intent_id, intent_handlers)].into(),
+                            // TODO: add better error variant? this is only triggered if the local
+                            // store failed with local IO.
+                            Err(DownloadError::DownloadFailed),
+                        );
+                        return;
+                    }
+                    Ok(GetOutput::Complete(stats)) => {
+                        self.finalize_download(
+                            kind,
+                            [(intent_id, intent_handlers)].into(),
+                            Ok(stats),
+                        );
+                        return;
+                    }
+                    Ok(GetOutput::NeedsConn(state)) => {
+                        // early exit if no providers.
+                        if self.providers.get_candidates(&kind.hash()).next().is_none() {
+                            self.finalize_download(
+                                kind,
+                                [(intent_id, intent_handlers)].into(),
+                                Err(DownloadError::NoProviders),
+                            );
+                            return;
+                        }
+                        state
+                    }
+                };
+                entry.insert(RequestInfo {
+                    intents: [(intent_id, intent_handlers)].into_iter().collect(),
+                    progress_sender,
+                    get_state: Some(get_state),
+                });
                 self.queue.insert(kind);
             }
         }
 
-        // store the request info
-        let request_info = self.requests.entry(kind).or_default();
-        request_info.intents.insert(intent_id, intent_handlers);
+        if updated && self.queue.is_parked(&kind) {
+            // the transfer is on hold for pending retries, and we added new nodes, so move back to queue.
+            self.queue.unpark(&kind);
+        }
     }
 
     /// Cancels a download intent.
@@ -860,7 +924,6 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     ) {
         self.progress_tracker.remove(&kind);
         self.remove_hash_if_not_queued(&kind.hash());
-        let result = result.map_err(|_| DownloadError::DownloadFailed);
         for (_id, handlers) in intents.into_iter() {
             handlers.on_finish.send(result.clone()).ok();
         }
@@ -1082,14 +1145,9 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     /// Panics if hash is not in self.requests or node is not in self.nodes.
     fn start_download(&mut self, kind: DownloadKind, node: NodeId) {
         let node_info = self.connected_nodes.get_mut(&node).expect("node exists");
-        let request_info = self.requests.get(&kind).expect("hash exists");
-
-        // create a progress sender and subscribe all intents to the progress sender
-        let subscribers = request_info
-            .intents
-            .values()
-            .flat_map(|state| state.on_progress.clone());
-        let progress_sender = self.progress_tracker.track(kind, subscribers);
+        let request_info = self.requests.get_mut(&kind).expect("request exists");
+        let progress = request_info.progress_sender.clone();
+        // .expect("queued state exists");
 
         // create the active request state
         let cancellation = CancellationToken::new();
@@ -1098,7 +1156,15 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             node,
         };
         let conn = node_info.conn.clone();
-        let get_fut = self.getter.get(kind, conn, progress_sender);
+
+        // If this is the first provider node we try, we have an initial state
+        // from starting the generator in Self::handle_queue_new_download.
+        // If this not the first provider node we try, we have to recreate the generator, because
+        // we can only resume it once.
+        let get_state = match request_info.get_state.take() {
+            Some(state) => Either::Left(async move { Ok(GetOutput::NeedsConn(state)) }),
+            None => Either::Right(self.getter.get(kind, progress)),
+        };
         let fut = async move {
             // NOTE: it's an open question if we should do timeouts at this point. Considerations from @Frando:
             // > at this stage we do not know the size of the download, so the timeout would have
@@ -1106,9 +1172,16 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             // > this means that a super slow node would block a download from succeeding for a long
             // > time, while faster nodes could be readily available.
             // As a conclusion, timeouts should be added only after downloads are known to be bounded
+            let fut = async move {
+                match get_state.await? {
+                    GetOutput::Complete(stats) => Ok(stats),
+                    GetOutput::NeedsConn(state) => state.proceed(conn).await,
+                }
+            };
+            tokio::pin!(fut);
             let res = tokio::select! {
                 _ = cancellation.cancelled() => Err(FailureAction::AllIntentsDropped),
-                res = get_fut => res
+                res = &mut fut => res
             };
             trace!("transfer finished");
 
@@ -1432,5 +1505,9 @@ impl Dialer for iroh_net::dialer::Dialer {
 
     fn is_pending(&self, node: NodeId) -> bool {
         self.is_pending(node)
+    }
+
+    fn node_id(&self) -> NodeId {
+        self.endpoint().node_id()
     }
 }
