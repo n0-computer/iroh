@@ -272,6 +272,8 @@
 <a href="#272" id="272">272</a>
 <a href="#273" id="273">273</a>
 <a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Topic handles for sending and receiving on a gossip topic.
 //!
 //! These are returned from [`super::Gossip`].
@@ -455,7 +457,7 @@
 
 <span class="doccomment">/// Events emitted from a gossip topic with a lagging notification.
 ///
-/// This is items of the [`GossipReceiver`] stream. It wraps the actual gossip events to also
+/// This is the item of the [`GossipReceiver`] stream. It wraps the actual gossip events to also
 /// provide a notification if we missed gossip events for the topic.
 </span><span class="attr">#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 </span><span class="kw">pub enum </span>Event {
@@ -466,6 +468,8 @@
 }
 
 <span class="doccomment">/// Events emitted from a gossip topic.
+///
+/// These are the events emitted from a [`GossipReceiver`], wrapped in [`Event::Gossip`].
 </span><span class="attr">#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 </span><span class="kw">pub enum </span>GossipEvent {
     <span class="doccomment">/// We joined the topic with at least one peer.

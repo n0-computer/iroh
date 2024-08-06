@@ -2,7 +2,7 @@
     Gossip(<a class="enum" href="enum.GossipEvent.html" title="enum iroh_gossip::net::GossipEvent">GossipEvent</a>),
     Lagged,
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Events emitted from a gossip topic with a lagging notification.</p>
-<p>This is items of the <a href="struct.GossipReceiver.html" title="struct iroh_gossip::net::GossipReceiver"><code>GossipReceiver</code></a> stream. It wraps the actual gossip events to also
+<p>This is the item of the <a href="struct.GossipReceiver.html" title="struct iroh_gossip::net::GossipReceiver"><code>GossipReceiver</code></a> stream. It wraps the actual gossip events to also
 provide a notification if we missed gossip events for the topic.</p>
 </div></details><h2 id="variants" class="variants section-header">Variants<a href="#variants" class="anchor">§</a></h2><div class="variants"><section id="variant.Gossip" class="variant"><a href="#variant.Gossip" class="anchor">§</a><h3 class="code-header">Gossip(<a class="enum" href="enum.GossipEvent.html" title="enum iroh_gossip::net::GossipEvent">GossipEvent</a>)</h3></section><div class="docblock"><p>We received an event.</p>
 </div><section id="variant.Lagged" class="variant"><a href="#variant.Lagged" class="anchor">§</a><h3 class="code-header">Lagged</h3></section><div class="docblock"><p>We missed some messages because our <a href="struct.GossipReceiver.html" title="struct iroh_gossip::net::GossipReceiver"><code>GossipReceiver</code></a> was not progressing fast enough.</p>
