@@ -501,8 +501,9 @@ impl Actor {
                     neighbors,
                     event_senders,
                     command_rx_keys,
+                    joined,
                 } = state;
-                if !neighbors.is_empty() {
+                if *joined {
                     let neighbors = neighbors.iter().copied().collect();
                     channels
                         .event_tx
@@ -588,14 +589,15 @@ impl Actor {
                         continue;
                     };
                     let TopicState {
+                        joined,
                         neighbors,
                         event_senders,
                         command_rx_keys,
                     } = state;
                     let event = if let ProtoEvent::NeighborUp(neighbor) = event {
-                        let was_empty = neighbors.is_empty();
                         neighbors.insert(neighbor);
-                        if was_empty {
+                        if !*joined {
+                            *joined = true;
                             GossipEvent::Joined(vec![neighbor])
                         } else {
                             GossipEvent::NeighborUp(neighbor)
@@ -662,6 +664,7 @@ impl Default for PeerState {
 
 #[derive(Debug, Default)]
 struct TopicState {
+    joined: bool,
     neighbors: BTreeSet<NodeId>,
     event_senders: EventSenders,
     command_rx_keys: HashSet<stream_group::Key>,

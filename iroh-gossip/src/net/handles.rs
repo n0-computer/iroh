@@ -8,7 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use iroh_net::NodeId;
@@ -112,6 +112,7 @@ pub struct GossipReceiver {
     #[debug("EventStream")]
     stream: EventStream,
     neighbors: HashSet<NodeId>,
+    joined: bool,
 }
 
 impl GossipReceiver {
@@ -119,6 +120,7 @@ impl GossipReceiver {
         Self {
             stream: events_rx,
             neighbors: Default::default(),
+            joined: false,
         }
     }
 
@@ -128,9 +130,22 @@ impl GossipReceiver {
     }
 
     /// Waits until we are connected to at least one node.
+    ///
+    /// This progresses the stream until we received [`GossipEvent::Joined`], which is the first
+    /// item emitted on the stream.
+    ///
+    /// Note that this consumes the [`GossipEvent::Joined`] event. If you want to act on these
+    /// initial neighbors, use [`Self::neighbors`] after awaiting [`Self::joined`].
     pub async fn joined(&mut self) -> Result<()> {
-        while self.neighbors.is_empty() {
-            let _ = self.try_next().await?;
+        if !self.joined {
+            match self
+                .try_next()
+                .await?
+                .context("Gossip receiver closed before Joined event was received.")?
+            {
+                Event::Gossip(GossipEvent::Joined(_)) => {}
+                _ => anyhow::bail!("Expected Joined event to be the first event received."),
+            }
         }
         Ok(())
     }
@@ -148,6 +163,7 @@ impl Stream for GossipReceiver {
         if let Some(Ok(item)) = &item {
             match item {
                 Event::Gossip(GossipEvent::Joined(neighbors)) => {
+                    self.joined = true;
                     self.neighbors.extend(neighbors.iter().copied());
                 }
                 Event::Gossip(GossipEvent::NeighborUp(node_id)) => {
@@ -163,26 +179,32 @@ impl Stream for GossipReceiver {
     }
 }
 
-/// Update from a subscribed gossip topic.
+/// Events emitted from a gossip topic with a lagging notification.
+///
+/// This is the item of the [`GossipReceiver`] stream. It wraps the actual gossip events to also
+/// provide a notification if we missed gossip events for the topic.
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub enum Event {
-    /// A message was received.
+    /// We received an event.
     Gossip(GossipEvent),
-    /// We missed some messages.
+    /// We missed some messages because our [`GossipReceiver`] was not progressing fast enough.
     Lagged,
 }
 
-/// Gossip event
-/// An event to be emitted to the application for a particular topic.
+/// Events emitted from a gossip topic.
+///
+/// These are the events emitted from a [`GossipReceiver`], wrapped in [`Event::Gossip`].
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub enum GossipEvent {
     /// We joined the topic with at least one peer.
+    ///
+    /// This is the first event on a [`GossipReceiver`] and will only be emitted once.
     Joined(Vec<NodeId>),
-    /// We have a new, direct neighbor in the swarm membership layer for this topic
+    /// We have a new, direct neighbor in the swarm membership layer for this topic.
     NeighborUp(NodeId),
-    /// We dropped direct neighbor in the swarm membership layer for this topic
+    /// We dropped direct neighbor in the swarm membership layer for this topic.
     NeighborDown(NodeId),
-    /// A gossip message was received for this topic
+    /// We received a gossip message for this topic.
     Received(Message),
 }
 
