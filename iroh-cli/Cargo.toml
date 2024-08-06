@@ -51,7 +51,7 @@ quic-rpc = { version = "0.11", features = ["flume-transport", "quinn-transport"]
 quinn = { package = "iroh-quinn", version = "0.11" }
 rand = "0.8.5"
 ratatui = "0.26.2"
-reqwest = { version = "0.12.4", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rustyline = "12.0.0"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_with = "3.7.0"
