@@ -9,8 +9,10 @@ use crate::{
     Endpoint, NodeId,
 };
 
-/// The n0 testing DNS node origin
-pub const N0_DNS_NODE_ORIGIN: &str = "dns.iroh.link";
+/// The n0 testing DNS node origin, for production.
+pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
+/// The n0 testing DNS node origin, for testing.
+pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
 const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
 /// DNS node discovery
@@ -44,9 +46,17 @@ impl DnsDiscovery {
         Self { origin_domain }
     }
 
-    /// Create a new DNS discovery which uses the [`N0_DNS_NODE_ORIGIN`] origin domain.
+    /// Create a new DNS discovery which uses the [`N0_DNS_NODE_ORIGIN_PROD`] origin domain and in testing
+    /// uses [`N0_DNS_NODE_ORIGIN_STAGING`].
     pub fn n0_dns() -> Self {
-        Self::new(N0_DNS_NODE_ORIGIN.to_string())
+        #[cfg(not(any(test, feature = "test-utils")))]
+        {
+            Self::new(N0_DNS_NODE_ORIGIN_PROD.to_string())
+        }
+        #[cfg(any(test, feature = "test-utils"))]
+        {
+            Self::new(N0_DNS_NODE_ORIGIN_STAGING.to_string())
+        }
     }
 }
 

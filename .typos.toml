@@ -1,0 +1,25 @@
+[files]
+# We can't change the `CHANGELOG` without changing old commit message
+extend-exclude = [
+  "CHANGELOG_old.md",
+  "CHANGELOG.md"
+]
+
+[default]
+extend-ignore-re = [
+  # Line ignore with trailing `// spellchecker:disable-line`
+  "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",
+
+  # Abbreviations
+  "UPnP",
+
+  # Library name
+  "tung",
+
+  # Hex
+  "ba",
+]
+
+[default.extend-words]
+# Library name
+ratatui = "ratatui"

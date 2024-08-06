@@ -84,7 +84,7 @@ pub enum Event<PI> {
     Received(GossipEvent<PI>),
 }
 
-#[derive(Clone, derive_more::Debug, PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Clone, derive_more::Debug, PartialEq, Eq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct GossipEvent<PI> {
     /// The content of the gossip message.
     #[debug("<{}b>", content.len())]
@@ -234,8 +234,8 @@ pub struct Config {
     ///
     /// The plumtree paper notes:
     /// > The timeout value is a protocol parameter that should be configured considering the
-    /// diameter of the overlay and a target maximum recovery latency, defined by the application
-    /// requirements. (p.8)
+    /// > diameter of the overlay and a target maximum recovery latency, defined by the application
+    /// > requirements. (p.8)
     pub graft_timeout_1: Duration,
     /// This timeout is registered when sending a [`Graft`] message. If a reply has not been
     /// received once the timeout expires, we send another [`Graft`] message to the next peer that
@@ -243,7 +243,7 @@ pub struct Config {
     ///
     /// The plumtree paper notes:
     /// > This second timeout value should be smaller that the first, in the order of an average
-    /// round trip time to a neighbor.
+    /// > round trip time to a neighbor.
     pub graft_timeout_2: Duration,
     /// Timeout after which [`IHave`] messages are pushed to peers.
     pub dispatch_timeout: Duration,
@@ -561,11 +561,11 @@ impl<PI: PeerIdentity> State<PI> {
     /// Handle receiving a [`Message::IHave`].
     ///
     /// > When a node receives a IHAVE message, it simply marks the corresponding message as
-    /// missing It then starts a timer, with a predefined timeout value, and waits for the missing
-    /// message to be received via eager push before the timer expires. The timeout value is a
-    /// protocol parameter that should be configured considering the diameter of the overlay and a
-    /// target maximum recovery latency, defined by the application requirements. This is a
-    /// parameter that should be statically configured at deployment time. (p8)
+    /// > missing It then starts a timer, with a predefined timeout value, and waits for the missing
+    /// > message to be received via eager push before the timer expires. The timeout value is a
+    /// > protocol parameter that should be configured considering the diameter of the overlay and a
+    /// > target maximum recovery latency, defined by the application requirements. This is a
+    /// > parameter that should be statically configured at deployment time. (p8)
     fn on_ihave(&mut self, sender: PI, ihaves: Vec<IHave>, io: &mut impl IO<PI>) {
         for ihave in ihaves {
             if !self.received_messages.contains_key(&ihave.id) {
@@ -636,8 +636,8 @@ impl<PI: PeerIdentity> State<PI> {
 
     /// Handle a [`InEvent::NeighborDown`] when a peer leaves the topic.
     /// > When a neighbor is detected to leave the overlay, it is simple removed from the
-    /// membership. Furthermore, the record of IHAVE messages sent from failed members is deleted
-    /// from the missing history. (p9)
+    /// > membership. Furthermore, the record of IHAVE messages sent from failed members is deleted
+    /// > from the missing history. (p9)
     fn on_neighbor_down(&mut self, peer: PI) {
         self.missing_messages.retain(|_message_id, ihaves| {
             ihaves.retain(|(ihave_peer, _round)| *ihave_peer != peer);

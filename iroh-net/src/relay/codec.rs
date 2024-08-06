@@ -1,14 +1,16 @@
 use std::time::Duration;
 
-use anyhow::{bail, ensure, Context};
+use anyhow::{bail, ensure};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+#[cfg(feature = "iroh-relay")]
 use futures_lite::{Stream, StreamExt};
 use futures_sink::Sink;
 use futures_util::SinkExt;
 use iroh_base::key::{Signature, PUBLIC_KEY_LENGTH};
+use postcard::experimental::max_size::MaxSize;
+use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Decoder, Encoder};
 
-use super::types::ClientInfo;
 use crate::key::{PublicKey, SecretKey};
 
 /// The maximum size of a packet sent over relay.
@@ -21,8 +23,10 @@ const MAX_FRAME_SIZE: usize = 1024 * 1024;
 /// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
 const MAGIC: &str = "RELAY🔑";
 
+#[cfg(feature = "iroh-relay")]
 pub(super) const KEEP_ALIVE: Duration = Duration::from_secs(60);
 // TODO: what should this be?
+#[cfg(feature = "iroh-relay")]
 pub(super) const SERVER_CHANNEL_SIZE: usize = 1024 * 100;
 /// The number of packets buffered for sending per client
 pub(super) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512; //32;
@@ -30,8 +34,9 @@ pub(super) const PER_CLIENT_READ_QUEUE_DEPTH: usize = 512;
 
 /// ProtocolVersion is bumped whenever there's a wire-incompatible change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
-///  - version 2: received packets have src addrs in FrameType::RecvPacket at beginning
-/// NOTE: we are techincally running a modified version of the protocol.
+///  - version 2: received packets have src addrs in FrameType::RecvPacket at beginning.
+///
+/// NOTE: we are technically running a modified version of the protocol.
 /// `FrameType::PeerPresent`, `FrameType::WatchConn`, `FrameType::ClosePeer`, have been removed.
 /// The server will error on that connection if a client sends one of these frames.
 /// We have split with the DERP protocol significantly starting with our relay protocol 3
@@ -111,8 +116,14 @@ impl std::fmt::Display for FrameType {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, MaxSize, PartialEq, Eq)]
+pub(crate) struct ClientInfo {
+    /// The relay protocol version that the client was built with.
+    pub(crate) version: usize,
+}
+
 /// Writes complete frame, errors if it is unable to write within the given `timeout`.
-/// Ignores the timeout if `timeout.is_zero()`
+/// Ignores the timeout if `None`
 ///
 /// Does not flush.
 pub(super) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
@@ -154,9 +165,11 @@ pub(crate) async fn send_client_key<S: Sink<Frame, Error = std::io::Error> + Unp
 
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
+#[cfg(feature = "iroh-relay")]
 pub(super) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     stream: S,
 ) -> anyhow::Result<(PublicKey, ClientInfo)> {
+    use anyhow::Context;
     // the client is untrusted at this point, limit the input size even smaller than our usual
     // maximum frame size, and give a timeout
 
@@ -264,8 +277,31 @@ impl Frame {
         }
     }
 
+    /// Tries to decode a frame received over websockets.
+    ///
+    /// Specifically, bytes received from a binary websocket message frame.
+    pub(crate) fn decode_from_ws_msg(vec: Vec<u8>) -> anyhow::Result<Self> {
+        if vec.is_empty() {
+            bail!("error parsing relay::codec::Frame: too few bytes (0)");
+        }
+        let bytes = Bytes::from(vec);
+        let typ = FrameType::from(bytes[0]);
+        let frame = Self::from_bytes(typ, bytes.slice(1..))?;
+        Ok(frame)
+    }
+
+    /// Encodes this frame for sending over websockets.
+    ///
+    /// Specifically meant for being put into a binary websocket message frame.
+    pub(crate) fn encode_for_ws_msg(self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.put_u8(self.typ().into());
+        self.write_to(&mut bytes);
+        bytes
+    }
+
     /// Writes it self to the given buffer.
-    fn write_to(&self, dst: &mut BytesMut) {
+    fn write_to(&self, dst: &mut impl BufMut) {
         match self {
             Frame::ClientInfo {
                 client_public_key,
@@ -499,6 +535,7 @@ impl Encoder<Frame> for DerpCodec {
 
 /// Receives the next frame and matches the frame type. If the correct type is found returns the content,
 /// otherwise an error.
+#[cfg(feature = "iroh-relay")]
 pub(super) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     frame_type: FrameType,
     mut stream: S,
@@ -559,6 +596,94 @@ mod tests {
         let (client_pub_key, got_client_info) = recv_client_key(&mut reader).await?;
         assert_eq!(client_key.public(), client_pub_key);
         assert_eq!(client_info, got_client_info);
+        Ok(())
+    }
+
+    #[test]
+    fn test_frame_snapshot() -> anyhow::Result<()> {
+        let client_key = SecretKey::from_bytes(&[42u8; 32]);
+        let client_info = ClientInfo {
+            version: PROTOCOL_VERSION,
+        };
+        let message = postcard::to_stdvec(&client_info)?;
+        let signature = client_key.sign(&message);
+
+        let frames = vec![
+            (
+                Frame::ClientInfo {
+                    client_public_key: client_key.public(),
+                    message: Bytes::from(message),
+                    signature,
+                },
+                "02 52 45 4c 41 59 f0 9f 94 91 19 7f 6b 23 e1 6c
+                85 32 c6 ab c8 38 fa cd 5e a7 89 be 0c 76 b2 92
+                03 34 03 9b fa 8b 3d 36 8d 61 88 e7 7b 22 f2 92
+                ab 37 43 5d a8 de 0b c8 cb 84 e2 88 f4 e7 3b 35
+                82 a5 27 31 e9 ff 98 65 46 5c 87 e0 5e 8d 42 7d
+                f4 22 bb 6e 85 e1 c0 5f 6f 74 98 37 ba a4 a5 c7
+                eb a3 23 0d 77 56 99 10 43 0e 03",
+            ),
+            (
+                Frame::Health {
+                    problem: "Hello? Yes this is dog.".into(),
+                },
+                "0e 48 65 6c 6c 6f 3f 20 59 65 73 20 74 68 69 73
+                20 69 73 20 64 6f 67 2e",
+            ),
+            (Frame::KeepAlive, "06"),
+            (Frame::NotePreferred { preferred: true }, "07 01"),
+            (
+                Frame::PeerGone {
+                    peer: client_key.public(),
+                },
+                "08 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
+                a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
+                61",
+            ),
+            (
+                Frame::Ping { data: [42u8; 8] },
+                "0c 2a 2a 2a 2a 2a 2a 2a 2a",
+            ),
+            (
+                Frame::Pong { data: [42u8; 8] },
+                "0d 2a 2a 2a 2a 2a 2a 2a 2a",
+            ),
+            (
+                Frame::RecvPacket {
+                    src_key: client_key.public(),
+                    content: "Hello World!".into(),
+                },
+                "05 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
+                a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
+                61 48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
+            ),
+            (
+                Frame::SendPacket {
+                    dst_key: client_key.public(),
+                    packet: "Goodbye!".into(),
+                },
+                "04 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
+                a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
+                61 47 6f 6f 64 62 79 65 21",
+            ),
+            (
+                Frame::Restarting {
+                    reconnect_in: 10,
+                    try_for: 20,
+                },
+                "0f 00 00 00 0a 00 00 00 14",
+            ),
+        ];
+
+        for (frame, expected_hex) in frames {
+            let bytes = frame.encode_for_ws_msg();
+            // To regenerate the hexdumps:
+            // let hexdump = iroh_test::hexdump::print_hexdump(bytes, []);
+            // println!("{hexdump}");
+            let expected_bytes = iroh_test::hexdump::parse_hexdump(expected_hex)?;
+            assert_eq!(bytes, expected_bytes);
+        }
+
         Ok(())
     }
 }
@@ -661,6 +786,13 @@ mod proptests {
             let mut buf = BytesMut::new();
             DerpCodec.encode(frame.clone(), &mut buf).unwrap();
             let decoded = DerpCodec.decode(&mut buf).unwrap().unwrap();
+            prop_assert_eq!(frame, decoded);
+        }
+
+        #[test]
+        fn frame_ws_roundtrip(frame in frame()) {
+            let encoded = frame.clone().encode_for_ws_msg();
+            let decoded = Frame::decode_from_ws_msg(encoded).unwrap();
             prop_assert_eq!(frame, decoded);
         }
 

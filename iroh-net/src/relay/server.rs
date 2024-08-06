@@ -1,765 +1,1047 @@
-//! based on tailscale/derp/derp_server.go
+//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+//!
+//! This module provides an API to run a full fledged iroh-relay server.  It is primarily
+//! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
+//! other locations however.
+//!
+//! This code is fully written in a form of structured-concurrency: every spawned task is
+//! always attached to a handle and when the handle is dropped the tasks abort.  So tasks
+//! can not outlive their handle.  It is also always possible to await for completion of a
+//! task.  Some tasks additionally have a method to do graceful shutdown.
+
+use std::fmt;
+use std::future::Future;
+use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::task::{Context, Poll};
-use std::time::Duration;
 
-use anyhow::{bail, Context as _, Result};
-use hyper::HeaderMap;
-use iroh_metrics::core::UsageStatsReport;
-use iroh_metrics::{inc, report_usage_stats};
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
-use tokio_util::codec::Framed;
-use tokio_util::sync::CancellationToken;
-use tracing::{info_span, trace, Instrument};
+use anyhow::{anyhow, bail, Context, Result};
+use futures_lite::StreamExt;
+use http::response::Builder as ResponseBuilder;
+use http::{HeaderMap, Method, Request, Response, StatusCode};
+use hyper::body::Incoming;
+use iroh_metrics::inc;
+use tokio::net::{TcpListener, UdpSocket};
+use tokio::task::JoinSet;
+use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-use crate::key::{PublicKey, SecretKey};
+use crate::key::SecretKey;
+use crate::relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH};
+use crate::stun;
+use crate::util::AbortingJoinHandle;
 
-use super::{
-    client_conn::ClientConnBuilder,
-    clients::Clients,
-    codec::{
-        recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
-        SERVER_CHANNEL_SIZE,
-    },
-    metrics::Metrics,
-    types::ServerMessage,
-};
+// Module defined in this file.
+use stun_metrics::StunMetrics;
 
-// TODO: skipping `verboseDropKeys` for now
+pub(crate) mod actor;
+pub(crate) mod client_conn;
+mod clients;
+mod http_server;
+mod metrics;
+pub(crate) mod streams;
+pub(crate) mod types;
 
-static CONN_NUM: AtomicUsize = AtomicUsize::new(1);
-fn new_conn_num() -> usize {
-    CONN_NUM.fetch_add(1, Ordering::Relaxed)
+pub use self::actor::{ClientConnHandler, ServerActorTask};
+pub use self::metrics::Metrics;
+pub use self::streams::MaybeTlsStream as MaybeTlsStreamServer;
+
+const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
+const NO_CONTENT_RESPONSE_HEADER: &str = "X-Tailscale-Response";
+const NOTFOUND: &[u8] = b"Not Found";
+const RELAY_DISABLED: &[u8] = b"relay server disabled";
+const ROBOTS_TXT: &[u8] = b"User-agent: *\nDisallow: /\n";
+const INDEX: &[u8] = br#"<html><body>
+<h1>Iroh Relay</h1>
+<p>
+  This is an <a href="https://iroh.computer/">Iroh</a> Relay server.
+</p>
+"#;
+const TLS_HEADERS: [(&str, &str); 2] = [
+    ("Strict-Transport-Security", "max-age=63072000; includeSubDomains"),
+    ("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'self'; block-all-mixed-content; plugin-types 'none'")
+];
+
+type BytesBody = http_body_util::Full<hyper::body::Bytes>;
+type HyperError = Box<dyn std::error::Error + Send + Sync>;
+type HyperResult<T> = std::result::Result<T, HyperError>;
+
+/// Creates a new [`BytesBody`] with no content.
+fn body_empty() -> BytesBody {
+    http_body_util::Full::new(hyper::body::Bytes::new())
 }
 
-pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// A relay server.
+/// Configuration for the full Relay & STUN server.
 ///
-/// Responsible for managing connections to relay [`super::client::Client`]s, sending packets from one client to another.
+/// Be aware the generic parameters are for when using the Let's Encrypt TLS configuration.
+/// If not used dummy ones need to be provided, e.g. `ServerConfig::<(), ()>::default()`.
+#[derive(Debug, Default)]
+pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+    /// Configuration for the Relay server, disabled if `None`.
+    pub relay: Option<RelayConfig<EC, EA>>,
+    /// Configuration for the STUN server, disabled if `None`.
+    pub stun: Option<StunConfig>,
+    /// Socket to serve metrics on.
+    #[cfg(feature = "metrics")]
+    pub metrics_addr: Option<SocketAddr>,
+}
+
+/// Configuration for the Relay HTTP and HTTPS server.
+///
+/// This includes the HTTP services hosted by the Relay server, the Relay `/relay` HTTP
+/// endpoint is only one of the services served.
+#[derive(Debug)]
+pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+    /// The iroh secret key of the Relay server.
+    pub secret_key: SecretKey,
+    /// The socket address on which the Relay HTTP server should bind.
+    ///
+    /// Normally you'd choose port `80`.  The bind address for the HTTPS server is
+    /// configured in [`RelayConfig::tls`].
+    ///
+    /// If [`RelayConfig::tls`] is `None` then this serves all the HTTP services without
+    /// TLS.
+    pub http_bind_addr: SocketAddr,
+    /// TLS configuration for the HTTPS server.
+    ///
+    /// If *None* all the HTTP services that would be served here are served from
+    /// [`RelayConfig::http_bind_addr`].
+    pub tls: Option<TlsConfig<EC, EA>>,
+    /// Rate limits.
+    pub limits: Limits,
+}
+
+/// Configuration for the STUN server.
+#[derive(Debug)]
+pub struct StunConfig {
+    /// The socket address on which the STUN server should bind.
+    ///
+    /// Normally you'd chose port `3478`, see [`crate::defaults::DEFAULT_STUN_PORT`].
+    pub bind_addr: SocketAddr,
+}
+
+/// TLS configuration for Relay server.
+///
+/// Normally the Relay server accepts connections on both HTTPS and HTTP.
+#[derive(Debug)]
+pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+    /// The socket address on which to serve the HTTPS server.
+    ///
+    /// Since the captive portal probe has to run over plain text HTTP and TLS is used for
+    /// the main relay server this has to be on a different port.  When TLS is not enabled
+    /// this is served on the [`RelayConfig::http_bind_addr`] socket address.
+    ///
+    /// Normally you'd choose port `80`.
+    pub https_bind_addr: SocketAddr,
+    /// Mode for getting a cert.
+    pub cert: CertConfig<EC, EA>,
+}
+
+/// Rate limits.
+#[derive(Debug, Default)]
+pub struct Limits {
+    /// Rate limit for accepting new connection. Unlimited if not set.
+    pub accept_conn_limit: Option<f64>,
+    /// Burst limit for accepting new connection. Unlimited if not set.
+    pub accept_conn_burst: Option<usize>,
+}
+
+/// TLS certificate configuration.
+#[derive(derive_more::Debug)]
+pub enum CertConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+    /// Use Let's Encrypt.
+    LetsEncrypt {
+        /// Configuration for Let's Encrypt certificates.
+        #[debug("AcmeConfig")]
+        config: tokio_rustls_acme::AcmeConfig<EC, EA>,
+    },
+    /// Use a static TLS key and certificate chain.
+    Manual {
+        /// The TLS private key.
+        private_key: rustls::PrivateKey,
+        /// The TLS certificate chain.
+        certs: Vec<rustls::Certificate>,
+    },
+}
+
+/// A running Relay + STUN server.
+///
+/// This is a full Relay server, including STUN, Relay and various associated HTTP services.
+///
+/// Dropping this will stop the server.
 #[derive(Debug)]
 pub struct Server {
-    /// Optionally specifies how long to wait before failing when writing
-    /// to a client
-    write_timeout: Option<Duration>,
-    /// secret_key of the client
-    secret_key: SecretKey,
-    /// The DER encoded x509 cert to send after `LetsEncrypt` cert+intermediate.
-    meta_cert: Vec<u8>,
-    /// Channel on which to communicate to the [`ServerActor`]
-    server_channel: mpsc::Sender<ServerMessage>,
-    /// When true, the server has been shutdown.
-    closed: bool,
-    /// Server loop handler
-    loop_handler: JoinHandle<Result<()>>,
-    /// Done token, forces a hard shutdown. To gracefully shutdown, use [`Server::close`]
-    cancel: CancellationToken,
-    // TODO: stats collection
+    /// The address of the HTTP server, if configured.
+    http_addr: Option<SocketAddr>,
+    /// The address of the STUN server, if configured.
+    stun_addr: Option<SocketAddr>,
+    /// The address of the HTTPS server, if the relay server is using TLS.
+    ///
+    /// If the Relay server is not using TLS then it is served from the
+    /// [`Server::http_addr`].
+    https_addr: Option<SocketAddr>,
+    /// Handle to the relay server.
+    relay_handle: Option<http_server::ServerHandle>,
+    /// The main task running the server.
+    supervisor: AbortingJoinHandle<Result<()>>,
 }
 
 impl Server {
-    /// TODO: replace with builder
-    pub fn new(key: SecretKey) -> Self {
-        let (server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
-        let server_actor = ServerActor::new(key.public(), server_channel_r);
-        let cancel_token = CancellationToken::new();
-        let done = cancel_token.clone();
-        let server_task = tokio::spawn(
-            async move { server_actor.run(done).await }
-                .instrument(info_span!("relay.server", me = %key.public().fmt_short())),
-        );
-        let meta_cert = init_meta_cert(&key.public());
-        Self {
-            write_timeout: Some(WRITE_TIMEOUT),
-            secret_key: key,
-            meta_cert,
-            server_channel: server_channel_s,
-            closed: false,
-            loop_handler: server_task,
-            cancel: cancel_token,
-        }
-    }
+    /// Starts the server.
+    pub async fn spawn<EC, EA>(config: ServerConfig<EC, EA>) -> Result<Self>
+    where
+        EC: fmt::Debug + 'static,
+        EA: fmt::Debug + 'static,
+    {
+        let mut tasks = JoinSet::new();
 
-    /// Returns the server's secret key.
-    pub fn secret_key(&self) -> &SecretKey {
-        &self.secret_key
-    }
+        #[cfg(feature = "metrics")]
+        if let Some(addr) = config.metrics_addr {
+            debug!("Starting metrics server");
+            use iroh_metrics::core::Metric;
 
-    /// Returns the server's public key.
-    pub fn public_key(&self) -> PublicKey {
-        self.secret_key.public()
-    }
-
-    /// Closes the server and waits for the connections to disconnect.
-    pub async fn close(mut self) {
-        if !self.closed {
-            if let Err(err) = self.server_channel.send(ServerMessage::Shutdown).await {
-                tracing::warn!(
-                    "could not shutdown the server gracefully, doing a forced shutdown: {:?}",
-                    err
-                );
-                self.cancel.cancel();
-            }
-            match self.loop_handler.await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => tracing::warn!("error shutting down server: {e:?}"),
-                Err(e) => tracing::warn!("error waiting for the server process to close: {e:?}"),
-            }
-            self.closed = true;
-        }
-    }
-
-    /// Aborts the server.
-    ///
-    /// You should prefer to use [`Server::close`] for a graceful shutdown.
-    pub fn abort(&self) {
-        self.cancel.cancel();
-    }
-
-    /// Whether or not the relay [Server] is closed.
-    pub fn is_closed(&self) -> bool {
-        self.closed
-    }
-
-    /// Create a [`ClientConnHandler`], which can verify connections and add them to the
-    /// [`Server`].
-    pub fn client_conn_handler(&self, default_headers: HeaderMap) -> ClientConnHandler {
-        ClientConnHandler {
-            server_channel: self.server_channel.clone(),
-            secret_key: self.secret_key.clone(),
-            write_timeout: self.write_timeout,
-            default_headers: Arc::new(default_headers),
-        }
-    }
-
-    /// Returns the server metadata cert that can be sent by the TLS server to
-    /// let the client skip a round trip during start-up.
-    pub fn meta_cert(&self) -> &[u8] {
-        &self.meta_cert
-    }
-}
-
-/// Handle incoming connections to the Server.
-///
-/// Created by the [`Server`] by calling [`Server::client_conn_handler`].
-///
-/// Can be cheaply cloned.
-#[derive(Debug)]
-pub struct ClientConnHandler {
-    server_channel: mpsc::Sender<ServerMessage>,
-    secret_key: SecretKey,
-    write_timeout: Option<Duration>,
-    pub(super) default_headers: Arc<HeaderMap>,
-}
-
-impl Clone for ClientConnHandler {
-    fn clone(&self) -> Self {
-        Self {
-            server_channel: self.server_channel.clone(),
-            secret_key: self.secret_key.clone(),
-            write_timeout: self.write_timeout,
-            default_headers: Arc::clone(&self.default_headers),
-        }
-    }
-}
-
-impl ClientConnHandler {
-    /// Adds a new connection to the server and serves it.
-    ///
-    /// Will error if it takes too long (10 sec) to write or read to the connection, if there is
-    /// some read or write error to the connection,  if the server is meant to verify clients,
-    /// and is unable to verify this one, or if there is some issue communicating with the server.
-    ///
-    /// The provided [`AsyncRead`] and [`AsyncWrite`] must be already connected to the connection.
-    pub async fn accept(&self, io: MaybeTlsStream) -> Result<()> {
-        let mut io = Framed::new(io, DerpCodec);
-        trace!("accept: start");
-        trace!("accept: recv client key");
-        let (client_key, info) = recv_client_key(&mut io)
-            .await
-            .context("unable to receive client information")?;
-
-        if info.version != PROTOCOL_VERSION {
-            bail!(
-                "unexpected client version {}, expected {}",
-                info.version,
-                PROTOCOL_VERSION
+            iroh_metrics::core::Core::init(|reg, metrics| {
+                metrics.insert(crate::metrics::RelayMetrics::new(reg));
+                metrics.insert(StunMetrics::new(reg));
+            });
+            tasks.spawn(
+                iroh_metrics::metrics::start_metrics_server(addr)
+                    .instrument(info_span!("metrics-server")),
             );
         }
 
-        trace!("accept: build client conn");
-        let client_conn_builder = ClientConnBuilder {
-            key: client_key,
-            conn_num: new_conn_num(),
-            io,
-            write_timeout: self.write_timeout,
-            channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
-            server_channel: self.server_channel.clone(),
+        // Start the STUN server.
+        let stun_addr = match config.stun {
+            Some(stun) => {
+                debug!("Starting STUN server");
+                match UdpSocket::bind(stun.bind_addr).await {
+                    Ok(sock) => {
+                        let addr = sock.local_addr()?;
+                        info!("STUN server bound on {addr}");
+                        tasks.spawn(
+                            server_stun_listener(sock).instrument(info_span!("stun-server", %addr)),
+                        );
+                        Some(addr)
+                    }
+                    Err(err) => bail!("failed to bind STUN listener: {err:#?}"),
+                }
+            }
+            None => None,
         };
-        trace!("accept: create client");
-        self.server_channel
-            .send(ServerMessage::CreateClient(client_conn_builder))
-            .await
-            .map_err(|_| {
-                anyhow::anyhow!("server channel closed, the server is probably shutdown")
-            })?;
-        Ok(())
+
+        // Start the Relay server.
+        let (relay_server, http_addr) = match config.relay {
+            Some(relay_config) => {
+                debug!("Starting Relay server");
+                let mut headers = HeaderMap::new();
+                for (name, value) in TLS_HEADERS.iter() {
+                    headers.insert(*name, value.parse()?);
+                }
+                let relay_bind_addr = match relay_config.tls {
+                    Some(ref tls) => tls.https_bind_addr,
+                    None => relay_config.http_bind_addr,
+                };
+                let mut builder = http_server::ServerBuilder::new(relay_bind_addr)
+                    .secret_key(Some(relay_config.secret_key))
+                    .headers(headers)
+                    .relay_override(Box::new(relay_disabled_handler))
+                    .request_handler(Method::GET, "/", Box::new(root_handler))
+                    .request_handler(Method::GET, "/index.html", Box::new(root_handler))
+                    .request_handler(
+                        Method::GET,
+                        LEGACY_RELAY_PROBE_PATH,
+                        Box::new(probe_handler),
+                    ) // backwards compat
+                    .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
+                    .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
+                let http_addr = match relay_config.tls {
+                    Some(tls_config) => {
+                        let server_config = rustls::ServerConfig::builder()
+                            .with_safe_defaults()
+                            .with_no_client_auth();
+                        let server_tls_config = match tls_config.cert {
+                            CertConfig::LetsEncrypt { config } => {
+                                let mut state = config.state();
+                                let server_config =
+                                    server_config.with_cert_resolver(state.resolver());
+                                let acceptor =
+                                    http_server::TlsAcceptor::LetsEncrypt(state.acceptor());
+                                tasks.spawn(
+                                    async move {
+                                        while let Some(event) = state.next().await {
+                                            match event {
+                                                Ok(ok) => debug!("acme event: {ok:?}"),
+                                                Err(err) => error!("error: {err:?}"),
+                                            }
+                                        }
+                                        Err(anyhow!("acme event stream finished"))
+                                    }
+                                    .instrument(info_span!("acme")),
+                                );
+                                Some(http_server::TlsConfig {
+                                    config: Arc::new(server_config),
+                                    acceptor,
+                                })
+                            }
+                            CertConfig::Manual { private_key, certs } => {
+                                let server_config = server_config
+                                    .with_single_cert(certs.clone(), private_key.clone())?;
+                                let server_config = Arc::new(server_config);
+                                let acceptor =
+                                    tokio_rustls::TlsAcceptor::from(server_config.clone());
+                                let acceptor = http_server::TlsAcceptor::Manual(acceptor);
+                                Some(http_server::TlsConfig {
+                                    config: server_config,
+                                    acceptor,
+                                })
+                            }
+                        };
+                        builder = builder.tls_config(server_tls_config);
+
+                        // Some services always need to be served over HTTP without TLS.  Run
+                        // these standalone.
+                        let http_listener = TcpListener::bind(&relay_config.http_bind_addr)
+                            .await
+                            .context("failed to bind http")?;
+                        let http_addr = http_listener.local_addr()?;
+                        tasks.spawn(
+                            run_captive_portal_service(http_listener)
+                                .instrument(info_span!("http-service", addr = %http_addr)),
+                        );
+                        Some(http_addr)
+                    }
+                    None => {
+                        // If running Relay without TLS add the plain HTTP server directly
+                        // to the Relay server.
+                        builder = builder.request_handler(
+                            Method::GET,
+                            "/generate_204",
+                            Box::new(serve_no_content_handler),
+                        );
+                        None
+                    }
+                };
+                let relay_server = builder.spawn().await?;
+                (Some(relay_server), http_addr)
+            }
+            None => (None, None),
+        };
+        // If http_addr is Some then relay_server is serving HTTPS.  If http_addr is None
+        // relay_server is serving HTTP, including the /generate_204 service.
+        let relay_addr = relay_server.as_ref().map(|srv| srv.addr());
+        let relay_handle = relay_server.as_ref().map(|srv| srv.handle());
+        let task = tokio::spawn(relay_supervisor(tasks, relay_server));
+        Ok(Self {
+            http_addr: http_addr.or(relay_addr),
+            stun_addr,
+            https_addr: http_addr.and(relay_addr),
+            relay_handle,
+            supervisor: AbortingJoinHandle::from(task),
+        })
     }
-}
 
-pub(crate) struct ServerActor {
-    key: PublicKey,
-    receiver: mpsc::Receiver<ServerMessage>,
-    /// All clients connected to this server
-    clients: Clients,
-}
-
-impl ServerActor {
-    pub(crate) fn new(key: PublicKey, receiver: mpsc::Receiver<ServerMessage>) -> Self {
-        Self {
-            key,
-            receiver,
-            clients: Clients::new(),
+    /// Requests graceful shutdown.
+    ///
+    /// Returns once all server tasks have stopped.
+    pub async fn shutdown(self) -> Result<()> {
+        // Only the Relay server needs shutting down, the supervisor will abort the tasks in
+        // the JoinSet when the server terminates.
+        if let Some(handle) = self.relay_handle {
+            handle.shutdown();
         }
+        self.supervisor.await?
     }
 
-    pub(crate) async fn run(mut self, done: CancellationToken) -> Result<()> {
-        loop {
+    /// Returns the handle for the task.
+    ///
+    /// This allows waiting for the server's supervisor task to finish.  Can be useful in
+    /// case there is an error in the server before it is shut down.
+    pub fn task_handle(&mut self) -> &mut AbortingJoinHandle<Result<()>> {
+        &mut self.supervisor
+    }
+
+    /// The socket address the HTTPS server is listening on.
+    pub fn https_addr(&self) -> Option<SocketAddr> {
+        self.https_addr
+    }
+
+    /// The socket address the HTTP server is listening on.
+    pub fn http_addr(&self) -> Option<SocketAddr> {
+        self.http_addr
+    }
+
+    /// The socket address the STUN server is listening on.
+    pub fn stun_addr(&self) -> Option<SocketAddr> {
+        self.stun_addr
+    }
+}
+
+/// Supervisor for the relay server tasks.
+///
+/// As soon as one of the tasks exits, all other tasks are stopped and the server stops.
+/// The supervisor finishes once all tasks are finished.
+#[instrument(skip_all)]
+async fn relay_supervisor(
+    mut tasks: JoinSet<Result<()>>,
+    mut relay_http_server: Option<http_server::Server>,
+) -> Result<()> {
+    let res = match (relay_http_server.as_mut(), tasks.len()) {
+        (None, _) => tasks
+            .join_next()
+            .await
+            .unwrap_or_else(|| Ok(Err(anyhow!("Nothing to supervise")))),
+        (Some(relay), 0) => relay.task_handle().await.map(anyhow::Ok),
+        (Some(relay), _) => {
             tokio::select! {
                 biased;
-                _ = done.cancelled() => {
-                    tracing::warn!("server actor loop cancelled, closing loop");
-                    // TODO: stats: drain channel & count dropped packets etc
-                    // close all client connections and client read/write loops
-                    self.clients.shutdown().await;
-                    return Ok(());
-                }
-                msg = self.receiver.recv() => {
-                    let msg = match msg {
-                        Some(m) => m,
-                        None => {
-                            tracing::warn!("server channel sender closed unexpectedly, shutting down server loop");
-                            self.clients.shutdown().await;
-                            anyhow::bail!("server channel sender closed unexpectedly, closed client connections, and shutting down server loop");
+                Some(ret) = tasks.join_next() => ret,
+                ret = relay.task_handle() => ret.map(anyhow::Ok),
+                else => Ok(Err(anyhow!("Empty JoinSet (unreachable)"))),
+            }
+        }
+    };
+    let ret = match res {
+        Ok(Ok(())) => {
+            debug!("Task exited");
+            Ok(())
+        }
+        Ok(Err(err)) => {
+            error!(%err, "Task failed");
+            Err(err.context("task failed"))
+        }
+        Err(err) => {
+            if let Ok(panic) = err.try_into_panic() {
+                error!("Task panicked");
+                std::panic::resume_unwind(panic);
+            }
+            debug!("Task cancelled");
+            Err(anyhow!("task cancelled"))
+        }
+    };
+
+    // Ensure the HTTP server terminated, there is no harm in calling this after it is
+    // already shut down.  The JoinSet is aborted on drop.
+    if let Some(server) = relay_http_server {
+        server.shutdown();
+    }
+
+    tasks.shutdown().await;
+
+    ret
+}
+
+/// Runs a STUN server.
+///
+/// When the future is dropped, the server stops.
+async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
+    info!(addr = ?sock.local_addr().ok(), "running STUN server");
+    let sock = Arc::new(sock);
+    let mut buffer = vec![0u8; 64 << 10];
+    let mut tasks = JoinSet::new();
+    loop {
+        tokio::select! {
+            biased;
+            _ = tasks.join_next(), if !tasks.is_empty() => (),
+            res = sock.recv_from(&mut buffer) => {
+                match res {
+                    Ok((n, src_addr)) => {
+                        inc!(StunMetrics, requests);
+                        let pkt = &buffer[..n];
+                        if !stun::is(pkt) {
+                            debug!(%src_addr, "STUN: ignoring non stun packet");
+                            inc!(StunMetrics, bad_requests);
+                            continue;
                         }
-                    };
-                   match msg {
-                        ServerMessage::SendPacket((key, packet)) => {
-                           tracing::trace!("send packet from: {:?} to: {:?} ({}b)", packet.src, key, packet.bytes.len());
-                            let src = packet.src;
-                            if self.clients.contains_key(&key) {
-                                // if this client is in our local network, just try to send the
-                                // packet
-                                if self.clients.send_packet(&key, packet).is_ok() {
-                                    self.clients.record_send(&src, key);
-                                }
-                            } else {
-                                tracing::warn!("send packet: no way to reach client {key:?}, dropped packet");
-                                inc!(Metrics, send_packets_dropped);
-                            }
-                        }
-                       ServerMessage::SendDiscoPacket((key, packet)) => {
-                           tracing::trace!("send disco packet from: {:?} to: {:?} ({}b)", packet.src, key, packet.bytes.len());
-                            let src = packet.src;
-                            if self.clients.contains_key(&key) {
-                                // if this client is in our local network, just try to send the
-                                // packet
-                                if self.clients.send_disco_packet(&key, packet).is_ok() {
-
-                                    self.clients.record_send(&src, key);
-                                }
-                            } else {
-                                tracing::warn!("send disco packet: no way to reach client {key:?}, dropped packet");
-                                inc!(Metrics, disco_packets_dropped);
-                            }
-                       }
-                       ServerMessage::CreateClient(client_builder) => {
-                           inc!(Metrics, accepts);
-
-                           tracing::trace!("create client: {:?}", client_builder.key);
-                           let key = client_builder.key;
-
-                           report_usage_stats(&UsageStatsReport::new(
-                                "relay_accepts".to_string(),
-                                self.key.to_string(),
-                                1,
-                                None, // TODO(arqu): attribute to user id; possibly with the re-introduction of request tokens or other auth
-                                Some(key.to_string()),
-                            )).await;
-
-                           // build and register client, starting up read & write loops for the
-                           // client connection
-                           self.clients.register(client_builder);
-
-                       }
-                       ServerMessage::RemoveClient((key, conn_num)) => {
-                           inc!(Metrics, disconnects);
-                           tracing::trace!("remove client: {:?}", key);
-                           // ensure we still have the client in question
-                           if self.clients.has_client(&key, conn_num) {
-                               // remove the client from the map of clients, & notify any peers that it
-                               // has sent messages that it has left the network
-                               self.clients.unregister(&key);
-                            }
-                       }
-                       ServerMessage::Shutdown => {
-                        tracing::info!("server gracefully shutting down...");
-                        // close all client connections and client read/write loops
-                        self.clients.shutdown().await;
-                        return Ok(());
-                       }
-                   }
+                        let pkt = pkt.to_vec();
+                        tasks.spawn(handle_stun_request(src_addr, pkt, sock.clone()));
+                    }
+                    Err(err) => {
+                        inc!(StunMetrics, failures);
+                        warn!("failed to recv: {err:#}");
+                    }
                 }
             }
         }
     }
 }
 
-/// Initializes the [`Server`] with a self-signed x509 cert
-/// encoding this server's public key and protocol version. "cmd/relay_server
-/// then sends this after the Let's Encrypt leaf + intermediate certs after
-/// the ServerHello (encrypted in TLS 1.3, not that is matters much).
-///
-/// Then the client can save a round trime getting that and can start speaking
-/// relay right away. (we don't use ALPN because that's sent in the clear and
-/// we're being paranoid to not look too weird to any middleboxes, given that
-/// relay is an ultimate fallback path). But since the post-ServerHello certs
-/// are encrypted we can have the client also use them as a signal to be able
-/// to start speaking relay right away, starting with its identity proof,
-/// encrypted to the server's public key.
-///
-/// This RTT optimization fails where there's a corp-mandated TLS proxy with
-/// corp-mandated root certs on employee machines and TLS proxy cleans up
-/// unnecessary certs. In that case we just fall back to the extra RTT.
-fn init_meta_cert(server_key: &PublicKey) -> Vec<u8> {
-    let mut params =
-        rcgen::CertificateParams::new([format!("derpkey{}", hex::encode(server_key.as_bytes()))]);
-    params.serial_number = Some((PROTOCOL_VERSION as u64).into());
-    // Windows requires not_after and not_before set:
-    params.not_after = time::OffsetDateTime::now_utc().saturating_add(30 * time::Duration::DAY);
-    params.not_before = time::OffsetDateTime::now_utc().saturating_sub(30 * time::Duration::DAY);
-
-    rcgen::Certificate::from_params(params)
-        .expect("fixed inputs")
-        .serialize_der()
-        .expect("fixed allocations")
-}
-
-/// Whether or not the underlying [`tokio::net::TcpStream`] is served over Tls
-#[derive(Debug)]
-pub enum MaybeTlsStream {
-    /// A plain non-Tls [`tokio::net::TcpStream`]
-    Plain(tokio::net::TcpStream),
-    /// A Tls wrapped [`tokio::net::TcpStream`]
-    Tls(tokio_rustls::server::TlsStream<tokio::net::TcpStream>),
-    #[cfg(test)]
-    Test(tokio::io::DuplexStream),
-}
-
-impl AsyncRead for MaybeTlsStream {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        match &mut *self {
-            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_read(cx, buf),
-            MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_read(cx, buf),
-            #[cfg(test)]
-            MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_read(cx, buf),
+/// Handles a single STUN request, doing all logging required.
+async fn handle_stun_request(src_addr: SocketAddr, pkt: Vec<u8>, sock: Arc<UdpSocket>) {
+    let handle = AbortingJoinHandle::from(tokio::task::spawn_blocking(move || {
+        match stun::parse_binding_request(&pkt) {
+            Ok(txid) => {
+                debug!(%src_addr, %txid, "STUN: received binding request");
+                Some((txid, stun::response(txid, src_addr)))
+            }
+            Err(err) => {
+                inc!(StunMetrics, bad_requests);
+                warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
+                None
+            }
+        }
+    }));
+    let (txid, response) = match handle.await {
+        Ok(Some(val)) => val,
+        Ok(None) => return,
+        Err(err) => {
+            error!("{err:#}");
+            return;
+        }
+    };
+    match sock.send_to(&response, src_addr).await {
+        Ok(len) => {
+            if len != response.len() {
+                warn!(
+                    %src_addr,
+                    %txid,
+                    "failed to write response, {len}/{} bytes sent",
+                    response.len()
+                );
+            } else {
+                match src_addr {
+                    SocketAddr::V4(_) => inc!(StunMetrics, ipv4_success),
+                    SocketAddr::V6(_) => inc!(StunMetrics, ipv6_success),
+                }
+            }
+            trace!(%src_addr, %txid, "sent {len} bytes");
+        }
+        Err(err) => {
+            inc!(StunMetrics, failures);
+            warn!(%src_addr, %txid, "failed to write response: {err:#}");
         }
     }
 }
 
-impl AsyncWrite for MaybeTlsStream {
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<std::result::Result<(), std::io::Error>> {
-        match &mut *self {
-            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_flush(cx),
-            MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_flush(cx),
-            #[cfg(test)]
-            MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_flush(cx),
+fn relay_disabled_handler(
+    _r: Request<Incoming>,
+    response: ResponseBuilder,
+) -> HyperResult<Response<BytesBody>> {
+    response
+        .status(StatusCode::NOT_FOUND)
+        .body(RELAY_DISABLED.into())
+        .map_err(|err| Box::new(err) as HyperError)
+}
+
+fn root_handler(
+    _r: Request<Incoming>,
+    response: ResponseBuilder,
+) -> HyperResult<Response<BytesBody>> {
+    response
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/html; charset=utf-8")
+        .body(INDEX.into())
+        .map_err(|err| Box::new(err) as HyperError)
+}
+
+/// HTTP latency queries
+fn probe_handler(
+    _r: Request<Incoming>,
+    response: ResponseBuilder,
+) -> HyperResult<Response<BytesBody>> {
+    response
+        .status(StatusCode::OK)
+        .header("Access-Control-Allow-Origin", "*")
+        .body(body_empty())
+        .map_err(|err| Box::new(err) as HyperError)
+}
+
+fn robots_handler(
+    _r: Request<Incoming>,
+    response: ResponseBuilder,
+) -> HyperResult<Response<BytesBody>> {
+    response
+        .status(StatusCode::OK)
+        .body(ROBOTS_TXT.into())
+        .map_err(|err| Box::new(err) as HyperError)
+}
+
+/// For captive portal detection.
+fn serve_no_content_handler<B: hyper::body::Body>(
+    r: Request<B>,
+    mut response: ResponseBuilder,
+) -> HyperResult<Response<BytesBody>> {
+    if let Some(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER) {
+        if !challenge.is_empty()
+            && challenge.len() < 64
+            && challenge
+                .as_bytes()
+                .iter()
+                .all(|c| is_challenge_char(*c as char))
+        {
+            response = response.header(
+                NO_CONTENT_RESPONSE_HEADER,
+                format!("response {}", challenge.to_str()?),
+            );
         }
     }
 
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<std::result::Result<(), std::io::Error>> {
-        match &mut *self {
-            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_shutdown(cx),
-            MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_shutdown(cx),
-            #[cfg(test)]
-            MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_shutdown(cx),
+    response
+        .status(StatusCode::NO_CONTENT)
+        .body(body_empty())
+        .map_err(|err| Box::new(err) as HyperError)
+}
+
+fn is_challenge_char(c: char) -> bool {
+    // Semi-randomly chosen as a limited set of valid characters
+    c.is_ascii_lowercase()
+        || c.is_ascii_uppercase()
+        || c.is_ascii_digit()
+        || c == '.'
+        || c == '-'
+        || c == '_'
+}
+
+/// This is a future that never returns, drop it to cancel/abort.
+async fn run_captive_portal_service(http_listener: TcpListener) -> Result<()> {
+    info!("serving");
+
+    // If this future is cancelled, this is dropped and all tasks are aborted.
+    let mut tasks = JoinSet::new();
+
+    loop {
+        match http_listener.accept().await {
+            Ok((stream, peer_addr)) => {
+                debug!(%peer_addr, "Connection opened",);
+                let handler = CaptivePortalService;
+
+                tasks.spawn(async move {
+                    let stream = crate::relay::server::streams::MaybeTlsStream::Plain(stream);
+                    let stream = hyper_util::rt::TokioIo::new(stream);
+                    if let Err(err) = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(stream, handler)
+                        .with_upgrades()
+                        .await
+                    {
+                        error!("Failed to serve connection: {err:?}");
+                    }
+                });
+            }
+            Err(err) => {
+                error!(
+                    "[CaptivePortalService] failed to accept connection: {:#?}",
+                    err
+                );
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CaptivePortalService;
+
+impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
+    type Response = Response<BytesBody>;
+    type Error = HyperError;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn call(&self, req: Request<Incoming>) -> Self::Future {
+        match (req.method(), req.uri().path()) {
+            // Captive Portal checker
+            (&Method::GET, "/generate_204") => {
+                Box::pin(async move { serve_no_content_handler(req, Response::builder()) })
+            }
+            _ => {
+                // Return 404 not found response.
+                let r = Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(NOTFOUND.into())
+                    .map_err(|err| Box::new(err) as HyperError);
+                Box::pin(async move { r })
+            }
+        }
+    }
+}
+
+mod stun_metrics {
+    use iroh_metrics::{
+        core::{Counter, Metric},
+        struct_iterable::Iterable,
+    };
+
+    /// StunMetrics tracked for the DERPER
+    #[allow(missing_docs)]
+    #[derive(Debug, Clone, Iterable)]
+    pub struct StunMetrics {
+        /*
+         * Metrics about STUN requests over ipv6
+         */
+        /// Number of stun requests made
+        pub requests: Counter,
+        /// Number of successful requests over ipv4
+        pub ipv4_success: Counter,
+        /// Number of successful requests over ipv6
+        pub ipv6_success: Counter,
+
+        /// Number of bad requests, either non-stun packets or incorrect binding request
+        pub bad_requests: Counter,
+        /// Number of failures
+        pub failures: Counter,
+    }
+
+    impl Default for StunMetrics {
+        fn default() -> Self {
+            Self {
+                /*
+                 * Metrics about STUN requests
+                 */
+                requests: Counter::new("Number of STUN requests made to the server."),
+                ipv4_success: Counter::new("Number of successful ipv4 STUN requests served."),
+                ipv6_success: Counter::new("Number of successful ipv6 STUN requests served."),
+                bad_requests: Counter::new("Number of bad requests made to the STUN endpoint."),
+                failures: Counter::new("Number of STUN requests that end in failure."),
+            }
         }
     }
 
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::result::Result<usize, std::io::Error>> {
-        match &mut *self {
-            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_write(cx, buf),
-            MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_write(cx, buf),
-            #[cfg(test)]
-            MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_write(cx, buf),
-        }
-    }
-
-    fn poll_write_vectored(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[std::io::IoSlice<'_>],
-    ) -> Poll<std::result::Result<usize, std::io::Error>> {
-        match &mut *self {
-            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_write_vectored(cx, bufs),
-            MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_write_vectored(cx, bufs),
-            #[cfg(test)]
-            MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_write_vectored(cx, bufs),
+    impl Metric for StunMetrics {
+        fn name() -> &'static str {
+            "stun"
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    use crate::relay::{
-        client::ClientBuilder,
-        codec::{recv_frame, Frame, FrameType},
-        http::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
-        types::ClientInfo,
-        ReceivedMessage,
-    };
-    use tokio_util::codec::{FramedRead, FramedWrite};
-    use tracing_subscriber::{prelude::*, EnvFilter};
+    use std::net::Ipv4Addr;
+    use std::time::Duration;
 
     use bytes::Bytes;
-    use tokio::io::DuplexStream;
+    use http::header::UPGRADE;
+    use iroh_base::node_addr::RelayUrl;
 
-    fn test_client_builder(
-        key: PublicKey,
-        conn_num: usize,
-        server_channel: mpsc::Sender<ServerMessage>,
-    ) -> (ClientConnBuilder, Framed<DuplexStream, DerpCodec>) {
-        let (test_io, io) = tokio::io::duplex(1024);
-        (
-            ClientConnBuilder {
-                key,
-                conn_num,
-                io: Framed::new(MaybeTlsStream::Test(io), DerpCodec),
-                write_timeout: None,
-                channel_capacity: 10,
-                server_channel,
-            },
-            Framed::new(test_io, DerpCodec),
-        )
+    use crate::relay::client::conn::ReceivedMessage;
+    use crate::relay::client::ClientBuilder;
+    use crate::relay::http::{Protocol, HTTP_UPGRADE_PROTOCOL};
+
+    use super::*;
+
+    async fn spawn_local_relay() -> Result<Server> {
+        Server::spawn(ServerConfig::<(), ()> {
+            relay: Some(RelayConfig {
+                secret_key: SecretKey::generate(),
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                tls: None,
+                limits: Default::default(),
+            }),
+            stun: None,
+            metrics_addr: None,
+        })
+        .await
     }
 
     #[tokio::test]
-    async fn test_server_actor() -> Result<()> {
-        let server_key = SecretKey::generate().public();
-
-        // make server actor
-        let (server_channel, server_channel_r) = mpsc::channel(20);
-        let server_actor: ServerActor = ServerActor::new(server_key, server_channel_r);
-        let done = CancellationToken::new();
-        let server_done = done.clone();
-
-        // run server actor
-        let server_task = tokio::spawn(
-            async move { server_actor.run(server_done).await }
-                .instrument(info_span!("relay.server")),
-        );
-
-        let key_a = SecretKey::generate().public();
-        let (client_a, mut a_io) = test_client_builder(key_a, 1, server_channel.clone());
-
-        // create client a
-        server_channel
-            .send(ServerMessage::CreateClient(client_a))
-            .await
-            .map_err(|_| anyhow::anyhow!("server gone"))?;
-
-        // server message: create client b
-        let key_b = SecretKey::generate().public();
-        let (client_b, mut b_io) = test_client_builder(key_b, 2, server_channel.clone());
-        server_channel
-            .send(ServerMessage::CreateClient(client_b))
-            .await
-            .map_err(|_| anyhow::anyhow!("server gone"))?;
-
-        // write message from b to a
-        let msg = b"hello world!";
-        crate::relay::client::send_packet(&mut b_io, &None, key_a, Bytes::from_static(msg)).await?;
-
-        // get message on a's reader
-        let frame = recv_frame(FrameType::RecvPacket, &mut a_io).await?;
-        assert_eq!(
-            frame,
-            Frame::RecvPacket {
-                src_key: key_b,
-                content: msg.to_vec().into()
-            }
-        );
-
-        // remove b
-        server_channel
-            .send(ServerMessage::RemoveClient((key_b, 2)))
-            .await
-            .map_err(|_| anyhow::anyhow!("server gone"))?;
-
-        // get peer gone message on a about b leaving the network
-        // (we get this message because b has sent us a packet before)
-        let frame = recv_frame(FrameType::PeerGone, &mut a_io).await?;
-        assert_eq!(Frame::PeerGone { peer: key_b }, frame);
-
-        // close gracefully
-        server_channel
-            .send(ServerMessage::Shutdown)
-            .await
-            .map_err(|_| anyhow::anyhow!("server gone"))?;
-        server_task.await??;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_client_conn_handler() -> Result<()> {
-        // create client connection handler
-        let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
-        let client_key = SecretKey::generate();
-        let handler = ClientConnHandler {
-            secret_key: client_key.clone(),
-            write_timeout: None,
-            server_channel: server_channel_s,
-            default_headers: Default::default(),
-        };
-
-        // create the parts needed for a client
-        let (client, server_io) = tokio::io::duplex(10);
-        let (client_reader, client_writer) = tokio::io::split(client);
-        let _client_reader = FramedRead::new(client_reader, DerpCodec);
-        let mut client_writer = FramedWrite::new(client_writer, DerpCodec);
-
-        // start a task as if a client is doing the "accept" handshake
-        let pub_client_key = client_key.public();
-        let client_task: JoinHandle<Result<()>> = tokio::spawn(async move {
-            // send the client info
-            let client_info = ClientInfo {
-                version: PROTOCOL_VERSION,
-            };
-            crate::relay::codec::send_client_key(&mut client_writer, &client_key, &client_info)
-                .await?;
-
-            Ok(())
-        });
-
-        // attempt to add the connection to the server
-        handler.accept(MaybeTlsStream::Test(server_io)).await?;
-        client_task.await??;
-
-        // ensure we inform the server to create the client from the connection!
-        match server_channel_r.recv().await.unwrap() {
-            ServerMessage::CreateClient(builder) => {
-                assert_eq!(pub_client_key, builder.key);
-            }
-            _ => anyhow::bail!("unexpected server message"),
-        }
-        Ok(())
-    }
-
-    fn make_test_client(secret_key: SecretKey) -> (tokio::io::DuplexStream, ClientBuilder) {
-        let (client, server) = tokio::io::duplex(10);
-        let (client_reader, client_writer) = tokio::io::split(client);
-        let client_reader = MaybeTlsStreamReader::Mem(client_reader);
-        let client_writer = MaybeTlsStreamWriter::Mem(client_writer);
-        (
-            server,
-            ClientBuilder::new(
-                secret_key,
-                "127.0.0.1:0".parse().unwrap(),
-                client_reader,
-                client_writer,
-            ),
-        )
-    }
-
-    #[tokio::test]
-    async fn test_server_basic() -> Result<()> {
+    async fn test_no_services() {
         let _guard = iroh_test::logging::setup();
-
-        // create the server!
-        let server_key = SecretKey::generate();
-        let server: Server = Server::new(server_key);
-
-        // create client a and connect it to the server
-        let key_a = SecretKey::generate();
-        let public_key_a = key_a.public();
-        let (rw_a, client_a_builder) = make_test_client(key_a);
-        let handler = server.client_conn_handler(Default::default());
-        let handler_task =
-            tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_a)).await });
-        let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
-        handler_task.await??;
-
-        // create client b and connect it to the server
-        let key_b = SecretKey::generate();
-        let public_key_b = key_b.public();
-        let (rw_b, client_b_builder) = make_test_client(key_b);
-        let handler = server.client_conn_handler(Default::default());
-        let handler_task =
-            tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_b)).await });
-        let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
-        handler_task.await??;
-
-        // send message from a to b!
-        let msg = Bytes::from_static(b"hello client b!!");
-        client_a.send(public_key_b, msg.clone()).await?;
-        match client_receiver_b.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_a, source);
-                assert_eq!(&msg[..], data);
-            }
-            msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
-            }
-        }
-
-        // send message from b to a!
-        let msg = Bytes::from_static(b"nice to meet you client a!!");
-        client_b.send(public_key_a, msg.clone()).await?;
-        match client_receiver_a.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_b, source);
-                assert_eq!(&msg[..], data);
-            }
-            msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
-            }
-        }
-
-        // close the server and clients
-        server.close().await;
-
-        // client connections have been shutdown
-        let res = client_a
-            .send(public_key_b, Bytes::from_static(b"try to send"))
-            .await;
+        let mut server = Server::spawn(ServerConfig::<(), ()>::default())
+            .await
+            .unwrap();
+        let res = tokio::time::timeout(Duration::from_secs(5), server.task_handle())
+            .await
+            .expect("timeout, server not finished")
+            .expect("server task JoinError");
         assert!(res.is_err());
-        assert!(client_receiver_b.recv().await.is_err());
-        Ok(())
     }
 
     #[tokio::test]
-    async fn test_server_replace_client() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+    async fn test_conflicting_bind() {
+        let _guard = iroh_test::logging::setup();
+        let mut server = Server::spawn(ServerConfig::<(), ()> {
+            relay: Some(RelayConfig {
+                secret_key: SecretKey::generate(),
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 1234).into(),
+                tls: None,
+                limits: Default::default(),
+            }),
+            stun: None,
+            metrics_addr: Some((Ipv4Addr::LOCALHOST, 1234).into()),
+        })
+        .await
+        .unwrap();
+        let res = tokio::time::timeout(Duration::from_secs(5), server.task_handle())
+            .await
+            .expect("timeout, server not finished")
+            .expect("server task JoinError");
+        assert!(res.is_err()); // AddrInUse
+    }
 
-        // create the server!
-        let server_key = SecretKey::generate();
-        let server: Server = Server::new(server_key);
+    #[tokio::test]
+    async fn test_root_handler() {
+        let _guard = iroh_test::logging::setup();
+        let server = spawn_local_relay().await.unwrap();
+        let url = format!("http://{}", server.http_addr().unwrap());
 
-        // create client a and connect it to the server
-        let key_a = SecretKey::generate();
-        let public_key_a = key_a.public();
-        let (rw_a, client_a_builder) = make_test_client(key_a);
-        let handler = server.client_conn_handler(Default::default());
-        let handler_task =
-            tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_a)).await });
-        let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
-        handler_task.await??;
+        let response = reqwest::get(&url).await.unwrap();
+        assert_eq!(response.status(), 200);
+        let body = response.text().await.unwrap();
+        assert!(body.contains("iroh.computer"));
+    }
 
-        // create client b and connect it to the server
-        let key_b = SecretKey::generate();
-        let public_key_b = key_b.public();
-        let (rw_b, client_b_builder) = make_test_client(key_b.clone());
-        let handler = server.client_conn_handler(Default::default());
-        let handler_task =
-            tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_b)).await });
-        let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
-        handler_task.await??;
+    #[tokio::test]
+    async fn test_captive_portal_service() {
+        let _guard = iroh_test::logging::setup();
+        let server = spawn_local_relay().await.unwrap();
+        let url = format!("http://{}/generate_204", server.http_addr().unwrap());
+        let challenge = "123az__.";
 
-        // send message from a to b!
-        let msg = Bytes::from_static(b"hello client b!!");
-        client_a.send(public_key_b, msg.clone()).await?;
-        match client_receiver_b.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_a, source);
-                assert_eq!(&msg[..], data);
+        let client = reqwest::Client::new();
+        let response = client
+            .get(&url)
+            .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let header = response.headers().get(NO_CONTENT_RESPONSE_HEADER).unwrap();
+        assert_eq!(header.to_str().unwrap(), format!("response {challenge}"));
+        let body = response.text().await.unwrap();
+        assert!(body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_relay_client_legacy_route() {
+        let _guard = iroh_test::logging::setup();
+        let server = spawn_local_relay().await.unwrap();
+        // We're testing the legacy endpoint at `/derp`
+        let endpoint_url = format!("http://{}/derp", server.http_addr().unwrap());
+
+        let client = reqwest::Client::new();
+        let result = client
+            .get(endpoint_url)
+            .header(UPGRADE, HTTP_UPGRADE_PROTOCOL)
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(result.status(), StatusCode::SWITCHING_PROTOCOLS);
+    }
+
+    #[tokio::test]
+    async fn test_relay_clients_both_derp() {
+        let _guard = iroh_test::logging::setup();
+        let server = spawn_local_relay().await.unwrap();
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse().unwrap();
+
+        // set up client a
+        let a_secret_key = SecretKey::generate();
+        let a_key = a_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_a, mut client_a_receiver) =
+            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
+        let connect_client = client_a.clone();
+
+        // give the relay server some time to accept connections
+        if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
+            loop {
+                match connect_client.connect().await {
+                    Ok(_) => break,
+                    Err(err) => {
+                        warn!("client unable to connect to relay server: {err:#}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
             }
-            msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
-            }
+        })
+        .await
+        {
+            panic!("error connecting to relay server: {err:#}");
         }
 
-        // send message from b to a!
-        let msg = Bytes::from_static(b"nice to meet you client a!!");
-        client_b.send(public_key_a, msg.clone()).await?;
-        match client_receiver_a.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_b, source);
-                assert_eq!(&msg[..], data);
-            }
-            msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
-            }
+        // set up client b
+        let b_secret_key = SecretKey::generate();
+        let b_key = b_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_b, mut client_b_receiver) =
+            ClientBuilder::new(relay_url.clone()).build(b_secret_key, resolver);
+        client_b.connect().await.unwrap();
+
+        // send message from a to b
+        let msg = Bytes::from("hello, b");
+        client_a.send(b_key, msg.clone()).await.unwrap();
+
+        let (res, _) = client_b_receiver.recv().await.unwrap().unwrap();
+        if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(a_key, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_b received unexpected message {res:?}");
         }
 
-        // create client b and connect it to the server
-        let (new_rw_b, new_client_b_builder) = make_test_client(key_b);
-        let handler = server.client_conn_handler(Default::default());
-        let handler_task =
-            tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(new_rw_b)).await });
-        let (new_client_b, mut new_client_receiver_b) = new_client_b_builder.build().await?;
-        handler_task.await??;
+        // send message from b to a
+        let msg = Bytes::from("howdy, a");
+        client_b.send(a_key, msg.clone()).await.unwrap();
 
-        // assert!(client_b.recv().await.is_err());
+        let (res, _) = client_a_receiver.recv().await.unwrap().unwrap();
+        if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(b_key, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_a received unexpected message {res:?}");
+        }
+    }
 
-        // send message from a to b!
-        let msg = Bytes::from_static(b"are you still there, b?!");
-        client_a.send(public_key_b, msg.clone()).await?;
-        match new_client_receiver_b.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_a, source);
-                assert_eq!(&msg[..], data);
+    #[tokio::test]
+    async fn test_relay_clients_both_websockets() {
+        let _guard = iroh_test::logging::setup();
+        let server = spawn_local_relay().await.unwrap();
+
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse().unwrap();
+
+        // set up client a
+        let a_secret_key = SecretKey::generate();
+        let a_key = a_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_a, mut client_a_receiver) = ClientBuilder::new(relay_url.clone())
+            .protocol(Protocol::Websocket)
+            .build(a_secret_key, resolver);
+        let connect_client = client_a.clone();
+
+        // give the relay server some time to accept connections
+        if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
+            loop {
+                match connect_client.connect().await {
+                    Ok(_) => break,
+                    Err(err) => {
+                        warn!("client unable to connect to relay server: {err:#}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
             }
-            msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
-            }
+        })
+        .await
+        {
+            panic!("error connecting to relay server: {err:#}");
         }
 
-        // send message from b to a!
-        let msg = Bytes::from_static(b"just had a spot of trouble but I'm back now,a!!");
-        new_client_b.send(public_key_a, msg.clone()).await?;
-        match client_receiver_a.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_b, source);
-                assert_eq!(&msg[..], data);
-            }
-            msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
-            }
+        // set up client b
+        let b_secret_key = SecretKey::generate();
+        let b_key = b_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_b, mut client_b_receiver) = ClientBuilder::new(relay_url.clone())
+            .protocol(Protocol::Websocket) // another websocket client
+            .build(b_secret_key, resolver);
+        client_b.connect().await.unwrap();
+
+        // send message from a to b
+        let msg = Bytes::from("hello, b");
+        client_a.send(b_key, msg.clone()).await.unwrap();
+
+        let (res, _) = client_b_receiver.recv().await.unwrap().unwrap();
+        if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(a_key, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_b received unexpected message {res:?}");
         }
 
-        // close the server and clients
-        server.close().await;
+        // send message from b to a
+        let msg = Bytes::from("howdy, a");
+        client_b.send(a_key, msg.clone()).await.unwrap();
 
-        // client connections have been shutdown
-        let res = client_a
-            .send(public_key_b, Bytes::from_static(b"try to send"))
-            .await;
-        assert!(res.is_err());
-        assert!(new_client_receiver_b.recv().await.is_err());
-        Ok(())
+        let (res, _) = client_a_receiver.recv().await.unwrap().unwrap();
+        if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(b_key, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_a received unexpected message {res:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_relay_clients_websocket_and_derp() {
+        let _guard = iroh_test::logging::setup();
+        let server = spawn_local_relay().await.unwrap();
+
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse().unwrap();
+
+        // set up client a
+        let a_secret_key = SecretKey::generate();
+        let a_key = a_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_a, mut client_a_receiver) =
+            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
+        let connect_client = client_a.clone();
+
+        // give the relay server some time to accept connections
+        if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
+            loop {
+                match connect_client.connect().await {
+                    Ok(_) => break,
+                    Err(err) => {
+                        warn!("client unable to connect to relay server: {err:#}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        })
+        .await
+        {
+            panic!("error connecting to relay server: {err:#}");
+        }
+
+        // set up client b
+        let b_secret_key = SecretKey::generate();
+        let b_key = b_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_b, mut client_b_receiver) = ClientBuilder::new(relay_url.clone())
+            .protocol(Protocol::Websocket) // Use websockets
+            .build(b_secret_key, resolver);
+        client_b.connect().await.unwrap();
+
+        // send message from a to b
+        let msg = Bytes::from("hello, b");
+        client_a.send(b_key, msg.clone()).await.unwrap();
+
+        let (res, _) = client_b_receiver.recv().await.unwrap().unwrap();
+        if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(a_key, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_b received unexpected message {res:?}");
+        }
+
+        // send message from b to a
+        let msg = Bytes::from("howdy, a");
+        client_b.send(a_key, msg.clone()).await.unwrap();
+
+        let (res, _) = client_a_receiver.recv().await.unwrap().unwrap();
+        if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(b_key, source);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_a received unexpected message {res:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stun() {
+        let _guard = iroh_test::logging::setup();
+        let server = Server::spawn(ServerConfig::<(), ()> {
+            relay: None,
+            stun: Some(StunConfig {
+                bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+            }),
+            metrics_addr: None,
+        })
+        .await
+        .unwrap();
+
+        let txid = stun::TransactionId::default();
+        let req = stun::request(txid);
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket
+            .send_to(&req, server.stun_addr().unwrap())
+            .await
+            .unwrap();
+
+        // get response
+        let mut buf = vec![0u8; 64000];
+        let (len, addr) = socket.recv_from(&mut buf).await.unwrap();
+        assert_eq!(addr, server.stun_addr().unwrap());
+        buf.truncate(len);
+        let (txid_back, response_addr) = stun::parse_response(&buf).unwrap();
+        assert_eq!(txid, txid_back);
+        assert_eq!(response_addr, socket.local_addr().unwrap());
     }
 }

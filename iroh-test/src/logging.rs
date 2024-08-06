@@ -25,6 +25,7 @@ use tracing_subscriber::EnvFilter;
 ///     let _guard = iroh_test::logging::setup();
 ///     assert!(true);
 /// }
+/// ```
 #[must_use = "The tracing guard must only be dropped at the end of the test"]
 pub fn setup() -> tracing::subscriber::DefaultGuard {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {

@@ -90,7 +90,7 @@ pub enum DocCommands {
     /// Set the active document (only works within the Iroh console).
     Switch { id: NamespaceId },
     /// Create a new document.
-    New {
+    Create {
         /// Switch to the created document (only in the Iroh console).
         #[clap(long)]
         switch: bool,
@@ -308,7 +308,7 @@ impl DocCommands {
                 env.set_doc(doc)?;
                 println!("Active doc is now {}", fmt_short(doc.as_bytes()));
             }
-            Self::New { switch } => {
+            Self::Create { switch } => {
                 if switch && !env.is_console() {
                     bail!("The --switch flag is only supported within the Iroh console.");
                 }
@@ -949,7 +949,7 @@ mod tests {
 
         let data_dir = tempfile::tempdir()?;
 
-        let node = crate::commands::start::start_node(data_dir.path(), None).await?;
+        let node = crate::commands::start::start_node(data_dir.path(), None, None).await?;
         let client = node.client();
         let doc = client.docs().create().await.context("doc create")?;
         let author = client.authors().create().await.context("author create")?;
@@ -958,7 +958,7 @@ mod tests {
         let cli = ConsoleEnv::for_console(data_dir.path().to_owned(), &node)
             .await
             .context("ConsoleEnv")?;
-        let iroh = iroh::client::Iroh::connect(data_dir.path())
+        let iroh = iroh::client::Iroh::connect_path(data_dir.path())
             .await
             .context("rpc connect")?;
 

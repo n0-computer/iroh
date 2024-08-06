@@ -23,14 +23,12 @@ use iroh::{
     base::ticket::{BlobTicket, Ticket},
     blobs::{
         store::{ReadableStore, Store as _},
-        util::progress::{FlumeProgressSender, ProgressSender},
+        util::progress::{AsyncChannelProgressSender, ProgressSender},
     },
     docs::{Capability, DocTicket},
     net::{
         defaults::DEFAULT_STUN_PORT,
-        discovery::{
-            dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery,
-        },
+        discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
         dns::default_resolver,
         endpoint::{self, Connection, ConnectionTypeStream, RecvStream, SendStream},
         key::{PublicKey, SecretKey},
@@ -44,7 +42,6 @@ use iroh::{
 };
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
-use ratatui::backend::Backend;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
 
@@ -58,6 +55,7 @@ use crossterm::{
 };
 use rand::Rng;
 use ratatui::{prelude::*, widgets::*};
+use tracing::warn;
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum SecretKeyOption {
@@ -235,6 +233,9 @@ pub enum Commands {
         /// Endpoint to scrape for prometheus metrics
         #[clap(long, default_value = "http://localhost:9090")]
         scrape_url: String,
+        /// File to read the metrics from. Takes precedence over scrape_url.
+        #[clap(long)]
+        file: Option<PathBuf>,
     },
 }
 
@@ -865,7 +866,7 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     let mut clients = HashMap::new();
     for node in &config.relay_nodes {
         let secret_key = key.clone();
-        let client = iroh::net::relay::http::ClientBuilder::new(node.url.clone())
+        let client = iroh::net::relay::HttpClientBuilder::new(node.url.clone())
             .build(secret_key, dns_resolver.clone());
 
         clients.insert(node.url.clone(), client);
@@ -1144,28 +1145,28 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
         Commands::TicketInspect { ticket, zbase32 } => inspect_ticket(&ticket, zbase32),
         Commands::BlobConsistencyCheck { path, repair } => {
             let blob_store = iroh::blobs::store::fs::Store::load(path).await?;
-            let (send, recv) = flume::bounded(1);
+            let (send, recv) = async_channel::bounded(1);
             let task = tokio::spawn(async move {
-                while let Ok(msg) = recv.recv_async().await {
+                while let Ok(msg) = recv.recv().await {
                     println!("{:?}", msg);
                 }
             });
             blob_store
-                .consistency_check(repair, FlumeProgressSender::new(send).boxed())
+                .consistency_check(repair, AsyncChannelProgressSender::new(send).boxed())
                 .await?;
             task.await?;
             Ok(())
         }
         Commands::BlobValidate { path, repair } => {
             let blob_store = iroh::blobs::store::fs::Store::load(path).await?;
-            let (send, recv) = flume::bounded(1);
+            let (send, recv) = async_channel::bounded(1);
             let task = tokio::spawn(async move {
-                while let Ok(msg) = recv.recv_async().await {
+                while let Ok(msg) = recv.recv().await {
                     println!("{:?}", msg);
                 }
             });
             blob_store
-                .validate(repair, FlumeProgressSender::new(send).boxed())
+                .validate(repair, AsyncChannelProgressSender::new(send).boxed())
                 .await?;
             task.await?;
             Ok(())
@@ -1175,6 +1176,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             metrics,
             timeframe,
             scrape_url,
+            file,
         } => {
             let metrics: Vec<String> = metrics.split(',').map(|s| s.to_string()).collect();
             let interval = Duration::from_millis(interval);
@@ -1185,7 +1187,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             let backend = CrosstermBackend::new(stdout);
             let mut terminal = Terminal::new(backend)?;
 
-            let app = PlotterApp::new(metrics, timeframe, scrape_url);
+            let app = PlotterApp::new(metrics, timeframe, scrape_url, file);
             let res = run_plotter(&mut terminal, app, interval).await;
             disable_raw_mode()?;
             execute!(
@@ -1217,7 +1219,7 @@ async fn run_plotter<B: Backend>(
     loop {
         terminal.draw(|f| plotter_draw(f, &mut app))?;
 
-        if crossterm::event::poll(Duration::from_millis(100))? {
+        if crossterm::event::poll(Duration::from_millis(10))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                     if let KeyCode::Char(c) = key.code {
@@ -1286,8 +1288,16 @@ fn plot_chart(frame: &mut Frame, area: Rect, app: &PlotterApp, metric: &str) {
     let y_start = data_y_range.0;
     let y_end = data_y_range.1;
 
+    let last_val = data.last();
+    let name = match last_val {
+        Some(val) => {
+            let val_y = val.1;
+            format!("{metric}: {val_y:.0}")
+        }
+        None => metric.to_string(),
+    };
     let datasets = vec![Dataset::default()
-        .name(metric)
+        .name(name)
         .marker(symbols::Marker::Dot)
         .graph_type(GraphType::Line)
         .style(Style::default().fg(Color::Cyan))
@@ -1307,19 +1317,19 @@ fn plot_chart(frame: &mut Frame, area: Rect, app: &PlotterApp, metric: &str) {
     ];
 
     let mut y_labels = vec![Span::styled(
-        format!("{:.1}", y_start),
+        format!("{:.0}", y_start),
         Style::default().add_modifier(Modifier::BOLD),
     )];
 
     for i in 1..=10 {
         y_labels.push(Span::raw(format!(
-            "{:.1}",
+            "{:.0}",
             y_start + (y_end - y_start) / 10.0 * i as f64
         )));
     }
 
     y_labels.push(Span::styled(
-        format!("{:.1}", y_end),
+        format!("{:.0}", y_end),
         Style::default().add_modifier(Modifier::BOLD),
     ));
 
@@ -1358,23 +1368,64 @@ struct PlotterApp {
     freeze: bool,
     internal_ts: Duration,
     scrape_url: String,
+    file_data: Vec<String>,
+    file_header: Vec<String>,
 }
 
 impl PlotterApp {
-    fn new(metrics: Vec<String>, timeframe: usize, scrape_url: String) -> Self {
+    fn new(
+        metrics: Vec<String>,
+        timeframe: usize,
+        scrape_url: String,
+        file: Option<PathBuf>,
+    ) -> Self {
         let data = metrics.iter().map(|m| (m.clone(), vec![])).collect();
         let data_y_range = metrics.iter().map(|m| (m.clone(), (0.0, 0.0))).collect();
+        let mut file_data: Vec<String> = file
+            .map(|f| std::fs::read_to_string(f).unwrap())
+            .unwrap_or_default()
+            .split('\n')
+            .map(|s| s.to_string())
+            .collect();
+        let mut file_header = vec![];
+        let mut timeframe = timeframe;
+        if !file_data.is_empty() {
+            file_header = file_data[0].split(',').map(|s| s.to_string()).collect();
+            file_data.remove(0);
+
+            while file_data.last().unwrap().is_empty() {
+                file_data.pop();
+            }
+
+            let first_line: Vec<String> = file_data[0].split(',').map(|s| s.to_string()).collect();
+            let last_line: Vec<String> = file_data
+                .last()
+                .unwrap()
+                .split(',')
+                .map(|s| s.to_string())
+                .collect();
+
+            let start_time: usize = first_line.first().unwrap().parse().unwrap();
+            let end_time: usize = last_line.first().unwrap().parse().unwrap();
+
+            timeframe = (end_time - start_time) / 1000;
+        }
+        timeframe = timeframe.clamp(30, 90);
+
+        file_data.reverse();
         Self {
             should_quit: false,
             metrics,
             start_ts: Instant::now(),
             data,
             data_y_range,
-            timeframe: timeframe - 25,
+            timeframe,
             rng: rand::thread_rng(),
             freeze: false,
             internal_ts: Duration::default(),
             scrape_url,
+            file_data,
+            file_header,
         }
     }
 
@@ -1395,16 +1446,34 @@ impl PlotterApp {
             return;
         }
 
-        let req = reqwest::Client::new().get(&self.scrape_url).send().await;
-        if req.is_err() {
-            return;
-        }
-        let data = req.unwrap().text().await.unwrap();
-        let metrics_response = parse_prometheus_metrics(&data);
-        if metrics_response.is_err() {
-            return;
-        }
-        let metrics_response = metrics_response.unwrap();
+        let metrics_response = match self.file_data.is_empty() {
+            true => {
+                let req = reqwest::Client::new().get(&self.scrape_url).send().await;
+                if req.is_err() {
+                    return;
+                }
+                let data = req.unwrap().text().await.unwrap();
+                let metrics_response = iroh_metrics::parse_prometheus_metrics(&data);
+                if metrics_response.is_err() {
+                    return;
+                }
+                metrics_response.unwrap()
+            }
+            false => {
+                if self.file_data.len() == 1 {
+                    self.freeze = true;
+                    return;
+                }
+                let data = self.file_data.pop().unwrap();
+                let r = parse_csv_metrics(&self.file_header, &data);
+                if let Ok(mr) = r {
+                    mr
+                } else {
+                    warn!("Failed to parse csv metrics: {:?}", r.err());
+                    HashMap::new()
+                }
+            }
+        };
         self.internal_ts = self.start_ts.elapsed();
         for metric in &self.metrics {
             let val = if metric.eq("random") {
@@ -1415,7 +1484,12 @@ impl PlotterApp {
                 0.0
             };
             let e = self.data.entry(metric.clone()).or_default();
-            e.push((self.internal_ts.as_secs_f64(), val));
+            let mut ts = self.internal_ts.as_secs_f64();
+            if metrics_response.contains_key("time") {
+                ts = *metrics_response.get("time").unwrap() / 1000.0;
+            }
+            self.internal_ts = Duration::from_secs_f64(ts);
+            e.push((ts, val));
             let yr = self.data_y_range.get_mut(metric).unwrap();
             if val * 1.1 < yr.0 {
                 yr.0 = val * 1.2;
@@ -1427,22 +1501,18 @@ impl PlotterApp {
     }
 }
 
-fn parse_prometheus_metrics(data: &str) -> anyhow::Result<HashMap<String, f64>> {
+fn parse_csv_metrics(header: &[String], data: &str) -> anyhow::Result<HashMap<String, f64>> {
     let mut metrics = HashMap::new();
-    for line in data.lines() {
-        if line.starts_with('#') {
-            continue;
-        }
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 2 {
-            continue;
-        }
-        let metric = parts[0];
-        let value = parts[1].parse::<f64>();
-        if value.is_err() {
-            continue;
-        }
-        metrics.insert(metric.to_string(), value.unwrap());
+    let data = data.split(',').collect::<Vec<&str>>();
+    for (i, h) in header.iter().enumerate() {
+        let val = match h.as_str() {
+            "time" => {
+                let ts = data[i].parse::<u64>()?;
+                ts as f64
+            }
+            _ => data[i].parse::<f64>()?,
+        };
+        metrics.insert(h.clone(), val);
     }
     Ok(metrics)
 }

@@ -1,4 +1,8 @@
 //! API for document management.
+//!
+//! The main entry point is the [`Client`].
+//!
+//! You obtain a [`Client`] via [`Iroh::docs()`](crate::client::Iroh::docs).
 
 use std::{
     path::{Path, PathBuf},
@@ -25,13 +29,14 @@ use quic_rpc::message::RpcMsg;
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
-use crate::rpc_protocol::{
-    DocCloseRequest, DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest,
-    DocExportFileRequest, DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest,
-    DocGetSyncPeersRequest, DocImportFileRequest, DocImportRequest, DocLeaveRequest,
-    DocListRequest, DocOpenRequest, DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest,
-    DocShareRequest, DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, RpcService,
+use crate::rpc_protocol::docs::{
+    CloseRequest, CreateRequest, DelRequest, DelResponse, DocListRequest, DocSubscribeRequest,
+    DropRequest, ExportFileRequest, GetDownloadPolicyRequest, GetExactRequest, GetManyRequest,
+    GetSyncPeersRequest, ImportFileRequest, ImportRequest, LeaveRequest, OpenRequest,
+    SetDownloadPolicyRequest, SetHashRequest, SetRequest, ShareRequest, StartSyncRequest,
+    StatusRequest,
 };
+use crate::rpc_protocol::RpcService;
 
 #[doc(inline)]
 pub use iroh_docs::engine::{Origin, SyncEvent, SyncReason};
@@ -46,33 +51,33 @@ pub struct Client {
 }
 
 impl Client {
-    /// Create a new document.
+    /// Creates a new document.
     pub async fn create(&self) -> Result<Doc> {
-        let res = self.rpc.rpc(DocCreateRequest {}).await??;
+        let res = self.rpc.rpc(CreateRequest {}).await??;
         let doc = Doc::new(self.rpc.clone(), res.id);
         Ok(doc)
     }
 
-    /// Delete a document from the local node.
+    /// Deletes a document from the local node.
     ///
     /// This is a destructive operation. Both the document secret key and all entries in the
     /// document will be permanently deleted from the node's storage. Content blobs will be deleted
     /// through garbage collection unless they are referenced from another document or tag.
     pub async fn drop_doc(&self, doc_id: NamespaceId) -> Result<()> {
-        self.rpc.rpc(DocDropRequest { doc_id }).await??;
+        self.rpc.rpc(DropRequest { doc_id }).await??;
         Ok(())
     }
 
-    /// Import a document from a namespace capability.
+    /// Imports a document from a namespace capability.
     ///
     /// This does not start sync automatically. Use [`Doc::start_sync`] to start sync.
     pub async fn import_namespace(&self, capability: Capability) -> Result<Doc> {
-        let res = self.rpc.rpc(DocImportRequest { capability }).await??;
+        let res = self.rpc.rpc(ImportRequest { capability }).await??;
         let doc = Doc::new(self.rpc.clone(), res.doc_id);
         Ok(doc)
     }
 
-    /// Import a document from a ticket and join all peers in the ticket.
+    /// Imports a document from a ticket and joins all peers in the ticket.
     pub async fn import(&self, ticket: DocTicket) -> Result<Doc> {
         let DocTicket { capability, nodes } = ticket;
         let doc = self.import_namespace(capability).await?;
@@ -80,9 +85,9 @@ impl Client {
         Ok(doc)
     }
 
-    /// Import a document from a ticket, create a subscription stream and join all peers in the ticket.
+    /// Imports a document from a ticket, creates a subscription stream and joins all peers in the ticket.
     ///
-    /// Returns the [`Doc`] and a [`Stream`] of [`LiveEvent`]s
+    /// Returns the [`Doc`] and a [`Stream`] of [`LiveEvent`]s.
     ///
     /// The subscription stream is created before the sync is started, so the first call to this
     /// method after starting the node is guaranteed to not miss any sync events.
@@ -91,22 +96,24 @@ impl Client {
         ticket: DocTicket,
     ) -> Result<(Doc, impl Stream<Item = anyhow::Result<LiveEvent>>)> {
         let DocTicket { capability, nodes } = ticket;
-        let res = self.rpc.rpc(DocImportRequest { capability }).await??;
+        let res = self.rpc.rpc(ImportRequest { capability }).await??;
         let doc = Doc::new(self.rpc.clone(), res.doc_id);
         let events = doc.subscribe().await?;
         doc.start_sync(nodes).await?;
         Ok((doc, events))
     }
 
-    /// List all documents.
+    /// Lists all documents.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<(NamespaceId, CapabilityKind)>>> {
         let stream = self.rpc.server_streaming(DocListRequest {}).await?;
         Ok(flatten(stream).map(|res| res.map(|res| (res.id, res.capability))))
     }
 
-    /// Get a [`Doc`] client for a single document. Return None if the document cannot be found.
+    /// Returns a [`Doc`] client for a single document.
+    ///
+    /// Returns None if the document cannot be found.
     pub async fn open(&self, id: NamespaceId) -> Result<Option<Doc>> {
-        self.rpc.rpc(DocOpenRequest { doc_id: id }).await??;
+        self.rpc.rpc(OpenRequest { doc_id: id }).await??;
         let doc = Doc::new(self.rpc.clone(), id);
         Ok(Some(doc))
     }
@@ -138,7 +145,7 @@ impl Drop for DocInner {
         let rpc = self.rpc.clone();
         if !self.closed.swap(true, Ordering::Relaxed) {
             self.rt.spawn(async move {
-                rpc.rpc(DocCloseRequest { doc_id }).await.ok();
+                rpc.rpc(CloseRequest { doc_id }).await.ok();
             });
         }
     }
@@ -162,15 +169,15 @@ impl Doc {
         Ok(res)
     }
 
-    /// Get the document id of this doc.
+    /// Returns the document id of this doc.
     pub fn id(&self) -> NamespaceId {
         self.0.id
     }
 
-    /// Close the document.
+    /// Closes the document.
     pub async fn close(&self) -> Result<()> {
         if !self.0.closed.swap(true, Ordering::Relaxed) {
-            self.rpc(DocCloseRequest { doc_id: self.id() }).await??;
+            self.rpc(CloseRequest { doc_id: self.id() }).await??;
         }
         Ok(())
     }
@@ -183,7 +190,7 @@ impl Doc {
         }
     }
 
-    /// Set the content of a key to a byte array.
+    /// Sets the content of a key to a byte array.
     pub async fn set_bytes(
         &self,
         author_id: AuthorId,
@@ -192,7 +199,7 @@ impl Doc {
     ) -> Result<Hash> {
         self.ensure_open()?;
         let res = self
-            .rpc(DocSetRequest {
+            .rpc(SetRequest {
                 doc_id: self.id(),
                 author_id,
                 key: key.into(),
@@ -202,7 +209,7 @@ impl Doc {
         Ok(res.entry.content_hash())
     }
 
-    /// Set an entries on the doc via its key, hash, and size.
+    /// Sets an entries on the doc via its key, hash, and size.
     pub async fn set_hash(
         &self,
         author_id: AuthorId,
@@ -211,7 +218,7 @@ impl Doc {
         size: u64,
     ) -> Result<()> {
         self.ensure_open()?;
-        self.rpc(DocSetHashRequest {
+        self.rpc(SetHashRequest {
             doc_id: self.id(),
             author_id,
             key: key.into(),
@@ -222,7 +229,7 @@ impl Doc {
         Ok(())
     }
 
-    /// Add an entry from an absolute file path
+    /// Adds an entry from an absolute file path
     pub async fn import_file(
         &self,
         author: AuthorId,
@@ -234,7 +241,7 @@ impl Doc {
         let stream = self
             .0
             .rpc
-            .server_streaming(DocImportFileRequest {
+            .server_streaming(ImportFileRequest {
                 doc_id: self.id(),
                 author_id: author,
                 path: path.as_ref().into(),
@@ -245,7 +252,7 @@ impl Doc {
         Ok(ImportFileProgress::new(stream))
     }
 
-    /// Export an entry as a file to a given absolute path.
+    /// Exports an entry as a file to a given absolute path.
     pub async fn export_file(
         &self,
         entry: Entry,
@@ -256,7 +263,7 @@ impl Doc {
         let stream = self
             .0
             .rpc
-            .server_streaming(DocExportFileRequest {
+            .server_streaming(ExportFileRequest {
                 entry: entry.0,
                 path: path.as_ref().into(),
                 mode,
@@ -265,7 +272,7 @@ impl Doc {
         Ok(ExportFileProgress::new(stream))
     }
 
-    /// Delete entries that match the given `author` and key `prefix`.
+    /// Deletes entries that match the given `author` and key `prefix`.
     ///
     /// This inserts an empty entry with the key set to `prefix`, effectively clearing all other
     /// entries whose key starts with or is equal to the given `prefix`.
@@ -274,19 +281,19 @@ impl Doc {
     pub async fn del(&self, author_id: AuthorId, prefix: impl Into<Bytes>) -> Result<usize> {
         self.ensure_open()?;
         let res = self
-            .rpc(DocDelRequest {
+            .rpc(DelRequest {
                 doc_id: self.id(),
                 author_id,
                 prefix: prefix.into(),
             })
             .await??;
-        let DocDelResponse { removed } = res;
+        let DelResponse { removed } = res;
         Ok(removed)
     }
 
-    /// Get an entry for a key and author.
+    /// Returns an entry for a key and author.
     ///
-    /// Optionally also get the entry if it is empty (i.e. a deletion marker).
+    /// Optionally also returns the entry unless it is empty (i.e. a deletion marker).
     pub async fn get_exact(
         &self,
         author: AuthorId,
@@ -295,7 +302,7 @@ impl Doc {
     ) -> Result<Option<Entry>> {
         self.ensure_open()?;
         let res = self
-            .rpc(DocGetExactRequest {
+            .rpc(GetExactRequest {
                 author,
                 key: key.as_ref().to_vec().into(),
                 doc_id: self.id(),
@@ -305,7 +312,7 @@ impl Doc {
         Ok(res.entry.map(|entry| entry.into()))
     }
 
-    /// Get entries.
+    /// Returns all entries matching the query.
     pub async fn get_many(
         &self,
         query: impl Into<Query>,
@@ -314,7 +321,7 @@ impl Doc {
         let stream = self
             .0
             .rpc
-            .server_streaming(DocGetManyRequest {
+            .server_streaming(GetManyRequest {
                 doc_id: self.id(),
                 query: query.into(),
             })
@@ -322,12 +329,12 @@ impl Doc {
         Ok(flatten(stream).map(|res| res.map(|res| res.entry.into())))
     }
 
-    /// Get a single entry.
+    /// Returns a single entry.
     pub async fn get_one(&self, query: impl Into<Query>) -> Result<Option<Entry>> {
         self.get_many(query).await?.next().await.transpose()
     }
 
-    /// Share this document with peers over a ticket.
+    /// Shares this document with peers over a ticket.
     pub async fn share(
         &self,
         mode: ShareMode,
@@ -335,7 +342,7 @@ impl Doc {
     ) -> anyhow::Result<DocTicket> {
         self.ensure_open()?;
         let res = self
-            .rpc(DocShareRequest {
+            .rpc(ShareRequest {
                 doc_id: self.id(),
                 mode,
                 addr_options,
@@ -344,11 +351,11 @@ impl Doc {
         Ok(res.0)
     }
 
-    /// Start to sync this document with a list of peers.
+    /// Starts to sync this document with a list of peers.
     pub async fn start_sync(&self, peers: Vec<NodeAddr>) -> Result<()> {
         self.ensure_open()?;
         let _res = self
-            .rpc(DocStartSyncRequest {
+            .rpc(StartSyncRequest {
                 doc_id: self.id(),
                 peers,
             })
@@ -356,14 +363,14 @@ impl Doc {
         Ok(())
     }
 
-    /// Stop the live sync for this document.
+    /// Stops the live sync for this document.
     pub async fn leave(&self) -> Result<()> {
         self.ensure_open()?;
-        let _res = self.rpc(DocLeaveRequest { doc_id: self.id() }).await??;
+        let _res = self.rpc(LeaveRequest { doc_id: self.id() }).await??;
         Ok(())
     }
 
-    /// Subscribe to events for this document.
+    /// Subscribes to events for this document.
     pub async fn subscribe(&self) -> anyhow::Result<impl Stream<Item = anyhow::Result<LiveEvent>>> {
         self.ensure_open()?;
         let stream = self
@@ -377,16 +384,16 @@ impl Doc {
         }))
     }
 
-    /// Get status info for this document
+    /// Returns status info for this document
     pub async fn status(&self) -> anyhow::Result<OpenState> {
         self.ensure_open()?;
-        let res = self.rpc(DocStatusRequest { doc_id: self.id() }).await??;
+        let res = self.rpc(StatusRequest { doc_id: self.id() }).await??;
         Ok(res.status)
     }
 
-    /// Set the download policy for this document
+    /// Sets the download policy for this document
     pub async fn set_download_policy(&self, policy: DownloadPolicy) -> Result<()> {
-        self.rpc(DocSetDownloadPolicyRequest {
+        self.rpc(SetDownloadPolicyRequest {
             doc_id: self.id(),
             policy,
         })
@@ -394,18 +401,18 @@ impl Doc {
         Ok(())
     }
 
-    /// Get the download policy for this document
+    /// Returns the download policy for this document
     pub async fn get_download_policy(&self) -> Result<DownloadPolicy> {
         let res = self
-            .rpc(DocGetDownloadPolicyRequest { doc_id: self.id() })
+            .rpc(GetDownloadPolicyRequest { doc_id: self.id() })
             .await??;
         Ok(res.policy)
     }
 
-    /// Get sync peers for this document
+    /// Returns sync peers for this document
     pub async fn get_sync_peers(&self) -> Result<Option<Vec<PeerIdBytes>>> {
         let res = self
-            .rpc(DocGetSyncPeersRequest { doc_id: self.id() })
+            .rpc(GetSyncPeersRequest { doc_id: self.id() })
             .await??;
         Ok(res.peers)
     }
@@ -434,44 +441,44 @@ impl From<iroh_docs::SignedEntry> for Entry {
 }
 
 impl Entry {
-    /// Get the [`RecordIdentifier`] for this entry.
+    /// Returns the [`RecordIdentifier`] for this entry.
     pub fn id(&self) -> &RecordIdentifier {
         self.0.id()
     }
 
-    /// Get the [`AuthorId`] of this entry.
+    /// Returns the [`AuthorId`] of this entry.
     pub fn author(&self) -> AuthorId {
         self.0.author()
     }
 
-    /// Get the [`struct@Hash`] of the content data of this record.
+    /// Returns the [`struct@Hash`] of the content data of this record.
     pub fn content_hash(&self) -> Hash {
         self.0.content_hash()
     }
 
-    /// Get the length of the data addressed by this record's content hash.
+    /// Returns the length of the data addressed by this record's content hash.
     pub fn content_len(&self) -> u64 {
         self.0.content_len()
     }
 
-    /// Get the key of this entry.
+    /// Returns the key of this entry.
     pub fn key(&self) -> &[u8] {
         self.0.key()
     }
 
-    /// Get the timestamp of this entry.
+    /// Returns the timestamp of this entry.
     pub fn timestamp(&self) -> u64 {
         self.0.timestamp()
     }
 
-    /// Read the content of an [`Entry`] as a streaming [`blobs::Reader`].
+    /// Reads the content of an [`Entry`] as a streaming [`blobs::Reader`].
     ///
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
     pub async fn content_reader(&self, client: impl Into<&RpcClient>) -> Result<blobs::Reader> {
         blobs::Reader::from_rpc_read(client.into(), self.content_hash()).await
     }
 
-    /// Read all content of an [`Entry`] into a buffer.
+    /// Reads all content of an [`Entry`] into a buffer.
     ///
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
     pub async fn content_bytes(&self, client: impl Into<&RpcClient>) -> Result<Bytes> {
@@ -489,7 +496,7 @@ impl Entry {
 /// file as an entry in the doc.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ImportProgress {
-    /// An item was found with name `name`, from now on referred to via `id`
+    /// An item was found with name `name`, from now on referred to via `id`.
     Found {
         /// A new unique id for this entry.
         id: u64,
@@ -512,7 +519,7 @@ pub enum ImportProgress {
         /// The hash of the entry.
         hash: Hash,
     },
-    /// We are done setting the entry to the doc
+    /// We are done setting the entry to the doc.
     AllDone {
         /// The key of the entry
         key: Bytes,
@@ -620,7 +627,7 @@ impl ImportFileProgress {
         }
     }
 
-    /// Finish writing the stream, ignoring all intermediate progress events.
+    /// Finishes writing the stream, ignoring all intermediate progress events.
     ///
     /// Returns a [`ImportFileOutcome`] which contains a tag, key, and hash and the size of the
     /// content.
@@ -692,8 +699,9 @@ impl ExportFileProgress {
             stream: Box::pin(stream),
         }
     }
-    /// Iterate through the export progress stream, returning when the stream has completed.
 
+    /// Iterates through the export progress stream, returning when the stream has completed.
+    ///
     /// Returns a [`ExportFileOutcome`] which contains a file path the data was written to and the size of the content.
     pub async fn finish(mut self) -> Result<ExportFileOutcome> {
         let mut total_size = 0;

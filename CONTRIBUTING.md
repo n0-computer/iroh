@@ -34,7 +34,7 @@ Code contributions to Iroh are greatly appreciated. Here is the general workflow
 
    - **General code guidelines**
 
-     - When possible, please document relevant pieces of code. If documentation refers to another object (module, function, struct, etc) use ``[`path::to::ReferencedObject`]`` to link it. For more information check the [rustdoc docummentation][rustdoc]
+     - When possible, please document relevant pieces of code following the [rust documentation conventions][docconventions]. For more information on how the rust documentation system works check the [rustdoc documentation][rustdoc].
      - Comment your code. It will be useful for your reviewer and future contributors.
 
    - **Pull request titles**
@@ -100,3 +100,4 @@ Code contributions to Iroh are greatly appreciated. Here is the general workflow
 [forkiroh]: https://github.com/n0-computer/iroh/fork
 [draftprs]: https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-pull-requests#draft-pull-requests
 [rustdoc]: https://doc.rust-lang.org/rustdoc/how-to-write-documentation.html
+[docconventions]: https://rust-lang.github.io/rfcs/1574-more-api-documentation-conventions.html#appendix-a-full-conventions-text

@@ -12,11 +12,13 @@ use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use futures_util::FutureExt;
 use iroh_base::hash::Hash;
+use iroh_metrics::inc;
 use serde::{Deserialize, Serialize};
 use tokio::{sync::oneshot, task::JoinSet};
 use tracing::{debug, error, error_span, trace, warn};
 
 use crate::{
+    metrics::Metrics,
     ranger::Message,
     store::{
         fs::{ContentHashesIterator, StoreInstance},
@@ -28,7 +30,7 @@ use crate::{
 };
 
 const ACTION_CAP: usize = 1024;
-const MAX_COMMIT_DELAY: Duration = Duration::from_millis(500);
+pub(crate) const MAX_COMMIT_DELAY: Duration = Duration::from_millis(500);
 
 #[derive(derive_more::Debug, derive_more::Display)]
 enum Action {
@@ -59,17 +61,22 @@ enum Action {
     #[display("ListAuthors")]
     ListAuthors {
         #[debug("reply")]
-        reply: flume::Sender<Result<AuthorId>>,
+        reply: async_channel::Sender<Result<AuthorId>>,
     },
     #[display("ListReplicas")]
     ListReplicas {
         #[debug("reply")]
-        reply: flume::Sender<Result<(NamespaceId, CapabilityKind)>>,
+        reply: async_channel::Sender<Result<(NamespaceId, CapabilityKind)>>,
     },
     #[display("ContentHashes")]
     ContentHashes {
         #[debug("reply")]
         reply: oneshot::Sender<Result<ContentHashesIterator>>,
+    },
+    #[display("FlushStore")]
+    FlushStore {
+        #[debug("reply")]
+        reply: oneshot::Sender<Result<()>>,
     },
     #[display("Replica({}, {})", _0.fmt_short(), _1)]
     Replica(NamespaceId, ReplicaAction),
@@ -101,12 +108,12 @@ enum ReplicaAction {
         reply: oneshot::Sender<Result<()>>,
     },
     Subscribe {
-        sender: flume::Sender<Event>,
+        sender: async_channel::Sender<Event>,
         #[debug("reply")]
         reply: oneshot::Sender<Result<()>>,
     },
     Unsubscribe {
-        sender: flume::Sender<Event>,
+        sender: async_channel::Sender<Event>,
         #[debug("reply")]
         reply: oneshot::Sender<Result<()>>,
     },
@@ -159,7 +166,7 @@ enum ReplicaAction {
     },
     GetMany {
         query: Query,
-        reply: flume::Sender<Result<SignedEntry>>,
+        reply: async_channel::Sender<Result<SignedEntry>>,
     },
     DropReplica {
         reply: oneshot::Sender<Result<()>>,
@@ -215,7 +222,7 @@ struct OpenReplica {
 /// [`SyncHandle::drop`] will not block.
 #[derive(Debug, Clone)]
 pub struct SyncHandle {
-    tx: flume::Sender<Action>,
+    tx: async_channel::Sender<Action>,
     join_handle: Arc<Option<JoinHandle<()>>>,
 }
 
@@ -225,7 +232,7 @@ pub struct OpenOpts {
     /// Set to true to set sync state to true.
     pub sync: bool,
     /// Optionally subscribe to replica events.
-    pub subscribe: Option<flume::Sender<Event>>,
+    pub subscribe: Option<async_channel::Sender<Event>>,
 }
 impl OpenOpts {
     /// Set sync state to true.
@@ -234,7 +241,7 @@ impl OpenOpts {
         self
     }
     /// Subscribe to replica events.
-    pub fn subscribe(mut self, subscribe: flume::Sender<Event>) -> Self {
+    pub fn subscribe(mut self, subscribe: async_channel::Sender<Event>) -> Self {
         self.subscribe = Some(subscribe);
         self
     }
@@ -248,7 +255,7 @@ impl SyncHandle {
         content_status_callback: Option<ContentStatusCallback>,
         me: String,
     ) -> SyncHandle {
-        let (action_tx, action_rx) = flume::bounded(ACTION_CAP);
+        let (action_tx, action_rx) = async_channel::bounded(ACTION_CAP);
         let actor = Actor {
             store,
             states: Default::default(),
@@ -291,7 +298,7 @@ impl SyncHandle {
     pub async fn subscribe(
         &self,
         namespace: NamespaceId,
-        sender: flume::Sender<Event>,
+        sender: async_channel::Sender<Event>,
     ) -> Result<()> {
         let (reply, rx) = oneshot::channel();
         self.send_replica(namespace, ReplicaAction::Subscribe { sender, reply })
@@ -302,7 +309,7 @@ impl SyncHandle {
     pub async fn unsubscribe(
         &self,
         namespace: NamespaceId,
-        sender: flume::Sender<Event>,
+        sender: async_channel::Sender<Event>,
     ) -> Result<()> {
         let (reply, rx) = oneshot::channel();
         self.send_replica(namespace, ReplicaAction::Unsubscribe { sender, reply })
@@ -428,7 +435,7 @@ impl SyncHandle {
         &self,
         namespace: NamespaceId,
         query: Query,
-        reply: flume::Sender<Result<SignedEntry>>,
+        reply: async_channel::Sender<Result<SignedEntry>>,
     ) -> Result<()> {
         let action = ReplicaAction::GetMany { query, reply };
         self.send_replica(namespace, action).await?;
@@ -482,13 +489,13 @@ impl SyncHandle {
         Ok(store)
     }
 
-    pub async fn list_authors(&self, reply: flume::Sender<Result<AuthorId>>) -> Result<()> {
+    pub async fn list_authors(&self, reply: async_channel::Sender<Result<AuthorId>>) -> Result<()> {
         self.send(Action::ListAuthors { reply }).await
     }
 
     pub async fn list_replicas(
         &self,
-        reply: flume::Sender<Result<(NamespaceId, CapabilityKind)>>,
+        reply: async_channel::Sender<Result<(NamespaceId, CapabilityKind)>>,
     ) -> Result<()> {
         self.send(Action::ListReplicas { reply }).await
     }
@@ -542,9 +549,24 @@ impl SyncHandle {
         rx.await?
     }
 
+    /// Makes sure that all pending database operations are persisted to disk.
+    ///
+    /// Otherwise, database operations are batched into bigger transactions for speed.
+    /// Use this if you need to make sure something is written to the database
+    /// before another operation, e.g. to make sure sudden process exits don't corrupt
+    /// your application state.
+    ///
+    /// It's not necessary to call this function before shutdown, as `shutdown` will
+    /// trigger a flush on its own.
+    pub async fn flush_store(&self) -> Result<()> {
+        let (reply, rx) = oneshot::channel();
+        self.send(Action::FlushStore { reply }).await?;
+        rx.await?
+    }
+
     async fn send(&self, action: Action) -> Result<()> {
         self.tx
-            .send_async(action)
+            .send(action)
             .await
             .context("sending to iroh_docs actor failed")?;
         Ok(())
@@ -559,7 +581,10 @@ impl Drop for SyncHandle {
     fn drop(&mut self) {
         // this means we're dropping the last reference
         if let Some(handle) = Arc::get_mut(&mut self.join_handle) {
-            self.tx.send(Action::Shutdown { reply: None }).ok();
+            // this call is the reason tx can not be a tokio mpsc channel.
+            // we have no control about where drop is called, yet tokio send_blocking panics
+            // when called from inside a tokio runtime.
+            self.tx.send_blocking(Action::Shutdown { reply: None }).ok();
             let handle = handle.take().expect("this can only run once");
             if let Err(err) = handle.join() {
                 warn!(?err, "Failed to join sync actor");
@@ -571,7 +596,7 @@ impl Drop for SyncHandle {
 struct Actor {
     store: Store,
     states: OpenReplicas,
-    action_rx: flume::Receiver<Action>,
+    action_rx: async_channel::Receiver<Action>,
     content_status_callback: Option<ContentStatusCallback>,
     tasks: JoinSet<()>,
 }
@@ -597,10 +622,10 @@ impl Actor {
                     }
                     continue;
                 }
-                action = self.action_rx.recv_async() => {
+                action = self.action_rx.recv() => {
                     match action {
                         Ok(action) => action,
-                        Err(flume::RecvError::Disconnected) => {
+                        Err(async_channel::RecvError) => {
                             debug!("action channel disconnected");
                             break None;
                         }
@@ -609,6 +634,7 @@ impl Actor {
                 }
             };
             trace!(%action, "tick");
+            inc!(Metrics, actor_tick_main);
             match action {
                 Action::Shutdown { reply } => {
                     break reply;
@@ -675,6 +701,7 @@ impl Actor {
             Action::ContentHashes { reply } => {
                 send_reply_with(reply, self, |this| this.store.content_hashes())
             }
+            Action::FlushStore { reply } => send_reply(reply, self.store.flush()),
             Action::Replica(namespace, action) => self.on_replica_action(namespace, action),
         }
     }
@@ -955,17 +982,14 @@ impl OpenReplicas {
 }
 
 async fn iter_to_channel_async<T: Send + 'static>(
-    channel: flume::Sender<Result<T>>,
+    channel: async_channel::Sender<Result<T>>,
     iter: Result<impl Iterator<Item = Result<T>>>,
 ) -> Result<(), SendReplyError> {
     match iter {
-        Err(err) => channel
-            .send_async(Err(err))
-            .await
-            .map_err(send_reply_error)?,
+        Err(err) => channel.send(Err(err)).await.map_err(send_reply_error)?,
         Ok(iter) => {
             for item in iter {
-                channel.send_async(item).await.map_err(send_reply_error)?;
+                channel.send(item).await.map_err(send_reply_error)?;
             }
         }
     }
@@ -1008,10 +1032,10 @@ mod tests {
         let id = namespace.id();
         sync.import_namespace(namespace.into()).await?;
         sync.open(id, Default::default()).await?;
-        let (tx, rx) = flume::bounded(10);
+        let (tx, rx) = async_channel::bounded(10);
         sync.subscribe(id, tx).await?;
         sync.close(id).await?;
-        assert!(rx.recv_async().await.is_err());
+        assert!(rx.recv().await.is_err());
         Ok(())
     }
 }

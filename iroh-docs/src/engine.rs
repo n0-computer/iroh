@@ -23,7 +23,6 @@ use tracing::{error, error_span, Instrument};
 use crate::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
 use crate::{Author, AuthorId};
 
-use self::gossip::GossipActor;
 use self::live::{LiveActor, ToLiveActor};
 
 pub use self::live::SyncEvent;
@@ -69,7 +68,6 @@ impl Engine {
         default_author_storage: DefaultAuthorStorage,
     ) -> anyhow::Result<Self> {
         let (live_actor_tx, to_live_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
-        let (to_gossip_actor, to_gossip_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
         let me = endpoint.node_id().fmt_short();
 
         let content_status_cb = {
@@ -86,17 +84,10 @@ impl Engine {
             downloader,
             to_live_actor_recv,
             live_actor_tx.clone(),
-            to_gossip_actor,
-        );
-        let gossip_actor = GossipActor::new(
-            to_gossip_actor_recv,
-            sync.clone(),
-            gossip,
-            live_actor_tx.clone(),
         );
         let actor_handle = tokio::task::spawn(
             async move {
-                if let Err(err) = actor.run(gossip_actor).await {
+                if let Err(err) = actor.run().await {
                     error!("sync actor failed: {err:?}");
                 }
             }
@@ -170,15 +161,15 @@ impl Engine {
 
         // Subscribe to insert events from the replica.
         let a = {
-            let (s, r) = flume::bounded(SUBSCRIBE_CHANNEL_CAP);
+            let (s, r) = async_channel::bounded(SUBSCRIBE_CHANNEL_CAP);
             this.sync.subscribe(namespace, s).await?;
-            r.into_stream()
-                .map(move |ev| LiveEvent::from_replica_event(ev, &content_status_cb))
+            Box::pin(r).map(move |ev| LiveEvent::from_replica_event(ev, &content_status_cb))
         };
 
         // Subscribe to events from the [`live::Actor`].
         let b = {
-            let (s, r) = flume::bounded(SUBSCRIBE_CHANNEL_CAP);
+            let (s, r) = async_channel::bounded(SUBSCRIBE_CHANNEL_CAP);
+            let r = Box::pin(r);
             let (reply, reply_rx) = oneshot::channel();
             this.to_live_actor
                 .send(ToLiveActor::Subscribe {
@@ -188,7 +179,7 @@ impl Engine {
                 })
                 .await?;
             reply_rx.await??;
-            r.into_stream().map(|event| Ok(LiveEvent::from(event)))
+            r.map(|event| Ok(LiveEvent::from(event)))
         };
 
         Ok(a.or(b))
@@ -351,6 +342,10 @@ impl DefaultAuthorStorage {
                     let author = Author::new(&mut rand::thread_rng());
                     let author_id = author.id();
                     docs_store.import_author(author).await?;
+                    // Make sure to write the default author to the store
+                    // *before* we write the default author ID file.
+                    // Otherwise the default author ID file is effectively a dangling reference.
+                    docs_store.flush_store().await?;
                     self.persist(author_id).await?;
                     Ok(author_id)
                 }
@@ -379,7 +374,7 @@ impl DefaultAuthorStorage {
     }
 }
 
-/// Peristent default author for a docs engine.
+/// Persistent default author for a docs engine.
 #[derive(Debug)]
 pub struct DefaultAuthor {
     value: RwLock<AuthorId>,
@@ -389,7 +384,7 @@ pub struct DefaultAuthor {
 impl DefaultAuthor {
     /// Load the default author from storage.
     ///
-    /// If the storage is empty creates a new author and perists it.
+    /// If the storage is empty creates a new author and persists it.
     pub async fn load(storage: DefaultAuthorStorage, docs_store: &SyncHandle) -> Result<Self> {
         let value = storage.load(docs_store).await?;
         Ok(Self {

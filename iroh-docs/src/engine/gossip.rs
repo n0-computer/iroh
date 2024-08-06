@@ -1,164 +1,156 @@
-use std::collections::HashSet;
+use std::collections::{hash_map, HashMap};
 
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use futures_lite::StreamExt;
 use futures_util::FutureExt;
-use iroh_gossip::net::{Event, Gossip};
-use iroh_net::key::PublicKey;
+use iroh_gossip::net::{Event, Gossip, GossipEvent, GossipReceiver, GossipSender, JoinOptions};
+use iroh_net::NodeId;
 use tokio::{
-    sync::{broadcast, mpsc},
-    task::JoinSet,
+    sync::mpsc,
+    task::{AbortHandle, JoinSet},
 };
-use tokio_stream::{
-    wrappers::{errors::BroadcastStreamRecvError, BroadcastStream},
-    StreamMap,
-};
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, instrument, warn};
 
 use crate::{actor::SyncHandle, ContentStatus, NamespaceId};
 
 use super::live::{Op, ToLiveActor};
 
-#[derive(strum::Display, Debug)]
-pub enum ToGossipActor {
-    Shutdown,
-    Join {
-        namespace: NamespaceId,
-        peers: Vec<PublicKey>,
-    },
-    Leave {
-        namespace: NamespaceId,
-    },
+#[derive(Debug)]
+struct ActiveState {
+    sender: GossipSender,
+    abort_handle: AbortHandle,
 }
 
-/// This actor subscribes to all gossip events. When receiving entries, they are inserted in the
-/// replica (if open). Other events are forwarded to the main actor to be handled there.
-pub struct GossipActor {
-    inbox: mpsc::Receiver<ToGossipActor>,
-    sync: SyncHandle,
+#[derive(Debug)]
+pub struct GossipState {
     gossip: Gossip,
-    to_sync_actor: mpsc::Sender<ToLiveActor>,
-    joined: HashSet<NamespaceId>,
-    want_join: HashSet<NamespaceId>,
-    pending_joins: JoinSet<(NamespaceId, Result<broadcast::Receiver<Event>>)>,
-    gossip_events: StreamMap<NamespaceId, BroadcastStream<Event>>,
+    sync: SyncHandle,
+    to_live_actor: mpsc::Sender<ToLiveActor>,
+    active: HashMap<NamespaceId, ActiveState>,
+    active_tasks: JoinSet<(NamespaceId, Result<()>)>,
 }
 
-impl GossipActor {
-    pub fn new(
-        inbox: mpsc::Receiver<ToGossipActor>,
-        sync: SyncHandle,
-        gossip: Gossip,
-        to_sync_actor: mpsc::Sender<ToLiveActor>,
-    ) -> Self {
+impl GossipState {
+    pub fn new(gossip: Gossip, sync: SyncHandle, to_live_actor: mpsc::Sender<ToLiveActor>) -> Self {
         Self {
-            inbox,
-            sync,
             gossip,
-            to_sync_actor,
-            joined: Default::default(),
-            want_join: Default::default(),
-            pending_joins: Default::default(),
-            gossip_events: Default::default(),
+            sync,
+            to_live_actor,
+            active: Default::default(),
+            active_tasks: Default::default(),
         }
     }
-    pub async fn run(&mut self) -> anyhow::Result<()> {
-        let mut i = 0;
-        loop {
-            i += 1;
-            trace!(?i, "tick wait");
-            tokio::select! {
-                next = self.gossip_events.next(), if !self.gossip_events.is_empty() => {
-                    trace!(?i, "tick: gossip_event");
-                    if let Err(err) = self.on_gossip_event(next).await {
-                        error!("gossip actor died: {err:?}");
-                        return Err(err);
-                    }
-                },
-                msg = self.inbox.recv() => {
-                    let msg = msg.context("to_actor closed")?;
-                    trace!(%msg, ?i, "tick: to_actor");
-                    if !self.on_actor_message(msg).await.context("on_actor_message")? {
-                        break;
-                    }
-                }
-                Some(res) = self.pending_joins.join_next(), if !self.pending_joins.is_empty() => {
-                    trace!(?i, "tick: pending_joins");
-                    let (namespace, res) = res.context("pending_joins closed")?;
-                    match res {
-                        Ok(stream) => {
-                            debug!(namespace = %namespace.fmt_short(), "joined gossip");
-                            self.joined.insert(namespace);
-                            let stream = BroadcastStream::new(stream);
-                            self.gossip_events.insert(namespace, stream);
-                        },
-                        Err(err) => {
-                            if self.want_join.contains(&namespace) {
-                                error!(?namespace, ?err, "failed to join gossip");
-                            }
-                        }
-                    }
-                }
 
+    pub async fn join(&mut self, namespace: NamespaceId, bootstrap: Vec<NodeId>) -> Result<()> {
+        match self.active.entry(namespace) {
+            hash_map::Entry::Occupied(entry) => {
+                if !bootstrap.is_empty() {
+                    entry.get().sender.join_peers(bootstrap).await?;
+                }
+            }
+            hash_map::Entry::Vacant(entry) => {
+                let sub = self
+                    .gossip
+                    .join_with_opts(namespace.into(), JoinOptions::with_bootstrap(bootstrap));
+                let (sender, stream) = sub.split();
+                let abort_handle = self.active_tasks.spawn(
+                    receive_loop(
+                        namespace,
+                        stream,
+                        self.to_live_actor.clone(),
+                        self.sync.clone(),
+                    )
+                    .map(move |res| (namespace, res)),
+                );
+                entry.insert(ActiveState {
+                    sender,
+                    abort_handle,
+                });
             }
         }
         Ok(())
     }
 
-    async fn on_actor_message(&mut self, msg: ToGossipActor) -> anyhow::Result<bool> {
-        match msg {
-            ToGossipActor::Shutdown => {
-                for namespace in self.joined.iter() {
-                    self.gossip.quit((*namespace).into()).await.ok();
+    pub fn quit(&mut self, topic: &NamespaceId) {
+        if let Some(state) = self.active.remove(topic) {
+            state.abort_handle.abort();
+        }
+    }
+
+    pub async fn shutdown(&mut self) -> Result<()> {
+        for (_, state) in self.active.drain() {
+            state.abort_handle.abort();
+        }
+        self.progress().await
+    }
+
+    pub async fn broadcast(&self, namespace: &NamespaceId, message: Bytes) {
+        if let Some(state) = self.active.get(namespace) {
+            state.sender.broadcast(message).await.ok();
+        }
+    }
+
+    pub async fn broadcast_neighbors(&self, namespace: &NamespaceId, message: Bytes) {
+        if let Some(state) = self.active.get(namespace) {
+            state.sender.broadcast_neighbors(message).await.ok();
+        }
+    }
+
+    pub fn max_message_size(&self) -> usize {
+        self.gossip.max_message_size()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.active.is_empty()
+    }
+
+    /// Progress the internal task queues.
+    ///
+    /// Returns an error if any of the active tasks panic.
+    ///
+    /// ## Cancel safety
+    ///
+    /// This function is fully cancel-safe.
+    pub async fn progress(&mut self) -> Result<()> {
+        while let Some(res) = self.active_tasks.join_next().await {
+            match res {
+                Err(err) if err.is_cancelled() => continue,
+                Err(err) => return Err(err).context("gossip receive loop panicked"),
+                Ok((namespace, res)) => {
+                    self.active.remove(&namespace);
+                    if let Err(err) = res {
+                        warn!(?err, ?namespace, "gossip receive loop failed")
+                    }
                 }
-                return Ok(false);
-            }
-            ToGossipActor::Join { namespace, peers } => {
-                debug!(?namespace, peers = peers.len(), "join gossip");
-                let gossip = self.gossip.clone();
-                // join gossip for the topic to receive and send message
-                let fut = async move {
-                    let stream = gossip.subscribe(namespace.into()).await?;
-                    let _topic = gossip.join(namespace.into(), peers).await?.await?;
-                    Ok(stream)
-                };
-                let fut = fut.map(move |res| (namespace, res));
-                self.want_join.insert(namespace);
-                self.pending_joins.spawn(fut);
-            }
-            ToGossipActor::Leave { namespace } => {
-                self.gossip.quit(namespace.into()).await?;
-                self.joined.remove(&namespace);
-                self.want_join.remove(&namespace);
             }
         }
-        Ok(true)
+        Ok(())
     }
-    async fn on_gossip_event(
-        &mut self,
-        event: Option<(NamespaceId, Result<Event, BroadcastStreamRecvError>)>,
-    ) -> Result<()> {
-        let (namespace, event) = event.context("Gossip event channel closed")?;
+}
+
+#[instrument("gossip-recv", skip_all, fields(namespace=%namespace.fmt_short()))]
+async fn receive_loop(
+    namespace: NamespaceId,
+    mut recv: GossipReceiver,
+    to_sync_actor: mpsc::Sender<ToLiveActor>,
+    sync: SyncHandle,
+) -> Result<()> {
+    for peer in recv.neighbors() {
+        to_sync_actor
+            .send(ToLiveActor::NeighborUp { namespace, peer })
+            .await?;
+    }
+    while let Some(event) = recv.try_next().await? {
         let event = match event {
-            Ok(event) => event,
-            Err(BroadcastStreamRecvError::Lagged(n)) => {
-                warn!("GossipActor too slow (lagged by {n}) - dropping gossip event");
-                return Ok(());
+            Event::Gossip(event) => event,
+            Event::Lagged => {
+                debug!("gossip loop lagged - dropping gossip event");
+                continue;
             }
         };
-        if !self.joined.contains(&namespace) && !self.want_join.contains(&namespace) {
-            error!(namespace = %namespace.fmt_short(), "received gossip event for unknown topic");
-            return Ok(());
-        }
-        if let Err(err) = self.on_gossip_event_inner(namespace, event).await {
-            error!(namespace = %namespace.fmt_short(), ?err, "Failed to process gossip event");
-        }
-        Ok(())
-    }
-
-    async fn on_gossip_event_inner(&mut self, namespace: NamespaceId, event: Event) -> Result<()> {
         match event {
-            Event::Received(msg) => {
+            GossipEvent::Received(msg) => {
                 let op: Op = postcard::from_bytes(&msg.content)?;
                 match op {
                     Op::Put(entry) => {
@@ -174,12 +166,15 @@ impl GossipActor {
                             false => ContentStatus::Missing,
                         };
                         let from = *msg.delivered_from.as_bytes();
-                        self.sync
+                        if let Err(err) = sync
                             .insert_remote(namespace, entry, from, content_status)
-                            .await?;
+                            .await
+                        {
+                            debug!("ignoring entry received via gossip: {err}");
+                        }
                     }
                     Op::ContentReady(hash) => {
-                        self.to_sync_actor
+                        to_sync_actor
                             .send(ToLiveActor::NeighborContentReady {
                                 namespace,
                                 node: msg.delivered_from,
@@ -188,7 +183,7 @@ impl GossipActor {
                             .await?;
                     }
                     Op::SyncReport(report) => {
-                        self.to_sync_actor
+                        to_sync_actor
                             .send(ToLiveActor::IncomingSyncReport {
                                 from: msg.delivered_from,
                                 report,
@@ -197,20 +192,24 @@ impl GossipActor {
                     }
                 }
             }
-            // A new neighbor appeared in the gossip swarm. Try to sync with it directly.
-            // [Self::sync_with_peer] will check to not resync with peers synced previously in the
-            // same session. TODO: Maybe this is too broad and leads to too many sync requests.
-            Event::NeighborUp(peer) => {
-                self.to_sync_actor
+            GossipEvent::NeighborUp(peer) => {
+                to_sync_actor
                     .send(ToLiveActor::NeighborUp { namespace, peer })
                     .await?;
             }
-            Event::NeighborDown(peer) => {
-                self.to_sync_actor
+            GossipEvent::NeighborDown(peer) => {
+                to_sync_actor
                     .send(ToLiveActor::NeighborDown { namespace, peer })
                     .await?;
             }
+            GossipEvent::Joined(peers) => {
+                for peer in peers {
+                    to_sync_actor
+                        .send(ToLiveActor::NeighborUp { namespace, peer })
+                        .await?;
+                }
+            }
         }
-        Ok(())
     }
+    Ok(())
 }

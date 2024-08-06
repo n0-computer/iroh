@@ -1,6 +1,6 @@
 [package]
 name = "iroh-dns-server"
-version = "0.18.0"
+version = "0.22.0"
 edition = "2021"
 description = "A pkarr relay and DNS server"
 license = "MIT OR Apache-2.0"
@@ -17,17 +17,18 @@ axum-server = { version = "0.6.0", features = ["tls-rustls"] }
 base64-url = "2.0.2"
 bytes = "1.5.0"
 clap = { version = "4.5.1", features = ["derive"] }
-derive_more = { version = "1.0.0-beta.6", features = ["debug", "display", "into", "from"] }
+derive_more = { version = "=1.0.0-beta.7", features = ["debug", "display", "into", "from"] }
 dirs-next = "2.0.0"
 futures-lite = "2.3.0"
 governor = "0.6.3"
 hickory-proto = "0.24.0"
 hickory-server = { version = "0.24.0", features = ["dns-over-rustls"] }
 http = "1.0.0"
-iroh-metrics = { version = "0.18.0", path = "../iroh-metrics" }
+iroh-metrics = { version = "0.22.0", path = "../iroh-metrics" }
 lru = "0.12.3"
+mainline = "2.0.1"
 parking_lot = "0.12.1"
-pkarr = { version = "1.1.4", features = [ "async", "relay", "dht"], default-features = false }
+pkarr = { version = "2.0.0", features = [ "async", "relay", "dht"], default-features = false }
 rcgen = "0.12.1"
 redb = "2.0.0"
 regex = "1.10.3"
@@ -52,9 +53,9 @@ z32 = "1.1.1"
 
 [dev-dependencies]
 hickory-resolver = "0.24.0"
-iroh-net = { version = "0.18.0", path = "../iroh-net" }
+iroh-net = { version = "0.22.0", path = "../iroh-net" }
 iroh-test = { path = "../iroh-test" }
-mainline = "<1.5.0"
+pkarr = { version = "2.0.0", features = ["rand"] }
 
 [package.metadata.docs.rs]
 all-features = true

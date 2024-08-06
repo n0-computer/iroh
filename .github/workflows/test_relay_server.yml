@@ -15,6 +15,7 @@ env:
     RUSTDOCFLAGS: -Dwarnings
     MSRV: "1.76"
     SCCACHE_CACHE_SIZE: "50G"
+    IROH_FORCE_STAGING_RELAYS: "1"
     
 jobs:
     build_relay_server:
@@ -31,7 +32,7 @@ jobs:
         - name: Install rust stable
           uses: dtolnay/rust-toolchain@stable
         - name: Install sccache
-          uses: mozilla-actions/sccache-action@v0.0.4
+          uses: mozilla-actions/sccache-action@v0.0.5
     
         - name: build release
           run: |

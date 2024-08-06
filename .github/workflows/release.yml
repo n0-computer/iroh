@@ -31,6 +31,7 @@ env:
   SCCACHE_CACHE_SIZE: "50G"
   BIN_NAMES: "iroh,iroh-relay,iroh-dns-server"
   RELEASE_VERSION: ${{ github.event.inputs.release_version }}
+  IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
     create-release:
@@ -72,6 +73,9 @@ jobs:
         name: Build release binaries
         needs: create-release
         runs-on: ${{ matrix.runner }}
+        outputs:
+          release_version: ${{ needs.create-release.outputs.release_version }}
+          base_hash: ${{ steps.define_hash.outputs.base_hash }}
         continue-on-error: false
         strategy:
           fail-fast: false
@@ -126,6 +130,12 @@ jobs:
           run: |
             echo "RELEASE_ARCH=${{ matrix.release-arch }}" >> $GITHUB_ENV
             echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV
+        
+        - name: Define hash
+          if: matrix.os == 'ubuntu-latest'
+          id: define_hash
+          run: |
+            echo "base_hash=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
         - name: Ensure musl support
           if: ${{ contains(matrix.cargo_targets, '-musl') }}
@@ -253,3 +263,12 @@ jobs:
           with:
             upload_url: ${{ needs.create-release.outputs.upload_url }}
             asset_path: ${{ env.ASSET }}
+
+    docker:
+      needs: build_release
+      uses: './.github/workflows/docker.yaml'
+      with:
+        release_version: ${{ needs.build_release.outputs.release_version }}
+        base_hash: ${{ needs.build_release.outputs.base_hash }}
+        publish: true
+        

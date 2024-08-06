@@ -12,7 +12,8 @@
 //! - `<z32-node-id>` is the [z-base-32] encoding of the [`NodeId`].
 //!
 //! - `<origin-domain>` is the domain name of the publishing DNS server,
-//!   [`N0_DNS_NODE_ORIGIN`] is the server operated by number0.
+//!   [`N0_DNS_NODE_ORIGIN_PROD`] is the server operated by number0 for production.
+//!   [`N0_DNS_NODE_ORIGIN_STAGING`] is the server operated by number0 for testing.
 //!
 //! - `TXT` is the DNS record type.
 //!
@@ -28,7 +29,8 @@
 //! [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 //! [RFC1464]: https://www.rfc-editor.org/rfc/rfc1464
 //! [`RelayUrl`]: iroh_base::node_addr::RelayUrl
-//! [`N0_DNS_NODE_ORIGIN`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN
+//! [`N0_DNS_NODE_ORIGIN_PROD`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN_PROD
+//! [`N0_DNS_NODE_ORIGIN_STAGING`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN_STAGING
 
 use std::{
     collections::{BTreeMap, BTreeSet},

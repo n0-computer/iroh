@@ -1,7 +1,7 @@
 //! A simple relay server for iroh-net.
 //!
 //! This handles only the CLI and config file loading, the server implementation lives in
-//! [`iroh_net::relay::iroh_relay`].
+//! [`iroh_net::relay::server`].
 
 use std::net::{Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use iroh_net::defaults::{
     DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT,
 };
 use iroh_net::key::SecretKey;
-use iroh_net::relay::iroh_relay;
+use iroh_net::relay::server as iroh_relay;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
@@ -60,7 +60,9 @@ fn load_certs(filename: impl AsRef<Path>) -> Result<Vec<rustls::Certificate>> {
 }
 
 fn load_secret_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
-    let keyfile = std::fs::File::open(filename.as_ref()).context("cannot open secret key file")?;
+    let filename = filename.as_ref();
+    let keyfile = std::fs::File::open(filename)
+        .with_context(|| format!("cannot open secret key file {}", filename.display()))?;
     let mut reader = std::io::BufReader::new(keyfile);
 
     loop {
@@ -75,7 +77,7 @@ fn load_secret_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
 
     bail!(
         "no keys found in {} (encrypted keys not supported)",
-        filename.as_ref().display()
+        filename.display()
     );
 }
 
@@ -104,7 +106,7 @@ struct Config {
     ///
     /// Defaults to `[::]:80`.
     ///
-    /// When running with `--dev` defaults to [::]:3340`.  If specified overrides these
+    /// When running with `--dev` defaults to `[::]:3340`.  If specified overrides these
     /// defaults.
     ///
     /// The Relay server always starts an HTTP server, this specifies the socket this will
@@ -182,7 +184,7 @@ impl Default for Config {
 /// Defaults for fields from [`Config`].
 ///
 /// These are the defaults that serde will fill in.  Other defaults depends on each other
-/// and can not immediately be substituded by serde.
+/// and can not immediately be substituted by serde.
 mod cfg_defaults {
     pub(crate) fn enable_relay() -> bool {
         true

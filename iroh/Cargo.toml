@@ -1,9 +1,9 @@
 [package]
 name = "iroh"
-version = "0.18.0"
+version = "0.22.0"
 edition = "2021"
 readme = "README.md"
-description = "Bytes. Distributed."
+description = "A toolkit for building distributed applications"
 license = "MIT OR Apache-2.0"
 authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
@@ -17,27 +17,30 @@ workspace = true
 
 [dependencies]
 anyhow = { version = "1" }
+async-channel = "2.3.1"
 bao-tree = { version = "0.13", features = ["tokio_fsm"], default-features = false }
 bytes = "1"
-derive_more = { version = "1.0.0-beta.6", features = ["debug", "display", "from", "try_into", "from_str"] }
+derive_more = { version = "=1.0.0-beta.7", features = ["debug", "display", "from", "try_into", "from_str"] }
 flume = "0.11"
 futures-buffered = "0.2.4"
 futures-lite = "2.3"
 futures-util = "0.3"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
 hex = { version = "0.4.3" }
-iroh-blobs = { version = "0.18.0", path = "../iroh-blobs", features = ["downloader"] }
-iroh-base = { version = "0.18.0", path = "../iroh-base", features = ["key"] }
+iroh-blobs = { version = "0.22.0", path = "../iroh-blobs", features = ["downloader"] }
+iroh-base = { version = "0.22.0", path = "../iroh-base", features = ["key"] }
 iroh-io = { version = "0.6.0", features = ["stats"] }
-iroh-metrics = { version = "0.18.0", path = "../iroh-metrics", optional = true }
-iroh-net = { version = "0.18.0", path = "../iroh-net" }
+iroh-metrics = { version = "0.22.0", path = "../iroh-metrics", optional = true }
+iroh-net = { version = "0.22.0", path = "../iroh-net", features = ["local_swarm_discovery"] }
+nested_enum_utils = "0.1.0"
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
-iroh-docs = { version = "0.18.0", path = "../iroh-docs" }
-iroh-gossip = { version = "0.18.0", path = "../iroh-gossip" }
+iroh-docs = { version = "0.22.0", path = "../iroh-docs" }
+iroh-gossip = { version = "0.22.0", path = "../iroh-gossip" }
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quic-rpc = { version = "0.10.2", default-features = false, features = ["flume-transport", "quinn-transport"] }
+quic-rpc = { version = "0.11", default-features = false, features = ["flume-transport", "quinn-transport"] }
+quic-rpc-derive = { version = "0.11" }
 quinn = { package = "iroh-quinn", version = "0.10" }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
@@ -54,6 +57,10 @@ walkdir = "2"
 clap = { version = "4", features = ["derive"], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 ref-cast = "1.0.23"
+console = { version = "0.15.5", optional = true }
+
+# Documentation tests
+url = { version = "2.5.0", features = ["serde"] }
 
 [features]
 default = ["metrics", "fs-store"]
@@ -61,6 +68,7 @@ metrics = ["iroh-metrics", "iroh-blobs/metrics"]
 fs-store = ["iroh-blobs/fs-store"]
 test = []
 examples = ["dep:clap", "dep:indicatif"]
+local_swarm_discovery = ["iroh-net/local_swarm_discovery", "examples", "dep:console"]
 test-utils = ["iroh-net/test-utils"]
 
 [dev-dependencies]
@@ -74,6 +82,7 @@ rand_chacha = "0.3.1"
 regex = { version = "1.7.1", features = ["std"] }
 serde_json = "1.0.107"
 testdir = "0.9.1"
+testresult = "0.4.0"
 tokio = { version = "1", features = ["macros", "io-util", "rt"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
@@ -106,3 +115,7 @@ required-features = ["examples"]
 [[example]]
 name = "custom-protocol"
 required-features = ["examples"]
+
+[[example]]
+name = "local_swarm_discovery"
+required-features = ["local_swarm_discovery"]

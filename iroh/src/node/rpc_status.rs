@@ -1,4 +1,7 @@
-use std::path::Path;
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    path::Path,
+};
 
 use anyhow::{ensure, Context, Result};
 use tokio::{fs, io::AsyncReadExt};
@@ -40,7 +43,8 @@ impl RpcStatus {
                     .await
                     .context("read rpc lock file")?;
                 let running_rpc_port = u16::from_le_bytes(buffer);
-                if let Ok(client) = crate::client::quic_connect_raw(running_rpc_port).await {
+                let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), running_rpc_port);
+                if let Ok(client) = crate::client::quic_connect_raw(addr).await {
                     return Ok(RpcStatus::Running {
                         port: running_rpc_port,
                         client,

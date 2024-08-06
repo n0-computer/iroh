@@ -4,8 +4,8 @@ use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
 use iroh_net::{
     discovery::{
-        dns::N0_DNS_NODE_ORIGIN,
-        pkarr_publish::{PkarrRelayClient, N0_DNS_PKARR_RELAY},
+        dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
+        pkarr::{PkarrRelayClient, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
     dns::node_info::{to_z32, NodeInfo, IROH_TXT_NAME},
     key::SecretKey,
@@ -19,9 +19,11 @@ const EXAMPLE_ORIGIN: &str = "irohdns.example";
 #[derive(ValueEnum, Clone, Debug, Default, Copy, strum::Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Env {
-    /// Use the pkarr relay run by number0.
+    /// Use the staging pkarr relay run by number0.
     #[default]
-    Default,
+    Staging,
+    /// Use the production pkarr relay run by number0.
+    Prod,
     /// Use a relay listening at http://localhost:8080
     Dev,
 }
@@ -32,7 +34,7 @@ pub enum Env {
 #[derive(Parser, Debug)]
 struct Cli {
     /// Environment to publish to.
-    #[clap(value_enum, short, long, default_value_t = Env::Default)]
+    #[clap(value_enum, short, long, default_value_t = Env::Staging)]
     env: Env,
     /// Pkarr Relay URL. If set, the --env option will be ignored.
     #[clap(long, conflicts_with = "env")]
@@ -58,14 +60,15 @@ async fn main() -> Result<()> {
             s
         }
         Err(_) => {
-            bail!("Environtment variable IROH_SECRET is not set. To create a new secret, use the --create option.")
+            bail!("Environment variable IROH_SECRET is not set. To create a new secret, use the --create option.")
         }
     };
 
     let node_id = secret_key.public();
     let pkarr_relay = match (args.pkarr_relay, args.env) {
         (Some(pkarr_relay), _) => pkarr_relay,
-        (None, Env::Default) => N0_DNS_PKARR_RELAY.parse().expect("valid url"),
+        (None, Env::Staging) => N0_DNS_PKARR_RELAY_STAGING.parse().expect("valid url"),
+        (None, Env::Prod) => N0_DNS_PKARR_RELAY_PROD.parse().expect("valid url"),
         (None, Env::Dev) => LOCALHOST_PKARR.parse().expect("valid url"),
     };
 
@@ -83,9 +86,22 @@ async fn main() -> Result<()> {
     println!("resolve with:");
 
     match args.env {
-        Env::Default => {
+        Env::Staging => {
             println!("   cargo run --example resolve -- node {}", node_id);
-            println!("   dig {} TXT", fmt_domain(&node_id, N0_DNS_NODE_ORIGIN))
+            println!(
+                "   dig {} TXT",
+                fmt_domain(&node_id, N0_DNS_NODE_ORIGIN_STAGING)
+            )
+        }
+        Env::Prod => {
+            println!(
+                "   cargo run --example resolve -- --env prod node {}",
+                node_id
+            );
+            println!(
+                "   dig {} TXT",
+                fmt_domain(&node_id, N0_DNS_NODE_ORIGIN_PROD)
+            )
         }
         Env::Dev => {
             println!(

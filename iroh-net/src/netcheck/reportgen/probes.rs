@@ -202,6 +202,10 @@ impl ProbePlan {
     pub(super) fn initial(relay_map: &RelayMap, if_state: &interfaces::State) -> Self {
         let mut plan = Self(BTreeSet::new());
 
+        // The first time we need add probes after the STUN we record this delay, so that
+        // further relay server can reuse this delay.
+        let mut max_stun_delay: Option<Duration> = None;
+
         for relay_node in relay_map.nodes() {
             let mut stun_ipv4_probes = ProbeSet::new(ProbeProto::StunIpv4);
             let mut stun_ipv6_probes = ProbeSet::new(ProbeProto::StunIpv6);
@@ -234,7 +238,8 @@ impl ProbePlan {
             let mut icmp_probes_ipv4 = ProbeSet::new(ProbeProto::IcmpV4);
             let mut icmp_probes_ipv6 = ProbeSet::new(ProbeProto::IcmpV6);
             for attempt in 0..3 {
-                let start = plan.max_delay() + DEFAULT_INITIAL_RETRANSMIT;
+                let start = *max_stun_delay.get_or_insert_with(|| plan.max_delay())
+                    + DEFAULT_INITIAL_RETRANSMIT;
                 let delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
 
                 https_probes
@@ -277,6 +282,10 @@ impl ProbePlan {
             return Self::initial(relay_map, if_state);
         }
         let mut plan = Self(Default::default());
+
+        // The first time we need add probes after the STUN we record this delay, so that
+        // further relay servers can reuse this delay.
+        let mut max_stun_delay: Option<Duration> = None;
 
         let had_stun_ipv4 = !last_report.relay_v4_latency.is_empty();
         let had_stun_ipv6 = !last_report.relay_v6_latency.is_empty();
@@ -349,7 +358,7 @@ impl ProbePlan {
             let mut https_probes = ProbeSet::new(ProbeProto::Https);
             let mut icmp_v4_probes = ProbeSet::new(ProbeProto::IcmpV4);
             let mut icmp_v6_probes = ProbeSet::new(ProbeProto::IcmpV6);
-            let start = plan.max_delay();
+            let start = *max_stun_delay.get_or_insert_with(|| plan.max_delay());
             for attempt in 0..attempts {
                 let delay = start
                     + (retransmit_delay * attempt as u32)
@@ -466,10 +475,30 @@ fn sort_relays<'a>(
 mod tests {
     use pretty_assertions::assert_eq;
 
-    use crate::defaults::default_relay_map;
+    use crate::defaults::staging::default_relay_map;
     use crate::netcheck::RelayLatencies;
 
     use super::*;
+
+    /// Shorthand which declares a new ProbeSet.
+    ///
+    /// `$kind`: The `ProbeProto`.
+    /// `$node`: Expression which will be an `Arc<RelayNode>`.
+    /// `$delays`: A `Vec` of the delays for this probe.
+    macro_rules! probeset {
+        (proto: ProbeProto::$kind:ident, relay: $node:expr, delays: $delays:expr,) => {
+            ProbeSet {
+                proto: ProbeProto::$kind,
+                probes: $delays
+                    .iter()
+                    .map(|delay| Probe::$kind {
+                        delay: *delay,
+                        node: $node,
+                    })
+                    .collect(),
+            }
+        };
+    }
 
     #[tokio::test]
     async fn test_initial_probeplan() {
@@ -480,192 +509,75 @@ mod tests {
         let plan = ProbePlan::initial(&relay_map, &if_state);
 
         let expected_plan: ProbePlan = [
-            ProbeSet {
+            probeset! {
                 proto: ProbeProto::StunIpv4,
-                probes: vec![
-                    Probe::StunIpv4 {
-                        delay: Duration::ZERO,
-                        node: relay_node_1.clone(),
-                    },
-                    Probe::StunIpv4 {
-                        delay: Duration::from_millis(100),
-                        node: relay_node_1.clone(),
-                    },
-                    Probe::StunIpv4 {
-                        delay: Duration::from_millis(200),
-                        node: relay_node_1.clone(),
-                    },
-                ],
+                relay: relay_node_1.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(100),
+                         Duration::from_millis(200)],
             },
-            ProbeSet {
+            probeset! {
                 proto: ProbeProto::StunIpv6,
-                probes: vec![
-                    Probe::StunIpv6 {
-                        delay: Duration::ZERO,
-                        node: relay_node_1.clone(),
-                    },
-                    Probe::StunIpv6 {
-                        delay: Duration::from_millis(100),
-                        node: relay_node_1.clone(),
-                    },
-                    Probe::StunIpv6 {
-                        delay: Duration::from_millis(200),
-                        node: relay_node_1.clone(),
-                    },
-                ],
+                relay: relay_node_1.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(100),
+                         Duration::from_millis(200)],
             },
-            ProbeSet {
+            probeset! {
                 proto: ProbeProto::Https,
-                probes: vec![
-                    Probe::Https {
-                        delay: Duration::from_millis(300),
-                        node: relay_node_1.clone(),
-                    },
-                    Probe::Https {
-                        delay: Duration::from_millis(400),
-                        node: relay_node_1.clone(),
-                    },
-                    Probe::Https {
-                        delay: Duration::from_millis(500),
-                        node: relay_node_1.clone(),
-                    },
-                ],
+                relay: relay_node_1.clone(),
+                delays: [Duration::from_millis(300),
+                         Duration::from_millis(400),
+                         Duration::from_millis(500)],
             },
-            ProbeSet {
+            probeset! {
                 proto: ProbeProto::IcmpV4,
-                probes: vec![
-                    Probe::IcmpV4 {
-                        delay: Duration::from_millis(300),
-                        node: relay_node_1.clone(),
-                    },
-                    Probe::IcmpV4 {
-                        delay: Duration::from_millis(400),
-                        node: relay_node_1.clone(),
-                    },
-                    Probe::IcmpV4 {
-                        delay: Duration::from_millis(500),
-                        node: relay_node_1.clone(),
-                    },
-                ],
+                relay: relay_node_1.clone(),
+                delays: [Duration::from_millis(300),
+                         Duration::from_millis(400),
+                         Duration::from_millis(500)],
             },
-            ProbeSet {
+            probeset! {
                 proto: ProbeProto::IcmpV6,
-                probes: vec![
-                    Probe::IcmpV6 {
-                        delay: Duration::from_millis(300),
-                        node: relay_node_1.clone(),
-                    },
-                    Probe::IcmpV6 {
-                        delay: Duration::from_millis(400),
-                        node: relay_node_1.clone(),
-                    },
-                    Probe::IcmpV6 {
-                        delay: Duration::from_millis(500),
-                        node: relay_node_1.clone(),
-                    },
-                ],
+                relay: relay_node_1.clone(),
+                delays: [Duration::from_millis(300),
+                         Duration::from_millis(400),
+                         Duration::from_millis(500)],
             },
-            ProbeSet {
+            probeset! {
                 proto: ProbeProto::StunIpv4,
-                probes: vec![
-                    Probe::StunIpv4 {
-                        delay: Duration::ZERO,
-                        node: relay_node_2.clone(),
-                    },
-                    Probe::StunIpv4 {
-                        delay: Duration::from_millis(100),
-                        node: relay_node_2.clone(),
-                    },
-                    Probe::StunIpv4 {
-                        delay: Duration::from_millis(200),
-                        node: relay_node_2.clone(),
-                    },
-                ],
+                relay: relay_node_2.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(100),
+                         Duration::from_millis(200)],
             },
-            ProbeSet {
+            probeset! {
                 proto: ProbeProto::StunIpv6,
-                probes: vec![
-                    Probe::StunIpv6 {
-                        delay: Duration::ZERO,
-                        node: relay_node_2.clone(),
-                    },
-                    Probe::StunIpv6 {
-                        delay: Duration::from_millis(100),
-                        node: relay_node_2.clone(),
-                    },
-                    Probe::StunIpv6 {
-                        delay: Duration::from_millis(200),
-                        node: relay_node_2.clone(),
-                    },
-                ],
+                relay: relay_node_2.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(100),
+                         Duration::from_millis(200)],
             },
-            ProbeSet {
+            probeset! {
                 proto: ProbeProto::Https,
-                probes: vec![
-                    Probe::Https {
-                        delay: Duration::from_millis(600),
-                        node: relay_node_2.clone(),
-                    },
-                    Probe::Https {
-                        delay: Duration::from_millis(700),
-                        node: relay_node_2.clone(),
-                    },
-                    Probe::Https {
-                        delay: Duration::from_millis(800),
-                        node: relay_node_2.clone(),
-                    },
-                ],
+                relay: relay_node_2.clone(),
+                delays: [Duration::from_millis(300),
+                         Duration::from_millis(400),
+                         Duration::from_millis(500)],
             },
-            ProbeSet {
+            probeset! {
                 proto: ProbeProto::IcmpV4,
-                probes: vec![
-                    Probe::IcmpV4 {
-                        delay: Duration::from_millis(600),
-                        node: relay_node_2.clone(),
-                    },
-                    Probe::IcmpV4 {
-                        delay: Duration::from_millis(700),
-                        node: relay_node_2.clone(),
-                    },
-                    Probe::IcmpV4 {
-                        delay: Duration::from_millis(800),
-                        node: relay_node_2.clone(),
-                    },
-                ],
+                relay: relay_node_2.clone(),
+                delays: [Duration::from_millis(300),
+                         Duration::from_millis(400),
+                         Duration::from_millis(500)],
             },
-            ProbeSet {
-                proto: ProbeProto::StunIpv4,
-                probes: vec![
-                    Probe::StunIpv4 {
-                        delay: Duration::ZERO,
-                        node: relay_node_2.clone(),
-                    },
-                    Probe::StunIpv4 {
-                        delay: Duration::from_millis(100),
-                        node: relay_node_2.clone(),
-                    },
-                    Probe::StunIpv4 {
-                        delay: Duration::from_millis(200),
-                        node: relay_node_2.clone(),
-                    },
-                ],
-            },
-            ProbeSet {
+            probeset! {
                 proto: ProbeProto::IcmpV6,
-                probes: vec![
-                    Probe::IcmpV6 {
-                        delay: Duration::from_millis(600),
-                        node: relay_node_2.clone(),
-                    },
-                    Probe::IcmpV6 {
-                        delay: Duration::from_millis(700),
-                        node: relay_node_2.clone(),
-                    },
-                    Probe::IcmpV6 {
-                        delay: Duration::from_millis(800),
-                        node: relay_node_2.clone(),
-                    },
-                ],
+                relay: relay_node_2.clone(),
+                delays: [Duration::from_millis(300),
+                         Duration::from_millis(400),
+                         Duration::from_millis(500)],
             },
         ]
         .into_iter()
@@ -715,175 +627,75 @@ mod tests {
             };
             let plan = ProbePlan::with_last_report(&relay_map, &if_state, &last_report);
             let expected_plan: ProbePlan = [
-                ProbeSet {
+                probeset! {
                     proto: ProbeProto::StunIpv4,
-                    probes: vec![
-                        Probe::StunIpv4 {
-                            delay: Duration::ZERO,
-                            node: relay_node_1.clone(),
-                        },
-                        Probe::StunIpv4 {
-                            delay: Duration::from_micros(52_400),
-                            node: relay_node_1.clone(),
-                        },
-                        Probe::StunIpv4 {
-                            delay: Duration::from_micros(104_800),
-                            node: relay_node_1.clone(),
-                        },
-                        Probe::StunIpv4 {
-                            delay: Duration::from_micros(157_200),
-                            node: relay_node_1.clone(),
-                        },
-                    ],
+                    relay: relay_node_1.clone(),
+                    delays: [Duration::ZERO,
+                             Duration::from_micros(52_400),
+                             Duration::from_micros(104_800),
+                             Duration::from_micros(157_200)],
                 },
-                ProbeSet {
+                probeset! {
                     proto: ProbeProto::StunIpv6,
-                    probes: vec![
-                        Probe::StunIpv6 {
-                            delay: Duration::ZERO,
-                            node: relay_node_1.clone(),
-                        },
-                        Probe::StunIpv6 {
-                            delay: Duration::from_micros(52_400),
-                            node: relay_node_1.clone(),
-                        },
-                        Probe::StunIpv6 {
-                            delay: Duration::from_micros(104_800),
-                            node: relay_node_1.clone(),
-                        },
-                        Probe::StunIpv6 {
-                            delay: Duration::from_micros(157_200),
-                            node: relay_node_1.clone(),
-                        },
-                    ],
+                    relay: relay_node_1.clone(),
+                    delays: [Duration::ZERO,
+                             Duration::from_micros(52_400),
+                             Duration::from_micros(104_800),
+                             Duration::from_micros(157_200)],
                 },
-                ProbeSet {
+                probeset! {
                     proto: ProbeProto::Https,
-                    probes: vec![
-                        Probe::Https {
-                            delay: Duration::from_micros(207_200),
-                            node: relay_node_1.clone(),
-                        },
-                        Probe::Https {
-                            delay: Duration::from_micros(259_600),
-                            node: relay_node_1.clone(),
-                        },
-                        Probe::Https {
-                            delay: Duration::from_micros(312_000),
-                            node: relay_node_1.clone(),
-                        },
-                        Probe::Https {
-                            delay: Duration::from_micros(364_400),
-                            node: relay_node_1.clone(),
-                        },
-                    ],
+                    relay: relay_node_1.clone(),
+                    delays: [Duration::from_micros(207_200),
+                             Duration::from_micros(259_600),
+                             Duration::from_micros(312_000),
+                             Duration::from_micros(364_400)],
                 },
-                ProbeSet {
+                probeset! {
                     proto: ProbeProto::IcmpV4,
-                    probes: vec![
-                        Probe::IcmpV4 {
-                            delay: Duration::from_micros(207_200),
-                            node: relay_node_1.clone(),
-                        },
-                        Probe::IcmpV4 {
-                            delay: Duration::from_micros(259_600),
-                            node: relay_node_1.clone(),
-                        },
-                        Probe::IcmpV4 {
-                            delay: Duration::from_micros(312_000),
-                            node: relay_node_1.clone(),
-                        },
-                        Probe::IcmpV4 {
-                            delay: Duration::from_micros(364_400),
-                            node: relay_node_1.clone(),
-                        },
-                    ],
+                    relay: relay_node_1.clone(),
+                    delays: [Duration::from_micros(207_200),
+                             Duration::from_micros(259_600),
+                             Duration::from_micros(312_000),
+                             Duration::from_micros(364_400)],
                 },
-                ProbeSet {
+                probeset! {
                     proto: ProbeProto::IcmpV6,
-                    probes: vec![
-                        Probe::IcmpV6 {
-                            delay: Duration::from_micros(207_200),
-                            node: relay_node_1.clone(),
-                        },
-                        Probe::IcmpV6 {
-                            delay: Duration::from_micros(259_600),
-                            node: relay_node_1.clone(),
-                        },
-                        Probe::IcmpV6 {
-                            delay: Duration::from_micros(312_000),
-                            node: relay_node_1.clone(),
-                        },
-                        Probe::IcmpV6 {
-                            delay: Duration::from_micros(364_400),
-                            node: relay_node_1.clone(),
-                        },
-                    ],
+                    relay: relay_node_1.clone(),
+                    delays: [Duration::from_micros(207_200),
+                             Duration::from_micros(259_600),
+                             Duration::from_micros(312_000),
+                             Duration::from_micros(364_400)],
                 },
-                ProbeSet {
+                probeset! {
                     proto: ProbeProto::StunIpv4,
-                    probes: vec![
-                        Probe::StunIpv4 {
-                            delay: Duration::ZERO,
-                            node: relay_node_2.clone(),
-                        },
-                        Probe::StunIpv4 {
-                            delay: Duration::from_micros(52_400),
-                            node: relay_node_2.clone(),
-                        },
-                    ],
+                    relay: relay_node_2.clone(),
+                    delays: [Duration::ZERO,
+                             Duration::from_micros(52_400)],
                 },
-                ProbeSet {
+                probeset! {
                     proto: ProbeProto::StunIpv6,
-                    probes: vec![
-                        Probe::StunIpv6 {
-                            delay: Duration::ZERO,
-                            node: relay_node_2.clone(),
-                        },
-                        Probe::StunIpv6 {
-                            delay: Duration::from_micros(52_400),
-                            node: relay_node_2.clone(),
-                        },
-                    ],
+                    relay: relay_node_2.clone(),
+                    delays: [Duration::ZERO,
+                             Duration::from_micros(52_400)],
                 },
-                ProbeSet {
+                probeset! {
                     proto: ProbeProto::Https,
-                    probes: vec![
-                        Probe::Https {
-                            delay: Duration::from_micros(414_400),
-                            node: relay_node_2.clone(),
-                        },
-                        Probe::Https {
-                            delay: Duration::from_micros(466_800),
-                            node: relay_node_2.clone(),
-                        },
-                    ],
+                    relay: relay_node_2.clone(),
+                    delays: [Duration::from_micros(207_200),
+                             Duration::from_micros(259_600)],
                 },
-                ProbeSet {
+                probeset! {
                     proto: ProbeProto::IcmpV4,
-                    probes: vec![
-                        Probe::IcmpV4 {
-                            delay: Duration::from_micros(414_400),
-                            node: relay_node_2.clone(),
-                        },
-                        Probe::IcmpV4 {
-                            delay: Duration::from_micros(466_800),
-                            node: relay_node_2.clone(),
-                        },
-                    ],
+                    relay: relay_node_2.clone(),
+                    delays: [Duration::from_micros(207_200),
+                             Duration::from_micros(259_600)],
                 },
-                ProbeSet {
+                probeset! {
                     proto: ProbeProto::IcmpV6,
-                    probes: vec![
-                        Probe::IcmpV6 {
-                            delay: Duration::from_micros(414_400),
-                            node: relay_node_2.clone(),
-                        },
-                        Probe::IcmpV6 {
-                            delay: Duration::from_micros(466_800),
-                            node: relay_node_2.clone(),
-                        },
-                    ],
+                    relay: relay_node_2.clone(),
+                    delays: [Duration::from_micros(207_200),
+                             Duration::from_micros(259_600)],
                 },
             ]
             .into_iter()

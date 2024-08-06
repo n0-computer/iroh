@@ -342,7 +342,7 @@ impl<A: Iterator<Item = IpAddr>, B: Iterator<Item = IpAddr>> Iterator for Lookup
 /// Staggers calls to the future F with the given delays.
 ///
 /// The first call is performed immediately. The first call to succeed generates an Ok result
-/// ignoring any previous error. If all calls fail, an error sumarizing all errors is returned.
+/// ignoring any previous error. If all calls fail, an error summarizing all errors is returned.
 async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
     f: F,
     delays_ms: &[u64],
@@ -381,7 +381,7 @@ async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
 pub(crate) mod tests {
     use std::sync::atomic::AtomicUsize;
 
-    use crate::defaults::NA_RELAY_HOSTNAME;
+    use crate::defaults::staging::NA_RELAY_HOSTNAME;
 
     use super::*;
     const TIMEOUT: Duration = Duration::from_secs(5);

@@ -1,5 +1,51 @@
 //! API for blobs management.
-
+//!
+//! The main entry point is the [`Client`].
+//!
+//! You obtain a [`Client`] via [`Iroh::blobs()`](crate::client::Iroh::blobs).
+//!
+//! ## Interacting with the local blob store
+//!
+//! ### Importing data
+//!
+//! There are several ways to import data into the local blob store:
+//!
+//! - [`add_bytes`](Client::add_bytes)
+//!   imports in memory data.
+//! - [`add_stream`](Client::add_stream)
+//!   imports data from a stream of bytes.
+//! - [`add_reader`](Client::add_reader)
+//!   imports data from an [async reader](tokio::io::AsyncRead).
+//! - [`add_from_path`](Client::add_from_path)
+//!   imports data from a file.
+//!
+//! The last method imports data from a file on the local filesystem.
+//! This is the most efficient way to import large amounts of data.
+//!
+//! ### Exporting data
+//!
+//! There are several ways to export data from the local blob store:
+//!
+//! - [`read_to_bytes`](Client::read_to_bytes) reads data into memory.
+//! - [`read`](Client::read) creates a [reader](Reader) to read data from.
+//! - [`export`](Client::export) eports data to a file on the local filesystem.
+//!
+//! ## Interacting with remote nodes
+//!
+//! - [`download`](Client::download) downloads data from a remote node.
+//! - [`share`](Client::share) allows creating a ticket to share data with a
+//!   remote node.
+//!
+//! ## Interacting with the blob store itself
+//!
+//! These are more advanced operations that are usually not needed in normal
+//! operation.
+//!
+//! - [`consistency_check`](Client::consistency_check) checks the internal
+//!   consistency of the local blob store.
+//! - [`validate`](Client::validate) validates the locally stored data against
+//!   their BLAKE3 hashes.
+//! - [`delete_blob`](Client::delete_blob) deletes a blob from the local store.
 use std::{
     future::Future,
     io,
@@ -20,6 +66,7 @@ use iroh_blobs::{
     format::collection::{Collection, SimpleStore},
     get::db::DownloadProgress as BytesDownloadProgress,
     store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
+    util::SetTagOption,
     BlobFormat, Hash, Tag,
 };
 use iroh_net::NodeAddr;
@@ -31,12 +78,13 @@ use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
 
-use crate::rpc_protocol::{
-    BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
-    BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobListIncompleteRequest,
-    BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, SetTagOption,
+use crate::rpc_protocol::blobs::{
+    AddPathRequest, AddStreamRequest, AddStreamUpdate, ConsistencyCheckRequest,
+    CreateCollectionRequest, CreateCollectionResponse, DeleteRequest, DownloadRequest,
+    ExportRequest, ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse,
+    ValidateRequest,
 };
+use crate::rpc_protocol::node::StatusRequest;
 
 use super::{flatten, tags, Iroh, RpcClient};
 
@@ -110,7 +158,7 @@ impl Client {
     ) -> Result<AddProgress> {
         let stream = self
             .rpc
-            .server_streaming(BlobAddPathRequest {
+            .server_streaming(AddPathRequest {
                 path,
                 in_place,
                 tag,
@@ -158,12 +206,12 @@ impl Client {
         input: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
         tag: SetTagOption,
     ) -> anyhow::Result<AddProgress> {
-        let (mut sink, progress) = self.rpc.bidi(BlobAddStreamRequest { tag }).await?;
+        let (mut sink, progress) = self.rpc.bidi(AddStreamRequest { tag }).await?;
         let mut input = input.map(|chunk| match chunk {
-            Ok(chunk) => Ok(BlobAddStreamUpdate::Chunk(chunk)),
+            Ok(chunk) => Ok(AddStreamUpdate::Chunk(chunk)),
             Err(err) => {
                 warn!("Abort send, reason: failed to read from source stream: {err:?}");
-                Ok(BlobAddStreamUpdate::Abort)
+                Ok(AddStreamUpdate::Abort)
             }
         });
         tokio::spawn(async move {
@@ -205,7 +253,7 @@ impl Client {
     ) -> Result<impl Stream<Item = Result<ValidateProgress>>> {
         let stream = self
             .rpc
-            .server_streaming(BlobValidateRequest { repair })
+            .server_streaming(ValidateRequest { repair })
             .await?;
         Ok(stream.map(|res| res.map_err(anyhow::Error::from)))
     }
@@ -219,7 +267,7 @@ impl Client {
     ) -> Result<impl Stream<Item = Result<ConsistencyCheckProgress>>> {
         let stream = self
             .rpc
-            .server_streaming(BlobConsistencyCheckRequest { repair })
+            .server_streaming(ConsistencyCheckRequest { repair })
             .await?;
         Ok(stream.map(|r| r.map_err(anyhow::Error::from)))
     }
@@ -266,7 +314,7 @@ impl Client {
         } = opts;
         let stream = self
             .rpc
-            .server_streaming(BlobDownloadRequest {
+            .server_streaming(DownloadRequest {
                 hash,
                 format,
                 nodes,
@@ -295,7 +343,7 @@ impl Client {
         format: ExportFormat,
         mode: ExportMode,
     ) -> Result<ExportProgress> {
-        let req = BlobExportRequest {
+        let req = ExportRequest {
             hash,
             path: destination,
             format,
@@ -309,13 +357,13 @@ impl Client {
 
     /// List all complete blobs.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<BlobInfo>>> {
-        let stream = self.rpc.server_streaming(BlobListRequest).await?;
+        let stream = self.rpc.server_streaming(ListRequest).await?;
         Ok(flatten(stream))
     }
 
     /// List all incomplete (partial) blobs.
     pub async fn list_incomplete(&self) -> Result<impl Stream<Item = Result<IncompleteBlobInfo>>> {
-        let stream = self.rpc.server_streaming(BlobListIncompleteRequest).await?;
+        let stream = self.rpc.server_streaming(ListIncompleteRequest).await?;
         Ok(flatten(stream))
     }
 
@@ -353,8 +401,12 @@ impl Client {
     }
 
     /// Delete a blob.
+    ///
+    /// **Warning**: this operation deletes the blob from the local store even
+    /// if it is tagged. You should usually not do this manually, but rely on the
+    /// node to remove data that is not tagged.
     pub async fn delete_blob(&self, hash: Hash) -> Result<()> {
-        self.rpc.rpc(BlobDeleteBlobRequest { hash }).await??;
+        self.rpc.rpc(DeleteRequest { hash }).await??;
         Ok(())
     }
 
@@ -365,7 +417,7 @@ impl Client {
         blob_format: BlobFormat,
         addr_options: AddrInfoOptions,
     ) -> Result<BlobTicket> {
-        let mut addr = self.rpc.rpc(NodeStatusRequest).await??.addr;
+        let mut addr = self.rpc.rpc(StatusRequest).await??.addr;
         addr.apply_options(addr_options);
         let ticket = BlobTicket::new(addr, hash, blob_format).expect("correct ticket");
 
@@ -791,18 +843,19 @@ impl Reader {
         len: Option<usize>,
     ) -> anyhow::Result<Self> {
         let stream = rpc
-            .server_streaming(BlobReadAtRequest { hash, offset, len })
+            .server_streaming(ReadAtRequest { hash, offset, len })
             .await?;
         let mut stream = flatten(stream);
 
         let (size, is_complete) = match stream.next().await {
-            Some(Ok(BlobReadAtResponse::Entry { size, is_complete })) => (size, is_complete),
+            Some(Ok(ReadAtResponse::Entry { size, is_complete })) => (size, is_complete),
             Some(Err(err)) => return Err(err),
-            None | Some(Ok(_)) => return Err(anyhow!("Expected header frame")),
+            Some(Ok(_)) => return Err(anyhow!("Expected header frame, but got data frame")),
+            None => return Err(anyhow!("Expected header frame, but RPC stream was dropped")),
         };
 
         let stream = stream.map(|item| match item {
-            Ok(BlobReadAtResponse::Data { chunk }) => Ok(chunk),
+            Ok(ReadAtResponse::Data { chunk }) => Ok(chunk),
             Ok(_) => Err(io::Error::new(io::ErrorKind::Other, "Expected data frame")),
             Err(err) => Err(io::Error::new(io::ErrorKind::Other, format!("{err}"))),
         });
@@ -891,7 +944,10 @@ mod tests {
     use super::*;
 
     use anyhow::Context as _;
+    use iroh_blobs::hashseq::HashSeq;
+    use iroh_net::NodeId;
     use rand::RngCore;
+    use testresult::TestResult;
     use tokio::io::AsyncWriteExt;
 
     #[tokio::test]
@@ -1192,6 +1248,187 @@ mod tests {
 
         let status = client.blobs().status(import_outcome.hash).await?;
         assert_eq!(status, BlobStatus::Complete { size });
+
+        Ok(())
+    }
+
+    /// Download a existing blob from oneself
+    #[tokio::test]
+    async fn test_blob_get_self_existing() -> TestResult<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let node = crate::node::Node::memory().spawn().await?;
+        let node_id = node.node_id();
+        let client = node.client();
+
+        let AddOutcome { hash, size, .. } = client.blobs().add_bytes("foo").await?;
+
+        // Direct
+        let res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::Raw,
+                    nodes: vec![node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Direct,
+                },
+            )
+            .await?
+            .await?;
+
+        assert_eq!(res.local_size, size);
+        assert_eq!(res.downloaded_size, 0);
+
+        // Queued
+        let res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::Raw,
+                    nodes: vec![node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Queued,
+                },
+            )
+            .await?
+            .await?;
+
+        assert_eq!(res.local_size, size);
+        assert_eq!(res.downloaded_size, 0);
+
+        Ok(())
+    }
+
+    /// Download a missing blob from oneself
+    #[tokio::test]
+    async fn test_blob_get_self_missing() -> TestResult<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let node = crate::node::Node::memory().spawn().await?;
+        let node_id = node.node_id();
+        let client = node.client();
+
+        let hash = Hash::from_bytes([0u8; 32]);
+
+        // Direct
+        let res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::Raw,
+                    nodes: vec![node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Direct,
+                },
+            )
+            .await?
+            .await;
+        assert!(res.is_err());
+        assert_eq!(
+            res.err().unwrap().to_string().as_str(),
+            "No nodes to download from provided"
+        );
+
+        // Queued
+        let res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::Raw,
+                    nodes: vec![node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Queued,
+                },
+            )
+            .await?
+            .await;
+        assert!(res.is_err());
+        assert_eq!(
+            res.err().unwrap().to_string().as_str(),
+            "No provider nodes found"
+        );
+
+        Ok(())
+    }
+
+    /// Download a existing collection. Check that things succeed and no download is performed.
+    #[tokio::test]
+    async fn test_blob_get_existing_collection() -> TestResult<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let node = crate::node::Node::memory().spawn().await?;
+        // We use a nonexisting node id because we just want to check that this succeeds without
+        // hitting the network.
+        let node_id = NodeId::from_bytes(&[0u8; 32])?;
+        let client = node.client();
+
+        let mut collection = Collection::default();
+        let mut tags = Vec::new();
+        let mut size = 0;
+        for value in ["iroh", "is", "cool"] {
+            let import_outcome = client.blobs().add_bytes(value).await.context("add bytes")?;
+            collection.push(value.to_string(), import_outcome.hash);
+            tags.push(import_outcome.tag);
+            size += import_outcome.size;
+        }
+
+        let (hash, _tag) = client
+            .blobs()
+            .create_collection(collection, SetTagOption::Auto, tags)
+            .await?;
+
+        // load the hashseq and collection header manually to calculate our expected size
+        let hashseq_bytes = client.blobs().read_to_bytes(hash).await?;
+        size += hashseq_bytes.len() as u64;
+        let hashseq = HashSeq::try_from(hashseq_bytes)?;
+        let collection_header_bytes = client
+            .blobs()
+            .read_to_bytes(hashseq.into_iter().next().expect("header to exist"))
+            .await?;
+        size += collection_header_bytes.len() as u64;
+
+        // Direct
+        let res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::HashSeq,
+                    nodes: vec![node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Direct,
+                },
+            )
+            .await?
+            .await
+            .context("direct (download)")?;
+
+        assert_eq!(res.local_size, size);
+        assert_eq!(res.downloaded_size, 0);
+
+        // Queued
+        let res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::HashSeq,
+                    nodes: vec![node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Queued,
+                },
+            )
+            .await?
+            .await
+            .context("queued")?;
+
+        assert_eq!(res.local_size, size);
+        assert_eq!(res.downloaded_size, 0);
 
         Ok(())
     }

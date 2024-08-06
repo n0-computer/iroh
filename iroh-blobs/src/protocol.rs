@@ -12,31 +12,29 @@
 //!
 //! - Be paranoid about data integrity.
 //!
-//!   Data integrity is considered more important than performance. Data will be
-//! validated both on the provider and getter side. A well behaved provider will
-//! never send invalid data. Responses to range requests contain sufficient
-//! information to validate the data.
+//!   Data integrity is considered more important than performance. Data will be validated both on
+//!   the provider and getter side. A well behaved provider will never send invalid data. Responses
+//!   to range requests contain sufficient information to validate the data.
 //!
-//!   Note: Validation using blake3 is extremely fast, so in almost all scenarios the
-//! validation will not be the bottleneck even if we validate both on the provider
-//! and getter side.
+//!   Note: Validation using blake3 is extremely fast, so in almost all scenarios the validation
+//!   will not be the bottleneck even if we validate both on the provider and getter side.
 //!
 //! - Do not limit the size of blobs or collections.
 //!
-//!   Blobs can be of arbitrary size, up to terabytes. Likewise, collections
-//! can contain an arbitrary number of links. A well behaved implementation will
-//! not require the entire blob or collection to be in memory at once.
+//!   Blobs can be of arbitrary size, up to terabytes. Likewise, collections can contain an
+//!   arbitrary number of links. A well behaved implementation will not require the entire blob or
+//!   collection to be in memory at once.
 //!
 //! - Be efficient when transferring large blobs, including range requests.
 //!
-//!   It is possible to request entire blobs or ranges of blobs, where the
-//! minimum granularity is a chunk group of 16KiB or 16 blake3 chunks. The worst
-//! case overhead when doing range requests is about two chunk groups per range.
+//!   It is possible to request entire blobs or ranges of blobs, where the minimum granularity is a
+//!   chunk group of 16KiB or 16 blake3 chunks. The worst case overhead when doing range requests
+//!   is about two chunk groups per range.
 //!
 //! - Be efficient when transferring multiple tiny blobs.
 //!
-//!   For tiny blobs the overhead of sending the blob hashes and the round-trip time
-//! for each blob would be prohibitive.
+//!   For tiny blobs the overhead of sending the blob hashes and the round-trip time for each blob
+//!   would be prohibitive.
 //!
 //! To avoid roundtrips, the protocol allows grouping multiple blobs into *collections*.
 //! The semantic meaning of a collection is up to the application. For the purpose
@@ -46,21 +44,21 @@
 //!
 //! - Do not attempt to be generic in terms of the used hash function.
 //!
-//!   The protocol makes extensive use of the [blake3](https://crates.io/crates/blake3)
-//! hash function and it's special properties such as blake3 verified streaming.
+//!   The protocol makes extensive use of the [blake3](https://crates.io/crates/blake3) hash
+//!   function and it's special properties such as blake3 verified streaming.
 //!
 //! - Do not support graph traversal.
 //!
-//!   The protocol only supports collections that directly contain blobs. If you have
-//! deeply nested graph data, you will need to either do multiple requests or flatten
-//! the graph into a single temporary collection.
+//!   The protocol only supports collections that directly contain blobs. If you have deeply nested
+//!   graph data, you will need to either do multiple requests or flatten the graph into a single
+//!   temporary collection.
 //!
 //! - Do not support discovery.
 //!
-//!   The protocol does not yet have a discovery mechanism for asking the provider
-//! what ranges are available for a given blob. Currently you have to have some
-//! out-of-band knowledge about what node has data for a given hash, or you can
-//! just try to retrieve the data and see if it is available.
+//!   The protocol does not yet have a discovery mechanism for asking the provider what ranges are
+//!   available for a given blob. Currently you have to have some out-of-band knowledge about what
+//!   node has data for a given hash, or you can just try to retrieve the data and see if it is
+//!   available.
 //!
 //! A discovery protocol is planned in the future though.
 //!
@@ -314,10 +312,10 @@
 //! Reasons for not retrieving a complete response are two-fold:
 //!
 //! - the connection to the provider was interrupted, or the provider encountered
-//! an internal error. In this case the provider will close the entire quinn connection.
+//!   an internal error. In this case the provider will close the entire quinn connection.
 //!
 //! - the provider does not have the requested data, or discovered on send that the
-//! requested data is not valid.
+//!   requested data is not valid.
 //!
 //! In this case the provider will close just the stream used to send the response.
 //! The exact location of the missing data can be retrieved from the error.

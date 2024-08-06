@@ -8,6 +8,7 @@ use anyhow::{bail, ensure, Context as _, Result};
 use bytes::Bytes;
 use derive_more::Debug;
 use futures_lite::FutureExt;
+use http::header::CONNECTION;
 use http::response::Builder as ResponseBuilder;
 use hyper::body::Incoming;
 use hyper::header::{HeaderValue, UPGRADE};
@@ -15,15 +16,16 @@ use hyper::service::Service;
 use hyper::upgrade::Upgraded;
 use hyper::{HeaderMap, Method, Request, Response, StatusCode};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::task::JoinHandle;
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, info_span, Instrument};
+use tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
+use tungstenite::handshake::derive_accept_key;
 
 use crate::key::SecretKey;
-use crate::relay::http::HTTP_UPGRADE_PROTOCOL;
-use crate::relay::server::{ClientConnHandler, MaybeTlsStream};
-use crate::relay::MaybeTlsStreamServer;
+use crate::relay::http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION};
+use crate::relay::server::actor::{ClientConnHandler, ServerActorTask};
+use crate::relay::server::streams::MaybeTlsStream;
+use crate::util::AbortingJoinHandle;
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -54,12 +56,13 @@ fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes)> {
     }
 }
 
-/// The server HTTP handler to do HTTP upgrades
+/// The server HTTP handler to do HTTP upgrades.
 async fn relay_connection_handler(
+    protocol: Protocol,
     conn_handler: &ClientConnHandler,
     upgraded: Upgraded,
 ) -> Result<()> {
-    debug!("relay_connection upgraded");
+    debug!(?protocol, "relay_connection upgraded");
     let (io, read_buf) = downcast_upgrade(upgraded)?;
     ensure!(
         read_buf.is_empty(),
@@ -67,7 +70,7 @@ async fn relay_connection_handler(
         read_buf
     );
 
-    conn_handler.accept(io).await
+    conn_handler.accept(protocol, io).await
 }
 
 /// The Relay HTTP server.
@@ -80,7 +83,7 @@ async fn relay_connection_handler(
 #[derive(Debug)]
 pub struct Server {
     addr: SocketAddr,
-    http_server_task: JoinHandle<()>,
+    http_server_task: AbortingJoinHandle<()>,
     cancel_server_loop: CancellationToken,
 }
 
@@ -91,7 +94,6 @@ impl Server {
     /// the server, in particular it allows gracefully shutting down the server.
     pub fn handle(&self) -> ServerHandle {
         ServerHandle {
-            addr: self.addr,
             cancel_token: self.cancel_server_loop.clone(),
         }
     }
@@ -101,12 +103,12 @@ impl Server {
         self.cancel_server_loop.cancel();
     }
 
-    /// Returns the [`JoinHandle`] for the supervisor task managing the server.
+    /// Returns the [`AbortingJoinHandle`] for the supervisor task managing the server.
     ///
     /// This is the root of all the tasks for the server.  Aborting it will abort all the
     /// other tasks for the server.  Awaiting it will complete when all the server tasks are
     /// completed.
-    pub fn task_handle(&mut self) -> &mut JoinHandle<()> {
+    pub fn task_handle(&mut self) -> &mut AbortingJoinHandle<()> {
         &mut self.http_server_task
     }
 
@@ -121,7 +123,6 @@ impl Server {
 /// This does not allow access to the task but can communicate with it.
 #[derive(Debug, Clone)]
 pub struct ServerHandle {
-    addr: SocketAddr,
     cancel_token: CancellationToken,
 }
 
@@ -129,11 +130,6 @@ impl ServerHandle {
     /// Gracefully shut down the server.
     pub fn shutdown(&self) {
         self.cancel_token.cancel()
-    }
-
-    /// Returns the address the server is bound on.
-    pub fn addr(&self) -> SocketAddr {
-        self.addr
     }
 }
 
@@ -148,8 +144,8 @@ pub struct TlsConfig {
 
 /// Builder for the Relay HTTP Server.
 ///
-/// Defaults to handling relay requests on the "/derp" endpoint.  Other HTTP endpoints can
-/// be added using [`ServerBuilder::request_handler`].
+/// Defaults to handling relay requests on the "/relay" (and "/derp" for backwards compatibility) endpoint.
+/// Other HTTP endpoints can be added using [`ServerBuilder::request_handler`].
 ///
 /// If no [`SecretKey`] is provided, it is assumed that you will provide a
 /// [`ServerBuilder::relay_override`] function that handles requests to the relay
@@ -173,8 +169,6 @@ pub struct ServerBuilder {
     /// Used when certain routes in your server should be made available at the same port as
     /// the relay server, and so must be handled along side requests to the relay endpoint.
     handlers: Handlers,
-    /// Defaults to `GET` request at "/derp".
-    relay_endpoint: &'static str,
     /// Use a custom relay response handler.
     ///
     /// Typically used when you want to disable any relay connections.
@@ -197,7 +191,6 @@ impl ServerBuilder {
             addr,
             tls_config: None,
             handlers: Default::default(),
-            relay_endpoint: "/derp",
             relay_override: None,
             headers: HeaderMap::new(),
             not_found_fn: None,
@@ -230,6 +223,7 @@ impl ServerBuilder {
     }
 
     /// Sets a custom "404" handler.
+    #[allow(unused)]
     pub fn not_found_handler(mut self, handler: HyperHandler) -> Self {
         self.not_found_fn = Some(handler);
         self
@@ -240,14 +234,6 @@ impl ServerBuilder {
     /// This is required if no [`SecretKey`] was provided to the builder.
     pub fn relay_override(mut self, handler: HyperHandler) -> Self {
         self.relay_override = Some(handler);
-        self
-    }
-
-    /// Sets a custom endpoint for the relay handler.
-    ///
-    /// The default is `/derp`.
-    pub fn relay_endpoint(mut self, endpoint: &'static str) -> Self {
-        self.relay_endpoint = endpoint;
         self
     }
 
@@ -267,7 +253,7 @@ impl ServerBuilder {
         );
         let (relay_handler, relay_server) = if let Some(secret_key) = self.secret_key {
             // spawns a server actor/task
-            let server = crate::relay::server::Server::new(secret_key.clone());
+            let server = ServerActorTask::new(secret_key.clone());
             (
                 RelayHandler::ConnHandler(server.client_conn_handler(self.headers.clone())),
                 Some(server),
@@ -294,13 +280,7 @@ impl ServerBuilder {
             }),
         };
 
-        let service = RelayService::new(
-            self.handlers,
-            relay_handler,
-            self.relay_endpoint,
-            not_found_fn,
-            self.headers,
-        );
+        let service = RelayService::new(self.handlers, relay_handler, not_found_fn, self.headers);
 
         let server_state = ServerState {
             addr: self.addr,
@@ -318,7 +298,7 @@ impl ServerBuilder {
 struct ServerState {
     addr: SocketAddr,
     tls_config: Option<TlsConfig>,
-    server: Option<crate::relay::server::Server>,
+    server: Option<ServerActorTask>,
     service: RelayService,
 }
 
@@ -334,11 +314,11 @@ impl ServerState {
         } = self;
         let listener = TcpListener::bind(&addr)
             .await
-            .context("failed to bind server socket")?;
+            .with_context(|| format!("failed to bind server socket to {addr}"))?;
         // we will use this cancel token to stop the infinite loop in the `listener.accept() task`
         let cancel_server_loop = CancellationToken::new();
         let addr = listener.local_addr()?;
-        let http_str = tls_config.as_ref().map_or("HTTP", |_| "HTTPS");
+        let http_str = tls_config.as_ref().map_or("HTTP/WS", |_| "HTTPS/WSS");
         info!("[{http_str}] relay: serving on {addr}");
         let cancel = cancel_server_loop.clone();
         let task = tokio::task::spawn(async move {
@@ -389,7 +369,7 @@ impl ServerState {
 
         Ok(Server {
             addr,
-            http_server_task: task,
+            http_server_task: AbortingJoinHandle::from(task),
             cancel_server_loop,
         })
     }
@@ -410,13 +390,48 @@ impl Service<Request<Incoming>> for ClientConnHandler {
 
         async move {
             {
-                let mut res = builder.body(body_empty()).expect("valid body");
-
                 // Send a 400 to any request that doesn't have an `Upgrade` header.
-                if !req.headers().contains_key(UPGRADE) {
-                    *res.status_mut() = StatusCode::BAD_REQUEST;
-                    return Ok(res);
-                }
+                let Some(protocol) = req.headers().get(UPGRADE).and_then(Protocol::parse_header)
+                else {
+                    return Ok(builder
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(body_empty())
+                        .expect("valid body"));
+                };
+
+                let websocket_headers = if protocol == Protocol::Websocket {
+                    let Some(key) = req.headers().get("Sec-WebSocket-Key").cloned() else {
+                        warn!("missing header Sec-WebSocket-Key for websocket relay protocol");
+                        return Ok(builder
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(body_empty())
+                            .expect("valid body"));
+                    };
+
+                    let Some(version) = req.headers().get("Sec-WebSocket-Version").cloned() else {
+                        warn!("missing header Sec-WebSocket-Version for websocket relay protocol");
+                        return Ok(builder
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(body_empty())
+                            .expect("valid body"));
+                    };
+
+                    if version.as_bytes() != SUPPORTED_WEBSOCKET_VERSION.as_bytes() {
+                        warn!("invalid header Sec-WebSocket-Version: {:?}", version);
+                        return Ok(builder
+                            .status(StatusCode::BAD_REQUEST)
+                            // It's convention to send back the version(s) we *do* support
+                            .header("Sec-WebSocket-Version", SUPPORTED_WEBSOCKET_VERSION)
+                            .body(body_empty())
+                            .expect("valid body"));
+                    }
+
+                    Some((key, version))
+                } else {
+                    None
+                };
+
+                debug!("upgrading protocol: {:?}", protocol);
 
                 // Setup a future that will eventually receive the upgraded
                 // connection and talk a new protocol, and spawn the future
@@ -429,31 +444,43 @@ impl Service<Request<Incoming>> for ClientConnHandler {
                     async move {
                         match hyper::upgrade::on(&mut req).await {
                             Ok(upgraded) => {
-                                if let Err(e) =
-                                    relay_connection_handler(&closure_conn_handler, upgraded).await
+                                if let Err(e) = relay_connection_handler(
+                                    protocol,
+                                    &closure_conn_handler,
+                                    upgraded,
+                                )
+                                .await
                                 {
-                                    tracing::warn!(
-                                        "upgrade to \"{HTTP_UPGRADE_PROTOCOL}\": io error: {:?}",
-                                        e
+                                    warn!(
+                                        "upgrade to \"{}\": io error: {:?}",
+                                        e,
+                                        protocol.upgrade_header()
                                     );
                                 } else {
-                                    tracing::debug!(
-                                        "upgrade to \"{HTTP_UPGRADE_PROTOCOL}\" success"
-                                    );
+                                    debug!("upgrade to \"{}\" success", protocol.upgrade_header());
                                 };
                             }
-                            Err(e) => tracing::warn!("upgrade error: {:?}", e),
+                            Err(e) => warn!("upgrade error: {:?}", e),
                         }
                     }
-                    .instrument(tracing::debug_span!("handler")),
+                    .instrument(debug_span!("handler")),
                 );
 
                 // Now return a 101 Response saying we agree to the upgrade to the
                 // HTTP_UPGRADE_PROTOCOL
-                *res.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
-                res.headers_mut()
-                    .insert(UPGRADE, HeaderValue::from_static(HTTP_UPGRADE_PROTOCOL));
-                Ok(res)
+                builder = builder
+                    .status(StatusCode::SWITCHING_PROTOCOLS)
+                    .header(UPGRADE, HeaderValue::from_static(protocol.upgrade_header()));
+
+                if let Some((key, _version)) = websocket_headers {
+                    Ok(builder
+                        .header("Sec-WebSocket-Accept", &derive_accept_key(key.as_bytes()))
+                        .header(CONNECTION, "upgrade")
+                        .body(body_full("switching to websocket protocol"))
+                        .expect("valid body"))
+                } else {
+                    Ok(builder.body(body_empty()).expect("valid body"))
+                }
             }
         }
         .boxed()
@@ -467,7 +494,11 @@ impl Service<Request<Incoming>> for RelayService {
 
     fn call(&self, req: Request<Incoming>) -> Self::Future {
         // if the request hits the relay endpoint
-        if req.method() == hyper::Method::GET && req.uri().path() == self.0.relay_endpoint {
+        // or /derp for backwards compat
+        if matches!(
+            (req.method(), req.uri().path()),
+            (&hyper::Method::GET, LEGACY_RELAY_PATH | RELAY_PATH)
+        ) {
             match &self.0.relay_handler {
                 RelayHandler::Override(f) => {
                     // see if we have some override response
@@ -500,7 +531,6 @@ struct RelayService(Arc<Inner>);
 #[derive(derive_more::Debug)]
 struct Inner {
     pub relay_handler: RelayHandler,
-    pub relay_endpoint: &'static str,
     #[debug("Box<Fn(ResponseBuilder) -> Result<Response<BytesBody>> + Send + Sync + 'static>")]
     pub not_found_fn: HyperHandler,
     pub handlers: Handlers,
@@ -548,14 +578,12 @@ impl RelayService {
     fn new(
         handlers: Handlers,
         relay_handler: RelayHandler,
-        relay_endpoint: &'static str,
         not_found_fn: HyperHandler,
         headers: HeaderMap,
     ) -> Self {
         Self(Arc::new(Inner {
             relay_handler,
             handlers,
-            relay_endpoint,
             not_found_fn,
             headers,
         }))
@@ -573,8 +601,7 @@ impl RelayService {
             Some(tls_config) => self.tls_serve_connection(stream, tls_config).await,
             None => {
                 debug!("HTTP: serve connection");
-                self.serve_connection(MaybeTlsStreamServer::Plain(stream))
-                    .await
+                self.serve_connection(MaybeTlsStream::Plain(stream)).await
             }
         }
     }
@@ -593,7 +620,7 @@ impl RelayService {
                         .into_stream(config)
                         .await
                         .context("TLS[acme] handshake")?;
-                    self.serve_connection(MaybeTlsStreamServer::Tls(tls_stream))
+                    self.serve_connection(MaybeTlsStream::Tls(tls_stream))
                         .await
                         .context("TLS[acme] serve connection")?;
                 }
@@ -601,7 +628,7 @@ impl RelayService {
             TlsAcceptor::Manual(a) => {
                 debug!("TLS[manual]: accept");
                 let tls_stream = a.accept(stream).await.context("TLS[manual] accept")?;
-                self.serve_connection(MaybeTlsStreamServer::Tls(tls_stream))
+                self.serve_connection(MaybeTlsStream::Tls(tls_stream))
                     .await
                     .context("TLS[manual] serve connection")?;
             }
@@ -646,5 +673,237 @@ impl std::ops::Deref for Handlers {
 impl std::ops::DerefMut for Handlers {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use anyhow::Result;
+    use bytes::Bytes;
+    use reqwest::Url;
+    use tokio::sync::mpsc;
+    use tokio::task::JoinHandle;
+    use tracing::{info, info_span, Instrument};
+    use tracing_subscriber::{prelude::*, EnvFilter};
+
+    use crate::key::{PublicKey, SecretKey};
+    use crate::relay::client::conn::ReceivedMessage;
+    use crate::relay::client::{Client, ClientBuilder};
+
+    pub(crate) fn make_tls_config() -> TlsConfig {
+        let subject_alt_names = vec!["localhost".to_string()];
+
+        let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
+        let rustls_certificate = rustls::Certificate(cert.serialize_der().unwrap());
+        let rustls_key = rustls::PrivateKey(cert.get_key_pair().serialize_der());
+        let config = rustls::ServerConfig::builder()
+            .with_safe_defaults()
+            .with_no_client_auth()
+            .with_single_cert(vec![(rustls_certificate)], rustls_key)
+            .unwrap();
+
+        let config = std::sync::Arc::new(config);
+        let acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
+
+        TlsConfig {
+            config,
+            acceptor: TlsAcceptor::Manual(acceptor),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_http_clients_and_server() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let server_key = SecretKey::generate();
+        let a_key = SecretKey::generate();
+        let b_key = SecretKey::generate();
+
+        // start server
+        let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
+            .secret_key(Some(server_key))
+            .spawn()
+            .await?;
+
+        let addr = server.addr();
+
+        // get dial info
+        let port = addr.port();
+        let addr = {
+            if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
+                ipv4_addr
+            } else {
+                anyhow::bail!("cannot get ipv4 addr from socket addr {addr:?}");
+            }
+        };
+        info!("addr: {addr}:{port}");
+        let relay_addr: Url = format!("http://{addr}:{port}").parse().unwrap();
+
+        // create clients
+        let (a_key, mut a_recv, client_a_task, client_a) = {
+            let span = info_span!("client-a");
+            let _guard = span.enter();
+            create_test_client(a_key, relay_addr.clone())
+        };
+        info!("created client {a_key:?}");
+        let (b_key, mut b_recv, client_b_task, client_b) = {
+            let span = info_span!("client-b");
+            let _guard = span.enter();
+            create_test_client(b_key, relay_addr)
+        };
+        info!("created client {b_key:?}");
+
+        info!("ping a");
+        client_a.ping().await?;
+
+        info!("ping b");
+        client_b.ping().await?;
+
+        info!("sending message from a to b");
+        let msg = Bytes::from_static(b"hi there, client b!");
+        client_a.send(b_key, msg.clone()).await?;
+        info!("waiting for message from a on b");
+        let (got_key, got_msg) = b_recv.recv().await.expect("expected message from client_a");
+        assert_eq!(a_key, got_key);
+        assert_eq!(msg, got_msg);
+
+        info!("sending message from b to a");
+        let msg = Bytes::from_static(b"right back at ya, client b!");
+        client_b.send(a_key, msg.clone()).await?;
+        info!("waiting for message b on a");
+        let (got_key, got_msg) = a_recv.recv().await.expect("expected message from client_b");
+        assert_eq!(b_key, got_key);
+        assert_eq!(msg, got_msg);
+
+        client_a.close().await?;
+        client_a_task.abort();
+        client_b.close().await?;
+        client_b_task.abort();
+        server.shutdown();
+
+        Ok(())
+    }
+
+    fn create_test_client(
+        key: SecretKey,
+        server_url: Url,
+    ) -> (
+        PublicKey,
+        mpsc::Receiver<(PublicKey, Bytes)>,
+        JoinHandle<()>,
+        Client,
+    ) {
+        let client = ClientBuilder::new(server_url).insecure_skip_cert_verify(true);
+        let dns_resolver = crate::dns::default_resolver();
+        let (client, mut client_reader) = client.build(key.clone(), dns_resolver.clone());
+        let public_key = key.public();
+        let (received_msg_s, received_msg_r) = tokio::sync::mpsc::channel(10);
+        let client_reader_task = tokio::spawn(
+            async move {
+                loop {
+                    info!("waiting for message on {:?}", key.public());
+                    match client_reader.recv().await {
+                        None => {
+                            info!("client received nothing");
+                            return;
+                        }
+                        Some(Err(e)) => {
+                            info!("client {:?} `recv` error {e}", key.public());
+                            return;
+                        }
+                        Some(Ok((msg, _))) => {
+                            info!("got message on {:?}: {msg:?}", key.public());
+                            if let ReceivedMessage::ReceivedPacket { source, data } = msg {
+                                received_msg_s
+                                    .send((source, data))
+                                    .await
+                                    .unwrap_or_else(|err| {
+                                        panic!(
+                                            "client {:?}, error sending message over channel: {:?}",
+                                            key.public(),
+                                            err
+                                        )
+                                    });
+                            }
+                        }
+                    }
+                }
+            }
+            .instrument(info_span!("test-client-reader")),
+        );
+        (public_key, received_msg_r, client_reader_task, client)
+    }
+
+    #[tokio::test]
+    async fn test_https_clients_and_server() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
+        let server_key = SecretKey::generate();
+        let a_key = SecretKey::generate();
+        let b_key = SecretKey::generate();
+
+        // create tls_config
+        let tls_config = make_tls_config();
+
+        // start server
+        let mut server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
+            .secret_key(Some(server_key))
+            .tls_config(Some(tls_config))
+            .spawn()
+            .await?;
+
+        let addr = server.addr();
+
+        // get dial info
+        let port = addr.port();
+        let addr = {
+            if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
+                ipv4_addr
+            } else {
+                anyhow::bail!("cannot get ipv4 addr from socket addr {addr:?}");
+            }
+        };
+        info!("Relay listening on: {addr}:{port}");
+
+        let url: Url = format!("https://localhost:{port}").parse().unwrap();
+
+        // create clients
+        let (a_key, mut a_recv, client_a_task, client_a) = create_test_client(a_key, url.clone());
+        info!("created client {a_key:?}");
+        let (b_key, mut b_recv, client_b_task, client_b) = create_test_client(b_key, url);
+        info!("created client {b_key:?}");
+
+        client_a.ping().await?;
+        client_b.ping().await?;
+
+        info!("sending message from a to b");
+        let msg = Bytes::from_static(b"hi there, client b!");
+        client_a.send(b_key, msg.clone()).await?;
+        info!("waiting for message from a on b");
+        let (got_key, got_msg) = b_recv.recv().await.expect("expected message from client_a");
+        assert_eq!(a_key, got_key);
+        assert_eq!(msg, got_msg);
+
+        info!("sending message from b to a");
+        let msg = Bytes::from_static(b"right back at ya, client b!");
+        client_b.send(a_key, msg.clone()).await?;
+        info!("waiting for message b on a");
+        let (got_key, got_msg) = a_recv.recv().await.expect("expected message from client_b");
+        assert_eq!(b_key, got_key);
+        assert_eq!(msg, got_msg);
+
+        server.shutdown();
+        server.task_handle().await?;
+        client_a.close().await?;
+        client_a_task.abort();
+        client_b.close().await?;
+        client_b_task.abort();
+        Ok(())
     }
 }

@@ -24,10 +24,10 @@ futures-concurrency = "7.6.0"
 futures-lite = "2.3.0"
 futures-util = "0.3.30"
 genawaiter = "0.99.1"
-iroh-base = { version = "0.18.0", path = "../iroh-base" }
-iroh-metrics = { version = "0.18.0", path = "../iroh-metrics", optional = true }
-iroh-net = { version = "0.18.0", path = "../iroh-net" }
-iroh-blobs = { version = "0.18.0", path = "../iroh-blobs" }
+iroh-base = { version = "0.22.0", path = "../iroh-base" }
+iroh-metrics = { version = "0.22.0", path = "../iroh-metrics", optional = true }
+iroh-net = { version = "0.22.0", path = "../iroh-net" }
+iroh-blobs = { version = "0.22.0", path = "../iroh-blobs" }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 rand = "0.8.5"
 rand_core = "0.6.4"

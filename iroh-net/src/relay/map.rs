@@ -14,10 +14,24 @@ use super::RelayUrl;
 pub enum RelayMode {
     /// Disable relay servers completely.
     Disabled,
-    /// Use the default relay map, with relay servers from n0.
+    /// Use the default relay map, with production relay servers from n0.
     Default,
+    /// Use the staging relay servers from n0.
+    Staging,
     /// Use a custom relay map.
     Custom(RelayMap),
+}
+
+impl RelayMode {
+    /// Returns the relay map for this mode.
+    pub fn relay_map(&self) -> RelayMap {
+        match self {
+            RelayMode::Disabled => RelayMap::empty(),
+            RelayMode::Default => crate::defaults::prod::default_relay_map(),
+            RelayMode::Staging => crate::defaults::staging::default_relay_map(),
+            RelayMode::Custom(relay_map) => relay_map.clone(),
+        }
+    }
 }
 
 /// Configuration of all the relay servers that can be used.
@@ -114,6 +128,8 @@ impl fmt::Display for RelayMap {
 /// Information on a specific relay server.
 ///
 /// Includes the Url where it can be dialed.
+// Please note that this is documented in the `iroh.computer` repository under
+// `src/app/docs/reference/config/page.mdx`.  Any changes to this need to be updated there.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct RelayNode {
     /// The [`RelayUrl`] where this relay server can be dialed.

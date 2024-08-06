@@ -11,20 +11,17 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 pub(crate) mod client;
-pub(crate) mod client_conn;
-pub(crate) mod clients;
-mod codec;
+pub(crate) mod codec;
 pub mod http;
-pub mod iroh_relay;
 mod map;
-mod metrics;
-pub(crate) mod server;
-pub(crate) mod types;
+#[cfg(feature = "iroh-relay")]
+pub mod server;
 
-pub use self::client::{Client as RelayClient, ReceivedMessage};
+pub use self::client::conn::{Conn as RelayConn, ReceivedMessage};
+pub use self::client::{
+    Client as HttpClient, ClientBuilder as HttpClientBuilder, ClientError as HttpClientError,
+    ClientReceiver as HttpClientReceiver,
+};
 pub use self::codec::MAX_PACKET_SIZE;
-pub use self::http::Client as HttpClient;
 pub use self::map::{RelayMap, RelayMode, RelayNode};
-pub use self::metrics::Metrics;
-pub use self::server::{ClientConnHandler, MaybeTlsStream as MaybeTlsStreamServer, Server};
 pub use iroh_base::node_addr::RelayUrl;

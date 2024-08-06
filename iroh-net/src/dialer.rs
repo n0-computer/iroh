@@ -1,23 +1,26 @@
-//! A dialer to dial nodes
+//! A dialer to conveniently dial many nodes.
 
 use std::{collections::HashMap, pin::Pin, task::Poll};
 
-use crate::{key::PublicKey, Endpoint, NodeAddr, NodeId};
 use anyhow::anyhow;
-use futures_lite::future::Boxed as BoxFuture;
+use futures_lite::Stream;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
-/// Dial nodes and maintain a queue of pending dials
+use crate::{Endpoint, NodeId};
+
+/// Dials nodes and maintains a queue of pending dials.
 ///
-/// This wraps a [`Endpoint`], connects to nodes through the endpoint, stores
-/// the pending connect futures and emits finished connect results.
+/// The [`Dialer`] wraps an [`Endpoint`], connects to nodes through the endpoint, stores the
+/// pending connect futures and emits finished connect results.
+///
+/// The [`Dialer`] also implements [`Stream`] to retrieve the dialled connections.
 #[derive(Debug)]
 pub struct Dialer {
     endpoint: Endpoint,
-    pending: JoinSet<(PublicKey, anyhow::Result<quinn::Connection>)>,
-    pending_dials: HashMap<PublicKey, CancellationToken>,
+    pending: JoinSet<(NodeId, anyhow::Result<quinn::Connection>)>,
+    pending_dials: HashMap<NodeId, CancellationToken>,
 }
 
 impl Dialer {
@@ -30,12 +33,15 @@ impl Dialer {
         }
     }
 
-    /// Start to dial a node.
+    /// Starts to dial a node by [`NodeId`].
     ///
-    /// Note that the node's addresses and/or relay url must be added to the endpoint's
-    /// addressbook for a dial to succeed, see [`Endpoint::add_node_addr`].
+    /// Since this dials by [`NodeId`] the [`Endpoint`] must know how to contact the node by
+    /// [`NodeId`] only.  This relies on addressing information being provided by either the
+    /// [discovery service] or manually by calling [`Endpoint::add_node_addr`].
+    ///
+    /// [discovery service]: crate::discovery::Discovery
     pub fn queue_dial(&mut self, node_id: NodeId, alpn: &'static [u8]) {
-        if self.is_pending(&node_id) {
+        if self.is_pending(node_id) {
             return;
         }
         let cancel = CancellationToken::new();
@@ -45,26 +51,26 @@ impl Dialer {
             let res = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => Err(anyhow!("Cancelled")),
-                res = endpoint.connect(NodeAddr::new(node_id), alpn) => res
+                res = endpoint.connect_by_node_id(node_id, alpn) => res
             };
             (node_id, res)
         });
     }
 
-    /// Abort a pending dial
-    pub fn abort_dial(&mut self, node_id: &NodeId) {
-        if let Some(cancel) = self.pending_dials.remove(node_id) {
+    /// Aborts a pending dial.
+    pub fn abort_dial(&mut self, node_id: NodeId) {
+        if let Some(cancel) = self.pending_dials.remove(&node_id) {
             cancel.cancel();
         }
     }
 
-    /// Check if a node is currently being dialed
-    pub fn is_pending(&self, node: &NodeId) -> bool {
-        self.pending_dials.contains_key(node)
+    /// Checks if a node is currently being dialed.
+    pub fn is_pending(&self, node: NodeId) -> bool {
+        self.pending_dials.contains_key(&node)
     }
 
-    /// Wait for the next dial operation to complete
-    pub async fn next_conn(&mut self) -> (PublicKey, anyhow::Result<quinn::Connection>) {
+    /// Waits for the next dial operation to complete.
+    pub async fn next_conn(&mut self) -> (NodeId, anyhow::Result<quinn::Connection>) {
         match self.pending_dials.is_empty() {
             false => {
                 let (node_id, res) = loop {
@@ -93,10 +99,15 @@ impl Dialer {
     pub fn pending_count(&self) -> usize {
         self.pending_dials.len()
     }
+
+    /// Returns a reference to the endpoint used in this dialer.
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
+    }
 }
 
-impl futures_lite::Stream for Dialer {
-    type Item = (PublicKey, anyhow::Result<quinn::Connection>);
+impl Stream for Dialer {
+    type Item = (NodeId, anyhow::Result<quinn::Connection>);
 
     fn poll_next(
         mut self: Pin<&mut Self>,
@@ -115,6 +126,3 @@ impl futures_lite::Stream for Dialer {
         }
     }
 }
-
-/// Future for a pending dial operation
-pub type DialFuture = BoxFuture<(PublicKey, anyhow::Result<quinn::Connection>)>;

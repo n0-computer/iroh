@@ -20,7 +20,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::dns::DnsResolver;
-use crate::net::ip::to_canonical;
 use crate::net::{IpFamily, UdpSocket};
 use crate::relay::RelayUrl;
 use crate::util::CancelOnDrop;
@@ -327,7 +326,7 @@ pub(crate) enum Message {
     /// A report produced by the [`reportgen`] actor.
     ReportReady { report: Box<Report> },
     /// The [`reportgen`] actor failed to produce a report.
-    ReportAborted,
+    ReportAborted { err: anyhow::Error },
     /// An incoming STUN packet to parse.
     StunPacket {
         /// The raw UDP payload.
@@ -458,8 +457,8 @@ impl Actor {
                 Message::ReportReady { report } => {
                     self.handle_report_ready(report);
                 }
-                Message::ReportAborted => {
-                    self.handle_report_aborted();
+                Message::ReportAborted { err } => {
+                    self.handle_report_aborted(err);
                 }
                 Message::StunPacket { payload, from_addr } => {
                     self.handle_stun_packet(&payload, from_addr);
@@ -547,10 +546,10 @@ impl Actor {
         }
     }
 
-    fn handle_report_aborted(&mut self) {
+    fn handle_report_aborted(&mut self, err: anyhow::Error) {
         self.in_flight_stun_requests.clear();
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
-            report_tx.send(Err(anyhow!("report aborted"))).ok();
+            report_tx.send(Err(err.context("report aborted"))).ok();
         }
     }
 
@@ -764,7 +763,7 @@ async fn recv_stun_once(sock: &UdpSocket, buf: &mut [u8], actor_addr: &Addr) -> 
         .await
         .context("Error reading from stun socket")?;
     let payload = &buf[..count];
-    from_addr.set_ip(to_canonical(from_addr.ip()));
+    from_addr.set_ip(from_addr.ip().to_canonical());
     let msg = Message::StunPacket {
         payload: Bytes::from(payload.to_vec()),
         from_addr,
@@ -785,7 +784,7 @@ mod tests {
     use tokio::time;
     use tracing::info;
 
-    use crate::defaults::{DEFAULT_STUN_PORT, EU_RELAY_HOSTNAME};
+    use crate::defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT};
     use crate::ping::Pinger;
     use crate::relay::RelayNode;
 

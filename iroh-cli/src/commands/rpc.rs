@@ -5,8 +5,8 @@ use iroh::client::Iroh;
 use crate::config::ConsoleEnv;
 
 use super::{
-    author::AuthorCommands, blob::BlobCommands, doc::DocCommands, node::NodeCommands,
-    tag::TagCommands,
+    authors::AuthorCommands, blobs::BlobCommands, docs::DocCommands, gossip::GossipCommands,
+    node::NodeCommands, tags::TagCommands,
 };
 
 #[derive(Subcommand, Debug, Clone)]
@@ -16,7 +16,9 @@ pub enum RpcCommands {
     ///
     /// Documents are mutable, syncable key-value stores.
     /// For more on docs see https://iroh.computer/docs/layers/documents
-    Doc {
+    ///
+    /// For general configuration options see <https://iroh.computer/docs/reference/config>.
+    Docs {
         #[clap(subcommand)]
         command: DocCommands,
     },
@@ -24,7 +26,9 @@ pub enum RpcCommands {
     /// Manage document authors
     ///
     /// Authors are keypairs that identify writers to documents.
-    Author {
+    ///
+    /// For general configuration options see <https://iroh.computer/docs/reference/config>.
+    Authors {
         #[clap(subcommand)]
         command: AuthorCommands,
     },
@@ -32,7 +36,9 @@ pub enum RpcCommands {
     ///
     /// Blobs are immutable, opaque chunks of arbitrary-sized data.
     /// For more on blobs see https://iroh.computer/docs/layers/blobs
-    Blob {
+    ///
+    /// For general configuration options see <https://iroh.computer/docs/reference/config>.
+    Blobs {
         #[clap(subcommand)]
         command: BlobCommands,
     },
@@ -40,6 +46,15 @@ pub enum RpcCommands {
     Node {
         #[clap(subcommand)]
         command: NodeCommands,
+    },
+    /// Manage gossip
+    ///
+    /// Gossip is a way to broadcast messages to a group of nodes.
+    ///
+    /// For general configuration options see <https://iroh.computer/docs/reference/config>.
+    Gossip {
+        #[clap(subcommand)]
+        command: GossipCommands,
     },
     /// Manage tags
     ///
@@ -50,7 +65,9 @@ pub enum RpcCommands {
     /// a tag.
     ///
     /// Any data iroh fetches without a tag will be periodically deleted.
-    Tag {
+    ///
+    /// For general configuration options see <https://iroh.computer/docs/reference/config>.
+    Tags {
         #[clap(subcommand)]
         command: TagCommands,
     },
@@ -60,10 +77,11 @@ impl RpcCommands {
     pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
             Self::Node { command } => command.run(iroh).await,
-            Self::Blob { command } => command.run(iroh).await,
-            Self::Doc { command } => command.run(iroh, env).await,
-            Self::Author { command } => command.run(iroh, env).await,
-            Self::Tag { command } => command.run(iroh).await,
+            Self::Blobs { command } => command.run(iroh).await,
+            Self::Docs { command } => command.run(iroh, env).await,
+            Self::Authors { command } => command.run(iroh, env).await,
+            Self::Tags { command } => command.run(iroh).await,
+            Self::Gossip { command } => command.run(iroh).await,
         }
     }
 }

@@ -1,4 +1,43 @@
-//! Trait and utils for the node discovery mechanism.
+//! Node address discovery.
+//!
+//! To connect to an iroh-net node a [`NodeAddr`] is needed, which needs to contain either a
+//! [`RelayUrl`] or one or more *direct addresses*.  However it is often more desirable to
+//! be able to connect with only the [`NodeId`], as [`Endpoint::connect_by_node_id`] does.
+//!
+//! For connecting by [`NodeId`] to work however, the endpoint has to get the addressing
+//! information by other means.  This can be done by manually calling
+//! [`Endpoint::add_node_addr`], but that still requires knowing the other addressing
+//! information.
+//!
+//! Node discovery is an automated system for an [`Endpoint`] to retrieve this addressing
+//! information.  Each iroh-net node will automatically publish their own addressing
+//! information.  Usually this means publishing which [`RelayUrl`] to use for their
+//! [`NodeId`], but they could also publish direct addresses.
+//!
+//! The [`Discovery`] trait is used to define node discovery.  This allows multiple
+//! implementations to co-exist because there are many possible ways to implement this.
+//! Each [`Endpoint`] can use the discovery mechanisms most suitable to the application.
+//! The [`Builder::discovery`] method is used to add a discovery mechanism to an
+//! [`Endpoint`].
+//!
+//! Some generally useful discovery implementations are provided:
+//!
+//! - The [`DnsDiscovery`] which supports publishing to a special DNS server and performs
+//!   lookups via the standard DNS systems.  [Number 0] runs a public instance of this which
+//!   is globally available and a reliable default choice.
+//!
+//! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
+//!   using HTTP.
+//!
+//! To use multiple discovery systems simultaneously use [`ConcurrentDiscovery`] which will
+//! perform lookups to all discovery systems at the same time.
+//!
+//! [`RelayUrl`]: crate::relay::RelayUrl
+//! [`Builder::discovery`]: crate::endpoint::Builder::discovery
+//! [`DnsDiscovery`]: dns::DnsDiscovery
+//! [Number 0]: https://n0.computer
+//! [`PkarrResolver`]: pkarr::PkarrResolver
+//! [pkarr relay servers]: https://pkarr.org/#servers
 
 use std::time::Duration;
 
@@ -11,32 +50,41 @@ use tracing::{debug, error_span, warn, Instrument};
 use crate::{AddrInfo, Endpoint, NodeId};
 
 pub mod dns;
-pub mod pkarr_publish;
+
+#[cfg(feature = "local_swarm_discovery")]
+pub mod local_swarm_discovery;
+pub mod pkarr;
 
 /// Name used for logging when new node addresses are added from discovery.
 const SOURCE_NAME: &str = "discovery";
 
 /// Node discovery for [`super::Endpoint`].
 ///
-/// The purpose of this trait is to hook up a node discovery mechanism that
-/// allows finding information such as the relay URL and direct addresses
-/// of a node given its [`NodeId`].
+/// This trait defines publishing and resolving addressing information for a [`NodeId`].
+/// This enables connecting to other nodes with only knowing the [`NodeId`], by using this
+/// [`Discovery`] system to look up the actual addressing information.  It is common for
+/// implementations to require each node to publish their own information before it can be
+/// looked up by other nodes.
+///
+/// The published addressing information can include both a [`RelayUrl`] and/or direct
+/// addresses.
 ///
 /// To allow for discovery, the [`super::Endpoint`] will call `publish` whenever
 /// discovery information changes. If a discovery mechanism requires a periodic
 /// refresh, it should start its own task.
+///
+/// [`RelayUrl`]: crate::relay::RelayUrl
 pub trait Discovery: std::fmt::Debug + Send + Sync {
-    /// Publish the given [`AddrInfo`] to the discovery mechanisms.
+    /// Publishes the given [`AddrInfo`] to the discovery mechanism.
     ///
-    /// This is fire and forget, since the magicsock can not wait for successful
-    /// publishing. If publishing is async, the implementation should start it's
-    /// own task.
+    /// This is fire and forget, since the [`Endpoint`] can not wait for successful
+    /// publishing. If publishing is async, the implementation should start it's own task.
     ///
     /// This will be called from a tokio task, so it is safe to spawn new tasks.
     /// These tasks will be run on the runtime of the [`super::Endpoint`].
     fn publish(&self, _info: &AddrInfo) {}
 
-    /// Resolve the [`AddrInfo`] for the given [`NodeId`].
+    /// Resolves the [`AddrInfo`] for the given [`NodeId`].
     ///
     /// Once the returned [`BoxStream`] is dropped, the service should stop any pending
     /// work.
@@ -59,8 +107,9 @@ pub struct DiscoveryItem {
     /// Optional timestamp when this node address info was last updated.
     ///
     /// Must be microseconds since the unix epoch.
+    // TODO(ramfox): this is currently unused. As we develop more `DiscoveryService`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each node to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
     pub last_updated: Option<u64>,
-    /// The adress info for the node being resolved.
+    /// The address info for the node being resolved.
     pub addr_info: AddrInfo,
 }
 
@@ -73,17 +122,17 @@ pub struct ConcurrentDiscovery {
 }
 
 impl ConcurrentDiscovery {
-    /// Create a empty [`ConcurrentDiscovery`].
+    /// Creates an empty [`ConcurrentDiscovery`].
     pub fn empty() -> Self {
         Self::default()
     }
 
-    /// Create a new [`ConcurrentDiscovery`].
+    /// Creates a new [`ConcurrentDiscovery`].
     pub fn from_services(services: Vec<Box<dyn Discovery>>) -> Self {
         Self { services }
     }
 
-    /// Add a [`Discovery`] service.
+    /// Adds a [`Discovery`] service.
     pub fn add(&mut self, service: impl Discovery + 'static) {
         self.services.push(Box::new(service));
     }
@@ -132,8 +181,8 @@ pub(super) struct DiscoveryTask {
 }
 
 impl DiscoveryTask {
-    /// Start a discovery task.
-    pub fn start(ep: Endpoint, node_id: NodeId) -> Result<Self> {
+    /// Starts a discovery task.
+    pub(super) fn start(ep: Endpoint, node_id: NodeId) -> Result<Self> {
         ensure!(ep.discovery().is_some(), "No discovery services configured");
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let me = ep.node_id();
@@ -145,7 +194,7 @@ impl DiscoveryTask {
         Ok(Self { task, on_first_rx })
     }
 
-    /// Start a discovery task after a delay and only if no path to the node was recently active.
+    /// Starts a discovery task after a delay and only if no path to the node was recently active.
     ///
     /// This returns `None` if we received data or control messages from the remote endpoint
     /// recently enough. If not it returns a [`DiscoveryTask`].
@@ -153,7 +202,7 @@ impl DiscoveryTask {
     /// If `delay` is set, the [`DiscoveryTask`] will first wait for `delay` and then check again
     /// if we recently received messages from remote endpoint. If true, the task will abort.
     /// Otherwise, or if no `delay` is set, the discovery will be started.
-    pub fn maybe_start_after_delay(
+    pub(super) fn maybe_start_after_delay(
         ep: &Endpoint,
         node_id: NodeId,
         delay: Option<Duration>,
@@ -186,15 +235,15 @@ impl DiscoveryTask {
         Ok(Some(Self { task, on_first_rx }))
     }
 
-    /// Wait until the discovery task produced at least one result.
-    pub async fn first_arrived(&mut self) -> Result<()> {
+    /// Waits until the discovery task produced at least one result.
+    pub(super) async fn first_arrived(&mut self) -> Result<()> {
         let fut = &mut self.on_first_rx;
         fut.await??;
         Ok(())
     }
 
-    /// Cancel the discovery task.
-    pub fn cancel(&self) {
+    /// Cancels the discovery task.
+    pub(super) fn cancel(&self) {
         self.task.abort();
     }
 
@@ -564,7 +613,7 @@ mod test_dns_pkarr {
     use iroh_base::key::SecretKey;
 
     use crate::{
-        discovery::pkarr_publish::PkarrPublisher,
+        discovery::pkarr::PkarrPublisher,
         dns::{node_info::NodeInfo, ResolverExt},
         relay::{RelayMap, RelayMode},
         test_utils::{
@@ -574,6 +623,8 @@ mod test_dns_pkarr {
         },
         AddrInfo, Endpoint, NodeAddr,
     };
+
+    const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 
     #[tokio::test]
     async fn dns_resolve() -> Result<()> {
@@ -605,7 +656,6 @@ mod test_dns_pkarr {
         let _logging_guard = iroh_test::logging::setup();
 
         let origin = "testdns.example".to_string();
-        let timeout = Duration::from_secs(2);
 
         let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone()).await?;
 
@@ -622,7 +672,7 @@ mod test_dns_pkarr {
         // does not block, update happens in background task
         publisher.update_addr_info(&addr_info);
         // wait until our shared state received the update from pkarr publishing
-        dns_pkarr_server.on_node(&node_id, timeout).await?;
+        dns_pkarr_server.on_node(&node_id, PUBLISH_TIMEOUT).await?;
         let resolved = resolver.lookup_by_id(&node_id, &origin).await?;
 
         let expected = NodeAddr {
@@ -640,8 +690,6 @@ mod test_dns_pkarr {
     async fn pkarr_publish_dns_discover() -> Result<()> {
         let _logging_guard = iroh_test::logging::setup();
 
-        let timeout = Duration::from_secs(2);
-
         let dns_pkarr_server = DnsPkarrServer::run().await?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
@@ -649,7 +697,9 @@ mod test_dns_pkarr {
         let ep2 = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
 
         // wait until our shared state received the update from pkarr publishing
-        dns_pkarr_server.on_node(&ep1.node_id(), timeout).await?;
+        dns_pkarr_server
+            .on_node(&ep1.node_id(), PUBLISH_TIMEOUT)
+            .await?;
 
         // we connect only by node id!
         let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
@@ -661,8 +711,6 @@ mod test_dns_pkarr {
     async fn pkarr_publish_dns_discover_empty_node_addr() -> Result<()> {
         let _logging_guard = iroh_test::logging::setup();
 
-        let timeout = Duration::from_secs(2);
-
         let dns_pkarr_server = DnsPkarrServer::run().await?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
@@ -670,7 +718,9 @@ mod test_dns_pkarr {
         let ep2 = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
 
         // wait until our shared state received the update from pkarr publishing
-        dns_pkarr_server.on_node(&ep1.node_id(), timeout).await?;
+        dns_pkarr_server
+            .on_node(&ep1.node_id(), PUBLISH_TIMEOUT)
+            .await?;
 
         // we connect only by node id!
         let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;

@@ -9,8 +9,14 @@ use futures_util::future::FutureExt;
 use iroh_net::key::SecretKey;
 
 use crate::{
-    get::{db::BlobId, progress::TransferState},
-    util::progress::{FlumeProgressSender, IdGenerator, ProgressSender},
+    get::{
+        db::BlobId,
+        progress::{BlobProgress, TransferState},
+    },
+    util::{
+        local_pool::LocalPool,
+        progress::{AsyncChannelProgressSender, IdGenerator},
+    },
 };
 
 use super::*;
@@ -23,7 +29,7 @@ impl Downloader {
         dialer: dialer::TestingDialer,
         getter: getter::TestingGetter,
         concurrency_limits: ConcurrencyLimits,
-    ) -> Self {
+    ) -> (Self, LocalPool) {
         Self::spawn_for_test_with_retry_config(
             dialer,
             getter,
@@ -37,10 +43,11 @@ impl Downloader {
         getter: getter::TestingGetter,
         concurrency_limits: ConcurrencyLimits,
         retry_config: RetryConfig,
-    ) -> Self {
+    ) -> (Self, LocalPool) {
         let (msg_tx, msg_rx) = mpsc::channel(super::SERVICE_CHANNEL_CAPACITY);
 
-        LocalPoolHandle::new(1).spawn_pinned(move || async move {
+        let lp = LocalPool::default();
+        lp.spawn_detached(move || async move {
             // we want to see the logs of the service
             let _guard = iroh_test::logging::setup();
 
@@ -48,10 +55,13 @@ impl Downloader {
             service.run().await
         });
 
-        Downloader {
-            next_id: Arc::new(AtomicU64::new(0)),
-            msg_tx,
-        }
+        (
+            Downloader {
+                next_id: Arc::new(AtomicU64::new(0)),
+                msg_tx,
+            },
+            lp,
+        )
     }
 }
 
@@ -63,7 +73,8 @@ async fn smoke_test() {
     let getter = getter::TestingGetter::default();
     let concurrency_limits = ConcurrencyLimits::default();
 
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     // send a request and make sure the peer is requested the corresponding download
     let peer = SecretKey::generate().public();
@@ -88,7 +99,8 @@ async fn deduplication() {
     getter.set_request_duration(Duration::from_secs(1));
     let concurrency_limits = ConcurrencyLimits::default();
 
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     let peer = SecretKey::generate().public();
     let kind: DownloadKind = HashAndFormat::raw(Hash::new([0u8; 32])).into();
@@ -119,7 +131,8 @@ async fn cancellation() {
     getter.set_request_duration(Duration::from_millis(500));
     let concurrency_limits = ConcurrencyLimits::default();
 
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     let peer = SecretKey::generate().public();
     let kind_1: DownloadKind = HashAndFormat::raw(Hash::new([0u8; 32])).into();
@@ -158,7 +171,8 @@ async fn max_concurrent_requests_total() {
         ..Default::default()
     };
 
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     // send the downloads
     let peer = SecretKey::generate().public();
@@ -201,7 +215,8 @@ async fn max_concurrent_requests_per_peer() {
         ..Default::default()
     };
 
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     // send the downloads
     let peer = SecretKey::generate().public();
@@ -257,43 +272,54 @@ async fn concurrent_progress() {
         }
         .boxed()
     }));
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
 
     let peer = SecretKey::generate().public();
     let hash = Hash::new([0u8; 32]);
     let kind_1 = HashAndFormat::raw(hash);
 
-    let (prog_a_tx, prog_a_rx) = flume::bounded(64);
-    let prog_a_tx = FlumeProgressSender::new(prog_a_tx);
+    let (prog_a_tx, prog_a_rx) = async_channel::bounded(64);
+    let prog_a_tx = AsyncChannelProgressSender::new(prog_a_tx);
     let req = DownloadRequest::new(kind_1, vec![peer]).progress_sender(prog_a_tx);
     let handle_a = downloader.queue(req).await;
 
-    let (prog_b_tx, prog_b_rx) = flume::bounded(64);
-    let prog_b_tx = FlumeProgressSender::new(prog_b_tx);
+    let (prog_b_tx, prog_b_rx) = async_channel::bounded(64);
+    let prog_b_tx = AsyncChannelProgressSender::new(prog_b_tx);
     let req = DownloadRequest::new(kind_1, vec![peer]).progress_sender(prog_b_tx);
     let handle_b = downloader.queue(req).await;
-
-    start_tx.send(()).unwrap();
 
     let mut state_a = TransferState::new(hash);
     let mut state_b = TransferState::new(hash);
     let mut state_c = TransferState::new(hash);
 
-    let prog1_a = prog_a_rx.recv_async().await.unwrap();
-    let prog1_b = prog_b_rx.recv_async().await.unwrap();
-    assert!(matches!(prog1_a, DownloadProgress::Found { hash, size: 100, ..} if hash == hash));
-    assert!(matches!(prog1_b, DownloadProgress::Found { hash, size: 100, ..} if hash == hash));
+    let prog0_b = prog_b_rx.recv().await.unwrap();
+    assert!(matches!(
+        prog0_b,
+        DownloadProgress::InitialState(state) if state.root.hash == hash && state.root.progress == BlobProgress::Pending,
+    ));
+
+    start_tx.send(()).unwrap();
+
+    let prog1_a = prog_a_rx.recv().await.unwrap();
+    let prog1_b = prog_b_rx.recv().await.unwrap();
+    assert!(
+        matches!(prog1_a, DownloadProgress::Found { hash: found_hash, size: 100, ..} if found_hash == hash)
+    );
+    assert!(
+        matches!(prog1_b, DownloadProgress::Found { hash: found_hash, size: 100, ..} if found_hash == hash)
+    );
 
     state_a.on_progress(prog1_a);
     state_b.on_progress(prog1_b);
     assert_eq!(state_a, state_b);
 
-    let (prog_c_tx, prog_c_rx) = flume::bounded(64);
-    let prog_c_tx = FlumeProgressSender::new(prog_c_tx);
+    let (prog_c_tx, prog_c_rx) = async_channel::bounded(64);
+    let prog_c_tx = AsyncChannelProgressSender::new(prog_c_tx);
     let req = DownloadRequest::new(kind_1, vec![peer]).progress_sender(prog_c_tx);
     let handle_c = downloader.queue(req).await;
 
-    let prog1_c = prog_c_rx.recv_async().await.unwrap();
+    let prog1_c = prog_c_rx.recv().await.unwrap();
     assert!(matches!(&prog1_c, DownloadProgress::InitialState(state) if state == &state_a));
     state_c.on_progress(prog1_c);
 
@@ -304,9 +330,9 @@ async fn concurrent_progress() {
     res_b.unwrap();
     res_c.unwrap();
 
-    let prog_a: Vec<_> = prog_a_rx.into_stream().collect().await;
-    let prog_b: Vec<_> = prog_b_rx.into_stream().collect().await;
-    let prog_c: Vec<_> = prog_c_rx.into_stream().collect().await;
+    let prog_a: Vec<_> = prog_a_rx.collect().await;
+    let prog_b: Vec<_> = prog_b_rx.collect().await;
+    let prog_c: Vec<_> = prog_c_rx.collect().await;
 
     assert_eq!(prog_a.len(), 1);
     assert_eq!(prog_b.len(), 1);
@@ -341,7 +367,8 @@ async fn long_queue() {
         ..Default::default()
     };
 
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
     // send the downloads
     let nodes = [
         SecretKey::generate().public(),
@@ -370,7 +397,8 @@ async fn fail_while_running() {
     let _guard = iroh_test::logging::setup();
     let dialer = dialer::TestingDialer::default();
     let getter = getter::TestingGetter::default();
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
     let blob_fail = HashAndFormat::raw(Hash::new([1u8; 32]));
     let blob_success = HashAndFormat::raw(Hash::new([2u8; 32]));
 
@@ -407,7 +435,8 @@ async fn retry_nodes_simple() {
     let _guard = iroh_test::logging::setup();
     let dialer = dialer::TestingDialer::default();
     let getter = getter::TestingGetter::default();
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
     let node = SecretKey::generate().public();
     let dial_attempts = Arc::new(AtomicUsize::new(0));
     let dial_attempts2 = dial_attempts.clone();
@@ -432,7 +461,7 @@ async fn retry_nodes_fail() {
         max_retries_per_node: 3,
     };
 
-    let downloader = Downloader::spawn_for_test_with_retry_config(
+    let (downloader, _lp) = Downloader::spawn_for_test_with_retry_config(
         dialer.clone(),
         getter.clone(),
         Default::default(),
@@ -472,7 +501,8 @@ async fn retry_nodes_jump_queue() {
         ..Default::default()
     };
 
-    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let (downloader, _lp) =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     let good_node = SecretKey::generate().public();
     let bad_node = SecretKey::generate().public();

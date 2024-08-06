@@ -1,27 +1,32 @@
 //! This module contains an impl block on [`DocsEngine`] with handlers for RPC requests
 
 use anyhow::anyhow;
-use futures_lite::Stream;
+use futures_lite::{Stream, StreamExt};
+use iroh_base::rpc::RpcResult;
 use iroh_blobs::{store::Store as BaoStore, BlobFormat};
 use iroh_docs::{Author, DocTicket, NamespaceSecret};
-use tokio_stream::StreamExt;
 
 use crate::client::docs::ShareMode;
 use crate::node::DocsEngine;
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorCreateResponse, AuthorDeleteRequest, AuthorDeleteResponse,
-    AuthorExportRequest, AuthorExportResponse, AuthorGetDefaultRequest, AuthorGetDefaultResponse,
-    AuthorImportRequest, AuthorImportResponse, AuthorListRequest, AuthorListResponse,
-    AuthorSetDefaultRequest, AuthorSetDefaultResponse, DocCloseRequest, DocCloseResponse,
-    DocCreateRequest, DocCreateResponse, DocDelRequest, DocDelResponse, DocDropRequest,
-    DocDropResponse, DocGetDownloadPolicyRequest, DocGetDownloadPolicyResponse, DocGetExactRequest,
-    DocGetExactResponse, DocGetManyRequest, DocGetManyResponse, DocGetSyncPeersRequest,
-    DocGetSyncPeersResponse, DocImportRequest, DocImportResponse, DocLeaveRequest,
-    DocLeaveResponse, DocListRequest, DocListResponse, DocOpenRequest, DocOpenResponse,
-    DocSetDownloadPolicyRequest, DocSetDownloadPolicyResponse, DocSetHashRequest,
-    DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
-    DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest, DocStatusResponse,
-    DocSubscribeRequest, DocSubscribeResponse, RpcResult,
+    authors::{
+        CreateRequest, CreateResponse, DeleteRequest, DeleteResponse, ExportRequest,
+        ExportResponse, GetDefaultRequest, GetDefaultResponse, ImportRequest, ImportResponse,
+        ListRequest as AuthorListRequest, ListResponse as AuthorListResponse, SetDefaultRequest,
+        SetDefaultResponse,
+    },
+    docs::{
+        CloseRequest, CloseResponse, CreateRequest as DocCreateRequest,
+        CreateResponse as DocCreateResponse, DelRequest, DelResponse, DocListRequest,
+        DocSubscribeRequest, DocSubscribeResponse, DropRequest, DropResponse,
+        GetDownloadPolicyRequest, GetDownloadPolicyResponse, GetExactRequest, GetExactResponse,
+        GetManyRequest, GetManyResponse, GetSyncPeersRequest, GetSyncPeersResponse,
+        ImportRequest as DocImportRequest, ImportResponse as DocImportResponse, LeaveRequest,
+        LeaveResponse, ListResponse as DocListResponse, OpenRequest, OpenResponse,
+        SetDownloadPolicyRequest, SetDownloadPolicyResponse, SetHashRequest, SetHashResponse,
+        SetRequest, SetResponse, ShareRequest, ShareResponse, StartSyncRequest, StartSyncResponse,
+        StatusRequest, StatusResponse,
+    },
 };
 
 /// Capacity for the flume channels to forward sync store iterators to async RPC streams.
@@ -29,68 +34,65 @@ const ITER_CHANNEL_CAP: usize = 64;
 
 #[allow(missing_docs)]
 impl DocsEngine {
-    pub async fn author_create(
-        &self,
-        _req: AuthorCreateRequest,
-    ) -> RpcResult<AuthorCreateResponse> {
+    pub async fn author_create(&self, _req: CreateRequest) -> RpcResult<CreateResponse> {
         // TODO: pass rng
         let author = Author::new(&mut rand::rngs::OsRng {});
         self.sync.import_author(author.clone()).await?;
-        Ok(AuthorCreateResponse {
+        Ok(CreateResponse {
             author_id: author.id(),
         })
     }
 
-    pub fn author_default(&self, _req: AuthorGetDefaultRequest) -> AuthorGetDefaultResponse {
+    pub fn author_default(&self, _req: GetDefaultRequest) -> GetDefaultResponse {
         let author_id = self.default_author.get();
-        AuthorGetDefaultResponse { author_id }
+        GetDefaultResponse { author_id }
     }
 
     pub async fn author_set_default(
         &self,
-        req: AuthorSetDefaultRequest,
-    ) -> RpcResult<AuthorSetDefaultResponse> {
+        req: SetDefaultRequest,
+    ) -> RpcResult<SetDefaultResponse> {
         self.default_author.set(req.author_id, &self.sync).await?;
-        Ok(AuthorSetDefaultResponse)
+        Ok(SetDefaultResponse)
     }
 
     pub fn author_list(
         &self,
         _req: AuthorListRequest,
-    ) -> impl Stream<Item = RpcResult<AuthorListResponse>> {
-        let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
+    ) -> impl Stream<Item = RpcResult<AuthorListResponse>> + Unpin {
+        let (tx, rx) = async_channel::bounded(ITER_CHANNEL_CAP);
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
         tokio::task::spawn(async move {
             let tx2 = tx.clone();
             if let Err(err) = sync.list_authors(tx).await {
-                tx2.send_async(Err(err)).await.ok();
+                tx2.send(Err(err)).await.ok();
             }
         });
-        rx.into_stream().map(|r| {
+        rx.boxed().map(|r| {
             r.map(|author_id| AuthorListResponse { author_id })
                 .map_err(Into::into)
         })
     }
 
-    pub async fn author_import(&self, req: AuthorImportRequest) -> RpcResult<AuthorImportResponse> {
+    pub async fn author_import(&self, req: ImportRequest) -> RpcResult<ImportResponse> {
         let author_id = self.sync.import_author(req.author).await?;
-        Ok(AuthorImportResponse { author_id })
+        Ok(ImportResponse { author_id })
     }
 
-    pub async fn author_export(&self, req: AuthorExportRequest) -> RpcResult<AuthorExportResponse> {
+    pub async fn author_export(&self, req: ExportRequest) -> RpcResult<ExportResponse> {
         let author = self.sync.export_author(req.author).await?;
 
-        Ok(AuthorExportResponse { author })
+        Ok(ExportResponse { author })
     }
 
-    pub async fn author_delete(&self, req: AuthorDeleteRequest) -> RpcResult<AuthorDeleteResponse> {
+    pub async fn author_delete(&self, req: DeleteRequest) -> RpcResult<DeleteResponse> {
         if req.author == self.default_author.get() {
             return Err(anyhow!("Deleting the default author is not supported").into());
         }
         self.sync.delete_author(req.author).await?;
-        Ok(AuthorDeleteResponse)
+        Ok(DeleteResponse)
     }
 
     pub async fn doc_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {
@@ -101,47 +103,50 @@ impl DocsEngine {
         Ok(DocCreateResponse { id })
     }
 
-    pub async fn doc_drop(&self, req: DocDropRequest) -> RpcResult<DocDropResponse> {
-        let DocDropRequest { doc_id } = req;
+    pub async fn doc_drop(&self, req: DropRequest) -> RpcResult<DropResponse> {
+        let DropRequest { doc_id } = req;
         self.leave(doc_id, true).await?;
         self.sync.drop_replica(doc_id).await?;
-        Ok(DocDropResponse {})
+        Ok(DropResponse {})
     }
 
-    pub fn doc_list(&self, _req: DocListRequest) -> impl Stream<Item = RpcResult<DocListResponse>> {
-        let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
+    pub fn doc_list(
+        &self,
+        _req: DocListRequest,
+    ) -> impl Stream<Item = RpcResult<DocListResponse>> + Unpin {
+        let (tx, rx) = async_channel::bounded(ITER_CHANNEL_CAP);
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
         tokio::task::spawn(async move {
             let tx2 = tx.clone();
             if let Err(err) = sync.list_replicas(tx).await {
-                tx2.send_async(Err(err)).await.ok();
+                tx2.send(Err(err)).await.ok();
             }
         });
-        rx.into_stream().map(|r| {
+        rx.boxed().map(|r| {
             r.map(|(id, capability)| DocListResponse { id, capability })
                 .map_err(Into::into)
         })
     }
 
-    pub async fn doc_open(&self, req: DocOpenRequest) -> RpcResult<DocOpenResponse> {
+    pub async fn doc_open(&self, req: OpenRequest) -> RpcResult<OpenResponse> {
         self.sync.open(req.doc_id, Default::default()).await?;
-        Ok(DocOpenResponse {})
+        Ok(OpenResponse {})
     }
 
-    pub async fn doc_close(&self, req: DocCloseRequest) -> RpcResult<DocCloseResponse> {
+    pub async fn doc_close(&self, req: CloseRequest) -> RpcResult<CloseResponse> {
         self.sync.close(req.doc_id).await?;
-        Ok(DocCloseResponse {})
+        Ok(CloseResponse {})
     }
 
-    pub async fn doc_status(&self, req: DocStatusRequest) -> RpcResult<DocStatusResponse> {
+    pub async fn doc_status(&self, req: StatusRequest) -> RpcResult<StatusResponse> {
         let status = self.sync.get_state(req.doc_id).await?;
-        Ok(DocStatusResponse { status })
+        Ok(StatusResponse { status })
     }
 
-    pub async fn doc_share(&self, req: DocShareRequest) -> RpcResult<DocShareResponse> {
-        let DocShareRequest {
+    pub async fn doc_share(&self, req: ShareRequest) -> RpcResult<ShareResponse> {
+        let ShareRequest {
             doc_id,
             mode,
             addr_options,
@@ -158,7 +163,7 @@ impl DocsEngine {
         };
         self.start_sync(doc_id, vec![]).await?;
 
-        Ok(DocShareResponse(DocTicket {
+        Ok(ShareResponse(DocTicket {
             capability,
             nodes: vec![me],
         }))
@@ -183,27 +188,24 @@ impl DocsEngine {
         Ok(DocImportResponse { doc_id })
     }
 
-    pub async fn doc_start_sync(
-        &self,
-        req: DocStartSyncRequest,
-    ) -> RpcResult<DocStartSyncResponse> {
-        let DocStartSyncRequest { doc_id, peers } = req;
+    pub async fn doc_start_sync(&self, req: StartSyncRequest) -> RpcResult<StartSyncResponse> {
+        let StartSyncRequest { doc_id, peers } = req;
         self.start_sync(doc_id, peers).await?;
-        Ok(DocStartSyncResponse {})
+        Ok(StartSyncResponse {})
     }
 
-    pub async fn doc_leave(&self, req: DocLeaveRequest) -> RpcResult<DocLeaveResponse> {
-        let DocLeaveRequest { doc_id } = req;
+    pub async fn doc_leave(&self, req: LeaveRequest) -> RpcResult<LeaveResponse> {
+        let LeaveRequest { doc_id } = req;
         self.leave(doc_id, false).await?;
-        Ok(DocLeaveResponse {})
+        Ok(LeaveResponse {})
     }
 
     pub async fn doc_set<B: BaoStore>(
         &self,
         bao_store: &B,
-        req: DocSetRequest,
-    ) -> RpcResult<DocSetResponse> {
-        let DocSetRequest {
+        req: SetRequest,
+    ) -> RpcResult<SetResponse> {
+        let SetRequest {
             doc_id,
             author_id,
             key,
@@ -219,21 +221,21 @@ impl DocsEngine {
             .get_exact(doc_id, author_id, key, false)
             .await?
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
-        Ok(DocSetResponse { entry })
+        Ok(SetResponse { entry })
     }
 
-    pub async fn doc_del(&self, req: DocDelRequest) -> RpcResult<DocDelResponse> {
-        let DocDelRequest {
+    pub async fn doc_del(&self, req: DelRequest) -> RpcResult<DelResponse> {
+        let DelRequest {
             doc_id,
             author_id,
             prefix,
         } = req;
         let removed = self.sync.delete_prefix(doc_id, author_id, prefix).await?;
-        Ok(DocDelResponse { removed })
+        Ok(DelResponse { removed })
     }
 
-    pub async fn doc_set_hash(&self, req: DocSetHashRequest) -> RpcResult<DocSetHashResponse> {
-        let DocSetHashRequest {
+    pub async fn doc_set_hash(&self, req: SetHashRequest) -> RpcResult<SetHashResponse> {
+        let SetHashRequest {
             doc_id,
             author_id,
             key,
@@ -243,32 +245,30 @@ impl DocsEngine {
         self.sync
             .insert_local(doc_id, author_id, key.clone(), hash, size)
             .await?;
-        Ok(DocSetHashResponse {})
+        Ok(SetHashResponse {})
     }
 
     pub fn doc_get_many(
         &self,
-        req: DocGetManyRequest,
-    ) -> impl Stream<Item = RpcResult<DocGetManyResponse>> {
-        let DocGetManyRequest { doc_id, query } = req;
-        let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
+        req: GetManyRequest,
+    ) -> impl Stream<Item = RpcResult<GetManyResponse>> + Unpin {
+        let GetManyRequest { doc_id, query } = req;
+        let (tx, rx) = async_channel::bounded(ITER_CHANNEL_CAP);
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
         tokio::task::spawn(async move {
             let tx2 = tx.clone();
             if let Err(err) = sync.get_many(doc_id, query, tx).await {
-                tx2.send_async(Err(err)).await.ok();
+                tx2.send(Err(err)).await.ok();
             }
         });
-        rx.into_stream().map(|r| {
-            r.map(|entry| DocGetManyResponse { entry })
-                .map_err(Into::into)
-        })
+        rx.boxed()
+            .map(|r| r.map(|entry| GetManyResponse { entry }).map_err(Into::into))
     }
 
-    pub async fn doc_get_exact(&self, req: DocGetExactRequest) -> RpcResult<DocGetExactResponse> {
-        let DocGetExactRequest {
+    pub async fn doc_get_exact(&self, req: GetExactRequest) -> RpcResult<GetExactResponse> {
+        let GetExactRequest {
             doc_id,
             author,
             key,
@@ -278,31 +278,31 @@ impl DocsEngine {
             .sync
             .get_exact(doc_id, author, key, include_empty)
             .await?;
-        Ok(DocGetExactResponse { entry })
+        Ok(GetExactResponse { entry })
     }
 
     pub async fn doc_set_download_policy(
         &self,
-        req: DocSetDownloadPolicyRequest,
-    ) -> RpcResult<DocSetDownloadPolicyResponse> {
+        req: SetDownloadPolicyRequest,
+    ) -> RpcResult<SetDownloadPolicyResponse> {
         self.sync
             .set_download_policy(req.doc_id, req.policy)
             .await?;
-        Ok(DocSetDownloadPolicyResponse {})
+        Ok(SetDownloadPolicyResponse {})
     }
     pub async fn doc_get_download_policy(
         &self,
-        req: DocGetDownloadPolicyRequest,
-    ) -> RpcResult<DocGetDownloadPolicyResponse> {
+        req: GetDownloadPolicyRequest,
+    ) -> RpcResult<GetDownloadPolicyResponse> {
         let policy = self.sync.get_download_policy(req.doc_id).await?;
-        Ok(DocGetDownloadPolicyResponse { policy })
+        Ok(GetDownloadPolicyResponse { policy })
     }
 
     pub async fn doc_get_sync_peers(
         &self,
-        req: DocGetSyncPeersRequest,
-    ) -> RpcResult<DocGetSyncPeersResponse> {
+        req: GetSyncPeersRequest,
+    ) -> RpcResult<GetSyncPeersResponse> {
         let peers = self.sync.get_sync_peers(req.doc_id).await?;
-        Ok(DocGetSyncPeersResponse { peers })
+        Ok(GetSyncPeersResponse { peers })
     }
 }

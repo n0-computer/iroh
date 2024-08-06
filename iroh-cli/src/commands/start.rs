@@ -1,15 +1,16 @@
+use std::path::PathBuf;
 use std::{future::Future, net::SocketAddr, path::Path, time::Duration};
 
 use crate::config::NodeConfig;
 use anyhow::Result;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use iroh::node::Node;
+use iroh::node::{Node, DEFAULT_RPC_ADDR};
 use iroh::{
     net::relay::{RelayMap, RelayMode},
     node::RpcStatus,
 };
-use tracing::{info_span, Instrument};
+use tracing::{info_span, trace, Instrument};
 
 /// Whether to stop the node after running a command or run forever until stopped.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -29,6 +30,7 @@ pub struct AlreadyRunningError(u16);
 pub async fn run_with_command<F, T>(
     config: &NodeConfig,
     iroh_data_root: &Path,
+    rpc_addr: Option<SocketAddr>,
     run_type: RunType,
     command: F,
 ) -> Result<()>
@@ -38,11 +40,16 @@ where
 {
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, iroh_data_root)?;
     let metrics_fut = start_metrics_server(config.metrics_addr);
+    let metrics_dumper_fut =
+        start_metrics_dumper(config.metrics_dump_path.clone(), Duration::from_millis(100));
 
-    let res = run_with_command_inner(config, iroh_data_root, run_type, command).await;
+    let res = run_with_command_inner(config, iroh_data_root, rpc_addr, run_type, command).await;
 
     if let Some(metrics_fut) = metrics_fut {
         metrics_fut.abort();
+    }
+    if let Some(metrics_dumper_fut) = metrics_dumper_fut {
+        metrics_dumper_fut.abort();
     }
 
     let (clear_rpc, res) = match res {
@@ -64,6 +71,7 @@ where
 async fn run_with_command_inner<F, T>(
     config: &NodeConfig,
     iroh_data_root: &Path,
+    rpc_addr: Option<SocketAddr>,
     run_type: RunType,
     command: F,
 ) -> Result<()>
@@ -71,17 +79,18 @@ where
     F: FnOnce(iroh::client::Iroh) -> T + Send + 'static,
     T: Future<Output = Result<()>> + 'static,
 {
+    trace!(?config, "using config");
     let relay_map = config.relay_map()?;
 
     let spinner = create_spinner("Iroh booting...");
-    let node = start_node(iroh_data_root, relay_map).await?;
+    let node = start_node(iroh_data_root, rpc_addr, relay_map).await?;
     drop(spinner);
 
     eprintln!("{}", welcome_message(&node)?);
 
     let client = node.client().clone();
 
-    let mut command_task = node.local_pool_handle().spawn_pinned(move || {
+    let mut command_task = node.local_pool_handle().spawn(move || {
         async move {
             match command(client).await {
                 Err(err) => Err(err),
@@ -115,6 +124,7 @@ where
 
 pub(crate) async fn start_node(
     iroh_data_root: &Path,
+    rpc_addr: Option<SocketAddr>,
     relay_map: Option<RelayMap>,
 ) -> Result<Node<iroh::blobs::store::fs::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root).await?;
@@ -132,10 +142,11 @@ pub(crate) async fn start_node(
         Some(relay_map) => RelayMode::Custom(relay_map),
     };
 
+    let rpc_addr = rpc_addr.unwrap_or(DEFAULT_RPC_ADDR);
     Node::persistent(iroh_data_root)
         .await?
         .relay_mode(relay_mode)
-        .enable_rpc()
+        .enable_rpc_with_addr(rpc_addr)
         .await?
         .spawn()
         .await
@@ -182,6 +193,20 @@ pub fn start_metrics_server(
     None
 }
 
+pub fn start_metrics_dumper(
+    path: Option<PathBuf>,
+    interval: Duration,
+) -> Option<tokio::task::JoinHandle<()>> {
+    // doesn't start the dumper if the address is None
+    Some(tokio::task::spawn(async move {
+        if let Some(path) = path {
+            if let Err(e) = iroh_metrics::metrics::start_metrics_dumper(path, interval).await {
+                eprintln!("Failed to start metrics dumper: {e}");
+            }
+        }
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,6 +229,7 @@ mod tests {
             run_with_command(
                 &NodeConfig::default(),
                 &data_dir_path,
+                None,
                 RunType::SingleCommandAbortable,
                 |_| async move {
                     // inform the test the node is booted up
@@ -236,6 +262,7 @@ mod tests {
         if run_with_command(
             &NodeConfig::default(),
             data_dir.path(),
+            None,
             RunType::SingleCommandAbortable,
             |_| async move { Ok(()) },
         )
@@ -256,7 +283,7 @@ mod tests {
         close_s.send(()).unwrap();
 
         // wait for the node to close
-        if tokio::time::timeout(Duration::from_millis(1000), start)
+        if tokio::time::timeout(Duration::from_secs(5), start)
             .await
             .is_err()
         {

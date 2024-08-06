@@ -9,7 +9,6 @@ pub mod export;
 pub mod format;
 pub mod get;
 pub mod hashseq;
-#[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod protocol;
 pub mod provider;

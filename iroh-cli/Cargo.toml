@@ -1,6 +1,6 @@
 [package]
 name = "iroh-cli"
-version = "0.18.0"
+version = "0.22.0"
 edition = "2021"
 readme = "README.md"
 description = "Bytes. Distributed."
@@ -23,6 +23,7 @@ doc = false
 
 [dependencies]
 anyhow = "1.0.81"
+async-channel = "2.3.1"
 bao-tree = "0.13"
 bytes = "1.5.0"
 clap = { version = "4", features = ["derive"] }
@@ -30,22 +31,23 @@ colored = "2.0.4"
 comfy-table = "7.0.1"
 console = "0.15.5"
 crossterm = "0.27.0"
-derive_more = { version = "1.0.0-beta.1", features = ["display"] }
+derive_more = { version = "=1.0.0-beta.7", features = ["display"] }
 dialoguer = { version = "0.11.0", default-features = false }
 dirs-next = "2.0.0"
-flume = "0.11.0"
 futures-buffered = "0.2.4"
 futures-lite = "2.3"
+futures-util = { version = "0.3.30", features = ["futures-sink"] }
 hex = "0.4.3"
 human-time = "0.1.6"
 indicatif = { version = "0.17", features = ["tokio"] }
-iroh = { version = "0.18.0", path = "../iroh", features = ["metrics"] }
-iroh-metrics = { version = "0.18.0", path = "../iroh-metrics" }
+iroh = { version = "0.22.0", path = "../iroh", features = ["metrics"] }
+iroh-gossip = { version = "0.22.0", path = "../iroh-gossip" }
+iroh-metrics = { version = "0.22.0", path = "../iroh-metrics" }
 parking_lot = "0.12.1"
 pkarr = { version = "1.1.5", default-features = false }
 portable-atomic = "1"
 postcard = "1.0.8"
-quic-rpc = { version = "0.10.2", features = ["flume-transport", "quinn-transport"] }
+quic-rpc = { version = "0.11", features = ["flume-transport", "quinn-transport"] }
 rand = "0.8.5"
 ratatui = "0.26.2"
 reqwest = { version = "0.12.4", default-features = false, features = ["json", "rustls-tls"] }
@@ -67,8 +69,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 duct = "0.13.6"
 nix = { version = "0.27", features = ["signal", "process"] }
+rand_xorshift = "0.3.0"
 regex = "1.10.3"
 testdir = "0.9.1"
+url = "2.5.0"
 walkdir = "2"
 
 [features]

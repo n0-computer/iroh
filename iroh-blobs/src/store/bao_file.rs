@@ -275,7 +275,7 @@ impl Default for BaoFileStorage {
 impl BaoFileStorage {
     /// Take the storage out, leaving an empty storage in its place.
     ///
-    /// Be careful to put somethign back in its place, or you will lose data.
+    /// Be careful to put something back in its place, or you will lose data.
     #[cfg(feature = "fs-store")]
     pub fn take(&mut self) -> Self {
         std::mem::take(self)
@@ -732,7 +732,6 @@ pub mod test_support {
         BlockSize, ChunkRanges,
     };
     use futures_lite::{Stream, StreamExt};
-    use iroh_base::hash::Hash;
     use iroh_io::AsyncStreamReader;
     use rand::RngCore;
     use range_collections::RangeSet2;
@@ -879,7 +878,8 @@ mod tests {
         decode_response_into_batch, local, make_wire_data, random_test_data, trickle, validate,
     };
     use tokio::task::JoinSet;
-    use tokio_util::task::LocalPoolHandle;
+
+    use crate::util::local_pool::LocalPool;
 
     use super::*;
 
@@ -958,7 +958,7 @@ mod tests {
             )),
             hash.into(),
         );
-        let local = LocalPoolHandle::new(4);
+        let local = LocalPool::default();
         let mut tasks = Vec::new();
         for i in 0..4 {
             let file = handle.writer();
@@ -969,7 +969,7 @@ mod tests {
                 .map(io::Result::Ok)
                 .boxed();
             let trickle = TokioStreamReader::new(tokio_util::io::StreamReader::new(trickle));
-            let task = local.spawn_pinned(move || async move {
+            let task = local.spawn(move || async move {
                 decode_response_into_batch(hash, IROH_BLOCK_SIZE, chunk_ranges, trickle, file).await
             });
             tasks.push(task);

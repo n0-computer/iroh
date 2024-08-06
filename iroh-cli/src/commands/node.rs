@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -8,10 +9,9 @@ use comfy_table::{presets::NOTHING, Cell};
 use futures_lite::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
 use iroh::client::Iroh;
-use iroh::net::{
-    endpoint::{ConnectionInfo, DirectAddrInfo},
-    key::PublicKey,
-};
+use iroh::net::endpoint::{ConnectionInfo, DirectAddrInfo};
+use iroh::net::relay::RelayUrl;
+use iroh::net::{NodeAddr, NodeId};
 
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
@@ -19,7 +19,7 @@ pub enum NodeCommands {
     /// Get information about the different connections we have made
     Connections,
     /// Get connection information about a particular node
-    Connection { node_id: PublicKey },
+    ConnectionInfo { node_id: NodeId },
     /// Get status of the running node.
     Status,
     /// Get statistics and metrics from the running node.
@@ -33,6 +33,16 @@ pub enum NodeCommands {
         #[clap(long, default_value_t = false)]
         force: bool,
     },
+    /// Get the node addr of this node.
+    NodeAddr,
+    /// Add this node addr to the known nodes.
+    AddNodeAddr {
+        node_id: NodeId,
+        relay: Option<RelayUrl>,
+        addresses: Vec<SocketAddr>,
+    },
+    /// Get the relay server we are connected to.
+    HomeRelay,
 }
 
 impl NodeCommands {
@@ -51,7 +61,7 @@ impl NodeCommands {
                     fmt_connections(connections).await
                 );
             }
-            Self::Connection { node_id } => {
+            Self::ConnectionInfo { node_id } => {
                 let conn_info = iroh.connection_info(node_id).await?;
                 match conn_info {
                     Some(info) => println!("{}", fmt_connection(info)),
@@ -73,8 +83,43 @@ impl NodeCommands {
             Self::Status => {
                 let response = iroh.status().await?;
                 println!("Listening addresses: {:#?}", response.listen_addrs);
-                println!("Node public key: {}", response.addr.node_id);
+                println!("Node ID: {}", response.addr.node_id);
                 println!("Version: {}", response.version);
+                if let Some(addr) = response.rpc_addr {
+                    println!("RPC Addr: {}", addr);
+                }
+            }
+            Self::NodeAddr => {
+                let addr = iroh.node_addr().await?;
+                println!("Node ID: {}", addr.node_id);
+                let relay = addr
+                    .info
+                    .relay_url
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Not Available".to_string());
+                println!("Home Relay: {}", relay);
+                println!("Direct Addresses ({}):", addr.info.direct_addresses.len());
+                for da in &addr.info.direct_addresses {
+                    println!(" {}", da);
+                }
+            }
+            Self::AddNodeAddr {
+                node_id,
+                relay,
+                addresses,
+            } => {
+                let mut addr = NodeAddr::new(node_id).with_direct_addresses(addresses);
+                if let Some(relay) = relay {
+                    addr = addr.with_relay_url(relay);
+                }
+                iroh.add_node_addr(addr).await?;
+            }
+            Self::HomeRelay => {
+                let relay = iroh.home_relay().await?;
+                let relay = relay
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Not Available".to_string());
+                println!("Home Relay: {}", relay);
             }
         }
         Ok(())
@@ -156,6 +201,7 @@ fn direct_addr_row(info: DirectAddrInfo) -> comfy_table::Row {
         latency,
         last_control,
         last_payload,
+        last_alive,
     } = info;
 
     let last_control = match last_control {
@@ -169,11 +215,17 @@ fn direct_addr_row(info: DirectAddrInfo) -> comfy_table::Row {
         .map(Cell::new)
         .unwrap_or_else(never);
 
+    let last_alive = last_alive
+        .map(fmt_how_long_ago)
+        .map(Cell::new)
+        .unwrap_or_else(never);
+
     [
         addr.into(),
         fmt_latency(latency).into(),
         last_control,
         last_payload,
+        last_alive,
     ]
     .into()
 }
@@ -181,7 +233,7 @@ fn direct_addr_row(info: DirectAddrInfo) -> comfy_table::Row {
 fn fmt_addrs(addrs: Vec<DirectAddrInfo>) -> comfy_table::Table {
     let mut table = Table::new();
     table.load_preset(NOTHING).set_header(
-        vec!["addr", "latency", "last control", "last data"]
+        vec!["addr", "latency", "last control", "last data", "last alive"]
             .into_iter()
             .map(bold_cell),
     );

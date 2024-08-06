@@ -216,11 +216,6 @@ impl<PI: PeerIdentity, R: Rng + Clone> State<PI, R> {
 
         match event {
             InEventMapped::TopicEvent(topic, event) => {
-                // when receiving messages, update our conn map to take note that this topic state may want
-                // to keep this connection
-                if let topic::InEvent::RecvMessage(from, _message) = &event {
-                    self.peer_topics.entry(*from).or_default().insert(topic);
-                }
                 // when receiving a join command, initialize state if it doesn't exist
                 if matches!(&event, topic::InEvent::Command(Command::Join(_peers))) {
                     if let hash_map::Entry::Vacant(e) = self.states.entry(topic) {
@@ -239,6 +234,11 @@ impl<PI: PeerIdentity, R: Rng + Clone> State<PI, R> {
 
                 // pass the event to the state handler
                 if let Some(state) = self.states.get_mut(&topic) {
+                    // when receiving messages, update our conn map to take note that this topic state may want
+                    // to keep this connection
+                    if let topic::InEvent::RecvMessage(from, _message) = &event {
+                        self.peer_topics.entry(*from).or_default().insert(topic);
+                    }
                     let out = state.handle(event, now);
                     for event in out {
                         handle_out_event(topic, event, &mut self.peer_topics, &mut self.outbox);

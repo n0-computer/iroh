@@ -1,13 +1,14 @@
 use std::{collections::HashMap, fmt, str::FromStr};
 
-use anyhow::{bail, Context};
+use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use clap::Parser;
 use ed25519_dalek::Signature;
+use futures_lite::StreamExt;
 use iroh_base::base32;
 use iroh_gossip::{
-    net::{Gossip, GOSSIP_ALPN},
-    proto::{Event, TopicId},
+    net::{Event, Gossip, GossipEvent, GossipReceiver, GOSSIP_ALPN},
+    proto::TopicId,
 };
 use iroh_net::{
     key::{PublicKey, SecretKey},
@@ -65,7 +66,7 @@ enum Command {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
@@ -90,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
     };
     println!("> our secret key: {secret_key}");
 
-    // confgure our relay map
+    // configure our relay map
     let relay_mode = match (args.no_relay, args.relay) {
         (false, None) => RelayMode::Default,
         (false, Some(url)) => RelayMode::Custom(RelayMap::from_url(url)),
@@ -134,18 +135,18 @@ async fn main() -> anyhow::Result<()> {
             endpoint.add_node_addr(peer)?;
         }
     };
-    gossip.join(topic, peer_ids).await?.await?;
+    let (sender, receiver) = gossip.join(topic, peer_ids).await?.split();
     println!("> connected!");
 
     // broadcast our name, if set
     if let Some(name) = args.name {
         let message = Message::AboutMe { name };
         let encoded_message = SignedMessage::sign_and_encode(endpoint.secret_key(), &message)?;
-        gossip.broadcast(topic, encoded_message).await?;
+        sender.broadcast(encoded_message).await?;
     }
 
     // subscribe and print loop
-    tokio::spawn(subscribe_loop(gossip.clone(), topic));
+    tokio::spawn(subscribe_loop(receiver));
 
     // spawn an input thread that reads stdin
     // not using tokio here because they recommend this for "technical reasons"
@@ -157,21 +158,18 @@ async fn main() -> anyhow::Result<()> {
     while let Some(text) = line_rx.recv().await {
         let message = Message::Message { text: text.clone() };
         let encoded_message = SignedMessage::sign_and_encode(endpoint.secret_key(), &message)?;
-        gossip.broadcast(topic, encoded_message).await?;
+        sender.broadcast(encoded_message).await?;
         println!("> sent: {text}");
     }
 
     Ok(())
 }
 
-async fn subscribe_loop(gossip: Gossip, topic: TopicId) -> anyhow::Result<()> {
+async fn subscribe_loop(mut receiver: GossipReceiver) -> Result<()> {
     // init a peerid -> name hashmap
     let mut names = HashMap::new();
-    // get a stream that emits updates on our topic
-    let mut stream = gossip.subscribe(topic).await?;
-    loop {
-        let event = stream.recv().await?;
-        if let Event::Received(msg) = event {
+    while let Some(event) = receiver.try_next().await? {
+        if let Event::Gossip(GossipEvent::Received(msg)) = event {
             let (from, message) = SignedMessage::verify_and_decode(&msg.content)?;
             match message {
                 Message::AboutMe { name } => {
@@ -187,6 +185,7 @@ async fn subscribe_loop(gossip: Gossip, topic: TopicId) -> anyhow::Result<()> {
             }
         }
     }
+    Ok(())
 }
 
 async fn endpoint_loop(endpoint: Endpoint, gossip: Gossip) {
@@ -199,10 +198,7 @@ async fn endpoint_loop(endpoint: Endpoint, gossip: Gossip) {
         });
     }
 }
-async fn handle_connection(
-    mut conn: iroh_net::endpoint::Connecting,
-    gossip: Gossip,
-) -> anyhow::Result<()> {
+async fn handle_connection(mut conn: iroh_net::endpoint::Connecting, gossip: Gossip) -> Result<()> {
     let alpn = conn.alpn().await?;
     let conn = conn.await?;
     let peer_id = iroh_net::endpoint::get_remote_node_id(&conn)?;
@@ -216,7 +212,7 @@ async fn handle_connection(
     Ok(())
 }
 
-fn input_loop(line_tx: tokio::sync::mpsc::Sender<String>) -> anyhow::Result<()> {
+fn input_loop(line_tx: tokio::sync::mpsc::Sender<String>) -> Result<()> {
     let mut buffer = String::new();
     let stdin = std::io::stdin(); // We get `Stdin` here.
     loop {
@@ -234,7 +230,7 @@ struct SignedMessage {
 }
 
 impl SignedMessage {
-    pub fn verify_and_decode(bytes: &[u8]) -> anyhow::Result<(PublicKey, Message)> {
+    pub fn verify_and_decode(bytes: &[u8]) -> Result<(PublicKey, Message)> {
         let signed_message: Self = postcard::from_bytes(bytes)?;
         let key: PublicKey = signed_message.from;
         key.verify(&signed_message.data, &signed_message.signature)?;
@@ -242,7 +238,7 @@ impl SignedMessage {
         Ok((signed_message.from, message))
     }
 
-    pub fn sign_and_encode(secret_key: &SecretKey, message: &Message) -> anyhow::Result<Bytes> {
+    pub fn sign_and_encode(secret_key: &SecretKey, message: &Message) -> Result<Bytes> {
         let data: Bytes = postcard::to_stdvec(&message)?.into();
         let signature = secret_key.sign(&data);
         let from: PublicKey = secret_key.public();
@@ -269,7 +265,7 @@ struct Ticket {
 }
 impl Ticket {
     /// Deserializes from bytes.
-    fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
         postcard::from_bytes(bytes).map_err(Into::into)
     }
     /// Serializes to bytes.
@@ -298,7 +294,8 @@ impl FromStr for Ticket {
 fn fmt_relay_mode(relay_mode: &RelayMode) -> String {
     match relay_mode {
         RelayMode::Disabled => "None".to_string(),
-        RelayMode::Default => "Default Relay servers".to_string(),
+        RelayMode::Default => "Default Relay (production) servers".to_string(),
+        RelayMode::Staging => "Default Relay (staging) servers".to_string(),
         RelayMode::Custom(map) => map
             .urls()
             .map(|url| url.to_string())

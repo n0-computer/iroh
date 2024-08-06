@@ -7,7 +7,6 @@ use std::{
     num::NonZeroU64,
     ops::Bound,
     path::Path,
-    time::Duration,
 };
 
 use anyhow::{anyhow, Result};
@@ -17,6 +16,7 @@ use rand_core::CryptoRngCore;
 use redb::{Database, DatabaseError, ReadableMultimapTable, ReadableTable, ReadableTableMetadata};
 
 use crate::{
+    actor::MAX_COMMIT_DELAY,
     keys::Author,
     ranger::{Fingerprint, Range, RangeEntry},
     sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
@@ -188,7 +188,7 @@ impl Store {
                 TransactionAndTables::new(tx)?
             }
             CurrentTransaction::Write(w) => {
-                if w.since.elapsed() > Duration::from_millis(500) {
+                if w.since.elapsed() > MAX_COMMIT_DELAY {
                     tracing::debug!("committing transaction because it's too old");
                     w.commit()?;
                     let tx = self.db.begin_write()?;
@@ -224,7 +224,16 @@ impl Store {
                 let tx = self.db.begin_write()?;
                 TransactionAndTables::new(tx)?
             }
-            CurrentTransaction::Write(w) => w,
+            CurrentTransaction::Write(w) => {
+                if w.since.elapsed() > MAX_COMMIT_DELAY {
+                    tracing::debug!("committing transaction because it's too old");
+                    w.commit()?;
+                    let tx = self.db.begin_write()?;
+                    TransactionAndTables::new(tx)?
+                } else {
+                    w
+                }
+            }
             CurrentTransaction::Read(_) => {
                 let tx = self.db.begin_write()?;
                 TransactionAndTables::new(tx)?
@@ -343,7 +352,7 @@ impl Store {
         })
     }
 
-    /// Delte an author.
+    /// Delete an author.
     pub fn delete_author(&mut self, author: AuthorId) -> Result<()> {
         self.modify(|tables| {
             tables.authors.remove(author.as_bytes())?;
@@ -881,7 +890,7 @@ impl Iterator for ParentIterator {
 /// a database snapshot open until it is dropped.
 ///
 /// Also, this represents a snapshot of the database at the time of creation.
-/// It nees a copy of a redb::ReadOnlyTable to be self-contained.
+/// It needs a copy of a redb::ReadOnlyTable to be self-contained.
 #[derive(derive_more::Debug)]
 pub struct ContentHashesIterator {
     #[debug(skip)]

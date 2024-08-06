@@ -27,7 +27,7 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::{key, net::ip::to_canonical, relay::RelayUrl};
+use crate::{key, relay::RelayUrl};
 
 use super::{key::PublicKey, stun};
 
@@ -159,6 +159,18 @@ impl SendAddr {
     }
 }
 
+impl From<SocketAddr> for SendAddr {
+    fn from(source: SocketAddr) -> Self {
+        SendAddr::Udp(source)
+    }
+}
+
+impl From<RelayUrl> for SendAddr {
+    fn from(source: RelayUrl) -> Self {
+        SendAddr::Relay(source)
+    }
+}
+
 impl PartialEq<SocketAddr> for SendAddr {
     fn eq(&self, other: &SocketAddr) -> bool {
         match self {
@@ -257,7 +269,7 @@ fn socket_addr_from_bytes(p: [u8; EP_LENGTH]) -> SocketAddr {
     let raw_src_ip: [u8; 16] = p[..16].try_into().expect("array long enough");
     let raw_port: [u8; 2] = p[16..].try_into().expect("array long enough");
 
-    let src_ip = to_canonical(IpAddr::from(raw_src_ip));
+    let src_ip = IpAddr::from(raw_src_ip).to_canonical();
     let src_port = u16::from_le_bytes(raw_port);
 
     SocketAddr::new(src_ip, src_port)

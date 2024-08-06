@@ -73,7 +73,7 @@
 //!
 //! The ALPN is used by both sides to agree on which application-specific protocol will be
 //! used over the resulting QUIC connection.  These can be protocols like `h3` used for
-//! [`HTTP/3`], but more commonly will be a custom identifier for the application.
+//! [HTTP/3][HTTP3], but more commonly will be a custom identifier for the application.
 //!
 //! Once connected the API exposes QUIC streams.  These are very cheap to create so can be
 //! created at any time and can be used to create very many short-lived stream as well as
@@ -98,7 +98,7 @@
 //!
 //! The [`DnsDiscovery`] service is a discovery service which will publish the [`RelayUrl`]
 //! and direct addresses to a service publishing those as DNS records.  To connect it looks
-//! up the [`NodeId`] in the DNS system to find the adressing details.  This enables
+//! up the [`NodeId`] in the DNS system to find the addressing details.  This enables
 //! connecting using only the [`NodeId`] which is often more convenient and resilient.
 //!
 //!
@@ -107,7 +107,7 @@
 //! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html
 //! [STUN]: https://en.wikipedia.org/wiki/STUN
 //! [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
-//! [HTTP/3]: https://en.wikipedia.org/wiki/HTTP/3
+//! [HTTP3]: https://en.wikipedia.org/wiki/HTTP/3
 //! [`SecretKey`]: crate::key::SecretKey
 //! [`PublicKey`]: crate::key::PublicKey
 //! [`RelayUrl`]: crate::relay::RelayUrl

@@ -10,8 +10,7 @@ use bytes::Bytes;
 use futures_lite::FutureExt;
 use iroh::node::{Builder, DocsStorage};
 use iroh_base::node_addr::AddrInfoOptions;
-use iroh_net::{defaults::default_relay_map, key::SecretKey, NodeAddr, NodeId};
-use quic_rpc::transport::misc::DummyServerEndpoint;
+use iroh_net::{defaults::staging::default_relay_map, key::SecretKey, NodeAddr, NodeId};
 use rand::RngCore;
 
 use bao_tree::{blake3, ChunkNum, ChunkRanges};
@@ -39,7 +38,7 @@ async fn dial(secret_key: SecretKey, peer: NodeAddr) -> anyhow::Result<quinn::Co
         .context("failed to connect to provider")
 }
 
-fn test_node<D: Store>(db: D) -> Builder<D, DummyServerEndpoint> {
+fn test_node<D: Store>(db: D) -> Builder<D> {
     iroh::node::Builder::with_db_and_store(db, DocsStorage::Memory, iroh::node::StorageConfig::Mem)
         .bind_port(0)
 }
@@ -154,7 +153,7 @@ async fn multiple_clients() -> Result<()> {
         let peer_id = node.node_id();
         let content = content.to_vec();
 
-        tasks.push(node.local_pool_handle().spawn_pinned(move || {
+        tasks.push(node.local_pool_handle().spawn(move || {
             async move {
                 let (secret_key, peer) = get_options(peer_id, addrs);
                 let expected_data = &content;

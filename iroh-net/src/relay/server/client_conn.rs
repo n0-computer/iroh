@@ -1,3 +1,5 @@
+//! The server-side representation of an ongoing client relaying connection.
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,7 +9,6 @@ use bytes::Bytes;
 use futures_lite::StreamExt;
 use futures_util::SinkExt;
 use tokio::sync::mpsc;
-use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{trace, Instrument};
 
@@ -16,15 +17,18 @@ use crate::{disco::looks_like_disco_wrapper, key::PublicKey};
 
 use iroh_metrics::{inc, inc_by};
 
-use super::codec::{DerpCodec, Frame};
-use super::server::MaybeTlsStream;
-use super::{
+use crate::relay::codec::Frame;
+use crate::relay::server::streams::RelayIo;
+use crate::relay::server::types::{Packet, ServerMessage};
+use crate::relay::{
     codec::{write_frame, KEEP_ALIVE},
-    metrics::Metrics,
-    types::{Packet, ServerMessage},
+    server::metrics::Metrics,
 };
 
-/// The [`super::server::Server`] side representation of a [`super::client::Client`]'s connection
+/// The [`Server`] side representation of a [`Client`]'s connection.
+///
+/// [`Server`]: crate::relay::server::Server
+/// [`Client`]: crate::relay::client::Client
 #[derive(Debug)]
 pub(crate) struct ClientConnManager {
     /// Static after construction, process-wide unique counter, incremented each time we accept
@@ -56,7 +60,7 @@ pub(crate) struct ClientConnManager {
 /// Channels that the [`ClientConnManager`] uses to communicate with the
 /// [`ClientConnIo`] to forward the client:
 ///  - information about a peer leaving the network (This should only happen for peers that this
-///  client was previously communciating with)
+///    client was previously communciating with)
 ///  - packets sent to this client from another client in the network
 #[derive(Debug)]
 pub(crate) struct ClientChannels {
@@ -73,7 +77,7 @@ pub(crate) struct ClientChannels {
 pub struct ClientConnBuilder {
     pub(crate) key: PublicKey,
     pub(crate) conn_num: usize,
-    pub(crate) io: Framed<MaybeTlsStream, DerpCodec>,
+    pub(crate) io: RelayIo,
     pub(crate) write_timeout: Option<Duration>,
     pub(crate) channel_capacity: usize,
     pub(crate) server_channel: mpsc::Sender<ServerMessage>,
@@ -102,7 +106,7 @@ impl ClientConnManager {
     pub fn new(
         key: PublicKey,
         conn_num: usize,
-        io: Framed<MaybeTlsStream, DerpCodec>,
+        io: RelayIo,
         write_timeout: Option<Duration>,
         channel_capacity: usize,
         server_channel: mpsc::Sender<ServerMessage>,
@@ -193,7 +197,7 @@ impl ClientConnManager {
 /// On the "write" side, the [`ClientConnIo`] can send the client:
 ///  - a KEEP_ALIVE frame
 ///  - a PEER_GONE frame to inform the client that a peer they have previously sent messages to
-///  is gone from the network
+///    is gone from the network
 ///  - packets from other peers
 ///
 /// On the "read" side, it can:
@@ -203,7 +207,7 @@ impl ClientConnManager {
 #[derive(Debug)]
 pub(crate) struct ClientConnIo {
     /// Io to talk to the client
-    io: Framed<MaybeTlsStream, DerpCodec>,
+    io: RelayIo,
     /// Max time we wait to complete a write to the client
     timeout: Option<Duration>,
     /// Packets queued to send to the client
@@ -453,11 +457,14 @@ impl ClientConnIo {
 #[cfg(test)]
 mod tests {
     use crate::key::SecretKey;
-    use crate::relay::codec::{recv_frame, FrameType};
+    use crate::relay::client::conn;
+    use crate::relay::codec::{recv_frame, DerpCodec, FrameType};
+    use crate::relay::server::streams::MaybeTlsStream;
 
     use super::*;
 
     use anyhow::bail;
+    use tokio_util::codec::Framed;
 
     #[tokio::test]
     async fn test_client_conn_io_basic() -> Result<()> {
@@ -472,7 +479,7 @@ mod tests {
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
         let conn_io = ClientConnIo {
-            io: Framed::new(MaybeTlsStream::Test(io), DerpCodec),
+            io: RelayIo::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -554,8 +561,7 @@ mod tests {
         // send packet
         println!("  send packet");
         let data = b"hello world!";
-        crate::relay::client::send_packet(&mut io_rw, &None, target, Bytes::from_static(data))
-            .await?;
+        conn::send_packet(&mut io_rw, &None, target, Bytes::from_static(data)).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
@@ -574,8 +580,7 @@ mod tests {
         let mut disco_data = crate::disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        crate::relay::client::send_packet(&mut io_rw, &None, target, disco_data.clone().into())
-            .await?;
+        conn::send_packet(&mut io_rw, &None, target, disco_data.clone().into()).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendDiscoPacket((got_target, packet)) => {
@@ -607,7 +612,7 @@ mod tests {
 
         println!("-- create client conn");
         let conn_io = ClientConnIo {
-            io: Framed::new(MaybeTlsStream::Test(io), DerpCodec),
+            io: RelayIo::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -629,8 +634,7 @@ mod tests {
         let data = b"hello world!";
         let target = SecretKey::generate().public();
 
-        crate::relay::client::send_packet(&mut io_rw, &None, target, Bytes::from_static(data))
-            .await?;
+        conn::send_packet(&mut io_rw, &None, target, Bytes::from_static(data)).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {

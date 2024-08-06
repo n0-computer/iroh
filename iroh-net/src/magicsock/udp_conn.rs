@@ -192,7 +192,7 @@ mod tests {
         let (m2, _m2_key) = wrap_socket(m2)?;
 
         let m1_addr = SocketAddr::new(network.local_addr(), m1.local_addr()?.port());
-        let (m1_send, m1_recv) = flume::bounded(8);
+        let (m1_send, m1_recv) = async_channel::bounded(8);
 
         let m1_task = tokio::task::spawn(async move {
             if let Some(conn) = m1.accept().await {
@@ -200,7 +200,7 @@ mod tests {
                 let (mut send_bi, mut recv_bi) = conn.accept_bi().await?;
 
                 let val = recv_bi.read_to_end(usize::MAX).await?;
-                m1_send.send_async(val).await?;
+                m1_send.send(val).await?;
                 send_bi.finish().await?;
             }
 
@@ -220,7 +220,7 @@ mod tests {
         drop(send_bi);
 
         // make sure the right values arrived
-        let val = m1_recv.recv_async().await?;
+        let val = m1_recv.recv().await?;
         assert_eq!(val, b"hello");
 
         m1_task.await??;

@@ -1,6 +1,6 @@
 [package]
 name = "iroh-docs"
-version = "0.18.0"
+version = "0.22.0"
 edition = "2021"
 readme = "README.md"
 description = "Iroh sync"
@@ -16,20 +16,20 @@ workspace = true
 
 [dependencies]
 anyhow = "1"
+async-channel = "2.3.1"
 blake3 = { package = "iroh-blake3", version = "1.4.5"}
 bytes = { version = "1.4", features = ["serde"] }
-derive_more = { version = "1.0.0-beta.6", features = ["debug", "deref", "display", "from", "try_into", "into", "as_ref"] }
+derive_more = { version = "=1.0.0-beta.7", features = ["debug", "deref", "display", "from", "try_into", "into", "as_ref"] }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
-flume = "0.11"
 futures-buffered = "0.2.4"
 futures-lite = "2.3.0"
 futures-util = { version = "0.3.25" }
 hex = "0.4"
-iroh-base = { version = "0.18.0", path = "../iroh-base" }
-iroh-blobs = { version = "0.18.0", path = "../iroh-blobs", optional = true, features = ["downloader"] }
-iroh-gossip = { version = "0.18.0", path = "../iroh-gossip", optional = true }
-iroh-metrics = { version = "0.18.0", path = "../iroh-metrics", optional = true }
-iroh-net = { version = "0.18.0", optional = true, path = "../iroh-net" }
+iroh-base = { version = "0.22.0", path = "../iroh-base" }
+iroh-blobs = { version = "0.22.0", path = "../iroh-blobs", optional = true, features = ["downloader"] }
+iroh-gossip = { version = "0.22.0", path = "../iroh-gossip", optional = true }
+iroh-metrics = { version = "0.22.0", path = "../iroh-metrics", default-features = false }
+iroh-net = { version = "0.22.0", optional = true, path = "../iroh-net" }
 lru = "0.12"
 num_enum = "0.7"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
@@ -58,7 +58,7 @@ test-strategy = "0.3.1"
 [features]
 default = ["net", "metrics", "engine"]
 net = ["dep:iroh-net", "tokio/io-util", "dep:tokio-stream", "dep:tokio-util"]
-metrics = ["dep:iroh-metrics"]
+metrics = ["iroh-metrics/metrics"]
 engine = ["net", "dep:iroh-gossip", "dep:iroh-blobs"]
 
 [package.metadata.docs.rs]
