@@ -43,7 +43,6 @@ quic-rpc = { version = "0.11", default-features = false, features = ["flume-tran
 quic-rpc-derive = { version = "0.11" }
 quinn = { package = "iroh-quinn", version = "0.11" }
 rand = "0.8"
-rustls = { version = "0.21", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive"] }
 strum = { version = "0.25", features = ["derive"] }
 thiserror = "1"
