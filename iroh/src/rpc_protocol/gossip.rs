@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use super::RpcService;
 
-pub use iroh_gossip::dispatcher::Command as SubscribeUpdate;
-pub use iroh_gossip::dispatcher::Event as SubscribeResponse;
+pub use iroh_gossip::net::Command as SubscribeUpdate;
+pub use iroh_gossip::net::Event as SubscribeResponse;
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

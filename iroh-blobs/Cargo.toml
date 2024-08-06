@@ -1,6 +1,6 @@
 [package]
 name = "iroh-blobs"
-version = "0.21.0"
+version = "0.22.0"
 edition = "2021"
 readme = "README.md"
 description = "blob and collection transfer support for iroh"
@@ -28,10 +28,10 @@ futures-lite = "2.3"
 genawaiter = { version = "0.99.1", features = ["futures03"] }
 hashlink = { version = "0.9.0", optional = true }
 hex = "0.4.3"
-iroh-base = { version = "0.21.0", features = ["redb"], path = "../iroh-base" }
+iroh-base = { version = "0.22.0", features = ["redb"], path = "../iroh-base" }
 iroh-io = { version = "0.6.0", features = ["stats"] }
-iroh-metrics = { version = "0.21.0", path = "../iroh-metrics", default-features = false }
-iroh-net = { version = "0.21.0", path = "../iroh-net" }
+iroh-metrics = { version = "0.22.0", path = "../iroh-metrics", default-features = false }
+iroh-net = { version = "0.22.0", path = "../iroh-net" }
 num_cpus = "1.15.0"
 parking_lot = { version = "0.12.1", optional = true }
 pin-project = "1.1.5"

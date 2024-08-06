@@ -15,10 +15,7 @@ use iroh_blobs::{
 };
 use iroh_docs::engine::DefaultAuthorStorage;
 use iroh_docs::net::DOCS_ALPN;
-use iroh_gossip::{
-    dispatcher::GossipDispatcher,
-    net::{Gossip, GOSSIP_ALPN},
-};
+use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 #[cfg(not(test))]
 use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 use iroh_net::{
@@ -57,7 +54,6 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 const MAX_CONNECTIONS: u32 = 1024;
-const MAX_STREAMS: u64 = 10;
 
 /// Storage backend for documents.
 #[derive(Debug, Clone)]
@@ -461,11 +457,6 @@ where
             ..Default::default()
         });
         let (endpoint, nodes_data_path) = {
-            let mut transport_config = quinn::TransportConfig::default();
-            transport_config
-                .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
-                .max_concurrent_uni_streams(0u32.into());
-
             let discovery: Option<Box<dyn Discovery>> = match self.node_discovery {
                 DiscoveryConfig::None => None,
                 DiscoveryConfig::Custom(discovery) => Some(discovery),
@@ -504,7 +495,6 @@ where
                 .secret_key(self.secret_key.clone())
                 .proxy_from_env()
                 .keylog(self.keylog)
-                .transport_config(transport_config)
                 .concurrent_connections(MAX_CONNECTIONS)
                 .relay_mode(self.relay_mode);
             let endpoint = match discovery {
@@ -557,7 +547,6 @@ where
             downloader.clone(),
         )
         .await?;
-        let gossip_dispatcher = GossipDispatcher::new(gossip.clone());
 
         // Initialize the internal RPC connection.
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection::<RpcService>(32);
@@ -577,7 +566,6 @@ where
             cancel_token: CancellationToken::new(),
             downloader,
             gossip,
-            gossip_dispatcher,
             local_pool_handle: lp.handle().clone(),
         });
 

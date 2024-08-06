@@ -46,7 +46,6 @@ use iroh_base::key::PublicKey;
 use iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store as BaoStore};
 use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
 use iroh_blobs::{downloader::Downloader, protocol::Closed};
-use iroh_gossip::dispatcher::GossipDispatcher;
 use iroh_gossip::net::Gossip;
 use iroh_net::key::SecretKey;
 use iroh_net::{
@@ -116,7 +115,6 @@ struct NodeInner<D> {
     cancel_token: CancellationToken,
     client: crate::client::Iroh,
     downloader: Downloader,
-    gossip_dispatcher: GossipDispatcher,
     local_pool_handle: LocalPoolHandle,
 }
 
