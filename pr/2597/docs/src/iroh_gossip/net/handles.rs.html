@@ -408,7 +408,7 @@
     /// This progresses the stream until we received [`GossipEvent::Joined`], which is the first
     /// item emitted on the stream.
     ///
-    /// Note that this consumes the [`GossipEvent::Joined`] event, If you want to act on these
+    /// Note that this consumes the [`GossipEvent::Joined`] event. If you want to act on these
     /// initial neighbors, use [`Self::neighbors`] after awaiting [`Self::joined`].
     </span><span class="kw">pub async fn </span>joined(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">if </span>!<span class="self">self</span>.joined {
