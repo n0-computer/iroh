@@ -14,7 +14,7 @@ use genawaiter::rc::Co;
 use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, StreamMap, StreamNotifyClose};
 use tokio_util::sync::PollSender;
-use tracing::debug;
+use tracing::{debug, trace, warn};
 
 use crate::{
     auth::{Auth, InterestMap},
@@ -231,7 +231,8 @@ impl Stream for IntentHandle {
     }
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
+#[debug("IntentChannels")]
 struct IntentChannels {
     event_tx: Sender<EventKind>,
     update_rx: Receiver<IntentUpdate>,
@@ -307,11 +308,11 @@ impl<S: Storage> IntentDispatcher<S> {
         while let Some(intent) = self.pending_intents.pop_front() {
             self.submit_intent(&co, intent).await?;
         }
-        debug!("submitted initial intents, start loop");
+        trace!("submitted initial intents, start loop");
         loop {
             tokio::select! {
                 input = inbox.next() => {
-                    tracing::debug!(?input, "tick: inbox");
+                    trace!(?input, "tick: inbox");
                     let Some(input) = input else {
                         break;
                     };
@@ -321,12 +322,12 @@ impl<S: Storage> IntentDispatcher<S> {
                     }
                 }
                 Some((intent_id, event)) = self.intent_update_rx.next(), if !self.intent_update_rx.is_empty() => {
-                    tracing::debug!(?intent_id, ?event, "tick: intent_update");
+                    trace!(?intent_id, ?event, "tick: intent_update");
                     match event {
                         Some(event) => {
                             // Received an intent update.
                             if let Err(err) = self.update_intent(&co, intent_id, event).await {
-                                tracing::warn!(%intent_id, ?err, "failed to update intent");
+                                warn!(%intent_id, ?err, "failed to update intent");
                             }
                         },
                         None => {
@@ -420,7 +421,7 @@ impl<S: Storage> IntentDispatcher<S> {
         intent_id: u64,
         update: IntentUpdate,
     ) -> Result<()> {
-        debug!(?intent_id, ?update, "intent update");
+        trace!(?intent_id, ?update, "intent update");
         match update {
             IntentUpdate::AddInterests(interests) => {
                 let add_interests = self.auth.resolve_interests(interests)?;
@@ -438,7 +439,7 @@ impl<S: Storage> IntentDispatcher<S> {
     }
 
     async fn cancel_intent(&mut self, co: &Co<Output>, intent_id: u64) {
-        debug!(?intent_id, "cancel intent");
+        trace!(?intent_id, "cancel intent");
         self.intent_update_rx.remove(&intent_id);
         self.intents.remove(&intent_id);
         if self.intents.is_empty() {
