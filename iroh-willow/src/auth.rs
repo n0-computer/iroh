@@ -146,7 +146,7 @@ pub enum AreaSelector {
     Widest,
     /// Use any capability that covers the provided area.
     ContainsArea(Area),
-    /// Use any capability that covers the provided point.
+    /// Use any capability that covers the provided point (i.e. entry).
     ContainsPoint(Point),
 }
 

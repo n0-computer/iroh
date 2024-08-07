@@ -40,7 +40,7 @@ impl Engine {
         let peer_manager = PeerManager::new(actor_handle.clone(), endpoint, pm_inbox_rx, accept_opts);
         let peer_manager_task = tokio::task::spawn(
             async move { peer_manager.run().await.map_err(|err| format!("{err:?}")) }
-                .instrument(error_span!("peer_manager", me = me.fmt_short())),
+                .instrument(error_span!("peer_manager", me=%me.fmt_short())),
         );
         Engine {
             actor_handle,

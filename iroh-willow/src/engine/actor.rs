@@ -49,9 +49,9 @@ impl ActorHandle {
     ) -> ActorHandle {
         let (inbox_tx, inbox_rx) = flume::bounded(INBOX_CAP);
         let join_handle = std::thread::Builder::new()
-            .name("willow-actor".to_string())
+            .name("willow".to_string())
             .spawn(move || {
-                let span = error_span!("willow-actor", me=%me.fmt_short());
+                let span = error_span!("willow", me=%me.fmt_short());
                 let _guard = span.enter();
                 let store = Store::new((create_store)());
                 let actor = Actor::new(store, inbox_rx);
