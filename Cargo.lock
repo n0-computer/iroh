@@ -4167,7 +4167,7 @@ dependencies = [
 [[package]]
 name = "quic-rpc"
 version = "0.11.0"
-source = "git+https://github.com/n0-computer/quic-rpc?branch=flub/quinn11-rustls23#ecd32ed86974f3c12ccd46fa3c6bee2b4491ca6b"
+source = "git+https://github.com/n0-computer/quic-rpc?branch=flub/quinn11-rustls23#bb47fdcb06ab275434e81733083b04ca45b16ac4"
 dependencies = [
  "anyhow",
  "bincode",
