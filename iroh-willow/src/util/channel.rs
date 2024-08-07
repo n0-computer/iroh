@@ -14,15 +14,15 @@ use tokio::io::AsyncWrite;
 
 use crate::util::codec::{DecodeOutcome, Decoder, Encoder};
 
-/// Create an in-memory pipe.
-pub fn pipe(cap: usize) -> (Writer, Reader) {
-    let shared = Shared::new(cap, Guarantees::Unlimited);
-    let writer = Writer {
-        shared: shared.clone(),
-    };
-    let reader = Reader { shared };
-    (writer, reader)
-}
+// /// Create an in-memory pipe.
+// pub fn pipe(cap: usize) -> (Writer, Reader) {
+//     let shared = Shared::new(cap, Guarantees::Unlimited);
+//     let writer = Writer {
+//         shared: shared.clone(),
+//     };
+//     let reader = Reader { shared };
+//     (writer, reader)
+// }
 
 /// Create a new channel with a message [`Sender`] on the transmit side and a byte [`Reader`] on
 /// the receive side.

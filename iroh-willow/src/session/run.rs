@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error_span, trace, Instrument, Span};
 
 use crate::{
-    net::WillowConn,
+    net::ConnHandle,
     proto::sync::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
     session::{
         aoi_finder::{self, IntersectionFinder},
@@ -36,16 +36,16 @@ use super::{
 
 const INITIAL_GUARANTEES: u64 = u64::MAX;
 
-pub async fn run_session<S: Storage>(
+pub(crate) async fn run_session<S: Storage>(
     store: Store<S>,
-    conn: WillowConn,
+    conn: ConnHandle,
     initial_intents: Vec<Intent>,
     cancel_token: CancellationToken,
     session_id: SessionId,
     event_sender: EventSender,
     update_receiver: impl Stream<Item = SessionUpdate> + Unpin + 'static,
 ) -> Result<(), Arc<Error>> {
-    let WillowConn {
+    let ConnHandle {
         peer: _,
         initial_transmission,
         our_role,
