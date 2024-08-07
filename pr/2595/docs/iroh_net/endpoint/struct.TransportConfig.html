@@ -23,7 +23,7 @@ link with a 100ms round trip time.</p>
     value: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;IdleTimeout&gt;
 ) -&gt; &amp;mut <a class="struct" href="struct.TransportConfig.html" title="struct iroh_net::endpoint::TransportConfig">TransportConfig</a></h4></section></summary><div class="docblock"><p>Maximum duration of inactivity to accept before timing out the connection.</p>
 <p>The true idle timeout is the minimum of this and the peer’s own max idle timeout. <code>None</code>
-represents an infinite timeout.</p>
+represents an infinite timeout. Defaults to 30 seconds.</p>
 <p><strong>WARNING</strong>: If a peer or its network path malfunctions or acts maliciously, an infinite
 idle timeout can result in permanently hung futures!</p>
 
@@ -85,7 +85,9 @@ adapts to the network.</p>
 ) -&gt; &amp;mut <a class="struct" href="struct.TransportConfig.html" title="struct iroh_net::endpoint::TransportConfig">TransportConfig</a></h4></section></summary><div class="docblock"><p>Specifies the ACK frequency config (see [<code>AckFrequencyConfig</code>] for details)</p>
 <p>The provided configuration will be ignored if the peer does not support the acknowledgement
 frequency QUIC extension.</p>
-<p>Defaults to <code>None</code>, which disables the ACK frequency feature.</p>
+<p>Defaults to <code>None</code>, which disables controlling the peer’s acknowledgement frequency. Even
+if set to <code>None</code>, the local side still supports the acknowledgement frequency QUIC
+extension and may use it in other ways.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.persistent_congestion_threshold" class="method"><h4 class="code-header">pub fn <a href="#method.persistent_congestion_threshold" class="fn">persistent_congestion_threshold</a>(
     &amp;mut self,
     value: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u32.html">u32</a>
