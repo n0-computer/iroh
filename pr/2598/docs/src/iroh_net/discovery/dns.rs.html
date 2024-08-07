@@ -80,6 +80,7 @@
 <a href="#80" id="80">80</a>
 <a href="#81" id="81">81</a>
 <a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh-net
 
 </span><span class="kw">use </span>anyhow::Result;
@@ -96,6 +97,7 @@
 <span class="doccomment">/// The n0 testing DNS node origin, for testing.
 </span><span class="kw">pub const </span>N0_DNS_NODE_ORIGIN_STAGING: <span class="kw-2">&amp;</span>str = <span class="string">"staging-dns.iroh.link"</span>;
 <span class="doccomment">/// Testing DNS node origin, must run server from iroh_net::test_utils.
+</span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 </span><span class="kw">const </span>TESTING_DNS_NODE_ORIGIN: <span class="kw-2">&amp;</span>str = <span class="string">"dns.iroh.test"</span>;
 <span class="kw">const </span>DNS_STAGGERING_MS: <span class="kw-2">&amp;</span>[u64] = <span class="kw-2">&amp;</span>[<span class="number">200</span>, <span class="number">300</span>];
 
