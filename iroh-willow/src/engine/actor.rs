@@ -13,7 +13,7 @@ use tracing::{debug, error, error_span, trace, warn, Instrument};
 use crate::{
     auth::{CapSelector, CapabilityPack, DelegateTo, InterestMap},
     form::{AuthForm, EntryForm, EntryOrForm},
-    net::WillowConn,
+    net::ConnHandle,
     proto::{
         grouping::ThreeDRange,
         keys::{NamespaceId, NamespaceKind, UserId, UserSecretKey},
@@ -135,9 +135,9 @@ impl ActorHandle {
         Ok(rx.into_stream())
     }
 
-    pub async fn init_session(
+    pub(crate) async fn init_session(
         &self,
-        conn: WillowConn,
+        conn: ConnHandle,
         intents: Vec<Intent>,
     ) -> Result<SessionHandle> {
         let (reply, reply_rx) = oneshot::channel();
@@ -224,7 +224,7 @@ impl Drop for ActorHandle {
 #[derive(derive_more::Debug, strum::Display)]
 pub enum Input {
     InitSession {
-        conn: WillowConn,
+        conn: ConnHandle,
         intents: Vec<Intent>,
         reply: oneshot::Sender<Result<SessionHandle>>,
     },

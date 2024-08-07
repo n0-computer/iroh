@@ -25,9 +25,9 @@ mod resource;
 mod run;
 mod static_tokens;
 
-pub use self::channels::Channels;
-pub use self::error::Error;
-pub use self::run::run_session;
+pub(crate) use self::channels::Channels;
+pub(crate) use self::error::Error;
+pub(crate) use self::run::run_session;
 
 pub type SessionId = u64;
 

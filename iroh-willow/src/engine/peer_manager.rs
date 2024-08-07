@@ -6,7 +6,7 @@ use futures_buffered::join_all;
 use futures_lite::{future::Boxed, StreamExt};
 use futures_util::{FutureExt, TryFutureExt};
 use iroh_net::{
-    endpoint::{Connection, ConnectionError},
+    endpoint::{get_remote_node_id, Connection, ConnectionError},
     util::AbortingJoinHandle,
     Endpoint, NodeId,
 };
@@ -20,11 +20,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, instrument, trace, warn, Instrument, Span};
 
 use crate::{
-    net::{establish, setup, ConnRunFut, PeerConn, WillowConn, ALPN},
+    net::{establish, prepare_channels, ChannelStreams, ConnHandle, ALPN},
     proto::sync::{AccessChallenge, InitialTransmission},
     session::{
         intents::{EventKind, Intent},
-        Channels, Error, Interests, Role, SessionEvent, SessionHandle, SessionInit, SessionUpdate,
+        Error, Interests, Role, SessionEvent, SessionHandle, SessionInit, SessionUpdate,
     },
 };
 
@@ -175,14 +175,13 @@ impl PeerManager {
     }
 
     async fn handle_connection(&mut self, conn: Connection) {
-        let conn = match PeerConn::new(conn, Role::Betty, self.endpoint.node_id()) {
-            Ok(conn) => conn,
+        let peer = match get_remote_node_id(&conn) {
+            Ok(peer) => peer,
             Err(err) => {
                 debug!("ignore incoming connection (failed to get remote node id: {err})");
                 return;
             }
         };
-        let peer = conn.peer();
         let Some(intent) = self.accept_handlers.accept(peer).await else {
             debug!("ignore incoming connection (accept handler returned none)");
             return;
@@ -196,10 +195,12 @@ impl PeerManager {
             PeerState::None => {
                 let our_nonce = AccessChallenge::generate();
                 let fut = async move {
-                    let initial_transmission = establish(&conn, our_nonce).await?;
-                    Ok(ConnStep::Established {
+                    let (initial_transmission, channel_streams) =
+                        establish(&conn, Role::Betty, our_nonce).await?;
+                    Ok(ConnStep::Ready {
                         conn,
                         initial_transmission,
+                        channel_streams,
                     })
                 };
                 let abort_handle = spawn_conn_task(&mut self.conn_tasks, &peer_info, fut);
@@ -233,11 +234,12 @@ impl PeerManager {
                 let endpoint = self.endpoint.clone();
                 let fut = async move {
                     let conn = endpoint.connect_by_node_id(&peer, ALPN).await?;
-                    let conn = PeerConn::new(conn, Role::Alfie, endpoint.node_id())?;
-                    let initial_transmission = establish(&conn, our_nonce).await?;
-                    Ok(ConnStep::Established {
+                    let (initial_transmission, channel_streams) =
+                        establish(&conn, Role::Alfie, our_nonce).await?;
+                    Ok(ConnStep::Ready {
                         conn,
                         initial_transmission,
+                        channel_streams,
                     })
                 };
                 let abort_handle = spawn_conn_task(&mut self.conn_tasks, &peer_info, fut);
@@ -292,38 +294,18 @@ impl PeerManager {
                 // We don't need to cancel the session here. It will terminate because all receiver channels are closed.
                 return Ok(());
             }
-            Ok(ConnStep::Established {
-                conn,
-                initial_transmission,
-            }) => {
-                // TODO: Check if we want to continue.
-                let fut = async move {
-                    let result = setup(&conn).await;
-                    result.map(|(channels, fut)| ConnStep::Ready {
-                        conn,
-                        channels,
-                        fut: fut.boxed(),
-                    })
-                };
-                let abort_handle = spawn_conn_task(&mut self.conn_tasks, &peer_info, fut);
-                peer_info.state = PeerState::Pending;
-                peer_info.abort_handle = Some(abort_handle);
-                peer_info.initial_transmission = Some(initial_transmission);
-            }
             Ok(ConnStep::Ready {
                 conn,
-                channels,
-                fut,
+                initial_transmission,
+                channel_streams,
             }) => {
-                let initial_transmission = peer_info
-                    .initial_transmission
-                    .take()
-                    .context("expedted initial transmission for peer in ready state")?;
+                // TODO: Here we should check again that we are not establishing a duplicate connection.
                 debug!("connection ready: init session");
-                let willow_conn = WillowConn {
+                let (channels, fut) = prepare_channels(channel_streams)?;
+                let willow_conn = ConnHandle {
                     initial_transmission,
                     channels,
-                    our_role: conn.our_role(),
+                    our_role: peer_info.our_role,
                     peer,
                 };
                 let intents = std::mem::take(&mut peer_info.pending_intents);
@@ -352,7 +334,7 @@ impl PeerManager {
                 // meaningful message should wait for the other end to terminate the connection, I think.
                 //
                 // In other words, the connection may only be closed by the party who received the last meaningful message.
-                if conn.our_role() == Role::Alfie {
+                if peer_info.our_role == Role::Alfie {
                     conn.close(ERROR_CODE_OK.into(), b"bye");
                 }
                 let fut = async move {
@@ -365,7 +347,7 @@ impl PeerManager {
             Ok(ConnStep::Closed { reason, conn }) => {
                 // TODO: Instead of using our role (alfie vs. betty), the party who sent the last
                 // meaningful message should wait for the other end to terminate the connection, I think.
-                let locally_closed = conn.our_role() == Role::Alfie;
+                let locally_closed = peer_info.our_role == Role::Alfie;
                 let is_graceful = match &reason {
                     ConnectionError::LocallyClosed if locally_closed => true,
                     ConnectionError::ApplicationClosed(frame)
@@ -473,7 +455,6 @@ struct PeerInfo {
     abort_handle: Option<AbortHandle>,
     state: PeerState,
     pending_intents: Vec<Intent>,
-    initial_transmission: Option<InitialTransmission>,
     span: Span,
 }
 
@@ -485,7 +466,6 @@ impl PeerInfo {
             abort_handle: None,
             state: PeerState::None,
             pending_intents: Vec::new(),
-            initial_transmission: None,
             span: error_span!("conn", peer=%peer.fmt_short()),
         }
     }
@@ -503,21 +483,16 @@ enum PeerState {
 
 #[derive(derive_more::Debug, strum::Display)]
 enum ConnStep {
-    Established {
-        conn: PeerConn,
-        initial_transmission: InitialTransmission,
-    },
     Ready {
-        conn: PeerConn,
-        channels: Channels,
-        #[debug("ConnRunFut")]
-        fut: ConnRunFut,
+        conn: Connection,
+        initial_transmission: InitialTransmission,
+        channel_streams: ChannelStreams,
     },
     Done {
-        conn: PeerConn,
+        conn: Connection,
     },
     Closed {
-        conn: PeerConn,
+        conn: Connection,
         reason: ConnectionError,
     },
 }

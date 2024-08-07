@@ -2,12 +2,11 @@ use std::future::Future;
 
 use anyhow::{ensure, Context as _, Result};
 use futures_concurrency::future::TryJoin;
-use futures_lite::future::Boxed;
 use futures_util::future::TryFutureExt;
 use iroh_base::key::NodeId;
-use iroh_net::endpoint::{get_remote_node_id, Connection, RecvStream, SendStream};
+use iroh_net::endpoint::{Connection, RecvStream, SendStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 use crate::{
     proto::sync::{
@@ -27,64 +26,46 @@ use crate::{
 };
 
 pub const CHANNEL_CAP: usize = 1024 * 64;
+
+/// The ALPN protocol name for iroh-willow.
 pub const ALPN: &[u8] = b"iroh-willow/0";
 
-pub type ConnRunFut = Boxed<Result<()>>;
+/// The handle to an active peer connection.
+///
+/// This is passed into the session loop, where it is used to send and receive messages
+/// on the control and logical channels. It also contains the data of the initial transmission.
+#[derive(derive_more::Debug)]
+pub(crate) struct ConnHandle {
+    pub(crate) our_role: Role,
+    pub(crate) peer: NodeId,
+    #[debug("InitialTransmission")]
+    pub(crate) initial_transmission: InitialTransmission,
+    #[debug("Channels")]
+    pub(crate) channels: Channels,
+}
 
-/// Wrapper around [`iroh_net::endpoint::Connection`] that keeps the remote node's [`NodeId`] and
-/// our role (whether we accepted or initiated the connection).
-// TODO: Integrate this into iroh_net::endpoint::Connection by making that a struct and not a reexport? Seems universally useful.
-#[derive(Debug, Clone)]
-pub struct PeerConn {
+/// Establish the connection by running the initial transmission and
+/// opening the streams for the control and logical channels.
+pub(crate) async fn establish(
+    conn: &Connection,
     our_role: Role,
-    remote_node_id: NodeId,
-    node_id: NodeId,
-    conn: iroh_net::endpoint::Connection,
-}
-
-impl std::ops::Deref for PeerConn {
-    type Target = iroh_net::endpoint::Connection;
-    fn deref(&self) -> &Self::Target {
-        &self.conn
-    }
-}
-
-impl PeerConn {
-    pub fn new(conn: iroh_net::endpoint::Connection, our_role: Role, me: NodeId) -> Result<Self> {
-        let peer = get_remote_node_id(&conn)?;
-        Ok(Self {
-            conn,
-            node_id: me,
-            remote_node_id: peer,
-            our_role,
-        })
-    }
-    pub fn peer(&self) -> NodeId {
-        self.remote_node_id
-    }
-
-    pub fn me(&self) -> NodeId {
-        self.node_id
-    }
-
-    pub fn our_role(&self) -> Role {
-        self.our_role
-    }
-}
-
-pub async fn dial_and_establish(
-    endpoint: &iroh_net::Endpoint,
-    node_id: NodeId,
     our_nonce: AccessChallenge,
-) -> Result<(PeerConn, InitialTransmission)> {
-    let conn = endpoint.connect_by_node_id(&node_id, ALPN).await?;
-    let conn = PeerConn::new(conn, Role::Alfie, endpoint.node_id())?;
-    let initial_transmission = establish(&conn, our_nonce).await?;
-    Ok((conn, initial_transmission))
+) -> Result<(InitialTransmission, ChannelStreams)> {
+    // Run the initial transmission (which works on uni streams) concurrently
+    // with opening/accepting the bi streams for the channels.
+    (
+        initial_transmission(conn, our_nonce),
+        open_channel_streams(conn, our_role),
+    )
+        .try_join()
+        .await
 }
 
-pub async fn establish(conn: &PeerConn, our_nonce: AccessChallenge) -> Result<InitialTransmission> {
-    debug!(our_role=?conn.our_role(), "start initial transmission");
+async fn initial_transmission(
+    conn: &Connection,
+    our_nonce: AccessChallenge,
+) -> Result<InitialTransmission> {
+    debug!("start initial transmission");
     let challenge_hash = our_nonce.hash();
     let mut send_stream = conn.open_uni().await?;
     send_stream.write_u8(MAX_PAYLOAD_SIZE_POWER).await?;
@@ -100,73 +81,21 @@ pub async fn establish(conn: &PeerConn, our_nonce: AccessChallenge) -> Result<In
 
     let mut received_commitment = [0u8; CHALLENGE_HASH_LENGTH];
     recv_stream.read_exact(&mut received_commitment).await?;
-    debug!(our_role=?conn.our_role(), "initial transmission complete");
+    debug!("initial transmission complete");
     Ok(InitialTransmission {
         our_nonce,
         received_commitment: ChallengeHash::from_bytes(received_commitment),
         their_max_payload_size,
     })
-
-    // let our_role = conn.our_role();
-    // let (mut setup_send, mut setup_recv) = match our_role {
-    //     Role::Alfie => conn.open_bi().await?,
-    //     Role::Betty => conn.accept_bi().await?,
-    // };
-    // debug!("setup channel ready");
-
-    // let initial_transmission =
-    //     exchange_commitments(&mut setup_send, &mut setup_recv, our_nonce).await?;
-    // Ok(initial_transmission)
-}
-
-pub async fn setup(
-    conn: &PeerConn,
-) -> Result<(Channels, impl Future<Output = Result<()>> + Send + 'static)> {
-    let our_role = conn.our_role();
-    let (channels, fut) = launch_channels(&conn, our_role).await?;
-    Ok((channels, fut))
-}
-
-#[derive(derive_more::Debug)]
-pub struct WillowConn {
-    pub(crate) our_role: Role,
-    pub(crate) peer: NodeId,
-    #[debug("InitialTransmission")]
-    pub(crate) initial_transmission: InitialTransmission,
-    #[debug("Channels")]
-    pub(crate) channels: Channels,
-}
-
-impl WillowConn {
-    #[cfg(test)]
-    #[instrument(skip_all, name = "conn", fields(me=%me.fmt_short(), peer=tracing::field::Empty))]
-    async fn connect(
-        conn: Connection,
-        me: NodeId,
-        our_role: Role,
-        our_nonce: AccessChallenge,
-    ) -> Result<Self> {
-        let conn = PeerConn::new(conn, our_role, me)?;
-        tracing::Span::current().record("peer", tracing::field::display(conn.peer().fmt_short()));
-        let initial_transmission = establish(&conn, our_nonce).await?;
-        let (channels, fut) = setup(&conn).await?;
-        tokio::task::spawn(fut);
-        Ok(WillowConn {
-            initial_transmission,
-            our_role,
-            peer: conn.peer(),
-            channels,
-        })
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("missing channel: {0:?}")]
 struct MissingChannel(Channel);
 
-type ChannelStreams = [(Channel, SendStream, RecvStream); Channel::COUNT];
+pub(crate) type ChannelStreams = [(Channel, SendStream, RecvStream); Channel::COUNT];
 
-async fn open_channels(conn: &Connection, our_role: Role) -> Result<ChannelStreams> {
+async fn open_channel_streams(conn: &Connection, our_role: Role) -> Result<ChannelStreams> {
     let channels = match our_role {
         // Alfie opens a quic stream for each logical channel, and sends a single byte with the
         // channel id.
@@ -204,7 +133,7 @@ async fn open_channels(conn: &Connection, our_role: Role) -> Result<ChannelStrea
     Ok(channels)
 }
 
-fn start_channels(
+pub(crate) fn prepare_channels(
     channels: ChannelStreams,
 ) -> Result<(Channels, impl Future<Output = Result<()>> + Send)> {
     let mut channels = channels.map(|(ch, send, recv)| (ch, Some(prepare_channel(ch, send, recv))));
@@ -256,14 +185,6 @@ fn start_channels(
         },
     };
     Ok((channels, fut))
-}
-
-async fn launch_channels(
-    conn: &Connection,
-    our_role: Role,
-) -> Result<(Channels, impl Future<Output = Result<()>> + Send)> {
-    let channels = open_channels(conn, our_role).await?;
-    start_channels(channels)
 }
 
 fn prepare_channel(
@@ -329,30 +250,6 @@ async fn send_loop(mut send_stream: SendStream, channel_reader: Reader) -> Resul
     Ok(())
 }
 
-async fn exchange_commitments(
-    send_stream: &mut SendStream,
-    recv_stream: &mut RecvStream,
-    our_nonce: AccessChallenge,
-) -> Result<InitialTransmission> {
-    let challenge_hash = our_nonce.hash();
-    send_stream.write_u8(MAX_PAYLOAD_SIZE_POWER).await?;
-    send_stream.write_all(challenge_hash.as_bytes()).await?;
-
-    let their_max_payload_size = {
-        let power = recv_stream.read_u8().await?;
-        ensure!(power <= 64, "max payload size too large");
-        2u64.pow(power as u32)
-    };
-
-    let mut received_commitment = [0u8; CHALLENGE_HASH_LENGTH];
-    recv_stream.read_exact(&mut received_commitment).await?;
-    Ok(InitialTransmission {
-        our_nonce,
-        received_commitment: ChallengeHash::from_bytes(received_commitment),
-        their_max_payload_size,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -360,18 +257,19 @@ mod tests {
         time::{Duration, Instant},
     };
 
+    use anyhow::Result;
     use futures_lite::StreamExt;
     use iroh_base::key::SecretKey;
     use iroh_net::{endpoint::Connection, Endpoint, NodeAddr, NodeId};
     use rand::SeedableRng;
     use rand_chacha::ChaCha12Rng;
-    use tracing::info;
+    use tracing::{info, Instrument};
 
     use crate::{
         auth::{CapSelector, DelegateTo, RestrictArea},
         engine::ActorHandle,
         form::{AuthForm, EntryForm, PayloadForm, SubspaceForm, TimestampForm},
-        net::WillowConn,
+        net::ConnHandle,
         proto::{
             grouping::ThreeDRange,
             keys::{NamespaceId, NamespaceKind, UserId},
@@ -381,6 +279,8 @@ mod tests {
         },
         session::{intents::Intent, Interests, Role, SessionHandle, SessionInit, SessionMode},
     };
+
+    use super::{establish, prepare_channels};
 
     const ALPN: &[u8] = b"iroh-willow/0";
 
@@ -396,14 +296,26 @@ mod tests {
         our_role: Role,
         our_nonce: AccessChallenge,
         intents: Vec<Intent>,
-    ) -> anyhow::Result<SessionHandle> {
-        let conn = WillowConn::connect(conn, me, our_role, our_nonce).await?;
-        let handle = actor.init_session(conn, intents).await?;
+    ) -> Result<SessionHandle> {
+        let peer = iroh_net::endpoint::get_remote_node_id(&conn)?;
+        let span = tracing::error_span!("conn", me=%me.fmt_short(), peer=%peer.fmt_short());
+        let (initial_transmission, channel_streams) = establish(&conn, our_role, our_nonce)
+            .instrument(span.clone())
+            .await?;
+        let (channels, fut) = prepare_channels(channel_streams)?;
+        tokio::task::spawn(fut.instrument(span));
+        let willow_conn = ConnHandle {
+            initial_transmission,
+            our_role,
+            peer,
+            channels,
+        };
+        let handle = actor.init_session(willow_conn, intents).await?;
         Ok(handle)
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn net_smoke() -> anyhow::Result<()> {
+    async fn net_smoke() -> Result<()> {
         iroh_test::logging::setup_multithreaded();
         let mut rng = create_rng("net_smoke");
         let n_betty = parse_env_var("N_BETTY", 100);
@@ -525,7 +437,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn net_live_data() -> anyhow::Result<()> {
+    async fn net_live_data() -> Result<()> {
         iroh_test::logging::setup_multithreaded();
         let mut rng = create_rng("net_live_data");
 
@@ -681,7 +593,7 @@ mod tests {
 
     pub async fn create_endpoint(
         rng: &mut rand_chacha::ChaCha12Rng,
-    ) -> anyhow::Result<(Endpoint, NodeId, NodeAddr)> {
+    ) -> Result<(Endpoint, NodeId, NodeAddr)> {
         let ep = Endpoint::builder()
             .secret_key(SecretKey::generate_with_rng(rng))
             .alpns(vec![ALPN.to_vec()])
@@ -692,11 +604,8 @@ mod tests {
         Ok((ep, node_id, addr))
     }
 
-    async fn get_entries(
-        store: &ActorHandle,
-        namespace: NamespaceId,
-    ) -> anyhow::Result<BTreeSet<Entry>> {
-        let entries: anyhow::Result<BTreeSet<_>> = store
+    async fn get_entries(store: &ActorHandle, namespace: NamespaceId) -> Result<BTreeSet<Entry>> {
+        let entries: Result<BTreeSet<_>> = store
             .get_entries(namespace, ThreeDRange::full())
             .await?
             .try_collect()
@@ -712,7 +621,7 @@ mod tests {
         path_fn: impl Fn(usize) -> Result<Path, InvalidPath>,
         content_fn: impl Fn(usize) -> String,
         track_entries: &mut impl Extend<Entry>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         for i in 0..count {
             let payload = content_fn(i).as_bytes().to_vec();
             let path = path_fn(i).expect("invalid path");
@@ -742,47 +651,4 @@ mod tests {
             Err(_) => default,
         }
     }
-
-    // async fn get_entries_debug(
-    //     store: &StoreHandle,
-    //     namespace: NamespaceId,
-    // ) -> anyhow::Result<Vec<(SubspaceId, Path)>> {
-    //     let entries = get_entries(store, namespace).await?;
-    //     let mut entries: Vec<_> = entries
-    //         .into_iter()
-    //         .map(|e| (e.subspace_id, e.path))
-    //         .collect();
-    //     entries.sort();
-    //     Ok(entries)
-    // }
-    //
-    //
-    //
-    // tokio::task::spawn({
-    //     let handle_alfie = handle_alfie.clone();
-    //     let handle_betty = handle_betty.clone();
-    //     async move {
-    //         loop {
-    //             info!(
-    //                 "alfie count: {}",
-    //                 handle_alfie
-    //                     .get_entries(namespace_id, ThreeDRange::full())
-    //                     .await
-    //                     .unwrap()
-    //                     .count()
-    //                     .await
-    //             );
-    //             info!(
-    //                 "betty count: {}",
-    //                 handle_betty
-    //                     .get_entries(namespace_id, ThreeDRange::full())
-    //                     .await
-    //                     .unwrap()
-    //                     .count()
-    //                     .await
-    //             );
-    //             tokio::time::sleep(Duration::from_secs(1)).await;
-    //         }
-    //     }
-    // });
 }
