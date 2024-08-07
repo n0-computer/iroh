@@ -101,7 +101,7 @@ pub(crate) mod dns_and_pkarr_servers {
     impl DnsPkarrServer {
         /// Run DNS and Pkarr servers on localhost.
         pub async fn run() -> anyhow::Result<Self> {
-            Self::run_with_origin("dns.example".to_string()).await
+            Self::run_with_origin("dns.iroh.test".to_string()).await
         }
 
         /// Run DNS and Pkarr servers on localhost with the specified `node_origin` domain.

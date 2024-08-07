@@ -13,6 +13,8 @@ use crate::{
 pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
 /// The n0 testing DNS node origin, for testing.
 pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
+/// Testing DNS node origin, must run server from iroh_net::test_utils.
+const TESTING_DNS_NODE_ORIGIN: &str = "dns.iroh.test";
 const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
 /// DNS node discovery
@@ -55,7 +57,7 @@ impl DnsDiscovery {
         }
         #[cfg(any(test, feature = "test-utils"))]
         {
-            Self::new(N0_DNS_NODE_ORIGIN_STAGING.to_string())
+            Self::new(TESTING_DNS_NODE_ORIGIN.to_string())
         }
     }
 }
