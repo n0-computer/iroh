@@ -1,17 +1,15 @@
+use std::time::Duration;
 
 use anyhow::Result;
 use futures_concurrency::future::TryJoin;
 use futures_lite::StreamExt;
 
 use iroh_willow::{
-    proto::{
-        grouping::Area,
-        willow::Path,
-    },
+    proto::{grouping::Area, willow::Path},
     session::{intents::EventKind, Interests, SessionInit, SessionMode},
 };
 
-use self::util::{create_rng, spawn_two, insert, setup_and_delegate, Peer};
+use self::util::{create_rng, insert, setup_and_delegate, spawn_two, Peer};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn peer_manager_two_intents() -> Result<()> {

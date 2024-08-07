@@ -81,7 +81,6 @@ impl<S: Storage> DataSender<S> {
                 }
             }
         }
-        tracing::debug!("data sender done");
         Ok(())
     }
 

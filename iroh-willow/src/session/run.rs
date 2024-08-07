@@ -6,7 +6,7 @@ use strum::IntoEnumIterator;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error_span, Instrument, Span};
+use tracing::{debug, error_span, trace, Instrument, Span};
 
 use crate::{
     net::WillowConn,
@@ -50,7 +50,6 @@ pub async fn run_session<S: Storage>(
         initial_transmission,
         our_role,
         channels,
-        join_handle,
     } = conn;
     let Channels {
         send: channel_sender,
@@ -116,25 +115,25 @@ pub async fn run_session<S: Storage>(
         (None, None)
     };
 
-    let net_fut = with_span(error_span!("net"), async {
-        // TODO: awaiting the net task handle hangs
-        drop(join_handle);
-        // let res = join_handle.await;
-        // debug!(?res, "net tasks finished");
-        // match res {
-        //     Ok(Ok(())) => Ok(()),
-        //     Ok(Err(err)) => Err(Error::Net(err)),
-        //     Err(err) => Err(Error::Net(err.into())),
-        // }
-        Ok(())
-    });
+    // let net_fut = with_span(error_span!("net"), async {
+    //     // TODO: awaiting the net task handle hangs
+    //     drop(join_handle);
+    //     // let res = join_handle.await;
+    //     // debug!(?res, "net tasks finished");
+    //     // match res {
+    //     //     Ok(Ok(())) => Ok(()),
+    //     //     Ok(Err(err)) => Err(Error::Net(err)),
+    //     //     Err(err) => Err(Error::Net(err.into())),
+    //     // }
+    //     Ok(())
+    // });
 
     let mut intents = intents::IntentDispatcher::new(store.auth().clone(), initial_intents);
     let intents_fut = with_span(error_span!("intents"), async {
         use intents::Output;
         let mut intents_gen = intents.run_gen(intents_inbox_rx);
         while let Some(output) = intents_gen.try_next().await? {
-            debug!(?output, "yield");
+            trace!(?output, "yield");
             match output {
                 Output::SubmitInterests(interests) => {
                     intersection_inbox
@@ -168,7 +167,7 @@ pub async fn run_session<S: Storage>(
                 while let Some(message) = data_recv.try_next().await? {
                     data_receiver.on_message(message).await?;
                 }
-                tracing::debug!("data receiver done");
+                trace!("data receiver terminated");
                 Ok(())
             };
             (send_fut, recv_fut).try_join().await?;
@@ -342,7 +341,7 @@ pub async fn run_session<S: Storage>(
     });
 
     let result = (
-        net_fut,
+        // net_fut,
         intents_fut,
         control_loop,
         data_loop,
@@ -481,9 +480,9 @@ async fn with_span<T: std::fmt::Debug>(
     fut: impl Future<Output = Result<T, Error>>,
 ) -> Result<T, Error> {
     async {
-        tracing::debug!("start");
+        trace!("start");
         let res = fut.await;
-        tracing::debug!(?res, "done");
+        trace!(?res, "done");
         res
     }
     .instrument(span)

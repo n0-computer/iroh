@@ -36,14 +36,14 @@ impl DelegateTo {
 #[derive(Debug, Clone)]
 pub enum RestrictArea {
     None,
-    Restrict(Area)
+    Restrict(Area),
 }
 
 impl RestrictArea {
     pub fn with_default(self, default: Area) -> Area {
         match self {
             RestrictArea::None => default.clone(),
-            RestrictArea::Restrict(area) => area
+            RestrictArea::Restrict(area) => area,
         }
     }
 }

@@ -29,9 +29,10 @@ use crate::{
         grouping::{AreaOfInterest, ThreeDRange},
         keys::NamespaceId,
         sync::{
-            AreaOfInterestHandle, Fingerprint, LengthyEntry, ReconciliationAnnounceEntries,
-            ReconciliationMessage, ReconciliationSendEntry, ReconciliationSendFingerprint,
-            ReconciliationSendPayload, ReconciliationTerminatePayload,
+            AreaOfInterestHandle, Fingerprint, IsHandle, LengthyEntry,
+            ReconciliationAnnounceEntries, ReconciliationMessage, ReconciliationSendEntry,
+            ReconciliationSendFingerprint, ReconciliationSendPayload,
+            ReconciliationTerminatePayload,
         },
         willow::PayloadDigest,
     },
@@ -188,6 +189,11 @@ impl<S: Storage> Reconciler<S> {
             .map
             .remove(&id)
             .ok_or(Error::InvalidMessageInCurrentState)?;
+        debug!(
+            our_handle = id.0.value(),
+            their_handle = id.1.value(),
+            "reconciled area"
+        );
         self.out(Output::ReconciledArea {
             area: target.intersection.intersection.clone(),
             namespace: target.namespace(),
@@ -256,7 +262,11 @@ impl<S: Storage> TargetMap<S> {
         let snapshot = shared.store.entries().snapshot()?;
         let target = Target::init(snapshot, shared, intersection).await?;
         let id = target.id();
-        tracing::info!("init {id:?}");
+        debug!(
+            our_handle = id.0.value(),
+            their_handle = id.1.value(),
+            "init area"
+        );
         self.map.insert(id, target);
         Ok(id)
     }

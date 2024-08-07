@@ -192,6 +192,19 @@ pub enum Channel {
 }
 
 impl Channel {
+    pub const COUNT: usize = LogicalChannel::COUNT + 1;
+
+    pub fn all() -> [Channel; LogicalChannel::COUNT + 1] {
+        // TODO: do this without allocation
+        // https://users.rust-lang.org/t/how-to-concatenate-array-literals-in-compile-time/21141/3
+        [Self::Control]
+            .into_iter()
+            .chain(LogicalChannel::VARIANTS.iter().copied().map(Self::Logical))
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("static length")
+    }
+
     pub fn fmt_short(&self) -> &'static str {
         match self {
             Channel::Control => "Ctl",
@@ -206,7 +219,7 @@ impl Channel {
         }
     }
 
-    pub fn from_id(self, id: u8) -> Result<Self, InvalidChannelId> {
+    pub fn from_id(id: u8) -> Result<Self, InvalidChannelId> {
         match id {
             0 => Ok(Self::Control),
             _ => {
