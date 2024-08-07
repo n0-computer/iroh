@@ -1,13 +1,13 @@
-use anyhow::ensure;
+use std::future::Future;
+
+use anyhow::{ensure, Context as _, Result};
 use futures_concurrency::future::TryJoin;
+use futures_lite::future::Boxed;
 use futures_util::future::TryFutureExt;
 use iroh_base::key::NodeId;
 use iroh_net::endpoint::{get_remote_node_id, Connection, RecvStream, SendStream};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    task::{JoinHandle, JoinSet},
-};
-use tracing::{debug, error_span, field::Empty, instrument, trace, warn, Instrument, Span};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tracing::{debug, instrument, trace};
 
 use crate::{
     proto::sync::{
@@ -29,6 +29,104 @@ use crate::{
 pub const CHANNEL_CAP: usize = 1024 * 64;
 pub const ALPN: &[u8] = b"iroh-willow/0";
 
+pub type ConnRunFut = Boxed<Result<()>>;
+
+/// Wrapper around [`iroh_net::endpoint::Connection`] that keeps the remote node's [`NodeId`] and
+/// our role (whether we accepted or initiated the connection).
+// TODO: Integrate this into iroh_net::endpoint::Connection by making that a struct and not a reexport? Seems universally useful.
+#[derive(Debug, Clone)]
+pub struct PeerConn {
+    our_role: Role,
+    remote_node_id: NodeId,
+    node_id: NodeId,
+    conn: iroh_net::endpoint::Connection,
+}
+
+impl std::ops::Deref for PeerConn {
+    type Target = iroh_net::endpoint::Connection;
+    fn deref(&self) -> &Self::Target {
+        &self.conn
+    }
+}
+
+impl PeerConn {
+    pub fn new(conn: iroh_net::endpoint::Connection, our_role: Role, me: NodeId) -> Result<Self> {
+        let peer = get_remote_node_id(&conn)?;
+        Ok(Self {
+            conn,
+            node_id: me,
+            remote_node_id: peer,
+            our_role,
+        })
+    }
+    pub fn peer(&self) -> NodeId {
+        self.remote_node_id
+    }
+
+    pub fn me(&self) -> NodeId {
+        self.node_id
+    }
+
+    pub fn our_role(&self) -> Role {
+        self.our_role
+    }
+}
+
+pub async fn dial_and_establish(
+    endpoint: &iroh_net::Endpoint,
+    node_id: NodeId,
+    our_nonce: AccessChallenge,
+) -> Result<(PeerConn, InitialTransmission)> {
+    let conn = endpoint.connect_by_node_id(&node_id, ALPN).await?;
+    let conn = PeerConn::new(conn, Role::Alfie, endpoint.node_id())?;
+    let initial_transmission = establish(&conn, our_nonce).await?;
+    Ok((conn, initial_transmission))
+}
+
+pub async fn establish(conn: &PeerConn, our_nonce: AccessChallenge) -> Result<InitialTransmission> {
+    debug!(our_role=?conn.our_role(), "start initial transmission");
+    let challenge_hash = our_nonce.hash();
+    let mut send_stream = conn.open_uni().await?;
+    send_stream.write_u8(MAX_PAYLOAD_SIZE_POWER).await?;
+    send_stream.write_all(challenge_hash.as_bytes()).await?;
+
+    let mut recv_stream = conn.accept_uni().await?;
+
+    let their_max_payload_size = {
+        let power = recv_stream.read_u8().await?;
+        ensure!(power <= 64, "max payload size too large");
+        2u64.pow(power as u32)
+    };
+
+    let mut received_commitment = [0u8; CHALLENGE_HASH_LENGTH];
+    recv_stream.read_exact(&mut received_commitment).await?;
+    debug!(our_role=?conn.our_role(), "initial transmission complete");
+    Ok(InitialTransmission {
+        our_nonce,
+        received_commitment: ChallengeHash::from_bytes(received_commitment),
+        their_max_payload_size,
+    })
+
+    // let our_role = conn.our_role();
+    // let (mut setup_send, mut setup_recv) = match our_role {
+    //     Role::Alfie => conn.open_bi().await?,
+    //     Role::Betty => conn.accept_bi().await?,
+    // };
+    // debug!("setup channel ready");
+
+    // let initial_transmission =
+    //     exchange_commitments(&mut setup_send, &mut setup_recv, our_nonce).await?;
+    // Ok(initial_transmission)
+}
+
+pub async fn setup(
+    conn: &PeerConn,
+) -> Result<(Channels, impl Future<Output = Result<()>> + Send + 'static)> {
+    let our_role = conn.our_role();
+    let (channels, fut) = launch_channels(&conn, our_role).await?;
+    Ok((channels, fut))
+}
+
 #[derive(derive_more::Debug)]
 pub struct WillowConn {
     pub(crate) our_role: Role,
@@ -37,122 +135,50 @@ pub struct WillowConn {
     pub(crate) initial_transmission: InitialTransmission,
     #[debug("Channels")]
     pub(crate) channels: Channels,
-    pub(crate) join_handle: JoinHandle<anyhow::Result<()>>,
 }
 
 impl WillowConn {
-    pub async fn alfie(
-        conn: Connection,
-        me: NodeId,
-        our_nonce: AccessChallenge,
-    ) -> anyhow::Result<Self> {
-        Self::connect(conn, me, Role::Alfie, our_nonce).await
-    }
-
-    pub async fn betty(
-        conn: Connection,
-        me: NodeId,
-        our_nonce: AccessChallenge,
-    ) -> anyhow::Result<Self> {
-        Self::connect(conn, me, Role::Betty, our_nonce).await
-    }
-
+    #[cfg(test)]
+    #[instrument(skip_all, name = "conn", fields(me=%me.fmt_short(), peer=tracing::field::Empty))]
     async fn connect(
         conn: Connection,
         me: NodeId,
         our_role: Role,
         our_nonce: AccessChallenge,
-    ) -> anyhow::Result<Self> {
-        let peer = get_remote_node_id(&conn)?;
-        let (initial_transmission, channels, mut join_set) =
-            setup(conn, me, our_role, our_nonce).await?;
-        let join_handle = tokio::task::spawn(async move { join_all(&mut join_set).await });
-        Ok(Self {
-            peer,
+    ) -> Result<Self> {
+        let conn = PeerConn::new(conn, our_role, me)?;
+        tracing::Span::current().record("peer", tracing::field::display(conn.peer().fmt_short()));
+        let initial_transmission = establish(&conn, our_nonce).await?;
+        let (channels, fut) = setup(&conn).await?;
+        tokio::task::spawn(fut);
+        Ok(WillowConn {
             initial_transmission,
-            channels,
-            join_handle,
             our_role,
+            peer: conn.peer(),
+            channels,
         })
     }
 }
 
-#[instrument(skip_all, name = "willow_net", fields(me=%me.fmt_short(), peer=Empty))]
-async fn setup(
-    conn: Connection,
-    me: NodeId,
-    our_role: Role,
-    our_nonce: AccessChallenge,
-) -> anyhow::Result<(InitialTransmission, Channels, JoinSet<anyhow::Result<()>>)> {
-    let peer = iroh_net::endpoint::get_remote_node_id(&conn)?;
-    Span::current().record("peer", tracing::field::display(peer.fmt_short()));
-    debug!(?our_role, "connected");
-
-    let mut tasks = JoinSet::new();
-
-    let (mut control_send_stream, mut control_recv_stream) = match our_role {
-        Role::Alfie => conn.open_bi().await?,
-        Role::Betty => conn.accept_bi().await?,
-    };
-    control_send_stream.set_priority(i32::MAX)?;
-    debug!("control channel ready");
-
-    let initial_transmission = exchange_commitments(
-        &mut control_send_stream,
-        &mut control_recv_stream,
-        our_nonce,
-    )
-    .await?;
-    debug!("exchanged commitments");
-
-    let (control_send, control_recv) = spawn_channel(
-        &mut tasks,
-        Channel::Control,
-        CHANNEL_CAP,
-        CHANNEL_CAP,
-        Guarantees::Unlimited,
-        control_send_stream,
-        control_recv_stream,
-    );
-
-    let (logical_send, logical_recv) = open_logical_channels(&mut tasks, conn, our_role).await?;
-    debug!("logical channels ready");
-    let channels = Channels {
-        send: ChannelSenders {
-            control_send,
-            logical_send,
-        },
-        recv: ChannelReceivers {
-            control_recv,
-            logical_recv,
-        },
-    };
-    Ok((initial_transmission, channels, tasks))
-}
-
 #[derive(Debug, thiserror::Error)]
 #[error("missing channel: {0:?}")]
-struct MissingChannel(LogicalChannel);
+struct MissingChannel(Channel);
 
-async fn open_logical_channels(
-    join_set: &mut JoinSet<anyhow::Result<()>>,
-    conn: Connection,
-    our_role: Role,
-) -> anyhow::Result<(LogicalChannelSenders, LogicalChannelReceivers)> {
-    let cap = CHANNEL_CAP;
-    let channels = LogicalChannel::all();
-    let mut channels = match our_role {
+type ChannelStreams = [(Channel, SendStream, RecvStream); Channel::COUNT];
+
+async fn open_channels(conn: &Connection, our_role: Role) -> Result<ChannelStreams> {
+    let channels = match our_role {
         // Alfie opens a quic stream for each logical channel, and sends a single byte with the
         // channel id.
         Role::Alfie => {
-            channels
+            Channel::all()
                 .map(|ch| {
                     let conn = conn.clone();
                     async move {
                         let (mut send, recv) = conn.open_bi().await?;
                         send.write_u8(ch.id()).await?;
                         trace!(?ch, "opened bi stream");
-                        Ok::<_, anyhow::Error>((ch, Some((send, recv))))
+                        Ok::<_, anyhow::Error>((ch, send, recv))
                     }
                 })
                 .try_join()
@@ -161,113 +187,145 @@ async fn open_logical_channels(
         // Betty accepts as many quick streams as there are logical channels, and reads a single
         // byte on each, which is expected to contain a channel id.
         Role::Betty => {
-            channels
+            Channel::all()
                 .map(|_| async {
                     let (send, mut recv) = conn.accept_bi().await?;
-                    trace!("accepted bi stream");
+                    // trace!("accepted bi stream");
                     let channel_id = recv.read_u8().await?;
-                    trace!("read channel id {channel_id}");
-                    let channel = LogicalChannel::from_id(channel_id)?;
-                    trace!("accepted bi stream for logical channel {channel:?}");
-                    anyhow::Result::Ok((channel, Some((send, recv))))
+                    // trace!("read channel id {channel_id}");
+                    let channel = Channel::from_id(channel_id)?;
+                    trace!(?channel, "accepted bi stream for channel");
+                    Result::Ok((channel, send, recv))
                 })
                 .try_join()
                 .await
         }
     }?;
+    Ok(channels)
+}
 
-    let mut take_and_spawn_channel = |channel| {
+fn start_channels(
+    channels: ChannelStreams,
+) -> Result<(Channels, impl Future<Output = Result<()>> + Send)> {
+    let mut channels = channels.map(|(ch, send, recv)| (ch, Some(prepare_channel(ch, send, recv))));
+
+    let mut find = |channel| {
         channels
             .iter_mut()
             .find_map(|(ch, streams)| (*ch == channel).then(|| streams.take()))
             .flatten()
-            .map(|(send_stream, recv_stream)| {
-                spawn_channel(
-                    join_set,
-                    Channel::Logical(channel),
-                    cap,
-                    cap,
-                    Guarantees::Limited(0),
-                    send_stream,
-                    recv_stream,
-                )
-            })
             .ok_or(MissingChannel(channel))
     };
 
-    let pai = take_and_spawn_channel(LogicalChannel::Intersection)?;
-    let rec = take_and_spawn_channel(LogicalChannel::Reconciliation)?;
-    let stt = take_and_spawn_channel(LogicalChannel::StaticToken)?;
-    let aoi = take_and_spawn_channel(LogicalChannel::AreaOfInterest)?;
-    let cap = take_and_spawn_channel(LogicalChannel::Capability)?;
-    let dat = take_and_spawn_channel(LogicalChannel::Data)?;
+    let ctrl = find(Channel::Control)?;
+    let pai = find(Channel::Logical(LogicalChannel::Intersection))?;
+    let rec = find(Channel::Logical(LogicalChannel::Reconciliation))?;
+    let stt = find(Channel::Logical(LogicalChannel::StaticToken))?;
+    let aoi = find(Channel::Logical(LogicalChannel::AreaOfInterest))?;
+    let cap = find(Channel::Logical(LogicalChannel::Capability))?;
+    let dat = find(Channel::Logical(LogicalChannel::Data))?;
 
-    Ok((
-        LogicalChannelSenders {
-            intersection_send: pai.0,
-            reconciliation_send: rec.0,
-            static_tokens_send: stt.0,
-            aoi_send: aoi.0,
-            capability_send: cap.0,
-            data_send: dat.0,
+    let fut = (ctrl.2, pai.2, rec.2, stt.2, aoi.2, cap.2, dat.2)
+        .try_join()
+        .map_ok(|_| ());
+
+    let logical_send = LogicalChannelSenders {
+        intersection_send: pai.0,
+        reconciliation_send: rec.0,
+        static_tokens_send: stt.0,
+        aoi_send: aoi.0,
+        capability_send: cap.0,
+        data_send: dat.0,
+    };
+    let logical_recv = LogicalChannelReceivers {
+        intersection_recv: pai.1.into(),
+        reconciliation_recv: rec.1.into(),
+        static_tokens_recv: stt.1.into(),
+        aoi_recv: aoi.1.into(),
+        capability_recv: cap.1.into(),
+        data_recv: dat.1.into(),
+    };
+    let channels = Channels {
+        send: ChannelSenders {
+            control_send: ctrl.0,
+            logical_send,
         },
-        LogicalChannelReceivers {
-            intersection_recv: pai.1.into(),
-            reconciliation_recv: rec.1.into(),
-            static_tokens_recv: stt.1.into(),
-            aoi_recv: aoi.1.into(),
-            capability_recv: cap.1.into(),
-            data_recv: dat.1.into(),
+        recv: ChannelReceivers {
+            control_recv: ctrl.1,
+            logical_recv,
         },
-    ))
+    };
+    Ok((channels, fut))
 }
 
-fn spawn_channel(
-    join_set: &mut JoinSet<anyhow::Result<()>>,
+async fn launch_channels(
+    conn: &Connection,
+    our_role: Role,
+) -> Result<(Channels, impl Future<Output = Result<()>> + Send)> {
+    let channels = open_channels(conn, our_role).await?;
+    start_channels(channels)
+}
+
+fn prepare_channel(
     ch: Channel,
-    send_cap: usize,
-    recv_cap: usize,
-    guarantees: Guarantees,
     send_stream: SendStream,
     recv_stream: RecvStream,
-) -> (Sender<Message>, Receiver<Message>) {
-    let (sender, outbound_reader) = outbound_channel(send_cap, guarantees);
-    let (inbound_writer, receiver) = inbound_channel(recv_cap);
+) -> (
+    Sender<Message>,
+    Receiver<Message>,
+    impl Future<Output = Result<()>> + Send,
+) {
+    let guarantees = match ch {
+        Channel::Control => Guarantees::Unlimited,
+        Channel::Logical(_) => Guarantees::Limited(0),
+    };
+    let cap = CHANNEL_CAP;
+    let (sender, outbound_reader) = outbound_channel(cap, guarantees);
+    let (inbound_writer, receiver) = inbound_channel(cap);
 
     let recv_fut = recv_loop(recv_stream, inbound_writer)
-        .map_err(move |e| e.context(format!("receive loop for {ch:?} failed")))
-        .instrument(error_span!("recv", ch=%ch.fmt_short()));
-
-    join_set.spawn(recv_fut);
+        .map_err(move |e| e.context(format!("receive loop for {ch:?} failed")));
 
     let send_fut = send_loop(send_stream, outbound_reader)
-        .map_err(move |e| e.context(format!("send loop for {ch:?} failed")))
-        .instrument(error_span!("send", ch=%ch.fmt_short()));
+        .map_err(move |e| e.context(format!("send loop for {ch:?} failed")));
 
-    join_set.spawn(send_fut);
+    let fut = (recv_fut, send_fut).try_join().map_ok(|_| ());
 
-    (sender, receiver)
+    (sender, receiver, fut)
 }
 
-async fn recv_loop(mut recv_stream: RecvStream, mut channel_writer: Writer) -> anyhow::Result<()> {
+async fn recv_loop(mut recv_stream: RecvStream, mut channel_writer: Writer) -> Result<()> {
+    trace!("recv: start");
     let max_buffer_size = channel_writer.max_buffer_size();
-    while let Some(buf) = recv_stream.read_chunk(max_buffer_size, true).await? {
+    while let Some(buf) = recv_stream
+        .read_chunk(max_buffer_size, true)
+        .await
+        .context("failed to read from quic stream")?
+    {
+        // trace!(len = buf.bytes.len(), "read");
         channel_writer.write_all(&buf.bytes[..]).await?;
-        // trace!(len = buf.bytes.len(), "recv");
+        // trace!(len = buf.bytes.len(), "sent");
     }
+    trace!("recv: stream close");
     channel_writer.close();
-    trace!("close");
+    trace!("recv: loop close");
     Ok(())
 }
 
-async fn send_loop(mut send_stream: SendStream, channel_reader: Reader) -> anyhow::Result<()> {
+async fn send_loop(mut send_stream: SendStream, channel_reader: Reader) -> Result<()> {
+    trace!("send: start");
     while let Some(data) = channel_reader.read_bytes().await {
         // let len = data.len();
-        send_stream.write_chunk(data).await?;
+        // trace!(len, "send");
+        send_stream
+            .write_chunk(data)
+            .await
+            .context("failed to write to quic stream")?;
         // trace!(len, "sent");
     }
+    trace!("send: close writer");
     send_stream.finish().await?;
-    trace!("close");
+    trace!("send: done");
     Ok(())
 }
 
@@ -275,7 +333,7 @@ async fn exchange_commitments(
     send_stream: &mut SendStream,
     recv_stream: &mut RecvStream,
     our_nonce: AccessChallenge,
-) -> anyhow::Result<InitialTransmission> {
+) -> Result<InitialTransmission> {
     let challenge_hash = our_nonce.hash();
     send_stream.write_u8(MAX_PAYLOAD_SIZE_POWER).await?;
     send_stream.write_all(challenge_hash.as_bytes()).await?;
@@ -293,26 +351,6 @@ async fn exchange_commitments(
         received_commitment: ChallengeHash::from_bytes(received_commitment),
         their_max_payload_size,
     })
-}
-
-pub async fn join_all(join_set: &mut JoinSet<anyhow::Result<()>>) -> anyhow::Result<()> {
-    let mut final_result = Ok(());
-    let mut joined = 0;
-    while let Some(res) = join_set.join_next().await {
-        joined += 1;
-        trace!("joined {joined} tasks, remaining {}", join_set.len());
-        let res = match res {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(err)) => Err(err),
-            Err(err) => Err(err.into()),
-        };
-        if res.is_err() && final_result.is_ok() {
-            final_result = res;
-        } else if res.is_err() {
-            warn!("join error after initial error: {res:?}");
-        }
-    }
-    final_result
 }
 
 #[cfg(test)]
