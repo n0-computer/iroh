@@ -115,19 +115,6 @@ pub(crate) async fn run_session<S: Storage>(
         (None, None)
     };
 
-    // let net_fut = with_span(error_span!("net"), async {
-    //     // TODO: awaiting the net task handle hangs
-    //     drop(join_handle);
-    //     // let res = join_handle.await;
-    //     // debug!(?res, "net tasks finished");
-    //     // match res {
-    //     //     Ok(Ok(())) => Ok(()),
-    //     //     Ok(Err(err)) => Err(Error::Net(err)),
-    //     //     Err(err) => Err(Error::Net(err.into())),
-    //     // }
-    //     Ok(())
-    // });
-
     let mut intents = intents::IntentDispatcher::new(store.auth().clone(), initial_intents);
     let intents_fut = with_span(error_span!("intents"), async {
         use intents::Output;
@@ -341,7 +328,6 @@ pub(crate) async fn run_session<S: Storage>(
     });
 
     let result = (
-        // net_fut,
         intents_fut,
         control_loop,
         data_loop,
