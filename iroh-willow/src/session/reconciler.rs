@@ -125,13 +125,6 @@ impl<S: Storage> Reconciler<S> {
                 target
                     .received_send_fingerprint(&self.shared, message)
                     .await?;
-                tracing::warn!(
-                    is_complete = target.is_complete(),
-                    started = target.started,
-                    our_uncovered_ranges = ?target.our_uncovered_ranges,
-                    current_entry_none = self.current_entry.is_none(),
-                    "received_send_fingerprint done"
-                );
                 if target.is_complete() && self.current_entry.is_none() {
                     self.complete_target(target_id).await?;
                 }
