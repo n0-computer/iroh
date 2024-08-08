@@ -560,6 +560,7 @@
 <a href="#560" id="560">560</a>
 <a href="#561" id="561">561</a>
 <a href="#562" id="562">562</a>
+<a href="#563" id="563">563</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{HashMap, HashSet, VecDeque},
     future::Future,
@@ -576,7 +577,7 @@
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tokio_stream::{wrappers::ReceiverStream, StreamMap, StreamNotifyClose};
 <span class="kw">use </span>tokio_util::sync::PollSender;
-<span class="kw">use </span>tracing::debug;
+<span class="kw">use </span>tracing::{debug, trace, warn};
 
 <span class="kw">use crate</span>::{
     auth::{Auth, InterestMap},
@@ -793,7 +794,8 @@
     }
 }
 
-<span class="attr">#[derive(Debug)]
+<span class="attr">#[derive(derive_more::Debug)]
+#[debug(<span class="string">"IntentChannels"</span>)]
 </span><span class="kw">struct </span>IntentChannels {
     event_tx: Sender&lt;EventKind&gt;,
     update_rx: Receiver&lt;IntentUpdate&gt;,
@@ -869,11 +871,11 @@
         <span class="kw">while let </span><span class="prelude-val">Some</span>(intent) = <span class="self">self</span>.pending_intents.pop_front() {
             <span class="self">self</span>.submit_intent(<span class="kw-2">&amp;</span>co, intent).<span class="kw">await</span><span class="question-mark">?</span>;
         }
-        <span class="macro">debug!</span>(<span class="string">"submitted initial intents, start loop"</span>);
+        <span class="macro">trace!</span>(<span class="string">"submitted initial intents, start loop"</span>);
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
                 input = inbox.next() =&gt; {
-                    <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>input, <span class="string">"tick: inbox"</span>);
+                    <span class="macro">trace!</span>(<span class="question-mark">?</span>input, <span class="string">"tick: inbox"</span>);
                     <span class="kw">let </span><span class="prelude-val">Some</span>(input) = input <span class="kw">else </span>{
                         <span class="kw">break</span>;
                     };
@@ -883,12 +885,12 @@
                     }
                 }
                 <span class="prelude-val">Some</span>((intent_id, event)) = <span class="self">self</span>.intent_update_rx.next(), <span class="kw">if </span>!<span class="self">self</span>.intent_update_rx.is_empty() =&gt; {
-                    <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>intent_id, <span class="question-mark">?</span>event, <span class="string">"tick: intent_update"</span>);
+                    <span class="macro">trace!</span>(<span class="question-mark">?</span>intent_id, <span class="question-mark">?</span>event, <span class="string">"tick: intent_update"</span>);
                     <span class="kw">match </span>event {
                         <span class="prelude-val">Some</span>(event) =&gt; {
                             <span class="comment">// Received an intent update.
                             </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.update_intent(<span class="kw-2">&amp;</span>co, intent_id, event).<span class="kw">await </span>{
-                                <span class="macro">tracing::warn!</span>(%intent_id, <span class="question-mark">?</span>err, <span class="string">"failed to update intent"</span>);
+                                <span class="macro">warn!</span>(%intent_id, <span class="question-mark">?</span>err, <span class="string">"failed to update intent"</span>);
                             }
                         },
                         <span class="prelude-val">None </span>=&gt; {
@@ -982,7 +984,7 @@
         intent_id: u64,
         update: IntentUpdate,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="macro">debug!</span>(<span class="question-mark">?</span>intent_id, <span class="question-mark">?</span>update, <span class="string">"intent update"</span>);
+        <span class="macro">trace!</span>(<span class="question-mark">?</span>intent_id, <span class="question-mark">?</span>update, <span class="string">"intent update"</span>);
         <span class="kw">match </span>update {
             IntentUpdate::AddInterests(interests) =&gt; {
                 <span class="kw">let </span>add_interests = <span class="self">self</span>.auth.resolve_interests(interests)<span class="question-mark">?</span>;
@@ -1000,7 +1002,7 @@
     }
 
     <span class="kw">async fn </span>cancel_intent(<span class="kw-2">&amp;mut </span><span class="self">self</span>, co: <span class="kw-2">&amp;</span>Co&lt;Output&gt;, intent_id: u64) {
-        <span class="macro">debug!</span>(<span class="question-mark">?</span>intent_id, <span class="string">"cancel intent"</span>);
+        <span class="macro">trace!</span>(<span class="question-mark">?</span>intent_id, <span class="string">"cancel intent"</span>);
         <span class="self">self</span>.intent_update_rx.remove(<span class="kw-2">&amp;</span>intent_id);
         <span class="self">self</span>.intents.remove(<span class="kw-2">&amp;</span>intent_id);
         <span class="kw">if </span><span class="self">self</span>.intents.is_empty() {

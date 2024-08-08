@@ -510,9 +510,9 @@
     ) -&gt; ActorHandle {
         <span class="kw">let </span>(inbox_tx, inbox_rx) = flume::bounded(INBOX_CAP);
         <span class="kw">let </span>join_handle = std::thread::Builder::new()
-            .name(<span class="string">"willow-actor"</span>.to_string())
+            .name(<span class="string">"willow"</span>.to_string())
             .spawn(<span class="kw">move </span>|| {
-                <span class="kw">let </span>span = <span class="macro">error_span!</span>(<span class="string">"willow-actor"</span>, me=%me.fmt_short());
+                <span class="kw">let </span>span = <span class="macro">error_span!</span>(<span class="string">"willow"</span>, me=%me.fmt_short());
                 <span class="kw">let </span>_guard = span.enter();
                 <span class="kw">let </span>store = Store::new((create_store)());
                 <span class="kw">let </span>actor = Actor::new(store, inbox_rx);

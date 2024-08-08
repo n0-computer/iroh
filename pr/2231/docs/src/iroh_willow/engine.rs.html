@@ -114,7 +114,7 @@
         <span class="kw">let </span>peer_manager = PeerManager::new(actor_handle.clone(), endpoint, pm_inbox_rx, accept_opts);
         <span class="kw">let </span>peer_manager_task = tokio::task::spawn(
             <span class="kw">async move </span>{ peer_manager.run().<span class="kw">await</span>.map_err(|err| <span class="macro">format!</span>(<span class="string">"{err:?}"</span>)) }
-                .instrument(<span class="macro">error_span!</span>(<span class="string">"peer_manager"</span>, me = me.fmt_short())),
+                .instrument(<span class="macro">error_span!</span>(<span class="string">"peer_manager"</span>, me=%me.fmt_short())),
         );
         Engine {
             actor_handle,
