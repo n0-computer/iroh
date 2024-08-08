@@ -1,10 +1,15 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use futures_concurrency::future::TryJoin;
 use futures_lite::StreamExt;
 
 use iroh_willow::{
     proto::{grouping::Area, willow::Path},
-    session::{intents::EventKind, Interests, SessionInit, SessionMode},
+    session::{
+        intents::{Completion, EventKind},
+        Interests, SessionInit, SessionMode,
+    },
 };
 
 use self::util::{create_rng, insert, setup_and_delegate, spawn_two, Peer};
@@ -106,8 +111,45 @@ async fn peer_manager_two_intents() -> Result<()> {
     task_foo_path.await.unwrap();
     task_bar_path.await.unwrap();
 
+    // tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
     [alfie, betty].map(Peer::shutdown).try_join().await?;
 
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn peer_manager_shutdown_immediate() -> Result<()> {
+    iroh_test::logging::setup_multithreaded();
+    let mut rng = create_rng("peer_manager_update_intent");
+
+    let [alfie, betty] = spawn_two(&mut rng).await?;
+    let (_namespace, _alfie_user, _betty_user) = setup_and_delegate(&alfie, &betty).await?;
+    let betty_node_id = betty.node_id();
+    let mut intent = alfie
+        .sync_with_peer(betty_node_id, SessionInit::reconcile_once(Interests::all()))
+        .await?;
+    let completion = intent.complete().await?;
+    assert_eq!(completion, Completion::Complete);
+    [alfie, betty].map(Peer::shutdown).try_join().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn peer_manager_shutdown_timeout() -> Result<()> {
+    iroh_test::logging::setup_multithreaded();
+    let mut rng = create_rng("peer_manager_update_intent");
+
+    let [alfie, betty] = spawn_two(&mut rng).await?;
+    let (_namespace, _alfie_user, _betty_user) = setup_and_delegate(&alfie, &betty).await?;
+    let betty_node_id = betty.node_id();
+    let mut intent = alfie
+        .sync_with_peer(betty_node_id, SessionInit::reconcile_once(Interests::all()))
+        .await?;
+    let completion = intent.complete().await?;
+    assert_eq!(completion, Completion::Complete);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    [alfie, betty].map(Peer::shutdown).try_join().await?;
     Ok(())
 }
 

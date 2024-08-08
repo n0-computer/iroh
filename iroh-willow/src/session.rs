@@ -3,6 +3,7 @@ use std::{
     sync::Arc,
 };
 
+use channels::ChannelSenders;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -77,6 +78,10 @@ pub enum Interests {
 impl Interests {
     pub fn builder() -> SelectBuilder {
         SelectBuilder::default()
+    }
+
+    pub fn all() -> Self {
+        Self::All
     }
 }
 
@@ -176,10 +181,23 @@ impl EventSender {
     }
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub enum SessionEvent {
     Established,
-    Complete { result: Result<(), Arc<Error>> },
+    Complete {
+        result: Result<(), Arc<Error>>,
+        who_cancelled: WhoCancelled,
+        #[debug("ChannelSenders")]
+        senders: ChannelSenders,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum WhoCancelled {
+    WeDid,
+    TheyDid,
+    BothDid,
+    NoneDid,
 }
 
 #[derive(Debug)]
@@ -195,7 +213,7 @@ impl SessionHandle {
     /// Returns an error if the session failed to complete.
     pub async fn complete(&mut self) -> Result<(), Arc<Error>> {
         while let Some(event) = self.event_rx.recv().await {
-            if let SessionEvent::Complete { result } = event {
+            if let SessionEvent::Complete { result, .. } = event {
                 return result;
             }
         }

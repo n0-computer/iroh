@@ -16,8 +16,8 @@ use tokio::{
 };
 use tokio_stream::{wrappers::ReceiverStream, StreamMap};
 
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, error_span, instrument, trace, warn, Instrument, Span};
+use tokio_util::{either::Either, sync::CancellationToken};
+use tracing::{debug, error_span, instrument, trace, warn, Instrument, Span};
 
 use crate::{
     net::{establish, prepare_channels, ChannelStreams, ConnHandle, ALPN},
@@ -25,6 +25,7 @@ use crate::{
     session::{
         intents::{EventKind, Intent},
         Error, Interests, Role, SessionEvent, SessionHandle, SessionInit, SessionUpdate,
+        WhoCancelled,
     },
 };
 
@@ -121,6 +122,7 @@ pub(super) struct PeerManager {
     peers: HashMap<NodeId, PeerInfo>,
     accept_handlers: AcceptHandlers,
     conn_tasks: JoinSet<(NodeId, Result<ConnStep>)>,
+    shutting_down: bool,
 }
 
 impl PeerManager {
@@ -138,38 +140,64 @@ impl PeerManager {
             peers: Default::default(),
             accept_handlers: AcceptHandlers::new(accept_opts),
             conn_tasks: Default::default(),
+            shutting_down: false,
         }
     }
 
     pub(super) async fn run(mut self) -> Result<(), Error> {
+        let mut shutdown_reply = None;
+        let shutdown_timeout = Either::Left(std::future::pending::<()>());
+        tokio::pin!(shutdown_timeout);
         loop {
             tokio::select! {
-                Some(input) = self.inbox.recv() => {
+                Some(input) = self.inbox.recv(), if !self.shutting_down => {
                     trace!(?input, "tick: inbox");
                     match input {
                         Input::SubmitIntent { peer, intent } => self.submit_intent(peer, intent).await,
                         Input::HandleConnection { conn } => self.handle_connection(conn).await,
                         Input::Shutdown { reply } => {
-                            self.handle_shutdown().await;
-                            reply.send(()).ok();
-                            break;
+                            self.init_shutdown();
+                            if self.conn_tasks.is_empty() {
+                                reply.send(()).ok();
+                                break;
+                            } else {
+                                shutdown_reply = Some(reply);
+                                shutdown_timeout.set(Either::Right(tokio::time::sleep(GRACEFUL_SHUTDOWN_TIMEOUT)));
+                            }
                         }
                     }
+                }
+                _ = &mut shutdown_timeout => {
+                    trace!("tick: shutdown timeout");
+                    debug!(
+                        remaining=self.conn_tasks.len(),
+                        "terminating all connections timed out, abort remaining connections"
+                    );
+                    // TODO: We do not catch panics here.
+                    self.conn_tasks.shutdown().await;
+                    break;
                 }
                 Some((session_id, event)) = self.session_events_rx.next(), if !self.session_events_rx.is_empty() => {
                     trace!(?session_id, ?event, "tick: event");
                     self.handle_session_event(session_id, event);
                 }
                 Some(res) = self.conn_tasks.join_next(), if !self.conn_tasks.is_empty() => {
-                    trace!("tick: conn task joined");
+                    trace!(active=self.conn_tasks.len(), "tick: conn task joined");
                     match res {
                         Err(err) if err.is_cancelled() => continue,
                         Err(err) => Err(err).context("conn task panicked")?,
                         Ok((peer, out)) => self.handle_conn_output(peer, out).await?,
                     }
+                    if self.shutting_down && self.conn_tasks.is_empty() {
+                        debug!("all connections gracefully terminated");
+                        break;
+                    }
                 }
                 else => break,
             }
+        }
+        if let Some(reply) = shutdown_reply {
+            reply.send(()).ok();
         }
         Ok(())
     }
@@ -261,14 +289,21 @@ impl PeerManager {
 
     #[instrument("conn", skip_all, fields(peer=%peer.fmt_short()))]
     fn handle_session_event(&mut self, peer: NodeId, event: SessionEvent) {
-        trace!(peer=%peer.fmt_short(), ?event, "session event");
+        trace!(?event, "session event");
         match event {
             SessionEvent::Established => {}
-            SessionEvent::Complete { result } => {
-                debug!(?result, "session complete");
-                // TODO: I don't think we need to do anything here. The connection tasks terminate by themselves:
-                // The send loops are closed from `session::run` via `ChannelSenders::close_all`,
-                // and the receive loops terminate once the other side closes their send loops.
+            SessionEvent::Complete {
+                result,
+                who_cancelled,
+                senders,
+            } => {
+                debug!(error=?result.err(), ?who_cancelled, "session complete");
+                senders.close_all();
+                let Some(peer_info) = self.peers.get_mut(&peer) else {
+                    warn!("got session complete for unknown peer");
+                    return;
+                };
+                peer_info.who_cancelled = Some(who_cancelled);
             }
         }
     }
@@ -299,6 +334,11 @@ impl PeerManager {
                 initial_transmission,
                 channel_streams,
             }) => {
+                if self.shutting_down {
+                    debug!("connection became ready while shutting down, abort");
+                    conn.close(ERROR_CODE_IGNORE_CONN.into(), b"shutting-down");
+                    return Ok(());
+                }
                 // TODO: Here we should check again that we are not establishing a duplicate connection.
                 debug!("connection ready: init session");
                 let (channels, fut) = prepare_channels(channel_streams)?;
@@ -329,40 +369,43 @@ impl PeerManager {
                 peer_info.abort_handle = Some(abort_handle);
             }
             Ok(ConnStep::Done { conn }) => {
-                debug!("connection loop finished");
-                // TODO: Instead of using our role (alfie vs. betty), the party who sent the last
-                // meaningful message should wait for the other end to terminate the connection, I think.
-                //
-                // In other words, the connection may only be closed by the party who received the last meaningful message.
-                if peer_info.our_role == Role::Alfie {
-                    conn.close(ERROR_CODE_OK.into(), b"bye");
-                }
+                trace!("connection loop finished");
+                let who_cancelled = peer_info
+                    .who_cancelled
+                    .take()
+                    .unwrap_or(WhoCancelled::NoneDid);
+                let me = self.endpoint.node_id();
                 let fut = async move {
+                    let we_close_first = match who_cancelled {
+                        WhoCancelled::WeDid => false,
+                        WhoCancelled::TheyDid => true,
+                        WhoCancelled::BothDid => me > peer,
+                        WhoCancelled::NoneDid => true,
+                    };
+                    if we_close_first {
+                        conn.close(ERROR_CODE_OK.into(), b"bye");
+                    }
                     let reason = conn.closed().await;
+                    let is_graceful = match &reason {
+                        ConnectionError::LocallyClosed if we_close_first => true,
+                        ConnectionError::ApplicationClosed(frame)
+                            if frame.error_code == ERROR_CODE_OK.into() =>
+                        {
+                            !we_close_first || who_cancelled == WhoCancelled::NoneDid
+                        }
+                        _ => false,
+                    };
+                    if !is_graceful {
+                        warn!(?reason, "connection was not closed gracefully");
+                    } else {
+                        debug!("connection closed gracefully");
+                    }
                     Ok(ConnStep::Closed { conn, reason })
                 };
                 let abort_handle = spawn_conn_task(&mut self.conn_tasks, &peer_info, fut);
                 peer_info.abort_handle = Some(abort_handle);
             }
-            Ok(ConnStep::Closed { reason, conn }) => {
-                // TODO: Instead of using our role (alfie vs. betty), the party who sent the last
-                // meaningful message should wait for the other end to terminate the connection, I think.
-                let locally_closed = peer_info.our_role == Role::Alfie;
-                let is_graceful = match &reason {
-                    ConnectionError::LocallyClosed if locally_closed => true,
-                    ConnectionError::ApplicationClosed(frame)
-                        if !locally_closed && frame.error_code == ERROR_CODE_OK.into() =>
-                    {
-                        true
-                    }
-                    _ => false,
-                };
-                if !is_graceful {
-                    warn!(?reason, "connection was not closed gracefully");
-                } else {
-                    debug!("connection closed gracefully");
-                }
-
+            Ok(ConnStep::Closed { reason: _, conn }) => {
                 self.peers.remove(&peer);
                 drop(conn);
             }
@@ -370,12 +413,8 @@ impl PeerManager {
         Ok(())
     }
 
-    /// Shuts down all connection tasks.
-    ///
-    /// Attempts to shutdown connections for active peers gracefully within [`GRACEFUL_SHUTDOWN_TIMEOUT`].
-    /// Aborts connections for not-yet-active peers immediately.
-    /// Aborts all connections after the graceful timeout elapsed.
-    async fn handle_shutdown(&mut self) {
+    fn init_shutdown(&mut self) {
+        self.shutting_down = true;
         for peer in self.peers.values() {
             match &peer.state {
                 PeerState::None => {}
@@ -390,47 +429,6 @@ impl PeerManager {
                     // We are in active state. We cancel our session, which leads to graceful connection termination.
                     cancel_token.cancel();
                 }
-            }
-        }
-
-        let join_conns_fut = async {
-            while let Some(res) = self.conn_tasks.join_next().await {
-                trace!("tick: conn task joined");
-                match res {
-                    Err(err) if err.is_cancelled() => continue,
-                    Err(err) => {
-                        error!(?err, "conn task panicked during shutdown");
-                    }
-                    Ok((peer, out)) => {
-                        match &out {
-                            Err(_) | Ok(ConnStep::Done { .. }) | Ok(ConnStep::Closed { .. }) => {
-                                if let Err(err) = self.handle_conn_output(peer, out).await {
-                                    error!(?err, "conn task output error during shutdown");
-                                }
-                            }
-                            _ => {
-                                // We should not reach this state, as we abort all tasks that lead to output other than done or close.
-                                // However, tokio docs for `AbortHandle::abort` state that cancelling a task that might
-                                // already have been completed only triggers a cancelled JoinError *most likely*...
-                                warn!(?peer, ?out, "expected tasks that lead to output other than done or close to be aborted");
-                            }
-                        }
-                    }
-                }
-            }
-        };
-
-        match tokio::time::timeout(GRACEFUL_SHUTDOWN_TIMEOUT, join_conns_fut).await {
-            Ok(()) => {
-                debug!("all connections gracefully terminated");
-            }
-            Err(_) => {
-                debug!(
-                    remaining=self.conn_tasks.len(),
-                    "terminating all connections at shutdown timed out, abort remaining connections"
-                );
-                // TODO: We do not catch panics here.
-                self.conn_tasks.shutdown().await;
             }
         }
     }
@@ -456,6 +454,7 @@ struct PeerInfo {
     state: PeerState,
     pending_intents: Vec<Intent>,
     span: Span,
+    who_cancelled: Option<WhoCancelled>,
 }
 
 impl PeerInfo {
@@ -467,6 +466,7 @@ impl PeerInfo {
             state: PeerState::None,
             pending_intents: Vec::new(),
             span: error_span!("conn", peer=%peer.fmt_short()),
+            who_cancelled: None,
         }
     }
 }

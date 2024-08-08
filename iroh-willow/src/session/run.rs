@@ -1,4 +1,10 @@
-use std::{future::Future, sync::Arc};
+use std::{
+    future::Future,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use futures_concurrency::{future::TryJoin, stream::StreamExt as _};
 use futures_lite::{Stream, StreamExt as _};
@@ -20,7 +26,7 @@ use crate::{
         pai_finder::{self as pai, PaiFinder},
         reconciler,
         static_tokens::StaticTokens,
-        Channels, Error, EventSender, Role, SessionEvent, SessionId, SessionUpdate,
+        Channels, Error, EventSender, Role, SessionEvent, SessionId, SessionUpdate, WhoCancelled,
     },
     store::{traits::Storage, Store},
     util::{channel::Receiver, stream::Cancelable},
@@ -81,7 +87,7 @@ pub(crate) async fn run_session<S: Storage>(
     debug!(role = ?our_role, ?mode, "start session");
 
     // Make all our receivers close once the cancel_token is triggered.
-    let control_recv = Cancelable::new(control_recv, cancel_token.clone());
+    // let control_recv = Cancelable::new(control_recv, cancel_token.clone());
     let reconciliation_recv = Cancelable::new(reconciliation_recv, cancel_token.clone());
     let intersection_recv = Cancelable::new(intersection_recv, cancel_token.clone());
     let mut static_tokens_recv = Cancelable::new(static_tokens_recv, cancel_token.clone());
@@ -291,6 +297,9 @@ pub(crate) async fn run_session<S: Storage>(
         Ok(())
     });
 
+    let we_cancelled = AtomicBool::new(false);
+    let mut who_cancelled = WhoCancelled::NoneDid;
+
     let control_loop = with_span(error_span!("control"), async {
         let res = control_loop(
             control_recv,
@@ -299,13 +308,23 @@ pub(crate) async fn run_session<S: Storage>(
             &channel_sender,
             &pai_inbox,
             &event_sender,
+            &we_cancelled,
         )
         .await;
         if !cancel_token.is_cancelled() {
-            debug!("close session (control channel closed)");
+            debug!("close session (closed by peer)");
             cancel_token.cancel();
         }
-        res
+        match res {
+            Ok(who) => {
+                who_cancelled = who;
+                Ok(())
+            }
+            Err(err) => {
+                who_cancelled = WhoCancelled::NoneDid;
+                Err(err)
+            }
+        }
     });
 
     let aoi_recv_loop = with_span(error_span!("aoi_recv"), async {
@@ -327,6 +346,13 @@ pub(crate) async fn run_session<S: Storage>(
         Ok(())
     });
 
+    let cancel_fut = async {
+        cancel_token.cancelled().await;
+        we_cancelled.store(true, Ordering::Relaxed);
+        channel_sender.send(Message::RequestClose).await?;
+        Ok(())
+    };
+
     let result = (
         intents_fut,
         control_loop,
@@ -338,6 +364,7 @@ pub(crate) async fn run_session<S: Storage>(
         token_recv_loop,
         caps_recv_loop,
         aoi_recv_loop,
+        cancel_fut,
     )
         .try_join()
         .await;
@@ -350,20 +377,18 @@ pub(crate) async fn run_session<S: Storage>(
     // Unsubscribe from the store.  This stops the data send task.
     store.entries().unsubscribe(&session_id);
 
-    // Close our channel senders.
-    // This will stop the network send loop after all pending data has been sent.
-    channel_sender.close_all();
-
     event_sender
         .send(SessionEvent::Complete {
             result: result.clone(),
+            who_cancelled,
+            senders: channel_sender,
         })
         .await
         .ok();
 
     match result {
         Ok(_) => {
-            debug!("session complete");
+            debug!(?who_cancelled, "session complete");
             Ok(())
         }
         Err(error) => {
@@ -375,13 +400,14 @@ pub(crate) async fn run_session<S: Storage>(
 }
 
 async fn control_loop(
-    mut control_recv: Cancelable<Receiver<Message>>,
+    mut control_recv: Receiver<Message>,
     our_role: Role,
     caps: &Capabilities,
     sender: &ChannelSenders,
     pai_inbox: &Sender<pai::Input>,
     event_sender: &EventSender,
-) -> Result<(), Error> {
+    we_cancelled: &AtomicBool,
+) -> Result<WhoCancelled, Error> {
     // Reveal our nonce.
     let reveal_message = caps.reveal_commitment()?;
     sender.send(reveal_message).await?;
@@ -394,6 +420,8 @@ async fn control_loop(
         };
         sender.send(msg).await?;
     }
+
+    let mut who_cancelled = WhoCancelled::NoneDid;
 
     // Handle incoming messages on the control channel.
     while let Some(message) = control_recv.try_next().await? {
@@ -428,11 +456,26 @@ async fn control_loop(
                     ))
                     .await?;
             }
+            Message::RequestClose => {
+                debug!("received close request");
+                if we_cancelled.load(Ordering::Relaxed) {
+                    who_cancelled = WhoCancelled::BothDid;
+                    break;
+                } else {
+                    who_cancelled = WhoCancelled::TheyDid;
+                    sender.send(Message::ConfirmClose).await?;
+                    break;
+                }
+            }
+            Message::ConfirmClose => {
+                who_cancelled = WhoCancelled::WeDid;
+                break;
+            }
             _ => return Err(Error::UnsupportedMessage),
         }
     }
 
-    Ok(())
+    Ok(who_cancelled)
 }
 
 fn cancelable_channel<T: Send + 'static>(

@@ -144,7 +144,7 @@ impl Intent {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum Completion {
     /// All interests were reconciled.
     Complete,

@@ -429,6 +429,8 @@ pub enum Message {
     ControlApologise(ControlApologise),
     #[debug("{:?}", _0)]
     ControlFreeHandle(ControlFreeHandle),
+    RequestClose,
+    ConfirmClose,
 }
 
 impl Message {
@@ -520,7 +522,9 @@ impl Message {
             | Message::ControlPlead(_)
             | Message::ControlAnnounceDropping(_)
             | Message::ControlApologise(_)
-            | Message::ControlFreeHandle(_) => Channel::Control,
+            | Message::ControlFreeHandle(_)
+            | Message::RequestClose
+            | Message::ConfirmClose => Channel::Control,
         }
     }
 }
