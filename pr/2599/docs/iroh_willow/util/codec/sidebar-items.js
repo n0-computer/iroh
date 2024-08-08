@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DecodeOutcome"],"fn":["compact_width"],"struct":["CompactWidth"],"trait":["Decoder","Encoder"]};
