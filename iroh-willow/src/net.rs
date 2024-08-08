@@ -662,17 +662,8 @@ mod tests {
             .complete()
             .await
             .expect("failed to close alfie session");
+        info!("close alfie session");
         senders_alfie.close_all();
-
-        let (res_alfie, res_betty) = tokio::join!(
-            intent_handle_alfie.complete(),
-            intent_handle_betty.complete()
-        );
-        info!(time=?start.elapsed(), "reconciliation finished");
-        info!("alfie intent res {:?}", res_alfie);
-        info!("betty intent res {:?}", res_betty);
-        assert!(res_alfie.is_ok());
-        assert!(res_betty.is_ok());
 
         let (senders_betty, betty_cancelled) = session_betty
             .complete()
@@ -684,6 +675,16 @@ mod tests {
             .expect("failed to close connection loops");
         r1.unwrap();
         r2.unwrap();
+
+        let (res_alfie, res_betty) = tokio::join!(
+            intent_handle_alfie.complete(),
+            intent_handle_betty.complete()
+        );
+        info!(time=?start.elapsed(), "reconciliation finished");
+        info!("alfie intent res {:?}", res_alfie);
+        info!("betty intent res {:?}", res_betty);
+        assert!(res_alfie.is_ok());
+        assert!(res_betty.is_ok());
 
         let (error_alfie, error_betty) = tokio::try_join!(
             terminate_gracefully(&conn_alfie, node_id_alfie, node_id_betty, alfie_cancelled),
