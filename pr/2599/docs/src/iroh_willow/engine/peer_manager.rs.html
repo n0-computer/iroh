@@ -1084,7 +1084,7 @@
                 <span class="comment">// Future that dials and establishes the connection. Can be cancelled for simultaneous connection.
                 </span><span class="kw">let </span>fut = <span class="kw">async move </span>{
                     <span class="kw">let </span>conn = <span class="macro">tokio::select!</span> {
-                        res = endpoint.connect_by_node_id(<span class="kw-2">&amp;</span>peer, ALPN) =&gt; res,
+                        res = endpoint.connect_by_node_id(peer, ALPN) =&gt; res,
                         <span class="kw">_ </span>= cancel_dial.cancelled() =&gt; {
                             <span class="macro">debug!</span>(<span class="string">"dial cancelled during dial"</span>);
                             <span class="kw">return </span><span class="prelude-val">Err</span>(ConnectionError::LocallyClosed.into());
