@@ -186,18 +186,11 @@ pub enum SessionEvent {
     Established,
     Complete {
         result: Result<(), Arc<Error>>,
-        who_cancelled: WhoCancelled,
+        // who_cancelled: WhoCancelled,
+        we_cancelled: bool,
         #[debug("ChannelSenders")]
         senders: ChannelSenders,
     },
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum WhoCancelled {
-    WeDid,
-    TheyDid,
-    BothDid,
-    NoneDid,
 }
 
 #[derive(Debug)]

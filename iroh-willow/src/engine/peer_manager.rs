@@ -20,22 +20,19 @@ use tokio_util::{either::Either, sync::CancellationToken};
 use tracing::{debug, error_span, instrument, trace, warn, Instrument, Span};
 
 use crate::{
-    net::{establish, prepare_channels, ChannelStreams, ConnHandle, ALPN},
+    net::{
+        establish, prepare_channels, terminate_gracefully, ChannelStreams, ConnHandle, ALPN,
+        ERROR_CODE_IGNORE_CONN,
+    },
     proto::sync::{AccessChallenge, InitialTransmission},
     session::{
         intents::{EventKind, Intent},
         Error, Interests, Role, SessionEvent, SessionHandle, SessionInit, SessionUpdate,
-        WhoCancelled,
     },
 };
 
 use super::actor::ActorHandle;
 
-/// Our QUIC application error code for graceful connection termination.
-const ERROR_CODE_OK: u32 = 1;
-/// Our QUIC application error code when closing connections during establishment
-/// because we prefer another existing connection to the same peer.
-const ERROR_CODE_IGNORE_CONN: u32 = 2;
 /// Timeout at shutdown after which we abort connections that failed to terminate gracefully.
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -294,16 +291,16 @@ impl PeerManager {
             SessionEvent::Established => {}
             SessionEvent::Complete {
                 result,
-                who_cancelled,
+                we_cancelled,
                 senders,
             } => {
-                debug!(error=?result.err(), ?who_cancelled, "session complete");
+                trace!(error=?result.err(), ?we_cancelled, "session complete");
                 senders.close_all();
                 let Some(peer_info) = self.peers.get_mut(&peer) else {
                     warn!("got session complete for unknown peer");
                     return;
                 };
-                peer_info.who_cancelled = Some(who_cancelled);
+                peer_info.we_cancelled = we_cancelled;
             }
         }
     }
@@ -370,42 +367,20 @@ impl PeerManager {
             }
             Ok(ConnStep::Done { conn }) => {
                 trace!("connection loop finished");
-                let who_cancelled = peer_info
-                    .who_cancelled
-                    .take()
-                    .unwrap_or(WhoCancelled::NoneDid);
+                let we_cancelled = peer_info.we_cancelled;
                 let me = self.endpoint.node_id();
                 let fut = async move {
-                    let we_close_first = match who_cancelled {
-                        WhoCancelled::WeDid => false,
-                        WhoCancelled::TheyDid => true,
-                        WhoCancelled::BothDid => me > peer,
-                        WhoCancelled::NoneDid => true,
-                    };
-                    if we_close_first {
-                        conn.close(ERROR_CODE_OK.into(), b"bye");
-                    }
-                    let reason = conn.closed().await;
-                    let is_graceful = match &reason {
-                        ConnectionError::LocallyClosed if we_close_first => true,
-                        ConnectionError::ApplicationClosed(frame)
-                            if frame.error_code == ERROR_CODE_OK.into() =>
-                        {
-                            !we_close_first || who_cancelled == WhoCancelled::NoneDid
-                        }
-                        _ => false,
-                    };
-                    if !is_graceful {
-                        warn!(?reason, "connection was not closed gracefully");
-                    } else {
-                        debug!("connection closed gracefully");
-                    }
-                    Ok(ConnStep::Closed { conn, reason })
+                    let error = terminate_gracefully(&conn, me, peer, we_cancelled).await?;
+                    Ok(ConnStep::Closed { conn, error })
                 };
                 let abort_handle = spawn_conn_task(&mut self.conn_tasks, &peer_info, fut);
                 peer_info.abort_handle = Some(abort_handle);
             }
-            Ok(ConnStep::Closed { reason: _, conn }) => {
+            Ok(ConnStep::Closed { error, conn }) => {
+                match error {
+                    None => debug!("connection closed gracefully"),
+                    Some(error) => warn!(?error, "failed to close connection gracefully"),
+                }
                 self.peers.remove(&peer);
                 drop(conn);
             }
@@ -454,7 +429,8 @@ struct PeerInfo {
     state: PeerState,
     pending_intents: Vec<Intent>,
     span: Span,
-    who_cancelled: Option<WhoCancelled>,
+    // who_cancelled: Option<WhoCancelled>,
+    we_cancelled: bool,
 }
 
 impl PeerInfo {
@@ -466,7 +442,7 @@ impl PeerInfo {
             state: PeerState::None,
             pending_intents: Vec::new(),
             span: error_span!("conn", peer=%peer.fmt_short()),
-            who_cancelled: None,
+            we_cancelled: false,
         }
     }
 }
@@ -493,7 +469,7 @@ enum ConnStep {
     },
     Closed {
         conn: Connection,
-        reason: ConnectionError,
+        error: Option<ConnectionError>,
     },
 }
 
