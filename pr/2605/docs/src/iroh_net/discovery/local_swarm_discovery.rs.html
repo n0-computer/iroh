@@ -591,10 +591,10 @@
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_local_swarm_discovery() -&gt; TestResult {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
-        <span class="kw">let </span>(node_id_a, discovery_a) = make_discoverer()<span class="question-mark">?</span>;
-        <span class="kw">let </span>(<span class="kw">_</span>, discovery_b) = make_discoverer()<span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw">_</span>, discovery_a) = make_discoverer()<span class="question-mark">?</span>;
+        <span class="kw">let </span>(node_id_b, discovery_b) = make_discoverer()<span class="question-mark">?</span>;
 
-        <span class="comment">// make addr info for discoverer a
+        <span class="comment">// make addr info for discoverer b
         </span><span class="kw">let </span>addr_info = AddrInfo {
             relay_url: <span class="prelude-val">None</span>,
             direct_addresses: BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]),
@@ -603,15 +603,15 @@
         <span class="comment">// pass in endpoint, this is never used
         </span><span class="kw">let </span>ep = <span class="kw">crate</span>::endpoint::Builder::default().bind(<span class="number">0</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="comment">// resolve twice to ensure we can create separate streams for the same node_id
-        </span><span class="kw">let </span><span class="kw-2">mut </span>s1 = discovery_b.resolve(ep.clone(), node_id_a).unwrap();
-        <span class="kw">let </span><span class="kw-2">mut </span>s2 = discovery_b.resolve(ep, node_id_a).unwrap();
-        <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>node_id_a, <span class="string">"Discovering node id a"</span>);
-        <span class="comment">// publish discovery_a's address
-        </span>discovery_a.publish(<span class="kw-2">&amp;</span>addr_info);
-        <span class="kw">let </span>s1_res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), s1.next())
+        </span><span class="kw">let </span><span class="kw-2">mut </span>s1 = discovery_a.resolve(ep.clone(), node_id_b).unwrap();
+        <span class="kw">let </span><span class="kw-2">mut </span>s2 = discovery_a.resolve(ep, node_id_b).unwrap();
+        <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>node_id_b, <span class="string">"Discovering node id b"</span>);
+        <span class="comment">// publish discovery_b's address
+        </span>discovery_b.publish(<span class="kw-2">&amp;</span>addr_info);
+        <span class="kw">let </span>s1_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
             .<span class="kw">await</span><span class="question-mark">?
             </span>.unwrap()<span class="question-mark">?</span>;
-        <span class="kw">let </span>s2_res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), s2.next())
+        <span class="kw">let </span>s2_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s2.next())
             .<span class="kw">await</span><span class="question-mark">?
             </span>.unwrap()<span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(s1_res.addr_info, addr_info);
