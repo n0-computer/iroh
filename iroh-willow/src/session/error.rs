@@ -73,6 +73,8 @@ pub enum Error {
     Net(anyhow::Error),
     #[error("channel receiver dropped")]
     ChannelDropped,
+    #[error("our node is shutting down")]
+    ShuttingDown,
 }
 
 #[derive(Debug, thiserror::Error)]

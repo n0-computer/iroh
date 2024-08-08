@@ -1,6 +1,6 @@
 use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use futures_buffered::join_all;
 
 use futures_lite::{future::Boxed, StreamExt};
@@ -231,11 +231,12 @@ impl PeerManager {
                 let abort_handle = spawn_conn_task(&mut self.conn_tasks, &peer_info, fut);
                 peer_info.abort_handle = Some(abort_handle);
                 peer_info.our_role = Role::Betty;
-                peer_info.pending_intents.push(intent);
-                peer_info.state = PeerState::Pending;
+                peer_info.state = PeerState::Pending {
+                    intents: vec![intent],
+                };
             }
-            PeerState::Pending => {
-                peer_info.pending_intents.push(intent);
+            PeerState::Pending { ref mut intents } => {
+                intents.push(intent);
                 debug!("ignore incoming connection (already pending)");
                 conn.close(ERROR_CODE_IGNORE_CONN.into(), b"duplicate-already-active");
             }
@@ -269,11 +270,12 @@ impl PeerManager {
                 };
                 let abort_handle = spawn_conn_task(&mut self.conn_tasks, &peer_info, fut);
                 peer_info.abort_handle = Some(abort_handle);
-                peer_info.pending_intents.push(intent);
-                peer_info.state = PeerState::Pending;
+                peer_info.state = PeerState::Pending {
+                    intents: vec![intent],
+                };
             }
-            PeerState::Pending => {
-                peer_info.pending_intents.push(intent);
+            PeerState::Pending { ref mut intents } => {
+                intents.push(intent);
             }
             PeerState::Active { ref update_tx, .. } => {
                 if let Err(err) = update_tx.send(SessionUpdate::SubmitIntent(intent)).await {
@@ -295,11 +297,14 @@ impl PeerManager {
                 senders,
             } => {
                 trace!(error=?result.err(), ?we_cancelled, "session complete");
+                // Close the channel senders. This will cause our send loops to close,
+                // which in turn causes the receive loops of the other peer to close.
                 senders.close_all();
                 let Some(peer_info) = self.peers.get_mut(&peer) else {
                     warn!("got session complete for unknown peer");
                     return;
                 };
+                // Store whether we initiated the termination. We will need this for the graceful termination logic later.
                 peer_info.we_cancelled = we_cancelled;
             }
         }
@@ -315,38 +320,59 @@ impl PeerManager {
         match out {
             Err(err) => {
                 debug!(peer=%peer.fmt_short(), ?err, "conn task failed");
-                let err = Arc::new(Error::Net(err));
                 let peer = self.peers.remove(&peer).expect("just checked");
-                join_all(
-                    peer.pending_intents
-                        .into_iter()
-                        .map(|intent| intent.send_abort(err.clone())),
-                )
-                .await;
+                // If we were still in pending state, terminate all pending intents.
+                if let PeerState::Pending { intents } = peer.state {
+                    let err = Arc::new(Error::Net(err));
+                    join_all(
+                        intents
+                            .into_iter()
+                            .map(|intent| intent.send_abort(err.clone())),
+                    )
+                    .await;
+                }
                 // We don't need to cancel the session here. It will terminate because all receiver channels are closed.
-                return Ok(());
             }
             Ok(ConnStep::Ready {
                 conn,
                 initial_transmission,
                 channel_streams,
             }) => {
+                let PeerState::Pending { ref mut intents } = &mut peer_info.state else {
+                    drop(conn);
+                    // TODO: unreachable?
+                    return Err(anyhow!(
+                        "got connection ready for peer in non-pending state"
+                    ));
+                };
+
+                let intents = std::mem::take(intents);
+
                 if self.shutting_down {
                     debug!("connection became ready while shutting down, abort");
                     conn.close(ERROR_CODE_IGNORE_CONN.into(), b"shutting-down");
+                    if !intents.is_empty() {
+                        let err = Arc::new(Error::ShuttingDown);
+                        join_all(
+                            intents
+                                .into_iter()
+                                .map(|intent| intent.send_abort(err.clone())),
+                        )
+                        .await;
+                    }
                     return Ok(());
                 }
+
                 // TODO: Here we should check again that we are not establishing a duplicate connection.
                 debug!("connection ready: init session");
                 let (channels, fut) = prepare_channels(channel_streams)?;
-                let willow_conn = ConnHandle {
+                let conn_handle = ConnHandle {
                     initial_transmission,
                     channels,
                     our_role: peer_info.our_role,
                     peer,
                 };
-                let intents = std::mem::take(&mut peer_info.pending_intents);
-                let session_handle = self.actor.init_session(willow_conn, intents).await?;
+                let session_handle = self.actor.init_session(conn_handle, intents).await?;
 
                 let fut = fut.map_ok(move |()| ConnStep::Done { conn });
                 let abort_handle = spawn_conn_task(&mut self.conn_tasks, &peer_info, fut);
@@ -393,7 +419,7 @@ impl PeerManager {
         for peer in self.peers.values() {
             match &peer.state {
                 PeerState::None => {}
-                PeerState::Pending => {
+                PeerState::Pending { .. } => {
                     // We are in pending state, which means the session has not yet been started.
                     // Hard-abort the task and let the other peer handle the error.
                     if let Some(abort_handle) = &peer.abort_handle {
@@ -427,9 +453,7 @@ struct PeerInfo {
     our_role: Role,
     abort_handle: Option<AbortHandle>,
     state: PeerState,
-    pending_intents: Vec<Intent>,
     span: Span,
-    // who_cancelled: Option<WhoCancelled>,
     we_cancelled: bool,
 }
 
@@ -440,7 +464,6 @@ impl PeerInfo {
             our_role,
             abort_handle: None,
             state: PeerState::None,
-            pending_intents: Vec::new(),
             span: error_span!("conn", peer=%peer.fmt_short()),
             we_cancelled: false,
         }
@@ -450,7 +473,9 @@ impl PeerInfo {
 #[derive(Debug)]
 enum PeerState {
     None,
-    Pending,
+    Pending {
+        intents: Vec<Intent>,
+    },
     Active {
         cancel_token: CancellationToken,
         update_tx: mpsc::Sender<SessionUpdate>,

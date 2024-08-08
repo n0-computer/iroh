@@ -203,14 +203,20 @@ pub struct SessionHandle {
 impl SessionHandle {
     /// Wait for the session to finish.
     ///
+    /// Returns the channel senders and a boolean indicating if we cancelled the session.
     /// Returns an error if the session failed to complete.
-    pub async fn complete(&mut self) -> Result<(), Arc<Error>> {
+    pub async fn complete(&mut self) -> Result<(ChannelSenders, bool), Arc<Error>> {
         while let Some(event) = self.event_rx.recv().await {
-            if let SessionEvent::Complete { result, .. } = event {
-                return result;
+            if let SessionEvent::Complete {
+                result,
+                senders,
+                we_cancelled,
+            } = event
+            {
+                return result.map(|()| (senders, we_cancelled));
             }
         }
-        Ok(())
+        Err(Arc::new(Error::ActorFailed))
     }
 
     /// Submit a new synchronisation intent.

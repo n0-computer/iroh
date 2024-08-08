@@ -119,41 +119,6 @@ async fn peer_manager_two_intents() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn peer_manager_shutdown_immediate() -> Result<()> {
-    iroh_test::logging::setup_multithreaded();
-    let mut rng = create_rng("peer_manager_update_intent");
-
-    let [alfie, betty] = spawn_two(&mut rng).await?;
-    let (_namespace, _alfie_user, _betty_user) = setup_and_delegate(&alfie, &betty).await?;
-    let betty_node_id = betty.node_id();
-    let mut intent = alfie
-        .sync_with_peer(betty_node_id, SessionInit::reconcile_once(Interests::all()))
-        .await?;
-    let completion = intent.complete().await?;
-    assert_eq!(completion, Completion::Complete);
-    [alfie, betty].map(Peer::shutdown).try_join().await?;
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn peer_manager_shutdown_timeout() -> Result<()> {
-    iroh_test::logging::setup_multithreaded();
-    let mut rng = create_rng("peer_manager_update_intent");
-
-    let [alfie, betty] = spawn_two(&mut rng).await?;
-    let (_namespace, _alfie_user, _betty_user) = setup_and_delegate(&alfie, &betty).await?;
-    let betty_node_id = betty.node_id();
-    let mut intent = alfie
-        .sync_with_peer(betty_node_id, SessionInit::reconcile_once(Interests::all()))
-        .await?;
-    let completion = intent.complete().await?;
-    assert_eq!(completion, Completion::Complete);
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    [alfie, betty].map(Peer::shutdown).try_join().await?;
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn peer_manager_update_intent() -> Result<()> {
     iroh_test::logging::setup_multithreaded();
     let mut rng = create_rng("peer_manager_update_intent");
@@ -218,6 +183,47 @@ async fn peer_manager_update_intent() -> Result<()> {
 
     assert!(intent.next().await.is_none(),);
 
+    [alfie, betty].map(Peer::shutdown).try_join().await?;
+    Ok(())
+}
+
+/// Test immediate shutdown.
+// TODO: This does not really test much. Used it for log reading of graceful connection termination.
+// Not sure where we should expose whether connections closed gracefully or not?
+#[tokio::test(flavor = "multi_thread")]
+async fn peer_manager_shutdown_immediate() -> Result<()> {
+    iroh_test::logging::setup_multithreaded();
+    let mut rng = create_rng("peer_manager_shutdown_immediate");
+
+    let [alfie, betty] = spawn_two(&mut rng).await?;
+    let (_namespace, _alfie_user, _betty_user) = setup_and_delegate(&alfie, &betty).await?;
+    let betty_node_id = betty.node_id();
+    let mut intent = alfie
+        .sync_with_peer(betty_node_id, SessionInit::reconcile_once(Interests::all()))
+        .await?;
+    let completion = intent.complete().await?;
+    assert_eq!(completion, Completion::Complete);
+    [alfie, betty].map(Peer::shutdown).try_join().await?;
+    Ok(())
+}
+
+/// Test shutdown after a timeout.
+// TODO: This does not really test much. Used it for log reading of graceful connection termination.
+// Not sure where we should expose whether connections closed gracefully or not?
+#[tokio::test(flavor = "multi_thread")]
+async fn peer_manager_shutdown_timeout() -> Result<()> {
+    iroh_test::logging::setup_multithreaded();
+    let mut rng = create_rng("peer_manager_shutdown_timeout");
+
+    let [alfie, betty] = spawn_two(&mut rng).await?;
+    let (_namespace, _alfie_user, _betty_user) = setup_and_delegate(&alfie, &betty).await?;
+    let betty_node_id = betty.node_id();
+    let mut intent = alfie
+        .sync_with_peer(betty_node_id, SessionInit::reconcile_once(Interests::all()))
+        .await?;
+    let completion = intent.complete().await?;
+    assert_eq!(completion, Completion::Complete);
+    tokio::time::sleep(Duration::from_secs(1)).await;
     [alfie, betty].map(Peer::shutdown).try_join().await?;
     Ok(())
 }
