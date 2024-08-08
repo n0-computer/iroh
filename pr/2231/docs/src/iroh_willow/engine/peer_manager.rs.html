@@ -756,15 +756,6 @@
 <a href="#756" id="756">756</a>
 <a href="#757" id="757">757</a>
 <a href="#758" id="758">758</a>
-<a href="#759" id="759">759</a>
-<a href="#760" id="760">760</a>
-<a href="#761" id="761">761</a>
-<a href="#762" id="762">762</a>
-<a href="#763" id="763">763</a>
-<a href="#764" id="764">764</a>
-<a href="#765" id="765">765</a>
-<a href="#766" id="766">766</a>
-<a href="#767" id="767">767</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
@@ -789,7 +780,7 @@
 <span class="kw">use crate</span>::{
     net::{
         establish, prepare_channels, terminate_gracefully, ChannelStreams, ConnHandle, ALPN,
-        ERROR_CODE_DUPLICATE_CONN,
+        ERROR_CODE_DUPLICATE_CONN, ERROR_CODE_SHUTDOWN,
     },
     proto::sync::{AccessChallenge, InitialTransmission},
     session::{
@@ -998,10 +989,7 @@
             } =&gt; <span class="kw">match </span>peer_info.our_role {
                 Role::Betty =&gt; {
                     <span class="macro">debug!</span>(<span class="string">"ignore incoming connection (already accepting)"</span>);
-                    conn.close(
-                        ERROR_CODE_DUPLICATE_CONN.into(),
-                        <span class="string">b"duplicate-already-pending"</span>,
-                    );
+                    conn.close(ERROR_CODE_DUPLICATE_CONN, <span class="string">b"duplicate-already-accepting"</span>);
                     <span class="bool-val">false
                 </span>}
                 Role::Alfie =&gt; {
@@ -1013,20 +1001,14 @@
                         <span class="bool-val">true
                     </span>} <span class="kw">else </span>{
                         <span class="macro">debug!</span>(<span class="string">"ignore incoming connection (already dialing and ours wins)"</span>);
-                        conn.close(
-                            ERROR_CODE_DUPLICATE_CONN.into(),
-                            <span class="string">b"duplicate-already-pending"</span>,
-                        );
+                        conn.close(ERROR_CODE_DUPLICATE_CONN, <span class="string">b"duplicate-our-dial-wins"</span>);
                         <span class="bool-val">false
                     </span>}
                 }
             },
             PeerState::Active { .. } =&gt; {
                 <span class="macro">debug!</span>(<span class="string">"ignore incoming connection (already active)"</span>);
-                conn.close(
-                    ERROR_CODE_DUPLICATE_CONN.into(),
-                    <span class="string">b"duplicate-already-active"</span>,
-                );
+                conn.close(ERROR_CODE_DUPLICATE_CONN, <span class="string">b"duplicate-already-active"</span>);
                 <span class="bool-val">false
             </span>}
             PeerState::Closing { .. } =&gt; <span class="bool-val">true</span>,
@@ -1094,7 +1076,7 @@
                         res = establish(<span class="kw-2">&amp;</span>conn, Role::Alfie, our_nonce) =&gt; res<span class="question-mark">?</span>,
                         <span class="kw">_ </span>= cancel_dial.cancelled() =&gt; {
                             <span class="macro">debug!</span>(<span class="string">"dial cancelled during establish"</span>);
-                            conn.close(ERROR_CODE_DUPLICATE_CONN, <span class="string">b"your-conn-wins"</span>);
+                            conn.close(ERROR_CODE_DUPLICATE_CONN, <span class="string">b"duplicate-your-dial-wins"</span>);
                             <span class="kw">return </span><span class="prelude-val">Err</span>(ConnectionError::LocallyClosed.into());
                         },
                     };
@@ -1267,7 +1249,7 @@
 
                 <span class="kw">if </span><span class="self">self</span>.shutting_down {
                     <span class="macro">debug!</span>(<span class="string">"connection became ready while shutting down, abort"</span>);
-                    conn.close(ERROR_CODE_DUPLICATE_CONN.into(), <span class="string">b"shutting-down"</span>);
+                    conn.close(ERROR_CODE_SHUTDOWN, <span class="string">b"shutting-down"</span>);
                     <span class="kw">if </span>!intents.is_empty() {
                         <span class="kw">let </span>err = Arc::new(Error::ShuttingDown);
                         join_all(

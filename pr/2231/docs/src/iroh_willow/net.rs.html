@@ -813,6 +813,9 @@
 <a href="#813" id="813">813</a>
 <a href="#814" id="814">814</a>
 <a href="#815" id="815">815</a>
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::future::Future;
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
@@ -845,11 +848,14 @@
 <span class="doccomment">/// The ALPN protocol name for iroh-willow.
 </span><span class="kw">pub const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"iroh-willow/0"</span>;
 
-<span class="doccomment">/// Our QUIC application error code for graceful connection termination.
+<span class="doccomment">/// QUIC application error code for graceful connection termination.
 </span><span class="kw">pub const </span>ERROR_CODE_OK: VarInt = VarInt::from_u32(<span class="number">1</span>);
-<span class="doccomment">/// Our QUIC application error code when closing connections during establishment
-/// because we prefer another existing connection to the same peer.
+
+<span class="doccomment">/// QUIC application error code for closing connections because another connection is preferred.
 </span><span class="kw">pub const </span>ERROR_CODE_DUPLICATE_CONN: VarInt = VarInt::from_u32(<span class="number">2</span>);
+
+<span class="doccomment">/// QUIC application error code when closing connection because our node is shutting down.
+</span><span class="kw">pub const </span>ERROR_CODE_SHUTDOWN: VarInt = VarInt::from_u32(<span class="number">3</span>);
 
 <span class="doccomment">/// The handle to an active peer connection.
 ///
@@ -1166,12 +1172,12 @@
     };
     <span class="macro">debug!</span>(<span class="question-mark">?</span>who_cancelled, <span class="string">"connection complete"</span>);
     <span class="kw">if </span>we_close_first {
-        conn.close(ERROR_CODE_OK.into(), <span class="string">b"bye"</span>);
+        conn.close(ERROR_CODE_OK, <span class="string">b"bye"</span>);
     }
     <span class="kw">let </span>reason = conn.closed().<span class="kw">await</span>;
     <span class="kw">let </span>is_graceful = <span class="kw">match </span><span class="kw-2">&amp;</span>reason {
         ConnectionError::LocallyClosed <span class="kw">if </span>we_close_first =&gt; <span class="bool-val">true</span>,
-        ConnectionError::ApplicationClosed(frame) <span class="kw">if </span>frame.error_code == ERROR_CODE_OK.into() =&gt; {
+        ConnectionError::ApplicationClosed(frame) <span class="kw">if </span>frame.error_code == ERROR_CODE_OK =&gt; {
             !we_close_first || <span class="macro">matches!</span>(who_cancelled, WhoCancelled::NoneDid)
         }
         <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
