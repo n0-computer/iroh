@@ -23,7 +23,7 @@ pub(crate) mod rpc;
 pub(crate) mod start;
 pub(crate) mod tags;
 
-/// iroh is a tool for syncing bytes
+/// iroh is a tool for building distributed apps
 /// https://iroh.computer/docs
 #[derive(Parser, Debug, Clone)]
 #[clap(version, verbatim_doc_comment)]
@@ -31,7 +31,7 @@ pub(crate) struct Cli {
     #[clap(subcommand)]
     pub(crate) command: Commands,
 
-    /// Path to the configuration file.
+    /// Path to the configuration file, see https://iroh.computer/docs/reference/config.
     #[clap(long)]
     pub(crate) config: Option<PathBuf>,
 
@@ -46,6 +46,10 @@ pub(crate) struct Cli {
     /// Address to serve RPC on.
     #[clap(long)]
     pub(crate) rpc_addr: Option<SocketAddr>,
+
+    /// Write metrics in CSV format at 100ms intervals. Disabled by default.
+    #[clap(long)]
+    pub(crate) metrics_dump_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +81,8 @@ pub(crate) enum Commands {
     /// start optionally takes a `--add SOURCE` option, which can be a file or a folder
     /// to serve on startup. Data can also be added after startup with commands like
     /// `iroh blob add` or by adding content to documents.
+    ///
+    /// For general configuration options see <https://iroh.computer/docs/reference/config>.
     Start {
         /// Optionally add a file or folder to the node.
         ///
@@ -95,6 +101,8 @@ pub(crate) enum Commands {
     ///
     /// The console is a REPL for interacting with a running iroh node.
     /// For more info on available commands, see https://iroh.computer/docs/api
+    ///
+    /// For general configuration options see <https://iroh.computer/docs/reference/config>.
     Console,
 
     #[clap(flatten)]

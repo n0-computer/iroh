@@ -14,13 +14,12 @@
 use std::any::Any;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
@@ -28,12 +27,11 @@ use tracing::{debug, info_span, trace, warn};
 use url::Url;
 
 use crate::{
-    defaults,
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
     magicsock::{self, Handle},
-    relay::{RelayMap, RelayMode, RelayUrl},
+    relay::{RelayMode, RelayUrl},
     tls, NodeId,
 };
 
@@ -60,6 +58,10 @@ pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 /// is still no connection the configured [`Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
+/// Environment variable to force the use of staging relays.
+#[cfg(not(any(test, feature = "test-utils")))]
+const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
+
 /// Builder for [`Endpoint`].
 ///
 /// By default the endpoint will generate a new random [`SecretKey`], which will result in a
@@ -76,8 +78,8 @@ pub struct Builder {
     keylog: bool,
     discovery: Option<Box<dyn Discovery>>,
     proxy_url: Option<Url>,
-    /// Path for known peers. See [`Builder::peers_data_path`].
-    peers_path: Option<PathBuf>,
+    /// List of known nodes. See [`Builder::known_nodes`].
+    node_map: Option<Vec<NodeAddr>>,
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
@@ -85,22 +87,16 @@ pub struct Builder {
 
 impl Default for Builder {
     fn default() -> Self {
-        // Use staging in testing
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let relay_mode = RelayMode::Default;
-        #[cfg(any(test, feature = "test-utils"))]
-        let relay_mode = RelayMode::Staging;
-
         Self {
             secret_key: Default::default(),
-            relay_mode,
+            relay_mode: default_relay_mode(),
             alpn_protocols: Default::default(),
             transport_config: Default::default(),
             concurrent_connections: Default::default(),
             keylog: Default::default(),
             discovery: Default::default(),
             proxy_url: None,
-            peers_path: None,
+            node_map: None,
             dns_resolver: None,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -122,15 +118,7 @@ impl Builder {
     ///
     /// NOTE: This will be improved soon to add support for binding on specific addresses.
     pub async fn bind(self, bind_port: u16) -> Result<Endpoint> {
-        let relay_map = match self.relay_mode {
-            RelayMode::Disabled => RelayMap::empty(),
-            RelayMode::Default => defaults::prod::default_relay_map(),
-            RelayMode::Staging => defaults::staging::default_relay_map(),
-            RelayMode::Custom(relay_map) => {
-                ensure!(!relay_map.is_empty(), "Empty custom relay server map",);
-                relay_map
-            }
-        };
+        let relay_map = self.relay_mode.relay_map();
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config.unwrap_or_default()),
@@ -146,7 +134,7 @@ impl Builder {
             port: bind_port,
             secret_key,
             relay_map,
-            nodes_path: self.peers_path,
+            node_map: self.node_map,
             discovery: self.discovery,
             proxy_url: self.proxy_url,
             dns_resolver,
@@ -191,7 +179,7 @@ impl Builder {
     /// By default the Number0 relay servers are used.
     ///
     /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
-    /// configured relay node.  If an invalid [`RelayMap`] is provided [`bind`]
+    /// configured relay node.  If an invalid RelayMap is provided [`bind`]
     /// will result in an error.
     ///
     /// [`bind`]: Builder::bind
@@ -215,12 +203,9 @@ impl Builder {
         self
     }
 
-    /// Optionally sets the path where peer info should be stored.
-    ///
-    /// If the file exists, it will be used to populate an initial set of peers. Peers will
-    /// be saved periodically and on shutdown to this path.
-    pub fn peers_data_path(mut self, path: PathBuf) -> Self {
-        self.peers_path = Some(path);
+    /// Optionally set a list of known nodes.
+    pub fn known_nodes(mut self, nodes: Vec<NodeAddr>) -> Self {
+        self.node_map = Some(nodes);
         self
     }
 
@@ -845,7 +830,7 @@ impl Endpoint {
     /// This will launch discovery in all cases except if:
     /// 1) we do not have discovery enabled
     /// 2) we have discovery enabled, but already have at least one verified, unexpired
-    /// addresses for this `node_id`
+    ///    addresses for this `node_id`
     ///
     /// # Errors
     ///
@@ -913,6 +898,7 @@ impl Endpoint {
 #[pin_project::pin_project]
 pub struct Accept<'a> {
     #[pin]
+    #[debug("quinn::Accept")]
     inner: quinn::Accept<'a>,
     magic_ep: Endpoint,
 }
@@ -1087,6 +1073,26 @@ fn proxy_url_from_env() -> Option<Url> {
     None
 }
 
+/// Returns the default relay mode.
+///
+/// If the `IROH_FORCE_STAGING_RELAYS` environment variable is set to `1`, it will return `RelayMode::Staging`.
+/// Otherwise, it will return `RelayMode::Default`.
+pub fn default_relay_mode() -> RelayMode {
+    // Use staging in testing
+    #[cfg(not(any(test, feature = "test-utils")))]
+    let force_staging_relays = match std::env::var(ENV_FORCE_STAGING_RELAYS) {
+        Ok(value) => value == "1",
+        Err(_) => false,
+    };
+    #[cfg(any(test, feature = "test-utils"))]
+    let force_staging_relays = true;
+
+    match force_staging_relays {
+        true => RelayMode::Staging,
+        false => RelayMode::Default,
+    }
+}
+
 /// Check if we are being executed in a CGI context.
 ///
 /// If so, a malicious client can send the `Proxy:` header, and it will
@@ -1238,24 +1244,25 @@ mod tests {
         client.unwrap();
     }
 
-    /// Test that peers saved on shutdown are correctly loaded
+    /// Test that peers are properly restored
     #[tokio::test]
-    async fn save_load_peers() {
+    async fn restore_peers() {
         let _guard = iroh_test::logging::setup();
 
         let secret_key = SecretKey::generate();
-        let root = testdir::testdir!();
-        let peers_path = root.join("peers");
 
         /// Create an endpoint for the test.
-        async fn new_endpoint(secret_key: SecretKey, peers_path: PathBuf) -> Endpoint {
+        async fn new_endpoint(secret_key: SecretKey, nodes: Option<Vec<NodeAddr>>) -> Endpoint {
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
-            Endpoint::builder()
+            let mut builder = Endpoint::builder()
                 .secret_key(secret_key.clone())
-                .transport_config(transport_config)
-                .peers_data_path(peers_path)
+                .transport_config(transport_config);
+            if let Some(nodes) = nodes {
+                builder = builder.known_nodes(nodes);
+            }
+            builder
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .bind(0)
                 .await
@@ -1271,37 +1278,26 @@ mod tests {
         info!("setting up first endpoint");
         // first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
-        let endpoint = new_endpoint(secret_key.clone(), peers_path.clone()).await;
+        let endpoint = new_endpoint(secret_key.clone(), None).await;
         assert!(endpoint.connection_infos().is_empty());
-        endpoint.add_node_addr(node_addr).unwrap();
+        endpoint.add_node_addr(node_addr.clone()).unwrap();
+
+        // Grab the current addrs
+        let node_addrs: Vec<NodeAddr> = endpoint
+            .connection_infos()
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        assert_eq!(node_addrs.len(), 1);
+        assert_eq!(node_addrs[0], node_addr);
 
         info!("closing endpoint");
         // close the endpoint and restart it
         endpoint.close(0u32.into(), b"done").await.unwrap();
 
-        // Give the destructors some time to create the file.  We use sync code to read the
-        // file here, it's just a test.
-        let now = Instant::now();
-        let mut previous_size = None;
-        while now.elapsed() < Duration::from_secs(10) {
-            if peers_path.is_file() {
-                let size = peers_path.metadata().unwrap().len();
-                match previous_size {
-                    None => previous_size = Some(size),
-                    Some(previous_size) => {
-                        if previous_size == size {
-                            // File is fully written
-                            break;
-                        }
-                    }
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-
         info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
-        let endpoint = new_endpoint(secret_key, peers_path).await;
+        let endpoint = new_endpoint(secret_key, Some(node_addrs)).await;
         let ConnectionInfo { mut addrs, .. } = endpoint.connection_info(peer_id).unwrap();
         let conn_addr = addrs.pop().unwrap().addr;
         assert_eq!(conn_addr, direct_addr);

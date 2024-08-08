@@ -9,7 +9,6 @@ use struct_iterable::Iterable;
 pub struct Metrics {
     pub pkarr_publish_update: Counter,
     pub pkarr_publish_noop: Counter,
-    pub pkarr_publish_error: Counter,
     pub dns_requests: Counter,
     pub dns_requests_udp: Counter,
     pub dns_requests_https: Counter,
@@ -32,7 +31,6 @@ impl Default for Metrics {
             pkarr_publish_noop: Counter::new(
                 "Number of pkarr relay puts that did not update the state",
             ),
-            pkarr_publish_error: Counter::new("Number of pkarr relay puts that failed"),
             dns_requests: Counter::new("DNS requests (total)"),
             dns_requests_udp: Counter::new("DNS requests via UDP"),
             dns_requests_https: Counter::new("DNS requests via HTTPS (DoH)"),

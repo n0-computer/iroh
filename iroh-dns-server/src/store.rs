@@ -57,7 +57,7 @@ impl ZoneStore {
         Ok(Self::new(packet_store))
     }
 
-    /// Configure a pkarr client for resolution of packets from the bittorent mainline DHT.
+    /// Configure a pkarr client for resolution of packets from the bittorrent mainline DHT.
     ///
     /// This will be used only as a fallback if there is no local info available.
     ///

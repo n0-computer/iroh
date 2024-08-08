@@ -15,10 +15,7 @@ use iroh_blobs::{
 };
 use iroh_docs::engine::DefaultAuthorStorage;
 use iroh_docs::net::DOCS_ALPN;
-use iroh_gossip::{
-    dispatcher::GossipDispatcher,
-    net::{Gossip, GOSSIP_ALPN},
-};
+use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 #[cfg(not(test))]
 use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 use iroh_net::{
@@ -36,6 +33,7 @@ use tracing::{debug, error_span, trace, Instrument};
 use crate::{
     client::RPC_ALPN,
     node::{
+        nodes_storage::load_node_addrs,
         protocol::{BlobsProtocol, ProtocolMap},
         ProtocolHandler,
     },
@@ -56,7 +54,6 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 const MAX_CONNECTIONS: u32 = 1024;
-const MAX_STREAMS: u64 = 10;
 
 /// Storage backend for documents.
 #[derive(Debug, Clone)]
@@ -459,12 +456,7 @@ where
             panic_mode: PanicMode::LogAndContinue,
             ..Default::default()
         });
-        let endpoint = {
-            let mut transport_config = quinn::TransportConfig::default();
-            transport_config
-                .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
-                .max_concurrent_uni_streams(0u32.into());
-
+        let (endpoint, nodes_data_path) = {
             let discovery: Option<Box<dyn Discovery>> = match self.node_discovery {
                 DiscoveryConfig::None => None,
                 DiscoveryConfig::Custom(discovery) => Some(discovery),
@@ -503,31 +495,36 @@ where
                 .secret_key(self.secret_key.clone())
                 .proxy_from_env()
                 .keylog(self.keylog)
-                .transport_config(transport_config)
                 .concurrent_connections(MAX_CONNECTIONS)
                 .relay_mode(self.relay_mode);
             let endpoint = match discovery {
                 Some(discovery) => endpoint.discovery(discovery),
                 None => endpoint,
             };
-            let endpoint = match self.dns_resolver {
+            let mut endpoint = match self.dns_resolver {
                 Some(resolver) => endpoint.dns_resolver(resolver),
                 None => endpoint,
             };
 
             #[cfg(any(test, feature = "test-utils"))]
-            let endpoint =
-                endpoint.insecure_skip_relay_cert_verify(self.insecure_skip_relay_cert_verify);
+            {
+                endpoint =
+                    endpoint.insecure_skip_relay_cert_verify(self.insecure_skip_relay_cert_verify);
+            }
 
-            let endpoint = match self.storage {
+            let nodes_data_path = match self.storage {
                 StorageConfig::Persistent(ref root) => {
-                    let peers_data_path = IrohPaths::PeerData.with_root(root);
-                    endpoint.peers_data_path(peers_data_path)
+                    let nodes_data_path = IrohPaths::PeerData.with_root(root);
+                    let node_addrs = load_node_addrs(&nodes_data_path)
+                        .await
+                        .context("loading known node addresses")?;
+                    endpoint = endpoint.known_nodes(node_addrs);
+                    Some(nodes_data_path)
                 }
-                StorageConfig::Mem => endpoint,
+                StorageConfig::Mem => None,
             };
             let bind_port = self.bind_port.unwrap_or(DEFAULT_BIND_PORT);
-            endpoint.bind(bind_port).await?
+            (endpoint.bind(bind_port).await?, nodes_data_path)
         };
         trace!("created endpoint");
 
@@ -550,7 +547,6 @@ where
             downloader.clone(),
         )
         .await?;
-        let gossip_dispatcher = GossipDispatcher::new(gossip.clone());
 
         // Initialize the internal RPC connection.
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection::<RpcService>(32);
@@ -570,7 +566,6 @@ where
             cancel_token: CancellationToken::new(),
             downloader,
             gossip,
-            gossip_dispatcher,
             local_pool_handle: lp.handle().clone(),
         });
 
@@ -581,6 +576,7 @@ where
             external_rpc: self.rpc_endpoint,
             gc_policy: self.gc_policy,
             gc_done_callback: self.gc_done_callback,
+            nodes_data_path,
             local_pool: lp,
         };
 
@@ -607,6 +603,7 @@ pub struct ProtocolBuilder<D> {
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
     gc_policy: GcPolicy,
+    nodes_data_path: Option<PathBuf>,
     local_pool: LocalPool,
 }
 
@@ -733,6 +730,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
             protocols,
             gc_done_callback,
             gc_policy,
+            nodes_data_path,
             local_pool: rt,
         } = self;
         let protocols = Arc::new(protocols);
@@ -757,6 +755,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
                 protocols.clone(),
                 gc_policy,
                 gc_done_callback,
+                nodes_data_path,
                 rt,
             )
             .instrument(error_span!("node", me=%node_id.fmt_short()));
@@ -791,6 +790,8 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
 }
 
 /// Policy for garbage collection.
+// Please note that this is documented in the `iroh.computer` repository under
+// `src/app/docs/reference/config/page.mdx`.  Any changes to this need to be updated there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GcPolicy {
     /// Garbage collection is disabled.

@@ -18,6 +18,7 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.76"
   SCCACHE_CACHE_SIZE: "50G"
+  IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
   tests:
@@ -323,7 +324,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.4
+      uses: mozilla-actions/sccache-action@v0.0.5
 
     - name: Build iroh
       run: |
@@ -450,3 +451,10 @@ jobs:
         continue-on-error: true
         run: |
           docker kill $(docker ps -q)
+
+  codespell:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - run: pip install --user codespell[toml]
+    - run: codespell --ignore-words-list=ans,crate,inout,ratatui,ser,stayin,swarmin,worl --skip=CHANGELOG.md

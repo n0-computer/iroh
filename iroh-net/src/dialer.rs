@@ -99,6 +99,11 @@ impl Dialer {
     pub fn pending_count(&self) -> usize {
         self.pending_dials.len()
     }
+
+    /// Returns a reference to the endpoint used in this dialer.
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
+    }
 }
 
 impl Stream for Dialer {

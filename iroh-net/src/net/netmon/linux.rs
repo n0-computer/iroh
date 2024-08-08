@@ -49,7 +49,7 @@ macro_rules! get_nla {
 }
 
 impl RouteMonitor {
-    pub(super) fn new(sender: flume::Sender<NetworkMessage>) -> Result<Self> {
+    pub(super) fn new(sender: async_channel::Sender<NetworkMessage>) -> Result<Self> {
         let (mut conn, mut _handle, mut messages) = new_connection()?;
 
         // Specify flags to listen on.
@@ -87,7 +87,7 @@ impl RouteMonitor {
                                     continue;
                                 } else {
                                     addrs.insert(addr.clone());
-                                    sender.send_async(NetworkMessage::Change).await.ok();
+                                    sender.send(NetworkMessage::Change).await.ok();
                                 }
                             }
                         }
@@ -97,7 +97,7 @@ impl RouteMonitor {
                             if let Some(addr) = get_nla!(msg, address::Nla::Address) {
                                 addrs.remove(addr);
                             }
-                            sender.send_async(NetworkMessage::Change).await.ok();
+                            sender.send(NetworkMessage::Change).await.ok();
                         }
                         RtnlMessage::NewRoute(msg) | RtnlMessage::DelRoute(msg) => {
                             trace!("ROUTE:: {:?}", msg);
@@ -124,15 +124,15 @@ impl RouteMonitor {
                                     }
                                 }
                             }
-                            sender.send_async(NetworkMessage::Change).await.ok();
+                            sender.send(NetworkMessage::Change).await.ok();
                         }
                         RtnlMessage::NewRule(msg) => {
                             trace!("NEWRULE: {:?}", msg);
-                            sender.send_async(NetworkMessage::Change).await.ok();
+                            sender.send(NetworkMessage::Change).await.ok();
                         }
                         RtnlMessage::DelRule(msg) => {
                             trace!("DELRULE: {:?}", msg);
-                            sender.send_async(NetworkMessage::Change).await.ok();
+                            sender.send(NetworkMessage::Change).await.ok();
                         }
                         RtnlMessage::NewLink(msg) => {
                             trace!("NEWLINK: {:?}", msg);

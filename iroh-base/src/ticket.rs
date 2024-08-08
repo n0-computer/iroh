@@ -36,7 +36,7 @@ pub trait Ticket: Sized {
     /// Serialize to string.
     fn serialize(&self) -> String {
         let mut out = Self::KIND.to_string();
-        base32::fmt_append(&self.to_bytes(), &mut out);
+        base32::fmt_append(self.to_bytes(), &mut out);
         out
     }
 

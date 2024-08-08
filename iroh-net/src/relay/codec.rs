@@ -1,14 +1,16 @@
 use std::time::Duration;
 
-use anyhow::{bail, ensure, Context};
+use anyhow::{bail, ensure};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+#[cfg(feature = "iroh-relay")]
 use futures_lite::{Stream, StreamExt};
 use futures_sink::Sink;
 use futures_util::SinkExt;
 use iroh_base::key::{Signature, PUBLIC_KEY_LENGTH};
+use postcard::experimental::max_size::MaxSize;
+use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Decoder, Encoder};
 
-use super::types::ClientInfo;
 use crate::key::{PublicKey, SecretKey};
 
 /// The maximum size of a packet sent over relay.
@@ -21,8 +23,10 @@ const MAX_FRAME_SIZE: usize = 1024 * 1024;
 /// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
 const MAGIC: &str = "RELAY🔑";
 
+#[cfg(feature = "iroh-relay")]
 pub(super) const KEEP_ALIVE: Duration = Duration::from_secs(60);
 // TODO: what should this be?
+#[cfg(feature = "iroh-relay")]
 pub(super) const SERVER_CHANNEL_SIZE: usize = 1024 * 100;
 /// The number of packets buffered for sending per client
 pub(super) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512; //32;
@@ -30,7 +34,8 @@ pub(super) const PER_CLIENT_READ_QUEUE_DEPTH: usize = 512;
 
 /// ProtocolVersion is bumped whenever there's a wire-incompatible change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
-///  - version 2: received packets have src addrs in FrameType::RecvPacket at beginning
+///  - version 2: received packets have src addrs in FrameType::RecvPacket at beginning.
+///
 /// NOTE: we are technically running a modified version of the protocol.
 /// `FrameType::PeerPresent`, `FrameType::WatchConn`, `FrameType::ClosePeer`, have been removed.
 /// The server will error on that connection if a client sends one of these frames.
@@ -111,6 +116,12 @@ impl std::fmt::Display for FrameType {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, MaxSize, PartialEq, Eq)]
+pub(crate) struct ClientInfo {
+    /// The relay protocol version that the client was built with.
+    pub(crate) version: usize,
+}
+
 /// Writes complete frame, errors if it is unable to write within the given `timeout`.
 /// Ignores the timeout if `None`
 ///
@@ -154,9 +165,11 @@ pub(crate) async fn send_client_key<S: Sink<Frame, Error = std::io::Error> + Unp
 
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
+#[cfg(feature = "iroh-relay")]
 pub(super) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     stream: S,
 ) -> anyhow::Result<(PublicKey, ClientInfo)> {
+    use anyhow::Context;
     // the client is untrusted at this point, limit the input size even smaller than our usual
     // maximum frame size, and give a timeout
 
@@ -522,6 +535,7 @@ impl Encoder<Frame> for DerpCodec {
 
 /// Receives the next frame and matches the frame type. If the correct type is found returns the content,
 /// otherwise an error.
+#[cfg(feature = "iroh-relay")]
 pub(super) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     frame_type: FrameType,
     mut stream: S,

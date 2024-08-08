@@ -21,6 +21,8 @@ struct TestingDialerInner {
     dial_duration: Duration,
     /// Fn deciding if a dial is successful.
     dial_outcome: Box<dyn Fn(NodeId) -> bool + Send + Sync + 'static>,
+    /// Our own node id
+    node_id: NodeId,
 }
 
 impl Default for TestingDialerInner {
@@ -31,6 +33,7 @@ impl Default for TestingDialerInner {
             dial_history: Vec::default(),
             dial_duration: Duration::from_millis(10),
             dial_outcome: Box::new(|_| true),
+            node_id: NodeId::from_bytes(&[0u8; 32]).unwrap(),
         }
     }
 }
@@ -54,6 +57,10 @@ impl Dialer for TestingDialer {
 
     fn is_pending(&self, node: NodeId) -> bool {
         self.0.read().dialing.contains(&node)
+    }
+
+    fn node_id(&self) -> NodeId {
+        self.0.read().node_id
     }
 }
 

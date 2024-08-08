@@ -19,8 +19,14 @@ pub struct Metrics {
     pub msgs_ctrl_recv_size: Counter,
     pub neighbor_up: Counter,
     pub neighbor_down: Counter,
-    // pub topics_joined: Counter,
-    // pub topics_left: Counter,
+    pub actor_tick_main: Counter,
+    pub actor_tick_rx: Counter,
+    pub actor_tick_endpoint: Counter,
+    pub actor_tick_dialer: Counter,
+    pub actor_tick_dialer_success: Counter,
+    pub actor_tick_dialer_failure: Counter,
+    pub actor_tick_in_event_rx: Counter,
+    pub actor_tick_timers: Counter,
 }
 
 impl Default for Metrics {
@@ -36,8 +42,22 @@ impl Default for Metrics {
             msgs_ctrl_recv_size: Counter::new("Total size of all control messages received"),
             neighbor_up: Counter::new("Number of times we connected to a peer"),
             neighbor_down: Counter::new("Number of times we disconnected from a peer"),
-            // topics_joined: Counter::new("Number of times we joined a topic"),
-            // topics_left: Counter::new("Number of times we left a topic"),
+            actor_tick_main: Counter::new("Number of times the main actor loop ticked"),
+            actor_tick_rx: Counter::new("Number of times the actor ticked for a message received"),
+            actor_tick_endpoint: Counter::new(
+                "Number of times the actor ticked for an endpoint event",
+            ),
+            actor_tick_dialer: Counter::new("Number of times the actor ticked for a dialer event"),
+            actor_tick_dialer_success: Counter::new(
+                "Number of times the actor ticked for a successful dialer event",
+            ),
+            actor_tick_dialer_failure: Counter::new(
+                "Number of times the actor ticked for a failed dialer event",
+            ),
+            actor_tick_in_event_rx: Counter::new(
+                "Number of times the actor ticked for an incoming event",
+            ),
+            actor_tick_timers: Counter::new("Number of times the actor ticked for a timer event"),
         }
     }
 }
