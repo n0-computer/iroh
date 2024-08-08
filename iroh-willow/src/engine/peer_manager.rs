@@ -22,7 +22,7 @@ use tracing::{debug, error_span, instrument, trace, warn, Instrument, Span};
 use crate::{
     net::{
         establish, prepare_channels, terminate_gracefully, ChannelStreams, ConnHandle, ALPN,
-        ERROR_CODE_DUPLICATE_CONN,
+        ERROR_CODE_DUPLICATE_CONN, ERROR_CODE_SHUTDOWN,
     },
     proto::sync::{AccessChallenge, InitialTransmission},
     session::{
@@ -231,10 +231,7 @@ impl PeerManager {
             } => match peer_info.our_role {
                 Role::Betty => {
                     debug!("ignore incoming connection (already accepting)");
-                    conn.close(
-                        ERROR_CODE_DUPLICATE_CONN.into(),
-                        b"duplicate-already-pending",
-                    );
+                    conn.close(ERROR_CODE_DUPLICATE_CONN, b"duplicate-already-accepting");
                     false
                 }
                 Role::Alfie => {
@@ -246,20 +243,14 @@ impl PeerManager {
                         true
                     } else {
                         debug!("ignore incoming connection (already dialing and ours wins)");
-                        conn.close(
-                            ERROR_CODE_DUPLICATE_CONN.into(),
-                            b"duplicate-already-pending",
-                        );
+                        conn.close(ERROR_CODE_DUPLICATE_CONN, b"duplicate-our-dial-wins");
                         false
                     }
                 }
             },
             PeerState::Active { .. } => {
                 debug!("ignore incoming connection (already active)");
-                conn.close(
-                    ERROR_CODE_DUPLICATE_CONN.into(),
-                    b"duplicate-already-active",
-                );
+                conn.close(ERROR_CODE_DUPLICATE_CONN, b"duplicate-already-active");
                 false
             }
             PeerState::Closing { .. } => true,
@@ -327,7 +318,7 @@ impl PeerManager {
                         res = establish(&conn, Role::Alfie, our_nonce) => res?,
                         _ = cancel_dial.cancelled() => {
                             debug!("dial cancelled during establish");
-                            conn.close(ERROR_CODE_DUPLICATE_CONN, b"your-conn-wins");
+                            conn.close(ERROR_CODE_DUPLICATE_CONN, b"duplicate-your-dial-wins");
                             return Err(ConnectionError::LocallyClosed.into());
                         },
                     };
@@ -500,7 +491,7 @@ impl PeerManager {
 
                 if self.shutting_down {
                     debug!("connection became ready while shutting down, abort");
-                    conn.close(ERROR_CODE_DUPLICATE_CONN.into(), b"shutting-down");
+                    conn.close(ERROR_CODE_SHUTDOWN, b"shutting-down");
                     if !intents.is_empty() {
                         let err = Arc::new(Error::ShuttingDown);
                         join_all(
