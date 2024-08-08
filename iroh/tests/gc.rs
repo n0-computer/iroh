@@ -432,7 +432,6 @@ mod file {
 
     /// Test that partial files are deleted.
     #[tokio::test]
-    // #[ignore = "flaky"]
     async fn gc_file_partial() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
