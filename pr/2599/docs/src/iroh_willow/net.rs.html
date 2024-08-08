@@ -769,6 +769,7 @@
 <a href="#769" id="769">769</a>
 <a href="#770" id="770">770</a>
 <a href="#771" id="771">771</a>
+<a href="#772" id="772">772</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::future::Future;
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
@@ -1433,17 +1434,8 @@
             .complete()
             .<span class="kw">await
             </span>.expect(<span class="string">"failed to close alfie session"</span>);
+        <span class="macro">info!</span>(<span class="string">"close alfie session"</span>);
         senders_alfie.close_all();
-
-        <span class="kw">let </span>(res_alfie, res_betty) = <span class="macro">tokio::join!</span>(
-            intent_handle_alfie.complete(),
-            intent_handle_betty.complete()
-        );
-        <span class="macro">info!</span>(time=<span class="question-mark">?</span>start.elapsed(), <span class="string">"reconciliation finished"</span>);
-        <span class="macro">info!</span>(<span class="string">"alfie intent res {:?}"</span>, res_alfie);
-        <span class="macro">info!</span>(<span class="string">"betty intent res {:?}"</span>, res_betty);
-        <span class="macro">assert!</span>(res_alfie.is_ok());
-        <span class="macro">assert!</span>(res_betty.is_ok());
 
         <span class="kw">let </span>(senders_betty, betty_cancelled) = session_betty
             .complete()
@@ -1455,6 +1447,16 @@
             .expect(<span class="string">"failed to close connection loops"</span>);
         r1.unwrap();
         r2.unwrap();
+
+        <span class="kw">let </span>(res_alfie, res_betty) = <span class="macro">tokio::join!</span>(
+            intent_handle_alfie.complete(),
+            intent_handle_betty.complete()
+        );
+        <span class="macro">info!</span>(time=<span class="question-mark">?</span>start.elapsed(), <span class="string">"reconciliation finished"</span>);
+        <span class="macro">info!</span>(<span class="string">"alfie intent res {:?}"</span>, res_alfie);
+        <span class="macro">info!</span>(<span class="string">"betty intent res {:?}"</span>, res_betty);
+        <span class="macro">assert!</span>(res_alfie.is_ok());
+        <span class="macro">assert!</span>(res_betty.is_ok());
 
         <span class="kw">let </span>(error_alfie, error_betty) = <span class="macro">tokio::try_join!</span>(
             terminate_gracefully(<span class="kw-2">&amp;</span>conn_alfie, node_id_alfie, node_id_betty, alfie_cancelled),
