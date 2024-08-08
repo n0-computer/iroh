@@ -1683,4 +1683,81 @@ mod tests {
         r1.expect("ep1 timeout").unwrap();
         r2.expect("ep2 timeout").unwrap();
     }
+
+    #[tokio::test]
+    async fn test_proto_bad_close() {
+        let _logging_guard = iroh_test::logging::setup();
+        let ep1 = Endpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Disabled)
+            .bind(0)
+            .await
+            .unwrap();
+        let ep2 = Endpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Disabled)
+            .bind(0)
+            .await
+            .unwrap();
+        let ep1_nodeaddr = ep1.node_addr().await.unwrap();
+        let ep2_nodeaddr = ep2.node_addr().await.unwrap();
+        ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
+        ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
+        let ep1_nodeid = ep1.node_id();
+        let ep2_nodeid = ep2.node_id();
+        eprintln!("node id 1 {ep1_nodeid}");
+        eprintln!("node id 2 {ep2_nodeid}");
+        let start = Instant::now();
+
+        async fn connect_hello(ep: Endpoint, dst: NodeAddr, start: Instant) {
+            let conn = ep.connect(dst, TEST_ALPN).await.unwrap();
+            let (mut send, mut recv) = conn.open_bi().await.unwrap();
+            send.write_all(b"hello").await.unwrap();
+            send.finish().unwrap();
+
+            let mut buf = [0u8; 5];
+            recv.read_exact(&mut buf).await.unwrap();
+
+            // Waiting here means we make sure we have received the CONNECTION_CLOSE frame
+            // before continuing to read.
+            tokio::time::sleep(Duration::from_secs(3)).await;
+
+            // Reading now we get the ApplicationClosed error instead of the FIN.
+            eprintln!("{:?} 2. reading to end", start.elapsed());
+            recv.read_to_end(0).await.unwrap();
+            conn.close(1u8.into(), b"done"); // never reached
+        }
+
+        async fn accept_world(ep: Endpoint, start: Instant) {
+            let incoming = ep.accept().await.unwrap();
+            let conn = incoming.await.unwrap();
+            let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+            let mut buf = [0u8; 5];
+            recv.read_exact(&mut buf).await.unwrap();
+            send.write_all(b"world").await.unwrap();
+            send.finish().unwrap();
+
+            // Using this line makes it work.  This is because Quinn is less strict than
+            // RFC9000 requires: it will still deliver acknowledged stream data to the
+            // application after a CONNECTION_CLOSE frame has been received.  Only returning
+            // the close error once all this data has been read.  This is why all our
+            // current protocols seem to work in practice.
+
+            // send.stopped().await.unwrap();
+
+            // This was sent and delivered ages ago, so is readily available and does not
+            // slow us down.
+            recv.read_to_end(0).await.unwrap();
+
+            // We close this before the FIN has been read by the peer.
+            eprintln!("{:?} 1. closing connection", start.elapsed());
+            conn.close(2u8.into(), b"boom");
+        }
+
+        let p1_accept = tokio::spawn(accept_world(ep1, start));
+        let p2_connect = tokio::spawn(connect_hello(ep2, ep1_nodeaddr, start));
+
+        p1_accept.await.unwrap();
+        p2_connect.await.unwrap();
+    }
 }
