@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["PATH_COUNT_POWER","PATH_LENGTH_POWER"],"struct":["RelativePath"],"type":["UPathCountPower","UPathLengthPower"]};
