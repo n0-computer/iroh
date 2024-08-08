@@ -10,4 +10,4 @@ pub mod net;
 pub mod proto;
 pub mod session;
 pub mod store;
-mod util;
+pub mod util;
