@@ -4,7 +4,7 @@ use anyhow::{anyhow, ensure, Context as _, Result};
 use futures_concurrency::future::TryJoin;
 use futures_util::future::TryFutureExt;
 use iroh_base::key::NodeId;
-use iroh_net::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
+use iroh_net::endpoint::{Connection, ConnectionError, RecvStream, SendStream, VarInt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, trace};
 
@@ -31,10 +31,10 @@ pub const CHANNEL_CAP: usize = 1024 * 64;
 pub const ALPN: &[u8] = b"iroh-willow/0";
 
 /// Our QUIC application error code for graceful connection termination.
-pub const ERROR_CODE_OK: u32 = 1;
+pub const ERROR_CODE_OK: VarInt = VarInt::from_u32(1);
 /// Our QUIC application error code when closing connections during establishment
 /// because we prefer another existing connection to the same peer.
-pub const ERROR_CODE_IGNORE_CONN: u32 = 2;
+pub const ERROR_CODE_DUPLICATE_CONN: VarInt = VarInt::from_u32(2);
 
 /// The handle to an active peer connection.
 ///

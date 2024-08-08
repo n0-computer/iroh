@@ -117,11 +117,24 @@ impl<S: Storage> Reconciler<S> {
     async fn received_message(&mut self, message: ReconciliationMessage) -> Result<(), Error> {
         match message {
             ReconciliationMessage::SendFingerprint(message) => {
-                self.targets
-                    .get_eventually(&self.shared, &message.handles())
-                    .await?
+                let target_id = message.handles();
+                let target = self
+                    .targets
+                    .get_eventually(&self.shared, &target_id)
+                    .await?;
+                target
                     .received_send_fingerprint(&self.shared, message)
                     .await?;
+                tracing::warn!(
+                    is_complete = target.is_complete(),
+                    started = target.started,
+                    our_uncovered_ranges = ?target.our_uncovered_ranges,
+                    current_entry_none = self.current_entry.is_none(),
+                    "received_send_fingerprint done"
+                );
+                if target.is_complete() && self.current_entry.is_none() {
+                    self.complete_target(target_id).await?;
+                }
             }
             ReconciliationMessage::AnnounceEntries(message) => {
                 let target_id = message.handles();
@@ -419,6 +432,7 @@ impl<S: Storage> Target<S> {
         shared: &Shared<S>,
         message: ReconciliationSendFingerprint,
     ) -> Result<(), Error> {
+        self.started = true;
         if let Some(range_count) = message.covers {
             self.mark_our_range_covered(range_count)?;
         }
@@ -486,6 +500,8 @@ impl<S: Storage> Target<S> {
         shared: &Shared<S>,
         message: ReconciliationAnnounceEntries,
     ) -> Result<(), Error> {
+        trace!(?message, "received_announce_entries start");
+        self.started = true;
         if let Some(range_count) = message.covers {
             self.mark_our_range_covered(range_count)?;
         }
@@ -587,7 +603,6 @@ impl<S: Storage> Target<S> {
 
     fn mark_our_next_range_pending(&mut self) {
         let range_count = self.next_range_count_ours();
-        self.started = true;
         self.our_uncovered_ranges.insert(range_count);
     }
 

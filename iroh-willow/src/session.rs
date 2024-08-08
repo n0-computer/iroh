@@ -190,6 +190,9 @@ pub enum SessionEvent {
         we_cancelled: bool,
         #[debug("ChannelSenders")]
         senders: ChannelSenders,
+        remaining_intents: Vec<Intent>,
+        #[debug("Receiver<SessionUpdate>")]
+        update_receiver: mpsc::Receiver<SessionUpdate>,
     },
 }
 
@@ -211,6 +214,7 @@ impl SessionHandle {
                 result,
                 senders,
                 we_cancelled,
+                ..
             } = event
             {
                 return result.map(|()| (senders, we_cancelled));

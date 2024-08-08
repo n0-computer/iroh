@@ -273,6 +273,7 @@ impl<S: Storage> IntentDispatcher<S> {
         }
     }
 
+    /// Aborts all registered intents.
     pub(super) async fn abort_all(&self, error: Arc<Error>) {
         let _ = futures_buffered::join_all(
             Iterator::chain(
@@ -290,6 +291,36 @@ impl<S: Storage> IntentDispatcher<S> {
             }),
         )
         .await;
+    }
+
+    /// Takes self and returns all pending intents.
+    // TODO: What if one of the two channels closed?
+    // Should not do Option<IntentChannels> but an option for each direction instead likely on Intent.
+    pub(super) fn drain_all(mut self) -> Vec<Intent> {
+        let mut intents: Vec<_> = self.pending_intents.into_iter().collect();
+        for (id, info) in self.intents.drain() {
+            let event_tx = info.event_tx;
+            let update_rx = self.intent_update_rx.remove(&id);
+            let update_rx = update_rx
+                .map(|stream| stream.into_inner())
+                .flatten()
+                .map(|stream| stream.into_inner());
+            let channels = match (event_tx, update_rx) {
+                (Some(event_tx), Some(update_rx)) => Some(IntentChannels {
+                    event_tx,
+                    update_rx,
+                }),
+                _ => None,
+            };
+            if let Some(channels) = channels {
+                let intent = Intent {
+                    init: info.original_init,
+                    channels: Some(channels),
+                };
+                intents.push(intent);
+            }
+        }
+        intents
     }
 
     /// Run the [`IntentDispatcher`].
@@ -347,7 +378,7 @@ impl<S: Storage> IntentDispatcher<S> {
     }
 
     async fn submit_intent(&mut self, co: &Co<Output>, intent: Intent) -> Result<(), Error> {
-        let interests = self.auth.resolve_interests(intent.init.interests)?;
+        let interests = self.auth.resolve_interests(intent.init.interests.clone())?;
         let intent_id = {
             let intent_id = self.next_intent_id;
             self.next_intent_id += 1;
@@ -365,6 +396,7 @@ impl<S: Storage> IntentDispatcher<S> {
             interests: flatten_interests(&interests),
             mode: intent.init.mode,
             event_tx,
+            original_init: intent.init,
         };
         // Send out reconciled events for already-complete areas.
         for (namespace, areas) in &self.complete_areas {
@@ -450,6 +482,7 @@ impl<S: Storage> IntentDispatcher<S> {
 
 #[derive(Debug)]
 pub(super) struct IntentInfo {
+    original_init: SessionInit,
     interests: NamespaceInterests,
     mode: SessionMode,
     event_tx: Option<Sender<EventKind>>,
