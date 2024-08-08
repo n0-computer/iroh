@@ -30,11 +30,14 @@ pub const CHANNEL_CAP: usize = 1024 * 64;
 /// The ALPN protocol name for iroh-willow.
 pub const ALPN: &[u8] = b"iroh-willow/0";
 
-/// Our QUIC application error code for graceful connection termination.
+/// QUIC application error code for graceful connection termination.
 pub const ERROR_CODE_OK: VarInt = VarInt::from_u32(1);
-/// Our QUIC application error code when closing connections during establishment
-/// because we prefer another existing connection to the same peer.
+
+/// QUIC application error code for closing connections because another connection is preferred.
 pub const ERROR_CODE_DUPLICATE_CONN: VarInt = VarInt::from_u32(2);
+
+/// QUIC application error code when closing connection because our node is shutting down.
+pub const ERROR_CODE_SHUTDOWN: VarInt = VarInt::from_u32(3);
 
 /// The handle to an active peer connection.
 ///
@@ -351,12 +354,12 @@ pub(crate) async fn terminate_gracefully(
     };
     debug!(?who_cancelled, "connection complete");
     if we_close_first {
-        conn.close(ERROR_CODE_OK.into(), b"bye");
+        conn.close(ERROR_CODE_OK, b"bye");
     }
     let reason = conn.closed().await;
     let is_graceful = match &reason {
         ConnectionError::LocallyClosed if we_close_first => true,
-        ConnectionError::ApplicationClosed(frame) if frame.error_code == ERROR_CODE_OK.into() => {
+        ConnectionError::ApplicationClosed(frame) if frame.error_code == ERROR_CODE_OK => {
             !we_close_first || matches!(who_cancelled, WhoCancelled::NoneDid)
         }
         _ => false,
