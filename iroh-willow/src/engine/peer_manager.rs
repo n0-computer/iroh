@@ -423,7 +423,7 @@ impl PeerManager {
                         if reason.error_code == ERROR_CODE_DUPLICATE_CONN =>
                     {
                         debug!(
-                            "connection was cancelled by the remote: simultaneous connection and theirs wins"
+                            "connection was cancelled by the remote: simultaneous connection and their's wins"
                         );
                         if our_role != peer_info.our_role {
                             // TODO: setup a timeout to kill intents if the other conn doesn't make it.

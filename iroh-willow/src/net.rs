@@ -1,4 +1,4 @@
-use std::future::Future;
+use std::{future::Future, time::Duration};
 
 use anyhow::{anyhow, ensure, Context as _, Result};
 use futures_concurrency::future::TryJoin;
@@ -39,6 +39,9 @@ pub const ERROR_CODE_DUPLICATE_CONN: VarInt = VarInt::from_u32(2);
 /// QUIC application error code when closing connection because our node is shutting down.
 pub const ERROR_CODE_SHUTDOWN: VarInt = VarInt::from_u32(3);
 
+pub const ESTABLISH_TIMEOUT: Duration = Duration::from_secs(10);
+pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// The handle to an active peer connection.
 ///
 /// This is passed into the session loop, where it is used to send and receive messages
@@ -71,12 +74,12 @@ pub(crate) async fn establish(
     debug!(?our_role, "establishing connection");
     // Run the initial transmission (which works on uni streams) concurrently
     // with opening/accepting the bi streams for the channels.
-    (
+    let fut = (
         initial_transmission(conn, our_nonce),
         open_channel_streams(conn, our_role),
     )
-        .try_join()
-        .await
+        .try_join();
+    tokio::time::timeout(ESTABLISH_TIMEOUT, fut).await?
 }
 
 async fn initial_transmission(
@@ -329,7 +332,8 @@ pub(crate) async fn terminate_gracefully(
         Ok(they_cancelled)
     };
 
-    let (_, they_cancelled) = (send, recv).try_join().await?;
+    let send_and_recv = (send, recv).try_join();
+    let (_, they_cancelled) = tokio::time::timeout(SHUTDOWN_TIMEOUT, send_and_recv).await??;
 
     #[derive(Debug)]
     enum WhoCancelled {
