@@ -6,7 +6,7 @@ use strum::IntoEnumIterator;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error_span, trace, Instrument, Span};
+use tracing::{debug, error_span, trace, warn, Instrument, Span};
 
 use crate::{
     net::ConnHandle,
@@ -354,16 +354,19 @@ pub(crate) async fn run_session<S: Storage>(
     // Unsubscribe from the store.  This stops the data send task.
     store.entries().unsubscribe(&session_id);
 
-    event_sender
+    debug!(error=?result.as_ref().err(), ?we_cancelled, "session complete");
+
+    if let Err(_receiver_dropped) = event_sender
         .send(SessionEvent::Complete {
             result: result.clone(),
             we_cancelled,
             senders: channel_sender,
         })
         .await
-        .ok();
+    {
+        warn!("failed to send session complete event: receiver dropped");
+    }
 
-    debug!(error=?result.as_ref().err(), ?we_cancelled, "session complete");
     match result {
         Ok(()) => Ok(()),
         Err(error) => {

@@ -57,6 +57,7 @@ pub(crate) async fn establish(
     our_role: Role,
     our_nonce: AccessChallenge,
 ) -> Result<(InitialTransmission, ChannelStreams)> {
+    debug!(?our_role, "establishing connection");
     // Run the initial transmission (which works on uni streams) concurrently
     // with opening/accepting the bi streams for the channels.
     (
@@ -71,7 +72,6 @@ async fn initial_transmission(
     conn: &Connection,
     our_nonce: AccessChallenge,
 ) -> Result<InitialTransmission> {
-    debug!("start initial transmission");
     let challenge_hash = our_nonce.hash();
     let mut send_stream = conn.open_uni().await?;
     send_stream.write_u8(MAX_PAYLOAD_SIZE_POWER).await?;
@@ -256,14 +256,6 @@ async fn send_loop(mut send_stream: SendStream, channel_reader: Reader) -> Resul
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum WhoCancelled {
-    WeDid,
-    TheyDid,
-    BothDid,
-    NoneDid,
-}
-
 pub(crate) async fn terminate_gracefully(
     conn: &Connection,
     me: NodeId,
@@ -293,6 +285,14 @@ pub(crate) async fn terminate_gracefully(
 
     let (_, they_cancelled) = (send, recv).try_join().await?;
 
+    #[derive(Debug)]
+    enum WhoCancelled {
+        WeDid,
+        TheyDid,
+        BothDid,
+        NoneDid,
+    }
+
     let who_cancelled = match (we_cancelled, they_cancelled) {
         (true, false) => WhoCancelled::WeDid,
         (false, true) => WhoCancelled::TheyDid,
@@ -314,7 +314,7 @@ pub(crate) async fn terminate_gracefully(
     let is_graceful = match &reason {
         ConnectionError::LocallyClosed if we_close_first => true,
         ConnectionError::ApplicationClosed(frame) if frame.error_code == ERROR_CODE_OK.into() => {
-            !we_close_first || who_cancelled == WhoCancelled::NoneDid
+            !we_close_first || matches!(who_cancelled, WhoCancelled::NoneDid)
         }
         _ => false,
     };
@@ -325,6 +325,10 @@ pub(crate) async fn terminate_gracefully(
     }
 }
 
+/// This test module contains two integration tests for the net and session run module.
+///
+/// They were written before the peer_manager module existed, and thus are quite verbose.
+/// Still going to keep them around for now as a safe guard.
 #[cfg(test)]
 mod tests {
     use std::{
@@ -344,7 +348,7 @@ mod tests {
         auth::{CapSelector, DelegateTo, RestrictArea},
         engine::ActorHandle,
         form::{AuthForm, EntryForm, PayloadForm, SubspaceForm, TimestampForm},
-        net::ConnHandle,
+        net::{terminate_gracefully, ConnHandle},
         proto::{
             grouping::ThreeDRange,
             keys::{NamespaceId, NamespaceKind, UserId},
@@ -371,14 +375,14 @@ mod tests {
         our_role: Role,
         our_nonce: AccessChallenge,
         intents: Vec<Intent>,
-    ) -> Result<SessionHandle> {
+    ) -> Result<(SessionHandle, tokio::task::JoinHandle<Result<()>>)> {
         let peer = iroh_net::endpoint::get_remote_node_id(&conn)?;
         let span = tracing::error_span!("conn", me=%me.fmt_short(), peer=%peer.fmt_short());
         let (initial_transmission, channel_streams) = establish(&conn, our_role, our_nonce)
             .instrument(span.clone())
             .await?;
         let (channels, fut) = prepare_channels(channel_streams)?;
-        tokio::task::spawn(fut.instrument(span));
+        let net_task = tokio::task::spawn(fut.instrument(span));
         let willow_conn = ConnHandle {
             initial_transmission,
             our_role,
@@ -386,7 +390,7 @@ mod tests {
             channels,
         };
         let handle = actor.init_session(willow_conn, intents).await?;
-        Ok(handle)
+        Ok((handle, net_task))
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -465,7 +469,7 @@ mod tests {
             run(
                 node_id_alfie,
                 handle_alfie.clone(),
-                conn_alfie,
+                conn_alfie.clone(),
                 Role::Alfie,
                 nonce_alfie,
                 vec![intent_alfie]
@@ -473,14 +477,14 @@ mod tests {
             run(
                 node_id_betty,
                 handle_betty.clone(),
-                conn_betty,
+                conn_betty.clone(),
                 Role::Betty,
                 nonce_betty,
                 vec![intent_betty]
             )
         );
-        let mut session_alfie = session_alfie?;
-        let mut session_betty = session_betty?;
+        let (mut session_alfie, net_task_alfie) = session_alfie?;
+        let (mut session_betty, net_task_betty) = session_betty?;
 
         let (res_alfie, res_betty) = tokio::join!(
             intent_handle_alfie.complete(),
@@ -495,10 +499,26 @@ mod tests {
             tokio::join!(session_alfie.complete(), session_betty.complete());
         info!("alfie session res {:?}", res_alfie);
         info!("betty session res {:?}", res_betty);
-        assert!(res_alfie.is_ok());
-        assert!(res_betty.is_ok());
 
         info!(time=?start.elapsed(), "reconciliation finished");
+
+        let (senders_alfie, alfie_cancelled) = res_alfie.unwrap();
+        let (senders_betty, betty_cancelled) = res_betty.unwrap();
+        senders_alfie.close_all();
+        senders_betty.close_all();
+
+        let (r1, r2) = tokio::try_join!(net_task_alfie, net_task_betty)
+            .expect("failed to close connection loops");
+        r1.unwrap();
+        r2.unwrap();
+
+        let (error_alfie, error_betty) = tokio::try_join!(
+            terminate_gracefully(&conn_alfie, node_id_alfie, node_id_betty, alfie_cancelled),
+            terminate_gracefully(&conn_betty, node_id_betty, node_id_alfie, betty_cancelled),
+        )
+        .expect("failed to close both connections gracefully");
+        assert_eq!(error_alfie, None);
+        assert_eq!(error_betty, None);
 
         let alfie_entries = get_entries(&handle_alfie, namespace_id).await?;
         let betty_entries = get_entries(&handle_betty, namespace_id).await?;
@@ -615,7 +635,7 @@ mod tests {
             run(
                 node_id_alfie,
                 handle_alfie.clone(),
-                conn_alfie,
+                conn_alfie.clone(),
                 Role::Alfie,
                 nonce_alfie,
                 vec![intent_alfie]
@@ -623,20 +643,26 @@ mod tests {
             run(
                 node_id_betty,
                 handle_betty.clone(),
-                conn_betty,
+                conn_betty.clone(),
                 Role::Betty,
                 nonce_betty,
                 vec![intent_betty]
             )
         );
-        let mut session_alfie = session_alfie?;
-        let mut session_betty = session_betty?;
+        let (mut session_alfie, net_task_alfie) = session_alfie?;
+        let (mut session_betty, net_task_betty) = session_betty?;
 
         let live_entries = done_rx.await?;
         expected_entries.extend(live_entries);
         // TODO: replace with event
         tokio::time::sleep(Duration::from_secs(1)).await;
+
         session_alfie.close();
+        let (senders_alfie, alfie_cancelled) = session_alfie
+            .complete()
+            .await
+            .expect("failed to close alfie session");
+        senders_alfie.close_all();
 
         let (res_alfie, res_betty) = tokio::join!(
             intent_handle_alfie.complete(),
@@ -648,8 +674,24 @@ mod tests {
         assert!(res_alfie.is_ok());
         assert!(res_betty.is_ok());
 
-        let (res_alfie, res_betty) =
-            tokio::join!(session_alfie.complete(), session_betty.complete());
+        let (senders_betty, betty_cancelled) = session_betty
+            .complete()
+            .await
+            .expect("failed to close alfie session");
+        senders_betty.close_all();
+
+        let (r1, r2) = tokio::try_join!(net_task_alfie, net_task_betty)
+            .expect("failed to close connection loops");
+        r1.unwrap();
+        r2.unwrap();
+
+        let (error_alfie, error_betty) = tokio::try_join!(
+            terminate_gracefully(&conn_alfie, node_id_alfie, node_id_betty, alfie_cancelled),
+            terminate_gracefully(&conn_betty, node_id_betty, node_id_alfie, betty_cancelled),
+        )
+        .expect("failed to close both connections gracefully");
+        assert_eq!(error_alfie, None);
+        assert_eq!(error_betty, None);
 
         info!("alfie session res {:?}", res_alfie);
         info!("betty session res {:?}", res_betty);
