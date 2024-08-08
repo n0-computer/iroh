@@ -26,6 +26,9 @@ impl<S> Cancelable<S> {
             is_cancelled: false,
         }
     }
+    pub fn into_inner(self) -> S {
+        self.stream
+    }
 }
 
 impl<S: Stream + Unpin> Stream for Cancelable<S> {

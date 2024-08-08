@@ -1,7 +1,7 @@
 use std::{future::Future, sync::Arc};
 
 use futures_concurrency::{future::TryJoin, stream::StreamExt as _};
-use futures_lite::{Stream, StreamExt as _};
+use futures_lite::StreamExt as _;
 use strum::IntoEnumIterator;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -43,7 +43,7 @@ pub(crate) async fn run_session<S: Storage>(
     cancel_token: CancellationToken,
     session_id: SessionId,
     event_sender: EventSender,
-    update_receiver: impl Stream<Item = SessionUpdate> + Unpin + 'static,
+    update_receiver: ReceiverStream<SessionUpdate>,
 ) -> Result<(), Arc<Error>> {
     let ConnHandle {
         peer: _,
@@ -346,34 +346,40 @@ pub(crate) async fn run_session<S: Storage>(
         .try_join()
         .await;
 
-    let result = match result {
-        Ok(_) => Ok(()),
-        Err(err) => Err(Arc::new(err)),
-    };
-
-    // Unsubscribe from the store.  This stops the data send task.
+    // Unsubscribe from the store.
     store.entries().unsubscribe(&session_id);
 
+    let result = result.map_err(Arc::new).map(|_| ());
+
     debug!(error=?result.as_ref().err(), ?we_cancelled, "session complete");
+
+    let remaining_intents = match result.as_ref() {
+        Ok(()) => {
+            // If the session closed without an error, return the remaining intents
+            // so that they can potentially be restarted.
+            intents.drain_all()
+        }
+        Err(err) => {
+            // If the session closed with error, abort the intents with that error.
+            intents.abort_all(err.clone()).await;
+            vec![]
+        }
+    };
 
     if let Err(_receiver_dropped) = event_sender
         .send(SessionEvent::Complete {
             result: result.clone(),
             we_cancelled,
             senders: channel_sender,
+            remaining_intents,
+            update_receiver: update_receiver.into_inner().into_inner(),
         })
         .await
     {
         warn!("failed to send session complete event: receiver dropped");
     }
 
-    match result {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            intents.abort_all(error.clone()).await;
-            Err(error)
-        }
-    }
+    result
 }
 
 async fn control_loop(
