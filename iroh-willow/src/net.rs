@@ -1,10 +1,10 @@
 use std::future::Future;
 
-use anyhow::{ensure, Context as _, Result};
+use anyhow::{anyhow, ensure, Context as _, Result};
 use futures_concurrency::future::TryJoin;
 use futures_util::future::TryFutureExt;
 use iroh_base::key::NodeId;
-use iroh_net::endpoint::{Connection, RecvStream, SendStream};
+use iroh_net::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, trace};
 
@@ -29,6 +29,12 @@ pub const CHANNEL_CAP: usize = 1024 * 64;
 
 /// The ALPN protocol name for iroh-willow.
 pub const ALPN: &[u8] = b"iroh-willow/0";
+
+/// Our QUIC application error code for graceful connection termination.
+pub const ERROR_CODE_OK: u32 = 1;
+/// Our QUIC application error code when closing connections during establishment
+/// because we prefer another existing connection to the same peer.
+pub const ERROR_CODE_IGNORE_CONN: u32 = 2;
 
 /// The handle to an active peer connection.
 ///
@@ -248,6 +254,75 @@ async fn send_loop(mut send_stream: SendStream, channel_reader: Reader) -> Resul
     send_stream.finish().await?;
     trace!("send: done");
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum WhoCancelled {
+    WeDid,
+    TheyDid,
+    BothDid,
+    NoneDid,
+}
+
+pub(crate) async fn terminate_gracefully(
+    conn: &Connection,
+    me: NodeId,
+    peer: NodeId,
+    we_cancelled: bool,
+) -> Result<Option<ConnectionError>> {
+    trace!(?we_cancelled, "terminating connection");
+    let send = async {
+        let mut send_stream = conn.open_uni().await?;
+        let data = if we_cancelled { 1u8 } else { 0u8 };
+        send_stream.write_u8(data).await?;
+        send_stream.finish().await?;
+        Ok(())
+    };
+
+    let recv = async {
+        let mut recv_stream = conn.accept_uni().await?;
+        let data = recv_stream.read_u8().await?;
+        recv_stream.read_to_end(0).await?;
+        let they_cancelled = match data {
+            0 => false,
+            1 => true,
+            _ => return Err(anyhow!("received unexpected closing byte from peer")),
+        };
+        Ok(they_cancelled)
+    };
+
+    let (_, they_cancelled) = (send, recv).try_join().await?;
+
+    let who_cancelled = match (we_cancelled, they_cancelled) {
+        (true, false) => WhoCancelled::WeDid,
+        (false, true) => WhoCancelled::TheyDid,
+        (true, true) => WhoCancelled::BothDid,
+        (false, false) => WhoCancelled::NoneDid,
+    };
+
+    let we_close_first = match who_cancelled {
+        WhoCancelled::WeDid => false,
+        WhoCancelled::TheyDid => true,
+        WhoCancelled::BothDid => me > peer,
+        WhoCancelled::NoneDid => true,
+    };
+    debug!(?who_cancelled, "connection complete");
+    if we_close_first {
+        conn.close(ERROR_CODE_OK.into(), b"bye");
+    }
+    let reason = conn.closed().await;
+    let is_graceful = match &reason {
+        ConnectionError::LocallyClosed if we_close_first => true,
+        ConnectionError::ApplicationClosed(frame) if frame.error_code == ERROR_CODE_OK.into() => {
+            !we_close_first || who_cancelled == WhoCancelled::NoneDid
+        }
+        _ => false,
+    };
+    if !is_graceful {
+        Ok(Some(reason))
+    } else {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
