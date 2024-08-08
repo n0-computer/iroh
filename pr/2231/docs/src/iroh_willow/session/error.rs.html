@@ -138,6 +138,8 @@
 <a href="#138" id="138">138</a>
 <a href="#139" id="139">139</a>
 <a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>ed25519_dalek::SignatureError;
 
 <span class="kw">use crate</span>::{
@@ -213,6 +215,8 @@
     </span>Net(anyhow::Error),
     <span class="attr">#[error(<span class="string">"channel receiver dropped"</span>)]
     </span>ChannelDropped,
+    <span class="attr">#[error(<span class="string">"our node is shutting down"</span>)]
+    </span>ShuttingDown,
 }
 
 <span class="attr">#[derive(Debug, thiserror::Error)]

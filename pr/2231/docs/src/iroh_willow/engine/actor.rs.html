@@ -474,7 +474,7 @@
 <span class="kw">use crate</span>::{
     auth::{CapSelector, CapabilityPack, DelegateTo, InterestMap},
     form::{AuthForm, EntryForm, EntryOrForm},
-    net::WillowConn,
+    net::ConnHandle,
     proto::{
         grouping::ThreeDRange,
         keys::{NamespaceId, NamespaceKind, UserId, UserSecretKey},
@@ -596,9 +596,9 @@
         <span class="prelude-val">Ok</span>(rx.into_stream())
     }
 
-    <span class="kw">pub async fn </span>init_session(
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>init_session(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        conn: WillowConn,
+        conn: ConnHandle,
         intents: Vec&lt;Intent&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;SessionHandle&gt; {
         <span class="kw">let </span>(reply, reply_rx) = oneshot::channel();
@@ -685,7 +685,7 @@
 <span class="attr">#[derive(derive_more::Debug, strum::Display)]
 </span><span class="kw">pub enum </span>Input {
     InitSession {
-        conn: WillowConn,
+        conn: ConnHandle,
         intents: Vec&lt;Intent&gt;,
         reply: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;SessionHandle&gt;&gt;,
     },

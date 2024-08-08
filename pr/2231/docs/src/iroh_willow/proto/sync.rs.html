@@ -999,6 +999,19 @@
 <a href="#999" id="999">999</a>
 <a href="#1000" id="1000">1000</a>
 <a href="#1001" id="1001">1001</a>
+<a href="#1002" id="1002">1002</a>
+<a href="#1003" id="1003">1003</a>
+<a href="#1004" id="1004">1004</a>
+<a href="#1005" id="1005">1005</a>
+<a href="#1006" id="1006">1006</a>
+<a href="#1007" id="1007">1007</a>
+<a href="#1008" id="1008">1008</a>
+<a href="#1009" id="1009">1009</a>
+<a href="#1010" id="1010">1010</a>
+<a href="#1011" id="1011">1011</a>
+<a href="#1012" id="1012">1012</a>
+<a href="#1013" id="1013">1013</a>
+<a href="#1014" id="1014">1014</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt, io::Write, sync::Arc};
 
 <span class="kw">use </span>iroh_base::{base32::fmt_short, hash::Hash};
@@ -1193,6 +1206,19 @@
 }
 
 <span class="kw">impl </span>Channel {
+    <span class="kw">pub const </span>COUNT: usize = LogicalChannel::COUNT + <span class="number">1</span>;
+
+    <span class="kw">pub fn </span>all() -&gt; [Channel; LogicalChannel::COUNT + <span class="number">1</span>] {
+        <span class="comment">// TODO: do this without allocation
+        // https://users.rust-lang.org/t/how-to-concatenate-array-literals-in-compile-time/21141/3
+        </span>[<span class="self">Self</span>::Control]
+            .into_iter()
+            .chain(LogicalChannel::VARIANTS.iter().copied().map(<span class="self">Self</span>::Logical))
+            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+            .try_into()
+            .expect(<span class="string">"static length"</span>)
+    }
+
     <span class="kw">pub fn </span>fmt_short(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
         <span class="kw">match </span><span class="self">self </span>{
             Channel::Control =&gt; <span class="string">"Ctl"</span>,
@@ -1207,7 +1233,7 @@
         }
     }
 
-    <span class="kw">pub fn </span>from_id(<span class="self">self</span>, id: u8) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, InvalidChannelId&gt; {
+    <span class="kw">pub fn </span>from_id(id: u8) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, InvalidChannelId&gt; {
         <span class="kw">match </span>id {
             <span class="number">0 </span>=&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Control),
             <span class="kw">_ </span>=&gt; {

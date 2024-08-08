@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["ALPN","CHANNEL_CAP"],"fn":["join_all"],"struct":["WillowConn"]};
+window.SIDEBAR_ITEMS = {"constant":["ALPN","CHANNEL_CAP","ERROR_CODE_DUPLICATE_CONN","ERROR_CODE_OK"]};

@@ -220,11 +220,33 @@
 <a href="#220" id="220">220</a>
 <a href="#221" id="221">221</a>
 <a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map, BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
 
+<span class="kw">use </span>channels::ChannelSenders;
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 
@@ -247,9 +269,9 @@
 <span class="kw">mod </span>run;
 <span class="kw">mod </span>static_tokens;
 
-<span class="kw">pub use </span><span class="self">self</span>::channels::Channels;
-<span class="kw">pub use </span><span class="self">self</span>::error::Error;
-<span class="kw">pub use </span><span class="self">self</span>::run::run_session;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::channels::Channels;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::error::Error;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::run::run_session;
 
 <span class="kw">pub type </span>SessionId = u64;
 
@@ -299,6 +321,10 @@
 <span class="kw">impl </span>Interests {
     <span class="kw">pub fn </span>builder() -&gt; SelectBuilder {
         SelectBuilder::default()
+    }
+
+    <span class="kw">pub fn </span>all() -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::All
     }
 }
 
@@ -398,10 +424,19 @@
     }
 }
 
-<span class="attr">#[derive(Debug)]
+<span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub enum </span>SessionEvent {
     Established,
-    Complete { result: <span class="prelude-ty">Result</span>&lt;(), Arc&lt;Error&gt;&gt; },
+    Complete {
+        result: <span class="prelude-ty">Result</span>&lt;(), Arc&lt;Error&gt;&gt;,
+        <span class="comment">// who_cancelled: WhoCancelled,
+        </span>we_cancelled: bool,
+        <span class="attr">#[debug(<span class="string">"ChannelSenders"</span>)]
+        </span>senders: ChannelSenders,
+        remaining_intents: Vec&lt;Intent&gt;,
+        <span class="attr">#[debug(<span class="string">"Receiver&lt;SessionUpdate&gt;"</span>)]
+        </span>update_receiver: mpsc::Receiver&lt;SessionUpdate&gt;,
+    },
 }
 
 <span class="attr">#[derive(Debug)]
@@ -414,14 +449,21 @@
 <span class="kw">impl </span>SessionHandle {
     <span class="doccomment">/// Wait for the session to finish.
     ///
+    /// Returns the channel senders and a boolean indicating if we cancelled the session.
     /// Returns an error if the session failed to complete.
-    </span><span class="kw">pub async fn </span>complete(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), Arc&lt;Error&gt;&gt; {
+    </span><span class="kw">pub async fn </span>complete(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(ChannelSenders, bool), Arc&lt;Error&gt;&gt; {
         <span class="kw">while let </span><span class="prelude-val">Some</span>(event) = <span class="self">self</span>.event_rx.recv().<span class="kw">await </span>{
-            <span class="kw">if let </span>SessionEvent::Complete { result } = event {
-                <span class="kw">return </span>result;
+            <span class="kw">if let </span>SessionEvent::Complete {
+                result,
+                senders,
+                we_cancelled,
+                ..
+            } = event
+            {
+                <span class="kw">return </span>result.map(|()| (senders, we_cancelled));
             }
         }
-        <span class="prelude-val">Ok</span>(())
+        <span class="prelude-val">Err</span>(Arc::new(Error::ActorFailed))
     }
 
     <span class="doccomment">/// Submit a new synchronisation intent.

@@ -72,10 +72,30 @@
 <a href="#72" id="72">72</a>
 <a href="#73" id="73">73</a>
 <a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>iroh_net::{endpoint::Connection, util::SharedAbortingJoinHandle, Endpoint, NodeId};
-<span class="kw">use </span>tokio::sync::mpsc;
-<span class="kw">use </span>tracing::{error_span, Instrument};
+<span class="kw">use </span>tokio::sync::{mpsc, oneshot};
+<span class="kw">use </span>tracing::{debug, error, error_span, Instrument};
 
 <span class="kw">use crate</span>::{
     session::{
@@ -99,7 +119,7 @@
 </span><span class="kw">pub struct </span>Engine {
     actor_handle: ActorHandle,
     peer_manager_inbox: mpsc::Sender&lt;peer_manager::Input&gt;,
-    _peer_manager_task: SharedAbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;(), String&gt;&gt;,
+    peer_manager_task: SharedAbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;(), String&gt;&gt;,
 }
 
 <span class="kw">impl </span>Engine {
@@ -111,7 +131,8 @@
         <span class="kw">let </span>me = endpoint.node_id();
         <span class="kw">let </span>actor_handle = ActorHandle::spawn(create_store, me);
         <span class="kw">let </span>(pm_inbox_tx, pm_inbox_rx) = mpsc::channel(PEER_MANAGER_INBOX_CAP);
-        <span class="kw">let </span>peer_manager = PeerManager::new(actor_handle.clone(), endpoint, pm_inbox_rx, accept_opts);
+        <span class="kw">let </span>peer_manager =
+            PeerManager::new(actor_handle.clone(), endpoint, pm_inbox_rx, accept_opts);
         <span class="kw">let </span>peer_manager_task = tokio::task::spawn(
             <span class="kw">async move </span>{ peer_manager.run().<span class="kw">await</span>.map_err(|err| <span class="macro">format!</span>(<span class="string">"{err:?}"</span>)) }
                 .instrument(<span class="macro">error_span!</span>(<span class="string">"peer_manager"</span>, me=%me.fmt_short())),
@@ -119,7 +140,7 @@
         Engine {
             actor_handle,
             peer_manager_inbox: pm_inbox_tx,
-            _peer_manager_task: peer_manager_task.into(),
+            peer_manager_task: peer_manager_task.into(),
         }
     }
 
@@ -136,6 +157,25 @@
             .send(peer_manager::Input::SubmitIntent { peer, intent })
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(handle)
+    }
+
+    <span class="kw">pub async fn </span>shutdown(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="macro">debug!</span>(<span class="string">"shutdown engine"</span>);
+        <span class="kw">let </span>(reply, reply_rx) = oneshot::channel();
+        <span class="self">self</span>.peer_manager_inbox
+            .send(peer_manager::Input::Shutdown { reply })
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        reply_rx.<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>res = <span class="self">self</span>.peer_manager_task.<span class="kw">await</span>;
+        <span class="kw">match </span>res {
+            <span class="prelude-val">Err</span>(err) =&gt; <span class="macro">error!</span>(<span class="question-mark">?</span>err, <span class="string">"peer manager task panicked"</span>),
+            <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="macro">error!</span>(<span class="question-mark">?</span>err, <span class="string">"peer manager task failed"</span>),
+            <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(())) =&gt; {}
+        };
+        <span class="macro">debug!</span>(<span class="string">"shutdown engine: peer manager terminated"</span>);
+        <span class="self">self</span>.actor_handle.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">debug!</span>(<span class="string">"shutdown engine: willow actor terminated"</span>);
+        <span class="prelude-val">Ok</span>(())
     }
 }
 

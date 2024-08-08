@@ -748,16 +748,80 @@
 <a href="#748" id="748">748</a>
 <a href="#749" id="749">749</a>
 <a href="#750" id="750">750</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::ensure;
+<a href="#751" id="751">751</a>
+<a href="#752" id="752">752</a>
+<a href="#753" id="753">753</a>
+<a href="#754" id="754">754</a>
+<a href="#755" id="755">755</a>
+<a href="#756" id="756">756</a>
+<a href="#757" id="757">757</a>
+<a href="#758" id="758">758</a>
+<a href="#759" id="759">759</a>
+<a href="#760" id="760">760</a>
+<a href="#761" id="761">761</a>
+<a href="#762" id="762">762</a>
+<a href="#763" id="763">763</a>
+<a href="#764" id="764">764</a>
+<a href="#765" id="765">765</a>
+<a href="#766" id="766">766</a>
+<a href="#767" id="767">767</a>
+<a href="#768" id="768">768</a>
+<a href="#769" id="769">769</a>
+<a href="#770" id="770">770</a>
+<a href="#771" id="771">771</a>
+<a href="#772" id="772">772</a>
+<a href="#773" id="773">773</a>
+<a href="#774" id="774">774</a>
+<a href="#775" id="775">775</a>
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
+<a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
+<a href="#781" id="781">781</a>
+<a href="#782" id="782">782</a>
+<a href="#783" id="783">783</a>
+<a href="#784" id="784">784</a>
+<a href="#785" id="785">785</a>
+<a href="#786" id="786">786</a>
+<a href="#787" id="787">787</a>
+<a href="#788" id="788">788</a>
+<a href="#789" id="789">789</a>
+<a href="#790" id="790">790</a>
+<a href="#791" id="791">791</a>
+<a href="#792" id="792">792</a>
+<a href="#793" id="793">793</a>
+<a href="#794" id="794">794</a>
+<a href="#795" id="795">795</a>
+<a href="#796" id="796">796</a>
+<a href="#797" id="797">797</a>
+<a href="#798" id="798">798</a>
+<a href="#799" id="799">799</a>
+<a href="#800" id="800">800</a>
+<a href="#801" id="801">801</a>
+<a href="#802" id="802">802</a>
+<a href="#803" id="803">803</a>
+<a href="#804" id="804">804</a>
+<a href="#805" id="805">805</a>
+<a href="#806" id="806">806</a>
+<a href="#807" id="807">807</a>
+<a href="#808" id="808">808</a>
+<a href="#809" id="809">809</a>
+<a href="#810" id="810">810</a>
+<a href="#811" id="811">811</a>
+<a href="#812" id="812">812</a>
+<a href="#813" id="813">813</a>
+<a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::future::Future;
+
+<span class="kw">use </span>anyhow::{anyhow, ensure, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_concurrency::future::TryJoin;
 <span class="kw">use </span>futures_util::future::TryFutureExt;
 <span class="kw">use </span>iroh_base::key::NodeId;
-<span class="kw">use </span>iroh_net::endpoint::{get_remote_node_id, Connection, RecvStream, SendStream};
-<span class="kw">use </span>tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    task::{JoinHandle, JoinSet},
-};
-<span class="kw">use </span>tracing::{debug, error_span, field::Empty, instrument, trace, warn, Instrument, Span};
+<span class="kw">use </span>iroh_net::endpoint::{Connection, ConnectionError, RecvStream, SendStream, VarInt};
+<span class="kw">use </span>tokio::io::{AsyncReadExt, AsyncWriteExt};
+<span class="kw">use </span>tracing::{debug, trace};
 
 <span class="kw">use crate</span>::{
     proto::sync::{
@@ -777,258 +841,66 @@
 };
 
 <span class="kw">pub const </span>CHANNEL_CAP: usize = <span class="number">1024 </span>* <span class="number">64</span>;
-<span class="kw">pub const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"iroh-willow/0"</span>;
 
-<span class="attr">#[derive(derive_more::Debug)]
-</span><span class="kw">pub struct </span>WillowConn {
+<span class="doccomment">/// The ALPN protocol name for iroh-willow.
+</span><span class="kw">pub const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"iroh-willow/0"</span>;
+
+<span class="doccomment">/// Our QUIC application error code for graceful connection termination.
+</span><span class="kw">pub const </span>ERROR_CODE_OK: VarInt = VarInt::from_u32(<span class="number">1</span>);
+<span class="doccomment">/// Our QUIC application error code when closing connections during establishment
+/// because we prefer another existing connection to the same peer.
+</span><span class="kw">pub const </span>ERROR_CODE_DUPLICATE_CONN: VarInt = VarInt::from_u32(<span class="number">2</span>);
+
+<span class="doccomment">/// The handle to an active peer connection.
+///
+/// This is passed into the session loop, where it is used to send and receive messages
+/// on the control and logical channels. It also contains the data of the initial transmission.
+</span><span class="attr">#[derive(derive_more::Debug)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ConnHandle {
     <span class="kw">pub</span>(<span class="kw">crate</span>) our_role: Role,
     <span class="kw">pub</span>(<span class="kw">crate</span>) peer: NodeId,
     <span class="attr">#[debug(<span class="string">"InitialTransmission"</span>)]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) initial_transmission: InitialTransmission,
     <span class="attr">#[debug(<span class="string">"Channels"</span>)]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) channels: Channels,
-    <span class="kw">pub</span>(<span class="kw">crate</span>) join_handle: JoinHandle&lt;anyhow::Result&lt;()&gt;&gt;,
 }
 
-<span class="kw">impl </span>WillowConn {
-    <span class="kw">pub async fn </span>alfie(
-        conn: Connection,
-        me: NodeId,
-        our_nonce: AccessChallenge,
-    ) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
-        <span class="self">Self</span>::connect(conn, me, Role::Alfie, our_nonce).<span class="kw">await
-    </span>}
-
-    <span class="kw">pub async fn </span>betty(
-        conn: Connection,
-        me: NodeId,
-        our_nonce: AccessChallenge,
-    ) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
-        <span class="self">Self</span>::connect(conn, me, Role::Betty, our_nonce).<span class="kw">await
-    </span>}
-
-    <span class="kw">async fn </span>connect(
-        conn: Connection,
-        me: NodeId,
-        our_role: Role,
-        our_nonce: AccessChallenge,
-    ) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>peer = get_remote_node_id(<span class="kw-2">&amp;</span>conn)<span class="question-mark">?</span>;
-        <span class="kw">let </span>(initial_transmission, channels, <span class="kw-2">mut </span>join_set) =
-            setup(conn, me, our_role, our_nonce).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>join_handle = tokio::task::spawn(<span class="kw">async move </span>{ join_all(<span class="kw-2">&amp;mut </span>join_set).<span class="kw">await </span>});
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-            peer,
-            initial_transmission,
-            channels,
-            join_handle,
-            our_role,
-        })
-    }
-}
-
-<span class="attr">#[instrument(skip_all, name = <span class="string">"willow_net"</span>, fields(me=%me.fmt_short(), peer=Empty))]
-</span><span class="kw">async fn </span>setup(
-    conn: Connection,
-    me: NodeId,
+<span class="doccomment">/// Establish the connection by running the initial transmission and
+/// opening the streams for the control and logical channels.
+///
+/// The initial transmission is transferred over a pair of uni streams.
+/// All channels for the actual WGPS are bi streams.
+/// Returns the initial transmission and [`ChannelStreams], which is an
+/// array of send and receive streams, one for each WGPS channel.
+///
+/// To start the networking loops that pipe the QUIC streams into our
+/// internal channel streams use [`prepare_channels`].
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>establish(
+    conn: <span class="kw-2">&amp;</span>Connection,
     our_role: Role,
     our_nonce: AccessChallenge,
-) -&gt; anyhow::Result&lt;(InitialTransmission, Channels, JoinSet&lt;anyhow::Result&lt;()&gt;&gt;)&gt; {
-    <span class="kw">let </span>peer = iroh_net::endpoint::get_remote_node_id(<span class="kw-2">&amp;</span>conn)<span class="question-mark">?</span>;
-    Span::current().record(<span class="string">"peer"</span>, tracing::field::display(peer.fmt_short()));
-    <span class="macro">debug!</span>(<span class="question-mark">?</span>our_role, <span class="string">"connected"</span>);
-
-    <span class="kw">let </span><span class="kw-2">mut </span>tasks = JoinSet::new();
-
-    <span class="kw">let </span>(<span class="kw-2">mut </span>control_send_stream, <span class="kw-2">mut </span>control_recv_stream) = <span class="kw">match </span>our_role {
-        Role::Alfie =&gt; conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>,
-        Role::Betty =&gt; conn.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>,
-    };
-    control_send_stream.set_priority(i32::MAX)<span class="question-mark">?</span>;
-    <span class="macro">debug!</span>(<span class="string">"control channel ready"</span>);
-
-    <span class="kw">let </span>initial_transmission = exchange_commitments(
-        <span class="kw-2">&amp;mut </span>control_send_stream,
-        <span class="kw-2">&amp;mut </span>control_recv_stream,
-        our_nonce,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(InitialTransmission, ChannelStreams)&gt; {
+    <span class="macro">debug!</span>(<span class="question-mark">?</span>our_role, <span class="string">"establishing connection"</span>);
+    <span class="comment">// Run the initial transmission (which works on uni streams) concurrently
+    // with opening/accepting the bi streams for the channels.
+    </span>(
+        initial_transmission(conn, our_nonce),
+        open_channel_streams(conn, our_role),
     )
-    .<span class="kw">await</span><span class="question-mark">?</span>;
-    <span class="macro">debug!</span>(<span class="string">"exchanged commitments"</span>);
+        .try_join()
+        .<span class="kw">await
+</span>}
 
-    <span class="kw">let </span>(control_send, control_recv) = spawn_channel(
-        <span class="kw-2">&amp;mut </span>tasks,
-        Channel::Control,
-        CHANNEL_CAP,
-        CHANNEL_CAP,
-        Guarantees::Unlimited,
-        control_send_stream,
-        control_recv_stream,
-    );
-
-    <span class="kw">let </span>(logical_send, logical_recv) = open_logical_channels(<span class="kw-2">&amp;mut </span>tasks, conn, our_role).<span class="kw">await</span><span class="question-mark">?</span>;
-    <span class="macro">debug!</span>(<span class="string">"logical channels ready"</span>);
-    <span class="kw">let </span>channels = Channels {
-        send: ChannelSenders {
-            control_send,
-            logical_send,
-        },
-        recv: ChannelReceivers {
-            control_recv,
-            logical_recv,
-        },
-    };
-    <span class="prelude-val">Ok</span>((initial_transmission, channels, tasks))
-}
-
-<span class="attr">#[derive(Debug, thiserror::Error)]
-#[error(<span class="string">"missing channel: {0:?}"</span>)]
-</span><span class="kw">struct </span>MissingChannel(LogicalChannel);
-
-<span class="kw">async fn </span>open_logical_channels(
-    join_set: <span class="kw-2">&amp;mut </span>JoinSet&lt;anyhow::Result&lt;()&gt;&gt;,
-    conn: Connection,
-    our_role: Role,
-) -&gt; anyhow::Result&lt;(LogicalChannelSenders, LogicalChannelReceivers)&gt; {
-    <span class="kw">let </span>cap = CHANNEL_CAP;
-    <span class="kw">let </span>channels = LogicalChannel::all();
-    <span class="kw">let </span><span class="kw-2">mut </span>channels = <span class="kw">match </span>our_role {
-        <span class="comment">// Alfie opens a quic stream for each logical channel, and sends a single byte with the
-        // channel id.
-        </span>Role::Alfie =&gt; {
-            channels
-                .map(|ch| {
-                    <span class="kw">let </span>conn = conn.clone();
-                    <span class="kw">async move </span>{
-                        <span class="kw">let </span>(<span class="kw-2">mut </span>send, recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
-                        send.write_u8(ch.id()).<span class="kw">await</span><span class="question-mark">?</span>;
-                        <span class="macro">trace!</span>(<span class="question-mark">?</span>ch, <span class="string">"opened bi stream"</span>);
-                        <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, anyhow::Error&gt;((ch, <span class="prelude-val">Some</span>((send, recv))))
-                    }
-                })
-                .try_join()
-                .<span class="kw">await
-        </span>}
-        <span class="comment">// Betty accepts as many quick streams as there are logical channels, and reads a single
-        // byte on each, which is expected to contain a channel id.
-        </span>Role::Betty =&gt; {
-            channels
-                .map(|<span class="kw">_</span>| <span class="kw">async </span>{
-                    <span class="kw">let </span>(send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
-                    <span class="macro">trace!</span>(<span class="string">"accepted bi stream"</span>);
-                    <span class="kw">let </span>channel_id = recv.read_u8().<span class="kw">await</span><span class="question-mark">?</span>;
-                    <span class="macro">trace!</span>(<span class="string">"read channel id {channel_id}"</span>);
-                    <span class="kw">let </span>channel = LogicalChannel::from_id(channel_id)<span class="question-mark">?</span>;
-                    <span class="macro">trace!</span>(<span class="string">"accepted bi stream for logical channel {channel:?}"</span>);
-                    anyhow::Result::Ok((channel, <span class="prelude-val">Some</span>((send, recv))))
-                })
-                .try_join()
-                .<span class="kw">await
-        </span>}
-    }<span class="question-mark">?</span>;
-
-    <span class="kw">let </span><span class="kw-2">mut </span>take_and_spawn_channel = |channel| {
-        channels
-            .iter_mut()
-            .find_map(|(ch, streams)| (<span class="kw-2">*</span>ch == channel).then(|| streams.take()))
-            .flatten()
-            .map(|(send_stream, recv_stream)| {
-                spawn_channel(
-                    join_set,
-                    Channel::Logical(channel),
-                    cap,
-                    cap,
-                    Guarantees::Limited(<span class="number">0</span>),
-                    send_stream,
-                    recv_stream,
-                )
-            })
-            .ok_or(MissingChannel(channel))
-    };
-
-    <span class="kw">let </span>pai = take_and_spawn_channel(LogicalChannel::Intersection)<span class="question-mark">?</span>;
-    <span class="kw">let </span>rec = take_and_spawn_channel(LogicalChannel::Reconciliation)<span class="question-mark">?</span>;
-    <span class="kw">let </span>stt = take_and_spawn_channel(LogicalChannel::StaticToken)<span class="question-mark">?</span>;
-    <span class="kw">let </span>aoi = take_and_spawn_channel(LogicalChannel::AreaOfInterest)<span class="question-mark">?</span>;
-    <span class="kw">let </span>cap = take_and_spawn_channel(LogicalChannel::Capability)<span class="question-mark">?</span>;
-    <span class="kw">let </span>dat = take_and_spawn_channel(LogicalChannel::Data)<span class="question-mark">?</span>;
-
-    <span class="prelude-val">Ok</span>((
-        LogicalChannelSenders {
-            intersection_send: pai.<span class="number">0</span>,
-            reconciliation_send: rec.<span class="number">0</span>,
-            static_tokens_send: stt.<span class="number">0</span>,
-            aoi_send: aoi.<span class="number">0</span>,
-            capability_send: cap.<span class="number">0</span>,
-            data_send: dat.<span class="number">0</span>,
-        },
-        LogicalChannelReceivers {
-            intersection_recv: pai.<span class="number">1</span>.into(),
-            reconciliation_recv: rec.<span class="number">1</span>.into(),
-            static_tokens_recv: stt.<span class="number">1</span>.into(),
-            aoi_recv: aoi.<span class="number">1</span>.into(),
-            capability_recv: cap.<span class="number">1</span>.into(),
-            data_recv: dat.<span class="number">1</span>.into(),
-        },
-    ))
-}
-
-<span class="kw">fn </span>spawn_channel(
-    join_set: <span class="kw-2">&amp;mut </span>JoinSet&lt;anyhow::Result&lt;()&gt;&gt;,
-    ch: Channel,
-    send_cap: usize,
-    recv_cap: usize,
-    guarantees: Guarantees,
-    send_stream: SendStream,
-    recv_stream: RecvStream,
-) -&gt; (Sender&lt;Message&gt;, Receiver&lt;Message&gt;) {
-    <span class="kw">let </span>(sender, outbound_reader) = outbound_channel(send_cap, guarantees);
-    <span class="kw">let </span>(inbound_writer, receiver) = inbound_channel(recv_cap);
-
-    <span class="kw">let </span>recv_fut = recv_loop(recv_stream, inbound_writer)
-        .map_err(<span class="kw">move </span>|e| e.context(<span class="macro">format!</span>(<span class="string">"receive loop for {ch:?} failed"</span>)))
-        .instrument(<span class="macro">error_span!</span>(<span class="string">"recv"</span>, ch=%ch.fmt_short()));
-
-    join_set.spawn(recv_fut);
-
-    <span class="kw">let </span>send_fut = send_loop(send_stream, outbound_reader)
-        .map_err(<span class="kw">move </span>|e| e.context(<span class="macro">format!</span>(<span class="string">"send loop for {ch:?} failed"</span>)))
-        .instrument(<span class="macro">error_span!</span>(<span class="string">"send"</span>, ch=%ch.fmt_short()));
-
-    join_set.spawn(send_fut);
-
-    (sender, receiver)
-}
-
-<span class="kw">async fn </span>recv_loop(<span class="kw-2">mut </span>recv_stream: RecvStream, <span class="kw-2">mut </span>channel_writer: Writer) -&gt; anyhow::Result&lt;()&gt; {
-    <span class="kw">let </span>max_buffer_size = channel_writer.max_buffer_size();
-    <span class="kw">while let </span><span class="prelude-val">Some</span>(buf) = recv_stream.read_chunk(max_buffer_size, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">? </span>{
-        channel_writer.write_all(<span class="kw-2">&amp;</span>buf.bytes[..]).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="comment">// trace!(len = buf.bytes.len(), "recv");
-    </span>}
-    channel_writer.close();
-    <span class="macro">trace!</span>(<span class="string">"close"</span>);
-    <span class="prelude-val">Ok</span>(())
-}
-
-<span class="kw">async fn </span>send_loop(<span class="kw-2">mut </span>send_stream: SendStream, channel_reader: Reader) -&gt; anyhow::Result&lt;()&gt; {
-    <span class="kw">while let </span><span class="prelude-val">Some</span>(data) = channel_reader.read_bytes().<span class="kw">await </span>{
-        <span class="comment">// let len = data.len();
-        </span>send_stream.write_chunk(data).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="comment">// trace!(len, "sent");
-    </span>}
-    send_stream.finish().<span class="kw">await</span><span class="question-mark">?</span>;
-    <span class="macro">trace!</span>(<span class="string">"close"</span>);
-    <span class="prelude-val">Ok</span>(())
-}
-
-<span class="kw">async fn </span>exchange_commitments(
-    send_stream: <span class="kw-2">&amp;mut </span>SendStream,
-    recv_stream: <span class="kw-2">&amp;mut </span>RecvStream,
+<span class="kw">async fn </span>initial_transmission(
+    conn: <span class="kw-2">&amp;</span>Connection,
     our_nonce: AccessChallenge,
-) -&gt; anyhow::Result&lt;InitialTransmission&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;InitialTransmission&gt; {
     <span class="kw">let </span>challenge_hash = our_nonce.hash();
+    <span class="kw">let </span><span class="kw-2">mut </span>send_stream = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
     send_stream.write_u8(MAX_PAYLOAD_SIZE_POWER).<span class="kw">await</span><span class="question-mark">?</span>;
     send_stream.write_all(challenge_hash.as_bytes()).<span class="kw">await</span><span class="question-mark">?</span>;
+
+    <span class="kw">let </span><span class="kw-2">mut </span>recv_stream = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
 
     <span class="kw">let </span>their_max_payload_size = {
         <span class="kw">let </span>power = recv_stream.read_u8().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1038,6 +910,7 @@
 
     <span class="kw">let </span><span class="kw-2">mut </span>received_commitment = [<span class="number">0u8</span>; CHALLENGE_HASH_LENGTH];
     recv_stream.read_exact(<span class="kw-2">&amp;mut </span>received_commitment).<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="macro">debug!</span>(<span class="string">"initial transmission complete"</span>);
     <span class="prelude-val">Ok</span>(InitialTransmission {
         our_nonce,
         received_commitment: ChallengeHash::from_bytes(received_commitment),
@@ -1045,45 +918,295 @@
     })
 }
 
-<span class="kw">pub async fn </span>join_all(join_set: <span class="kw-2">&amp;mut </span>JoinSet&lt;anyhow::Result&lt;()&gt;&gt;) -&gt; anyhow::Result&lt;()&gt; {
-    <span class="kw">let </span><span class="kw-2">mut </span>final_result = <span class="prelude-val">Ok</span>(());
-    <span class="kw">let </span><span class="kw-2">mut </span>joined = <span class="number">0</span>;
-    <span class="kw">while let </span><span class="prelude-val">Some</span>(res) = join_set.join_next().<span class="kw">await </span>{
-        joined += <span class="number">1</span>;
-        <span class="macro">trace!</span>(<span class="string">"joined {joined} tasks, remaining {}"</span>, join_set.len());
-        <span class="kw">let </span>res = <span class="kw">match </span>res {
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(())) =&gt; <span class="prelude-val">Ok</span>(()),
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="prelude-val">Err</span>(err),
-            <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err.into()),
-        };
-        <span class="kw">if </span>res.is_err() &amp;&amp; final_result.is_ok() {
-            final_result = res;
-        } <span class="kw">else if </span>res.is_err() {
-            <span class="macro">warn!</span>(<span class="string">"join error after initial error: {res:?}"</span>);
-        }
-    }
-    final_result
+<span class="attr">#[derive(Debug, thiserror::Error)]
+#[error(<span class="string">"missing channel: {0:?}"</span>)]
+</span><span class="kw">struct </span>MissingChannel(Channel);
+
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>ChannelStreams = [(Channel, SendStream, RecvStream); Channel::COUNT];
+
+<span class="kw">async fn </span>open_channel_streams(conn: <span class="kw-2">&amp;</span>Connection, our_role: Role) -&gt; <span class="prelude-ty">Result</span>&lt;ChannelStreams&gt; {
+    <span class="kw">let </span>channels = <span class="kw">match </span>our_role {
+        <span class="comment">// Alfie opens a quic stream for each logical channel, and sends a single byte with the
+        // channel id.
+        </span>Role::Alfie =&gt; {
+            Channel::all()
+                .map(|ch| {
+                    <span class="kw">let </span>conn = conn.clone();
+                    <span class="kw">async move </span>{
+                        <span class="kw">let </span>(<span class="kw-2">mut </span>send, recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+                        send.write_u8(ch.id()).<span class="kw">await</span><span class="question-mark">?</span>;
+                        <span class="macro">trace!</span>(<span class="question-mark">?</span>ch, <span class="string">"opened bi stream"</span>);
+                        <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, anyhow::Error&gt;((ch, send, recv))
+                    }
+                })
+                .try_join()
+                .<span class="kw">await
+        </span>}
+        <span class="comment">// Betty accepts as many quick streams as there are logical channels, and reads a single
+        // byte on each, which is expected to contain a channel id.
+        </span>Role::Betty =&gt; {
+            Channel::all()
+                .map(|<span class="kw">_</span>| <span class="kw">async </span>{
+                    <span class="kw">let </span>(send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+                    <span class="comment">// trace!("accepted bi stream");
+                    </span><span class="kw">let </span>channel_id = recv.read_u8().<span class="kw">await</span><span class="question-mark">?</span>;
+                    <span class="comment">// trace!("read channel id {channel_id}");
+                    </span><span class="kw">let </span>channel = Channel::from_id(channel_id)<span class="question-mark">?</span>;
+                    <span class="macro">trace!</span>(<span class="question-mark">?</span>channel, <span class="string">"accepted bi stream for channel"</span>);
+                    Result::Ok((channel, send, recv))
+                })
+                .try_join()
+                .<span class="kw">await
+        </span>}
+    }<span class="question-mark">?</span>;
+    <span class="prelude-val">Ok</span>(channels)
 }
 
-<span class="attr">#[cfg(test)]
+<span class="doccomment">/// Create a future for each WGPS channel that pipes between the QUIC channels and the
+/// [`Sender`] and [`Receiver`] for each channel to be used in the session.
+///
+/// Returns [`Channels`], which contains all senders and receivers, and a future that drives
+/// the send and receive loops for all channels combined.
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>prepare_channels(
+    channels: ChannelStreams,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(Channels, <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;()&gt;&gt; + Send)&gt; {
+    <span class="kw">let </span><span class="kw-2">mut </span>channels = channels.map(|(ch, send, recv)| (ch, <span class="prelude-val">Some</span>(prepare_channel(ch, send, recv))));
+
+    <span class="kw">let </span><span class="kw-2">mut </span>find = |channel| {
+        channels
+            .iter_mut()
+            .find_map(|(ch, streams)| (<span class="kw-2">*</span>ch == channel).then(|| streams.take()))
+            .flatten()
+            .ok_or(MissingChannel(channel))
+    };
+
+    <span class="kw">let </span>ctrl = find(Channel::Control)<span class="question-mark">?</span>;
+    <span class="kw">let </span>pai = find(Channel::Logical(LogicalChannel::Intersection))<span class="question-mark">?</span>;
+    <span class="kw">let </span>rec = find(Channel::Logical(LogicalChannel::Reconciliation))<span class="question-mark">?</span>;
+    <span class="kw">let </span>stt = find(Channel::Logical(LogicalChannel::StaticToken))<span class="question-mark">?</span>;
+    <span class="kw">let </span>aoi = find(Channel::Logical(LogicalChannel::AreaOfInterest))<span class="question-mark">?</span>;
+    <span class="kw">let </span>cap = find(Channel::Logical(LogicalChannel::Capability))<span class="question-mark">?</span>;
+    <span class="kw">let </span>dat = find(Channel::Logical(LogicalChannel::Data))<span class="question-mark">?</span>;
+
+    <span class="kw">let </span>fut = (ctrl.<span class="number">2</span>, pai.<span class="number">2</span>, rec.<span class="number">2</span>, stt.<span class="number">2</span>, aoi.<span class="number">2</span>, cap.<span class="number">2</span>, dat.<span class="number">2</span>)
+        .try_join()
+        .map_ok(|<span class="kw">_</span>| ());
+
+    <span class="kw">let </span>logical_send = LogicalChannelSenders {
+        intersection_send: pai.<span class="number">0</span>,
+        reconciliation_send: rec.<span class="number">0</span>,
+        static_tokens_send: stt.<span class="number">0</span>,
+        aoi_send: aoi.<span class="number">0</span>,
+        capability_send: cap.<span class="number">0</span>,
+        data_send: dat.<span class="number">0</span>,
+    };
+    <span class="kw">let </span>logical_recv = LogicalChannelReceivers {
+        intersection_recv: pai.<span class="number">1</span>.into(),
+        reconciliation_recv: rec.<span class="number">1</span>.into(),
+        static_tokens_recv: stt.<span class="number">1</span>.into(),
+        aoi_recv: aoi.<span class="number">1</span>.into(),
+        capability_recv: cap.<span class="number">1</span>.into(),
+        data_recv: dat.<span class="number">1</span>.into(),
+    };
+    <span class="kw">let </span>channels = Channels {
+        send: ChannelSenders {
+            control_send: ctrl.<span class="number">0</span>,
+            logical_send,
+        },
+        recv: ChannelReceivers {
+            control_recv: ctrl.<span class="number">1</span>,
+            logical_recv,
+        },
+    };
+    <span class="prelude-val">Ok</span>((channels, fut))
+}
+
+<span class="kw">fn </span>prepare_channel(
+    ch: Channel,
+    send_stream: SendStream,
+    recv_stream: RecvStream,
+) -&gt; (
+    Sender&lt;Message&gt;,
+    Receiver&lt;Message&gt;,
+    <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;()&gt;&gt; + Send,
+) {
+    <span class="kw">let </span>guarantees = <span class="kw">match </span>ch {
+        Channel::Control =&gt; Guarantees::Unlimited,
+        Channel::Logical(<span class="kw">_</span>) =&gt; Guarantees::Limited(<span class="number">0</span>),
+    };
+    <span class="kw">let </span>cap = CHANNEL_CAP;
+    <span class="kw">let </span>(sender, outbound_reader) = outbound_channel(cap, guarantees);
+    <span class="kw">let </span>(inbound_writer, receiver) = inbound_channel(cap);
+
+    <span class="kw">let </span>recv_fut = recv_loop(recv_stream, inbound_writer)
+        .map_err(<span class="kw">move </span>|e| e.context(<span class="macro">format!</span>(<span class="string">"receive loop for {ch:?} failed"</span>)));
+
+    <span class="kw">let </span>send_fut = send_loop(send_stream, outbound_reader)
+        .map_err(<span class="kw">move </span>|e| e.context(<span class="macro">format!</span>(<span class="string">"send loop for {ch:?} failed"</span>)));
+
+    <span class="kw">let </span>fut = (recv_fut, send_fut).try_join().map_ok(|<span class="kw">_</span>| ());
+
+    (sender, receiver, fut)
+}
+
+<span class="kw">async fn </span>recv_loop(<span class="kw-2">mut </span>recv_stream: RecvStream, <span class="kw-2">mut </span>channel_writer: Writer) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="macro">trace!</span>(<span class="string">"recv: start"</span>);
+    <span class="kw">let </span>max_buffer_size = channel_writer.max_buffer_size();
+    <span class="kw">while let </span><span class="prelude-val">Some</span>(buf) = recv_stream
+        .read_chunk(max_buffer_size, <span class="bool-val">true</span>)
+        .<span class="kw">await
+        </span>.context(<span class="string">"failed to read from quic stream"</span>)<span class="question-mark">?
+    </span>{
+        <span class="comment">// trace!(len = buf.bytes.len(), "read");
+        </span>channel_writer.write_all(<span class="kw-2">&amp;</span>buf.bytes[..]).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="comment">// trace!(len = buf.bytes.len(), "sent");
+    </span>}
+    <span class="macro">trace!</span>(<span class="string">"recv: stream close"</span>);
+    channel_writer.close();
+    <span class="macro">trace!</span>(<span class="string">"recv: loop close"</span>);
+    <span class="prelude-val">Ok</span>(())
+}
+
+<span class="kw">async fn </span>send_loop(<span class="kw-2">mut </span>send_stream: SendStream, channel_reader: Reader) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="macro">trace!</span>(<span class="string">"send: start"</span>);
+    <span class="kw">while let </span><span class="prelude-val">Some</span>(data) = channel_reader.read_bytes().<span class="kw">await </span>{
+        <span class="comment">// let len = data.len();
+        // trace!(len, "send");
+        </span>send_stream
+            .write_chunk(data)
+            .<span class="kw">await
+            </span>.context(<span class="string">"failed to write to quic stream"</span>)<span class="question-mark">?</span>;
+        <span class="comment">// trace!(len, "sent");
+    </span>}
+    <span class="macro">trace!</span>(<span class="string">"send: close writer"</span>);
+    send_stream.finish().<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="macro">trace!</span>(<span class="string">"send: done"</span>);
+    <span class="prelude-val">Ok</span>(())
+}
+
+<span class="doccomment">/// Terminate a connection gracefully.
+///
+/// QUIC does not allow us to rely on stream terminations, because those only signal
+/// reception in the peer's QUIC stack, not in the application. Closing a QUIC connection
+/// triggers immediate termination, so to make sure that all data was actually processed
+/// by our session, we exchange a single byte over a pair of uni streams. As this is the only
+/// use of uni streams after the initial connection handshake, we do not have to identify the
+/// streams specifically.
+///
+/// This function may only be called once the session processing has fully terminated and all
+/// WGPS streams are closed (for send streams) and read to end (for recv streams) on our side.
+///
+/// `we_cancelled` is a boolean indicating whether we are terminating the connection after
+/// we willfully terminated or completed our session. Pass `false` if the session terminated
+/// because the other peer closed their WGPS streams.
+///
+/// If only one peer indicated that they initiated the termination by setting `we_cancelled`
+/// to `true`, this peer will *not* close the connection, but instead wait for the other peer
+/// to close the connection.
+/// If both peers indicated that they initiated the termination, the peer with the higher node id
+/// will close the connection first.
+/// If none of the peers said they closed, which likely is a bug in the implementation, both peers
+/// will close the connection.
+///
+/// A connection is considered to be closed gracefully if and only if this procedure is run to end
+/// successfully, and if the connection is closed with the expected error code.
+///
+/// Returns an error if the termination flow was aborted prematurely.
+/// Returns a  [`ConnectionError] if the termination flow was completed successfully, but the connection
+/// was not closed with the expected error code.
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>terminate_gracefully(
+    conn: <span class="kw-2">&amp;</span>Connection,
+    me: NodeId,
+    peer: NodeId,
+    we_cancelled: bool,
+) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;ConnectionError&gt;&gt; {
+    <span class="macro">trace!</span>(<span class="question-mark">?</span>we_cancelled, <span class="string">"terminating connection"</span>);
+    <span class="kw">let </span>send = <span class="kw">async </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>send_stream = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>data = <span class="kw">if </span>we_cancelled { <span class="number">1u8 </span>} <span class="kw">else </span>{ <span class="number">0u8 </span>};
+        send_stream.write_u8(data).<span class="kw">await</span><span class="question-mark">?</span>;
+        send_stream.finish().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(())
+    };
+
+    <span class="kw">let </span>recv = <span class="kw">async </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>recv_stream = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>data = recv_stream.read_u8().<span class="kw">await</span><span class="question-mark">?</span>;
+        recv_stream.read_to_end(<span class="number">0</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>they_cancelled = <span class="kw">match </span>data {
+            <span class="number">0 </span>=&gt; <span class="bool-val">false</span>,
+            <span class="number">1 </span>=&gt; <span class="bool-val">true</span>,
+            <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"received unexpected closing byte from peer"</span>)),
+        };
+        <span class="prelude-val">Ok</span>(they_cancelled)
+    };
+
+    <span class="kw">let </span>(<span class="kw">_</span>, they_cancelled) = (send, recv).try_join().<span class="kw">await</span><span class="question-mark">?</span>;
+
+    <span class="attr">#[derive(Debug)]
+    </span><span class="kw">enum </span>WhoCancelled {
+        WeDid,
+        TheyDid,
+        BothDid,
+        NoneDid,
+    }
+
+    <span class="kw">let </span>who_cancelled = <span class="kw">match </span>(we_cancelled, they_cancelled) {
+        (<span class="bool-val">true</span>, <span class="bool-val">false</span>) =&gt; WhoCancelled::WeDid,
+        (<span class="bool-val">false</span>, <span class="bool-val">true</span>) =&gt; WhoCancelled::TheyDid,
+        (<span class="bool-val">true</span>, <span class="bool-val">true</span>) =&gt; WhoCancelled::BothDid,
+        (<span class="bool-val">false</span>, <span class="bool-val">false</span>) =&gt; WhoCancelled::NoneDid,
+    };
+
+    <span class="kw">let </span>we_close_first = <span class="kw">match </span>who_cancelled {
+        WhoCancelled::WeDid =&gt; <span class="bool-val">false</span>,
+        WhoCancelled::TheyDid =&gt; <span class="bool-val">true</span>,
+        WhoCancelled::BothDid =&gt; me &gt; peer,
+        WhoCancelled::NoneDid =&gt; <span class="bool-val">true</span>,
+    };
+    <span class="macro">debug!</span>(<span class="question-mark">?</span>who_cancelled, <span class="string">"connection complete"</span>);
+    <span class="kw">if </span>we_close_first {
+        conn.close(ERROR_CODE_OK.into(), <span class="string">b"bye"</span>);
+    }
+    <span class="kw">let </span>reason = conn.closed().<span class="kw">await</span>;
+    <span class="kw">let </span>is_graceful = <span class="kw">match </span><span class="kw-2">&amp;</span>reason {
+        ConnectionError::LocallyClosed <span class="kw">if </span>we_close_first =&gt; <span class="bool-val">true</span>,
+        ConnectionError::ApplicationClosed(frame) <span class="kw">if </span>frame.error_code == ERROR_CODE_OK.into() =&gt; {
+            !we_close_first || <span class="macro">matches!</span>(who_cancelled, WhoCancelled::NoneDid)
+        }
+        <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
+    };
+    <span class="kw">if </span>!is_graceful {
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(reason))
+    } <span class="kw">else </span>{
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
+    }
+}
+
+<span class="doccomment">/// This test module contains two integration tests for the net and session run module.
+///
+/// They were written before the peer_manager module existed, and thus are quite verbose.
+/// Still going to keep them around for now as a safe guard.
+</span><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::{
         collections::BTreeSet,
         time::{Duration, Instant},
     };
 
+    <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>futures_lite::StreamExt;
     <span class="kw">use </span>iroh_base::key::SecretKey;
     <span class="kw">use </span>iroh_net::{endpoint::Connection, Endpoint, NodeAddr, NodeId};
     <span class="kw">use </span>rand::SeedableRng;
     <span class="kw">use </span>rand_chacha::ChaCha12Rng;
-    <span class="kw">use </span>tracing::info;
+    <span class="kw">use </span>tracing::{info, Instrument};
 
     <span class="kw">use crate</span>::{
         auth::{CapSelector, DelegateTo, RestrictArea},
         engine::ActorHandle,
         form::{AuthForm, EntryForm, PayloadForm, SubspaceForm, TimestampForm},
-        net::WillowConn,
+        net::{terminate_gracefully, ConnHandle},
         proto::{
             grouping::ThreeDRange,
             keys::{NamespaceId, NamespaceKind, UserId},
@@ -1093,6 +1216,8 @@
         },
         session::{intents::Intent, Interests, Role, SessionHandle, SessionInit, SessionMode},
     };
+
+    <span class="kw">use super</span>::{establish, prepare_channels};
 
     <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"iroh-willow/0"</span>;
 
@@ -1108,14 +1233,26 @@
         our_role: Role,
         our_nonce: AccessChallenge,
         intents: Vec&lt;Intent&gt;,
-    ) -&gt; anyhow::Result&lt;SessionHandle&gt; {
-        <span class="kw">let </span>conn = WillowConn::connect(conn, me, our_role, our_nonce).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>handle = actor.init_session(conn, intents).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(handle)
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(SessionHandle, tokio::task::JoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;)&gt; {
+        <span class="kw">let </span>peer = iroh_net::endpoint::get_remote_node_id(<span class="kw-2">&amp;</span>conn)<span class="question-mark">?</span>;
+        <span class="kw">let </span>span = <span class="macro">tracing::error_span!</span>(<span class="string">"conn"</span>, me=%me.fmt_short(), peer=%peer.fmt_short());
+        <span class="kw">let </span>(initial_transmission, channel_streams) = establish(<span class="kw-2">&amp;</span>conn, our_role, our_nonce)
+            .instrument(span.clone())
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(channels, fut) = prepare_channels(channel_streams)<span class="question-mark">?</span>;
+        <span class="kw">let </span>net_task = tokio::task::spawn(fut.instrument(span));
+        <span class="kw">let </span>willow_conn = ConnHandle {
+            initial_transmission,
+            our_role,
+            peer,
+            channels,
+        };
+        <span class="kw">let </span>handle = actor.init_session(willow_conn, intents).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>((handle, net_task))
     }
 
     <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
-    </span><span class="kw">async fn </span>net_smoke() -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>net_smoke() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         iroh_test::logging::setup_multithreaded();
         <span class="kw">let </span><span class="kw-2">mut </span>rng = create_rng(<span class="string">"net_smoke"</span>);
         <span class="kw">let </span>n_betty = parse_env_var(<span class="string">"N_BETTY"</span>, <span class="number">100</span>);
@@ -1190,7 +1327,7 @@
             run(
                 node_id_alfie,
                 handle_alfie.clone(),
-                conn_alfie,
+                conn_alfie.clone(),
                 Role::Alfie,
                 nonce_alfie,
                 <span class="macro">vec!</span>[intent_alfie]
@@ -1198,14 +1335,14 @@
             run(
                 node_id_betty,
                 handle_betty.clone(),
-                conn_betty,
+                conn_betty.clone(),
                 Role::Betty,
                 nonce_betty,
                 <span class="macro">vec!</span>[intent_betty]
             )
         );
-        <span class="kw">let </span><span class="kw-2">mut </span>session_alfie = session_alfie<span class="question-mark">?</span>;
-        <span class="kw">let </span><span class="kw-2">mut </span>session_betty = session_betty<span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>session_alfie, net_task_alfie) = session_alfie<span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>session_betty, net_task_betty) = session_betty<span class="question-mark">?</span>;
 
         <span class="kw">let </span>(res_alfie, res_betty) = <span class="macro">tokio::join!</span>(
             intent_handle_alfie.complete(),
@@ -1220,10 +1357,26 @@
             <span class="macro">tokio::join!</span>(session_alfie.complete(), session_betty.complete());
         <span class="macro">info!</span>(<span class="string">"alfie session res {:?}"</span>, res_alfie);
         <span class="macro">info!</span>(<span class="string">"betty session res {:?}"</span>, res_betty);
-        <span class="macro">assert!</span>(res_alfie.is_ok());
-        <span class="macro">assert!</span>(res_betty.is_ok());
 
         <span class="macro">info!</span>(time=<span class="question-mark">?</span>start.elapsed(), <span class="string">"reconciliation finished"</span>);
+
+        <span class="kw">let </span>(senders_alfie, alfie_cancelled) = res_alfie.unwrap();
+        <span class="kw">let </span>(senders_betty, betty_cancelled) = res_betty.unwrap();
+        senders_alfie.close_all();
+        senders_betty.close_all();
+
+        <span class="kw">let </span>(r1, r2) = <span class="macro">tokio::try_join!</span>(net_task_alfie, net_task_betty)
+            .expect(<span class="string">"failed to close connection loops"</span>);
+        r1.unwrap();
+        r2.unwrap();
+
+        <span class="kw">let </span>(error_alfie, error_betty) = <span class="macro">tokio::try_join!</span>(
+            terminate_gracefully(<span class="kw-2">&amp;</span>conn_alfie, node_id_alfie, node_id_betty, alfie_cancelled),
+            terminate_gracefully(<span class="kw-2">&amp;</span>conn_betty, node_id_betty, node_id_alfie, betty_cancelled),
+        )
+        .expect(<span class="string">"failed to close both connections gracefully"</span>);
+        <span class="macro">assert_eq!</span>(error_alfie, <span class="prelude-val">None</span>);
+        <span class="macro">assert_eq!</span>(error_betty, <span class="prelude-val">None</span>);
 
         <span class="kw">let </span>alfie_entries = get_entries(<span class="kw-2">&amp;</span>handle_alfie, namespace_id).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>betty_entries = get_entries(<span class="kw-2">&amp;</span>handle_betty, namespace_id).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1237,7 +1390,7 @@
     }
 
     <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
-    </span><span class="kw">async fn </span>net_live_data() -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>net_live_data() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         iroh_test::logging::setup_multithreaded();
         <span class="kw">let </span><span class="kw-2">mut </span>rng = create_rng(<span class="string">"net_live_data"</span>);
 
@@ -1340,7 +1493,7 @@
             run(
                 node_id_alfie,
                 handle_alfie.clone(),
-                conn_alfie,
+                conn_alfie.clone(),
                 Role::Alfie,
                 nonce_alfie,
                 <span class="macro">vec!</span>[intent_alfie]
@@ -1348,20 +1501,38 @@
             run(
                 node_id_betty,
                 handle_betty.clone(),
-                conn_betty,
+                conn_betty.clone(),
                 Role::Betty,
                 nonce_betty,
                 <span class="macro">vec!</span>[intent_betty]
             )
         );
-        <span class="kw">let </span><span class="kw-2">mut </span>session_alfie = session_alfie<span class="question-mark">?</span>;
-        <span class="kw">let </span><span class="kw-2">mut </span>session_betty = session_betty<span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>session_alfie, net_task_alfie) = session_alfie<span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>session_betty, net_task_betty) = session_betty<span class="question-mark">?</span>;
 
         <span class="kw">let </span>live_entries = done_rx.<span class="kw">await</span><span class="question-mark">?</span>;
         expected_entries.extend(live_entries);
         <span class="comment">// TODO: replace with event
         </span>tokio::time::sleep(Duration::from_secs(<span class="number">1</span>)).<span class="kw">await</span>;
+
         session_alfie.close();
+        <span class="kw">let </span>(senders_alfie, alfie_cancelled) = session_alfie
+            .complete()
+            .<span class="kw">await
+            </span>.expect(<span class="string">"failed to close alfie session"</span>);
+        <span class="macro">info!</span>(<span class="string">"close alfie session"</span>);
+        senders_alfie.close_all();
+
+        <span class="kw">let </span>(senders_betty, betty_cancelled) = session_betty
+            .complete()
+            .<span class="kw">await
+            </span>.expect(<span class="string">"failed to close alfie session"</span>);
+        senders_betty.close_all();
+
+        <span class="kw">let </span>(r1, r2) = <span class="macro">tokio::try_join!</span>(net_task_alfie, net_task_betty)
+            .expect(<span class="string">"failed to close connection loops"</span>);
+        r1.unwrap();
+        r2.unwrap();
 
         <span class="kw">let </span>(res_alfie, res_betty) = <span class="macro">tokio::join!</span>(
             intent_handle_alfie.complete(),
@@ -1373,8 +1544,13 @@
         <span class="macro">assert!</span>(res_alfie.is_ok());
         <span class="macro">assert!</span>(res_betty.is_ok());
 
-        <span class="kw">let </span>(res_alfie, res_betty) =
-            <span class="macro">tokio::join!</span>(session_alfie.complete(), session_betty.complete());
+        <span class="kw">let </span>(error_alfie, error_betty) = <span class="macro">tokio::try_join!</span>(
+            terminate_gracefully(<span class="kw-2">&amp;</span>conn_alfie, node_id_alfie, node_id_betty, alfie_cancelled),
+            terminate_gracefully(<span class="kw-2">&amp;</span>conn_betty, node_id_betty, node_id_alfie, betty_cancelled),
+        )
+        .expect(<span class="string">"failed to close both connections gracefully"</span>);
+        <span class="macro">assert_eq!</span>(error_alfie, <span class="prelude-val">None</span>);
+        <span class="macro">assert_eq!</span>(error_betty, <span class="prelude-val">None</span>);
 
         <span class="macro">info!</span>(<span class="string">"alfie session res {:?}"</span>, res_alfie);
         <span class="macro">info!</span>(<span class="string">"betty session res {:?}"</span>, res_betty);
@@ -1393,7 +1569,7 @@
 
     <span class="kw">pub async fn </span>create_endpoint(
         rng: <span class="kw-2">&amp;mut </span>rand_chacha::ChaCha12Rng,
-    ) -&gt; anyhow::Result&lt;(Endpoint, NodeId, NodeAddr)&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, NodeId, NodeAddr)&gt; {
         <span class="kw">let </span>ep = Endpoint::builder()
             .secret_key(SecretKey::generate_with_rng(rng))
             .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
@@ -1404,11 +1580,8 @@
         <span class="prelude-val">Ok</span>((ep, node_id, addr))
     }
 
-    <span class="kw">async fn </span>get_entries(
-        store: <span class="kw-2">&amp;</span>ActorHandle,
-        namespace: NamespaceId,
-    ) -&gt; anyhow::Result&lt;BTreeSet&lt;Entry&gt;&gt; {
-        <span class="kw">let </span>entries: anyhow::Result&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt; = store
+    <span class="kw">async fn </span>get_entries(store: <span class="kw-2">&amp;</span>ActorHandle, namespace: NamespaceId) -&gt; <span class="prelude-ty">Result</span>&lt;BTreeSet&lt;Entry&gt;&gt; {
+        <span class="kw">let </span>entries: <span class="prelude-ty">Result</span>&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt; = store
             .get_entries(namespace, ThreeDRange::full())
             .<span class="kw">await</span><span class="question-mark">?
             </span>.try_collect()
@@ -1424,7 +1597,7 @@
         path_fn: <span class="kw">impl </span>Fn(usize) -&gt; <span class="prelude-ty">Result</span>&lt;Path, InvalidPath&gt;,
         content_fn: <span class="kw">impl </span>Fn(usize) -&gt; String,
         track_entries: <span class="kw-2">&amp;mut </span><span class="kw">impl </span>Extend&lt;Entry&gt;,
-    ) -&gt; anyhow::Result&lt;()&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..count {
             <span class="kw">let </span>payload = content_fn(i).as_bytes().to_vec();
             <span class="kw">let </span>path = path_fn(i).expect(<span class="string">"invalid path"</span>);
@@ -1454,48 +1627,5 @@
             <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; default,
         }
     }
-
-    <span class="comment">// async fn get_entries_debug(
-    //     store: &amp;StoreHandle,
-    //     namespace: NamespaceId,
-    // ) -&gt; anyhow::Result&lt;Vec&lt;(SubspaceId, Path)&gt;&gt; {
-    //     let entries = get_entries(store, namespace).await?;
-    //     let mut entries: Vec&lt;_&gt; = entries
-    //         .into_iter()
-    //         .map(|e| (e.subspace_id, e.path))
-    //         .collect();
-    //     entries.sort();
-    //     Ok(entries)
-    // }
-    //
-    //
-    //
-    // tokio::task::spawn({
-    //     let handle_alfie = handle_alfie.clone();
-    //     let handle_betty = handle_betty.clone();
-    //     async move {
-    //         loop {
-    //             info!(
-    //                 "alfie count: {}",
-    //                 handle_alfie
-    //                     .get_entries(namespace_id, ThreeDRange::full())
-    //                     .await
-    //                     .unwrap()
-    //                     .count()
-    //                     .await
-    //             );
-    //             info!(
-    //                 "betty count: {}",
-    //                 handle_betty
-    //                     .get_entries(namespace_id, ThreeDRange::full())
-    //                     .await
-    //                     .unwrap()
-    //                     .count()
-    //                     .await
-    //             );
-    //             tokio::time::sleep(Duration::from_secs(1)).await;
-    //         }
-    //     }
-    // });
-</span>}
+}
 </code></pre></div></section></main></body></html>

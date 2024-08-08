@@ -473,14 +473,14 @@
 <span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub enum </span>RestrictArea {
     <span class="prelude-val">None</span>,
-    Restrict(Area)
+    Restrict(Area),
 }
 
 <span class="kw">impl </span>RestrictArea {
     <span class="kw">pub fn </span>with_default(<span class="self">self</span>, default: Area) -&gt; Area {
         <span class="kw">match </span><span class="self">self </span>{
             RestrictArea::None =&gt; default.clone(),
-            RestrictArea::Restrict(area) =&gt; area
+            RestrictArea::Restrict(area) =&gt; area,
         }
     }
 }

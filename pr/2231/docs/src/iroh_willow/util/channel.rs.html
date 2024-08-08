@@ -467,17 +467,17 @@
 
 <span class="kw">use </span><span class="kw">crate</span>::util::codec::{DecodeOutcome, Decoder, Encoder};
 
-<span class="doccomment">/// Create an in-memory pipe.
-</span><span class="kw">pub fn </span>pipe(cap: usize) -&gt; (Writer, Reader) {
-    <span class="kw">let </span>shared = Shared::new(cap, Guarantees::Unlimited);
-    <span class="kw">let </span>writer = Writer {
-        shared: shared.clone(),
-    };
-    <span class="kw">let </span>reader = Reader { shared };
-    (writer, reader)
-}
+<span class="comment">// /// Create an in-memory pipe.
+// pub fn pipe(cap: usize) -&gt; (Writer, Reader) {
+//     let shared = Shared::new(cap, Guarantees::Unlimited);
+//     let writer = Writer {
+//         shared: shared.clone(),
+//     };
+//     let reader = Reader { shared };
+//     (writer, reader)
+// }
 
-<span class="doccomment">/// Create a new channel with a message [`Sender`] on the transmit side and a byte [`Reader`] on
+</span><span class="doccomment">/// Create a new channel with a message [`Sender`] on the transmit side and a byte [`Reader`] on
 /// the receive side.
 ///
 /// This is used for data sent from the application into the network: The application code queues

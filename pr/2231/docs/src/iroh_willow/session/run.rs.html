@@ -482,25 +482,18 @@
 <a href="#482" id="482">482</a>
 <a href="#483" id="483">483</a>
 <a href="#484" id="484">484</a>
-<a href="#485" id="485">485</a>
-<a href="#486" id="486">486</a>
-<a href="#487" id="487">487</a>
-<a href="#488" id="488">488</a>
-<a href="#489" id="489">489</a>
-<a href="#490" id="490">490</a>
-<a href="#491" id="491">491</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, sync::Arc};
 
 <span class="kw">use </span>futures_concurrency::{future::TryJoin, stream::StreamExt <span class="kw">as _</span>};
-<span class="kw">use </span>futures_lite::{Stream, StreamExt <span class="kw">as _</span>};
+<span class="kw">use </span>futures_lite::StreamExt <span class="kw">as _</span>;
 <span class="kw">use </span>strum::IntoEnumIterator;
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tokio_stream::wrappers::ReceiverStream;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
-<span class="kw">use </span>tracing::{debug, error_span, Instrument, Span};
+<span class="kw">use </span>tracing::{debug, error_span, trace, warn, Instrument, Span};
 
 <span class="kw">use crate</span>::{
-    net::WillowConn,
+    net::ConnHandle,
     proto::sync::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
     session::{
         aoi_finder::{<span class="self">self</span>, IntersectionFinder},
@@ -527,21 +520,20 @@
 
 <span class="kw">const </span>INITIAL_GUARANTEES: u64 = u64::MAX;
 
-<span class="kw">pub async fn </span>run_session&lt;S: Storage&gt;(
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>run_session&lt;S: Storage&gt;(
     store: Store&lt;S&gt;,
-    conn: WillowConn,
+    conn: ConnHandle,
     initial_intents: Vec&lt;Intent&gt;,
     cancel_token: CancellationToken,
     session_id: SessionId,
     event_sender: EventSender,
-    update_receiver: <span class="kw">impl </span>Stream&lt;Item = SessionUpdate&gt; + Unpin + <span class="lifetime">'static</span>,
+    update_receiver: ReceiverStream&lt;SessionUpdate&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Arc&lt;Error&gt;&gt; {
-    <span class="kw">let </span>WillowConn {
+    <span class="kw">let </span>ConnHandle {
         peer: <span class="kw">_</span>,
         initial_transmission,
         our_role,
         channels,
-        join_handle,
     } = conn;
     <span class="kw">let </span>Channels {
         send: channel_sender,
@@ -607,25 +599,12 @@
         (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
     };
 
-    <span class="kw">let </span>net_fut = with_span(<span class="macro">error_span!</span>(<span class="string">"net"</span>), <span class="kw">async </span>{
-        <span class="comment">// TODO: awaiting the net task handle hangs
-        </span>drop(join_handle);
-        <span class="comment">// let res = join_handle.await;
-        // debug!(?res, "net tasks finished");
-        // match res {
-        //     Ok(Ok(())) =&gt; Ok(()),
-        //     Ok(Err(err)) =&gt; Err(Error::Net(err)),
-        //     Err(err) =&gt; Err(Error::Net(err.into())),
-        // }
-        </span><span class="prelude-val">Ok</span>(())
-    });
-
     <span class="kw">let </span><span class="kw-2">mut </span>intents = intents::IntentDispatcher::new(store.auth().clone(), initial_intents);
     <span class="kw">let </span>intents_fut = with_span(<span class="macro">error_span!</span>(<span class="string">"intents"</span>), <span class="kw">async </span>{
         <span class="kw">use </span>intents::Output;
         <span class="kw">let </span><span class="kw-2">mut </span>intents_gen = intents.run_gen(intents_inbox_rx);
         <span class="kw">while let </span><span class="prelude-val">Some</span>(output) = intents_gen.try_next().<span class="kw">await</span><span class="question-mark">? </span>{
-            <span class="macro">debug!</span>(<span class="question-mark">?</span>output, <span class="string">"yield"</span>);
+            <span class="macro">trace!</span>(<span class="question-mark">?</span>output, <span class="string">"yield"</span>);
             <span class="kw">match </span>output {
                 Output::SubmitInterests(interests) =&gt; {
                     intersection_inbox
@@ -659,7 +638,7 @@
                 <span class="kw">while let </span><span class="prelude-val">Some</span>(message) = data_recv.try_next().<span class="kw">await</span><span class="question-mark">? </span>{
                     data_receiver.on_message(message).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
-                <span class="macro">tracing::debug!</span>(<span class="string">"data receiver done"</span>);
+                <span class="macro">trace!</span>(<span class="string">"data receiver terminated"</span>);
                 <span class="prelude-val">Ok</span>(())
             };
             (send_fut, recv_fut).try_join().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -796,6 +775,8 @@
         <span class="prelude-val">Ok</span>(())
     });
 
+    <span class="kw">let </span><span class="kw-2">mut </span>we_cancelled = <span class="bool-val">false</span>;
+
     <span class="kw">let </span>control_loop = with_span(<span class="macro">error_span!</span>(<span class="string">"control"</span>), <span class="kw">async </span>{
         <span class="kw">let </span>res = control_loop(
             control_recv,
@@ -807,8 +788,10 @@
         )
         .<span class="kw">await</span>;
         <span class="kw">if </span>!cancel_token.is_cancelled() {
-            <span class="macro">debug!</span>(<span class="string">"close session (control channel closed)"</span>);
+            <span class="macro">debug!</span>(<span class="string">"close session (closed by peer)"</span>);
             cancel_token.cancel();
+        } <span class="kw">else </span>{
+            we_cancelled = <span class="bool-val">true</span>;
         }
         res
     });
@@ -833,7 +816,6 @@
     });
 
     <span class="kw">let </span>result = (
-        net_fut,
         intents_fut,
         control_loop,
         data_loop,
@@ -848,36 +830,40 @@
         .try_join()
         .<span class="kw">await</span>;
 
-    <span class="kw">let </span>result = <span class="kw">match </span>result {
-        <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(()),
-        <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(Arc::new(err)),
-    };
-
-    <span class="comment">// Unsubscribe from the store.  This stops the data send task.
+    <span class="comment">// Unsubscribe from the store.
     </span>store.entries().unsubscribe(<span class="kw-2">&amp;</span>session_id);
 
-    <span class="comment">// Close our channel senders.
-    // This will stop the network send loop after all pending data has been sent.
-    </span>channel_sender.close_all();
+    <span class="kw">let </span>result = result.map_err(Arc::new).map(|<span class="kw">_</span>| ());
 
-    event_sender
+    <span class="macro">debug!</span>(error=<span class="question-mark">?</span>result.as_ref().err(), <span class="question-mark">?</span>we_cancelled, <span class="string">"session complete"</span>);
+
+    <span class="kw">let </span>remaining_intents = <span class="kw">match </span>result.as_ref() {
+        <span class="prelude-val">Ok</span>(()) =&gt; {
+            <span class="comment">// If the session closed without an error, return the remaining intents
+            // so that they can potentially be restarted.
+            </span>intents.drain_all()
+        }
+        <span class="prelude-val">Err</span>(err) =&gt; {
+            <span class="comment">// If the session closed with error, abort the intents with that error.
+            </span>intents.abort_all(err.clone()).<span class="kw">await</span>;
+            <span class="macro">vec!</span>[]
+        }
+    };
+
+    <span class="kw">if let </span><span class="prelude-val">Err</span>(_receiver_dropped) = event_sender
         .send(SessionEvent::Complete {
             result: result.clone(),
+            we_cancelled,
+            senders: channel_sender,
+            remaining_intents,
+            update_receiver: update_receiver.into_inner().into_inner(),
         })
         .<span class="kw">await
-        </span>.ok();
-
-    <span class="kw">match </span>result {
-        <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
-            <span class="macro">debug!</span>(<span class="string">"session complete"</span>);
-            <span class="prelude-val">Ok</span>(())
-        }
-        <span class="prelude-val">Err</span>(error) =&gt; {
-            <span class="macro">debug!</span>(<span class="question-mark">?</span>error, <span class="string">"session failed"</span>);
-            intents.abort_all(error.clone()).<span class="kw">await</span>;
-            <span class="prelude-val">Err</span>(error)
-        }
+    </span>{
+        <span class="macro">warn!</span>(<span class="string">"failed to send session complete event: receiver dropped"</span>);
     }
+
+    result
 }
 
 <span class="kw">async fn </span>control_loop(
@@ -972,9 +958,9 @@
     fut: <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;T, Error&gt;&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;T, Error&gt; {
     <span class="kw">async </span>{
-        <span class="macro">tracing::debug!</span>(<span class="string">"start"</span>);
+        <span class="macro">trace!</span>(<span class="string">"start"</span>);
         <span class="kw">let </span>res = fut.<span class="kw">await</span>;
-        <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>res, <span class="string">"done"</span>);
+        <span class="macro">trace!</span>(<span class="question-mark">?</span>res, <span class="string">"done"</span>);
         res
     }
     .instrument(span)

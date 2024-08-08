@@ -561,6 +561,39 @@
 <a href="#561" id="561">561</a>
 <a href="#562" id="562">562</a>
 <a href="#563" id="563">563</a>
+<a href="#564" id="564">564</a>
+<a href="#565" id="565">565</a>
+<a href="#566" id="566">566</a>
+<a href="#567" id="567">567</a>
+<a href="#568" id="568">568</a>
+<a href="#569" id="569">569</a>
+<a href="#570" id="570">570</a>
+<a href="#571" id="571">571</a>
+<a href="#572" id="572">572</a>
+<a href="#573" id="573">573</a>
+<a href="#574" id="574">574</a>
+<a href="#575" id="575">575</a>
+<a href="#576" id="576">576</a>
+<a href="#577" id="577">577</a>
+<a href="#578" id="578">578</a>
+<a href="#579" id="579">579</a>
+<a href="#580" id="580">580</a>
+<a href="#581" id="581">581</a>
+<a href="#582" id="582">582</a>
+<a href="#583" id="583">583</a>
+<a href="#584" id="584">584</a>
+<a href="#585" id="585">585</a>
+<a href="#586" id="586">586</a>
+<a href="#587" id="587">587</a>
+<a href="#588" id="588">588</a>
+<a href="#589" id="589">589</a>
+<a href="#590" id="590">590</a>
+<a href="#591" id="591">591</a>
+<a href="#592" id="592">592</a>
+<a href="#593" id="593">593</a>
+<a href="#594" id="594">594</a>
+<a href="#595" id="595">595</a>
+<a href="#596" id="596">596</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{HashMap, HashSet, VecDeque},
     future::Future,
@@ -707,7 +740,7 @@
     }
 }
 
-<span class="attr">#[derive(Debug)]
+<span class="attr">#[derive(Debug, Eq, PartialEq)]
 </span><span class="kw">pub enum </span>Completion {
     <span class="doccomment">/// All interests were reconciled.
     </span>Complete,
@@ -836,7 +869,8 @@
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>abort_all(<span class="kw-2">&amp;</span><span class="self">self</span>, error: Arc&lt;Error&gt;) {
+    <span class="doccomment">/// Aborts all registered intents.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>abort_all(<span class="kw-2">&amp;</span><span class="self">self</span>, error: Arc&lt;Error&gt;) {
         <span class="kw">let _ </span>= futures_buffered::join_all(
             Iterator::chain(
                 <span class="self">self</span>.pending_intents
@@ -853,6 +887,36 @@
             }),
         )
         .<span class="kw">await</span>;
+    }
+
+    <span class="doccomment">/// Takes self and returns all pending intents.
+    </span><span class="comment">// TODO: What if one of the two channels closed?
+    // Should not do Option&lt;IntentChannels&gt; but an option for each direction instead likely on Intent.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>drain_all(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; Vec&lt;Intent&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>intents: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.pending_intents.into_iter().collect();
+        <span class="kw">for </span>(id, info) <span class="kw">in </span><span class="self">self</span>.intents.drain() {
+            <span class="kw">let </span>event_tx = info.event_tx;
+            <span class="kw">let </span>update_rx = <span class="self">self</span>.intent_update_rx.remove(<span class="kw-2">&amp;</span>id);
+            <span class="kw">let </span>update_rx = update_rx
+                .map(|stream| stream.into_inner())
+                .flatten()
+                .map(|stream| stream.into_inner());
+            <span class="kw">let </span>channels = <span class="kw">match </span>(event_tx, update_rx) {
+                (<span class="prelude-val">Some</span>(event_tx), <span class="prelude-val">Some</span>(update_rx)) =&gt; <span class="prelude-val">Some</span>(IntentChannels {
+                    event_tx,
+                    update_rx,
+                }),
+                <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+            };
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(channels) = channels {
+                <span class="kw">let </span>intent = Intent {
+                    init: info.original_init,
+                    channels: <span class="prelude-val">Some</span>(channels),
+                };
+                intents.push(intent);
+            }
+        }
+        intents
     }
 
     <span class="doccomment">/// Run the [`IntentDispatcher`].
@@ -910,7 +974,7 @@
     }
 
     <span class="kw">async fn </span>submit_intent(<span class="kw-2">&amp;mut </span><span class="self">self</span>, co: <span class="kw-2">&amp;</span>Co&lt;Output&gt;, intent: Intent) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
-        <span class="kw">let </span>interests = <span class="self">self</span>.auth.resolve_interests(intent.init.interests)<span class="question-mark">?</span>;
+        <span class="kw">let </span>interests = <span class="self">self</span>.auth.resolve_interests(intent.init.interests.clone())<span class="question-mark">?</span>;
         <span class="kw">let </span>intent_id = {
             <span class="kw">let </span>intent_id = <span class="self">self</span>.next_intent_id;
             <span class="self">self</span>.next_intent_id += <span class="number">1</span>;
@@ -928,6 +992,7 @@
             interests: flatten_interests(<span class="kw-2">&amp;</span>interests),
             mode: intent.init.mode,
             event_tx,
+            original_init: intent.init,
         };
         <span class="comment">// Send out reconciled events for already-complete areas.
         </span><span class="kw">for </span>(namespace, areas) <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.complete_areas {
@@ -1013,6 +1078,7 @@
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>IntentInfo {
+    original_init: SessionInit,
     interests: NamespaceInterests,
     mode: SessionMode,
     event_tx: <span class="prelude-ty">Option</span>&lt;Sender&lt;EventKind&gt;&gt;,

@@ -603,6 +603,24 @@
 <a href="#603" id="603">603</a>
 <a href="#604" id="604">604</a>
 <a href="#605" id="605">605</a>
+<a href="#606" id="606">606</a>
+<a href="#607" id="607">607</a>
+<a href="#608" id="608">608</a>
+<a href="#609" id="609">609</a>
+<a href="#610" id="610">610</a>
+<a href="#611" id="611">611</a>
+<a href="#612" id="612">612</a>
+<a href="#613" id="613">613</a>
+<a href="#614" id="614">614</a>
+<a href="#615" id="615">615</a>
+<a href="#616" id="616">616</a>
+<a href="#617" id="617">617</a>
+<a href="#618" id="618">618</a>
+<a href="#619" id="619">619</a>
+<a href="#620" id="620">620</a>
+<a href="#621" id="621">621</a>
+<a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{HashMap, HashSet},
     num::NonZeroU64,
@@ -634,9 +652,10 @@
         grouping::{AreaOfInterest, ThreeDRange},
         keys::NamespaceId,
         sync::{
-            AreaOfInterestHandle, Fingerprint, LengthyEntry, ReconciliationAnnounceEntries,
-            ReconciliationMessage, ReconciliationSendEntry, ReconciliationSendFingerprint,
-            ReconciliationSendPayload, ReconciliationTerminatePayload,
+            AreaOfInterestHandle, Fingerprint, IsHandle, LengthyEntry,
+            ReconciliationAnnounceEntries, ReconciliationMessage, ReconciliationSendEntry,
+            ReconciliationSendFingerprint, ReconciliationSendPayload,
+            ReconciliationTerminatePayload,
         },
         willow::PayloadDigest,
     },
@@ -721,11 +740,17 @@
     <span class="kw">async fn </span>received_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, message: ReconciliationMessage) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="kw">match </span>message {
             ReconciliationMessage::SendFingerprint(message) =&gt; {
-                <span class="self">self</span>.targets
-                    .get_eventually(<span class="kw-2">&amp;</span><span class="self">self</span>.shared, <span class="kw-2">&amp;</span>message.handles())
-                    .<span class="kw">await</span><span class="question-mark">?
-                    </span>.received_send_fingerprint(<span class="kw-2">&amp;</span><span class="self">self</span>.shared, message)
+                <span class="kw">let </span>target_id = message.handles();
+                <span class="kw">let </span>target = <span class="self">self
+                    </span>.targets
+                    .get_eventually(<span class="kw-2">&amp;</span><span class="self">self</span>.shared, <span class="kw-2">&amp;</span>target_id)
                     .<span class="kw">await</span><span class="question-mark">?</span>;
+                target
+                    .received_send_fingerprint(<span class="kw-2">&amp;</span><span class="self">self</span>.shared, message)
+                    .<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="kw">if </span>target.is_complete() &amp;&amp; <span class="self">self</span>.current_entry.is_none() {
+                    <span class="self">self</span>.complete_target(target_id).<span class="kw">await</span><span class="question-mark">?</span>;
+                }
             }
             ReconciliationMessage::AnnounceEntries(message) =&gt; {
                 <span class="kw">let </span>target_id = message.handles();
@@ -793,6 +818,11 @@
             .map
             .remove(<span class="kw-2">&amp;</span>id)
             .ok_or(Error::InvalidMessageInCurrentState)<span class="question-mark">?</span>;
+        <span class="macro">debug!</span>(
+            our_handle = id.<span class="number">0</span>.value(),
+            their_handle = id.<span class="number">1</span>.value(),
+            <span class="string">"reconciled area"
+        </span>);
         <span class="self">self</span>.out(Output::ReconciledArea {
             area: target.intersection.intersection.clone(),
             namespace: target.namespace(),
@@ -861,7 +891,11 @@
         <span class="kw">let </span>snapshot = shared.store.entries().snapshot()<span class="question-mark">?</span>;
         <span class="kw">let </span>target = Target::init(snapshot, shared, intersection).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>id = target.id();
-        <span class="macro">tracing::info!</span>(<span class="string">"init {id:?}"</span>);
+        <span class="macro">debug!</span>(
+            our_handle = id.<span class="number">0</span>.value(),
+            their_handle = id.<span class="number">1</span>.value(),
+            <span class="string">"init area"
+        </span>);
         <span class="self">self</span>.map.insert(id, target);
         <span class="prelude-val">Ok</span>(id)
     }
@@ -1014,6 +1048,7 @@
         shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;,
         message: ReconciliationSendFingerprint,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
+        <span class="self">self</span>.started = <span class="bool-val">true</span>;
         <span class="kw">if let </span><span class="prelude-val">Some</span>(range_count) = message.covers {
             <span class="self">self</span>.mark_our_range_covered(range_count)<span class="question-mark">?</span>;
         }
@@ -1081,6 +1116,8 @@
         shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;,
         message: ReconciliationAnnounceEntries,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
+        <span class="macro">trace!</span>(<span class="question-mark">?</span>message, <span class="string">"received_announce_entries start"</span>);
+        <span class="self">self</span>.started = <span class="bool-val">true</span>;
         <span class="kw">if let </span><span class="prelude-val">Some</span>(range_count) = message.covers {
             <span class="self">self</span>.mark_our_range_covered(range_count)<span class="question-mark">?</span>;
         }
@@ -1182,7 +1219,6 @@
 
     <span class="kw">fn </span>mark_our_next_range_pending(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="kw">let </span>range_count = <span class="self">self</span>.next_range_count_ours();
-        <span class="self">self</span>.started = <span class="bool-val">true</span>;
         <span class="self">self</span>.our_uncovered_ranges.insert(range_count);
     }
 
