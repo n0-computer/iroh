@@ -52,6 +52,14 @@ pub(crate) struct ConnHandle {
 
 /// Establish the connection by running the initial transmission and
 /// opening the streams for the control and logical channels.
+///
+/// The initial transmission is transferred over a pair of uni streams.
+/// All channels for the actual WGPS are bi streams.
+/// Returns the initial transmission and [`ChannelStreams], which is an
+/// array of send and receive streams, one for each WGPS channel.
+///
+/// To start the networking loops that pipe the QUIC streams into our
+/// internal channel streams use [`prepare_channels`].
 pub(crate) async fn establish(
     conn: &Connection,
     our_role: Role,
@@ -139,6 +147,11 @@ async fn open_channel_streams(conn: &Connection, our_role: Role) -> Result<Chann
     Ok(channels)
 }
 
+/// Create a future for each WGPS channel that pipes between the QUIC channels and the
+/// [`Sender`] and [`Receiver`] for each channel to be used in the session.
+///
+/// Returns [`Channels`], which contains all senders and receivers, and a future that drives
+/// the send and receive loops for all channels combined.
 pub(crate) fn prepare_channels(
     channels: ChannelStreams,
 ) -> Result<(Channels, impl Future<Output = Result<()>> + Send)> {
@@ -256,6 +269,36 @@ async fn send_loop(mut send_stream: SendStream, channel_reader: Reader) -> Resul
     Ok(())
 }
 
+/// Terminate a connection gracefully.
+///
+/// QUIC does not allow us to rely on stream terminations, because those only signal
+/// reception in the peer's QUIC stack, not in the application. Closing a QUIC connection
+/// triggers immediate termination, so to make sure that all data was actually processed
+/// by our session, we exchange a single byte over a pair of uni streams. As this is the only
+/// use of uni streams after the initial connection handshake, we do not have to identify the
+/// streams specifically.
+///
+/// This function may only be called once the session processing has fully terminated and all
+/// WGPS streams are closed (for send streams) and read to end (for recv streams) on our side.
+///
+/// `we_cancelled` is a boolean indicating whether we are terminating the connection after
+/// we willfully terminated or completed our session. Pass `false` if the session terminated
+/// because the other peer closed their WGPS streams.
+///
+/// If only one peer indicated that they initiated the termination by setting `we_cancelled`
+/// to `true`, this peer will *not* close the connection, but instead wait for the other peer
+/// to close the connection.
+/// If both peers indicated that they initiated the termination, the peer with the higher node id
+/// will close the connection first.
+/// If none of the peers said they closed, which likely is a bug in the implementation, both peers
+/// will close the connection.
+///
+/// A connection is considered to be closed gracefully if and only if this procedure is run to end
+/// successfully, and if the connection is closed with the expected error code.
+///
+/// Returns an error if the termination flow was aborted prematurely.
+/// Returns a  [`ConnectionError] if the termination flow was completed successfully, but the connection
+/// was not closed with the expected error code.
 pub(crate) async fn terminate_gracefully(
     conn: &Connection,
     me: NodeId,
