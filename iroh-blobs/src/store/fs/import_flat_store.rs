@@ -310,11 +310,15 @@ impl ActorState {
             if let Some(((data_path, data_size), outboard)) = largest_partial {
                 let needs_outboard = data_size >= IROH_BLOCK_SIZE.bytes() as u64;
                 let outboard_path = if needs_outboard {
-                    let Some((outboard_path, _)) = outboard else {
-                        tracing::warn!("missing outboard file for {}", hash.to_hex());
-                        continue;
-                    };
-                    Some(outboard_path)
+                    if let Some((outboard_path, _)) = outboard {
+                        Some(outboard_path)
+                    } else {
+                        tracing::warn!(
+                            hash = hash.fmt_short(),
+                            "missing outboard file. assuming empty partial"
+                        );
+                        None
+                    }
                 } else {
                     None
                 };
