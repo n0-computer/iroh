@@ -152,7 +152,7 @@ pub enum DiscoveryConfig {
     /// This uses two discovery services concurrently:
     ///
     /// - It publishes to a pkarr service operated by [number 0] which makes the information
-    ///   avaiable via DNS in the `iroh.link` domain.
+    ///   available via DNS in the `iroh.link` domain.
     ///
     /// - It uses an mDNS-like system to announce itself on the local network.
     ///
