@@ -317,7 +317,7 @@ impl PeerManager {
                 // Future that dials and establishes the connection. Can be cancelled for simultaneous connection.
                 let fut = async move {
                     let conn = tokio::select! {
-                        res = endpoint.connect_by_node_id(&peer, ALPN) => res,
+                        res = endpoint.connect_by_node_id(peer, ALPN) => res,
                         _ = cancel_dial.cancelled() => {
                             debug!("dial cancelled during dial");
                             return Err(ConnectionError::LocallyClosed.into());
