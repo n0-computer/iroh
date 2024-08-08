@@ -278,10 +278,10 @@ mod tests {
     #[tokio::test]
     async fn test_local_swarm_discovery() -> TestResult {
         let _guard = iroh_test::logging::setup();
-        let (node_id_a, discovery_a) = make_discoverer()?;
-        let (_, discovery_b) = make_discoverer()?;
+        let (_, discovery_a) = make_discoverer()?;
+        let (node_id_b, discovery_b) = make_discoverer()?;
 
-        // make addr info for discoverer a
+        // make addr info for discoverer b
         let addr_info = AddrInfo {
             relay_url: None,
             direct_addresses: BTreeSet::from(["0.0.0.0:11111".parse()?]),
@@ -290,15 +290,15 @@ mod tests {
         // pass in endpoint, this is never used
         let ep = crate::endpoint::Builder::default().bind(0).await?;
         // resolve twice to ensure we can create separate streams for the same node_id
-        let mut s1 = discovery_b.resolve(ep.clone(), node_id_a).unwrap();
-        let mut s2 = discovery_b.resolve(ep, node_id_a).unwrap();
-        tracing::debug!(?node_id_a, "Discovering node id a");
-        // publish discovery_a's address
-        discovery_a.publish(&addr_info);
-        let s1_res = tokio::time::timeout(Duration::from_secs(10), s1.next())
+        let mut s1 = discovery_a.resolve(ep.clone(), node_id_b).unwrap();
+        let mut s2 = discovery_a.resolve(ep, node_id_b).unwrap();
+        tracing::debug!(?node_id_b, "Discovering node id b");
+        // publish discovery_b's address
+        discovery_b.publish(&addr_info);
+        let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
             .await?
             .unwrap()?;
-        let s2_res = tokio::time::timeout(Duration::from_secs(10), s2.next())
+        let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
             .await?
             .unwrap()?;
         assert_eq!(s1_res.addr_info, addr_info);
