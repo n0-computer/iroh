@@ -678,7 +678,7 @@ impl std::ops::DerefMut for Handlers {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
 
     use anyhow::Result;
     use bytes::Bytes;
@@ -692,19 +692,27 @@ mod tests {
     use crate::relay::client::conn::ReceivedMessage;
     use crate::relay::client::{Client, ClientBuilder};
 
+    use super::*;
+
     pub(crate) fn make_tls_config() -> TlsConfig {
         let subject_alt_names = vec!["localhost".to_string()];
 
         let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
-        let rustls_certificate = rustls::Certificate(cert.serialize_der().unwrap());
-        let rustls_key = rustls::PrivateKey(cert.get_key_pair().serialize_der());
-        let config = rustls::ServerConfig::builder()
-            .with_safe_defaults()
-            .with_no_client_auth()
-            .with_single_cert(vec![(rustls_certificate)], rustls_key)
-            .unwrap();
+        let rustls_certificate =
+            rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
+        let rustls_key =
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.get_key_pair().serialize_der());
+        let rustls_key = rustls::pki_types::PrivateKeyDer::from(rustls_key);
+        let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("protocols supported by ring")
+        .with_no_client_auth()
+        .with_single_cert(vec![(rustls_certificate)], rustls_key)
+        .expect("cert is right");
 
-        let config = std::sync::Arc::new(config);
+        let config = Arc::new(config);
         let acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
 
         TlsConfig {

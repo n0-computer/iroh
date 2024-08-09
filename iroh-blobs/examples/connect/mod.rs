@@ -1,5 +1,6 @@
 //! Common code used to created quinn connections in the examples
 use anyhow::{bail, Context, Result};
+use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use std::{path::PathBuf, sync::Arc};
 use tokio::fs;
 
@@ -17,7 +18,7 @@ pub async fn load_certs() -> Result<rustls::RootCertStore> {
     let path = PathBuf::from(CERT_PATH).join("cert.der");
     match fs::read(path).await {
         Ok(cert) => {
-            roots.add(&rustls::Certificate(cert))?;
+            roots.add(rustls::pki_types::CertificateDer::from(cert))?;
         }
         Err(e) => {
             bail!("failed to open local server certificate: {}\nYou must run the `provide-bytes` example to create the certificate.\n\tcargo run --example provide-bytes", e);
@@ -29,7 +30,10 @@ pub async fn load_certs() -> Result<rustls::RootCertStore> {
 // derived from `quinn/examples/server.rs`
 // creates a self signed certificate and saves it to "./certs"
 #[allow(unused)]
-pub async fn make_and_write_certs() -> Result<(rustls::PrivateKey, rustls::Certificate)> {
+pub async fn make_and_write_certs() -> Result<(
+    rustls::pki_types::PrivateKeyDer<'static>,
+    rustls::pki_types::CertificateDer<'static>,
+)> {
     let path = std::path::PathBuf::from(CERT_PATH);
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key_path = path.join("key.der");
@@ -47,7 +51,10 @@ pub async fn make_and_write_certs() -> Result<(rustls::PrivateKey, rustls::Certi
         .await
         .context("failed to write private key")?;
 
-    Ok((rustls::PrivateKey(key), rustls::Certificate(cert)))
+    Ok((
+        rustls::pki_types::PrivateKeyDer::try_from(key).unwrap(),
+        rustls::pki_types::CertificateDer::from(cert),
+    ))
 }
 
 // derived from `quinn/examples/client.rs`
@@ -55,13 +62,12 @@ pub async fn make_and_write_certs() -> Result<(rustls::PrivateKey, rustls::Certi
 #[allow(unused)]
 pub fn make_client_endpoint(roots: rustls::RootCertStore) -> Result<quinn::Endpoint> {
     let mut client_crypto = rustls::ClientConfig::builder()
-        .with_safe_defaults()
         .with_root_certificates(roots)
         .with_no_client_auth();
 
     client_crypto.alpn_protocols = vec![EXAMPLE_ALPN.to_vec()];
-
-    let client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
+    let client_config: QuicClientConfig = client_crypto.try_into()?;
+    let client_config = quinn::ClientConfig::new(Arc::new(client_config));
     let mut endpoint = quinn::Endpoint::client("[::]:0".parse().unwrap())?;
     endpoint.set_default_client_config(client_config);
     Ok(endpoint)
@@ -71,15 +77,15 @@ pub fn make_client_endpoint(roots: rustls::RootCertStore) -> Result<quinn::Endpo
 // makes a quinn server endpoint
 #[allow(unused)]
 pub fn make_server_endpoint(
-    key: rustls::PrivateKey,
-    cert: rustls::Certificate,
+    key: rustls::pki_types::PrivateKeyDer<'static>,
+    cert: rustls::pki_types::CertificateDer<'static>,
 ) -> Result<quinn::Endpoint> {
     let mut server_crypto = rustls::ServerConfig::builder()
-        .with_safe_defaults()
         .with_no_client_auth()
         .with_single_cert(vec![cert], key)?;
     server_crypto.alpn_protocols = vec![EXAMPLE_ALPN.to_vec()];
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
+    let server_config: QuicServerConfig = server_crypto.try_into()?;
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_config));
     let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
     transport_config.max_concurrent_uni_streams(0_u8.into());
 

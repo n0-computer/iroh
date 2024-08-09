@@ -25,7 +25,7 @@ use std::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
         Arc,
     },
-    task::{ready, Context, Poll, Waker},
+    task::{Context, Poll, Waker},
     time::{Duration, Instant},
 };
 
@@ -180,7 +180,7 @@ pub(crate) struct MagicSock {
     relay_recv_receiver: async_channel::Receiver<RelayRecvResult>,
     /// Stores wakers, to be called when relay_recv_ch receives new data.
     network_recv_wakers: parking_lot::Mutex<Option<Waker>>,
-    network_send_wakers: parking_lot::Mutex<Option<Waker>>,
+    network_send_wakers: Arc<parking_lot::Mutex<Option<Waker>>>,
 
     /// The DNS resolver to be used in this magicsock.
     dns_resolver: DnsResolver,
@@ -215,10 +215,7 @@ pub(crate) struct MagicSock {
     net_checker: netcheck::Client,
     /// The state for an active DiscoKey.
     disco_secrets: DiscoSecrets,
-    udp_state: quinn_udp::UdpState,
 
-    /// Send buffer used in `poll_send_udp`
-    send_buffer: parking_lot::Mutex<Vec<quinn_udp::Transmit>>,
     /// UDP disco (ping) queue
     udp_disco_sender: mpsc::Sender<(SocketAddr, PublicKey, disco::Message)>,
 
@@ -435,130 +432,118 @@ impl MagicSock {
         Ok(addr)
     }
 
-    #[instrument(skip_all, fields(me = %self.me))]
-    fn poll_send(
-        &self,
-        cx: &mut Context,
-        transmits: &[quinn_udp::Transmit],
-    ) -> Poll<io::Result<usize>> {
-        let bytes_total: usize = transmits.iter().map(|t| t.contents.len()).sum();
-        inc_by!(MagicsockMetrics, send_data, bytes_total as _);
+    fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
+        // To do this properly the MagicSock would need a registry of pollers.  For each
+        // node we would look up the poller or create one.  Then on each try_send we can
+        // look up the correct poller and configure it to poll the paths it needs.
+        //
+        // Note however that the current quinn impl calls UdpPoller::poll_writable()
+        // **before** it calls try_send(), as opposed to how it is documented.  That is a
+        // problem as we would not yet know the path that needs to be polled.  To avoid such
+        // ambiguity the API could be changed to a .poll_send(&self, cx: &mut Context,
+        // io_poller: Pin<&mut dyn UdpPoller>, transmit: &Transmit) -> Poll<io::Result<()>>
+        // instead of the existing .try_send() because then we would have control over this.
+        //
+        // Right now however we have one single poller behaving the same for each
+        // connection.  It checks all paths returns Poll::Ready as soon as any path is
+        // ready.
+        let ipv4_poller = Arc::new(self.pconn4.clone()).create_io_poller();
+        let ipv6_poller = self
+            .pconn6
+            .as_ref()
+            .map(|sock| Arc::new(sock.clone()).create_io_poller());
+        let relay_sender = self.relay_actor_sender.clone();
+        Box::pin(IoPoller {
+            ipv4_poller,
+            ipv6_poller,
+            relay_sender,
+            relay_send_waker: self.network_send_wakers.clone(),
+        })
+    }
 
-        let mut n = 0;
-        if transmits.is_empty() {
-            tracing::trace!(is_closed=?self.is_closed(), "poll_send without any quinn_udp::Transmit");
-            return Poll::Ready(Ok(n));
-        }
+    /// Implementation for AsyncUdpSocket::try_send
+    #[instrument(skip_all)]
+    fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
+        inc_by!(MagicsockMetrics, send_data, transmit.contents.len() as _);
 
         if self.is_closed() {
-            inc_by!(MagicsockMetrics, send_data_network_down, bytes_total as _);
-            return Poll::Ready(Err(io::Error::new(
+            inc_by!(
+                MagicsockMetrics,
+                send_data_network_down,
+                transmit.contents.len() as _
+            );
+            return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "connection closed",
-            )));
+            ));
         }
 
+        let dest = QuicMappedAddr(transmit.destination);
         trace!(
-            "sending:\n{}",
-            transmits.iter().fold(
-                String::with_capacity(transmits.len() * 50),
-                |mut final_repr, t| {
-                    final_repr.push_str(
-                        format!(
-                            "  dest: {}, src: {:?}, content_len: {}\n",
-                            QuicMappedAddr(t.destination),
-                            t.src_ip,
-                            t.contents.len()
-                        )
-                        .as_str(),
-                    );
-                    final_repr
-                }
-            )
+            dst = %dest,
+            src = ?transmit.src_ip,
+            len = %transmit.contents.len(),
+            "sending",
         );
-
-        let dest = transmits[0].destination;
-        for transmit in transmits.iter() {
-            if transmit.destination != dest {
-                break;
-            }
-            n += 1;
-        }
-
-        // Copy the transmits into an owned buffer, because we will have to modify the send
-        // addresses to translate from the quic mapped address to the actual UDP address.
-        // To avoid allocating on each call to `poll_send`, we use a fixed buffer.
-        let mut transmits = {
-            let mut buf = self.send_buffer.lock();
-            buf.clear();
-            buf.reserve(n);
-            buf.extend_from_slice(&transmits[..n]);
-            buf
-        };
-
-        let dest = QuicMappedAddr(dest);
-
-        let mut transmits_sent = 0;
+        let mut transmit = transmit.clone();
         match self
             .node_map
             .get_send_addrs(dest, self.ipv6_reported.load(Ordering::Relaxed))
         {
-            Some((public_key, udp_addr, relay_url, mut msgs)) => {
+            Some((node_id, udp_addr, relay_url, msgs)) => {
                 let mut pings_sent = false;
                 // If we have pings to send, we *have* to send them out first.
                 if !msgs.is_empty() {
-                    if let Err(err) = ready!(self.poll_handle_ping_actions(cx, &mut msgs)) {
-                        warn!(node = %public_key.fmt_short(), "failed to handle ping actions: {err:?}");
+                    if let Err(err) = self.try_send_ping_actions(msgs) {
+                        warn!(
+                            node = %node_id.fmt_short(),
+                            "failed to handle ping actions: {err:#}",
+                        );
                     }
                     pings_sent = true;
                 }
 
+                // if udp_addr.is_none() && relay_url.is_none() {
+                //     // Handle no addresses being available
+                //     warn!(node = %node_id.fmt_short(), "failed to send: no UDP or relay addr");
+                //     return Err(io::Error::new(
+                //         io::ErrorKind::NotConnected,
+                //         "no UDP or relay address available for node",
+                //     ));
+                // }
+
                 let mut udp_sent = false;
-                let mut relay_sent = false;
                 let mut udp_error = None;
-                let mut udp_pending = false;
-                let mut relay_pending = false;
+                let mut relay_sent = false;
+                let mut relay_error = None;
 
                 // send udp
                 if let Some(addr) = udp_addr {
-                    // rewrite target addresses.
-                    for t in transmits.iter_mut() {
-                        t.destination = addr;
-                    }
-                    match self.poll_send_udp(addr, &transmits, cx) {
-                        Poll::Ready(Ok(n)) => {
-                            trace!(node = %public_key.fmt_short(), dst = %addr, transmit_count=n, "sent transmits over UDP");
-                            // truncate the transmits vec to `n`. these transmits will be sent to
-                            // the relay further below. We only want to send those transmits to the relay that were
-                            // sent to UDP, because the next transmits will be sent on the next
-                            // call to poll_send, which will happen immediately after, because we
-                            // are always returning Poll::Ready if poll_send_udp returned
-                            // Poll::Ready.
-                            transmits.truncate(n);
-                            transmits_sent = transmits.len();
+                    // rewrite target address
+                    transmit.destination = addr;
+                    match self.try_send_udp(addr, &transmit) {
+                        Ok(()) => {
+                            trace!(node = %node_id.fmt_short(), dst = %addr,
+                                   "sent transmit over UDP");
                             udp_sent = true;
-                            // record metrics.
+                            // TODO: record metrics?
                         }
-                        Poll::Ready(Err(err)) => {
-                            error!(node = %public_key.fmt_short(), ?addr, "failed to send udp: {err:?}");
+                        Err(err) => {
+                            error!(node = %node_id.fmt_short(), dst = %addr,
+                                   "failed to send udp: {err:#}");
                             udp_error = Some(err);
-                        }
-                        Poll::Pending => {
-                            udp_pending = true;
                         }
                     }
                 }
 
                 // send relay
                 if let Some(ref relay_url) = relay_url {
-                    match self.poll_send_relay(relay_url, public_key, split_packets(&transmits)) {
-                        Poll::Ready(sent) => {
-                            relay_sent = sent;
-                            transmits_sent = transmits.len();
+                    match self.try_send_relay(relay_url, node_id, split_packets(&transmit)) {
+                        Ok(()) => {
+                            relay_sent = true;
                         }
-                        Poll::Pending => {
-                            self.network_send_wakers.lock().replace(cx.waker().clone());
-                            relay_pending = true;
+                        Err(err) => {
+                            relay_error = Some(err);
                         }
                     }
                 }
@@ -566,89 +551,119 @@ impl MagicSock {
                 if udp_addr.is_none() && relay_url.is_none() {
                     // Returning an error here would lock up the entire `Endpoint`.
                     //
-                    // If we returned `Poll::Pending`, the waker driving the `poll_send` will never get woken up.
+                    // If we returned `Poll::Pending`, the waker driving the `poll_send`
+                    // will never get woken up.
                     //
-                    // Our best bet here is to log an error and return `Poll::Ready(Ok(n))`.
+                    // Our best bet here is to log an error and return `Ok(())`.  In doing
+                    // so, we are effectively dropping this transmit, by lying to QUIC and
+                    // saying they were sent.  If we returned `Err(WouldBlock)` instead
+                    // Quinn would loop to attempt to re-send this transmit, blocking other
+                    // destinations.
                     //
-                    // `n` is the number of consecutive transmits in this batch that are meant for the same destination (a destination that we have no addresses for, and so we can never actually send).
-                    //
-                    // When we return `Poll::Ready(Ok(n))`, we are effectively dropping those n messages, by lying to QUIC and saying they were sent.
-                    // (If we returned `Poll::Ready(Ok(0))` instead, QUIC would loop to attempt to re-send those messages, blocking other traffic.)
-                    //
-                    // When `QUIC` gets no `ACK`s for those messages, the connection will eventually timeout.
-                    error!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
-                    return Poll::Ready(Ok(n));
+                    // When `Quinn` gets no `ACK`s for those messages, the connection will
+                    // eventually timeout.
+                    error!(node = %node_id.fmt_short(), "failed to send: no UDP or relay addr");
+                    return Ok(());
                 }
-
-                if (udp_addr.is_none() || udp_pending) && (relay_url.is_none() || relay_pending) {
-                    // Handle backpressure
-                    // The explicit choice here is to only return pending, iff all available paths returned
-                    // pending.
-                    // This might result in one channel being backed up, without the system noticing, but
-                    // for now this seems to be the best choice workable in the current implementation.
-                    return Poll::Pending;
+                let udp_pending = udp_error
+                    .as_ref()
+                    .map(|err| err.kind() == io::ErrorKind::WouldBlock)
+                    .unwrap_or_default();
+                let relay_pending = relay_error
+                    .as_ref()
+                    .map(|err| err.kind() == io::ErrorKind::WouldBlock)
+                    .unwrap_or_default();
+                if udp_pending && relay_pending {
+                    // Handle backpressure.
+                    return Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"));
                 }
 
                 if !relay_sent && !udp_sent && !pings_sent {
-                    // Returning an error here would lock up the entire `Endpoint`.
-                    // Instead, log an error and return `Poll::Pending`, the connection will timeout.
+                    // Returning an error here would kill the Quinn EndpointDriver and lock
+                    // up the entire Endpoint.  Instead, log an error and return
+                    // `Err(WouldBlock)`, the connection will timeout.
                     let err = udp_error.unwrap_or_else(|| {
                         io::Error::new(
-                            io::ErrorKind::NotConnected,
+                            io::ErrorKind::WouldBlock,
                             "no UDP or relay address available for node",
                         )
                     });
-                    error!(node = %public_key.fmt_short(), "{err:?}");
-                    return Poll::Pending;
+                    error!(node = %node_id.fmt_short(), "{err:?}");
+                    return Err(err);
                 }
 
                 trace!(
-                    node = %public_key.fmt_short(),
-                    transmit_count = %transmits_sent,
+                    node = %node_id.fmt_short(),
                     send_udp = ?udp_addr,
                     send_relay = ?relay_url,
-                    "sent transmits"
+                    "sent transmit",
                 );
-                Poll::Ready(Ok(transmits_sent))
+                Ok(())
             }
             None => {
-                // Returning an error here would lock up the entire `Endpoint`.
-                //
-                // If we returned `Poll::Pending`, the waker driving the `poll_send` will never get woken up.
-                //
-                // Our best bet here is to log an error and return `Poll::Ready(Ok(n))`.
-                //
-                // `n` is the number of consecutive transmits in this batch that are meant for the same destination (a destination that we have no node state for, and so we can never actually send).
-                //
-                // When we return `Poll::Ready(Ok(n))`, we are effectively dropping those n messages, by lying to QUIC and saying they were sent.
-                // (If we returned `Poll::Ready(Ok(0))` instead, QUIC would loop to attempt to re-send those messages, blocking other traffic.)
-                //
-                // When `QUIC` gets no `ACK`s for those messages, the connection will eventually timeout.
-                error!(dst=%dest, "no node_state for mapped address");
-                Poll::Ready(Ok(n))
+                // TODO: maybe this should report OK?
+                error!(%dest, "no endpoint for mapped address");
+                Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "trying to send to unknown endpoint",
+                ))
             }
         }
     }
 
-    fn poll_send_udp(
+    fn try_send_relay(
         &self,
-        addr: SocketAddr,
-        transmits: &[quinn_udp::Transmit],
-        cx: &mut Context<'_>,
-    ) -> Poll<io::Result<usize>> {
+        url: &RelayUrl,
+        node: NodeId,
+        contents: RelayContents,
+    ) -> io::Result<()> {
+        trace!(
+            node = %node.fmt_short(),
+            relay_url = %url,
+            count = contents.len(),
+            len = contents.iter().map(|c| c.len()).sum::<usize>(),
+            "send relay",
+        );
+        let msg = RelayActorMessage::Send {
+            url: url.clone(),
+            contents,
+            peer: node,
+        };
+        match self.relay_actor_sender.try_send(msg) {
+            Ok(_) => {
+                trace!(node = %node.fmt_short(), relay_url = %url,
+                       "send relay: message queued");
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                warn!(node = %node.fmt_short(), relay_url = %url,
+                      "send relay: message dropped, channel to actor is closed");
+                Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "channel to actor is closed",
+                ))
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!(node = %node.fmt_short(), relay_url = %url,
+                      "send relay: message dropped, channel to actor is full");
+                Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "channel to actor is full",
+                ))
+            }
+        }
+    }
+
+    fn try_send_udp(&self, addr: SocketAddr, transmit: &quinn_udp::Transmit) -> io::Result<()> {
         let conn = self.conn_for_addr(addr)?;
-        let n = ready!(conn.poll_send(&self.udp_state, cx, transmits))?;
-        let total_bytes: u64 = transmits
-            .iter()
-            .take(n)
-            .map(|x| x.contents.len() as u64)
-            .sum();
+        conn.try_send(transmit)?;
+        let total_bytes: u64 = transmit.contents.len() as u64;
         if addr.is_ipv6() {
             inc_by!(MagicsockMetrics, send_ipv6, total_bytes);
         } else {
             inc_by!(MagicsockMetrics, send_ipv4, total_bytes);
         }
-        Poll::Ready(Ok(n))
+        Ok(())
     }
 
     fn conn_for_addr(&self, addr: SocketAddr) -> io::Result<&UdpConn> {
@@ -663,7 +678,7 @@ impl MagicSock {
     }
 
     /// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
-    #[instrument(skip_all, fields(me = %self.me))]
+    #[instrument(skip_all)]
     fn poll_recv(
         &self,
         cx: &mut Context,
@@ -776,7 +791,7 @@ impl MagicSock {
         Poll::Ready(Ok(msgs))
     }
 
-    #[instrument(skip_all, fields(name = %self.me))]
+    #[instrument(skip_all)]
     fn poll_recv_relay(
         &self,
         cx: &mut Context,
@@ -987,24 +1002,30 @@ impl MagicSock {
         }
     }
 
-    fn poll_send_ping(&self, ping: &SendPing, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let SendPing {
-            id,
-            dst,
-            dst_node,
-            tx_id,
-            purpose,
-        } = ping;
-        let msg = disco::Message::Ping(disco::Ping {
-            tx_id: *tx_id,
-            node_key: self.public_key(),
-        });
-        ready!(self.poll_send_disco_message(dst.clone(), *dst_node, msg, cx))?;
-        let msg_sender = self.actor_sender.clone();
-        debug!(%dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (polled)");
-        self.node_map
-            .notify_ping_sent(*id, dst.clone(), *tx_id, *purpose, msg_sender);
-        Poll::Ready(Ok(()))
+    /// Tries to send the ping actions.
+    ///
+    /// Note that on failure the (remaining) ping actions are simply dropped.  That's bad!
+    /// The Endpoint will think a full ping was done and not request a new full-ping for a
+    /// while.  We should probably be buffering the pings.
+    fn try_send_ping_actions(&self, msgs: Vec<PingAction>) -> io::Result<()> {
+        for msg in msgs {
+            // Abort sending as soon as we know we are shutting down.
+            if self.is_closing() || self.is_closed() {
+                return Ok(());
+            }
+            match msg {
+                PingAction::SendCallMeMaybe {
+                    ref relay_url,
+                    dst_node,
+                } => {
+                    self.send_or_queue_call_me_maybe(relay_url, dst_node);
+                }
+                PingAction::SendPing(ping) => {
+                    self.try_send_ping(ping)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Send a disco message. UDP messages will be queued.
@@ -1027,22 +1048,21 @@ impl MagicSock {
     }
 
     /// Send a disco message. UDP messages will be polled to send directly on the UDP socket.
-    fn poll_send_disco_message(
+    fn try_send_disco_message(
         &self,
         dst: SendAddr,
         dst_key: PublicKey,
         msg: disco::Message,
-        cx: &mut Context<'_>,
-    ) -> Poll<io::Result<()>> {
+    ) -> io::Result<()> {
         match dst {
             SendAddr::Udp(addr) => {
-                ready!(self.poll_send_disco_message_udp(addr, dst_key, &msg, cx))?;
+                self.try_send_disco_message_udp(addr, dst_key, &msg)?;
             }
             SendAddr::Relay(ref url) => {
                 self.send_disco_message_relay(url, dst_key, msg);
             }
         }
-        Poll::Ready(Ok(()))
+        Ok(())
     }
 
     fn send_disco_message_relay(
@@ -1054,111 +1074,113 @@ impl MagicSock {
         debug!(node = %dst_key.fmt_short(), %url, %msg, "send disco message (relay)");
         let pkt = self.encode_disco_message(dst_key, &msg);
         inc!(MagicsockMetrics, send_disco_relay);
-        match self.poll_send_relay(url, dst_key, smallvec![pkt]) {
-            Poll::Ready(true) => {
+        match self.try_send_relay(url, dst_key, smallvec![pkt]) {
+            Ok(()) => {
                 inc!(MagicsockMetrics, sent_disco_relay);
                 disco_message_sent(&msg);
                 true
             }
-            _ => false,
+            Err(_) => false,
         }
     }
 
     async fn send_disco_message_udp(
         &self,
         dst: SocketAddr,
-        dst_key: PublicKey,
+        dst_node: NodeId,
         msg: &disco::Message,
-    ) -> io::Result<bool> {
-        std::future::poll_fn(move |cx| self.poll_send_disco_message_udp(dst, dst_key, msg, cx))
-            .await
+    ) -> io::Result<()> {
+        futures_lite::future::poll_fn(move |cx| {
+            loop {
+                match self.try_send_disco_message_udp(dst, dst_node, msg) {
+                    Ok(()) => return Poll::Ready(Ok(())),
+                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                        // This is the socket .try_send_disco_message_udp used.
+                        let sock = self.conn_for_addr(dst)?;
+                        let sock = Arc::new(sock.clone());
+                        let mut poller = sock.create_io_poller();
+                        match poller.as_mut().poll_writable(cx)? {
+                            Poll::Ready(()) => continue,
+                            Poll::Pending => return Poll::Pending,
+                        }
+                    }
+                    Err(err) => return Poll::Ready(Err(err)),
+                }
+            }
+        })
+        .await
     }
 
-    fn poll_send_disco_message_udp(
+    fn try_send_disco_message_udp(
         &self,
         dst: SocketAddr,
-        dst_key: PublicKey,
+        dst_node: NodeId,
         msg: &disco::Message,
-        cx: &mut Context<'_>,
-    ) -> Poll<std::io::Result<bool>> {
+    ) -> std::io::Result<()> {
         trace!(%dst, %msg, "send disco message (UDP)");
         if self.is_closed() {
-            return Poll::Ready(Err(io::Error::new(
+            return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "connection closed",
-            )));
+            ));
         }
-        let pkt = self.encode_disco_message(dst_key, msg);
+        // TODO: possibly change this to return bytes directly.
+        let pkt = self.encode_disco_message(dst_node, msg);
         // TODO: These metrics will be wrong with the poll impl
         // Also - do we need it? I'd say the `sent_disco_udp` below is enough.
         inc!(MagicsockMetrics, send_disco_udp);
-        let transmits = [quinn_udp::Transmit {
+        let transmit = quinn_udp::Transmit {
             destination: dst,
-            contents: pkt,
+            contents: &pkt,
             ecn: None,
             segment_size: None,
             src_ip: None, // TODO
-        }];
-        let sent = ready!(self.poll_send_udp(dst, &transmits, cx));
-        Poll::Ready(match sent {
-            Ok(0) => {
-                // Can't send. (e.g. no IPv6 locally)
-                warn!(%dst, node = %dst_key.fmt_short(), ?msg, "failed to send disco message");
-                Ok(false)
-            }
-            Ok(_n) => {
-                trace!(%dst, node = %dst_key.fmt_short(), %msg, "sent disco message");
+        };
+        let sent = self.try_send_udp(dst, &transmit);
+        match sent {
+            Ok(()) => {
+                trace!(%dst, node = %dst_node.fmt_short(), %msg, "sent disco message");
                 inc!(MagicsockMetrics, sent_disco_udp);
                 disco_message_sent(msg);
-                Ok(true)
+                Ok(())
             }
             Err(err) => {
-                warn!(%dst, node = %dst_key.fmt_short(), ?msg, ?err, "failed to send disco message");
+                warn!(%dst, node = %dst_node.fmt_short(), ?msg, ?err,
+                      "failed to send disco message");
                 Err(err)
             }
-        })
+        }
     }
 
-    fn poll_handle_ping_actions(
-        &self,
-        cx: &mut Context<'_>,
-        msgs: &mut Vec<PingAction>,
-    ) -> Poll<io::Result<()>> {
-        if msgs.is_empty() {
-            return Poll::Ready(Ok(()));
+    #[instrument(skip_all)]
+    async fn handle_ping_actions(&mut self, msgs: Vec<PingAction>) {
+        // TODO: This used to make sure that all ping actions are sent.  Though on the
+        // poll_send/try_send path we also do fire-and-forget.  try_send_ping_actions()
+        // really should store any unsent pings on the Inner and send them at the next
+        // possible time.
+        if let Err(err) = self.try_send_ping_actions(msgs) {
+            warn!("Not all ping actions were sent: {err:#}");
         }
-
-        while let Some(msg) = msgs.pop() {
-            if self.poll_handle_ping_action(cx, &msg)?.is_pending() {
-                msgs.push(msg);
-                return Poll::Pending;
-            }
-        }
-        Poll::Ready(Ok(()))
     }
 
-    #[instrument("handle_ping_action", skip_all)]
-    fn poll_handle_ping_action(
-        &self,
-        cx: &mut Context<'_>,
-        msg: &PingAction,
-    ) -> Poll<io::Result<()>> {
-        // Abort sending as soon as we know we are shutting down.
-        if self.is_closing() || self.is_closed() {
-            return Poll::Ready(Ok(()));
-        }
-        match *msg {
-            PingAction::SendCallMeMaybe {
-                ref relay_url,
-                dst_node,
-            } => {
-                self.send_or_queue_call_me_maybe(relay_url, dst_node);
-            }
-            PingAction::SendPing(ref ping) => {
-                ready!(self.poll_send_ping(ping, cx))?;
-            }
-        }
-        Poll::Ready(Ok(()))
+    fn try_send_ping(&self, ping: SendPing) -> io::Result<()> {
+        let SendPing {
+            id,
+            dst,
+            dst_node,
+            tx_id,
+            purpose,
+        } = ping;
+        let msg = disco::Message::Ping(disco::Ping {
+            tx_id,
+            node_key: self.public_key(),
+        });
+        self.try_send_disco_message(dst.clone(), dst_node, msg)?;
+        debug!(%dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (polled)");
+        let msg_sender = self.actor_sender.clone();
+        self.node_map
+            .notify_ping_sent(id, dst.clone(), tx_id, purpose, msg_sender);
+        Ok(())
     }
 
     fn poll_send_relay(
@@ -1403,7 +1425,6 @@ impl Handle {
         let node_map = node_map.unwrap_or_default();
         let node_map = NodeMap::load_from_vec(node_map);
 
-        let udp_state = quinn_udp::UdpState::default();
         let inner = Arc::new(MagicSock {
             me,
             port: AtomicU16::new(port),
@@ -1414,7 +1435,7 @@ impl Handle {
             closed: AtomicBool::new(false),
             relay_recv_receiver,
             network_recv_wakers: parking_lot::Mutex::new(None),
-            network_send_wakers: parking_lot::Mutex::new(None),
+            network_send_wakers: Arc::new(parking_lot::Mutex::new(None)),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             relay_map,
@@ -1425,8 +1446,6 @@ impl Handle {
             disco_secrets: DiscoSecrets::default(),
             node_map,
             relay_actor_sender: relay_actor_sender.clone(),
-            udp_state,
-            send_buffer: Default::default(),
             udp_disco_sender,
             discovery,
             direct_addrs: Watchable::new(Default::default()),
@@ -1651,13 +1670,12 @@ fn endpoint_sets_equal(xs: &[DirectAddr], ys: &[DirectAddr]) -> bool {
 }
 
 impl AsyncUdpSocket for Handle {
-    fn poll_send(
-        &self,
-        _udp_state: &quinn_udp::UdpState,
-        cx: &mut Context,
-        transmits: &[quinn_udp::Transmit],
-    ) -> Poll<io::Result<usize>> {
-        self.msock.poll_send(cx, transmits)
+    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
+        self.msock.create_io_poller()
+    }
+
+    fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
+        self.msock.try_send(transmit)
     }
 
     /// NOTE: Receiving on a [`Self::close`]d socket will return [`Poll::Pending`] indefinitely.
@@ -1682,6 +1700,71 @@ impl AsyncUdpSocket for Handle {
                 Ok(SocketAddr::new(ip, ipv4.port()))
             }
             (_, Some(ipv6)) => Ok(*ipv6),
+        }
+    }
+
+    fn max_transmit_segments(&self) -> usize {
+        // TODO(matheus23): Do we need to account for the relay somehow?
+        if let Some(pconn6) = self.pconn6.as_ref() {
+            std::cmp::min(
+                pconn6.max_transmit_segments(),
+                self.pconn4.max_transmit_segments(),
+            )
+        } else {
+            self.pconn4.max_transmit_segments()
+        }
+    }
+
+    fn max_receive_segments(&self) -> usize {
+        // TODO(matheus23): Do we need to account for the relay somehow?
+        if let Some(pconn6) = self.pconn6.as_ref() {
+            std::cmp::min(
+                pconn6.max_receive_segments(),
+                self.pconn4.max_receive_segments(),
+            )
+        } else {
+            self.pconn4.max_receive_segments()
+        }
+    }
+
+    fn may_fragment(&self) -> bool {
+        // TODO(matheus23): Do we need to account for the relay somehow?
+        if let Some(pconn6) = self.pconn6.as_ref() {
+            pconn6.may_fragment() || self.pconn4.may_fragment()
+        } else {
+            self.pconn4.may_fragment()
+        }
+    }
+}
+
+#[derive(Debug)]
+struct IoPoller {
+    ipv4_poller: Pin<Box<dyn quinn::UdpPoller>>,
+    ipv6_poller: Option<Pin<Box<dyn quinn::UdpPoller>>>,
+    relay_sender: mpsc::Sender<RelayActorMessage>,
+    relay_send_waker: Arc<parking_lot::Mutex<Option<Waker>>>,
+}
+
+impl quinn::UdpPoller for IoPoller {
+    fn poll_writable(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+        // This version returns Ready as soon as any of them are ready.
+        let this = &mut *self;
+        match this.ipv4_poller.as_mut().poll_writable(cx) {
+            Poll::Ready(_) => return Poll::Ready(Ok(())),
+            Poll::Pending => (),
+        }
+        if let Some(ref mut ipv6_poller) = this.ipv6_poller {
+            match ipv6_poller.as_mut().poll_writable(cx) {
+                Poll::Ready(_) => return Poll::Ready(Ok(())),
+                Poll::Pending => (),
+            }
+        }
+        match this.relay_sender.capacity() {
+            0 => {
+                self.relay_send_waker.lock().replace(cx.waker().clone());
+                Poll::Pending
+            }
+            _ => Poll::Ready(Ok(())),
         }
     }
 }
@@ -1820,14 +1903,14 @@ impl Actor {
         }
     }
 
-    async fn handle_ping_actions(&mut self, mut msgs: Vec<PingAction>) {
-        if msgs.is_empty() {
-            return;
-        }
-        if let Err(err) =
-            std::future::poll_fn(|cx| self.msock.poll_handle_ping_actions(cx, &mut msgs)).await
-        {
-            debug!("failed to send pings: {err:?}");
+    #[instrument(skip_all)]
+    async fn handle_ping_actions(&mut self, msgs: Vec<PingAction>) {
+        // TODO: This used to make sure that all ping actions are sent.  Though on the
+        // poll_send/try_send path we also do fire-and-forget.  try_send_ping_actions()
+        // really should store any unsent pings on the Inner and send them at the next
+        // possible time.
+        if let Err(err) = self.msock.try_send_ping_actions(msgs) {
+            warn!("Not all ping actions were sent: {err:#}");
         }
     }
 
@@ -2479,22 +2562,24 @@ impl DiscoveredDirectAddrs {
     }
 }
 
-/// Split a number of transmits into individual packets.
+/// Split a transmit containing a GSO payload into individual packets.
 ///
-/// For each transmit, if it has a segment size, it will be split into
-/// multiple packets according to that segment size. If it does not have a
-/// segment size, the contents will be sent as a single packet.
-fn split_packets(transmits: &[quinn_udp::Transmit]) -> RelayContents {
-    let mut res = SmallVec::with_capacity(transmits.len());
-    for transmit in transmits {
-        let contents = &transmit.contents;
-        if let Some(segment_size) = transmit.segment_size {
-            for chunk in contents.chunks(segment_size) {
-                res.push(contents.slice_ref(chunk));
-            }
-        } else {
-            res.push(contents.clone());
+/// This allocates the data.
+///
+/// If the transmit has a segment size i contains multiple GSO packets.  It will be split
+/// into multiple packets according to that segment size.  If it does not have a segment
+/// size, the contents will be sent as a single packet.
+// TODO: If quinn stayed on bytes this would probably be much cheaper, probably.  Need to
+// figure out where they allocate the Vec.
+fn split_packets(transmit: &quinn_udp::Transmit) -> RelayContents {
+    let mut res = SmallVec::with_capacity(1);
+    let contents = transmit.contents;
+    if let Some(segment_size) = transmit.segment_size {
+        for chunk in contents.chunks(segment_size) {
+            res.push(Bytes::from(chunk.to_vec()));
         }
+    } else {
+        res.push(Bytes::from(contents.to_vec()));
     }
     res
 }
@@ -2892,7 +2977,8 @@ mod tests {
         }
 
         info!("finishing");
-        send_bi.finish().await.context("[receiver] finishing")?;
+        send_bi.finish().context("[receiver] finishing")?;
+        send_bi.stopped().await.context("[receiver] stopped")?;
 
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
@@ -2927,7 +3013,8 @@ mod tests {
         send_bi.write_all(msg).await.context("[sender] write all")?;
 
         info!("finishing");
-        send_bi.finish().await.context("[sender] finish")?;
+        send_bi.finish().context("[sender] finish")?;
+        send_bi.stopped().await.context("[sender] stopped")?;
 
         info!("reading_to_end");
         let val = recv_bi.read_to_end(usize::MAX).await.context("[sender]")?;
@@ -3158,8 +3245,8 @@ mod tests {
             let key = SecretKey::generate();
             let conn = std::net::UdpSocket::bind(addr)?;
 
-            let tls_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
-            let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+            let quic_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
+            let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -3171,9 +3258,9 @@ mod tests {
                 Arc::new(quinn::TokioRuntime),
             )?;
 
-            let tls_client_config =
+            let quic_client_config =
                 tls::make_client_config(&key, None, vec![ALPN.to_vec()], false)?;
-            let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+            let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
             client_config.transport_config(Arc::new(transport_config));
@@ -3200,73 +3287,79 @@ mod tests {
                 println!("{}: {}, {}: {}", a_name, a_addr, b_name, b_addr);
 
                 let b_task = tokio::task::spawn(async move {
-                    println!("[{}] accepting conn", b_name);
+                    println!("[{b_name}] accepting conn");
                     let conn = b.accept().await.expect("no conn");
                     println!("[{}] connecting", b_name);
                     let conn = conn
                         .await
-                        .with_context(|| format!("[{}] connecting", b_name))?;
+                        .with_context(|| format!("[{b_name}] connecting"))?;
                     println!("[{}] accepting bi", b_name);
                     let (mut send_bi, mut recv_bi) = conn
                         .accept_bi()
                         .await
-                        .with_context(|| format!("[{}] accepting bi", b_name))?;
+                        .with_context(|| format!("[{b_name}] accepting bi"))?;
 
-                    println!("[{}] reading", b_name);
+                    println!("[{b_name}] reading");
                     let val = recv_bi
                         .read_to_end(usize::MAX)
                         .await
-                        .with_context(|| format!("[{}] reading to end", b_name))?;
-                    println!("[{}] finishing", b_name);
+                        .with_context(|| format!("[{b_name}] reading to end"))?;
+                    println!("[{b_name}] finishing");
                     send_bi
                         .finish()
+                        .with_context(|| format!("[{b_name}] finishing"))?;
+                    send_bi
+                        .stopped()
                         .await
-                        .with_context(|| format!("[{}] finishing", b_name))?;
+                        .with_context(|| format!("[b_name] stopped"))?;
 
-                    println!("[{}] close", b_name);
+                    println!("[{b_name}] close");
                     conn.close(0u32.into(), b"done");
-                    println!("[{}] closed", b_name);
+                    println!("[{b_name}] closed");
 
                     Ok::<_, anyhow::Error>(val)
                 });
 
-                println!("[{}] connecting to {}", a_name, b_addr);
+                println!("[{a_name}] connecting to {b_addr}");
                 let conn = a
                     .connect(b_addr, "localhost")?
                     .await
-                    .with_context(|| format!("[{}] connect", a_name))?;
+                    .with_context(|| format!("[{a_name}] connect"))?;
 
-                println!("[{}] opening bi", a_name);
+                println!("[{a_name}] opening bi");
                 let (mut send_bi, mut recv_bi) = conn
                     .open_bi()
                     .await
-                    .with_context(|| format!("[{}] open bi", a_name))?;
-                println!("[{}] writing message", a_name);
+                    .with_context(|| format!("[{a_name}] open bi"))?;
+                println!("[{a_name}] writing message");
                 send_bi
                     .write_all(&$msg[..])
                     .await
-                    .with_context(|| format!("[{}] write all", a_name))?;
+                    .with_context(|| format!("[{a_name}] write all"))?;
 
-                println!("[{}] finishing", a_name);
+                println!("[{a_name}] finishing");
                 send_bi
                     .finish()
+                    .with_context(|| format!("[{a_name}] finish"))?;
+                send_bi
+                    .stopped()
                     .await
-                    .with_context(|| format!("[{}] finish", a_name))?;
+                    .with_context(|| format!("[{a_name}] stopped"))?;
 
-                println!("[{}] reading_to_end", a_name);
+                println!("[{a_name}] reading_to_end");
                 let _ = recv_bi
                     .read_to_end(usize::MAX)
                     .await
-                    .with_context(|| format!("[{}]", a_name))?;
-                println!("[{}] close", a_name);
+                    .with_context(|| format!("[{a_name}] reading_to_end"))?;
+                println!("[{a_name}] close");
                 conn.close(0u32.into(), b"done");
-                println!("[{}] wait idle", a_name);
+                println!("[{a_name}] wait idle");
                 a.wait_idle().await;
 
                 drop(send_bi);
 
                 // make sure the right values arrived
-                println!("[{}] waiting for channel", a_name);
+                println!("[{a_name}] waiting for channel");
                 let val = b_task.await??;
                 anyhow::ensure!(
                     val == $msg,
@@ -3301,8 +3394,8 @@ mod tests {
             let key = SecretKey::generate();
             let conn = UdpConn::bind(addr.port(), addr.ip().into())?;
 
-            let tls_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
-            let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+            let quic_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
+            let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -3310,13 +3403,13 @@ mod tests {
             let mut quic_ep = quinn::Endpoint::new_with_abstract_socket(
                 quinn::EndpointConfig::default(),
                 Some(server_config),
-                conn,
+                Arc::new(conn),
                 Arc::new(quinn::TokioRuntime),
             )?;
 
-            let tls_client_config =
+            let quic_client_config =
                 tls::make_client_config(&key, None, vec![ALPN.to_vec()], false)?;
-            let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+            let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
             client_config.transport_config(Arc::new(transport_config));
@@ -3367,8 +3460,11 @@ mod tests {
                     println!("[{}] finishing", b_name);
                     send_bi
                         .finish()
-                        .await
                         .with_context(|| format!("[{}] finishing", b_name))?;
+                    send_bi
+                        .stopped()
+                        .await
+                        .with_context(|| format!("[{b_name}] stopped"))?;
 
                     println!("[{}] close", b_name);
                     conn.close(0u32.into(), b"done");
@@ -3397,8 +3493,11 @@ mod tests {
                 println!("[{}] finishing", a_name);
                 send_bi
                     .finish()
-                    .await
                     .with_context(|| format!("[{}] finish", a_name))?;
+                send_bi
+                    .stopped()
+                    .await
+                    .with_context(|| format!("[{a_name}] stopped"))?;
 
                 println!("[{}] reading_to_end", a_name);
                 let _ = recv_bi
@@ -3442,12 +3541,12 @@ mod tests {
 
     #[test]
     fn test_split_packets() {
-        fn mk_transmit(contents: &[u8], segment_size: Option<usize>) -> quinn_udp::Transmit {
+        fn mk_transmit(contents: &[u8], segment_size: Option<usize>) -> quinn_udp::Transmit<'_> {
             let destination = "127.0.0.1:0".parse().unwrap();
             quinn_udp::Transmit {
                 destination,
                 ecn: None,
-                contents: contents.to_vec().into(),
+                contents,
                 segment_size,
                 src_ip: None,
             }
@@ -3458,36 +3557,25 @@ mod tests {
                 .map(|p| p.as_bytes().to_vec().into())
                 .collect()
         }
-        // no packets
-        assert_eq!(split_packets(&[]), SmallVec::<[Bytes; 1]>::default());
         // no split
         assert_eq!(
-            split_packets(&vec![
-                mk_transmit(b"hello", None),
-                mk_transmit(b"world", None)
-            ]),
-            mk_expected(["hello", "world"])
+            split_packets(&mk_transmit(b"hello", None)),
+            mk_expected(["hello"])
         );
         // split without rest
         assert_eq!(
-            split_packets(&[mk_transmit(b"helloworld", Some(5))]),
+            split_packets(&mk_transmit(b"helloworld", Some(5))),
             mk_expected(["hello", "world"])
         );
         // split with rest and second transmit
         assert_eq!(
-            split_packets(&vec![
-                mk_transmit(b"hello world", Some(5)),
-                mk_transmit(b"!", None)
-            ]),
-            mk_expected(["hello", " worl", "d", "!"]) // spellchecker:disable-line
+            split_packets(&mk_transmit(b"hello world", Some(5))),
+            mk_expected(["hello", " worl", "d"]) // spellchecker:disable-line
         );
         // split that results in 1 packet
         assert_eq!(
-            split_packets(&vec![
-                mk_transmit(b"hello world", Some(1000)),
-                mk_transmit(b"!", None)
-            ]),
-            mk_expected(["hello world", "!"])
+            split_packets(&mk_transmit(b"hello world", Some(1000))),
+            mk_expected(["hello world"])
         );
     }
 

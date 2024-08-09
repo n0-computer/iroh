@@ -189,7 +189,14 @@ async fn subscribe_loop(mut receiver: GossipReceiver) -> Result<()> {
 }
 
 async fn endpoint_loop(endpoint: Endpoint, gossip: Gossip) {
-    while let Some(conn) = endpoint.accept().await {
+    while let Some(incoming) = endpoint.accept().await {
+        let conn = match incoming.accept() {
+            Ok(conn) => conn,
+            Err(err) => {
+                println!("incoming connection failed: {err:#}");
+                continue;
+            }
+        };
         let gossip = gossip.clone();
         tokio::spawn(async move {
             if let Err(err) = handle_connection(conn, gossip).await {
@@ -198,7 +205,12 @@ async fn endpoint_loop(endpoint: Endpoint, gossip: Gossip) {
         });
     }
 }
-async fn handle_connection(mut conn: iroh_net::endpoint::Connecting, gossip: Gossip) -> Result<()> {
+
+// TODO: needs to be Incoming now
+async fn handle_connection(
+    mut conn: iroh_net::endpoint::Connecting,
+    gossip: Gossip,
+) -> anyhow::Result<()> {
     let alpn = conn.alpn().await?;
     let conn = conn.await?;
     let peer_id = iroh_net::endpoint::get_remote_node_id(&conn)?;

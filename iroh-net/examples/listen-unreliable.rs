@@ -62,7 +62,8 @@ async fn main() -> anyhow::Result<()> {
     );
     // accept incoming connections, returns a normal QUIC connection
 
-    while let Some(mut conn) = endpoint.accept().await {
+    while let Some(incoming) = endpoint.accept().await {
+        let mut conn = incoming.accept()?;
         let alpn = conn.alpn().await?;
         let conn = conn.await?;
         let node_id = iroh_net::endpoint::get_remote_node_id(&conn)?;

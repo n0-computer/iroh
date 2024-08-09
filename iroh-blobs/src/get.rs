@@ -188,7 +188,10 @@ pub mod fsm {
         RequestTooBig,
         /// Error when writing the request to the [`SendStream`].
         #[error("write: {0}")]
-        Write(#[from] endpoint::WriteError),
+        Write(#[from] quinn::WriteError),
+        /// Quic connection is closed.
+        #[error("closed")]
+        Closed(#[from] quinn::ClosedStream),
         /// A generic io error
         #[error("io {0}")]
         Io(io::Error),
@@ -257,7 +260,7 @@ pub mod fsm {
 
             // 2. Finish writing before expecting a response
             let (mut writer, bytes_written) = writer.into_parts();
-            writer.finish().await?;
+            writer.finish()?;
 
             let hash = request.hash;
             let ranges_iter = RangesIter::new(request.ranges);

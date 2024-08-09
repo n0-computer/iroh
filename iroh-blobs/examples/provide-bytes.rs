@@ -87,13 +87,20 @@ async fn main() -> Result<()> {
         while let Some(incoming) = endpoint.accept().await {
             println!("connection incoming");
 
+            let conn = match incoming.accept() {
+                Ok(conn) => conn,
+                Err(err) => {
+                    println!("incoming connection failed: {err:#}");
+                    return;
+                }
+            };
             let db = db.clone();
             let lp = lp.clone();
 
             // spawn a task to handle the connection
             tokio::spawn(async move {
-                let remote_addr = incoming.remote_address();
-                let conn = match incoming.await {
+                let remote_addr = conn.remote_address();
+                let conn = match conn.await {
                     Ok(conn) => conn,
                     Err(err) => {
                         warn!(%remote_addr, "Error connecting: {err:#}");

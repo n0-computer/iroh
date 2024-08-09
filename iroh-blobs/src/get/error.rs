@@ -73,6 +73,11 @@ impl From<endpoint::ConnectionError> for GetError {
                 // TODO(@divma): don't see how this is reachable but let's just not use the peer
                 GetError::Io(e.into())
             }
+            e @ quinn::ConnectionError::CidsExhausted => {
+                // > The connection could not be created because not enough of the CID space
+                // > is available
+                GetError::Io(e.into())
+            }
         }
     }
 }
@@ -83,13 +88,18 @@ impl From<endpoint::ReadError> for GetError {
         match value {
             e @ ReadError::Reset(_) => GetError::RemoteReset(e.into()),
             ReadError::ConnectionLost(conn_error) => conn_error.into(),
-            ReadError::UnknownStream
+            ReadError::ClosedStream
             | ReadError::IllegalOrderedRead
             | ReadError::ZeroRttRejected => {
                 // all these errors indicate the peer is not usable at this moment
                 GetError::Io(value.into())
             }
         }
+    }
+}
+impl From<quinn::ClosedStream> for GetError {
+    fn from(value: quinn::ClosedStream) -> Self {
+        GetError::Io(value.into())
     }
 }
 
@@ -99,7 +109,7 @@ impl From<endpoint::WriteError> for GetError {
         match value {
             e @ WriteError::Stopped(_) => GetError::RemoteReset(e.into()),
             WriteError::ConnectionLost(conn_error) => conn_error.into(),
-            WriteError::UnknownStream | WriteError::ZeroRttRejected => {
+            WriteError::ClosedStream | WriteError::ZeroRttRejected => {
                 // all these errors indicate the peer is not usable at this moment
                 GetError::Io(value.into())
             }
@@ -120,6 +130,7 @@ impl From<crate::get::fsm::ConnectedNextError> for GetError {
                 GetError::BadRequest(e.into())
             }
             Write(e) => e.into(),
+            Closed(e) => e.into(),
             e @ Io(_) => {
                 // io errors are likely recoverable
                 GetError::Io(e.into())

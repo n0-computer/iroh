@@ -341,7 +341,7 @@ mod tests {
     use parking_lot::Mutex;
     use rand::Rng;
 
-    use crate::{key::SecretKey, relay::RelayMode};
+    use crate::{key::SecretKey, relay::RelayMode, util::AbortingJoinHandle};
 
     use super::*;
 
@@ -456,12 +456,12 @@ mod tests {
     async fn endpoint_discovery_simple_shared() -> anyhow::Result<()> {
         let _guard = iroh_test::logging::setup();
         let disco_shared = TestDiscoveryShared::default();
-        let ep1 = {
+        let (ep1, _guard1) = {
             let secret = SecretKey::generate();
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
-        let ep2 = {
+        let (ep2, _guard2) = {
             let secret = SecretKey::generate();
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
@@ -478,12 +478,12 @@ mod tests {
     async fn endpoint_discovery_combined_with_empty() -> anyhow::Result<()> {
         let _guard = iroh_test::logging::setup();
         let disco_shared = TestDiscoveryShared::default();
-        let ep1 = {
+        let (ep1, _guard1) = {
             let secret = SecretKey::generate();
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
-        let ep2 = {
+        let (ep2, _guard2) = {
             let secret = SecretKey::generate();
             let disco1 = EmptyDiscovery;
             let disco2 = disco_shared.create_discovery(secret.public());
@@ -506,12 +506,12 @@ mod tests {
     async fn endpoint_discovery_combined_with_empty_and_wrong() -> anyhow::Result<()> {
         let _guard = iroh_test::logging::setup();
         let disco_shared = TestDiscoveryShared::default();
-        let ep1 = {
+        let (ep1, _guard1) = {
             let secret = SecretKey::generate();
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
-        let ep2 = {
+        let (ep2, _guard2) = {
             let secret = SecretKey::generate();
             let disco1 = EmptyDiscovery;
             let disco2 = disco_shared.create_lying_discovery(secret.public());
@@ -534,12 +534,12 @@ mod tests {
     async fn endpoint_discovery_combined_wrong_only() -> anyhow::Result<()> {
         let _guard = iroh_test::logging::setup();
         let disco_shared = TestDiscoveryShared::default();
-        let ep1 = {
+        let (ep1, _guard1) = {
             let secret = SecretKey::generate();
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
-        let ep2 = {
+        let (ep2, _guard2) = {
             let secret = SecretKey::generate();
             let disco1 = disco_shared.create_lying_discovery(secret.public());
             let disco = ConcurrentDiscovery::from_services(vec![Box::new(disco1)]);
@@ -559,12 +559,12 @@ mod tests {
     async fn endpoint_discovery_with_wrong_existing_addr() -> anyhow::Result<()> {
         let _guard = iroh_test::logging::setup();
         let disco_shared = TestDiscoveryShared::default();
-        let ep1 = {
+        let (ep1, _guard1) = {
             let secret = SecretKey::generate();
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
-        let ep2 = {
+        let (ep2, _guard2) = {
             let secret = SecretKey::generate();
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
@@ -582,15 +582,32 @@ mod tests {
         Ok(())
     }
 
-    async fn new_endpoint(secret: SecretKey, disco: impl Discovery + 'static) -> Endpoint {
-        Endpoint::builder()
+    async fn new_endpoint(
+        secret: SecretKey,
+        disco: impl Discovery + 'static,
+    ) -> (Endpoint, AbortingJoinHandle<anyhow::Result<()>>) {
+        let ep = Endpoint::builder()
             .secret_key(secret)
             .discovery(Box::new(disco))
             .relay_mode(RelayMode::Disabled)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind(0)
             .await
-            .unwrap()
+            .unwrap();
+
+        let handle = tokio::spawn({
+            let ep = ep.clone();
+            async move {
+                while let Some(incoming) = ep.accept().await {
+                    let _conn = incoming.accept()?.await?;
+                    // Just accept incoming connections, but don't do anything with them.
+                }
+
+                anyhow::Ok(())
+            }
+        });
+
+        (ep, AbortingJoinHandle::from(handle))
     }
 
     fn system_time_now() -> u64 {
@@ -621,6 +638,7 @@ mod test_dns_pkarr {
             pkarr_dns_state::State,
             run_relay_server, DnsPkarrServer,
         },
+        util::AbortingJoinHandle,
         AddrInfo, Endpoint, NodeAddr,
     };
 
@@ -693,8 +711,8 @@ mod test_dns_pkarr {
         let dns_pkarr_server = DnsPkarrServer::run().await?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
-        let ep1 = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
-        let ep2 = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
+        let (ep1, _guard1) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
+        let (ep2, _guard2) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
 
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
@@ -714,8 +732,8 @@ mod test_dns_pkarr {
         let dns_pkarr_server = DnsPkarrServer::run().await?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
-        let ep1 = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
-        let ep2 = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
+        let (ep1, _guard1) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
+        let (ep2, _guard2) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
 
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
@@ -731,7 +749,7 @@ mod test_dns_pkarr {
     async fn ep_with_discovery(
         relay_map: &RelayMap,
         dns_pkarr_server: &DnsPkarrServer,
-    ) -> Result<Endpoint> {
+    ) -> Result<(Endpoint, AbortingJoinHandle<Result<()>>)> {
         let secret_key = SecretKey::generate();
         let ep = Endpoint::builder()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -742,6 +760,19 @@ mod test_dns_pkarr {
             .discovery(dns_pkarr_server.discovery(secret_key))
             .bind(0)
             .await?;
-        Ok(ep)
+
+        let handle = tokio::spawn({
+            let ep = ep.clone();
+            async move {
+                while let Some(incoming) = ep.accept().await {
+                    let _conn = incoming.accept()?.await?;
+                    // Just accept incoming connections, but don't do anything with them.
+                }
+
+                anyhow::Ok(())
+            }
+        });
+
+        Ok((ep, AbortingJoinHandle::from(handle)))
     }
 }
