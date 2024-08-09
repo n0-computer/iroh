@@ -300,46 +300,31 @@ impl NodeState {
 
             // Update some metrics
             match (prev_typ, typ) {
-                (ConnectionType::Direct(_), ConnectionType::Direct(_)) => (),
-                (ConnectionType::Direct(_), ConnectionType::Relay(_)) => {
-                    inc!(MagicsockMetrics, num_direct_conns_removed);
-                    inc!(MagicsockMetrics, num_relay_conns_added);
-                }
-                (ConnectionType::Direct(_), ConnectionType::Mixed(_, _)) => {
-                    inc!(MagicsockMetrics, num_direct_conns_removed);
-                    inc!(MagicsockMetrics, num_relay_conns_added);
-                }
-                (ConnectionType::Direct(_), ConnectionType::None) => {
-                    inc!(MagicsockMetrics, num_direct_conns_removed)
-                }
-                (ConnectionType::Relay(_), ConnectionType::Direct(_)) => {
+                (ConnectionType::Relay(_), ConnectionType::Direct(_))
+                | (ConnectionType::Mixed(_, _), ConnectionType::Direct(_)) => {
                     inc!(MagicsockMetrics, num_direct_conns_added);
                     inc!(MagicsockMetrics, num_relay_conns_removed);
                 }
-                (ConnectionType::Relay(_), ConnectionType::Relay(_)) => (),
-                (ConnectionType::Relay(_), ConnectionType::Mixed(_, _)) => (),
-                (ConnectionType::Relay(_), ConnectionType::None) => {
-                    inc!(MagicsockMetrics, num_relay_conns_removed)
-                }
-                (ConnectionType::Mixed(_, _), ConnectionType::Direct(_)) => {
-                    inc!(MagicsockMetrics, num_direct_conns_added);
-                    inc!(MagicsockMetrics, num_relay_conns_removed);
-                }
-                (ConnectionType::Mixed(_, _), ConnectionType::Relay(_)) => (),
-                (ConnectionType::Mixed(_, _), ConnectionType::Mixed(_, _)) => (),
-                (ConnectionType::Mixed(_, _), ConnectionType::None) => {
-                    inc!(MagicsockMetrics, num_relay_conns_removed)
+                (ConnectionType::Direct(_), ConnectionType::Relay(_))
+                | (ConnectionType::Direct(_), ConnectionType::Mixed(_, _)) => {
+                    inc!(MagicsockMetrics, num_direct_conns_removed);
+                    inc!(MagicsockMetrics, num_relay_conns_added);
                 }
                 (ConnectionType::None, ConnectionType::Direct(_)) => {
                     inc!(MagicsockMetrics, num_direct_conns_added)
                 }
-                (ConnectionType::None, ConnectionType::Relay(_)) => {
+                (ConnectionType::Direct(_), ConnectionType::None) => {
+                    inc!(MagicsockMetrics, num_direct_conns_removed)
+                }
+                (ConnectionType::None, ConnectionType::Relay(_))
+                | (ConnectionType::None, ConnectionType::Mixed(_, _)) => {
                     inc!(MagicsockMetrics, num_relay_conns_added)
                 }
-                (ConnectionType::None, ConnectionType::Mixed(_, _)) => {
-                    inc!(MagicsockMetrics, num_relay_conns_added)
+                (ConnectionType::Relay(_), ConnectionType::None)
+                | (ConnectionType::Mixed(_, _), ConnectionType::None) => {
+                    inc!(MagicsockMetrics, num_relay_conns_removed)
                 }
-                (ConnectionType::None, ConnectionType::None) => (),
+                _ => (),
             }
         }
         (best_addr, relay_url)
@@ -1308,13 +1293,12 @@ pub enum ConnectionType {
 mod tests {
     use std::{collections::BTreeMap, net::Ipv4Addr};
 
+    use crate::key::SecretKey;
+    use crate::magicsock::node_map::{NodeMap, NodeMapInner};
+
     use best_addr::BestAddr;
 
-    use super::{
-        super::{NodeMap, NodeMapInner},
-        *,
-    };
-    use crate::key::SecretKey;
+    use super::*;
 
     #[test]
     fn test_endpoint_infos() {
