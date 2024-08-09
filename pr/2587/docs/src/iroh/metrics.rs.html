@@ -116,11 +116,6 @@
 <a href="#116" id="116">116</a>
 <a href="#117" id="117">117</a>
 <a href="#118" id="118">118</a>
-<a href="#119" id="119">119</a>
-<a href="#120" id="120">120</a>
-<a href="#121" id="121">121</a>
-<a href="#122" id="122">122</a>
-<a href="#123" id="123">123</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::BTreeMap;
 
 <span class="kw">use </span>iroh_metrics::{
@@ -197,7 +192,6 @@
         metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
         metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
         metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
-        metrics.insert(iroh_net::metrics::RelayMetrics::new(reg));
     })
 }
 
@@ -222,10 +216,6 @@
     );
     collect(
         core.get_collector::&lt;iroh_net::metrics::PortmapMetrics&gt;(),
-        <span class="kw-2">&amp;mut </span>map,
-    );
-    collect(
-        core.get_collector::&lt;iroh_net::metrics::RelayMetrics&gt;(),
         <span class="kw-2">&amp;mut </span>map,
     );
     <span class="prelude-val">Ok</span>(map)

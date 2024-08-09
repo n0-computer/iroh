@@ -52,8 +52,8 @@
 
 <span class="kw">use </span><span class="kw">super</span>::RpcService;
 
-<span class="kw">pub use </span>iroh_gossip::dispatcher::Command <span class="kw">as </span>SubscribeUpdate;
-<span class="kw">pub use </span>iroh_gossip::dispatcher::Event <span class="kw">as </span>SubscribeResponse;
+<span class="kw">pub use </span>iroh_gossip::net::Command <span class="kw">as </span>SubscribeUpdate;
+<span class="kw">pub use </span>iroh_gossip::net::Event <span class="kw">as </span>SubscribeResponse;
 
 <span class="attr">#[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

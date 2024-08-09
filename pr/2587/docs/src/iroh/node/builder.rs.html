@@ -854,18 +854,6 @@
 <a href="#854" id="854">854</a>
 <a href="#855" id="855">855</a>
 <a href="#856" id="856">856</a>
-<a href="#857" id="857">857</a>
-<a href="#858" id="858">858</a>
-<a href="#859" id="859">859</a>
-<a href="#860" id="860">860</a>
-<a href="#861" id="861">861</a>
-<a href="#862" id="862">862</a>
-<a href="#863" id="863">863</a>
-<a href="#864" id="864">864</a>
-<a href="#865" id="865">865</a>
-<a href="#866" id="866">866</a>
-<a href="#867" id="867">867</a>
-<a href="#868" id="868">868</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
@@ -883,10 +871,7 @@
 };
 <span class="kw">use </span>iroh_docs::engine::DefaultAuthorStorage;
 <span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
-<span class="kw">use </span>iroh_gossip::{
-    dispatcher::GossipDispatcher,
-    net::{Gossip, GOSSIP_ALPN},
-};
+<span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 <span class="attr">#[cfg(not(test))]
 </span><span class="kw">use </span>iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 <span class="kw">use </span>iroh_net::{
@@ -925,7 +910,6 @@
 </span><span class="kw">const </span>DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(<span class="number">60 </span>* <span class="number">5</span>);
 
 <span class="kw">const </span>MAX_CONNECTIONS: u32 = <span class="number">1024</span>;
-<span class="kw">const </span>MAX_STREAMS: u64 = <span class="number">10</span>;
 
 <span class="doccomment">/// Storage backend for documents.
 </span><span class="attr">#[derive(Debug, Clone)]
@@ -1329,11 +1313,6 @@
             ..Default::default()
         });
         <span class="kw">let </span>(endpoint, nodes_data_path) = {
-            <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
-            transport_config
-                .max_concurrent_bidi_streams(MAX_STREAMS.try_into()<span class="question-mark">?</span>)
-                .max_concurrent_uni_streams(<span class="number">0u32</span>.into());
-
             <span class="kw">let </span>discovery: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; = <span class="kw">match </span><span class="self">self</span>.node_discovery {
                 DiscoveryConfig::None =&gt; <span class="prelude-val">None</span>,
                 DiscoveryConfig::Custom(discovery) =&gt; <span class="prelude-val">Some</span>(discovery),
@@ -1372,7 +1351,6 @@
                 .secret_key(<span class="self">self</span>.secret_key.clone())
                 .proxy_from_env()
                 .keylog(<span class="self">self</span>.keylog)
-                .transport_config(transport_config)
                 .concurrent_connections(MAX_CONNECTIONS)
                 .relay_mode(<span class="self">self</span>.relay_mode);
             <span class="kw">let </span>endpoint = <span class="kw">match </span>discovery {
@@ -1425,7 +1403,6 @@
             downloader.clone(),
         )
         .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>gossip_dispatcher = GossipDispatcher::new(gossip.clone());
 
         <span class="comment">// Initialize the internal RPC connection.
         </span><span class="kw">let </span>(internal_rpc, controller) = quic_rpc::transport::flume::connection::&lt;RpcService&gt;(<span class="number">32</span>);
@@ -1445,7 +1422,6 @@
             cancel_token: CancellationToken::new(),
             downloader,
             gossip,
-            gossip_dispatcher,
             local_pool_handle: lp.handle().clone(),
         });
 

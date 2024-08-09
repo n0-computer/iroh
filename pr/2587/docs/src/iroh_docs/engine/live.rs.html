@@ -958,35 +958,6 @@
 <a href="#958" id="958">958</a>
 <a href="#959" id="959">959</a>
 <a href="#960" id="960">960</a>
-<a href="#961" id="961">961</a>
-<a href="#962" id="962">962</a>
-<a href="#963" id="963">963</a>
-<a href="#964" id="964">964</a>
-<a href="#965" id="965">965</a>
-<a href="#966" id="966">966</a>
-<a href="#967" id="967">967</a>
-<a href="#968" id="968">968</a>
-<a href="#969" id="969">969</a>
-<a href="#970" id="970">970</a>
-<a href="#971" id="971">971</a>
-<a href="#972" id="972">972</a>
-<a href="#973" id="973">973</a>
-<a href="#974" id="974">974</a>
-<a href="#975" id="975">975</a>
-<a href="#976" id="976">976</a>
-<a href="#977" id="977">977</a>
-<a href="#978" id="978">978</a>
-<a href="#979" id="979">979</a>
-<a href="#980" id="980">980</a>
-<a href="#981" id="981">981</a>
-<a href="#982" id="982">982</a>
-<a href="#983" id="983">983</a>
-<a href="#984" id="984">984</a>
-<a href="#985" id="985">985</a>
-<a href="#986" id="986">986</a>
-<a href="#987" id="987">987</a>
-<a href="#988" id="988">988</a>
-<a href="#989" id="989">989</a>
 </pre></div><pre class="rust"><code><span class="attr">#![allow(missing_docs)]
 
 </span><span class="kw">use </span>std::collections::HashSet;
@@ -998,7 +969,7 @@
 <span class="kw">use </span>iroh_blobs::get::Stats;
 <span class="kw">use </span>iroh_blobs::HashAndFormat;
 <span class="kw">use </span>iroh_blobs::{store::EntryStatus, Hash};
-<span class="kw">use </span>iroh_gossip::{net::Gossip, proto::TopicId};
+<span class="kw">use </span>iroh_gossip::net::Gossip;
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>iroh_net::NodeId;
 <span class="kw">use </span>iroh_net::{key::PublicKey, Endpoint, NodeAddr};
@@ -1007,9 +978,8 @@
     sync::{<span class="self">self</span>, mpsc, oneshot},
     task::JoinSet,
 };
-<span class="kw">use </span>tracing::{debug, error, error_span, info, instrument, trace, warn, Instrument, Span};
+<span class="kw">use </span>tracing::{debug, error, info, instrument, trace, warn, Instrument, Span};
 
-<span class="kw">use </span><span class="kw">crate</span>::metrics::Metrics;
 <span class="kw">use crate</span>::{
     actor::{OpenOpts, SyncHandle},
     net::{
@@ -1018,9 +988,10 @@
     },
     AuthorHeads, ContentStatus, NamespaceId, SignedEntry,
 };
+<span class="kw">use crate</span>::{engine::gossip::GossipState, metrics::Metrics};
 
-<span class="kw">use </span><span class="kw">super</span>::gossip::{GossipActor, ToGossipActor};
-<span class="kw">use </span><span class="kw">super</span>::state::{NamespaceStates, Origin, SyncReason};
+<span class="comment">// use super::gossip::{GossipActor, ToGossipActor};
+</span><span class="kw">use </span><span class="kw">super</span>::state::{NamespaceStates, Origin, SyncReason};
 
 <span class="doccomment">/// Name used for logging when new node addresses are added from the docs engine.
 </span><span class="kw">const </span>SOURCE_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"docs_engine"</span>;
@@ -1139,7 +1110,6 @@
     </span>inbox: mpsc::Receiver&lt;ToLiveActor&gt;,
     sync: SyncHandle,
     endpoint: Endpoint,
-    gossip: Gossip,
     bao_store: B,
     downloader: Downloader,
     replica_events_tx: async_channel::Sender&lt;<span class="kw">crate</span>::Event&gt;,
@@ -1149,7 +1119,7 @@
     /// Note: Must not be used in methods called from `Self::run` directly to prevent deadlocks.
     /// Only clone into newly spawned tasks.
     </span>sync_actor_tx: mpsc::Sender&lt;ToLiveActor&gt;,
-    gossip_actor_tx: mpsc::Sender&lt;ToGossipActor&gt;,
+    gossip: GossipState,
 
     <span class="doccomment">/// Running sync futures (from connect).
     </span>running_sync_connect: JoinSet&lt;SyncConnectRes&gt;,
@@ -1179,20 +1149,19 @@
         downloader: Downloader,
         inbox: mpsc::Receiver&lt;ToLiveActor&gt;,
         sync_actor_tx: mpsc::Sender&lt;ToLiveActor&gt;,
-        gossip_actor_tx: mpsc::Sender&lt;ToGossipActor&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>(replica_events_tx, replica_events_rx) = async_channel::bounded(<span class="number">1024</span>);
+        <span class="kw">let </span>gossip_state = GossipState::new(gossip, sync.clone(), sync_actor_tx.clone());
         <span class="self">Self </span>{
             inbox,
             sync,
             replica_events_rx,
             replica_events_tx,
             endpoint,
-            gossip,
+            gossip: gossip_state,
             bao_store,
             downloader,
             sync_actor_tx,
-            gossip_actor_tx,
             running_sync_connect: Default::default(),
             running_sync_accept: Default::default(),
             subscribers: Default::default(),
@@ -1204,22 +1173,11 @@
     }
 
     <span class="doccomment">/// Run the actor loop.
-    </span><span class="kw">pub async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, <span class="kw-2">mut </span>gossip_actor: GossipActor) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>me = <span class="self">self</span>.endpoint.node_id().fmt_short();
-        <span class="kw">let </span>gossip_handle = tokio::task::spawn(
-            <span class="kw">async move </span>{
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = gossip_actor.run().<span class="kw">await </span>{
-                    <span class="macro">error!</span>(<span class="string">"gossip recv actor failed: {err:?}"</span>);
-                }
-            }
-            .instrument(<span class="macro">error_span!</span>(<span class="string">"sync"</span>, %me)),
-        );
-
+    </span><span class="kw">pub async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>shutdown_reply = <span class="self">self</span>.run_inner().<span class="kw">await</span>;
         <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.shutdown().<span class="kw">await </span>{
             <span class="macro">error!</span>(<span class="question-mark">?</span>err, <span class="string">"Error during shutdown"</span>);
         }
-        gossip_handle.<span class="kw">await</span><span class="question-mark">?</span>;
         drop(<span class="self">self</span>);
         <span class="kw">match </span>shutdown_reply {
             <span class="prelude-val">Ok</span>(reply) =&gt; {
@@ -1277,7 +1235,11 @@
                     <span class="macro">inc!</span>(Metrics, doc_live_tick_pending_downloads);
                     <span class="kw">let </span>(namespace, hash, res) = res.context(<span class="string">"pending_downloads closed"</span>)<span class="question-mark">?</span>;
                     <span class="self">self</span>.on_download_ready(namespace, hash, res).<span class="kw">await</span>;
-
+                }
+                res = <span class="self">self</span>.gossip.progress(), <span class="kw">if </span>!<span class="self">self</span>.gossip.is_empty() =&gt; {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = res {
+                        <span class="macro">warn!</span>(<span class="question-mark">?</span>error, <span class="string">"gossip state failed"</span>);
+                    }
                 }
             }
         }
@@ -1368,14 +1330,16 @@
     <span class="kw">async fn </span>shutdown(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
         <span class="comment">// cancel all subscriptions
         </span><span class="self">self</span>.subscribers.clear();
-        <span class="comment">// shutdown gossip actor
-        </span><span class="self">self</span>.gossip_actor_tx
-            .send(ToGossipActor::Shutdown)
-            .<span class="kw">await
-            </span>.ok();
-        <span class="comment">// shutdown sync thread
-        </span><span class="kw">let </span>_store = <span class="self">self</span>.sync.shutdown().<span class="kw">await</span>;
-        <span class="prelude-val">Ok</span>(())
+        <span class="kw">let </span>(gossip_shutdown_res, _store) = <span class="macro">tokio::join!</span>(
+            <span class="comment">// quit the gossip topics and task loops.
+            </span><span class="self">self</span>.gossip.shutdown(),
+            <span class="comment">// shutdown sync thread
+            </span><span class="self">self</span>.sync.shutdown()
+        );
+        gossip_shutdown_res<span class="question-mark">?</span>;
+        <span class="comment">// TODO: abort_all and join_next all JoinSets to catch panics
+        // (they are aborted on drop, but that swallows panics)
+        </span><span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">async fn </span>start_sync(<span class="kw-2">&amp;mut </span><span class="self">self</span>, namespace: NamespaceId, <span class="kw-2">mut </span>peers: Vec&lt;NodeAddr&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
@@ -1428,10 +1392,7 @@
                 .unsubscribe(namespace, <span class="self">self</span>.replica_events_tx.clone())
                 .<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="self">self</span>.sync.close(namespace).<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="self">self</span>.gossip_actor_tx
-                .send(ToGossipActor::Leave { namespace })
-                .<span class="kw">await
-                </span>.context(<span class="string">"gossip actor failure"</span>)<span class="question-mark">?</span>;
+            <span class="self">self</span>.gossip.quit(<span class="kw-2">&amp;</span>namespace);
         }
         <span class="kw">if </span>kill_subscribers {
             <span class="self">self</span>.subscribers.remove(<span class="kw-2">&amp;</span>namespace);
@@ -1439,11 +1400,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>join_peers(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        namespace: NamespaceId,
-        peers: Vec&lt;NodeAddr&gt;,
-    ) -&gt; anyhow::Result&lt;()&gt; {
+    <span class="kw">async fn </span>join_peers(<span class="kw-2">&amp;mut </span><span class="self">self</span>, namespace: NamespaceId, peers: Vec&lt;NodeAddr&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>peer_ids = Vec::new();
 
         <span class="comment">// add addresses of peers to our endpoint address book
@@ -1466,12 +1423,7 @@
         }
 
         <span class="comment">// tell gossip to join
-        </span><span class="self">self</span>.gossip_actor_tx
-            .send(ToGossipActor::Join {
-                namespace,
-                peers: peer_ids.clone(),
-            })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        </span><span class="self">self</span>.gossip.join(namespace, peer_ids.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">if </span>!peer_ids.is_empty() {
             <span class="comment">// trigger initial sync with initial peers
@@ -1633,18 +1585,9 @@
             }
         };
         <span class="comment">// TODO: We should debounce and merge these neighbor announcements likely.
-        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self
-            </span>.gossip
-            .broadcast_neighbors(namespace.into(), msg.into())
-            .<span class="kw">await
-        </span>{
-            <span class="macro">error!</span>(
-                namespace = %namespace.fmt_short(),
-                %op,
-                <span class="question-mark">?</span>err,
-                <span class="string">"Failed to broadcast to neighbors"
-            </span>);
-        }
+        </span><span class="self">self</span>.gossip
+            .broadcast_neighbors(<span class="kw-2">&amp;</span>namespace, msg.into())
+            .<span class="kw">await</span>;
     }
 
     <span class="kw">async fn </span>on_download_ready(
@@ -1714,12 +1657,11 @@
         <span class="kw">match </span>event {
             <span class="kw">crate</span>::Event::LocalInsert { namespace, entry } =&gt; {
                 <span class="macro">debug!</span>(namespace=%namespace.fmt_short(), <span class="string">"replica event: LocalInsert"</span>);
-                <span class="kw">let </span>topic = TopicId::from_bytes(<span class="kw-2">*</span>namespace.as_bytes());
                 <span class="comment">// A new entry was inserted locally. Broadcast a gossip message.
                 </span><span class="kw">if </span><span class="self">self</span>.state.is_syncing(<span class="kw-2">&amp;</span>namespace) {
                     <span class="kw">let </span>op = Op::Put(entry.clone());
                     <span class="kw">let </span>message = postcard::to_stdvec(<span class="kw-2">&amp;</span>op)<span class="question-mark">?</span>.into();
-                    <span class="self">self</span>.gossip.broadcast(topic, message).<span class="kw">await</span><span class="question-mark">?</span>;
+                    <span class="self">self</span>.gossip.broadcast(<span class="kw-2">&amp;</span>namespace, message).<span class="kw">await</span>;
                 }
             }
             <span class="kw">crate</span>::Event::RemoteInsert {

@@ -1251,17 +1251,31 @@
 <a href="#1251" id="1251">1251</a>
 <a href="#1252" id="1252">1252</a>
 <a href="#1253" id="1253">1253</a>
+<a href="#1254" id="1254">1254</a>
+<a href="#1255" id="1255">1255</a>
+<a href="#1256" id="1256">1256</a>
+<a href="#1257" id="1257">1257</a>
+<a href="#1258" id="1258">1258</a>
+<a href="#1259" id="1259">1259</a>
+<a href="#1260" id="1260">1260</a>
+<a href="#1261" id="1261">1261</a>
+<a href="#1262" id="1262">1262</a>
+<a href="#1263" id="1263">1263</a>
+<a href="#1264" id="1264">1264</a>
+<a href="#1265" id="1265">1265</a>
+<a href="#1266" id="1266">1266</a>
+<a href="#1267" id="1267">1267</a>
+<a href="#1268" id="1268">1268</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::{Arc, Mutex};
 <span class="kw">use </span>std::time::Duration;
 
-<span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_buffered::BufferedStreamExt;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>genawaiter::sync::{Co, Gen};
 <span class="kw">use </span>iroh_base::rpc::{RpcError, RpcResult};
-<span class="kw">use </span>iroh_blobs::downloader::{DownloadRequest, Downloader};
 <span class="kw">use </span>iroh_blobs::export::ExportProgress;
 <span class="kw">use </span>iroh_blobs::format::collection::Collection;
 <span class="kw">use </span>iroh_blobs::get::db::DownloadProgress;
@@ -1271,6 +1285,10 @@
 <span class="kw">use </span>iroh_blobs::util::progress::{AsyncChannelProgressSender, ProgressSender};
 <span class="kw">use </span>iroh_blobs::util::SetTagOption;
 <span class="kw">use </span>iroh_blobs::BlobFormat;
+<span class="kw">use </span>iroh_blobs::{
+    downloader::{DownloadRequest, Downloader},
+    get::db::GetState,
+};
 <span class="kw">use </span>iroh_blobs::{
     provider::AddProgress,
     store::{Store <span class="kw">as </span>BaoStore, ValidateProgress},
@@ -1462,14 +1480,15 @@
         <span class="kw">match </span>msg {
             Subscribe(msg) =&gt; {
                 chan.bidi_streaming(msg, <span class="self">self</span>, |handler, req, updates| {
-                    handler.inner.gossip_dispatcher.subscribe_with_opts(
+                    <span class="kw">let </span>stream = handler.inner.gossip.join_with_stream(
                         req.topic,
-                        iroh_gossip::dispatcher::SubscribeOptions {
+                        iroh_gossip::net::JoinOptions {
                             bootstrap: req.bootstrap,
                             subscription_capacity: req.subscription_capacity,
                         },
-                        Box::new(updates),
-                    )
+                        Box::pin(updates),
+                    );
+                    futures_util::TryStreamExt::map_err(stream, RpcError::from)
                 })
                 .<span class="kw">await
             </span>}
@@ -2444,7 +2463,8 @@
     <span class="prelude-val">Ok</span>(stats)
 }
 
-<span class="kw">async fn </span>download_direct_from_nodes&lt;D&gt;(
+<span class="attr">#[tracing::instrument(<span class="string">"download_direct"</span>, skip_all, fields(hash=%hash_and_format.hash.fmt_short()))]
+</span><span class="kw">async fn </span>download_direct_from_nodes&lt;D&gt;(
     db: <span class="kw-2">&amp;</span>D,
     endpoint: Endpoint,
     hash_and_format: HashAndFormat,
@@ -2454,51 +2474,61 @@
 <span class="kw">where
     </span>D: BaoStore,
 {
-    <span class="macro">ensure!</span>(!nodes.is_empty(), <span class="string">"No nodes to download from provided."</span>);
     <span class="kw">let </span><span class="kw-2">mut </span>last_err = <span class="prelude-val">None</span>;
-    <span class="kw">for </span>node <span class="kw">in </span>nodes {
-        <span class="kw">let </span>node_id = node.node_id;
-        <span class="kw">match </span>download_direct(
-            db,
-            endpoint.clone(),
-            hash_and_format,
-            node,
-            progress.clone(),
-        )
-        .<span class="kw">await
+    <span class="kw">let </span><span class="kw-2">mut </span>remaining_nodes = nodes.len();
+    <span class="kw">let </span><span class="kw-2">mut </span>nodes_iter = nodes.into_iter();
+    <span class="lifetime">'outer</span>: <span class="kw">loop </span>{
+        <span class="kw">match </span>iroh_blobs::get::db::get_to_db_in_steps(db.clone(), hash_and_format, progress.clone())
+            .<span class="kw">await</span><span class="question-mark">?
         </span>{
-            <span class="prelude-val">Ok</span>(stats) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(stats),
-            <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="macro">debug!</span>(<span class="question-mark">?</span>err, node = <span class="kw-2">&amp;</span>node_id.fmt_short(), <span class="string">"Download failed"</span>);
-                last_err = <span class="prelude-val">Some</span>(err)
+            GetState::Complete(stats) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(stats),
+            GetState::NeedsConn(needs_conn) =&gt; {
+                <span class="kw">let </span>(conn, node_id) = <span class="lifetime">'inner</span>: <span class="kw">loop </span>{
+                    <span class="kw">match </span>nodes_iter.next() {
+                        <span class="prelude-val">None </span>=&gt; <span class="kw">break </span><span class="lifetime">'outer</span>,
+                        <span class="prelude-val">Some</span>(node) =&gt; {
+                            remaining_nodes -= <span class="number">1</span>;
+                            <span class="kw">let </span>node_id = node.node_id;
+                            <span class="kw">if </span>node_id == endpoint.node_id() {
+                                <span class="macro">debug!</span>(
+                                    <span class="question-mark">?</span>remaining_nodes,
+                                    <span class="string">"skip node {} (it is the node id of ourselves)"</span>,
+                                    node_id.fmt_short()
+                                );
+                                <span class="kw">continue </span><span class="lifetime">'inner</span>;
+                            }
+                            <span class="kw">match </span>endpoint.connect(node, iroh_blobs::protocol::ALPN).<span class="kw">await </span>{
+                                <span class="prelude-val">Ok</span>(conn) =&gt; <span class="kw">break </span><span class="lifetime">'inner </span>(conn, node_id),
+                                <span class="prelude-val">Err</span>(err) =&gt; {
+                                    <span class="macro">debug!</span>(
+                                        <span class="question-mark">?</span>remaining_nodes,
+                                        <span class="string">"failed to connect to {}: {err}"</span>,
+                                        node_id.fmt_short()
+                                    );
+                                    <span class="kw">continue </span><span class="lifetime">'inner</span>;
+                                }
+                            }
+                        }
+                    }
+                };
+                <span class="kw">match </span>needs_conn.proceed(conn).<span class="kw">await </span>{
+                    <span class="prelude-val">Ok</span>(stats) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(stats),
+                    <span class="prelude-val">Err</span>(err) =&gt; {
+                        <span class="macro">warn!</span>(
+                            <span class="question-mark">?</span>remaining_nodes,
+                            <span class="string">"failed to download from {}: {err}"</span>,
+                            node_id.fmt_short()
+                        );
+                        last_err = <span class="prelude-val">Some</span>(err);
+                    }
+                }
             }
         }
     }
-    <span class="prelude-val">Err</span>(last_err.unwrap())
-}
-
-<span class="kw">async fn </span>download_direct&lt;D&gt;(
-    db: <span class="kw-2">&amp;</span>D,
-    endpoint: Endpoint,
-    hash_and_format: HashAndFormat,
-    node: NodeAddr,
-    progress: AsyncChannelProgressSender&lt;DownloadProgress&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;Stats&gt;
-<span class="kw">where
-    </span>D: BaoStore,
-{
-    <span class="kw">let </span>get_conn = {
-        <span class="kw">let </span>progress = progress.clone();
-        <span class="kw">move </span>|| <span class="kw">async move </span>{
-            <span class="kw">let </span>conn = endpoint.connect(node, iroh_blobs::protocol::ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-            progress.send(DownloadProgress::Connected).<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="prelude-val">Ok</span>(conn)
-        }
-    };
-
-    <span class="kw">let </span>res = iroh_blobs::get::db::get_to_db(db, get_conn, <span class="kw-2">&amp;</span>hash_and_format, progress).<span class="kw">await</span>;
-
-    res.map_err(Into::into)
+    <span class="kw">match </span>last_err {
+        <span class="prelude-val">Some</span>(err) =&gt; <span class="prelude-val">Err</span>(err.into()),
+        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No nodes to download from provided"</span>)),
+    }
 }
 
 <span class="kw">fn </span>docs_disabled() -&gt; RpcError {

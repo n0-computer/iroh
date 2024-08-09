@@ -1574,22 +1574,6 @@
 <a href="#1574" id="1574">1574</a>
 <a href="#1575" id="1575">1575</a>
 <a href="#1576" id="1576">1576</a>
-<a href="#1577" id="1577">1577</a>
-<a href="#1578" id="1578">1578</a>
-<a href="#1579" id="1579">1579</a>
-<a href="#1580" id="1580">1580</a>
-<a href="#1581" id="1581">1581</a>
-<a href="#1582" id="1582">1582</a>
-<a href="#1583" id="1583">1583</a>
-<a href="#1584" id="1584">1584</a>
-<a href="#1585" id="1585">1585</a>
-<a href="#1586" id="1586">1586</a>
-<a href="#1587" id="1587">1587</a>
-<a href="#1588" id="1588">1588</a>
-<a href="#1589" id="1589">1589</a>
-<a href="#1590" id="1590">1590</a>
-<a href="#1591" id="1591">1591</a>
-<a href="#1592" id="1592">1592</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{btree_map::Entry, BTreeSet, HashMap};
 <span class="kw">use </span>std::hash::Hash;
 <span class="kw">use </span>std::net::{IpAddr, SocketAddr};
@@ -1892,46 +1876,31 @@
 
             <span class="comment">// Update some metrics
             </span><span class="kw">match </span>(prev_typ, typ) {
-                (ConnectionType::Direct(<span class="kw">_</span>), ConnectionType::Direct(<span class="kw">_</span>)) =&gt; (),
-                (ConnectionType::Direct(<span class="kw">_</span>), ConnectionType::Relay(<span class="kw">_</span>)) =&gt; {
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_direct_conns_removed);
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
-                }
-                (ConnectionType::Direct(<span class="kw">_</span>), ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>)) =&gt; {
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_direct_conns_removed);
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
-                }
-                (ConnectionType::Direct(<span class="kw">_</span>), ConnectionType::None) =&gt; {
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_direct_conns_removed)
-                }
-                (ConnectionType::Relay(<span class="kw">_</span>), ConnectionType::Direct(<span class="kw">_</span>)) =&gt; {
+                (ConnectionType::Relay(<span class="kw">_</span>), ConnectionType::Direct(<span class="kw">_</span>))
+                | (ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>), ConnectionType::Direct(<span class="kw">_</span>)) =&gt; {
                     <span class="macro">inc!</span>(MagicsockMetrics, num_direct_conns_added);
                     <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed);
                 }
-                (ConnectionType::Relay(<span class="kw">_</span>), ConnectionType::Relay(<span class="kw">_</span>)) =&gt; (),
-                (ConnectionType::Relay(<span class="kw">_</span>), ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>)) =&gt; (),
-                (ConnectionType::Relay(<span class="kw">_</span>), ConnectionType::None) =&gt; {
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed)
-                }
-                (ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>), ConnectionType::Direct(<span class="kw">_</span>)) =&gt; {
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_direct_conns_added);
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed);
-                }
-                (ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>), ConnectionType::Relay(<span class="kw">_</span>)) =&gt; (),
-                (ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>), ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>)) =&gt; (),
-                (ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>), ConnectionType::None) =&gt; {
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed)
+                (ConnectionType::Direct(<span class="kw">_</span>), ConnectionType::Relay(<span class="kw">_</span>))
+                | (ConnectionType::Direct(<span class="kw">_</span>), ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>)) =&gt; {
+                    <span class="macro">inc!</span>(MagicsockMetrics, num_direct_conns_removed);
+                    <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
                 }
                 (ConnectionType::None, ConnectionType::Direct(<span class="kw">_</span>)) =&gt; {
                     <span class="macro">inc!</span>(MagicsockMetrics, num_direct_conns_added)
                 }
-                (ConnectionType::None, ConnectionType::Relay(<span class="kw">_</span>)) =&gt; {
+                (ConnectionType::Direct(<span class="kw">_</span>), ConnectionType::None) =&gt; {
+                    <span class="macro">inc!</span>(MagicsockMetrics, num_direct_conns_removed)
+                }
+                (ConnectionType::None, ConnectionType::Relay(<span class="kw">_</span>))
+                | (ConnectionType::None, ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>)) =&gt; {
                     <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added)
                 }
-                (ConnectionType::None, ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>)) =&gt; {
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added)
+                (ConnectionType::Relay(<span class="kw">_</span>), ConnectionType::None)
+                | (ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>), ConnectionType::None) =&gt; {
+                    <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed)
                 }
-                (ConnectionType::None, ConnectionType::None) =&gt; (),
+                <span class="kw">_ </span>=&gt; (),
             }
         }
         (best_addr, relay_url)
@@ -2900,13 +2869,12 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::{collections::BTreeMap, net::Ipv4Addr};
 
+    <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
+    <span class="kw">use </span><span class="kw">crate</span>::magicsock::node_map::{NodeMap, NodeMapInner};
+
     <span class="kw">use </span>best_addr::BestAddr;
 
-    <span class="kw">use super</span>::{
-        <span class="kw">super</span>::{NodeMap, NodeMapInner},
-        <span class="kw-2">*</span>,
-    };
-    <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_endpoint_infos() {
