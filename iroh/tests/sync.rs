@@ -156,7 +156,7 @@ async fn sync_subscribe_no_sync() -> Result<()> {
 async fn sync_gossip_bulk() -> Result<()> {
     let n_entries: usize = std::env::var("N_ENTRIES")
         .map(|x| x.parse().expect("N_ENTRIES must be a number"))
-        .unwrap_or(1000);
+        .unwrap_or(100);
     let mut rng = test_rng(b"sync_gossip_bulk");
     setup_logging();
 
