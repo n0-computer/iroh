@@ -350,7 +350,6 @@ fn run_cli(
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_bao_store_migration() -> anyhow::Result<()> {
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh_data_dir");
