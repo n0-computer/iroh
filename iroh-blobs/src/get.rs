@@ -60,7 +60,10 @@ pub mod fsm {
     use std::{io, result};
 
     use crate::{
-        protocol::{GetRequest, NonEmptyRequestRangeSpecIter, Request, MAX_MESSAGE_SIZE},
+        protocol::{
+            GetRequest, NonEmptyRequestRangeSpecIter, Request, DEFAULT_BUFFER_CAPACITY,
+            MAX_MESSAGE_SIZE,
+        },
         store::BaoBatchWriter,
     };
 
@@ -73,9 +76,9 @@ pub mod fsm {
     use derive_more::From;
     use iroh_io::{AsyncSliceWriter, AsyncStreamReader, TokioStreamReader};
     use iroh_net::endpoint::Connection;
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    type WrappedRecvStream = TrackingReader<TokioStreamReader<RecvStream>>;
+    type WrappedRecvStream = TrackingReader<TokioStreamReader<tokio::io::BufReader<RecvStream>>>;
 
     self_cell::self_cell! {
         struct RangesIterInner {
@@ -146,7 +149,9 @@ pub mod fsm {
         pub async fn next(self) -> Result<AtConnected, endpoint::ConnectionError> {
             let start = Instant::now();
             let (writer, reader) = self.connection.open_bi().await?;
-            let reader = TrackingReader::new(TokioStreamReader::new(reader));
+            let reader = TrackingReader::new(TokioStreamReader::new(
+                tokio::io::BufReader::with_capacity(DEFAULT_BUFFER_CAPACITY, reader),
+            ));
             let writer = TrackingWriter::new(writer);
             Ok(AtConnected {
                 start,
@@ -296,7 +301,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtStartRoot {
         ranges: ChunkRanges,
-        reader: TrackingReader<TokioStreamReader<RecvStream>>,
+        reader: WrappedRecvStream,
         misc: Box<Misc>,
         hash: Hash,
     }
@@ -305,7 +310,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtStartChild {
         ranges: ChunkRanges,
-        reader: TrackingReader<TokioStreamReader<RecvStream>>,
+        reader: WrappedRecvStream,
         misc: Box<Misc>,
         child_offset: u64,
     }
@@ -380,7 +385,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtBlobHeader {
         ranges: ChunkRanges,
-        reader: TrackingReader<TokioStreamReader<RecvStream>>,
+        reader: WrappedRecvStream,
         misc: Box<Misc>,
         hash: Hash,
     }
@@ -852,12 +857,14 @@ pub mod fsm {
             let (reader, bytes_read) = self.reader.into_parts();
             let mut reader = reader.into_inner();
             if self.check_extra_data {
-                if let Some(chunk) = reader.read_chunk(8, false).await? {
-                    reader.stop(0u8.into()).ok();
+                let mut chunk = [0u8; 8];
+                let read = reader.read(&mut chunk).await.unwrap_or(0);
+                if read != 0 {
+                    reader.into_inner().stop(0u8.into()).ok();
                     error!("Received unexpected data from the provider: {chunk:?}");
                 }
             } else {
-                reader.stop(0u8.into()).ok();
+                reader.into_inner().stop(0u8.into()).ok();
             }
             Ok(Stats {
                 elapsed: self.misc.start.elapsed(),

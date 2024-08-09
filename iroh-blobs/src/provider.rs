@@ -17,7 +17,7 @@ use tracing::{debug, debug_span, info, trace, warn};
 use tracing_futures::Instrument;
 
 use crate::hashseq::parse_hash_seq;
-use crate::protocol::{GetRequest, RangeSpec, Request};
+use crate::protocol::{GetRequest, RangeSpec, Request, DEFAULT_BUFFER_CAPACITY};
 use crate::store::*;
 use crate::util::local_pool::LocalPoolHandle;
 use crate::util::Tag;
@@ -228,6 +228,7 @@ pub async fn transfer_collection<D: Map, E: EventSender>(
                 &mut tw,
             )
             .await?;
+            tw.sync().await?;
             stats.read += tracking_reader.stats();
             stats.send += tw.stats();
             debug!(
@@ -244,6 +245,7 @@ pub async fn transfer_collection<D: Map, E: EventSender>(
             if let Some(hash) = c.next().await? {
                 tokio::task::yield_now().await;
                 let (status, size, blob_read_stats) = send_blob(db, hash, ranges, &mut tw).await?;
+                tw.sync().await?;
                 stats.send += tw.stats();
                 stats.read += blob_read_stats;
                 if SentStatus::NotFound == status {
@@ -404,8 +406,13 @@ pub struct ResponseWriter<E> {
 }
 
 impl<E: EventSender> ResponseWriter<E> {
-    fn tracking_writer(&mut self) -> TrackingStreamWriter<TokioStreamWriter<&mut SendStream>> {
-        TrackingStreamWriter::new(TokioStreamWriter(&mut self.inner))
+    fn tracking_writer(
+        &mut self,
+    ) -> TrackingStreamWriter<TokioStreamWriter<tokio::io::BufWriter<&mut SendStream>>> {
+        TrackingStreamWriter::new(TokioStreamWriter(tokio::io::BufWriter::with_capacity(
+            DEFAULT_BUFFER_CAPACITY,
+            &mut self.inner,
+        )))
     }
 
     fn connection_id(&self) -> u64 {

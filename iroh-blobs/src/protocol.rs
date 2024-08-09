@@ -351,6 +351,13 @@ pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 /// The ALPN used with quic for the iroh bytes protocol.
 pub const ALPN: &[u8] = b"/iroh-bytes/4";
 
+/// Default capacity for buffered readers & writers.
+/// This constant can be changed without breaking the protocol. Here is
+/// just a good place to put it.
+/// In local testing values above 256KiB have shown greatly diminished
+/// returns. 128KiB ended up ~5% slower. 64KiB ended up ~10% slower.
+pub(crate) const DEFAULT_BUFFER_CAPACITY: usize = 256 * 1024;
+
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, From)]
 /// A request to the provider
 pub enum Request {
