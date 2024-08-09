@@ -32,8 +32,11 @@ mod best_addr;
 mod node_state;
 mod udp_paths;
 
-pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, NodeInfo};
 pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
+
+#[allow(deprecated)]
+pub use node_state::ControlMsg;
+pub use node_state::{ConnectionType, DirectAddrInfo, NodeInfo};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -223,7 +226,7 @@ impl NodeMap {
             .collect()
     }
 
-    /// Gets the [`NodeInfo`]s for each endpoint
+    /// Returns the [`NodeInfo`]s for each node in the node map.
     pub(super) fn node_infos(&self, now: Instant) -> Vec<NodeInfo> {
         self.inner.lock().node_infos(now)
     }

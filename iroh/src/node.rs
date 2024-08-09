@@ -47,11 +47,9 @@ use iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store as BaoStore};
 use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
 use iroh_blobs::{downloader::Downloader, protocol::Closed};
 use iroh_gossip::net::Gossip;
+use iroh_net::endpoint::{DirectAddrsStream, NodeInfo};
 use iroh_net::key::SecretKey;
-use iroh_net::{
-    endpoint::{ConnectionInfo, DirectAddrsStream},
-    util::SharedAbortingJoinHandle,
-};
+use iroh_net::util::SharedAbortingJoinHandle;
 use iroh_net::{AddrInfo, Endpoint, NodeAddr};
 use quic_rpc::transport::ServerEndpoint as _;
 use quic_rpc::RpcServer;
@@ -576,7 +574,7 @@ fn node_addresses_for_storage(ep: &Endpoint) -> Vec<NodeAddr> {
 /// If the endpoint was used, only the paths that were in use will be returned.
 ///
 /// Returns `None` if the resulting [`NodeAddr`] would be empty.
-fn node_address_for_storage(info: ConnectionInfo) -> Option<NodeAddr> {
+fn node_address_for_storage(info: NodeInfo) -> Option<NodeAddr> {
     let direct_addresses = if info.last_used.is_none() {
         info.addrs
             .into_iter()

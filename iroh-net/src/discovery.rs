@@ -259,8 +259,11 @@ impl DiscoveryTask {
 
     /// We need discovery if we have no paths to the node, or if the paths we do have
     /// have timed out.
+    // TODO: info.last_received() and info.last_alive_relay() are deprecated, avoid using
+    // them.
+    #[allow(deprecated)]
     fn needs_discovery(ep: &Endpoint, node_id: NodeId) -> bool {
-        match ep.connection_info(node_id) {
+        match ep.node_info(node_id) {
             // No connection info means no path to node -> start discovery.
             None => true,
             Some(info) => {

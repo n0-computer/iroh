@@ -18,7 +18,7 @@ use std::{collections::BTreeMap, net::SocketAddr};
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use iroh_net::{endpoint::ConnectionInfo, relay::RelayUrl, NodeAddr, NodeId};
+use iroh_net::{endpoint::NodeInfo, relay::RelayUrl, NodeAddr, NodeId};
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
@@ -128,7 +128,8 @@ impl Client {
     /// transferring the snapshot.
     ///
     /// See also [`Endpoint::connection_infos`](crate::net::Endpoint::connection_infos).
-    pub async fn connections(&self) -> Result<impl Stream<Item = Result<ConnectionInfo>>> {
+    // TODO: Bad bad name.  fix me
+    pub async fn connections(&self) -> Result<impl Stream<Item = Result<NodeInfo>>> {
         let stream = self.rpc.server_streaming(ConnectionsRequest {}).await?;
         Ok(flatten(stream).map(|res| res.map(|res| res.conn_info)))
     }
@@ -136,7 +137,8 @@ impl Client {
     /// Fetches connection information about a connection to another node identified by its [`NodeId`].
     ///
     /// See also [`Endpoint::connection_info`](crate::net::Endpoint::connection_info).
-    pub async fn connection_info(&self, node_id: NodeId) -> Result<Option<ConnectionInfo>> {
+    // TODO: Bad bad name.  fix me
+    pub async fn connection_info(&self, node_id: NodeId) -> Result<Option<NodeInfo>> {
         let ConnectionInfoResponse { conn_info } =
             self.rpc.rpc(ConnectionInfoRequest { node_id }).await??;
         Ok(conn_info)

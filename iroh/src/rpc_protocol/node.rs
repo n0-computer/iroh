@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use iroh_base::rpc::RpcResult;
-use iroh_net::{endpoint::ConnectionInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
+use iroh_net::{endpoint::NodeInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};

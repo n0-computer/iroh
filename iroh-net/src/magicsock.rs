@@ -75,12 +75,14 @@ mod relay_actor;
 mod timer;
 mod udp_conn;
 
-pub use self::metrics::Metrics;
-pub use self::node_map::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo as ConnectionInfo,
-};
-pub(super) use self::timer::Timer;
 pub(crate) use node_map::Source;
+
+pub(super) use self::timer::Timer;
+
+pub use self::metrics::Metrics;
+#[allow(deprecated)]
+pub use self::node_map::ControlMsg;
+pub use self::node_map::{ConnectionType, ConnectionTypeStream, DirectAddrInfo, NodeInfo};
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
@@ -286,18 +288,18 @@ impl MagicSock {
 
     /// Returns `true` if we have at least one candidate address where we can send packets to.
     pub(crate) fn has_send_address(&self, node_key: PublicKey) -> bool {
-        self.connection_info(node_key)
+        self.node_info(node_key)
             .map(|info| info.has_send_address())
             .unwrap_or(false)
     }
 
-    /// Retrieve connection information about nodes in the network.
-    pub(crate) fn connection_infos(&self) -> Vec<ConnectionInfo> {
+    /// Return all the [`NodeInfo`]s of all nodes in the node map.
+    pub(crate) fn node_info_all_nodes(&self) -> Vec<NodeInfo> {
         self.node_map.node_infos(Instant::now())
     }
 
-    /// Retrieve connection information about a node in the network.
-    pub(crate) fn connection_info(&self, node_id: NodeId) -> Option<ConnectionInfo> {
+    /// Return the [`NodeInfo`] for a single node in the node map.
+    pub(crate) fn node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
         self.node_map.node_info(node_id)
     }
 
@@ -2781,7 +2783,7 @@ mod tests {
         fn tracked_endpoints(&self) -> Vec<PublicKey> {
             self.endpoint
                 .magic_sock()
-                .connection_infos()
+                .node_info_all_nodes()
                 .into_iter()
                 .map(|ep| ep.node_id)
                 .collect()
