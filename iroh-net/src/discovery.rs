@@ -136,6 +136,11 @@ impl ConcurrentDiscovery {
     pub fn add(&mut self, service: impl Discovery + 'static) {
         self.services.push(Box::new(service));
     }
+
+    /// Return a slice of the [`Discovery`] services we have available
+    pub fn services(&self) -> &[Box<dyn Discovery>] {
+        &self.services
+    }
 }
 
 impl<T> From<T> for ConcurrentDiscovery

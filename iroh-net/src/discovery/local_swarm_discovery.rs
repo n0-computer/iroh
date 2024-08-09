@@ -15,7 +15,7 @@ use futures_lite::{stream::Boxed as BoxStream, StreamExt};
 use tracing::{debug, error, trace, warn};
 
 use async_channel::Sender;
-use iroh_base::key::PublicKey;
+use iroh_base::{key::PublicKey, node_addr::NodeAddr};
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::task::JoinSet;
 
@@ -48,6 +48,7 @@ enum Message {
     SendAddrs(NodeId, Sender<Result<DiscoveryItem>>),
     ChangeLocalAddrs(AddrInfo),
     Timeout(NodeId, usize),
+    List(Sender<Vec<NodeAddr>>),
 }
 
 impl LocalSwarmDiscovery {
@@ -178,6 +179,21 @@ impl LocalSwarmDiscovery {
                             discovery.add(addr.0, addr.1)
                         }
                     }
+                    Message::List(sender) => {
+                        trace!("LocalSwarmDiscovery Message::List");
+                        let addrs: Vec<NodeAddr> = node_addrs
+                            .iter()
+                            .map(|(public_key, peer_info)| {
+                                let addrs = peer_info
+                                    .addrs()
+                                    .iter()
+                                    .map(|(ipaddr, port)| SocketAddr::new(*ipaddr, *port))
+                                    .collect();
+                                NodeAddr::from_parts(public_key.clone().into(), None, addrs)
+                            })
+                            .collect();
+                        sender.send(addrs).await.ok();
+                    }
                 }
             }
         });
@@ -224,6 +240,14 @@ impl LocalSwarmDiscovery {
                 .or_insert(vec![socketaddr.ip()]);
         }
         addrs
+    }
+
+    /// Receive a list of the [`NodeAddr`]s that have been discovered on the local network so far.
+    pub async fn discovered_nodes(&self) -> Result<Vec<NodeAddr>> {
+        let (s, r) = async_channel::bounded(1);
+        self.sender.send(Message::List(s)).await.ok();
+        let addrs = r.recv().await?;
+        Ok(addrs)
     }
 }
 
@@ -303,6 +327,10 @@ mod tests {
             .unwrap()?;
         assert_eq!(s1_res.addr_info, addr_info);
         assert_eq!(s2_res.addr_info, addr_info);
+        let locally_discovered_nodes = discovery_a.discovered_nodes().await?;
+        assert!(locally_discovered_nodes
+            .iter()
+            .any(|node_addr| node_addr.node_id == node_id_b));
         Ok(())
     }
 
