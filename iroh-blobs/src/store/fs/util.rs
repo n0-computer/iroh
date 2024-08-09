@@ -69,16 +69,16 @@ pub fn read_and_remove(path: &Path) -> io::Result<Vec<u8>> {
     Ok(data)
 }
 
-/// A wrapper for a flume receiver that allows peeking at the next message.
+/// A wrapper for a `async_channel` receiver that allows peeking at the next message.
 #[derive(Debug)]
-pub(super) struct PeekableFlumeReceiver<T> {
+pub(super) struct PeekableAsyncChannelReceiver<T> {
     msg: Option<T>,
-    recv: flume::Receiver<T>,
+    recv: async_channel::Receiver<T>,
 }
 
 #[allow(dead_code)]
-impl<T> PeekableFlumeReceiver<T> {
-    pub fn new(recv: flume::Receiver<T>) -> Self {
+impl<T> PeekableAsyncChannelReceiver<T> {
+    pub fn new(recv: async_channel::Receiver<T>) -> Self {
         Self { msg: None, recv }
     }
 
@@ -88,7 +88,7 @@ impl<T> PeekableFlumeReceiver<T> {
     /// Returns None only if there are no more messages (sender is dropped).
     pub fn peek(&mut self) -> Option<&T> {
         if self.msg.is_none() {
-            self.msg = self.recv.recv().ok();
+            self.msg = self.recv.recv_blocking().ok();
         }
         self.msg.as_ref()
     }
@@ -101,7 +101,7 @@ impl<T> PeekableFlumeReceiver<T> {
         if let Some(msg) = self.msg.take() {
             return Some(msg);
         }
-        self.recv.recv().ok()
+        self.recv.recv_blocking().ok()
     }
 
     /// Try to peek at the next message.
@@ -126,11 +126,14 @@ impl<T> PeekableFlumeReceiver<T> {
         self.recv.try_recv().ok()
     }
 
-    pub fn recv_timeout(&mut self, timeout: std::time::Duration) -> Option<T> {
+    pub fn recv_timeout(&mut self, _timeout: std::time::Duration) -> Option<T> {
         if let Some(msg) = self.msg.take() {
             return Some(msg);
         }
-        self.recv.recv_timeout(timeout).ok()
+
+        self.recv.recv_blocking().ok()
+        // TODO: timeout
+        // self.recv.recv_timeout(timeout).ok()
     }
 
     /// Create an iterator that pulls messages from the receiver for at most
@@ -152,14 +155,18 @@ impl<T> PeekableFlumeReceiver<T> {
 }
 
 pub(super) struct BatchIter<'a, T> {
-    recv: &'a mut PeekableFlumeReceiver<T>,
+    recv: &'a mut PeekableAsyncChannelReceiver<T>,
     start: Instant,
     remaining: usize,
     max_duration: Duration,
 }
 
 impl<'a, T> BatchIter<'a, T> {
-    fn new(recv: &'a mut PeekableFlumeReceiver<T>, count: usize, max_duration: Duration) -> Self {
+    fn new(
+        recv: &'a mut PeekableAsyncChannelReceiver<T>,
+        count: usize,
+        max_duration: Duration,
+    ) -> Self {
         Self {
             recv,
             start: Instant::now(),

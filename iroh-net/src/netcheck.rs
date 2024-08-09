@@ -417,7 +417,7 @@ impl Actor {
     /// This does not start the actor, see [`Actor::run`] for this.  You should not
     /// normally create this directly but rather create a [`Client`].
     fn new(port_mapper: Option<portmapper::Client>, dns_resolver: DnsResolver) -> Result<Self> {
-        // TODO: consider an instrumented flume channel so we have metrics.
+        // TODO: consider an instrumented channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);
         Ok(Self {
             receiver,

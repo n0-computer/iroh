@@ -22,7 +22,6 @@ bao-tree = {  version = "0.13", features = ["tokio_fsm", "validate"], default-fe
 bytes = { version = "1.4", features = ["serde"] }
 chrono = "0.4.31"
 derive_more = { version = "=1.0.0-beta.7", features = ["debug", "display", "deref", "deref_mut", "from", "try_into", "into"] }
-flume = "0.11"
 futures-buffered = "0.2.4"
 futures-lite = "2.3"
 genawaiter = { version = "0.99.1", features = ["futures03"] }

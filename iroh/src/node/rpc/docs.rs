@@ -29,7 +29,7 @@ use crate::rpc_protocol::{
     },
 };
 
-/// Capacity for the flume channels to forward sync store iterators to async RPC streams.
+/// Capacity for the channels to forward sync store iterators to async RPC streams.
 const ITER_CHANNEL_CAP: usize = 64;
 
 #[allow(missing_docs)]
