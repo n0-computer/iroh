@@ -13,6 +13,10 @@ use crate::{
 pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
 /// The n0 testing DNS node origin, for testing.
 pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
+/// Testing DNS node origin, must run server from [`crate::test_utils::DnsPkarrServer`].
+#[cfg(any(test, feature = "test-utils"))]
+pub const TEST_DNS_NODE_ORIGIN: &str = "dns.iroh.test";
+
 const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
 /// DNS node discovery
@@ -41,13 +45,28 @@ pub struct DnsDiscovery {
 }
 
 impl DnsDiscovery {
-    /// Create a new DNS discovery.
+    /// Creates a new DNS discovery.
     pub fn new(origin_domain: String) -> Self {
         Self { origin_domain }
     }
 
-    /// Create a new DNS discovery which uses the [`N0_DNS_NODE_ORIGIN_PROD`] origin domain and in testing
-    /// uses [`N0_DNS_NODE_ORIGIN_STAGING`].
+    /// Creates a new DNS discovery using the `iroh.link` domain.
+    ///
+    /// This uses the [`N0_DNS_NODE_ORIGIN_PROD`] domain.
+    ///
+    /// # Usage during tests
+    ///
+    /// When `cfg(test)` is enabled or when using the `test-utils` cargo feature the
+    /// [`TEST_DNS_NODE_ORIGIN`] is used.
+    ///
+    /// Note that the `iroh.test` domain is not integrated with the global DNS network and
+    /// thus node discovery is effectively disabled.  To use node discovery in a test use
+    /// the [`crate::test_utils::DnsPkarrServer`] in the test and configure it as a
+    /// custom discovery mechanism.
+    ///
+    /// For testing it is also possible to use the [`N0_DNS_NODE_ORIGIN_STAGING`] domain
+    /// with [`DnsDiscovery::new`].  This would then use a hosted discovery service again,
+    /// but for testing purposes.
     pub fn n0_dns() -> Self {
         #[cfg(not(any(test, feature = "test-utils")))]
         {
@@ -55,7 +74,7 @@ impl DnsDiscovery {
         }
         #[cfg(any(test, feature = "test-utils"))]
         {
-            Self::new(N0_DNS_NODE_ORIGIN_STAGING.to_string())
+            Self::new(TEST_DNS_NODE_ORIGIN.to_string())
         }
     }
 }
