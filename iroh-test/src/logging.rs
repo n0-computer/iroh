@@ -40,6 +40,21 @@ pub fn setup() -> tracing::subscriber::DefaultGuard {
     testing_subscriber().set_default()
 }
 
+/// Enable test tracing on all threads.
+pub fn setup_global() {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        match handle.runtime_flavor() {
+            RuntimeFlavor::CurrentThread => (),
+            RuntimeFlavor::MultiThread => {
+                panic!("setup_logging() does not work in a multi-threaded tokio runtime");
+            }
+            _ => panic!("unknown runtime flavour"),
+        }
+    }
+    // Errors when a global one has already been set before.
+    tracing::subscriber::set_global_default(testing_subscriber()).ok();
+}
+
 /// The first call to this function will install a global logger.
 ///
 /// The logger uses the `RUST_LOG` environment variable to decide on what level to log
