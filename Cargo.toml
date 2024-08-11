@@ -41,3 +41,11 @@ missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+[patch.crates-io]
+# willow-data-model = { path = "../willow-rs/data-model" }
+# willow-encoding = { path = "../willow-rs/encoding" }
+# meadowcap = { path = "../willow-rs/meadowcap" }
+willow-data-model = { git = "https://github.com/Frando/willow-rs.git", branch = "iroh" }
+willow-encoding  = { git = "https://github.com/Frando/willow-rs.git", branch = "iroh" }
+meadowcap  = { git = "https://github.com/Frando/willow-rs.git", branch = "iroh" }
