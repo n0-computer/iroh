@@ -8,15 +8,15 @@
 //! [RFC 9380]: https://www.rfc-editor.org/rfc/rfc9380
 
 use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint, Scalar};
+use ufotofu::sync::consumer::IntoVec;
+use willow_encoding::sync::Encodable;
 
-use crate::{
-    proto::{
-        grouping::SubspaceArea,
-        sync::ReadCapability,
-        willow::{NamespaceId, Path, SubspaceId},
-    },
-    util::codec::Encoder,
+use crate::proto::{
+    data_model::{NamespaceId, Path, SubspaceId},
+    grouping::AreaSubspace,
 };
+
+type ReadCapability = super::meadowcap::McCapability;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct PsiGroup(RistrettoPoint);
@@ -45,7 +45,13 @@ pub struct PaiScheme;
 
 impl PaiScheme {
     pub fn hash_into_group(fragment: &Fragment) -> PsiGroup {
-        let encoded = fragment.encode().expect("encoding not to fail");
+        let encoded = {
+            let mut consumer = IntoVec::<u8>::new();
+            fragment
+                .encode(&mut consumer)
+                .expect("encoding not to fail");
+            consumer.into_vec()
+        };
         let point = RistrettoPoint::hash_from_bytes::<sha2::Sha512>(&encoded);
         PsiGroup(point)
     }
@@ -64,13 +70,13 @@ impl PaiScheme {
 
     pub fn get_fragment_kit(cap: &ReadCapability) -> FragmentKit {
         let granted_area = cap.granted_area();
-        let granted_namespace = cap.granted_namespace().id();
-        let granted_path = granted_area.path.clone();
+        let granted_namespace = cap.granted_namespace();
+        let granted_path = granted_area.path().clone();
 
-        match granted_area.subspace {
-            SubspaceArea::Any => FragmentKit::Complete(granted_namespace, granted_path),
-            SubspaceArea::Id(granted_subspace) => {
-                FragmentKit::Selective(granted_namespace, granted_subspace, granted_path)
+        match granted_area.subspace() {
+            AreaSubspace::Any => FragmentKit::Complete(*granted_namespace, granted_path),
+            AreaSubspace::Id(granted_subspace) => {
+                FragmentKit::Selective(*granted_namespace, *granted_subspace, granted_path)
             }
         }
     }
@@ -83,38 +89,13 @@ pub enum Fragment {
 }
 
 impl Fragment {
-    pub fn into_parts(self) -> (NamespaceId, SubspaceArea, Path) {
+    pub fn into_parts(self) -> (NamespaceId, AreaSubspace, Path) {
         match self {
-            Fragment::Pair((namespace_id, path)) => (namespace_id, SubspaceArea::Any, path),
+            Fragment::Pair((namespace_id, path)) => (namespace_id, AreaSubspace::Any, path),
             Fragment::Triple((namespace_id, subspace_id, path)) => {
-                (namespace_id, SubspaceArea::Id(subspace_id), path)
+                (namespace_id, AreaSubspace::Id(subspace_id), path)
             }
         }
-    }
-}
-
-impl Encoder for Fragment {
-    fn encoded_len(&self) -> usize {
-        match self {
-            Fragment::Pair((_, path)) => NamespaceId::LENGTH + path.encoded_len(),
-            Fragment::Triple((_, _, path)) => {
-                NamespaceId::LENGTH + SubspaceId::LENGTH + path.encoded_len()
-            }
-        }
-    }
-    fn encode_into<W: std::io::Write>(&self, out: &mut W) -> anyhow::Result<()> {
-        match self {
-            Fragment::Pair((namespace_id, path)) => {
-                out.write_all(namespace_id.as_bytes())?;
-                path.encode_into(out)?;
-            }
-            Fragment::Triple((namespace_id, subspace_id, path)) => {
-                out.write_all(namespace_id.as_bytes())?;
-                out.write_all(subspace_id.as_bytes())?;
-                path.encode_into(out)?;
-            }
-        }
-        Ok(())
     }
 }
 
@@ -161,18 +142,50 @@ impl FragmentKit {
                 FragmentSet::Complete(pairs)
             }
             FragmentKit::Selective(namespace_id, subspace_id, path) => {
-                let all_prefixes = path.all_prefixes();
-                let primary = all_prefixes
-                    .iter()
-                    .cloned()
+                let primary = path
+                    .all_prefixes()
                     .map(|prefix| (namespace_id, subspace_id, prefix))
                     .collect();
-                let secondary = all_prefixes
-                    .into_iter()
+                let secondary = path
+                    .all_prefixes()
                     .map(|prefix| (namespace_id, prefix))
                     .collect();
                 FragmentSet::Selective { primary, secondary }
             }
+        }
+    }
+}
+
+use syncify::syncify;
+use syncify::syncify_replace;
+
+#[syncify(encoding_sync)]
+mod encoding {
+    #[syncify_replace(use ufotofu::sync::BulkConsumer;)]
+    use ufotofu::local_nb::BulkConsumer;
+
+    #[syncify_replace(use willow_encoding::sync::Encodable;)]
+    use willow_encoding::Encodable;
+
+    use super::*;
+
+    impl Encodable for Fragment {
+        async fn encode<Consumer>(&self, consumer: &mut Consumer) -> Result<(), Consumer::Error>
+        where
+            Consumer: BulkConsumer<Item = u8>,
+        {
+            match self {
+                Fragment::Pair((namespace_id, path)) => {
+                    namespace_id.encode(consumer).await?;
+                    path.encode(consumer).await?;
+                }
+                Fragment::Triple((namespace_id, subspace_id, path)) => {
+                    namespace_id.encode(consumer).await?;
+                    subspace_id.encode(consumer).await?;
+                    path.encode(consumer).await?;
+                }
+            }
+            Ok(())
         }
     }
 }

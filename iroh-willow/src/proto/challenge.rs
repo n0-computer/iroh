@@ -1,105 +1,56 @@
-use crate::{
-    proto::sync::AccessChallengeBytes,
-    session::{Error, Role},
-};
+use iroh_base::base32::fmt_short;
+use iroh_blobs::Hash;
+use rand::Rng;
+use rand_core::CryptoRngCore;
+use serde::{Deserialize, Serialize};
 
-use super::{
-    keys::{UserPublicKey, UserSecretKey, UserSignature},
-    sync::{AccessChallenge, ChallengeHash},
-};
+use super::data_model::DIGEST_LENGTH;
 
-#[derive(Debug)]
-pub enum ChallengeState {
-    Committed {
-        our_nonce: AccessChallenge,
-        received_commitment: ChallengeHash,
-    },
-    Revealed {
-        ours: AccessChallengeBytes,
-        theirs: AccessChallengeBytes,
-    },
-}
+pub const CHALLENGE_LENGTH: usize = 32;
+pub const CHALLENGE_HASH_LENGTH: usize = DIGEST_LENGTH;
 
-impl ChallengeState {
-    pub fn reveal(&mut self, our_role: Role, their_nonce: AccessChallenge) -> Result<(), Error> {
-        match self {
-            Self::Committed {
-                our_nonce,
-                received_commitment,
-            } => {
-                if their_nonce.hash() != *received_commitment {
-                    return Err(Error::BrokenCommittement);
-                }
-                let ours = match our_role {
-                    Role::Alfie => bitwise_xor(our_nonce.to_bytes(), their_nonce.to_bytes()),
-                    Role::Betty => {
-                        bitwise_xor_complement(our_nonce.to_bytes(), their_nonce.to_bytes())
-                    }
-                };
-                let theirs = bitwise_complement(ours);
-                *self = Self::Revealed { ours, theirs };
-                Ok(())
-            }
-            _ => Err(Error::InvalidMessageInCurrentState),
-        }
+#[derive(derive_more::Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChallengeHash(#[debug("{}..", fmt_short(self.0))] [u8; CHALLENGE_HASH_LENGTH]);
+
+impl ChallengeHash {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
     }
 
-    pub fn is_revealed(&self) -> bool {
-        matches!(self, Self::Revealed { .. })
-    }
-
-    pub fn sign(&self, secret_key: &UserSecretKey) -> Result<UserSignature, Error> {
-        let signable = self.signable()?;
-        let signature = secret_key.sign(&signable);
-        Ok(signature)
-    }
-
-    pub fn signable(&self) -> Result<[u8; 32], Error> {
-        let challenge = self.get_ours()?;
-        Ok(*challenge)
-    }
-
-    pub fn verify(&self, user_key: &UserPublicKey, signature: &UserSignature) -> Result<(), Error> {
-        let their_challenge = self.get_theirs()?;
-        user_key.verify(their_challenge, signature)?;
-        Ok(())
-    }
-
-    fn get_ours(&self) -> Result<&AccessChallengeBytes, Error> {
-        match self {
-            Self::Revealed { ours, .. } => Ok(ours),
-            _ => Err(Error::InvalidMessageInCurrentState),
-        }
-    }
-
-    fn get_theirs(&self) -> Result<&AccessChallengeBytes, Error> {
-        match self {
-            Self::Revealed { theirs, .. } => Ok(theirs),
-            _ => Err(Error::InvalidMessageInCurrentState),
-        }
+    pub fn from_bytes(bytes: [u8; CHALLENGE_HASH_LENGTH]) -> Self {
+        Self(bytes)
     }
 }
 
-fn bitwise_xor<const N: usize>(a: [u8; N], b: [u8; N]) -> [u8; N] {
-    let mut res = [0u8; N];
-    for (i, (x1, x2)) in a.iter().zip(b.iter()).enumerate() {
-        res[i] = x1 ^ x2;
+#[derive(derive_more::Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct AccessChallenge(#[debug("{}..", fmt_short(self.0))] AccessChallengeBytes);
+
+pub type AccessChallengeBytes = [u8; CHALLENGE_LENGTH];
+
+impl Default for AccessChallenge {
+    fn default() -> Self {
+        Self::generate()
     }
-    res
 }
 
-fn bitwise_complement<const N: usize>(a: [u8; N]) -> [u8; N] {
-    let mut res = [0u8; N];
-    for (i, x) in a.iter().enumerate() {
-        res[i] = !x;
+impl AccessChallenge {
+    pub fn generate() -> Self {
+        Self(rand::random())
     }
-    res
-}
 
-fn bitwise_xor_complement<const N: usize>(a: [u8; N], b: [u8; N]) -> [u8; N] {
-    let mut res = [0u8; N];
-    for (i, (x1, x2)) in a.iter().zip(b.iter()).enumerate() {
-        res[i] = !(x1 ^ x2);
+    pub fn generate_with_rng(rng: &mut impl CryptoRngCore) -> Self {
+        Self(rng.gen())
     }
-    res
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0
+    }
+
+    pub fn hash(&self) -> ChallengeHash {
+        ChallengeHash(*Hash::new(self.0).as_bytes())
+    }
 }
