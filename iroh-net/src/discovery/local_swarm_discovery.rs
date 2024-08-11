@@ -48,7 +48,7 @@ enum Message {
     SendAddrs(NodeId, Sender<Result<DiscoveryItem>>),
     ChangeLocalAddrs(AddrInfo),
     Timeout(NodeId, usize),
-    List(Sender<Vec<NodeAddr>>),
+    List(Sender<NodeAddr>),
 }
 
 impl LocalSwarmDiscovery {
@@ -181,18 +181,18 @@ impl LocalSwarmDiscovery {
                     }
                     Message::List(sender) => {
                         trace!("LocalSwarmDiscovery Message::List");
-                        let addrs: Vec<NodeAddr> = node_addrs
-                            .iter()
-                            .map(|(public_key, peer_info)| {
-                                let addrs = peer_info
-                                    .addrs()
-                                    .iter()
-                                    .map(|(ipaddr, port)| SocketAddr::new(*ipaddr, *port))
-                                    .collect();
-                                NodeAddr::from_parts(public_key.clone().into(), None, addrs)
-                            })
-                            .collect();
-                        sender.send(addrs).await.ok();
+                        for node_addr in node_addrs.iter() {
+                            let (public_key, peer_info) = node_addr;
+                            let addrs = peer_info
+                                .addrs()
+                                .iter()
+                                .map(|(ipaddr, port)| SocketAddr::new(*ipaddr, *port))
+                                .collect();
+                            sender
+                                .send(NodeAddr::from_parts(public_key.clone().into(), None, addrs))
+                                .await
+                                .ok();
+                        }
                     }
                 }
             }
@@ -241,14 +241,6 @@ impl LocalSwarmDiscovery {
         }
         addrs
     }
-
-    /// Receive a list of the [`NodeAddr`]s that have been discovered on the local network so far.
-    pub async fn discovered_nodes(&self) -> Result<Vec<NodeAddr>> {
-        let (s, r) = async_channel::bounded(1);
-        self.sender.send(Message::List(s)).await.ok();
-        let addrs = r.recv().await?;
-        Ok(addrs)
-    }
 }
 
 impl From<&Peer> for DiscoveryItem {
@@ -292,6 +284,16 @@ impl Discovery for LocalSwarmDiscovery {
                 .ok();
         });
     }
+
+    /// Receive a list of the [`NodeAddr`]s that have been discovered on the local network so far.
+    fn locally_discovered_nodes(&self) -> Option<BoxStream<NodeAddr>> {
+        let (send, recv) = async_channel::bounded(20);
+        let discovery_sender = self.sender.clone();
+        tokio::spawn(async move {
+            discovery_sender.send(Message::List(send)).await.ok();
+        });
+        Some(recv.boxed())
+    }
 }
 
 #[cfg(test)]
@@ -327,7 +329,11 @@ mod tests {
             .unwrap()?;
         assert_eq!(s1_res.addr_info, addr_info);
         assert_eq!(s2_res.addr_info, addr_info);
-        let locally_discovered_nodes = discovery_a.discovered_nodes().await?;
+        let locally_discovered_nodes: Vec<NodeAddr> = discovery_a
+            .locally_discovered_nodes()
+            .unwrap()
+            .collect()
+            .await;
         assert!(locally_discovered_nodes
             .iter()
             .any(|node_addr| node_addr.node_id == node_id_b));

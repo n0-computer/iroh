@@ -730,6 +730,20 @@ impl Endpoint {
         self.msock.connection_infos()
     }
 
+    /// Return any [`NodeAddr`]s for nodes we have discovered in the local network.
+    ///
+    /// If no nodes have been discovered, or [`iroh-net::discovery::LocalSwarmDiscovery`]
+    /// has not been configured as a [`Discovery`] service, it will return an
+    /// empty list.
+    pub async fn locally_discovered_nodes(&self) -> Option<Vec<NodeAddr>> {
+        if let Some(discovery) = self.discovery() {
+            if let Some(addrs) = discovery.locally_discovered_nodes() {
+                return Some(addrs.collect().await);
+            }
+        }
+        None
+    }
+
     // # Methods for less common getters.
     //
     // Partially they return things passed into the builder.

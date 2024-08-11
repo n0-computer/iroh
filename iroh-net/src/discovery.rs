@@ -95,6 +95,15 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     ) -> Option<BoxStream<Result<DiscoveryItem>>> {
         None
     }
+
+    /// Returns a list of nodes that have been discovered on the
+    /// local network.
+    ///
+    /// If the discovery service does not discover local nodes,
+    /// this returns `None`.
+    fn locally_discovered_nodes(&self) -> Option<BoxStream<NodeAddr>> {
+        None
+    }
 }
 
 /// The results returned from [`Discovery::resolve`].
@@ -170,6 +179,15 @@ impl Discovery for ConcurrentDiscovery {
             .iter()
             .filter_map(|service| service.resolve(endpoint.clone(), node_id));
 
+        let streams = futures_buffered::Merge::from_iter(streams);
+        Some(Box::pin(streams))
+    }
+
+    fn locally_discovered_nodes(&self) -> Option<BoxStream<NodeAddr>> {
+        let streams = self
+            .services
+            .iter()
+            .filter_map(|service| service.locally_discovered_nodes());
         let streams = futures_buffered::Merge::from_iter(streams);
         Some(Box::pin(streams))
     }
