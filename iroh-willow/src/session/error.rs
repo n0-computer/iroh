@@ -11,6 +11,8 @@ use crate::{
     util::channel::{ReadError, WriteError},
 };
 
+// This is a catch-all error type for the session module.
+// TODO: Split this into multiple error types
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("local store failed: {0}")]

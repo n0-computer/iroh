@@ -8,7 +8,7 @@
 use std::{cmp::Ordering, fmt, str::FromStr};
 
 use derive_more::{AsRef, Deref, From, Into};
-use ed25519_dalek::{SignatureError, Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{SignatureError, Signer, SigningKey, Verifier, VerifyingKey};
 use iroh_base::base32;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
@@ -551,5 +551,162 @@ impl FromStr for NamespaceId {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         NamespacePublicKey::from_str(s).map(|x| x.into())
+    }
+}
+
+mod willow_impls {
+    use crate::util::increment_by_one;
+
+    use super::*;
+
+    impl willow_data_model::SubspaceId for UserId {
+        fn successor(&self) -> Option<Self> {
+            match increment_by_one(self.as_bytes()) {
+                Some(bytes) => Some(Self::from_bytes_unchecked(bytes)),
+                None => None,
+            }
+        }
+    }
+
+    impl willow_data_model::SubspaceId for UserPublicKey {
+        fn successor(&self) -> Option<Self> {
+            match increment_by_one(self.as_bytes()) {
+                Some(bytes) => Self::from_bytes(&bytes).ok(),
+                None => None,
+            }
+        }
+    }
+
+    impl willow_data_model::NamespaceId for NamespaceId {}
+    impl willow_data_model::NamespaceId for NamespacePublicKey {}
+
+    impl Verifier<UserSignature> for UserPublicKey {
+        fn verify(
+            &self,
+            msg: &[u8],
+            signature: &UserSignature,
+        ) -> Result<(), ed25519_dalek::ed25519::Error> {
+            self.0.verify(msg, &signature.0)
+        }
+    }
+
+    impl Verifier<UserSignature> for UserId {
+        fn verify(
+            &self,
+            msg: &[u8],
+            signature: &UserSignature,
+        ) -> Result<(), ed25519_dalek::ed25519::Error> {
+            // TODO: Cache this in a global LRU cache.
+            let key = self.into_public_key()?;
+            key.0.verify(msg, &signature.0)
+        }
+    }
+
+    impl Verifier<NamespaceSignature> for NamespacePublicKey {
+        fn verify(
+            &self,
+            msg: &[u8],
+            signature: &NamespaceSignature,
+        ) -> Result<(), ed25519_dalek::ed25519::Error> {
+            self.0.verify(msg, &signature.0)
+        }
+    }
+
+    impl Verifier<NamespaceSignature> for NamespaceId {
+        fn verify(
+            &self,
+            msg: &[u8],
+            signature: &NamespaceSignature,
+        ) -> Result<(), ed25519_dalek::ed25519::Error> {
+            // TODO: Cache this in a global LRU cache.
+            let key = self.into_public_key()?;
+            key.0.verify(msg, &signature.0)
+        }
+    }
+}
+
+use syncify::syncify;
+use syncify::syncify_replace;
+
+#[syncify(encoding_sync)]
+mod encoding {
+    #[syncify_replace(use ufotofu::sync::BulkConsumer;)]
+    use ufotofu::local_nb::BulkConsumer;
+
+    #[syncify_replace(use willow_encoding::sync::Encodable;)]
+    use willow_encoding::Encodable;
+
+    use super::*;
+
+    impl Encodable for NamespacePublicKey {
+        async fn encode<Consumer>(&self, consumer: &mut Consumer) -> Result<(), Consumer::Error>
+        where
+            Consumer: BulkConsumer<Item = u8>,
+        {
+            consumer
+                .bulk_consume_full_slice(self.as_bytes())
+                .await
+                .map_err(|err| err.reason)
+        }
+    }
+
+    impl Encodable for UserPublicKey {
+        async fn encode<Consumer>(&self, consumer: &mut Consumer) -> Result<(), Consumer::Error>
+        where
+            Consumer: BulkConsumer<Item = u8>,
+        {
+            consumer
+                .bulk_consume_full_slice(self.as_bytes())
+                .await
+                .map_err(|err| err.reason)
+        }
+    }
+
+    impl Encodable for NamespaceSignature {
+        async fn encode<Consumer>(&self, consumer: &mut Consumer) -> Result<(), Consumer::Error>
+        where
+            Consumer: BulkConsumer<Item = u8>,
+        {
+            consumer
+                .bulk_consume_full_slice(&self.to_bytes())
+                .await
+                .map_err(|err| err.reason)
+        }
+    }
+
+    impl Encodable for UserSignature {
+        async fn encode<Consumer>(&self, consumer: &mut Consumer) -> Result<(), Consumer::Error>
+        where
+            Consumer: BulkConsumer<Item = u8>,
+        {
+            consumer
+                .bulk_consume_full_slice(&self.to_bytes())
+                .await
+                .map_err(|err| err.reason)
+        }
+    }
+
+    impl Encodable for UserId {
+        async fn encode<Consumer>(&self, consumer: &mut Consumer) -> Result<(), Consumer::Error>
+        where
+            Consumer: BulkConsumer<Item = u8>,
+        {
+            consumer
+                .bulk_consume_full_slice(self.as_bytes())
+                .await
+                .map_err(|err| err.reason)
+        }
+    }
+
+    impl Encodable for NamespaceId {
+        async fn encode<Consumer>(&self, consumer: &mut Consumer) -> Result<(), Consumer::Error>
+        where
+            Consumer: BulkConsumer<Item = u8>,
+        {
+            consumer
+                .bulk_consume_full_slice(self.as_bytes())
+                .await
+                .map_err(|err| err.reason)
+        }
     }
 }
