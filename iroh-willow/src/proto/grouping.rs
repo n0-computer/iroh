@@ -33,12 +33,14 @@ pub type Range<T> = willow_data_model::grouping::Range<T>;
 //     >,
 // );
 
-pub type Three3Range = willow_data_model::grouping::Range3d<
+pub type Range3d = willow_data_model::grouping::Range3d<
     MAX_COMPONENT_LENGTH,
     MAX_COMPONENT_COUNT,
     MAX_PATH_LENGTH,
     SubspaceId,
 >;
+
+pub type ThreeDRange = Range3d;
 
 pub type Area = willow_data_model::grouping::Area<
     MAX_COMPONENT_LENGTH,
@@ -128,6 +130,96 @@ impl Point {
             end: RangeEnd::Closed(self.timestamp + 1),
         };
         Area::new(AreaSubspace::Id(self.subspace_id), self.path.clone(), times)
+    }
+}
+
+pub mod serde_encoding {
+    use serde::{Deserialize, Deserializer, Serialize};
+    use ufotofu::sync::{consumer::IntoVec, producer::FromSlice};
+    use willow_encoding::sync::{RelativeDecodable, RelativeEncodable};
+
+    use super::*;
+
+    impl Serialize for AreaOfInterest {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let relative = Area::new_full();
+            let encoded_area = {
+                let mut consumer = IntoVec::<u8>::new();
+                self.0
+                    .area
+                    .relative_encode(&relative, &mut consumer)
+                    .expect("encoding not to fail");
+                consumer.into_vec()
+            };
+            (encoded_area, self.0.max_count, self.0.max_size).serialize(serializer)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for AreaOfInterest {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let relative = Area::new_full();
+            let (encoded_area, max_count, max_size): (Vec<u8>, u64, u64) =
+                Deserialize::deserialize(deserializer)?;
+            let decoded_area = {
+                let mut producer = FromSlice::new(&encoded_area);
+                let decoded =
+                    willow_data_model::grouping::Area::relative_decode(&relative, &mut producer)
+                        .map_err(|err| serde::de::Error::custom(format!("{err}")))?;
+                decoded
+            };
+            let aoi = willow_data_model::grouping::AreaOfInterest {
+                area: decoded_area,
+                max_count,
+                max_size,
+            };
+            Ok(Self(aoi))
+        }
+    }
+
+    #[derive(Debug, Clone, derive_more::From, derive_more::Into, derive_more::Deref)]
+    pub struct SerdeRange3d(Range3d);
+
+    impl Serialize for SerdeRange3d {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let relative = Range3d::new(
+                Default::default(),
+                Range::new_open(Path::new_empty()),
+                Default::default(),
+            );
+            let encoded = {
+                let mut consumer = IntoVec::<u8>::new();
+                self.0
+                    .relative_encode(&relative, &mut consumer)
+                    .expect("encoding not to fail");
+                consumer.into_vec()
+            };
+            encoded.serialize(serializer)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for SerdeRange3d {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let relative = Range3d::new(
+                Default::default(),
+                Range::new_open(Path::new_empty()),
+                Default::default(),
+            );
+            let encoded_range: Vec<u8> = Deserialize::deserialize(deserializer)?;
+            let decoded_range = {
+                let mut producer = FromSlice::new(&encoded_range);
+                let decoded =
+                    willow_data_model::grouping::Range3d::relative_decode(&relative, &mut producer)
+                        .map_err(|err| serde::de::Error::custom(format!("{err}")))?;
+                decoded
+            };
+            Ok(Self(decoded_range))
+        }
     }
 }
 

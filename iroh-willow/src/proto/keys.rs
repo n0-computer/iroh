@@ -343,6 +343,13 @@ impl From<&UserSecretKey> for UserPublicKey {
 #[derive(Serialize, Deserialize, Clone, From, PartialEq, Eq, Deref)]
 pub struct NamespaceSignature(ed25519_dalek::Signature);
 
+impl NamespaceSignature {
+    /// Create from a byte array.
+    pub fn from_bytes(bytes: [u8; SIGNATURE_LENGTH]) -> Self {
+        Self(ed25519_dalek::Signature::from_bytes(&bytes))
+    }
+}
+
 impl PartialOrd for NamespaceSignature {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
@@ -366,6 +373,13 @@ impl std::hash::Hash for NamespaceSignature {
 /// The signature obtained by signing a message with a [`UserSecretKey`].
 #[derive(Serialize, Deserialize, Clone, From, PartialEq, Eq, Deref)]
 pub struct UserSignature(ed25519_dalek::Signature);
+
+impl UserSignature {
+    /// Create from a byte array.
+    pub fn from_bytes(bytes: [u8; SIGNATURE_LENGTH]) -> Self {
+        Self(ed25519_dalek::Signature::from_bytes(&bytes))
+    }
+}
 
 impl PartialOrd for UserSignature {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -623,6 +637,21 @@ mod willow_impls {
             key.0.verify(msg, &signature.0)
         }
     }
+
+    impl Signer<UserSignature> for UserSecretKey {
+        fn try_sign(&self, msg: &[u8]) -> Result<UserSignature, ed25519_dalek::ed25519::Error> {
+            Ok(UserSignature(self.0.sign(msg)))
+        }
+    }
+
+    impl Signer<NamespaceSignature> for NamespaceSecretKey {
+        fn try_sign(
+            &self,
+            msg: &[u8],
+        ) -> Result<NamespaceSignature, ed25519_dalek::ed25519::Error> {
+            Ok(NamespaceSignature(self.0.sign(msg)))
+        }
+    }
 }
 
 use syncify::syncify;
@@ -630,11 +659,12 @@ use syncify::syncify_replace;
 
 #[syncify(encoding_sync)]
 mod encoding {
-    #[syncify_replace(use ufotofu::sync::BulkConsumer;)]
-    use ufotofu::local_nb::BulkConsumer;
+    #[syncify_replace(use ufotofu::sync::{BulkConsumer, BulkProducer};)]
+    use ufotofu::local_nb::{BulkConsumer, BulkProducer};
 
-    #[syncify_replace(use willow_encoding::sync::Encodable;)]
-    use willow_encoding::Encodable;
+    use willow_encoding::DecodeError;
+    #[syncify_replace(use willow_encoding::sync::{Encodable, Decodable};)]
+    use willow_encoding::{Decodable, Encodable};
 
     use super::*;
 
@@ -707,6 +737,58 @@ mod encoding {
                 .bulk_consume_full_slice(self.as_bytes())
                 .await
                 .map_err(|err| err.reason)
+        }
+    }
+
+    impl Decodable for NamespaceId {
+        async fn decode<Producer>(
+            producer: &mut Producer,
+        ) -> Result<Self, DecodeError<Producer::Error>>
+        where
+            Producer: BulkProducer<Item = u8>,
+        {
+            let mut bytes = [0; PUBLIC_KEY_LENGTH];
+            producer.bulk_overwrite_full_slice(&mut bytes).await?;
+            Ok(Self::from_bytes_unchecked(bytes))
+        }
+    }
+
+    impl Decodable for UserId {
+        async fn decode<Producer>(
+            producer: &mut Producer,
+        ) -> Result<Self, DecodeError<Producer::Error>>
+        where
+            Producer: BulkProducer<Item = u8>,
+        {
+            let mut bytes = [0; PUBLIC_KEY_LENGTH];
+            producer.bulk_overwrite_full_slice(&mut bytes).await?;
+            Ok(Self::from_bytes_unchecked(bytes))
+        }
+    }
+
+    impl Decodable for NamespaceSignature {
+        async fn decode<Producer>(
+            producer: &mut Producer,
+        ) -> Result<Self, DecodeError<Producer::Error>>
+        where
+            Producer: BulkProducer<Item = u8>,
+        {
+            let mut bytes = [0; SIGNATURE_LENGTH];
+            producer.bulk_overwrite_full_slice(&mut bytes).await?;
+            Ok(Self::from_bytes(bytes))
+        }
+    }
+
+    impl Decodable for UserSignature {
+        async fn decode<Producer>(
+            producer: &mut Producer,
+        ) -> Result<Self, DecodeError<Producer::Error>>
+        where
+            Producer: BulkProducer<Item = u8>,
+        {
+            let mut bytes = [0; SIGNATURE_LENGTH];
+            producer.bulk_overwrite_full_slice(&mut bytes).await?;
+            Ok(Self::from_bytes(bytes))
         }
     }
 }
