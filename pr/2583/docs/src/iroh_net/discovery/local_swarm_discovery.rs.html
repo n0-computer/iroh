@@ -311,25 +311,6 @@
 <a href="#311" id="311">311</a>
 <a href="#312" id="312">312</a>
 <a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a>
-<a href="#315" id="315">315</a>
-<a href="#316" id="316">316</a>
-<a href="#317" id="317">317</a>
-<a href="#318" id="318">318</a>
-<a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
-<a href="#322" id="322">322</a>
-<a href="#323" id="323">323</a>
-<a href="#324" id="324">324</a>
-<a href="#325" id="325">325</a>
-<a href="#326" id="326">326</a>
-<a href="#327" id="327">327</a>
-<a href="#328" id="328">328</a>
-<a href="#329" id="329">329</a>
-<a href="#330" id="330">330</a>
-<a href="#331" id="331">331</a>
-<a href="#332" id="332">332</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
@@ -397,12 +378,12 @@
         <span class="kw">let </span>(send, recv) = async_channel::bounded(<span class="number">64</span>);
         <span class="kw">let </span>task_sender = send.clone();
         <span class="kw">let </span>rt = tokio::runtime::Handle::current();
-        <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="prelude-val">Some</span>(LocalSwarmDiscovery::spawn_discoverer(
+        <span class="kw">let </span>discovery = LocalSwarmDiscovery::spawn_discoverer(
             node_id,
             task_sender.clone(),
             BTreeSet::new(),
             <span class="kw-2">&amp;</span>rt,
-        )<span class="question-mark">?</span>);
+        )<span class="question-mark">?</span>;
 
         <span class="kw">let </span>handle = tokio::spawn(<span class="kw">async move </span>{
             <span class="kw">let </span><span class="kw-2">mut </span>node_addrs: HashMap&lt;PublicKey, Peer&gt; = HashMap::default();
@@ -503,21 +484,12 @@
                     }
                     Message::ChangeLocalAddrs(addrs) =&gt; {
                         <span class="macro">trace!</span>(<span class="question-mark">?</span>addrs, <span class="string">"LocalSwarmDiscovery Message::ChangeLocalAddrs"</span>);
-                        <span class="kw">let </span>callback_send = task_sender.clone();
-                        <span class="kw">let </span>g = guard.take();
-                        drop(g);
-                        guard = <span class="kw">match </span>LocalSwarmDiscovery::spawn_discoverer(
-                            node_id,
-                            callback_send.clone(),
-                            addrs.direct_addresses,
-                            <span class="kw-2">&amp;</span>rt,
-                        ) {
-                            <span class="prelude-val">Ok</span>(guard) =&gt; <span class="prelude-val">Some</span>(guard),
-                            <span class="prelude-val">Err</span>(e) =&gt; {
-                                <span class="macro">error!</span>(<span class="string">"LocalSwarmDiscovery error creating discovery service: {e}"</span>);
-                                <span class="kw">return</span>;
-                            }
-                        };
+                        discovery.remove_all();
+                        <span class="kw">let </span>addrs =
+                            LocalSwarmDiscovery::socketaddrs_to_addrs(addrs.direct_addresses);
+                        <span class="kw">for </span>addr <span class="kw">in </span>addrs {
+                            discovery.add(addr.<span class="number">0</span>, addr.<span class="number">1</span>)
+                        }
                     }
                 }
             }
@@ -545,37 +517,26 @@
                 .send_blocking(Message::Discovery(node_id.to_string(), peer.clone()))
                 .ok();
         };
+        <span class="kw">let </span>addrs = LocalSwarmDiscovery::socketaddrs_to_addrs(socketaddrs);
+        <span class="kw">let </span><span class="kw-2">mut </span>discoverer =
+            Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id.to_string())
+                .with_callback(callback)
+                .with_ip_class(IpClass::Auto);
+        <span class="kw">for </span>addr <span class="kw">in </span>addrs {
+            discoverer = discoverer.with_addrs(addr.<span class="number">0</span>, addr.<span class="number">1</span>);
+        }
+        discoverer.spawn(rt)
+    }
+
+    <span class="kw">fn </span>socketaddrs_to_addrs(socketaddrs: BTreeSet&lt;SocketAddr&gt;) -&gt; HashMap&lt;u16, Vec&lt;IpAddr&gt;&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>addrs: HashMap&lt;u16, Vec&lt;IpAddr&gt;&gt; = HashMap::default();
-        <span class="kw">let </span><span class="kw-2">mut </span>has_ipv4 = <span class="bool-val">false</span>;
-        <span class="kw">let </span><span class="kw-2">mut </span>has_ipv6 = <span class="bool-val">false</span>;
         <span class="kw">for </span>socketaddr <span class="kw">in </span>socketaddrs {
-            <span class="kw">if </span>!has_ipv6 &amp;&amp; socketaddr.is_ipv6() {
-                has_ipv6 = <span class="bool-val">true</span>;
-            };
-            <span class="kw">if </span>!has_ipv4 &amp;&amp; socketaddr.is_ipv4() {
-                has_ipv4 = <span class="bool-val">true</span>;
-            };
             addrs
                 .entry(socketaddr.port())
                 .and_modify(|a| a.push(socketaddr.ip()))
                 .or_insert(<span class="macro">vec!</span>[socketaddr.ip()]);
         }
-
-        <span class="kw">let </span>ip_class = <span class="kw">match </span>(has_ipv4, has_ipv6) {
-            (<span class="bool-val">true</span>, <span class="bool-val">true</span>) =&gt; IpClass::V4AndV6,
-            (<span class="bool-val">true</span>, <span class="bool-val">false</span>) =&gt; IpClass::V4Only,
-            (<span class="bool-val">false</span>, <span class="bool-val">true</span>) =&gt; IpClass::V6Only,
-            <span class="comment">// this case indicates no ip addresses were supplied, in which case, default to ipv4
-            </span>(<span class="bool-val">false</span>, <span class="bool-val">false</span>) =&gt; IpClass::V4Only,
-        };
-        <span class="kw">let </span><span class="kw-2">mut </span>discoverer =
-            Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id.to_string())
-                .with_callback(callback)
-                .with_ip_class(ip_class);
-        <span class="kw">for </span>addr <span class="kw">in </span>addrs {
-            discoverer = discoverer.with_addrs(addr.<span class="number">0</span>, addr.<span class="number">1</span>);
-        }
-        discoverer.spawn(rt)
+        addrs
     }
 }
 
@@ -628,12 +589,12 @@
     <span class="kw">use </span>testresult::TestResult;
 
     <span class="attr">#[tokio::test]
-    #[ignore = <span class="string">"flaky"</span>]
     </span><span class="kw">async fn </span>test_local_swarm_discovery() -&gt; TestResult {
-        <span class="kw">let </span>(node_id_a, discovery_a) = make_discoverer()<span class="question-mark">?</span>;
-        <span class="kw">let </span>(<span class="kw">_</span>, discovery_b) = make_discoverer()<span class="question-mark">?</span>;
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+        <span class="kw">let </span>(<span class="kw">_</span>, discovery_a) = make_discoverer()<span class="question-mark">?</span>;
+        <span class="kw">let </span>(node_id_b, discovery_b) = make_discoverer()<span class="question-mark">?</span>;
 
-        <span class="comment">// make addr info for discoverer a
+        <span class="comment">// make addr info for discoverer b
         </span><span class="kw">let </span>addr_info = AddrInfo {
             relay_url: <span class="prelude-val">None</span>,
             direct_addresses: BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]),
@@ -642,10 +603,11 @@
         <span class="comment">// pass in endpoint, this is never used
         </span><span class="kw">let </span>ep = <span class="kw">crate</span>::endpoint::Builder::default().bind(<span class="number">0</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="comment">// resolve twice to ensure we can create separate streams for the same node_id
-        </span><span class="kw">let </span><span class="kw-2">mut </span>s1 = discovery_b.resolve(ep.clone(), node_id_a).unwrap();
-        <span class="kw">let </span><span class="kw-2">mut </span>s2 = discovery_b.resolve(ep, node_id_a).unwrap();
-        <span class="comment">// publish discovery_a's address
-        </span>discovery_a.publish(<span class="kw-2">&amp;</span>addr_info);
+        </span><span class="kw">let </span><span class="kw-2">mut </span>s1 = discovery_a.resolve(ep.clone(), node_id_b).unwrap();
+        <span class="kw">let </span><span class="kw-2">mut </span>s2 = discovery_a.resolve(ep, node_id_b).unwrap();
+        <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>node_id_b, <span class="string">"Discovering node id b"</span>);
+        <span class="comment">// publish discovery_b's address
+        </span>discovery_b.publish(<span class="kw-2">&amp;</span>addr_info);
         <span class="kw">let </span>s1_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
             .<span class="kw">await</span><span class="question-mark">?
             </span>.unwrap()<span class="question-mark">?</span>;

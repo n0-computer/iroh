@@ -82,23 +82,30 @@
 <a href="#82" id="82">82</a>
 <a href="#83" id="83">83</a>
 <a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! [`Getter`] implementation that performs requests over [`Connection`]s.
 //!
 //! [`Connection`]: iroh_net::endpoint::Connection
 
 </span><span class="kw">use crate</span>::{
-    get::{db::get_to_db, error::GetError},
+    get::{db::get_to_db_in_steps, error::GetError},
     store::Store,
 };
 <span class="kw">use </span>futures_lite::FutureExt;
-<span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-</span><span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_net::endpoint;
 
-<span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-</span><span class="kw">use </span><span class="kw">crate</span>::metrics::Metrics;
-
-<span class="kw">use super</span>::{progress::BroadcastProgressSender, DownloadKind, FailureAction, GetFut, Getter};
+<span class="kw">use super</span>::{progress::BroadcastProgressSender, DownloadKind, FailureAction, GetStartFut, Getter};
 
 <span class="kw">impl </span>From&lt;GetError&gt; <span class="kw">for </span>FailureAction {
     <span class="kw">fn </span>from(e: GetError) -&gt; <span class="self">Self </span>{
@@ -123,47 +130,64 @@
 
 <span class="kw">impl</span>&lt;S: Store&gt; Getter <span class="kw">for </span>IoGetter&lt;S&gt; {
     <span class="kw">type </span>Connection = endpoint::Connection;
+    <span class="kw">type </span>NeedsConn = <span class="kw">crate</span>::get::db::GetStateNeedsConn;
 
     <span class="kw">fn </span>get(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         kind: DownloadKind,
-        conn: <span class="self">Self</span>::Connection,
         progress_sender: BroadcastProgressSender,
-    ) -&gt; GetFut {
+    ) -&gt; GetStartFut&lt;<span class="self">Self</span>::NeedsConn&gt; {
         <span class="kw">let </span>store = <span class="self">self</span>.store.clone();
-        <span class="kw">let </span>fut = <span class="kw">async move </span>{
-            <span class="kw">let </span>get_conn = || <span class="kw">async move </span>{ <span class="prelude-val">Ok</span>(conn) };
-            <span class="kw">let </span>res = get_to_db(<span class="kw-2">&amp;</span>store, get_conn, <span class="kw-2">&amp;</span>kind.hash_and_format(), progress_sender).<span class="kw">await</span>;
-            <span class="kw">match </span>res {
-                <span class="prelude-val">Ok</span>(stats) =&gt; {
-                    <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-                    </span>{
-                        <span class="kw">let </span><span class="kw">crate</span>::get::Stats {
-                            bytes_written,
-                            bytes_read: <span class="kw">_</span>,
-                            elapsed,
-                        } = stats;
-
-                        <span class="macro">inc!</span>(Metrics, downloads_success);
-                        <span class="macro">inc_by!</span>(Metrics, download_bytes_total, bytes_written);
-                        <span class="macro">inc_by!</span>(Metrics, download_time_total, elapsed.as_millis() <span class="kw">as </span>u64);
-                    }
-                    <span class="prelude-val">Ok</span>(stats)
+        <span class="kw">async move </span>{
+            <span class="kw">match </span>get_to_db_in_steps(store, kind.hash_and_format(), progress_sender).<span class="kw">await </span>{
+                <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err.into()),
+                <span class="prelude-val">Ok</span>(<span class="kw">crate</span>::get::db::GetState::Complete(stats)) =&gt; {
+                    <span class="prelude-val">Ok</span>(<span class="kw">super</span>::GetOutput::Complete(stats))
                 }
-                <span class="prelude-val">Err</span>(e) =&gt; {
-                    <span class="comment">// record metrics according to the error
-                    </span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-                    </span>{
-                        <span class="kw">match </span><span class="kw-2">&amp;</span>e {
-                            GetError::NotFound(<span class="kw">_</span>) =&gt; <span class="macro">inc!</span>(Metrics, downloads_notfound),
-                            <span class="kw">_ </span>=&gt; <span class="macro">inc!</span>(Metrics, downloads_error),
-                        }
-                    }
-                    <span class="prelude-val">Err</span>(e.into())
+                <span class="prelude-val">Ok</span>(<span class="kw">crate</span>::get::db::GetState::NeedsConn(needs_conn)) =&gt; {
+                    <span class="prelude-val">Ok</span>(<span class="kw">super</span>::GetOutput::NeedsConn(needs_conn))
                 }
             }
-        };
-        fut.boxed_local()
+        }
+        .boxed_local()
+    }
+}
+
+<span class="kw">impl </span><span class="kw">super</span>::NeedsConn&lt;endpoint::Connection&gt; <span class="kw">for </span><span class="kw">crate</span>::get::db::GetStateNeedsConn {
+    <span class="kw">fn </span>proceed(<span class="self">self</span>, conn: endpoint::Connection) -&gt; <span class="kw">super</span>::GetProceedFut {
+        <span class="kw">async move </span>{
+            <span class="kw">let </span>res = <span class="self">self</span>.proceed(conn).<span class="kw">await</span>;
+            <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+            </span>track_metrics(<span class="kw-2">&amp;</span>res);
+            <span class="kw">match </span>res {
+                <span class="prelude-val">Ok</span>(stats) =&gt; <span class="prelude-val">Ok</span>(stats),
+                <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err.into()),
+            }
+        }
+        .boxed_local()
+    }
+}
+
+<span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+</span><span class="kw">fn </span>track_metrics(res: <span class="kw-2">&amp;</span><span class="prelude-ty">Result</span>&lt;<span class="kw">crate</span>::get::Stats, GetError&gt;) {
+    <span class="kw">use </span><span class="kw">crate</span>::metrics::Metrics;
+    <span class="kw">use </span>iroh_metrics::{inc, inc_by};
+    <span class="kw">match </span>res {
+        <span class="prelude-val">Ok</span>(stats) =&gt; {
+            <span class="kw">let </span><span class="kw">crate</span>::get::Stats {
+                bytes_written,
+                bytes_read: <span class="kw">_</span>,
+                elapsed,
+            } = stats;
+
+            <span class="macro">inc!</span>(Metrics, downloads_success);
+            <span class="macro">inc_by!</span>(Metrics, download_bytes_total, <span class="kw-2">*</span>bytes_written);
+            <span class="macro">inc_by!</span>(Metrics, download_time_total, elapsed.as_millis() <span class="kw">as </span>u64);
+        }
+        <span class="prelude-val">Err</span>(e) =&gt; <span class="kw">match </span><span class="kw-2">&amp;</span>e {
+            GetError::NotFound(<span class="kw">_</span>) =&gt; <span class="macro">inc!</span>(Metrics, downloads_notfound),
+            <span class="kw">_ </span>=&gt; <span class="macro">inc!</span>(Metrics, downloads_error),
+        },
     }
 }
 </code></pre></div></section></main></body></html>

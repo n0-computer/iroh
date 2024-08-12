@@ -123,6 +123,85 @@
 <a href="#123" id="123">123</a>
 <a href="#124" id="124">124</a>
 <a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API to manage the iroh node itself.
 //!
 //! The main entry point is the [`Client`].
@@ -154,7 +233,86 @@
 
 <span class="kw">use super</span>::{flatten, RpcClient};
 
-<span class="doccomment">/// Iroh node client.
+<span class="doccomment">/// Iroh node Client.
+///
+/// Cheaply clonable and threadsafe. Use the iroh `node::Client` to access the
+/// iroh node methods from a different thread, process, or remote machine.
+/// The [`Iroh`](crate::client::Iroh) client dereferences to a `node::Client`,
+/// so you have access to this api from the [`Iroh`](crate::client::Iroh) client itself.
+///
+/// The `node::Client` api allows you to get information *about* the iroh node,
+/// its status, and connection status to other nodes. It also allows you to
+/// provide address information about *other* nodes to your node.
+///
+/// Obtain an iroh `node::Client` via [`Iroh::node()`](crate::client::Iroh::node).
+///
+/// It also provides a way to [shutdown](Client::shutdown) the entire iroh node.
+///
+/// # Examples
+/// ```
+/// use std::str::FromStr;
+/// use iroh_base::{key::NodeId, node_addr::{RelayUrl, NodeAddr}};
+/// use url::Url;
+///
+/// # async fn run() -&gt; anyhow::Result&lt;()&gt; {
+/// // Create an iroh node:
+/// let iroh = iroh::node::Node::memory().spawn().await?;
+/// // Create a node client, a client that gives you access to `node` subsystem
+/// let node_client = iroh.client().node();
+/// // Get the node status, including its node id, addresses, the version of iroh
+/// // it is running, and more.
+/// let status = node_client.status().await?;
+/// println!("Node status: {status:?}");
+/// // Provide your node an address for another node
+/// let relay_url = RelayUrl::from(Url::parse("https://example.com").unwrap());
+/// let addr = NodeAddr::from_parts(
+///   // the node_id
+///   NodeId::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6").unwrap(),
+///   // the home relay
+///   Some(relay_url),
+///   // the direct addresses
+///   vec!["120.0.0.1:0".parse().unwrap()],
+/// );
+/// node_client.add_node_addr(addr).await?;
+/// // Shut down the node. Passing `true` will force the shutdown, passing in
+/// // `false` will allow the node to shut down gracefully.
+/// node_client.shutdown(false).await?;
+/// # Ok(())
+/// # }
+/// ```
+/// You can also use the `node::Client` methods from the `Iroh` client:
+///
+/// ```
+/// use std::str::FromStr;
+/// use iroh_base::{key::NodeId, node_addr::{RelayUrl, NodeAddr}};
+/// use url::Url;
+///
+/// # async fn run() -&gt; anyhow::Result&lt;()&gt; {
+/// // Create an iroh node:
+/// let iroh = iroh::node::Node::memory().spawn().await?;
+/// // Create a client:
+/// let client = iroh.client();
+/// // Get the node status, including its node id, addresses, the version of iroh
+/// // it is running, and more.
+/// let status = client.status().await?;
+/// println!("Node status: {status:?}");
+/// // Provide your node an address for another node
+/// let relay_url = RelayUrl::from(Url::parse("https://example.com").unwrap());
+/// let addr = NodeAddr::from_parts(
+///   // the node_id
+///   NodeId::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6").unwrap(),
+///   // the home relay
+///   Some(relay_url),
+///   // the direct addresses
+///   vec!["120.0.0.1:0".parse().unwrap()],
+/// );
+/// client.add_node_addr(addr).await?;
+/// // Shut down the node. Passing `true` will force the shutdown, passing in
+/// // `false` will allow the node to shut down gracefully.
+/// client.shutdown(false).await?;
+/// # Ok(())
+/// # }
+/// ```
 </span><span class="attr">#[derive(Debug, Clone, RefCast)]
 #[repr(transparent)]
 </span><span class="kw">pub struct </span>Client {

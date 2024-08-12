@@ -911,6 +911,41 @@
 <a href="#911" id="911">911</a>
 <a href="#912" id="912">912</a>
 <a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a>
+<a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a>
+<a href="#924" id="924">924</a>
+<a href="#925" id="925">925</a>
+<a href="#926" id="926">926</a>
+<a href="#927" id="927">927</a>
+<a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
@@ -928,10 +963,7 @@
 };
 <span class="kw">use </span>iroh_docs::engine::DefaultAuthorStorage;
 <span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
-<span class="kw">use </span>iroh_gossip::{
-    dispatcher::GossipDispatcher,
-    net::{Gossip, GOSSIP_ALPN},
-};
+<span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 <span class="attr">#[cfg(not(test))]
 </span><span class="kw">use </span>iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 <span class="kw">use </span>iroh_net::{
@@ -972,7 +1004,6 @@
 </span><span class="kw">const </span>DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(<span class="number">60 </span>* <span class="number">5</span>);
 
 <span class="kw">const </span>MAX_CONNECTIONS: u32 = <span class="number">1024</span>;
-<span class="kw">const </span>MAX_STREAMS: u64 = <span class="number">10</span>;
 
 <span class="doccomment">/// Storage backend for documents.
 </span><span class="attr">#[derive(Debug, Clone)]
@@ -992,12 +1023,23 @@
 /// Blob store implementations are available in [`iroh_blobs::store`].
 /// Document store implementations are available in [`iroh_docs::store`].
 ///
-/// Everything else is optional.
+/// Everything else is optional, with some sensible defaults.
+///
+/// The default **relay servers** are hosted by [number 0] on the `iroh.network` domain.  To
+/// customise this use the [`Builder::relay_mode`] function.
+///
+/// For **node discovery** the default is to use the [number 0] hosted DNS server hosted on
+/// `iroh.link`.  To customise this use the [`Builder::node_discovery`] function.
+///
+/// Note that some defaults change when running using `cfg(test)`, see the individual
+/// methods for details.
 ///
 /// Finally you can create and run the node by calling [`Builder::spawn`].
 ///
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
+///
+/// [number 0]: https://n0.computer
 </span><span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub struct </span>Builder&lt;D, E = MockEventSender&gt;
 <span class="kw">where
@@ -1046,13 +1088,37 @@
 }
 
 <span class="doccomment">/// Configuration for node discovery.
+///
+/// Node discovery enables connecting to other peers by only the [`NodeId`].  This usually
+/// works by the nodes publishing their [`RelayUrl`] and/or their direct addresses to some
+/// publicly available service.
+///
+/// [`NodeId`]: crate::base::key::NodeId
+/// [`RelayUrl`]: crate::base::node_addr::RelayUrl
 </span><span class="attr">#[derive(Debug, Default)]
 </span><span class="kw">pub enum </span>DiscoveryConfig {
     <span class="doccomment">/// Use no node discovery mechanism.
     </span><span class="prelude-val">None</span>,
     <span class="doccomment">/// Use the default discovery mechanism.
     ///
-    /// This enables the [`DnsDiscovery`] service.
+    /// This uses two discovery services concurrently:
+    ///
+    /// - It publishes to a pkarr service operated by [number 0] which makes the information
+    ///   available via DNS in the `iroh.link` domain.
+    ///
+    /// - It uses an mDNS-like system to announce itself on the local network.
+    ///
+    /// # Usage during tests
+    ///
+    /// Note that the default changes when compiling with `cfg(test)` or the `test-utils`
+    /// cargo feature from [iroh-net] is enabled.  In this case only the Pkarr/DNS service
+    /// is used, but on the `iroh.test` domain.  This domain is not integrated with the
+    /// global DNS network and thus node discovery is effectively disabled.  To use node
+    /// discovery in a test use the [`iroh_net::test_utils::DnsPkarrServer`] in the test and
+    /// configure it here as a custom discovery mechanism ([`DiscoveryConfig::Custom`]).
+    ///
+    /// [number 0]: https://n0.computer
+    /// [iroh-net]: crate::net
     </span><span class="attr">#[default]
     </span>Default,
     <span class="doccomment">/// Use a custom discovery mechanism.
@@ -1310,18 +1376,30 @@
     /// establish connections between peers by being an initial relay for traffic while
     /// assisting in holepunching to establish a direct connection between peers.
     ///
-    /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
-    /// configured relay node.  If an invalid [`iroh_net::relay::RelayMode`]
-    /// is provided [`Self::spawn`] will result in an error.
-    </span><span class="kw">pub fn </span>relay_mode(<span class="kw-2">mut </span><span class="self">self</span>, dm: RelayMode) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.relay_mode = dm;
+    /// When using [`RelayMode::Custom`], the provided `relay_map` must contain at least one
+    /// configured relay node.  If an invalid [`iroh_net::relay::RelayMode`] is provided
+    /// [`Self::spawn`] will result in an error.
+    ///
+    /// # Usage during tests
+    ///
+    /// Note that while the default is [`RelayMode::Default`], when using `cfg(test)` or
+    /// when the `test-utils` cargo feature [`RelayMode::Staging`] is the default.
+    </span><span class="kw">pub fn </span>relay_mode(<span class="kw-2">mut </span><span class="self">self</span>, relay_mode: RelayMode) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.relay_mode = relay_mode;
         <span class="self">self
     </span>}
 
     <span class="doccomment">/// Sets the node discovery mechanism.
     ///
-    /// The default is [`DiscoveryConfig::Default`]. Use [`DiscoveryConfig::Custom`] to pass a
-    /// custom [`Discovery`].
+    /// Node discovery enables connecting to other peers by only the [`NodeId`].  This
+    /// usually works by the nodes publishing their [`RelayUrl`] and/or their direct
+    /// addresses to some publicly available service.
+    ///
+    /// See [`DiscoveryConfig::default`] for the defaults, note that the defaults change
+    /// when using `cfg(test)`.
+    ///
+    /// [`NodeId`]: crate::base::key::NodeId
+    /// [`RelayUrl`]: crate::base::node_addr::RelayUrl
     </span><span class="kw">pub fn </span>node_discovery(<span class="kw-2">mut </span><span class="self">self</span>, config: DiscoveryConfig) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.node_discovery = config;
         <span class="self">self
@@ -1413,11 +1491,6 @@
             ..Default::default()
         });
         <span class="kw">let </span>(endpoint, nodes_data_path) = {
-            <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
-            transport_config
-                .max_concurrent_bidi_streams(MAX_STREAMS.try_into()<span class="question-mark">?</span>)
-                .max_concurrent_uni_streams(<span class="number">0u32</span>.into());
-
             <span class="kw">let </span>discovery: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; = <span class="kw">match </span><span class="self">self</span>.node_discovery {
                 DiscoveryConfig::None =&gt; <span class="prelude-val">None</span>,
                 DiscoveryConfig::Custom(discovery) =&gt; <span class="prelude-val">Some</span>(discovery),
@@ -1456,7 +1529,6 @@
                 .secret_key(<span class="self">self</span>.secret_key.clone())
                 .proxy_from_env()
                 .keylog(<span class="self">self</span>.keylog)
-                .transport_config(transport_config)
                 .concurrent_connections(MAX_CONNECTIONS)
                 .relay_mode(<span class="self">self</span>.relay_mode);
             <span class="kw">let </span>endpoint = <span class="kw">match </span>discovery {
@@ -1509,7 +1581,6 @@
             downloader.clone(),
         )
         .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>gossip_dispatcher = GossipDispatcher::new(gossip.clone());
 
         <span class="comment">// Initialize the internal RPC connection.
         </span><span class="kw">let </span>(internal_rpc, controller) = quic_rpc::transport::flume::connection::&lt;RpcService&gt;(<span class="number">32</span>);
@@ -1529,7 +1600,6 @@
             cancel_token: CancellationToken::new(),
             downloader,
             gossip,
-            gossip_dispatcher,
             local_pool_handle: lp.handle().clone(),
         });
 

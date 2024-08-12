@@ -6,15 +6,11 @@
 <a href="#6" id="6">6</a>
 <a href="#7" id="7">7</a>
 <a href="#8" id="8">8</a>
-<a href="#9" id="9">9</a>
-<a href="#10" id="10">10</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Broadcast messages to peers subscribed to a topic
 
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
-#[cfg(feature = <span class="string">"dispatcher"</span>)]
-</span><span class="kw">pub mod </span>dispatcher;
-<span class="kw">pub mod </span>metrics;
+</span><span class="kw">pub mod </span>metrics;
 <span class="attr">#[cfg(feature = <span class="string">"net"</span>)]
 </span><span class="kw">pub mod </span>net;
 <span class="kw">pub mod </span>proto;

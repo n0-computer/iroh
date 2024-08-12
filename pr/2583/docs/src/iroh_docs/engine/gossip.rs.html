@@ -213,180 +213,159 @@
 <a href="#213" id="213">213</a>
 <a href="#214" id="214">214</a>
 <a href="#215" id="215">215</a>
-<a href="#216" id="216">216</a>
-<a href="#217" id="217">217</a>
-<a href="#218" id="218">218</a>
-<a href="#219" id="219">219</a>
-<a href="#220" id="220">220</a>
-<a href="#221" id="221">221</a>
-<a href="#222" id="222">222</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::HashSet;
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{hash_map, HashMap};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::StreamExt;
 <span class="kw">use </span>futures_util::FutureExt;
-<span class="kw">use </span>iroh_gossip::net::{Event, Gossip};
-<span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>iroh_net::key::PublicKey;
+<span class="kw">use </span>iroh_gossip::net::{Event, Gossip, GossipEvent, GossipReceiver, GossipSender, JoinOptions};
+<span class="kw">use </span>iroh_net::NodeId;
 <span class="kw">use </span>tokio::{
-    sync::{broadcast, mpsc},
-    task::JoinSet,
+    sync::mpsc,
+    task::{AbortHandle, JoinSet},
 };
-<span class="kw">use </span>tokio_stream::{
-    wrappers::{errors::BroadcastStreamRecvError, BroadcastStream},
-    StreamMap,
-};
-<span class="kw">use </span>tracing::{debug, error, trace, warn};
+<span class="kw">use </span>tracing::{debug, instrument, warn};
 
-<span class="kw">use </span><span class="kw">crate</span>::metrics::Metrics;
 <span class="kw">use crate</span>::{actor::SyncHandle, ContentStatus, NamespaceId};
 
 <span class="kw">use </span><span class="kw">super</span>::live::{Op, ToLiveActor};
 
-<span class="attr">#[derive(strum::Display, Debug)]
-</span><span class="kw">pub enum </span>ToGossipActor {
-    Shutdown,
-    Join {
-        namespace: NamespaceId,
-        peers: Vec&lt;PublicKey&gt;,
-    },
-    Leave {
-        namespace: NamespaceId,
-    },
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>ActiveState {
+    sender: GossipSender,
+    abort_handle: AbortHandle,
 }
 
-<span class="doccomment">/// This actor subscribes to all gossip events. When receiving entries, they are inserted in the
-/// replica (if open). Other events are forwarded to the main actor to be handled there.
-</span><span class="kw">pub struct </span>GossipActor {
-    inbox: mpsc::Receiver&lt;ToGossipActor&gt;,
-    sync: SyncHandle,
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">pub struct </span>GossipState {
     gossip: Gossip,
-    to_sync_actor: mpsc::Sender&lt;ToLiveActor&gt;,
-    joined: HashSet&lt;NamespaceId&gt;,
-    want_join: HashSet&lt;NamespaceId&gt;,
-    pending_joins: JoinSet&lt;(NamespaceId, <span class="prelude-ty">Result</span>&lt;broadcast::Receiver&lt;Event&gt;&gt;)&gt;,
-    gossip_events: StreamMap&lt;NamespaceId, BroadcastStream&lt;Event&gt;&gt;,
+    sync: SyncHandle,
+    to_live_actor: mpsc::Sender&lt;ToLiveActor&gt;,
+    active: HashMap&lt;NamespaceId, ActiveState&gt;,
+    active_tasks: JoinSet&lt;(NamespaceId, <span class="prelude-ty">Result</span>&lt;()&gt;)&gt;,
 }
 
-<span class="kw">impl </span>GossipActor {
-    <span class="kw">pub fn </span>new(
-        inbox: mpsc::Receiver&lt;ToGossipActor&gt;,
-        sync: SyncHandle,
-        gossip: Gossip,
-        to_sync_actor: mpsc::Sender&lt;ToLiveActor&gt;,
-    ) -&gt; <span class="self">Self </span>{
+<span class="kw">impl </span>GossipState {
+    <span class="kw">pub fn </span>new(gossip: Gossip, sync: SyncHandle, to_live_actor: mpsc::Sender&lt;ToLiveActor&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            inbox,
-            sync,
             gossip,
-            to_sync_actor,
-            joined: Default::default(),
-            want_join: Default::default(),
-            pending_joins: Default::default(),
-            gossip_events: Default::default(),
+            sync,
+            to_live_actor,
+            active: Default::default(),
+            active_tasks: Default::default(),
         }
     }
-    <span class="kw">pub async fn </span>run(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>i = <span class="number">0</span>;
-        <span class="kw">loop </span>{
-            i += <span class="number">1</span>;
-            <span class="macro">trace!</span>(<span class="question-mark">?</span>i, <span class="string">"tick wait"</span>);
-            <span class="macro">inc!</span>(Metrics, doc_gossip_tick_main);
-            <span class="macro">tokio::select!</span> {
-                next = <span class="self">self</span>.gossip_events.next(), <span class="kw">if </span>!<span class="self">self</span>.gossip_events.is_empty() =&gt; {
-                    <span class="macro">trace!</span>(<span class="question-mark">?</span>i, <span class="string">"tick: gossip_event"</span>);
-                    <span class="macro">inc!</span>(Metrics, doc_gossip_tick_event);
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.on_gossip_event(next).<span class="kw">await </span>{
-                        <span class="macro">error!</span>(<span class="string">"gossip actor died: {err:?}"</span>);
-                        <span class="kw">return </span><span class="prelude-val">Err</span>(err);
-                    }
-                },
-                msg = <span class="self">self</span>.inbox.recv() =&gt; {
-                    <span class="kw">let </span>msg = msg.context(<span class="string">"to_actor closed"</span>)<span class="question-mark">?</span>;
-                    <span class="macro">trace!</span>(%msg, <span class="question-mark">?</span>i, <span class="string">"tick: to_actor"</span>);
-                    <span class="macro">inc!</span>(Metrics, doc_gossip_tick_actor);
-                    <span class="kw">if </span>!<span class="self">self</span>.on_actor_message(msg).<span class="kw">await</span>.context(<span class="string">"on_actor_message"</span>)<span class="question-mark">? </span>{
-                        <span class="kw">break</span>;
-                    }
-                }
-                <span class="prelude-val">Some</span>(res) = <span class="self">self</span>.pending_joins.join_next(), <span class="kw">if </span>!<span class="self">self</span>.pending_joins.is_empty() =&gt; {
-                    <span class="macro">trace!</span>(<span class="question-mark">?</span>i, <span class="string">"tick: pending_joins"</span>);
-                    <span class="macro">inc!</span>(Metrics, doc_gossip_tick_pending_join);
-                    <span class="kw">let </span>(namespace, res) = res.context(<span class="string">"pending_joins closed"</span>)<span class="question-mark">?</span>;
-                    <span class="kw">match </span>res {
-                        <span class="prelude-val">Ok</span>(stream) =&gt; {
-                            <span class="macro">debug!</span>(namespace = %namespace.fmt_short(), <span class="string">"joined gossip"</span>);
-                            <span class="self">self</span>.joined.insert(namespace);
-                            <span class="kw">let </span>stream = BroadcastStream::new(stream);
-                            <span class="self">self</span>.gossip_events.insert(namespace, stream);
-                        },
-                        <span class="prelude-val">Err</span>(err) =&gt; {
-                            <span class="kw">if </span><span class="self">self</span>.want_join.contains(<span class="kw-2">&amp;</span>namespace) {
-                                <span class="macro">error!</span>(<span class="question-mark">?</span>namespace, <span class="question-mark">?</span>err, <span class="string">"failed to join gossip"</span>);
-                            }
-                        }
-                    }
-                }
 
+    <span class="kw">pub async fn </span>join(<span class="kw-2">&amp;mut </span><span class="self">self</span>, namespace: NamespaceId, bootstrap: Vec&lt;NodeId&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">match </span><span class="self">self</span>.active.entry(namespace) {
+            hash_map::Entry::Occupied(entry) =&gt; {
+                <span class="kw">if </span>!bootstrap.is_empty() {
+                    entry.get().sender.join_peers(bootstrap).<span class="kw">await</span><span class="question-mark">?</span>;
+                }
+            }
+            hash_map::Entry::Vacant(entry) =&gt; {
+                <span class="kw">let </span>sub = <span class="self">self
+                    </span>.gossip
+                    .join_with_opts(namespace.into(), JoinOptions::with_bootstrap(bootstrap));
+                <span class="kw">let </span>(sender, stream) = sub.split();
+                <span class="kw">let </span>abort_handle = <span class="self">self</span>.active_tasks.spawn(
+                    receive_loop(
+                        namespace,
+                        stream,
+                        <span class="self">self</span>.to_live_actor.clone(),
+                        <span class="self">self</span>.sync.clone(),
+                    )
+                    .map(<span class="kw">move </span>|res| (namespace, res)),
+                );
+                entry.insert(ActiveState {
+                    sender,
+                    abort_handle,
+                });
             }
         }
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>on_actor_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ToGossipActor) -&gt; anyhow::Result&lt;bool&gt; {
-        <span class="kw">match </span>msg {
-            ToGossipActor::Shutdown =&gt; {
-                <span class="kw">for </span>namespace <span class="kw">in </span><span class="self">self</span>.joined.iter() {
-                    <span class="self">self</span>.gossip.quit((<span class="kw-2">*</span>namespace).into()).<span class="kw">await</span>.ok();
+    <span class="kw">pub fn </span>quit(<span class="kw-2">&amp;mut </span><span class="self">self</span>, topic: <span class="kw-2">&amp;</span>NamespaceId) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(state) = <span class="self">self</span>.active.remove(topic) {
+            state.abort_handle.abort();
+        }
+    }
+
+    <span class="kw">pub async fn </span>shutdown(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">for </span>(<span class="kw">_</span>, state) <span class="kw">in </span><span class="self">self</span>.active.drain() {
+            state.abort_handle.abort();
+        }
+        <span class="self">self</span>.progress().<span class="kw">await
+    </span>}
+
+    <span class="kw">pub async fn </span>broadcast(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: <span class="kw-2">&amp;</span>NamespaceId, message: Bytes) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(state) = <span class="self">self</span>.active.get(namespace) {
+            state.sender.broadcast(message).<span class="kw">await</span>.ok();
+        }
+    }
+
+    <span class="kw">pub async fn </span>broadcast_neighbors(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: <span class="kw-2">&amp;</span>NamespaceId, message: Bytes) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(state) = <span class="self">self</span>.active.get(namespace) {
+            state.sender.broadcast_neighbors(message).<span class="kw">await</span>.ok();
+        }
+    }
+
+    <span class="kw">pub fn </span>max_message_size(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+        <span class="self">self</span>.gossip.max_message_size()
+    }
+
+    <span class="kw">pub fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="self">self</span>.active.is_empty()
+    }
+
+    <span class="doccomment">/// Progress the internal task queues.
+    ///
+    /// Returns an error if any of the active tasks panic.
+    ///
+    /// ## Cancel safety
+    ///
+    /// This function is fully cancel-safe.
+    </span><span class="kw">pub async fn </span>progress(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(res) = <span class="self">self</span>.active_tasks.join_next().<span class="kw">await </span>{
+            <span class="kw">match </span>res {
+                <span class="prelude-val">Err</span>(err) <span class="kw">if </span>err.is_cancelled() =&gt; <span class="kw">continue</span>,
+                <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(err).context(<span class="string">"gossip receive loop panicked"</span>),
+                <span class="prelude-val">Ok</span>((namespace, res)) =&gt; {
+                    <span class="self">self</span>.active.remove(<span class="kw-2">&amp;</span>namespace);
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
+                        <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="question-mark">?</span>namespace, <span class="string">"gossip receive loop failed"</span>)
+                    }
                 }
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
-            }
-            ToGossipActor::Join { namespace, peers } =&gt; {
-                <span class="macro">debug!</span>(<span class="question-mark">?</span>namespace, peers = peers.len(), <span class="string">"join gossip"</span>);
-                <span class="kw">let </span>gossip = <span class="self">self</span>.gossip.clone();
-                <span class="comment">// join gossip for the topic to receive and send message
-                </span><span class="kw">let </span>fut = <span class="kw">async move </span>{
-                    <span class="kw">let </span>stream = gossip.subscribe(namespace.into()).<span class="kw">await</span><span class="question-mark">?</span>;
-                    <span class="kw">let </span>_topic = gossip.join(namespace.into(), peers).<span class="kw">await</span><span class="question-mark">?</span>.<span class="kw">await</span><span class="question-mark">?</span>;
-                    <span class="prelude-val">Ok</span>(stream)
-                };
-                <span class="kw">let </span>fut = fut.map(<span class="kw">move </span>|res| (namespace, res));
-                <span class="self">self</span>.want_join.insert(namespace);
-                <span class="self">self</span>.pending_joins.spawn(fut);
-            }
-            ToGossipActor::Leave { namespace } =&gt; {
-                <span class="self">self</span>.gossip.quit(namespace.into()).<span class="kw">await</span><span class="question-mark">?</span>;
-                <span class="self">self</span>.joined.remove(<span class="kw-2">&amp;</span>namespace);
-                <span class="self">self</span>.want_join.remove(<span class="kw-2">&amp;</span>namespace);
             }
         }
-        <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
+        <span class="prelude-val">Ok</span>(())
     }
-    <span class="kw">async fn </span>on_gossip_event(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        event: <span class="prelude-ty">Option</span>&lt;(NamespaceId, <span class="prelude-ty">Result</span>&lt;Event, BroadcastStreamRecvError&gt;)&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>(namespace, event) = event.context(<span class="string">"Gossip event channel closed"</span>)<span class="question-mark">?</span>;
+}
+
+<span class="attr">#[instrument(<span class="string">"gossip-recv"</span>, skip_all, fields(namespace=%namespace.fmt_short()))]
+</span><span class="kw">async fn </span>receive_loop(
+    namespace: NamespaceId,
+    <span class="kw-2">mut </span>recv: GossipReceiver,
+    to_sync_actor: mpsc::Sender&lt;ToLiveActor&gt;,
+    sync: SyncHandle,
+) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">for </span>peer <span class="kw">in </span>recv.neighbors() {
+        to_sync_actor
+            .send(ToLiveActor::NeighborUp { namespace, peer })
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+    }
+    <span class="kw">while let </span><span class="prelude-val">Some</span>(event) = recv.try_next().<span class="kw">await</span><span class="question-mark">? </span>{
         <span class="kw">let </span>event = <span class="kw">match </span>event {
-            <span class="prelude-val">Ok</span>(event) =&gt; event,
-            <span class="prelude-val">Err</span>(BroadcastStreamRecvError::Lagged(n)) =&gt; {
-                <span class="macro">warn!</span>(<span class="string">"GossipActor too slow (lagged by {n}) - dropping gossip event"</span>);
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+            Event::Gossip(event) =&gt; event,
+            Event::Lagged =&gt; {
+                <span class="macro">debug!</span>(<span class="string">"gossip loop lagged - dropping gossip event"</span>);
+                <span class="kw">continue</span>;
             }
         };
-        <span class="kw">if </span>!<span class="self">self</span>.joined.contains(<span class="kw-2">&amp;</span>namespace) &amp;&amp; !<span class="self">self</span>.want_join.contains(<span class="kw-2">&amp;</span>namespace) {
-            <span class="macro">error!</span>(namespace = %namespace.fmt_short(), <span class="string">"received gossip event for unknown topic"</span>);
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-        }
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.on_gossip_event_inner(namespace, event).<span class="kw">await </span>{
-            <span class="macro">error!</span>(namespace = %namespace.fmt_short(), <span class="question-mark">?</span>err, <span class="string">"Failed to process gossip event"</span>);
-        }
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="kw">async fn </span>on_gossip_event_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>, namespace: NamespaceId, event: Event) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">match </span>event {
-            Event::Received(msg) =&gt; {
+            GossipEvent::Received(msg) =&gt; {
                 <span class="kw">let </span>op: Op = postcard::from_bytes(<span class="kw-2">&amp;</span>msg.content)<span class="question-mark">?</span>;
                 <span class="kw">match </span>op {
                     Op::Put(entry) =&gt; {
@@ -402,12 +381,15 @@
                             <span class="bool-val">false </span>=&gt; ContentStatus::Missing,
                         };
                         <span class="kw">let </span>from = <span class="kw-2">*</span>msg.delivered_from.as_bytes();
-                        <span class="self">self</span>.sync
+                        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = sync
                             .insert_remote(namespace, entry, from, content_status)
-                            .<span class="kw">await</span><span class="question-mark">?</span>;
+                            .<span class="kw">await
+                        </span>{
+                            <span class="macro">debug!</span>(<span class="string">"ignoring entry received via gossip: {err}"</span>);
+                        }
                     }
                     Op::ContentReady(hash) =&gt; {
-                        <span class="self">self</span>.to_sync_actor
+                        to_sync_actor
                             .send(ToLiveActor::NeighborContentReady {
                                 namespace,
                                 node: msg.delivered_from,
@@ -416,7 +398,7 @@
                             .<span class="kw">await</span><span class="question-mark">?</span>;
                     }
                     Op::SyncReport(report) =&gt; {
-                        <span class="self">self</span>.to_sync_actor
+                        to_sync_actor
                             .send(ToLiveActor::IncomingSyncReport {
                                 from: msg.delivered_from,
                                 report,
@@ -425,21 +407,25 @@
                     }
                 }
             }
-            <span class="comment">// A new neighbor appeared in the gossip swarm. Try to sync with it directly.
-            // [Self::sync_with_peer] will check to not resync with peers synced previously in the
-            // same session. TODO: Maybe this is too broad and leads to too many sync requests.
-            </span>Event::NeighborUp(peer) =&gt; {
-                <span class="self">self</span>.to_sync_actor
+            GossipEvent::NeighborUp(peer) =&gt; {
+                to_sync_actor
                     .send(ToLiveActor::NeighborUp { namespace, peer })
                     .<span class="kw">await</span><span class="question-mark">?</span>;
             }
-            Event::NeighborDown(peer) =&gt; {
-                <span class="self">self</span>.to_sync_actor
+            GossipEvent::NeighborDown(peer) =&gt; {
+                to_sync_actor
                     .send(ToLiveActor::NeighborDown { namespace, peer })
                     .<span class="kw">await</span><span class="question-mark">?</span>;
             }
+            GossipEvent::Joined(peers) =&gt; {
+                <span class="kw">for </span>peer <span class="kw">in </span>peers {
+                    to_sync_actor
+                        .send(ToLiveActor::NeighborUp { namespace, peer })
+                        .<span class="kw">await</span><span class="question-mark">?</span>;
+                }
+            }
         }
-        <span class="prelude-val">Ok</span>(())
     }
+    <span class="prelude-val">Ok</span>(())
 }
 </code></pre></div></section></main></body></html>

@@ -569,11 +569,6 @@
 
         <span class="kw">match </span>event {
             InEventMapped::TopicEvent(topic, event) =&gt; {
-                <span class="comment">// when receiving messages, update our conn map to take note that this topic state may want
-                // to keep this connection
-                </span><span class="kw">if let </span>topic::InEvent::RecvMessage(from, _message) = <span class="kw-2">&amp;</span>event {
-                    <span class="self">self</span>.peer_topics.entry(<span class="kw-2">*</span>from).or_default().insert(topic);
-                }
                 <span class="comment">// when receiving a join command, initialize state if it doesn't exist
                 </span><span class="kw">if </span><span class="macro">matches!</span>(<span class="kw-2">&amp;</span>event, topic::InEvent::Command(Command::Join(_peers))) {
                     <span class="kw">if let </span>hash_map::Entry::Vacant(e) = <span class="self">self</span>.states.entry(topic) {
@@ -592,6 +587,11 @@
 
                 <span class="comment">// pass the event to the state handler
                 </span><span class="kw">if let </span><span class="prelude-val">Some</span>(state) = <span class="self">self</span>.states.get_mut(<span class="kw-2">&amp;</span>topic) {
+                    <span class="comment">// when receiving messages, update our conn map to take note that this topic state may want
+                    // to keep this connection
+                    </span><span class="kw">if let </span>topic::InEvent::RecvMessage(from, _message) = <span class="kw-2">&amp;</span>event {
+                        <span class="self">self</span>.peer_topics.entry(<span class="kw-2">*</span>from).or_default().insert(topic);
+                    }
                     <span class="kw">let </span>out = state.handle(event, now);
                     <span class="kw">for </span>event <span class="kw">in </span>out {
                         handle_out_event(topic, event, <span class="kw-2">&amp;mut </span><span class="self">self</span>.peer_topics, <span class="kw-2">&amp;mut </span><span class="self">self</span>.outbox);

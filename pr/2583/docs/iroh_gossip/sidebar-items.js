@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["dispatcher","metrics","net","proto"]};
+window.SIDEBAR_ITEMS = {"mod":["metrics","net","proto"]};
