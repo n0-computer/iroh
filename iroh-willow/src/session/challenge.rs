@@ -1,3 +1,9 @@
+use super::{Error, Role};
+use crate::proto::{
+    keys::{UserPublicKey, UserSecretKey, UserSignature},
+    wgps::challenge::{AccessChallenge, AccessChallengeBytes, ChallengeHash},
+};
+
 /// Data from the initial transmission
 ///
 /// This happens before the session is initialized.

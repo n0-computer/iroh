@@ -10,7 +10,10 @@ use tracing::{debug, error_span, trace, warn, Instrument, Span};
 
 use crate::{
     net::ConnHandle,
-    proto::sync::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
+    proto::{
+        sync::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
+        willow::Unauthorised,
+    },
     session::{
         aoi_finder::{self, IntersectionFinder},
         capabilities::Capabilities,
@@ -283,7 +286,7 @@ pub(crate) async fn run_session<S: Storage>(
     let caps_recv_loop = with_span(error_span!("caps_recv"), async {
         while let Some(message) = capability_recv.try_next().await? {
             let handle = message.handle;
-            caps.validate_and_bind_theirs(message.capability, message.signature)?;
+            caps.validate_and_bind_theirs(message.capability.0, message.signature)?;
             pai_inbox
                 .send(pai::Input::ReceivedReadCapForIntersection(handle))
                 .await?;
@@ -318,9 +321,12 @@ pub(crate) async fn run_session<S: Storage>(
                 area_of_interest,
                 authorisation,
             } = message;
+            let area_of_interest = area_of_interest.0;
             let cap = caps.get_theirs_eventually(authorisation).await;
-            cap.try_granted_area(&area_of_interest.area)?;
-            let namespace = cap.granted_namespace().id();
+            if !cap.granted_area().includes_area(&area_of_interest.area) {
+                return Err(Unauthorised.into());
+            }
+            let namespace = *cap.granted_namespace();
             intersection_inbox
                 .send(aoi_finder::Input::ReceivedValidatedAoi {
                     namespace,
@@ -432,7 +438,7 @@ async fn control_loop(
                 pai_inbox
                     .send(pai::Input::ReceivedVerifiedSubspaceCapReply(
                         msg.handle,
-                        msg.capability.granted_namespace().id(),
+                        *msg.capability.granted_namespace(),
                     ))
                     .await?;
             }

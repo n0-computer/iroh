@@ -7,15 +7,14 @@ use std::{
 
 use crate::{
     proto::{
-        challenge::ChallengeState,
         keys::UserSignature,
+        meadowcap::{ReadCapability, SubspaceCapability},
         sync::{
             AccessChallenge, CapabilityHandle, ChallengeHash, CommitmentReveal, IntersectionHandle,
-            PaiReplySubspaceCapability, ReadCapability, SetupBindReadCapability,
-            SubspaceCapability,
+            PaiReplySubspaceCapability, SetupBindReadCapability,
         },
     },
-    session::{resource::ResourceMap, Error, Role},
+    session::{challenge::ChallengeState, resource::ResourceMap, Error, Role},
     store::traits::SecretStorage,
 };
 
@@ -72,9 +71,9 @@ impl Capabilities {
     ) -> Result<SetupBindReadCapability, Error> {
         let inner = self.0.borrow();
         let signable = inner.challenge.signable()?;
-        let signature = secret_store.sign_user(&capability.receiver().id(), &signable)?;
+        let signature = secret_store.sign_user(&capability.receiver(), &signable)?;
         Ok(SetupBindReadCapability {
-            capability,
+            capability: capability.into(),
             handle: intersection_handle,
             signature,
         })
@@ -89,9 +88,12 @@ impl Capabilities {
         capability: ReadCapability,
         signature: UserSignature,
     ) -> Result<(), Error> {
-        capability.validate()?;
+        // TODO(Frando): I *think* meadowcap caps are always validated (no way to construct invalid ones).
+        // capability.validate()?;
         let mut inner = self.0.borrow_mut();
-        inner.challenge.verify(capability.receiver(), &signature)?;
+        // TODO(Frando): We should somehow remove the `Id`/`PublicKey` split.
+        let receiver_key = capability.receiver().into_public_key()?;
+        inner.challenge.verify(&receiver_key, &signature)?;
         inner.theirs.bind(capability);
         Ok(())
     }
@@ -110,11 +112,14 @@ impl Capabilities {
         capability: &SubspaceCapability,
         signature: &UserSignature,
     ) -> Result<(), Error> {
-        capability.validate()?;
+        // TODO(Frando): I *think* meadowcap caps are always validated (no way to construct invalid ones).
+        // capability.validate()?;
+        // TODO(Frando): We should somehow remove the `Id`/`PublicKey` split.
+        let receiver_key = capability.receiver().into_public_key()?;
         self.0
             .borrow_mut()
             .challenge
-            .verify(capability.receiver(), signature)?;
+            .verify(&receiver_key, signature)?;
         Ok(())
     }
 
@@ -148,10 +153,10 @@ impl Capabilities {
     ) -> Result<PaiReplySubspaceCapability, Error> {
         let inner = self.0.borrow();
         let signable = inner.challenge.signable()?;
-        let signature = secrets.sign_user(&cap.receiver().id(), &signable)?;
+        let signature = secrets.sign_user(&cap.receiver(), &signable)?;
         let message = PaiReplySubspaceCapability {
             handle,
-            capability: cap.clone(),
+            capability: cap.clone().into(),
             signature,
         };
         Ok(message)

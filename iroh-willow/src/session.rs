@@ -1,20 +1,17 @@
-use std::{
-    collections::{hash_map, BTreeSet, HashMap, HashSet},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use channels::ChannelSenders;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    auth::CapSelector,
-    proto::{grouping::AreaOfInterest, sync::ReadAuthorisation},
+    interest::Interests,
     session::{error::ChannelReceiverDropped, intents::Intent},
 };
 
 mod aoi_finder;
 mod capabilities;
+mod challenge;
 pub mod channels;
 mod data;
 pub mod error;
@@ -26,6 +23,7 @@ mod resource;
 mod run;
 mod static_tokens;
 
+pub(crate) use self::challenge::InitialTransmission;
 pub(crate) use self::channels::Channels;
 pub(crate) use self::error::Error;
 pub(crate) use self::run::run_session;

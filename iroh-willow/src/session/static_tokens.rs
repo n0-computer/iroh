@@ -8,7 +8,7 @@ use std::{
 use crate::{
     proto::{
         sync::{DynamicToken, SetupBindStaticToken, StaticToken, StaticTokenHandle},
-        willow::{AuthorisedEntry, Entry},
+        willow::{AuthorisationToken, AuthorisedEntry, Entry},
     },
     session::{channels::ChannelSenders, resource::ResourceMap, Error},
 };
@@ -54,8 +54,12 @@ impl StaticTokens {
         })
         .await;
 
-        let authorised_entry =
-            AuthorisedEntry::try_from_parts(entry, static_token.clone(), dynamic_token)?;
+        let token = AuthorisationToken {
+            signature: dynamic_token,
+            capability: static_token.into(),
+        };
+
+        let authorised_entry = AuthorisedEntry::try_authorise(entry, token)?;
 
         Ok(authorised_entry)
     }

@@ -26,7 +26,7 @@ pub enum Output {
 
 use crate::{
     proto::{
-        grouping::{AreaOfInterest, ThreeDRange},
+        grouping::{AreaExt, AreaOfInterest, ThreeDRange},
         keys::NamespaceId,
         sync::{
             AreaOfInterestHandle, Fingerprint, IsHandle, LengthyEntry,
@@ -149,13 +149,13 @@ impl<S: Storage> Reconciler<S> {
                     .shared
                     .static_tokens
                     .authorise_entry_eventually(
-                        message.entry.entry,
+                        message.entry.entry.into(),
                         message.static_token_handle,
                         message.dynamic_token,
                     )
                     .await?;
                 self.current_entry.received_entry(
-                    authorised_entry.entry().payload_digest,
+                    *authorised_entry.entry().payload_digest(),
                     message.entry.available,
                 )?;
                 self.shared.store.entries().ingest(
@@ -517,7 +517,7 @@ impl<S: Storage> Target<S> {
     ) -> anyhow::Result<()> {
         self.mark_our_next_range_pending();
         let msg = ReconciliationSendFingerprint {
-            range,
+            range: range.into(),
             fingerprint,
             sender_handle: self.intersection.our_handle,
             receiver_handle: self.intersection.their_handle,
@@ -540,7 +540,7 @@ impl<S: Storage> Target<S> {
             None => self.snapshot.count(self.namespace(), range)?,
         };
         let msg = ReconciliationAnnounceEntries {
-            range: range.clone(),
+            range: range.clone().into(),
             count: our_entry_count,
             want_response,
             will_sort: false, // todo: sorted?
@@ -559,18 +559,20 @@ impl<S: Storage> Target<S> {
         {
             let authorised_entry = authorised_entry?;
             let (entry, token) = authorised_entry.into_parts();
-            let (static_token, dynamic_token) = token.into_parts();
+
+            let static_token = token.capability.into();
+            let dynamic_token = token.signature;
             // TODO: partial payloads
-            let available = entry.payload_length;
+            let available = entry.payload_length();
             let static_token_handle = shared
                 .static_tokens
                 .bind_and_send_ours(static_token, &shared.send)
                 .await?;
-            let digest = entry.payload_digest;
+            let digest = *entry.payload_digest();
             let msg = ReconciliationSendEntry {
                 entry: LengthyEntry::new(entry, available),
                 static_token_handle,
-                dynamic_token,
+                dynamic_token: dynamic_token.into(),
             };
             shared.send.send(msg).await?;
 

@@ -1,4 +1,5 @@
 pub use willow_data_model::grouping::{Range, RangeEnd};
+use willow_data_model::SubspaceId as _;
 
 use super::data_model::{
     Entry, Path, SubspaceId, Timestamp, MAX_COMPONENT_COUNT, MAX_COMPONENT_LENGTH, MAX_PATH_LENGTH,
@@ -85,6 +86,7 @@ impl AreaOfInterestExt for AreaOfInterest {
 pub trait AreaExt {
     fn includes_point(&self, point: &Point) -> bool;
     fn new_path(path: Path) -> Area;
+    fn into_range(&self) -> Range3d;
 }
 
 impl AreaExt for Area {
@@ -94,6 +96,22 @@ impl AreaExt for Area {
 
     fn new_path(path: Path) -> Self {
         Self::new(AreaSubspace::Any, path, Range::full())
+    }
+
+    fn into_range(&self) -> Range3d {
+        let subspaces = match self.subspace() {
+            AreaSubspace::Id(id) => match id.successor() {
+                None => Range::new_open(*id),
+                Some(end) => Range::new_closed(*id, end).expect("successor is bigger"),
+            },
+            AreaSubspace::Any => Default::default(),
+        };
+        let path = self.path();
+        let path_range = match path.greater_but_not_prefixed() {
+            None => Range::new_open(path.clone()),
+            Some(end) => Range::new_closed(path.clone(), end).expect("successor is bigger"),
+        };
+        Range3d::new(subspaces, path_range, self.times().clone())
     }
 }
 
@@ -161,7 +179,7 @@ pub mod serde_encoding {
     #[derive(
         Debug, Clone, Eq, PartialEq, derive_more::From, derive_more::Into, derive_more::Deref,
     )]
-    pub struct SerdeAreaOfInterest(AreaOfInterest);
+    pub struct SerdeAreaOfInterest(pub AreaOfInterest);
 
     impl Serialize for SerdeAreaOfInterest {
         fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -203,7 +221,7 @@ pub mod serde_encoding {
     }
 
     #[derive(Debug, Clone, derive_more::From, derive_more::Into, derive_more::Deref)]
-    pub struct SerdeRange3d(Range3d);
+    pub struct SerdeRange3d(pub Range3d);
 
     impl Serialize for SerdeRange3d {
         fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {

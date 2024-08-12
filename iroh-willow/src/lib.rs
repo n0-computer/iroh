@@ -3,12 +3,12 @@
 #![allow(missing_docs)]
 #![deny(unsafe_code)]
 
-// pub mod engine;
+pub mod engine;
 pub mod form;
-// pub mod net;
-pub mod proto;
-// pub mod session;
 pub mod interest;
+pub mod net;
+pub mod proto;
+pub mod session;
 pub mod store;
 pub mod util;
 

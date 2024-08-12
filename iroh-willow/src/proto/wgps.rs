@@ -1,8 +1,10 @@
+pub mod challenge;
 pub mod channels;
 pub mod fingerprint;
 pub mod handles;
 pub mod messages;
 
+pub use challenge::*;
 pub use channels::*;
 pub use fingerprint::*;
 pub use handles::*;
