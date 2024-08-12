@@ -1,17 +1,19 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use rand_core::CryptoRngCore;
 
 use crate::{
-    auth::{Auth, AuthError, CapSelector, ReceiverSelector},
-    form::{AuthForm, EntryOrForm},
+    form::{AuthForm, EntryForm, EntryOrForm, SubspaceForm, TimestampForm},
+    interest::{CapSelector, ReceiverSelector},
     proto::{
+        data_model::{AuthorisedEntry, PayloadDigest},
         keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserId},
         willow::Entry,
     },
-    session::Error,
     store::traits::SecretStorage,
+    util::time::system_time_now,
 };
 
+use self::auth::{Auth, AuthError};
 use self::traits::Storage;
 
 pub use self::entry::{EntryOrigin, WatchableEntryStore};
@@ -59,10 +61,10 @@ impl<S: Storage> Store<S> {
         let user_id = auth.user_id();
         let entry = match entry {
             EntryOrForm::Entry(entry) => Ok(entry),
-            EntryOrForm::Form(form) => form.into_entry(self, user_id).await,
+            EntryOrForm::Form(form) => self.form_to_entry(form, user_id).await,
         }?;
         let capability = match auth {
-            AuthForm::Exact(cap) => cap,
+            AuthForm::Exact(cap) => cap.0,
             AuthForm::Any(user_id) => {
                 let selector = CapSelector::for_entry(&entry, ReceiverSelector::Exact(user_id));
                 self.auth()
@@ -73,12 +75,13 @@ impl<S: Storage> Store<S> {
         let secret_key = self
             .secrets()
             .get_user(&user_id)
-            .ok_or(Error::MissingUserKey(user_id))?;
-        let authorised_entry = entry.attach_authorisation(capability, &secret_key)?;
+            .context("Missing user keypair")?;
+        let token = capability.authorisation_token(&entry, secret_key)?;
+        let authorised_entry = AuthorisedEntry(entry, token);
         let inserted = self
             .entries()
             .ingest(&authorised_entry, EntryOrigin::Local)?;
-        Ok((authorised_entry.into_entry(), inserted))
+        Ok((authorised_entry.0, inserted))
     }
 
     pub fn create_namespace(
@@ -92,5 +95,34 @@ impl<S: Storage> Store<S> {
         self.secrets().insert_namespace(namespace_secret)?;
         self.auth().create_full_caps(namespace_id, owner)?;
         Ok(namespace_id)
+    }
+
+    /// Convert the form into an [`Entry`] by filling the fields with data from the environment and
+    /// the provided [`Store`].
+    ///
+    /// `user_id` must be set to the user who is authenticating the entry.
+    pub async fn form_to_entry(
+        &self,
+        form: EntryForm,
+        user_id: UserId, // auth: AuthForm,
+    ) -> anyhow::Result<Entry> {
+        let timestamp = match form.timestamp {
+            TimestampForm::Now => system_time_now(),
+            TimestampForm::Exact(timestamp) => timestamp,
+        };
+        let subspace_id = match form.subspace_id {
+            SubspaceForm::User => user_id,
+            SubspaceForm::Exact(subspace) => subspace,
+        };
+        let (payload_digest, payload_length) = form.payload.submit(self.payloads()).await?;
+        let entry = Entry::new(
+            form.namespace_id,
+            subspace_id,
+            form.path,
+            timestamp,
+            payload_length,
+            PayloadDigest(payload_digest),
+        );
+        Ok(entry)
     }
 }

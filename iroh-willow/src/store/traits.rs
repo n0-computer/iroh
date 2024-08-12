@@ -3,12 +3,12 @@ use std::fmt::Debug;
 use anyhow::Result;
 
 use crate::{
-    auth::{CapSelector, CapabilityPack},
+    interest::{CapSelector, CapabilityPack},
     proto::{
         grouping::ThreeDRange,
         keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
-        meadowcap,
-        sync::{Fingerprint, ReadAuthorisation},
+        meadowcap::{self, ReadAuthorisation},
+        sync::Fingerprint,
         willow::{AuthorisedEntry, Entry, NamespaceId, WriteCapability},
     },
 };
@@ -102,7 +102,7 @@ pub trait EntryReader: Debug + 'static {
         range: &ThreeDRange,
     ) -> impl Iterator<Item = Result<Entry>> {
         self.get_entries_with_authorisation(namespace, range)
-            .map(|e| e.map(|e| e.into_entry()))
+            .map(|e| e.map(|e| e.0))
     }
 }
 

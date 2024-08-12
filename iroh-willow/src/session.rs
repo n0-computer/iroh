@@ -67,77 +67,6 @@ impl SessionMode {
     }
 }
 
-#[derive(Debug, Default, Clone)]
-pub enum Interests {
-    #[default]
-    All,
-    Select(HashMap<CapSelector, AreaOfInterestSelector>),
-    Exact(HashMap<ReadAuthorisation, HashSet<AreaOfInterest>>),
-}
-
-impl Interests {
-    pub fn builder() -> SelectBuilder {
-        SelectBuilder::default()
-    }
-
-    pub fn all() -> Self {
-        Self::All
-    }
-}
-
-#[derive(Default, Debug)]
-pub struct SelectBuilder(HashMap<CapSelector, AreaOfInterestSelector>);
-
-impl SelectBuilder {
-    pub fn add_full_cap(mut self, cap: impl Into<CapSelector>) -> Self {
-        let cap = cap.into();
-        self.0.insert(cap, AreaOfInterestSelector::Widest);
-        self
-    }
-
-    pub fn add_area(
-        mut self,
-        cap: impl Into<CapSelector>,
-        aois: impl IntoIterator<Item = impl Into<AreaOfInterest>>,
-    ) -> Self {
-        let cap = cap.into();
-        let aois = aois.into_iter();
-        let aois = aois.map(|aoi| aoi.into());
-        match self.0.entry(cap) {
-            hash_map::Entry::Vacant(entry) => {
-                entry.insert(AreaOfInterestSelector::Exact(aois.collect()));
-            }
-            hash_map::Entry::Occupied(mut entry) => match entry.get_mut() {
-                AreaOfInterestSelector::Widest => {}
-                AreaOfInterestSelector::Exact(existing) => existing.extend(aois),
-            },
-        }
-        self
-    }
-
-    pub fn build(self) -> Interests {
-        Interests::Select(self.0)
-    }
-}
-
-impl From<SelectBuilder> for Interests {
-    fn from(builder: SelectBuilder) -> Self {
-        builder.build()
-    }
-}
-
-#[derive(Debug)]
-pub enum SessionUpdate {
-    SubmitIntent(Intent),
-}
-
-#[derive(Debug, Default, Clone)]
-pub enum AreaOfInterestSelector {
-    #[default]
-    Widest,
-    Exact(BTreeSet<AreaOfInterest>),
-}
-
 /// Options to initialize a session with.
 #[derive(Debug)]
 pub struct SessionInit {
@@ -194,6 +123,11 @@ pub enum SessionEvent {
         #[debug("Receiver<SessionUpdate>")]
         update_receiver: mpsc::Receiver<SessionUpdate>,
     },
+}
+
+#[derive(Debug)]
+pub enum SessionUpdate {
+    SubmitIntent(Intent),
 }
 
 #[derive(Debug)]

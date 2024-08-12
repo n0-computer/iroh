@@ -5,7 +5,11 @@ use serde::{Deserialize, Serialize};
 use crate::{
     proto::{
         challenge::AccessChallenge,
-        grouping::{serde_encoding::SerdeRange3d, Area, AreaOfInterest},
+        data_model::serde_encoding::SerdeEntry,
+        grouping::{
+            serde_encoding::{SerdeAreaOfInterest, SerdeRange3d},
+            Area,
+        },
         meadowcap::{self},
         willow::Entry,
     },
@@ -47,14 +51,17 @@ pub type Receiver = meadowcap::UserPublicKey;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LengthyEntry {
     /// The Entry in question.
-    pub entry: Entry,
+    pub entry: SerdeEntry,
     /// The number of consecutive bytes from the start of the entry’s Payload that the peer holds.
     pub available: u64,
 }
 
 impl LengthyEntry {
     pub fn new(entry: Entry, available: u64) -> Self {
-        Self { entry, available }
+        Self {
+            entry: entry.into(),
+            available,
+        }
     }
 }
 
@@ -301,7 +308,7 @@ pub struct SetupBindReadCapability {
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 pub struct SetupBindAreaOfInterest {
     /// An AreaOfInterest that the peer wishes to reference in future messages.
-    pub area_of_interest: AreaOfInterest,
+    pub area_of_interest: SerdeAreaOfInterest,
     /// A CapabilityHandle bound by the sender that grants access to all entries in the message’s area_of_interest.
     pub authorisation: CapabilityHandle,
 }
@@ -395,7 +402,7 @@ pub struct ReconciliationTerminatePayload;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataSendEntry {
     /// The Entry to transmit.
-    pub entry: Entry,
+    pub entry: SerdeEntry,
     /// A [`StaticTokenHandle`] bound to the StaticToken of the Entry to transmit.
     pub static_token_handle: StaticTokenHandle,
     /// The DynamicToken of the Entry to transmit.
