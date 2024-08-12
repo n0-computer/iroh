@@ -249,6 +249,7 @@ pub(crate) async fn run_session<S: Storage>(
             session_id,
             channel_sender.clone(),
             our_role,
+            initial_transmission.their_max_payload_size,
         );
         while let Some(output) = gen.try_next().await? {
             match output {

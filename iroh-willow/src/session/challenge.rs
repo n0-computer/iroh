@@ -1,6 +1,6 @@
 use super::{Error, Role};
 use crate::proto::{
-    keys::{UserPublicKey, UserSecretKey, UserSignature},
+    keys::{UserPublicKey, UserSignature},
     wgps::challenge::{AccessChallenge, AccessChallengeBytes, ChallengeHash},
 };
 
@@ -57,11 +57,11 @@ impl ChallengeState {
         matches!(self, Self::Revealed { .. })
     }
 
-    pub fn sign(&self, secret_key: &UserSecretKey) -> Result<UserSignature, Error> {
-        let signable = self.signable()?;
-        let signature = secret_key.sign(&signable);
-        Ok(signature)
-    }
+    // pub fn sign(&self, secret_key: &UserSecretKey) -> Result<UserSignature, Error> {
+    //     let signable = self.signable()?;
+    //     let signature = secret_key.sign(&signable);
+    //     Ok(signature)
+    // }
 
     pub fn signable(&self) -> Result<[u8; 32], Error> {
         let challenge = self.get_ours()?;

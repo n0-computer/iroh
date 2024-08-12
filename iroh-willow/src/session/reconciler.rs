@@ -25,7 +25,7 @@ use crate::{
     session::{
         aoi_finder::AoiIntersection,
         channels::{ChannelSenders, MessageReceiver},
-        payload::{send_payload_chunked, CurrentPayload},
+        payload::{send_payload_chunked, CurrentPayload, DEFAULT_CHUNK_SIZE},
         static_tokens::StaticTokens,
         Error, Role, SessionId,
     },
@@ -73,6 +73,7 @@ impl<S: Storage> Reconciler<S> {
         session_id: SessionId,
         send: ChannelSenders,
         our_role: Role,
+        max_eager_payload_size: u64,
     ) -> impl futures_lite::Stream<Item = Result<Output, Error>> {
         GenStream::new(|co| {
             let shared = Shared {
@@ -82,6 +83,7 @@ impl<S: Storage> Reconciler<S> {
                 send,
                 static_tokens,
                 session_id,
+                max_eager_payload_size,
             };
             Self {
                 shared,
@@ -366,6 +368,7 @@ struct Shared<S: Storage> {
     send: ChannelSenders,
     static_tokens: StaticTokens,
     session_id: SessionId,
+    max_eager_payload_size: u64,
 }
 
 #[derive(Debug)]
@@ -563,7 +566,8 @@ impl<S: Storage> Target<S> {
             let static_token = token.capability.into();
             let dynamic_token = token.signature;
             // TODO: partial payloads
-            let available = entry.payload_length();
+            let payload_len = entry.payload_length();
+            let available = payload_len;
             let static_token_handle = shared
                 .static_tokens
                 .bind_and_send_ours(static_token, &shared.send)
@@ -577,21 +581,17 @@ impl<S: Storage> Target<S> {
             shared.send.send(msg).await?;
 
             // TODO: only send payload if configured to do so and/or under size limit.
-            let send_payloads = true;
-            let chunk_size = 1024 * 64;
-            if send_payloads
-                && send_payload_chunked(
+            if payload_len <= shared.max_eager_payload_size {
+                send_payload_chunked(
                     digest,
                     shared.store.payloads(),
                     &shared.send,
-                    chunk_size,
+                    DEFAULT_CHUNK_SIZE,
                     |bytes| ReconciliationSendPayload { bytes }.into(),
                 )
-                .await?
-            {
-                let msg = ReconciliationTerminatePayload;
-                shared.send.send(msg).await?;
+                .await?;
             }
+            shared.send.send(ReconciliationTerminatePayload).await?;
         }
         Ok(())
     }

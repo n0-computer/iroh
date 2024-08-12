@@ -15,6 +15,12 @@ use super::Error;
 
 pub const DEFAULT_CHUNK_SIZE: usize = 1024 * 64;
 
+/// Send a payload in chunks.
+///
+/// Returns `true` if the payload was sent.
+/// Returns `false` if blob is not found in `payload_store`.
+/// Returns an error if the store or sending on the `senders` return an error.
+// TODO: Include outboards.
 pub async fn send_payload_chunked<P: PayloadStore>(
     digest: PayloadDigest,
     payload_store: &P,
