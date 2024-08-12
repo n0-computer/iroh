@@ -29,7 +29,7 @@ async fn peer_manager_two_intents() -> Result<()> {
     let task_foo_path = tokio::task::spawn({
         let alfie = alfie.clone();
         async move {
-            let path = Path::new(&[b"foo"]).unwrap();
+            let path = Path::from_bytes(&[b"foo"]).unwrap();
 
             let init = SessionInit::new(
                 Interests::builder().add_area(namespace, [Area::new_path(path.clone())]),
@@ -70,7 +70,7 @@ async fn peer_manager_two_intents() -> Result<()> {
     let task_bar_path = tokio::task::spawn({
         let alfie = alfie.clone();
         async move {
-            let path = Path::new(&[b"bar"]).unwrap();
+            let path = Path::from_bytes(&[b"bar"]).unwrap();
 
             let interests = Interests::builder().add_area(namespace, [Area::new_path(path.clone())]);
             let init = SessionInit::new(interests, SessionMode::ReconcileOnce);
@@ -129,7 +129,7 @@ async fn peer_manager_update_intent() -> Result<()> {
     insert(&betty, namespace, betty_user, &[b"foo"], "foo 1").await?;
     insert(&betty, namespace, betty_user, &[b"bar"], "bar 1").await?;
 
-    let path = Path::new(&[b"foo"]).unwrap();
+    let path = Path::from_bytes(&[b"foo"]).unwrap();
     let interests = Interests::builder().add_area(namespace, [Area::new_path(path.clone())]);
     let init = SessionInit::new(interests, SessionMode::Live);
     let mut intent = alfie.sync_with_peer(betty_node_id, init).await.unwrap();
@@ -157,7 +157,7 @@ async fn peer_manager_update_intent() -> Result<()> {
     );
     assert_eq!(intent.next().await.unwrap(), EventKind::ReconciledAll);
 
-    let path = Path::new(&[b"bar"]).unwrap();
+    let path = Path::from_bytes(&[b"bar"]).unwrap();
     let interests = Interests::builder().add_area(namespace, [Area::new_path(path.clone())]);
     intent.add_interests(interests).await?;
 
@@ -416,7 +416,7 @@ mod util {
         path: &[&[u8]],
         bytes: impl Into<Bytes>,
     ) -> Result<()> {
-        let path = Path::new(path)?;
+        let path = Path::from_bytes(path)?;
         let entry = EntryForm::new_bytes(namespace_id, path, bytes);
         handle.insert(entry, user).await?;
         Ok(())

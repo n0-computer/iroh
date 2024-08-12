@@ -481,7 +481,7 @@ mod tests {
             namespace_id,
             user_alfie,
             n_alfie,
-            |n| Path::new(&[b"alfie", n.to_string().as_bytes()]),
+            |n| Path::from_bytes(&[b"alfie", n.to_string().as_bytes()]),
             |n| format!("alfie{n}"),
             &mut expected_entries,
         )
@@ -492,7 +492,7 @@ mod tests {
             namespace_id,
             user_betty,
             n_betty,
-            |n| Path::new(&[b"betty", n.to_string().as_bytes()]),
+            |n| Path::from_bytes(&[b"betty", n.to_string().as_bytes()]),
             |n| format!("betty{n}"),
             &mut expected_entries,
         )
@@ -618,7 +618,7 @@ mod tests {
             namespace_id,
             user_alfie,
             n_init,
-            |n| Path::new(&[b"alfie-init", n.to_string().as_bytes()]),
+            |n| Path::from_bytes(&[b"alfie-init", n.to_string().as_bytes()]),
             |n| format!("alfie{n}"),
             &mut expected_entries,
         )
@@ -629,7 +629,7 @@ mod tests {
             namespace_id,
             user_betty,
             n_init,
-            |n| Path::new(&[b"betty-init", n.to_string().as_bytes()]),
+            |n| Path::from_bytes(&[b"betty-init", n.to_string().as_bytes()]),
             |n| format!("betty{n}"),
             &mut expected_entries,
         )
@@ -652,7 +652,7 @@ mod tests {
             let handle_alfie = handle_alfie.clone();
             let count = 3;
             let content_fn = |i: usize| format!("alfie live {i}");
-            let path_fn = |i: usize| Path::new(&[b"alfie-live", i.to_string().as_bytes()]);
+            let path_fn = |i: usize| Path::from_bytes(&[b"alfie-live", i.to_string().as_bytes()]);
             let mut track_entries = vec![];
 
             async move {
