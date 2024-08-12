@@ -5,33 +5,6 @@ use super::data_model::{
     Entry, Path, SubspaceId, Timestamp, MAX_COMPONENT_COUNT, MAX_COMPONENT_LENGTH, MAX_PATH_LENGTH,
 };
 
-// /// A three-dimensional range that includes every [`Entry`] included in all three of its ranges.
-// #[derive(
-//     Debug, Clone, Hash, Eq, PartialEq, derive_more::From, derive_more::Into, derive_more::Deref,
-// )]
-// pub struct Three3Range(
-//     willow_data_model::grouping::Range3d<
-//         MAX_COMPONENT_LENGTH,
-//         MAX_COMPONENT_COUNT,
-//         MAX_PATH_LENGTH,
-//         SubspaceId,
-//     >,
-// );
-
-/// A grouping of entries.
-/// [Definition](https://willowprotocol.org/specs/grouping-entries/index.html#areas).
-// #[derive(
-//     Debug, Clone, Eq, PartialEq, Hash, derive_more::From, derive_more::Into, derive_more::Deref,
-// )]
-// pub struct Area(
-//     willow_data_model::grouping::Area<
-//         MAX_COMPONENT_LENGTH,
-//         MAX_COMPONENT_COUNT,
-//         MAX_PATH_LENGTH,
-//         SubspaceId,
-//     >,
-// );
-
 pub type Range3d = willow_data_model::grouping::Range3d<
     MAX_COMPONENT_LENGTH,
     MAX_COMPONENT_COUNT,
@@ -50,18 +23,6 @@ pub type Area = willow_data_model::grouping::Area<
 
 pub type AreaSubspace = willow_data_model::grouping::AreaSubspace<SubspaceId>;
 
-/// A grouping of [`crate::Entry`]s that are among the newest in some [store](https://willowprotocol.org/specs/data-model/index.html#store).
-///
-/// [Definition](https://willowprotocol.org/specs/grouping-entries/index.html#aois).
-// #[derive(Debug, Clone, Eq, PartialEq, derive_more::From, derive_more::Into, derive_more::Deref)]
-// pub struct AreaOfInterest(
-//     willow_data_model::grouping::AreaOfInterest<
-//         MAX_COMPONENT_LENGTH,
-//         MAX_COMPONENT_COUNT,
-//         MAX_PATH_LENGTH,
-//         SubspaceId,
-//     >,
-// );
 pub type AreaOfInterest = willow_data_model::grouping::AreaOfInterest<
     MAX_COMPONENT_LENGTH,
     MAX_COMPONENT_COUNT,
@@ -114,25 +75,6 @@ impl AreaExt for Area {
         Range3d::new(subspaces, path_range, *self.times())
     }
 }
-
-// impl Area {
-//     /// Create a new [`Area`].
-//     pub fn new(subspace: AreaSubspace, path: Path, times: Range<Timestamp>) -> Self {
-//         Self(willow_data_model::grouping::Area::new(
-//             subspace,
-//             path.into(),
-//             times,
-//         ))
-//     }
-
-//     pub fn includes_point(&self, point: &Point) -> bool {
-//         self.includes_area(&point.into_area())
-//     }
-
-//     pub fn path(path: Path) -> Self {
-//         Self::new(AreaSubspace::Any, path, Range::full())
-//     }
-// }
 
 /// A single point in the 3D range space.
 ///
@@ -273,9 +215,9 @@ mod tests {
 
     #[test]
     fn area_eq() {
-        let p1 = Path::new(&[b"foo", b"bar"]).unwrap();
+        let p1 = Path::from_bytes(&[b"foo", b"bar"]).unwrap();
         let a1 = Area::new_path(p1);
-        let p2 = Path::new(&[b"foo", b"bar"]).unwrap();
+        let p2 = Path::from_bytes(&[b"foo", b"bar"]).unwrap();
         let a2 = Area::new_path(p2);
         assert_eq!(a1, a2);
         let mut set = HashSet::new();

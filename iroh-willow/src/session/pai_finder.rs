@@ -581,7 +581,7 @@ mod tests {
 
         let betty_area = Area::new(
             AreaSubspace::Any,
-            Path::new(&[b"chess"]).unwrap(),
+            Path::from_bytes(&[b"chess"]).unwrap(),
             Default::default(),
         );
         let betty_auth = root_auth

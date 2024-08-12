@@ -105,11 +105,11 @@ impl From<InvalidPathError> for InvalidPathError2 {
 }
 
 pub trait PathExt {
-    fn new(slices: &[&[u8]]) -> Result<Path, InvalidPathError2>;
+    fn from_bytes(slices: &[&[u8]]) -> Result<Path, InvalidPathError2>;
 }
 
 impl PathExt for Path {
-    fn new(slices: &[&[u8]]) -> Result<Self, InvalidPathError2> {
+    fn from_bytes(slices: &[&[u8]]) -> Result<Self, InvalidPathError2> {
         let component_count = slices.len();
         let total_len = slices.iter().map(|x| x.len()).sum::<usize>();
         let iter = slices.iter().filter_map(|c| Component::new(c));
