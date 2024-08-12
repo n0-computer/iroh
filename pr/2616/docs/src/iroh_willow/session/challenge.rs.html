@@ -114,7 +114,7 @@
 <a href="#114" id="114">114</a>
 </pre></div><pre class="rust"><code><span class="kw">use super</span>::{Error, Role};
 <span class="kw">use </span><span class="kw">crate</span>::proto::{
-    keys::{UserPublicKey, UserSecretKey, UserSignature},
+    keys::{UserPublicKey, UserSignature},
     wgps::challenge::{AccessChallenge, AccessChallengeBytes, ChallengeHash},
 };
 
@@ -171,13 +171,13 @@
         <span class="macro">matches!</span>(<span class="self">self</span>, <span class="self">Self</span>::Revealed { .. })
     }
 
-    <span class="kw">pub fn </span>sign(<span class="kw-2">&amp;</span><span class="self">self</span>, secret_key: <span class="kw-2">&amp;</span>UserSecretKey) -&gt; <span class="prelude-ty">Result</span>&lt;UserSignature, Error&gt; {
-        <span class="kw">let </span>signable = <span class="self">self</span>.signable()<span class="question-mark">?</span>;
-        <span class="kw">let </span>signature = secret_key.sign(<span class="kw-2">&amp;</span>signable);
-        <span class="prelude-val">Ok</span>(signature)
-    }
+    <span class="comment">// pub fn sign(&amp;self, secret_key: &amp;UserSecretKey) -&gt; Result&lt;UserSignature, Error&gt; {
+    //     let signable = self.signable()?;
+    //     let signature = secret_key.sign(&amp;signable);
+    //     Ok(signature)
+    // }
 
-    <span class="kw">pub fn </span>signable(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;[u8; <span class="number">32</span>], Error&gt; {
+    </span><span class="kw">pub fn </span>signable(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;[u8; <span class="number">32</span>], Error&gt; {
         <span class="kw">let </span>challenge = <span class="self">self</span>.get_ours()<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>challenge)
     }
