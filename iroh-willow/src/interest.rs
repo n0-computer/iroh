@@ -6,7 +6,9 @@ use crate::proto::{
     data_model::{Entry, SerdeWriteCapability},
     grouping::{Area, AreaExt, AreaOfInterest, Point},
     keys::{NamespaceId, UserId},
-    meadowcap::{serde_encoding::SerdeReadAuthorisation, McCapability, ReadAuthorisation},
+    meadowcap::{
+        serde_encoding::SerdeReadAuthorisation, AccessMode, McCapability, ReadAuthorisation,
+    },
 };
 
 pub type InterestMap = HashMap<ReadAuthorisation, HashSet<AreaOfInterest>>;
@@ -32,6 +34,22 @@ impl Interests {
 #[derive(Default, Debug)]
 pub struct SelectBuilder(HashMap<CapSelector, AreaOfInterestSelector>);
 
+pub trait IntoAreaOfInterest {
+    fn into_area_of_interest(self) -> AreaOfInterest;
+}
+
+impl IntoAreaOfInterest for AreaOfInterest {
+    fn into_area_of_interest(self) -> AreaOfInterest {
+        self
+    }
+}
+
+impl IntoAreaOfInterest for Area {
+    fn into_area_of_interest(self) -> AreaOfInterest {
+        AreaOfInterest::new(self, 0, 0)
+    }
+}
+
 impl SelectBuilder {
     pub fn add_full_cap(mut self, cap: impl Into<CapSelector>) -> Self {
         let cap = cap.into();
@@ -42,11 +60,11 @@ impl SelectBuilder {
     pub fn add_area(
         mut self,
         cap: impl Into<CapSelector>,
-        aois: impl IntoIterator<Item = impl Into<AreaOfInterest>>,
+        aois: impl IntoIterator<Item = impl IntoAreaOfInterest>,
     ) -> Self {
         let cap = cap.into();
         let aois = aois.into_iter();
-        let aois = aois.map(|aoi| aoi.into());
+        let aois = aois.map(|aoi| aoi.into_area_of_interest());
         match self.0.entry(cap) {
             hash_map::Entry::Vacant(entry) => {
                 entry.insert(AreaOfInterestSelector::Exact(aois.collect()));
@@ -98,7 +116,7 @@ impl CapSelector {
     /// Checks if the provided capability is matched by this [`CapSelector`].
     pub fn is_covered_by(&self, cap: &McCapability) -> bool {
         self.namespace_id == *cap.granted_namespace()
-            && self.receiver.includes(&cap.receiver())
+            && self.receiver.includes(cap.receiver())
             && self.granted_area.is_covered_by(&cap.granted_area())
     }
 
@@ -209,8 +227,16 @@ impl CapabilityPack {
     }
 
     pub fn validate(&self) -> Result<(), InvalidCapabilityPack> {
-        // meadowcap capability are validated on deserialization.
-        Ok(())
+        // meadowcap capability themselves are validated on creation/deserialization.
+        let is_valid = match self {
+            Self::Read(cap) => cap.read_cap().access_mode() == AccessMode::Read,
+            Self::Write(cap) => cap.0.access_mode() == AccessMode::Write,
+        };
+        if !is_valid {
+            Err(InvalidCapabilityPack)
+        } else {
+            Ok(())
+        }
         // match self {
         //     CapabilityPack::Read(auth) => {
         //         auth.read_cap().validate()?;
@@ -229,3 +255,35 @@ impl CapabilityPack {
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid capability pack.")]
 pub struct InvalidCapabilityPack;
+
+// TODO: This doesn't really belong into this module.
+#[derive(Debug, Clone)]
+pub struct DelegateTo {
+    pub user: UserId,
+    pub restrict_area: RestrictArea,
+}
+
+impl DelegateTo {
+    pub fn new(user: UserId, restrict_area: RestrictArea) -> Self {
+        Self {
+            user,
+            restrict_area,
+        }
+    }
+}
+
+// TODO: This doesn't really belong into this module.
+#[derive(Debug, Clone)]
+pub enum RestrictArea {
+    None,
+    Restrict(Area),
+}
+
+impl RestrictArea {
+    pub fn with_default(self, default: Area) -> Area {
+        match self {
+            RestrictArea::None => default.clone(),
+            RestrictArea::Restrict(area) => area,
+        }
+    }
+}

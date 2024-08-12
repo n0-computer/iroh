@@ -40,6 +40,10 @@ pub type McSubspaceCapability = meadowcap::McSubspaceCapability<
     keys::UserSignature,
 >;
 
+pub type SubspaceCapability = McSubspaceCapability;
+pub type ReadCapability = McCapability;
+pub type WriteCapability = McCapability;
+
 pub type McAuthorisationToken = meadowcap::McAuthorisationToken<
     MAX_COMPONENT_LENGTH,
     MAX_COMPONENT_COUNT,
@@ -78,18 +82,18 @@ impl ReadAuthorisation {
     }
 
     pub fn new_owned(
-        namespace_secret: NamespaceSecretKey,
+        namespace_secret: &NamespaceSecretKey,
         user_key: UserId,
     ) -> anyhow::Result<Self> {
         let read_cap = McCapability::new_owned(
             namespace_secret.public_key().id(),
-            &namespace_secret,
+            namespace_secret,
             user_key,
             AccessMode::Read,
         )?;
         let subspace_cap = meadowcap::McSubspaceCapability::new(
             namespace_secret.public_key().id(),
-            &namespace_secret,
+            namespace_secret,
             user_key,
         )?;
         Ok(Self::new(read_cap, Some(subspace_cap)))

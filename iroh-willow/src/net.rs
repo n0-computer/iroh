@@ -10,15 +10,15 @@ use tracing::{debug, trace};
 
 use crate::{
     proto::sync::{
-        AccessChallenge, ChallengeHash, Channel, InitialTransmission, LogicalChannel, Message,
-        CHALLENGE_HASH_LENGTH, MAX_PAYLOAD_SIZE_POWER,
+        AccessChallenge, ChallengeHash, Channel, LogicalChannel, Message, CHALLENGE_HASH_LENGTH,
+        MAX_PAYLOAD_SIZE_POWER,
     },
     session::{
         channels::{
             ChannelReceivers, ChannelSenders, Channels, LogicalChannelReceivers,
             LogicalChannelSenders,
         },
-        Role,
+        InitialTransmission, Role,
     },
     util::channel::{
         inbound_channel, outbound_channel, Guarantees, Reader, Receiver, Sender, Writer,
@@ -395,18 +395,18 @@ mod tests {
     use tracing::{info, Instrument};
 
     use crate::{
-        auth::{CapSelector, DelegateTo, RestrictArea},
         engine::ActorHandle,
         form::{AuthForm, EntryForm, PayloadForm, SubspaceForm, TimestampForm},
+        interest::{CapSelector, DelegateTo, Interests, RestrictArea},
         net::{terminate_gracefully, ConnHandle},
         proto::{
+            data_model::{Entry, InvalidPathError2, Path, PathExt},
             grouping::ThreeDRange,
             keys::{NamespaceId, NamespaceKind, UserId},
             meadowcap::AccessMode,
             sync::AccessChallenge,
-            willow::{Entry, InvalidPath, Path},
         },
-        session::{intents::Intent, Interests, Role, SessionHandle, SessionInit, SessionMode},
+        session::{intents::Intent, Role, SessionHandle, SessionInit, SessionMode},
     };
 
     use super::{establish, prepare_channels};
@@ -469,7 +469,7 @@ mod tests {
         let cap_for_betty = handle_alfie
             .delegate_caps(
                 CapSelector::widest(namespace_id),
-                AccessMode::ReadWrite,
+                AccessMode::Write,
                 DelegateTo::new(user_betty, RestrictArea::None),
             )
             .await?;
@@ -602,7 +602,7 @@ mod tests {
         let cap_for_betty = handle_alfie
             .delegate_caps(
                 CapSelector::widest(namespace_id),
-                AccessMode::ReadWrite,
+                AccessMode::Write,
                 DelegateTo::new(user_betty, RestrictArea::None),
             )
             .await?;
@@ -774,7 +774,7 @@ mod tests {
 
     async fn get_entries(store: &ActorHandle, namespace: NamespaceId) -> Result<BTreeSet<Entry>> {
         let entries: Result<BTreeSet<_>> = store
-            .get_entries(namespace, ThreeDRange::full())
+            .get_entries(namespace, ThreeDRange::new_full())
             .await?
             .try_collect()
             .await;
@@ -786,7 +786,7 @@ mod tests {
         namespace_id: NamespaceId,
         user_id: UserId,
         count: usize,
-        path_fn: impl Fn(usize) -> Result<Path, InvalidPath>,
+        path_fn: impl Fn(usize) -> Result<Path, InvalidPathError2>,
         content_fn: impl Fn(usize) -> String,
         track_entries: &mut impl Extend<Entry>,
     ) -> Result<()> {

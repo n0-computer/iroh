@@ -11,8 +11,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, trace, warn, Instrument};
 
 use crate::{
-    auth::{CapSelector, CapabilityPack, DelegateTo, InterestMap},
     form::{AuthForm, EntryForm, EntryOrForm},
+    interest::{CapSelector, CapabilityPack, DelegateTo, InterestMap, Interests},
     net::ConnHandle,
     proto::{
         grouping::ThreeDRange,
@@ -20,7 +20,7 @@ use crate::{
         meadowcap::{self, AccessMode},
         willow::{AuthorisedEntry, Entry},
     },
-    session::{intents::Intent, run_session, Error, EventSender, Interests, SessionHandle},
+    session::{intents::Intent, run_session, Error, EventSender, SessionHandle},
     store::{
         entry::EntryOrigin,
         traits::{EntryReader, SecretStorage, Storage},

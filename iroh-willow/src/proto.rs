@@ -1,4 +1,3 @@
-pub mod challenge;
 pub mod data_model;
 pub mod grouping;
 pub mod keys;

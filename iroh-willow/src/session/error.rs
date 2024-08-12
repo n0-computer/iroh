@@ -18,7 +18,7 @@ pub enum Error {
     #[error("local store failed: {0}")]
     Store(#[from] anyhow::Error),
     #[error("authentication error: {0}")]
-    Auth(#[from] crate::auth::AuthError),
+    Auth(#[from] crate::store::auth::AuthError),
     #[error("payload store failed: {0}")]
     PayloadStore(std::io::Error),
     #[error("payload digest does not match expected digest")]
@@ -119,11 +119,11 @@ impl From<Unauthorised> for Error {
         Self::UnauthorisedEntryReceived
     }
 }
-impl From<meadowcap::InvalidCapability> for Error {
-    fn from(_value: meadowcap::InvalidCapability) -> Self {
-        Self::InvalidCapability
-    }
-}
+// impl From<meadowcap::InvalidCapability> for Error {
+//     fn from(_value: meadowcap::InvalidCapability) -> Self {
+//         Self::InvalidCapability
+//     }
+// }
 
 impl From<SignatureError> for Error {
     fn from(_value: SignatureError) -> Self {
@@ -131,11 +131,11 @@ impl From<SignatureError> for Error {
     }
 }
 
-impl From<meadowcap::InvalidParams> for Error {
-    fn from(_value: meadowcap::InvalidParams) -> Self {
-        Self::InvalidParameters("")
-    }
-}
+// impl From<meadowcap::InvalidParams> for Error {
+//     fn from(_value: meadowcap::InvalidParams) -> Self {
+//         Self::InvalidParameters("")
+//     }
+// }
 
 impl From<MissingResource> for Error {
     fn from(value: MissingResource) -> Self {

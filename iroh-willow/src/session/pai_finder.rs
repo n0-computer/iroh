@@ -17,11 +17,12 @@ use tracing::{debug, trace};
 
 use crate::{
     proto::{
-        grouping::SubspaceArea,
+        grouping::AreaSubspace,
+        meadowcap::{ReadAuthorisation, SubspaceCapability},
         pai::{Fragment, FragmentKind, FragmentSet, PaiScheme, PsiGroup, PsiScalar},
         sync::{
             IntersectionHandle, IntersectionMessage, Message, PaiBindFragment, PaiReplyFragment,
-            PaiRequestSubspaceCapability, ReadAuthorisation, SubspaceCapability,
+            PaiRequestSubspaceCapability,
         },
         willow::{NamespaceId, Path},
     },
@@ -387,7 +388,7 @@ pub struct LocalFragmentInfo {
     path: Path,
     // will be needed for spec-compliant encodings of read capabilities
     #[allow(dead_code)]
-    subspace: SubspaceArea,
+    subspace: AreaSubspace,
 }
 
 impl LocalFragmentInfo {
@@ -504,13 +505,14 @@ mod tests {
 
     use crate::{
         proto::{
-            grouping::{Area, SubspaceArea},
-            keys::{NamespaceKind, NamespaceSecretKey, UserPublicKey, UserSecretKey},
-            sync::{
+            grouping::{Area, AreaSubspace},
+            keys::{NamespaceKind, NamespaceSecretKey, UserId, UserPublicKey, UserSecretKey},
+            meadowcap::ReadAuthorisation,
+            wgps::{
                 IntersectionMessage, Message, PaiBindFragment, PaiReplyFragment,
-                PaiRequestSubspaceCapability, ReadAuthorisation,
+                PaiRequestSubspaceCapability,
             },
-            willow::Path,
+            willow::{Path, PathExt},
         },
         session::{pai_finder::PaiIntersection, Error},
     };
@@ -529,8 +531,8 @@ mod tests {
         let (_, alfie_public) = keypair(&mut rng);
         let (_, betty_public) = keypair(&mut rng);
 
-        let auth_alfie = ReadAuthorisation::new_owned(&namespace_secret, alfie_public);
-        let auth_betty = ReadAuthorisation::new_owned(&namespace_secret, betty_public);
+        let auth_alfie = ReadAuthorisation::new_owned(&namespace_secret, alfie_public).unwrap();
+        let auth_betty = ReadAuthorisation::new_owned(&namespace_secret, betty_public).unwrap();
 
         let (alfie, betty) = Handle::create_two();
 
@@ -559,15 +561,15 @@ mod tests {
         let namespace = NamespaceSecretKey::generate(&mut rng, NamespaceKind::Owned);
 
         let (root_secret, root_public) = keypair(&mut rng);
-        let root_auth = ReadAuthorisation::new_owned(&namespace, root_public);
+        let root_auth = ReadAuthorisation::new_owned(&namespace, root_public).unwrap();
 
         let (_, alfie_public) = keypair(&mut rng);
         let (_, betty_public) = keypair(&mut rng);
         let (_, gemma_public) = keypair(&mut rng);
 
         let alfie_area = Area::new(
-            SubspaceArea::Id(gemma_public.id()),
-            Path::empty(),
+            AreaSubspace::Id(gemma_public),
+            Path::new_empty(),
             Default::default(),
         );
         let alfie_auth = root_auth
@@ -576,7 +578,7 @@ mod tests {
         assert!(alfie_auth.subspace_cap().is_none());
 
         let betty_area = Area::new(
-            SubspaceArea::Any,
+            AreaSubspace::Any,
             Path::new(&[b"chess"]).unwrap(),
             Default::default(),
         );
@@ -613,9 +615,9 @@ mod tests {
         };
 
         assert_eq!(&cap, betty_auth.subspace_cap().unwrap());
-        let namespace = cap.granted_namespace().id();
+        let namespace = cap.granted_namespace();
         alfie
-            .input(Input::ReceivedVerifiedSubspaceCapReply(handle, namespace))
+            .input(Input::ReceivedVerifiedSubspaceCapReply(handle, *namespace))
             .await;
 
         let next = alfie.next_intersection().await;
@@ -631,10 +633,10 @@ mod tests {
         betty.join().await;
     }
 
-    fn keypair<R: CryptoRngCore + ?Sized>(rng: &mut R) -> (UserSecretKey, UserPublicKey) {
+    fn keypair<R: CryptoRngCore + ?Sized>(rng: &mut R) -> (UserSecretKey, UserId) {
         let secret = UserSecretKey::generate(rng);
         let public = secret.public_key();
-        (secret, public)
+        (secret, public.id())
     }
 
     async fn transfer<T: TryFrom<Message> + Into<IntersectionMessage>>(from: &Handle, to: &Handle) {

@@ -17,13 +17,13 @@ use tokio_util::sync::PollSender;
 use tracing::{debug, trace, warn};
 
 use crate::{
-    auth::{Auth, InterestMap},
+    interest::InterestMap,
     proto::{
         grouping::{Area, AreaOfInterest},
         keys::NamespaceId,
     },
     session::{error::ChannelReceiverDropped, Error, Interests, SessionInit, SessionMode},
-    store::traits::Storage,
+    store::{auth::Auth, traits::Storage},
     util::gen_stream::GenStream,
 };
 
@@ -526,7 +526,11 @@ impl IntentInfo {
     fn matches_area(&self, namespace: &NamespaceId, area: &Area) -> bool {
         self.interests
             .get(namespace)
-            .map(|interests| interests.iter().any(|x| x.area.has_intersection(area)))
+            .map(|interests| {
+                interests
+                    .iter()
+                    .any(|x| x.area.intersection(area).is_some())
+            })
             .unwrap_or(false)
     }
 
@@ -534,7 +538,10 @@ impl IntentInfo {
         let mut namespace_complete = false;
         let mut matches = false;
         if let Some(interests) = self.interests.get_mut(namespace) {
-            if interests.iter().any(|x| x.area.has_intersection(area)) {
+            if interests
+                .iter()
+                .any(|x| x.area.intersection(area).is_some())
+            {
                 matches = true;
                 interests.retain(|x| !area.includes_area(&x.area));
                 if interests.is_empty() {

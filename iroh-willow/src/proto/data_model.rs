@@ -1,7 +1,9 @@
 use iroh_base::hash::Hash;
 use ufotofu::sync::{consumer::IntoVec, producer::FromSlice};
-use willow_data_model::InvalidPathError;
+use willow_data_model::{AuthorisationToken as _, InvalidPathError};
 use willow_encoding::sync::{Decodable, Encodable};
+
+use crate::proto::keys::UserSignature;
 
 use super::{
     keys,
@@ -125,7 +127,6 @@ impl PathExt for Path {
     }
 }
 
-// #[derive(Debug, Clone, Eq, PartialEq, derive_more::From, derive_more::Into, derive_more::Deref)]
 pub type Entry = willow_data_model::Entry<
     MAX_COMPONENT_LENGTH,
     MAX_COMPONENT_COUNT,
@@ -172,7 +173,26 @@ impl AuthorisedEntry {
     pub fn entry(&self) -> &Entry {
         &self.0
     }
+
+    pub fn try_authorise(entry: Entry, token: AuthorisationToken) -> Result<Self, Unauthorised> {
+        if token.is_authorised_write(&entry) {
+            Ok(AuthorisedEntry(entry, token))
+        } else {
+            Err(Unauthorised)
+        }
+    }
+
+    pub fn into_parts(self) -> (Entry, AuthorisationToken) {
+        (self.0, self.1)
+    }
 }
+
+/// Error returned for entries that are not authorised.
+///
+/// See [`is_authorised_write`] for details.
+#[derive(Debug, thiserror::Error)]
+#[error("Entry is not authorised")]
+pub struct Unauthorised;
 
 // #[derive(Debug, Clone, derive_more::From, derive_more::Into, derive_more::Deref)]
 // pub type AuthorisedEntry =

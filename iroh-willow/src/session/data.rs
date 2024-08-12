@@ -4,8 +4,8 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
     proto::{
-        sync::{DataMessage, DataSendEntry, DataSendPayload},
-        willow::AuthorisedEntry,
+        data_model::AuthorisedEntry,
+        wgps::{DataMessage, DataSendEntry, DataSendPayload, StaticToken},
     },
     session::{
         channels::ChannelSenders, payload::DEFAULT_CHUNK_SIZE, static_tokens::StaticTokens, Error,
@@ -85,17 +85,18 @@ impl<S: Storage> DataSender<S> {
     }
 
     async fn send_entry(&mut self, authorised_entry: AuthorisedEntry) -> Result<(), Error> {
-        let (entry, token) = authorised_entry.into_parts();
-        let (static_token, dynamic_token) = token.into_parts();
+        let AuthorisedEntry(entry, token) = authorised_entry;
+        let static_token: StaticToken = token.capability.into();
+        let dynamic_token = token.signature;
         // TODO: partial payloads
         // let available = entry.payload_length;
         let static_token_handle = self
             .static_tokens
             .bind_and_send_ours(static_token, &self.send)
             .await?;
-        let digest = entry.payload_digest;
+        let digest = *entry.payload_digest();
         let msg = DataSendEntry {
-            entry,
+            entry: entry.into(),
             static_token_handle,
             dynamic_token,
             offset: 0,
@@ -150,7 +151,7 @@ impl<S: Storage> DataReceiver<S> {
         let authorised_entry = self
             .static_tokens
             .authorise_entry_eventually(
-                message.entry,
+                message.entry.into(),
                 message.static_token_handle,
                 message.dynamic_token,
             )
@@ -162,10 +163,10 @@ impl<S: Storage> DataReceiver<S> {
                 channel: EntryChannel::Data,
             },
         )?;
-        let entry = authorised_entry.into_entry();
+        let entry = authorised_entry.0;
         // TODO: handle offset
         self.current_payload
-            .set(entry.payload_digest, entry.payload_length)?;
+            .set(*entry.payload_digest(), entry.payload_length())?;
         Ok(())
     }
 

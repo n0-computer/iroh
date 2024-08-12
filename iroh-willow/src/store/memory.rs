@@ -10,7 +10,7 @@ use crate::{
         data_model::{AuthorisedEntry, Entry, EntryExt, WriteCapability},
         grouping::{Range, RangeEnd, ThreeDRange},
         keys::{NamespaceId, NamespaceSecretKey, UserId, UserSecretKey},
-        meadowcap::{self, is_wider_than, ReadAuthorisation},
+        meadowcap::{self, is_wider_than, ReadAuthorisation, AccessMode},
         wgps::Fingerprint,
     },
     store::traits::{self, RangeSplit, SplitAction, SplitOpts},

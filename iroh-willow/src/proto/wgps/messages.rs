@@ -4,13 +4,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     proto::{
-        challenge::AccessChallenge,
         data_model::serde_encoding::SerdeEntry,
         grouping::{
             serde_encoding::{SerdeAreaOfInterest, SerdeRange3d},
             Area,
         },
         meadowcap::{self},
+        wgps::AccessChallenge,
         willow::Entry,
     },
     util::codec::{DecodeOutcome, Decoder, Encoder},

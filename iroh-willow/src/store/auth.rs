@@ -7,8 +7,8 @@ use tracing::debug;
 
 use crate::{
     interest::{
-        AreaOfInterestSelector, CapSelector, CapabilityPack, InterestMap, Interests,
-        InvalidCapabilityPack,
+        AreaOfInterestSelector, CapSelector, CapabilityPack, DelegateTo, InterestMap, Interests,
+        InvalidCapabilityPack, RestrictArea,
     },
     proto::{
         data_model::WriteCapability,
@@ -18,36 +18,6 @@ use crate::{
     },
     store::traits::{CapsStorage, SecretStorage, SecretStoreError, Storage},
 };
-
-#[derive(Debug, Clone)]
-pub struct DelegateTo {
-    pub user: UserId,
-    pub restrict_area: RestrictArea,
-}
-
-impl DelegateTo {
-    pub fn new(user: UserId, restrict_area: RestrictArea) -> Self {
-        Self {
-            user,
-            restrict_area,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum RestrictArea {
-    None,
-    Restrict(Area),
-}
-
-impl RestrictArea {
-    pub fn with_default(self, default: Area) -> Area {
-        match self {
-            RestrictArea::None => default.clone(),
-            RestrictArea::Restrict(area) => area,
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct Auth<S: Storage> {
@@ -84,6 +54,7 @@ impl<S: Storage> Auth<S> {
         caps: impl IntoIterator<Item = CapabilityPack>,
     ) -> Result<(), AuthError> {
         for cap in caps.into_iter() {
+            tracing::debug!("import cap {cap:?}");
             cap.validate()?;
             // Only allow importing caps we can use.
             // TODO: Is this what we want?
@@ -92,6 +63,7 @@ impl<S: Storage> Auth<S> {
                 return Err(AuthError::MissingUserSecret(user_id));
             }
             self.caps.insert(cap)?;
+            tracing::debug!("imported");
         }
         Ok(())
     }
@@ -114,7 +86,7 @@ impl<S: Storage> Auth<S> {
                     .list_read_caps()?
                     .map(|auth| {
                         let area = auth.read_cap().granted_area();
-                        let aoi = AreaOfInterest::new(area);
+                        let aoi = AreaOfInterest::new(area, 0, 0);
                         (auth, HashSet::from_iter([aoi]))
                     })
                     .collect::<HashMap<_, _>>();
@@ -129,7 +101,7 @@ impl<S: Storage> Auth<S> {
                         match aoi_selector {
                             AreaOfInterestSelector::Widest => {
                                 let area = cap.read_cap().granted_area();
-                                let aoi = AreaOfInterest::new(area);
+                                let aoi = AreaOfInterest::new(area, 0, 0);
                                 entry.insert(aoi);
                             }
                             AreaOfInterestSelector::Exact(aois) => {
@@ -195,7 +167,7 @@ impl<S: Storage> Auth<S> {
                 .secrets
                 .get_namespace(&namespace_key)
                 .ok_or(AuthError::MissingNamespaceSecret(namespace_key))?;
-            McCapability::new_owned(namespace_key, &namespace_secret, user_key, AccessMode::Read)?
+            McCapability::new_owned(namespace_key, &namespace_secret, user_key, AccessMode::Write)?
         };
         let pack = CapabilityPack::Write(cap.into());
         Ok(pack)

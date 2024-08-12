@@ -20,14 +20,15 @@ use tokio_util::{either::Either, sync::CancellationToken};
 use tracing::{debug, error_span, instrument, trace, warn, Instrument, Span};
 
 use crate::{
+    interest::Interests,
     net::{
         establish, prepare_channels, terminate_gracefully, ChannelStreams, ConnHandle, ALPN,
         ERROR_CODE_DUPLICATE_CONN, ERROR_CODE_SHUTDOWN,
     },
-    proto::sync::{AccessChallenge, InitialTransmission},
+    proto::wgps::challenge::AccessChallenge,
     session::{
         intents::{EventKind, Intent},
-        Error, Interests, Role, SessionEvent, SessionHandle, SessionInit, SessionUpdate,
+        Error, InitialTransmission, Role, SessionEvent, SessionHandle, SessionInit, SessionUpdate,
     },
 };
 

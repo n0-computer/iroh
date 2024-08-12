@@ -4,7 +4,7 @@ use rand::Rng;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
-use super::data_model::DIGEST_LENGTH;
+use crate::proto::data_model::DIGEST_LENGTH;
 
 pub const CHALLENGE_LENGTH: usize = 32;
 pub const CHALLENGE_HASH_LENGTH: usize = DIGEST_LENGTH;
