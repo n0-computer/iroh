@@ -19,6 +19,7 @@ use tracing::{debug, trace};
 
 use crate::{
     proto::{
+        data_model::{NamespaceId, Path},
         grouping::AreaSubspace,
         meadowcap::{ReadAuthorisation, SubspaceCapability},
         pai::{Fragment, FragmentKind, FragmentSet, PaiScheme, PsiGroup, PsiScalar},
@@ -26,7 +27,6 @@ use crate::{
             IntersectionHandle, IntersectionMessage, Message, PaiBindFragment, PaiReplyFragment,
             PaiRequestSubspaceCapability,
         },
-        data_model::{NamespaceId, Path},
     },
     session::{
         resource::{MissingResource, ResourceMap},
@@ -507,6 +507,7 @@ mod tests {
 
     use crate::{
         proto::{
+            data_model::{Path, PathExt},
             grouping::{Area, AreaSubspace},
             keys::{NamespaceKind, NamespaceSecretKey, UserId, UserSecretKey},
             meadowcap::ReadAuthorisation,
@@ -514,7 +515,6 @@ mod tests {
                 IntersectionMessage, Message, PaiBindFragment, PaiReplyFragment,
                 PaiRequestSubspaceCapability,
             },
-            data_model::{Path, PathExt},
         },
         session::{pai_finder::PaiIntersection, Error},
     };

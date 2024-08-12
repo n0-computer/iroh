@@ -401,7 +401,7 @@ mod tests {
         net::{terminate_gracefully, ConnHandle},
         proto::{
             data_model::{Entry, InvalidPathError2, Path, PathExt},
-            grouping::ThreeDRange,
+            grouping::Range3d,
             keys::{NamespaceId, NamespaceKind, UserId},
             meadowcap::AccessMode,
             wgps::AccessChallenge,
@@ -774,7 +774,7 @@ mod tests {
 
     async fn get_entries(store: &ActorHandle, namespace: NamespaceId) -> Result<BTreeSet<Entry>> {
         let entries: Result<BTreeSet<_>> = store
-            .get_entries(namespace, ThreeDRange::new_full())
+            .get_entries(namespace, Range3d::new_full())
             .await?
             .try_collect()
             .await;

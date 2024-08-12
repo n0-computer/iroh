@@ -12,8 +12,6 @@ pub type Range3d = willow_data_model::grouping::Range3d<
     SubspaceId,
 >;
 
-pub type ThreeDRange = Range3d;
-
 pub type Area = willow_data_model::grouping::Area<
     MAX_COMPONENT_LENGTH,
     MAX_COMPONENT_COUNT,
@@ -148,9 +146,9 @@ pub mod serde_encoding {
                 Deserialize::deserialize(deserializer)?;
             let decoded_area = {
                 let mut producer = FromSlice::new(&encoded_area);
-                
+
                 willow_data_model::grouping::Area::relative_decode(&relative, &mut producer)
-                        .map_err(|err| serde::de::Error::custom(format!("{err}")))?
+                    .map_err(|err| serde::de::Error::custom(format!("{err}")))?
             };
             let aoi = willow_data_model::grouping::AreaOfInterest {
                 area: decoded_area,
@@ -195,9 +193,9 @@ pub mod serde_encoding {
             let encoded_range: Vec<u8> = Deserialize::deserialize(deserializer)?;
             let decoded_range = {
                 let mut producer = FromSlice::new(&encoded_range);
-                
+
                 willow_data_model::grouping::Range3d::relative_decode(&relative, &mut producer)
-                        .map_err(|err| serde::de::Error::custom(format!("{err}")))?
+                    .map_err(|err| serde::de::Error::custom(format!("{err}")))?
             };
             Ok(Self(decoded_range))
         }

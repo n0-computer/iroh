@@ -8,7 +8,7 @@ use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
         data_model::{AuthorisedEntry, Entry, EntryExt, WriteCapability},
-        grouping::{Range, RangeEnd, ThreeDRange},
+        grouping::{Range, Range3d, RangeEnd},
         keys::{NamespaceId, NamespaceSecretKey, UserId, UserSecretKey},
         meadowcap::{self, is_wider_than, ReadAuthorisation},
         wgps::Fingerprint,
@@ -94,7 +94,7 @@ pub struct EntryStore {
 
 // impl<T: std::ops::Deref<Target = MemoryEntryStore> + 'static> ReadonlyStore for T {
 impl traits::EntryReader for Rc<RefCell<EntryStore>> {
-    fn fingerprint(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<Fingerprint> {
+    fn fingerprint(&self, namespace: NamespaceId, range: &Range3d) -> Result<Fingerprint> {
         let mut fingerprint = Fingerprint::default();
         for entry in self.get_entries(namespace, range) {
             let entry = entry?;
@@ -106,7 +106,7 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
     fn split_range(
         &self,
         namespace: NamespaceId,
-        range: &ThreeDRange,
+        range: &Range3d,
         config: &SplitOpts,
     ) -> Result<impl Iterator<Item = Result<RangeSplit>>> {
         let count = self.get_entries(namespace, range).count();
@@ -127,12 +127,12 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
         let mut ranges = vec![];
         // split in two halves by subspace
         if *mid.subspace_id() != range.subspaces().start {
-            ranges.push(ThreeDRange::new(
+            ranges.push(Range3d::new(
                 Range::new_closed(range.subspaces().start, *mid.subspace_id()).unwrap(),
                 range.paths().clone(),
                 *range.times(),
             ));
-            ranges.push(ThreeDRange::new(
+            ranges.push(Range3d::new(
                 Range::new(*mid.subspace_id(), range.subspaces().end),
                 range.paths().clone(),
                 *range.times(),
@@ -140,7 +140,7 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
         }
         // split by path
         else if *mid.path() != range.paths().start {
-            ranges.push(ThreeDRange::new(
+            ranges.push(Range3d::new(
                 *range.subspaces(),
                 Range::new(
                     range.paths().start.clone(),
@@ -148,19 +148,19 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
                 ),
                 *range.times(),
             ));
-            ranges.push(ThreeDRange::new(
+            ranges.push(Range3d::new(
                 *range.subspaces(),
                 Range::new(mid.path().clone(), range.paths().end.clone()),
                 *range.times(),
             ));
         // split by time
         } else {
-            ranges.push(ThreeDRange::new(
+            ranges.push(Range3d::new(
                 *range.subspaces(),
                 range.paths().clone(),
                 Range::new(range.times().start, RangeEnd::Closed(mid.timestamp())),
             ));
-            ranges.push(ThreeDRange::new(
+            ranges.push(Range3d::new(
                 *range.subspaces(),
                 range.paths().clone(),
                 Range::new(mid.timestamp(), range.times().end),
@@ -174,14 +174,14 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
         Ok(out.into_iter())
     }
 
-    fn count(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64> {
+    fn count(&self, namespace: NamespaceId, range: &Range3d) -> Result<u64> {
         Ok(self.get_entries(namespace, range).count() as u64)
     }
 
     fn get_entries_with_authorisation<'a>(
         &'a self,
         namespace: NamespaceId,
-        range: &ThreeDRange,
+        range: &Range3d,
     ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a {
         let slf = self.borrow();
         slf.entries

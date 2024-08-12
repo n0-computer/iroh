@@ -15,10 +15,10 @@ use crate::{
     interest::{CapSelector, CapabilityPack, DelegateTo, InterestMap, Interests},
     net::ConnHandle,
     proto::{
-        grouping::ThreeDRange,
+        data_model::{AuthorisedEntry, Entry},
+        grouping::Range3d,
         keys::{NamespaceId, NamespaceKind, UserId, UserSecretKey},
         meadowcap::{self, AccessMode},
-        data_model::{AuthorisedEntry, Entry},
     },
     session::{intents::Intent, run_session, Error, EventSender, SessionHandle},
     store::{
@@ -123,7 +123,7 @@ impl ActorHandle {
     pub async fn get_entries(
         &self,
         namespace: NamespaceId,
-        range: ThreeDRange,
+        range: Range3d,
     ) -> Result<impl Stream<Item = anyhow::Result<Entry>>> {
         let (tx, rx) = flume::bounded(1024);
         self.send(Input::GetEntries {
@@ -230,7 +230,7 @@ pub enum Input {
     },
     GetEntries {
         namespace: NamespaceId,
-        range: ThreeDRange,
+        range: Range3d,
         #[debug(skip)]
         reply: flume::Sender<Result<Entry>>,
     },

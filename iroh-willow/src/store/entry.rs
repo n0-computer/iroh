@@ -5,8 +5,8 @@ use std::{
 use tokio::sync::broadcast;
 
 use crate::proto::{
-    grouping::Area,
     data_model::{AuthorisedEntry, NamespaceId},
+    grouping::Area,
 };
 
 pub type SessionId = u64;
