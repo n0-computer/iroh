@@ -1,5 +1,6 @@
 //! The server side API
 use std::fmt::Debug;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -179,12 +180,12 @@ pub async fn read_request(mut reader: RecvStream) -> Result<Request> {
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-pub async fn transfer_collection<D: Map, E: EventSender>(
+pub async fn transfer_collection<D: Map>(
     request: GetRequest,
     // Store from which to fetch blobs.
     db: &D,
     // Response writer, containing the quinn stream.
-    writer: &mut ResponseWriter<E>,
+    writer: &mut ResponseWriter,
     // the collection to transfer
     mut outboard: impl Outboard,
     mut data: impl AsyncSliceReader,
@@ -199,7 +200,7 @@ pub async fn transfer_collection<D: Map, E: EventSender>(
         let (stream, num_blobs) = parse_hash_seq(&mut data).await?;
         writer
             .events
-            .send(Event::TransferHashSeqStarted {
+            .send(|| Event::TransferHashSeqStarted {
                 connection_id: writer.connection_id(),
                 request_id: writer.request_id(),
                 num_blobs,
@@ -253,7 +254,7 @@ pub async fn transfer_collection<D: Map, E: EventSender>(
 
                 writer
                     .events
-                    .send(Event::TransferBlobCompleted {
+                    .send(|| Event::TransferBlobCompleted {
                         connection_id: writer.connection_id(),
                         request_id: writer.request_id(),
                         hash,
@@ -274,16 +275,40 @@ pub async fn transfer_collection<D: Map, E: EventSender>(
 }
 
 /// Trait for sending events.
-pub trait EventSender: std::fmt::Debug + Clone + Sync + Send + 'static {
+pub trait EventSenderPlugin: std::fmt::Debug + Sync + Send + 'static {
     /// Send an event.
     fn send(&self, event: Event) -> BoxFuture<()>;
 }
 
+///
+#[derive(Debug, Clone, Default)]
+pub struct EventSender {
+    inner: Option<Arc<dyn EventSenderPlugin>>,
+}
+
+impl EventSender {
+    /// Create a new event sender.
+    pub fn new(inner: Option<Arc<dyn EventSenderPlugin>>) -> Self {
+        Self { inner }
+    }
+
+    /// Send an event.
+    ///
+    /// If the inner sender is not set, the function to produce the event will
+    /// not be called.
+    pub async fn send(&self, event: impl FnOnce() -> Event) {
+        if let Some(inner) = &self.inner {
+            let event = event();
+            inner.as_ref().send(event).await;
+        }
+    }
+}
+
 /// Handle a single connection.
-pub async fn handle_connection<D: Map, E: EventSender>(
+pub async fn handle_connection<D: Map>(
     connection: endpoint::Connection,
     db: D,
-    events: E,
+    events: EventSender,
     rt: LocalPoolHandle,
 ) {
     let remote_addr = connection.remote_address();
@@ -300,7 +325,9 @@ pub async fn handle_connection<D: Map, E: EventSender>(
                 events: events.clone(),
                 inner: writer,
             };
-            events.send(Event::ClientConnected { connection_id }).await;
+            events
+                .send(|| Event::ClientConnected { connection_id })
+                .await;
             let db = db.clone();
             rt.spawn_detached(|| {
                 async move {
@@ -316,11 +343,7 @@ pub async fn handle_connection<D: Map, E: EventSender>(
     .await
 }
 
-async fn handle_stream<D: Map, E: EventSender>(
-    db: D,
-    reader: RecvStream,
-    writer: ResponseWriter<E>,
-) -> Result<()> {
+async fn handle_stream<D: Map>(db: D, reader: RecvStream, writer: ResponseWriter) -> Result<()> {
     // 1. Decode the request.
     debug!("reading request");
     let request = match read_request(reader).await {
@@ -337,16 +360,16 @@ async fn handle_stream<D: Map, E: EventSender>(
 }
 
 /// Handle a single standard get request.
-pub async fn handle_get<D: Map, E: EventSender>(
+pub async fn handle_get<D: Map>(
     db: D,
     request: GetRequest,
-    mut writer: ResponseWriter<E>,
+    mut writer: ResponseWriter,
 ) -> Result<()> {
     let hash = request.hash;
     debug!(%hash, "received request");
     writer
         .events
-        .send(Event::GetRequestReceived {
+        .send(|| Event::GetRequestReceived {
             hash,
             connection_id: writer.connection_id(),
             request_id: writer.request_id(),
@@ -397,13 +420,13 @@ pub async fn handle_get<D: Map, E: EventSender>(
 
 /// A helper struct that combines a quinn::SendStream with auxiliary information
 #[derive(Debug)]
-pub struct ResponseWriter<E> {
+pub struct ResponseWriter {
     inner: SendStream,
-    events: E,
+    events: EventSender,
     connection_id: u64,
 }
 
-impl<E: EventSender> ResponseWriter<E> {
+impl ResponseWriter {
     fn tracking_writer(&mut self) -> TrackingStreamWriter<TokioStreamWriter<&mut SendStream>> {
         TrackingStreamWriter::new(TokioStreamWriter(&mut self.inner))
     }
@@ -449,7 +472,7 @@ impl<E: EventSender> ResponseWriter<E> {
         info!("transfer completed for {}", hash);
         Self::print_stats(&stats);
         self.events
-            .send(Event::TransferCompleted {
+            .send(move || Event::TransferCompleted {
                 connection_id: self.connection_id(),
                 request_id: self.request_id(),
                 stats,
@@ -462,7 +485,7 @@ impl<E: EventSender> ResponseWriter<E> {
             Self::print_stats(stats);
         };
         self.events
-            .send(Event::TransferAborted {
+            .send(move || Event::TransferAborted {
                 connection_id: self.connection_id(),
                 request_id: self.request_id(),
                 stats,

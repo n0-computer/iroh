@@ -3,7 +3,7 @@ use std::{any::Any, collections::BTreeMap, fmt, sync::Arc};
 use anyhow::Result;
 use futures_lite::future::Boxed as BoxedFuture;
 use futures_util::future::join_all;
-use iroh_blobs::util::local_pool::LocalPoolHandle;
+use iroh_blobs::{provider::EventSender, util::local_pool::LocalPoolHandle};
 use iroh_net::endpoint::Connecting;
 
 /// Handler for incoming connections.
@@ -78,26 +78,19 @@ impl ProtocolMap {
 }
 
 #[derive(Debug)]
-pub(crate) struct BlobsProtocol<S, E = MockEventSender> {
+pub(crate) struct BlobsProtocol<S> {
     rt: LocalPoolHandle,
     store: S,
-    events: E,
+    events: EventSender,
 }
 
 impl<S: iroh_blobs::store::Store> BlobsProtocol<S> {
-    pub fn new(store: S, rt: LocalPoolHandle) -> Self {
-        Self::new_with_events(store, rt, MockEventSender)
-    }
-}
-impl<S: iroh_blobs::store::Store, E: iroh_blobs::provider::EventSender> BlobsProtocol<S, E> {
-    pub fn new_with_events(store: S, rt: LocalPoolHandle, events: E) -> Self {
+    pub fn new_with_events(store: S, rt: LocalPoolHandle, events: EventSender) -> Self {
         Self { rt, store, events }
     }
 }
 
-impl<S: iroh_blobs::store::Store, E: iroh_blobs::provider::EventSender> ProtocolHandler
-    for BlobsProtocol<S, E>
-{
+impl<S: iroh_blobs::store::Store> ProtocolHandler for BlobsProtocol<S> {
     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move {
             iroh_blobs::provider::handle_connection(
@@ -109,16 +102,6 @@ impl<S: iroh_blobs::store::Store, E: iroh_blobs::provider::EventSender> Protocol
             .await;
             Ok(())
         })
-    }
-}
-
-/// An event sender that consumes all events without doing anything with them.
-#[derive(Debug, Clone)]
-pub struct MockEventSender;
-
-impl iroh_blobs::provider::EventSender for MockEventSender {
-    fn send(&self, _event: iroh_blobs::provider::Event) -> futures_lite::future::Boxed<()> {
-        Box::pin(std::future::ready(()))
     }
 }
 
