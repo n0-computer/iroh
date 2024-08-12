@@ -599,6 +599,7 @@
 <a href="#599" id="599">599</a>
 <a href="#600" id="600">600</a>
 <a href="#601" id="601">601</a>
+<a href="#602" id="602">602</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server side API
 </span><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::sync::Arc;
@@ -919,7 +920,7 @@
     </span><span class="kw">fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, event: Event) -&gt; BoxFuture&lt;()&gt;;
 }
 
-<span class="doccomment">///
+<span class="doccomment">/// A possibly disabled sender for events.
 </span><span class="attr">#[derive(Debug, Clone, Default)]
 </span><span class="kw">pub struct </span>EventSender {
     inner: <span class="prelude-ty">Option</span>&lt;Arc&lt;<span class="kw">dyn </span>CustomEventSender&gt;&gt;,
@@ -942,7 +943,8 @@
     <span class="doccomment">/// Send an event.
     ///
     /// If the inner sender is not set, the function to produce the event will
-    /// not be called.
+    /// not be called. So any cost associated with gathering information for the
+    /// event will not be incurred.
     </span><span class="kw">pub async fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, event: <span class="kw">impl </span>FnOnce() -&gt; Event) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(inner) = <span class="kw-2">&amp;</span><span class="self">self</span>.inner {
             <span class="kw">let </span>event = event();
