@@ -1,5 +1,9 @@
-use super::keys;
+use super::{
+    grouping::Area,
+    keys::{self, NamespaceSecretKey, UserSecretKey},
+};
 
+use serde::Serialize;
 use willow_data_model::AuthorisationToken;
 
 pub type UserPublicKey = keys::UserPublicKey;
@@ -11,6 +15,8 @@ pub type NamespaceSignature = keys::NamespaceSignature;
 
 use super::data_model::{Entry, MAX_COMPONENT_COUNT, MAX_COMPONENT_LENGTH, MAX_PATH_LENGTH};
 
+pub use meadowcap::AccessMode;
+
 #[derive(Debug, derive_more::From)]
 pub enum SecretKey {
     User(keys::UserSecretKey),
@@ -21,6 +27,13 @@ pub type McCapability = meadowcap::McCapability<
     MAX_COMPONENT_LENGTH,
     MAX_COMPONENT_COUNT,
     MAX_PATH_LENGTH,
+    keys::NamespaceId,
+    keys::NamespaceSignature,
+    keys::UserId,
+    keys::UserSignature,
+>;
+
+pub type McSubspaceCapability = meadowcap::McSubspaceCapability<
     keys::NamespaceId,
     keys::NamespaceSignature,
     keys::UserId,
@@ -47,10 +60,165 @@ pub fn is_authorised_write(entry: &Entry, token: &McAuthorisationToken) -> bool 
     token.is_authorised_write(entry)
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum AccessMode {
-    ReadOnly,
-    ReadWrite,
+/// Represents an authorisation to read an area of data in a Namespace.
+// TODO: Move somewhere else?
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct ReadAuthorisation(McCapability, Option<McSubspaceCapability>);
+
+impl ReadAuthorisation {
+    pub fn new(read_cap: McCapability, subspace_cap: Option<McSubspaceCapability>) -> Self {
+        Self(read_cap, subspace_cap)
+    }
+
+    pub fn new_owned(
+        namespace_secret: NamespaceSecretKey,
+        user_key: UserId,
+    ) -> anyhow::Result<Self> {
+        let read_cap = McCapability::new_owned(
+            namespace_secret.public_key().id(),
+            &namespace_secret,
+            user_key,
+            AccessMode::Read,
+        )?;
+        let subspace_cap = meadowcap::McSubspaceCapability::new(
+            namespace_secret.public_key().id(),
+            &namespace_secret,
+            user_key,
+        )?;
+        Ok(Self::new(read_cap, Some(subspace_cap)))
+    }
+
+    pub fn read_cap(&self) -> &McCapability {
+        &self.0
+    }
+
+    pub fn subspace_cap(&self) -> Option<&McSubspaceCapability> {
+        self.1.as_ref()
+    }
+
+    pub fn namespace(&self) -> NamespaceId {
+        *self.0.granted_namespace()
+    }
+
+    pub fn delegate(
+        &self,
+        user_secret: &UserSecretKey,
+        new_user: UserId,
+        new_area: Area,
+    ) -> anyhow::Result<Self> {
+        let subspace_cap = match self.subspace_cap() {
+            Some(subspace_cap) if new_area.subspace().is_any() && !new_area.path().is_empty() => {
+                Some(subspace_cap.delegate(user_secret, &new_user)?)
+            }
+            _ => None,
+        };
+        let read_cap = self
+            .read_cap()
+            .delegate(user_secret, &new_user, &new_area)?;
+        Ok(Self::new(read_cap, subspace_cap))
+    }
+}
+
+// #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
+// pub enum AccessMode {
+//     ReadOnly,
+//     ReadWrite,
+// }
+
+pub mod serde_encoding {
+    use serde::{Deserialize, Deserializer};
+    use ufotofu::sync::{consumer::IntoVec, producer::FromSlice};
+    use willow_encoding::sync::{Decodable, Encodable, RelativeDecodable, RelativeEncodable};
+
+    use crate::proto::grouping::Area;
+
+    use super::*;
+
+    #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
+    pub struct SerdeReadAuthorisation(SerdeMcCapability, Option<SerdeMcSubspaceCapability>);
+
+    impl From<ReadAuthorisation> for SerdeReadAuthorisation {
+        fn from(value: ReadAuthorisation) -> Self {
+            Self(
+                SerdeMcCapability::from(value.0),
+                value.1.map(SerdeMcSubspaceCapability::from),
+            )
+        }
+    }
+
+    impl From<SerdeReadAuthorisation> for ReadAuthorisation {
+        fn from(value: SerdeReadAuthorisation) -> Self {
+            Self(value.0.into(), value.1.map(Into::into))
+        }
+    }
+
+    #[derive(
+        Debug, Clone, Eq, PartialEq, Hash, derive_more::From, derive_more::Into, derive_more::Deref,
+    )]
+    pub struct SerdeMcCapability(McCapability);
+
+    impl Serialize for SerdeMcCapability {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let relative = Area::new_full();
+            let encoded = {
+                let mut consumer = IntoVec::<u8>::new();
+                self.0
+                    .relative_encode(&relative, &mut consumer)
+                    .expect("encoding not to fail");
+                consumer.into_vec()
+            };
+            encoded.serialize(serializer)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for SerdeMcCapability {
+        fn deserialize<D>(deserializer: D) -> Result<SerdeMcCapability, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let relative = Area::new_full();
+            let data: Vec<u8> = Deserialize::deserialize(deserializer)?;
+            let decoded = {
+                let mut producer = FromSlice::new(&data);
+                let decoded = McCapability::relative_decode(&relative, &mut producer)
+                    .expect("decoding not to fail");
+                Self(decoded)
+            };
+            Ok(decoded)
+        }
+    }
+
+    #[derive(
+        Debug, Clone, Eq, PartialEq, Hash, derive_more::From, derive_more::Into, derive_more::Deref,
+    )]
+    pub struct SerdeMcSubspaceCapability(McSubspaceCapability);
+
+    impl Serialize for SerdeMcSubspaceCapability {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let encoded = {
+                let mut consumer = IntoVec::<u8>::new();
+                self.0.encode(&mut consumer).expect("encoding not to fail");
+                consumer.into_vec()
+            };
+            encoded.serialize(serializer)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for SerdeMcSubspaceCapability {
+        fn deserialize<D>(deserializer: D) -> Result<SerdeMcSubspaceCapability, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let data: Vec<u8> = Deserialize::deserialize(deserializer)?;
+            let decoded = {
+                let mut producer = FromSlice::new(&data);
+                let decoded =
+                    McSubspaceCapability::decode(&mut producer).expect("decoding not to fail");
+                Self(decoded)
+            };
+            Ok(decoded)
+        }
+    }
 }
 
 // use std::{io::Write, sync::Arc};

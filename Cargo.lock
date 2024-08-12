@@ -3238,7 +3238,6 @@ checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 [[package]]
 name = "meadowcap"
 version = "0.1.0"
-source = "git+https://github.com/Frando/willow-rs.git?branch=iroh#b98500eebb46bdbbb137f2b049c54f86bf49bcb6"
 dependencies = [
  "either",
  "signature",
@@ -6638,7 +6637,6 @@ checksum = "7219d36b6eac893fa81e84ebe06485e7dcbb616177469b142df14f1f4deb1311"
 [[package]]
 name = "willow-data-model"
 version = "0.1.0"
-source = "git+https://github.com/Frando/willow-rs.git?branch=iroh#b98500eebb46bdbbb137f2b049c54f86bf49bcb6"
 dependencies = [
  "bytes",
  "either",
@@ -6650,7 +6648,6 @@ dependencies = [
 [[package]]
 name = "willow-encoding"
 version = "0.1.0"
-source = "git+https://github.com/Frando/willow-rs.git?branch=iroh#b98500eebb46bdbbb137f2b049c54f86bf49bcb6"
 dependencies = [
  "either",
  "syncify",

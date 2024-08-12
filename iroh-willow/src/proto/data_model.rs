@@ -1,5 +1,7 @@
 use iroh_base::hash::Hash;
+use ufotofu::sync::{consumer::IntoVec, producer::FromSlice};
 use willow_data_model::InvalidPathError;
+use willow_encoding::sync::{Decodable, Encodable};
 
 use super::{
     keys,
@@ -132,6 +134,20 @@ pub struct Entry(
     >,
 );
 
+impl Entry {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut consumer = IntoVec::<u8>::new();
+        self.0.encode(&mut consumer).expect("encoding not to fail");
+        consumer.into_vec()
+    }
+
+    pub fn decode(bytes: &[u8]) -> anyhow::Result<Self> {
+        let mut producer = FromSlice::<u8>::new(bytes);
+        let entry = willow_data_model::Entry::decode(&mut producer)?;
+        Ok(Self(entry))
+    }
+}
+
 #[derive(Debug, Clone, derive_more::From, derive_more::Into, derive_more::Deref)]
 pub struct AuthorisedEntry(
     willow_data_model::AuthorisedEntry<
@@ -208,182 +224,37 @@ mod encoding {
     }
 }
 
-// /// A PossiblyAuthorisedEntry is a pair of an Entry and an AuthorisationToken.
-// #[derive(Debug, Serialize, Deserialize)]
-// pub struct PossiblyAuthorisedEntry(Entry, AuthorisationToken);
+pub mod serde_encoding {
+    use serde::{Deserialize, Deserializer, Serialize};
+    use ufotofu::sync::{consumer::IntoVec, producer::FromSlice};
+    use willow_encoding::sync::{Decodable, Encodable};
 
-// impl PossiblyAuthorisedEntry {
-//     pub fn new(entry: Entry, authorisation_token: AuthorisationToken) -> Self {
-//         Self(entry, authorisation_token)
-//     }
-//     pub fn is_authorised(&self) -> bool {
-//         is_authorised_write(&self.0, &self.1)
-//     }
+    use super::*;
 
-//     pub fn authorise(self) -> Result<AuthorisedEntry, Unauthorised> {
-//         match self.is_authorised() {
-//             true => Ok(AuthorisedEntry(self.0, self.1)),
-//             false => Err(Unauthorised),
-//         }
-//     }
+    impl Serialize for Entry {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let encoded = {
+                let mut consumer = IntoVec::<u8>::new();
+                self.0.encode(&mut consumer).expect("encoding not to fail");
+                consumer.into_vec()
+            };
+            encoded.serialize(serializer)
+        }
+    }
 
-//     pub fn into_parts(self) -> (Entry, AuthorisationToken) {
-//         (self.0, self.1)
-//     }
-// }
-
-// impl TryFrom<PossiblyAuthorisedEntry> for AuthorisedEntry {
-//     type Error = Unauthorised;
-//     fn try_from(value: PossiblyAuthorisedEntry) -> Result<Self, Self::Error> {
-//         value.authorise()
-//     }
-// }
-
-// /// An AuthorisedEntry is a PossiblyAuthorisedEntry for which is_authorised_write returns true.
-// #[derive(Debug, Serialize, Deserialize, Clone)]
-// pub struct AuthorisedEntry(Entry, AuthorisationToken);
-
-// impl AuthorisedEntry {
-//     pub fn try_from_parts(
-//         entry: Entry,
-//         static_token: StaticToken,
-//         dynamic_token: DynamicToken,
-//     ) -> Result<Self, Unauthorised> {
-//         let authorisation_token = AuthorisationToken::from_parts(static_token, dynamic_token);
-//         PossiblyAuthorisedEntry::new(entry, authorisation_token).authorise()
-//     }
-
-//     pub fn entry(&self) -> &Entry {
-//         &self.0
-//     }
-
-//     pub fn into_entry(self) -> Entry {
-//         self.0
-//     }
-
-//     pub fn is_authorised(&self) -> bool {
-//         true
-//     }
-
-//     /// Use only if you can assure that the authorisation was previously checked!
-//     pub fn from_parts_unchecked(entry: Entry, authorisation_token: AuthorisationToken) -> Self {
-//         Self(entry, authorisation_token)
-//     }
-
-//     pub fn into_parts(self) -> (Entry, AuthorisationToken) {
-//         (self.0, self.1)
-//     }
-
-//     pub fn namespace_id(&self) -> NamespaceId {
-//         self.1.capability.granted_namespace().into()
-//     }
-// }
-
-// // TODO: zerocopy support for path
-// // #[allow(missing_debug_implementations)]
-// // #[derive(KnownLayout, FromBytes, NoCell, Unaligned, IntoBytes)]
-// // #[repr(C, packed)]
-// // pub struct ComponentRef([u8]);
-// //
-// // #[allow(missing_debug_implementations)]
-// // #[derive(KnownLayout, FromBytes, NoCell, Unaligned, IntoBytes)]
-// // #[repr(C, packed)]
-// // pub struct PathRef([ComponentRef]);
-// // pub struct PathRef<'a>(&'a [&'a [u8]]);
-// // impl<'a> AsRef<PathRef<'a>> for Path {
-// //     fn as_ref(&'a self) -> &'a PathRef<'a> {
-// //         todo!()
-// //     }
-// // }
-
-// pub mod encodings {
-//     //! Encoding for Willow entries
-//     //!
-//     //! TODO: Verify that these are correct accoring to the spec! These encodings are the message
-//     //! bytes for authorisation signatures, so we better not need to change them again.
-
-//     use std::io::Write;
-
-//     use bytes::Bytes;
-
-//     use crate::{
-//         proto::willow::{NamespaceId, SubspaceId},
-//         util::codec::Encoder,
-//     };
-
-//     use super::{Entry, Path, DIGEST_LENGTH};
-
-//     /// `PATH_LENGTH_POWER` is the least natural number such that `256 ^ PATH_LENGTH_POWER ≥ MAX_COMPONENT_LENGTH`.
-//     /// We can represent the length of any Component in path_length_power bytes.
-//     /// UPathLengthPower denotes the type of numbers between zero (inclusive) and 256path_length_power (exclusive).
-//     ///
-//     /// The value `2` means that we can encode paths up to 64KiB long.
-//     pub const PATH_LENGTH_POWER: usize = 2;
-//     pub const PATH_COUNT_POWER: usize = PATH_LENGTH_POWER;
-//     pub type UPathLengthPower = u16;
-//     pub type UPathCountPower = u16;
-
-//     impl Encoder for Path {
-//         fn encoded_len(&self) -> usize {
-//             let lengths_len = PATH_COUNT_POWER + self.len() * PATH_LENGTH_POWER;
-//             let data_len = self.iter().map(Bytes::len).sum::<usize>();
-//             lengths_len + data_len
-//         }
-
-//         /// Encode in the format for signatures into a mutable vector.
-//         fn encode_into<W: Write>(&self, out: &mut W) -> anyhow::Result<()> {
-//             let component_count = self.len() as UPathCountPower;
-//             out.write_all(&component_count.to_be_bytes())?;
-//             for component in self.iter() {
-//                 let len = component.len() as UPathLengthPower;
-//                 out.write_all(&len.to_be_bytes())?;
-//                 out.write_all(component)?;
-//             }
-//             Ok(())
-//         }
-//     }
-
-//     impl Encoder for entry {
-//         fn encode_into<W: Write>(&self, out: &mut W) -> anyhow::Result<()> {
-//             out.write_all(self.namespace_id.as_bytes())?;
-//             out.write_all(self.subspace_id.as_bytes())?;
-//             self.path.encode_into(out)?;
-//             out.write_all(&self.timestamp.to_be_bytes())?;
-//             out.write_all(&self.payload_length.to_be_bytes())?;
-//             out.write_all(self.payload_digest.as_bytes())?;
-//             Ok(())
-//         }
-
-//         fn encoded_len(&self) -> usize {
-//             let path_len = self.path.encoded_len();
-//             NamespaceId::LENGTH + SubspaceId::LENGTH + path_len + 8 + 8 + DIGEST_LENGTH
-//         }
-//     }
-
-//     #[derive(Debug, Clone)]
-//     pub struct RelativePath<'a> {
-//         pub path: &'a Path,
-//         pub reference: &'a Path,
-//     }
-//     impl<'a> RelativePath<'a> {
-//         pub fn new(path: &'a Path, reference: &'a Path) -> Self {
-//             Self { path, reference }
-//         }
-//     }
-
-//     impl<'a> Encoder for RelativePath<'a> {
-//         fn encoded_len(&self) -> usize {
-//             let common_prefix_len = self.path.common_prefix_len(self.reference) as UPathCountPower;
-//             let remaining_path = self.path.remove_prefix(common_prefix_len as usize);
-//             PATH_COUNT_POWER + remaining_path.encoded_len()
-//         }
-
-//         fn encode_into<W: Write>(&self, out: &mut W) -> anyhow::Result<()> {
-//             let common_prefix_len = self.path.common_prefix_len(self.reference) as UPathCountPower;
-//             out.write_all(&common_prefix_len.to_be_bytes())?;
-//             let remaining_path = self.path.remove_prefix(common_prefix_len as usize);
-//             remaining_path.encode_into(out)?;
-//             Ok(())
-//         }
-//     }
-// }
+    impl<'de> Deserialize<'de> for Entry {
+        fn deserialize<D>(deserializer: D) -> Result<Entry, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let data: Vec<u8> = Deserialize::deserialize(deserializer)?;
+            let decoded = {
+                let mut producer = FromSlice::new(&data);
+                let decoded =
+                    willow_data_model::Entry::decode(&mut producer).expect("decoding not to fail");
+                Self(decoded)
+            };
+            Ok(decoded)
+        }
+    }
+}
