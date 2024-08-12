@@ -1,0 +1,6 @@
+[test-groups]
+run-in-isolation = { max-threads = 1 } # this are tests that must not run with other tests concurrently
+
+[[profile.default.overrides]]
+filter = 'test(::run_in_isolation::)'
+test-group = 'run-in-isolation'
