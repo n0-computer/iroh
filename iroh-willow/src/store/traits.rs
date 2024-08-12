@@ -102,7 +102,7 @@ pub trait EntryReader: Debug + 'static {
         range: &Range3d,
     ) -> impl Iterator<Item = Result<Entry>> {
         self.get_entries_with_authorisation(namespace, range)
-            .map(|e| e.map(|e| e.0))
+            .map(|e| e.map(|e| e.into_parts().0))
     }
 }
 

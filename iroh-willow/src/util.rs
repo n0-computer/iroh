@@ -2,6 +2,7 @@
 
 pub mod channel;
 pub mod codec;
+pub mod codec2;
 pub mod gen_stream;
 pub mod queue;
 pub mod stream;

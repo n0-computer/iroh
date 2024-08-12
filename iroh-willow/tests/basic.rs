@@ -7,8 +7,8 @@ use futures_lite::StreamExt;
 use iroh_willow::{
     interest::{Interests, IntoAreaOfInterest},
     proto::{
+        data_model::{Path, PathExt},
         grouping::{Area, AreaExt},
-        willow::{Path, PathExt},
     },
     session::{
         intents::{Completion, EventKind},
@@ -291,9 +291,9 @@ mod util {
         interest::{CapSelector, DelegateTo, RestrictArea},
         net::ALPN,
         proto::{
+            data_model::{Path, PathExt},
             keys::{NamespaceId, NamespaceKind, UserId},
             meadowcap::AccessMode,
-            willow::{Path, PathExt},
         },
     };
 

@@ -10,10 +10,7 @@ use tracing::{debug, error_span, trace, warn, Instrument, Span};
 
 use crate::{
     net::ConnHandle,
-    proto::{
-        data_model::Unauthorised,
-        wgps::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
-    },
+    proto::wgps::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
     session::{
         aoi_finder::{self, IntersectionFinder},
         capabilities::Capabilities,
@@ -324,7 +321,7 @@ pub(crate) async fn run_session<S: Storage>(
             let area_of_interest = area_of_interest.0;
             let cap = caps.get_theirs_eventually(authorisation).await;
             if !cap.granted_area().includes_area(&area_of_interest.area) {
-                return Err(Unauthorised.into());
+                return Err(Error::UnauthorisedArea);
             }
             let namespace = *cap.granted_namespace();
             intersection_inbox

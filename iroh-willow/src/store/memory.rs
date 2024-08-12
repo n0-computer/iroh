@@ -120,7 +120,7 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
             .filter_map(|e| e.ok())
             .collect();
 
-        entries.sort_by(|e1, e2| e1.as_set_sort_tuple().cmp(&e2.as_set_sort_tuple()));
+        entries.sort_by(|e1, e2| e1.as_sortable_tuple().cmp(&e2.as_sortable_tuple()));
 
         let split_index = count / 2;
         let mid = entries.get(split_index).expect("not empty");
@@ -210,7 +210,10 @@ impl traits::EntryStorage for Rc<RefCell<EntryStore>> {
 
     fn ingest_entry(&self, entry: &AuthorisedEntry) -> Result<bool> {
         let mut slf = self.borrow_mut();
-        let entries = slf.entries.entry(*entry.namespace_id()).or_default();
+        let entries = slf
+            .entries
+            .entry(*entry.entry().namespace_id())
+            .or_default();
         let new = entry.entry();
         let mut to_remove = vec![];
         for (i, existing) in entries.iter().enumerate() {

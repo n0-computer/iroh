@@ -5,6 +5,7 @@ use super::data_model::{
     Entry, Path, SubspaceId, Timestamp, MAX_COMPONENT_COUNT, MAX_COMPONENT_LENGTH, MAX_PATH_LENGTH,
 };
 
+/// See [`willow_data_model::grouping::Range3d`].
 pub type Range3d = willow_data_model::grouping::Range3d<
     MAX_COMPONENT_LENGTH,
     MAX_COMPONENT_COUNT,
@@ -12,6 +13,7 @@ pub type Range3d = willow_data_model::grouping::Range3d<
     SubspaceId,
 >;
 
+/// See [`willow_data_model::grouping::Area`].
 pub type Area = willow_data_model::grouping::Area<
     MAX_COMPONENT_LENGTH,
     MAX_COMPONENT_COUNT,
@@ -19,8 +21,10 @@ pub type Area = willow_data_model::grouping::Area<
     SubspaceId,
 >;
 
+/// See [`willow_data_model::grouping::AreaSubspace`].
 pub type AreaSubspace = willow_data_model::grouping::AreaSubspace<SubspaceId>;
 
+/// See [`willow_data_model::grouping::AreaOfInterest`].
 pub type AreaOfInterest = willow_data_model::grouping::AreaOfInterest<
     MAX_COMPONENT_LENGTH,
     MAX_COMPONENT_COUNT,
@@ -28,7 +32,9 @@ pub type AreaOfInterest = willow_data_model::grouping::AreaOfInterest<
     SubspaceId,
 >;
 
+/// Extension methods for [`AreaOfInterest`].
 pub trait AreaOfInterestExt {
+    /// Creates a new area of interest with the specified area and no other limits.
     fn with_area(area: Area) -> AreaOfInterest;
 }
 
@@ -42,9 +48,15 @@ impl AreaOfInterestExt for AreaOfInterest {
     }
 }
 
+/// Extension methods for [`Area`].
 pub trait AreaExt {
+    /// Returns `true` if the area contains `point`.
     fn includes_point(&self, point: &Point) -> bool;
+
+    /// Creates a new area with `path` as prefix and no constraints on subspace or timestamp.
     fn new_path(path: Path) -> Area;
+
+    /// Converts the area into a [`Range3d`].
     fn to_range(&self) -> Range3d;
 }
 
@@ -101,18 +113,15 @@ impl Point {
     }
 
     pub fn into_area(&self) -> Area {
-        let times = Range {
-            start: self.timestamp,
-            end: RangeEnd::Closed(self.timestamp + 1),
-        };
+        let times = Range::new_closed(self.timestamp, self.timestamp + 1).expect("verified");
         Area::new(AreaSubspace::Id(self.subspace_id), self.path.clone(), times)
     }
 }
 
 pub mod serde_encoding {
-    use serde::{Deserialize, Deserializer, Serialize};
-    use ufotofu::sync::{consumer::IntoVec, producer::FromSlice};
-    use willow_encoding::sync::{RelativeDecodable, RelativeEncodable};
+    use serde::{de, Deserialize, Deserializer, Serialize};
+
+    use crate::util::codec2::{from_bytes_relative, to_vec_relative};
 
     use super::*;
 
@@ -123,15 +132,8 @@ pub mod serde_encoding {
 
     impl Serialize for SerdeAreaOfInterest {
         fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-            let relative = Area::new_full();
-            let encoded_area = {
-                let mut consumer = IntoVec::<u8>::new();
-                self.0
-                    .area
-                    .relative_encode(&relative, &mut consumer)
-                    .expect("encoding not to fail");
-                consumer.into_vec()
-            };
+            let previous = Area::new_full();
+            let encoded_area = to_vec_relative(&previous, &self.0.area);
             (encoded_area, self.0.max_count, self.0.max_size).serialize(serializer)
         }
     }
@@ -144,18 +146,8 @@ pub mod serde_encoding {
             let relative = Area::new_full();
             let (encoded_area, max_count, max_size): (Vec<u8>, u64, u64) =
                 Deserialize::deserialize(deserializer)?;
-            let decoded_area = {
-                let mut producer = FromSlice::new(&encoded_area);
-
-                willow_data_model::grouping::Area::relative_decode(&relative, &mut producer)
-                    .map_err(|err| serde::de::Error::custom(format!("{err}")))?
-            };
-            let aoi = willow_data_model::grouping::AreaOfInterest {
-                area: decoded_area,
-                max_count,
-                max_size,
-            };
-            Ok(Self(aoi))
+            let area = from_bytes_relative(&relative, &encoded_area).map_err(de::Error::custom)?;
+            Ok(Self(AreaOfInterest::new(area, max_count, max_size)))
         }
     }
 
@@ -164,19 +156,8 @@ pub mod serde_encoding {
 
     impl Serialize for SerdeRange3d {
         fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-            let relative = Range3d::new(
-                Default::default(),
-                Range::new_open(Path::new_empty()),
-                Default::default(),
-            );
-            let encoded = {
-                let mut consumer = IntoVec::<u8>::new();
-                self.0
-                    .relative_encode(&relative, &mut consumer)
-                    .expect("encoding not to fail");
-                consumer.into_vec()
-            };
-            encoded.serialize(serializer)
+            let previous = Range3d::new_full();
+            to_vec_relative(&previous, &self.0).serialize(serializer)
         }
     }
 
@@ -185,19 +166,10 @@ pub mod serde_encoding {
         where
             D: Deserializer<'de>,
         {
-            let relative = Range3d::new(
-                Default::default(),
-                Range::new_open(Path::new_empty()),
-                Default::default(),
-            );
-            let encoded_range: Vec<u8> = Deserialize::deserialize(deserializer)?;
-            let decoded_range = {
-                let mut producer = FromSlice::new(&encoded_range);
-
-                willow_data_model::grouping::Range3d::relative_decode(&relative, &mut producer)
-                    .map_err(|err| serde::de::Error::custom(format!("{err}")))?
-            };
-            Ok(Self(decoded_range))
+            let previous = Range3d::new_full();
+            let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+            let decoded = from_bytes_relative(&previous, &bytes).map_err(de::Error::custom)?;
+            Ok(Self(decoded))
         }
     }
 }
