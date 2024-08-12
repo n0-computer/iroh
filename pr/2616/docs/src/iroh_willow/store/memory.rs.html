@@ -369,7 +369,7 @@
     interest::{CapSelector, CapabilityPack},
     proto::{
         data_model::{AuthorisedEntry, Entry, EntryExt, WriteCapability},
-        grouping::{Range, RangeEnd, ThreeDRange},
+        grouping::{Range, Range3d, RangeEnd},
         keys::{NamespaceId, NamespaceSecretKey, UserId, UserSecretKey},
         meadowcap::{<span class="self">self</span>, is_wider_than, ReadAuthorisation},
         wgps::Fingerprint,
@@ -455,7 +455,7 @@
 
 <span class="comment">// impl&lt;T: std::ops::Deref&lt;Target = MemoryEntryStore&gt; + 'static&gt; ReadonlyStore for T {
 </span><span class="kw">impl </span>traits::EntryReader <span class="kw">for </span>Rc&lt;RefCell&lt;EntryStore&gt;&gt; {
-    <span class="kw">fn </span>fingerprint(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>ThreeDRange) -&gt; <span class="prelude-ty">Result</span>&lt;Fingerprint&gt; {
+    <span class="kw">fn </span>fingerprint(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>Range3d) -&gt; <span class="prelude-ty">Result</span>&lt;Fingerprint&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>fingerprint = Fingerprint::default();
         <span class="kw">for </span>entry <span class="kw">in </span><span class="self">self</span>.get_entries(namespace, range) {
             <span class="kw">let </span>entry = entry<span class="question-mark">?</span>;
@@ -467,7 +467,7 @@
     <span class="kw">fn </span>split_range(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         namespace: NamespaceId,
-        range: <span class="kw-2">&amp;</span>ThreeDRange,
+        range: <span class="kw-2">&amp;</span>Range3d,
         config: <span class="kw-2">&amp;</span>SplitOpts,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;RangeSplit&gt;&gt;&gt; {
         <span class="kw">let </span>count = <span class="self">self</span>.get_entries(namespace, range).count();
@@ -488,12 +488,12 @@
         <span class="kw">let </span><span class="kw-2">mut </span>ranges = <span class="macro">vec!</span>[];
         <span class="comment">// split in two halves by subspace
         </span><span class="kw">if </span><span class="kw-2">*</span>mid.subspace_id() != range.subspaces().start {
-            ranges.push(ThreeDRange::new(
+            ranges.push(Range3d::new(
                 Range::new_closed(range.subspaces().start, <span class="kw-2">*</span>mid.subspace_id()).unwrap(),
                 range.paths().clone(),
                 <span class="kw-2">*</span>range.times(),
             ));
-            ranges.push(ThreeDRange::new(
+            ranges.push(Range3d::new(
                 Range::new(<span class="kw-2">*</span>mid.subspace_id(), range.subspaces().end),
                 range.paths().clone(),
                 <span class="kw-2">*</span>range.times(),
@@ -501,7 +501,7 @@
         }
         <span class="comment">// split by path
         </span><span class="kw">else if </span><span class="kw-2">*</span>mid.path() != range.paths().start {
-            ranges.push(ThreeDRange::new(
+            ranges.push(Range3d::new(
                 <span class="kw-2">*</span>range.subspaces(),
                 Range::new(
                     range.paths().start.clone(),
@@ -509,19 +509,19 @@
                 ),
                 <span class="kw-2">*</span>range.times(),
             ));
-            ranges.push(ThreeDRange::new(
+            ranges.push(Range3d::new(
                 <span class="kw-2">*</span>range.subspaces(),
                 Range::new(mid.path().clone(), range.paths().end.clone()),
                 <span class="kw-2">*</span>range.times(),
             ));
         <span class="comment">// split by time
         </span>} <span class="kw">else </span>{
-            ranges.push(ThreeDRange::new(
+            ranges.push(Range3d::new(
                 <span class="kw-2">*</span>range.subspaces(),
                 range.paths().clone(),
                 Range::new(range.times().start, RangeEnd::Closed(mid.timestamp())),
             ));
-            ranges.push(ThreeDRange::new(
+            ranges.push(Range3d::new(
                 <span class="kw-2">*</span>range.subspaces(),
                 range.paths().clone(),
                 Range::new(mid.timestamp(), range.times().end),
@@ -535,14 +535,14 @@
         <span class="prelude-val">Ok</span>(out.into_iter())
     }
 
-    <span class="kw">fn </span>count(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>ThreeDRange) -&gt; <span class="prelude-ty">Result</span>&lt;u64&gt; {
+    <span class="kw">fn </span>count(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>Range3d) -&gt; <span class="prelude-ty">Result</span>&lt;u64&gt; {
         <span class="prelude-val">Ok</span>(<span class="self">self</span>.get_entries(namespace, range).count() <span class="kw">as </span>u64)
     }
 
     <span class="kw">fn </span>get_entries_with_authorisation&lt;<span class="lifetime">'a</span>&gt;(
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
         namespace: NamespaceId,
-        range: <span class="kw-2">&amp;</span>ThreeDRange,
+        range: <span class="kw-2">&amp;</span>Range3d,
     ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;AuthorisedEntry&gt;&gt; + <span class="lifetime">'a </span>{
         <span class="kw">let </span>slf = <span class="self">self</span>.borrow();
         slf.entries

@@ -224,8 +224,6 @@
 <a href="#224" id="224">224</a>
 <a href="#225" id="225">225</a>
 <a href="#226" id="226">226</a>
-<a href="#227" id="227">227</a>
-<a href="#228" id="228">228</a>
 </pre></div><pre class="rust"><code><span class="kw">pub use </span>willow_data_model::grouping::{Range, RangeEnd};
 <span class="kw">use </span>willow_data_model::SubspaceId <span class="kw">as _</span>;
 
@@ -239,8 +237,6 @@
     MAX_PATH_LENGTH,
     SubspaceId,
 &gt;;
-
-<span class="kw">pub type </span>ThreeDRange = Range3d;
 
 <span class="kw">pub type </span>Area = willow_data_model::grouping::Area&lt;
     MAX_COMPONENT_LENGTH,
@@ -376,9 +372,9 @@
                 Deserialize::deserialize(deserializer)<span class="question-mark">?</span>;
             <span class="kw">let </span>decoded_area = {
                 <span class="kw">let </span><span class="kw-2">mut </span>producer = FromSlice::new(<span class="kw-2">&amp;</span>encoded_area);
-                
+
                 willow_data_model::grouping::Area::relative_decode(<span class="kw-2">&amp;</span>relative, <span class="kw-2">&amp;mut </span>producer)
-                        .map_err(|err| serde::de::Error::custom(<span class="macro">format!</span>(<span class="string">"{err}"</span>)))<span class="question-mark">?
+                    .map_err(|err| serde::de::Error::custom(<span class="macro">format!</span>(<span class="string">"{err}"</span>)))<span class="question-mark">?
             </span>};
             <span class="kw">let </span>aoi = willow_data_model::grouping::AreaOfInterest {
                 area: decoded_area,
@@ -423,9 +419,9 @@
             <span class="kw">let </span>encoded_range: Vec&lt;u8&gt; = Deserialize::deserialize(deserializer)<span class="question-mark">?</span>;
             <span class="kw">let </span>decoded_range = {
                 <span class="kw">let </span><span class="kw-2">mut </span>producer = FromSlice::new(<span class="kw-2">&amp;</span>encoded_range);
-                
+
                 willow_data_model::grouping::Range3d::relative_decode(<span class="kw-2">&amp;</span>relative, <span class="kw-2">&amp;mut </span>producer)
-                        .map_err(|err| serde::de::Error::custom(<span class="macro">format!</span>(<span class="string">"{err}"</span>)))<span class="question-mark">?
+                    .map_err(|err| serde::de::Error::custom(<span class="macro">format!</span>(<span class="string">"{err}"</span>)))<span class="question-mark">?
             </span>};
             <span class="prelude-val">Ok</span>(<span class="self">Self</span>(decoded_range))
         }

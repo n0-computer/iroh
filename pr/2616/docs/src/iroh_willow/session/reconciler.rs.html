@@ -623,7 +623,6 @@
 <a href="#623" id="623">623</a>
 <a href="#624" id="624">624</a>
 <a href="#625" id="625">625</a>
-<a href="#626" id="626">626</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{HashMap, HashSet},
     num::NonZeroU64,
@@ -638,7 +637,8 @@
 
 <span class="kw">use crate</span>::{
     proto::{
-        grouping::{AreaExt, AreaOfInterest, ThreeDRange},
+        data_model::PayloadDigest,
+        grouping::{AreaExt, AreaOfInterest, Range3d},
         keys::NamespaceId,
         wgps::{
             AreaOfInterestHandle, Fingerprint, IsHandle, LengthyEntry,
@@ -646,7 +646,6 @@
             ReconciliationSendFingerprint, ReconciliationSendPayload,
             ReconciliationTerminatePayload,
         },
-        data_model::PayloadDigest,
     },
     session::{
         aoi_finder::AoiIntersection,
@@ -676,7 +675,6 @@
     },
     ReconciledAll,
 }
-
 
 <span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub struct </span>Reconciler&lt;S: Storage&gt; {
@@ -1138,7 +1136,7 @@
     <span class="kw">async fn </span>send_fingerprint(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;,
-        range: ThreeDRange,
+        range: Range3d,
         fingerprint: Fingerprint,
         covers: <span class="prelude-ty">Option</span>&lt;u64&gt;,
     ) -&gt; anyhow::Result&lt;()&gt; {
@@ -1157,7 +1155,7 @@
     <span class="kw">async fn </span>announce_and_send_entries(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;,
-        range: <span class="kw-2">&amp;</span>ThreeDRange,
+        range: <span class="kw-2">&amp;</span>Range3d,
         want_response: bool,
         covers: <span class="prelude-ty">Option</span>&lt;u64&gt;,
         our_entry_count: <span class="prelude-ty">Option</span>&lt;u64&gt;,

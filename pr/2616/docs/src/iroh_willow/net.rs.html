@@ -1223,7 +1223,7 @@
         net::{terminate_gracefully, ConnHandle},
         proto::{
             data_model::{Entry, InvalidPathError2, Path, PathExt},
-            grouping::ThreeDRange,
+            grouping::Range3d,
             keys::{NamespaceId, NamespaceKind, UserId},
             meadowcap::AccessMode,
             wgps::AccessChallenge,
@@ -1596,7 +1596,7 @@
 
     <span class="kw">async fn </span>get_entries(store: <span class="kw-2">&amp;</span>ActorHandle, namespace: NamespaceId) -&gt; <span class="prelude-ty">Result</span>&lt;BTreeSet&lt;Entry&gt;&gt; {
         <span class="kw">let </span>entries: <span class="prelude-ty">Result</span>&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt; = store
-            .get_entries(namespace, ThreeDRange::new_full())
+            .get_entries(namespace, Range3d::new_full())
             .<span class="kw">await</span><span class="question-mark">?
             </span>.try_collect()
             .<span class="kw">await</span>;

@@ -138,18 +138,10 @@
 <a href="#138" id="138">138</a>
 <a href="#139" id="139">139</a>
 <a href="#140" id="140">140</a>
-<a href="#141" id="141">141</a>
-<a href="#142" id="142">142</a>
-<a href="#143" id="143">143</a>
-<a href="#144" id="144">144</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>ed25519_dalek::SignatureError;
 
 <span class="kw">use crate</span>::{
-    proto::{
-        meadowcap::{UserId},
-        wgps::ResourceHandle,
-        data_model::Unauthorised,
-    },
+    proto::{data_model::Unauthorised, meadowcap::UserId, wgps::ResourceHandle},
     session::{pai_finder::PaiError, resource::MissingResource},
     store::traits::SecretStoreError,
     util::channel::{ReadError, WriteError},

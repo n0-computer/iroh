@@ -280,6 +280,11 @@
 <a href="#280" id="280">280</a>
 <a href="#281" id="281">281</a>
 <a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{HashMap, HashSet};
 
 <span class="kw">use </span>anyhow::Result;
@@ -294,7 +299,7 @@
     },
     proto::{
         data_model::WriteCapability,
-        grouping::{AreaOfInterest},
+        grouping::AreaOfInterest,
         keys::{NamespaceId, UserId},
         meadowcap::{AccessMode, FailedDelegationError, McCapability, ReadAuthorisation},
     },
@@ -449,7 +454,12 @@
                 </span>.secrets
                 .get_namespace(<span class="kw-2">&amp;</span>namespace_key)
                 .ok_or(AuthError::MissingNamespaceSecret(namespace_key))<span class="question-mark">?</span>;
-            McCapability::new_owned(namespace_key, <span class="kw-2">&amp;</span>namespace_secret, user_key, AccessMode::Write)<span class="question-mark">?
+            McCapability::new_owned(
+                namespace_key,
+                <span class="kw-2">&amp;</span>namespace_secret,
+                user_key,
+                AccessMode::Write,
+            )<span class="question-mark">?
         </span>};
         <span class="kw">let </span>pack = CapabilityPack::Write(cap.into());
         <span class="prelude-val">Ok</span>(pack)

@@ -476,10 +476,10 @@
     interest::{CapSelector, CapabilityPack, DelegateTo, InterestMap, Interests},
     net::ConnHandle,
     proto::{
-        grouping::ThreeDRange,
+        data_model::{AuthorisedEntry, Entry},
+        grouping::Range3d,
         keys::{NamespaceId, NamespaceKind, UserId, UserSecretKey},
         meadowcap::{<span class="self">self</span>, AccessMode},
-        data_model::{AuthorisedEntry, Entry},
     },
     session::{intents::Intent, run_session, Error, EventSender, SessionHandle},
     store::{
@@ -584,7 +584,7 @@
     <span class="kw">pub async fn </span>get_entries(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         namespace: NamespaceId,
-        range: ThreeDRange,
+        range: Range3d,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = anyhow::Result&lt;Entry&gt;&gt;&gt; {
         <span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">1024</span>);
         <span class="self">self</span>.send(Input::GetEntries {
@@ -691,7 +691,7 @@
     },
     GetEntries {
         namespace: NamespaceId,
-        range: ThreeDRange,
+        range: Range3d,
         <span class="attr">#[debug(skip)]
         </span>reply: flume::Sender&lt;<span class="prelude-ty">Result</span>&lt;Entry&gt;&gt;,
     },
