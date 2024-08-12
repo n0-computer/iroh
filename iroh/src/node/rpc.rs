@@ -40,6 +40,7 @@ use crate::client::{
     NodeStatus,
 };
 use crate::node::{docs::DocsEngine, NodeInner};
+use crate::rpc_protocol::node::{LocallyDiscoveredNodesRequest, LocallyDiscoveredNodesResponse};
 use crate::rpc_protocol::{
     authors, blobs,
     blobs::{
@@ -156,6 +157,7 @@ impl<D: BaoStore> Handler<D> {
             }
             ConnectionInfo(msg) => chan.rpc(msg, self, Self::node_connection_info).await,
             AddAddr(msg) => chan.rpc(msg, self, Self::node_add_addr).await,
+            LocallyDiscoveredNodes(msg) => chan.rpc(msg, self, Self::node_locally_discovered).await,
         }
     }
 
@@ -1087,6 +1089,15 @@ impl<D: BaoStore> Handler<D> {
         let AddAddrRequest { addr } = req;
         self.inner.endpoint.add_node_addr(addr)?;
         Ok(())
+    }
+
+    // This method is called as an RPC method, which have to be asy
+    async fn node_locally_discovered(
+        self,
+        _: LocallyDiscoveredNodesRequest,
+    ) -> RpcResult<LocallyDiscoveredNodesResponse> {
+        let node_addrs = self.inner.endpoint.locally_discovered_nodes().await;
+        Ok(LocallyDiscoveredNodesResponse { node_addrs })
     }
 
     async fn create_collection(

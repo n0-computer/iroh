@@ -33,6 +33,8 @@ pub enum Request {
     Connections(ConnectionsRequest),
     #[rpc(response = RpcResult<ConnectionInfoResponse>)]
     ConnectionInfo(ConnectionInfoRequest),
+    #[rpc(response = RpcResult<LocallyDiscoveredNodesResponse>)]
+    LocallyDiscoveredNodes(LocallyDiscoveredNodesRequest),
     #[server_streaming(response = WatchResponse)]
     Watch(NodeWatchRequest),
 }
@@ -48,6 +50,7 @@ pub enum Response {
     Stats(RpcResult<StatsResponse>),
     Connections(RpcResult<ConnectionsResponse>),
     ConnectionInfo(RpcResult<ConnectionInfoResponse>),
+    LocallyDiscoveredNodes(RpcResult<LocallyDiscoveredNodesResponse>),
     Shutdown(()),
     Watch(WatchResponse),
 }
@@ -78,6 +81,20 @@ pub struct ConnectionInfoRequest {
 pub struct ConnectionInfoResponse {
     /// Information about a connection to a node
     pub conn_info: Option<ConnectionInfo>,
+}
+
+/// Get a list of nodes that have been discovered on the local network.
+///
+/// If no [`Discovery`] service is enabled, or no [`Discovery`] service that is
+/// enabled discovers nodes on the local network, then this will return `None`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LocallyDiscoveredNodesRequest;
+
+/// A response to a locally node discovery request.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LocallyDiscoveredNodesResponse {
+    /// [`NodeAddr`]s of nodes discovered on the local network
+    pub node_addrs: Option<Vec<NodeAddr>>,
 }
 
 /// A request to shutdown the node

@@ -24,7 +24,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::node::{
     AddAddrRequest, AddrRequest, ConnectionInfoRequest, ConnectionInfoResponse, ConnectionsRequest,
-    CounterStats, IdRequest, RelayRequest, ShutdownRequest, StatsRequest, StatusRequest,
+    CounterStats, IdRequest, LocallyDiscoveredNodesRequest, LocallyDiscoveredNodesResponse,
+    RelayRequest, ShutdownRequest, StatsRequest, StatusRequest,
 };
 
 use super::{flatten, RpcClient};
@@ -140,6 +141,18 @@ impl Client {
         let ConnectionInfoResponse { conn_info } =
             self.rpc.rpc(ConnectionInfoRequest { node_id }).await??;
         Ok(conn_info)
+    }
+
+    /// Fetches a list of nodes that have been discovered on the local network.
+    ///
+    /// This will return and empty list if:
+    /// - no local nodes have been discovered
+    /// - `Discovery` is not enabled
+    /// -  none of the discovery services configured do discovery on the locally network.
+    pub async fn locally_discovered_nodes(&self) -> Result<Vec<NodeAddr>> {
+        let LocallyDiscoveredNodesResponse { node_addrs } =
+            self.rpc.rpc(LocallyDiscoveredNodesRequest).await??;
+        Ok(node_addrs.unwrap_or_default())
     }
 
     /// Fetches status information about this node.
