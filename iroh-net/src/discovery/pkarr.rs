@@ -153,12 +153,17 @@ impl PublisherService {
         loop {
             if let Some(info) = self.watcher.get() {
                 if let Err(err) = self.publish_current(info).await {
-                    warn!(?err, url = %self.pkarr_client.pkarr_relay_url , "Failed to publish to pkarr");
                     failed_attempts += 1;
                     // Retry after increasing timeout
-                    republish
-                        .as_mut()
-                        .reset(Instant::now() + Duration::from_secs(failed_attempts));
+                    let retry_after = Duration::from_secs(failed_attempts);
+                    republish.as_mut().reset(Instant::now() + retry_after);
+                    warn!(
+                        err = %format!("{err:#}"),
+                        url = %self.pkarr_client.pkarr_relay_url ,
+                        ?retry_after,
+                        %failed_attempts,
+                        "Failed to publish to pkarr",
+                    );
                 } else {
                     failed_attempts = 0;
                     // Republish after fixed interval

@@ -30,6 +30,7 @@ use crate::{
 
 mod best_addr;
 mod node_state;
+mod path_state;
 mod udp_paths;
 
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, NodeInfo};
