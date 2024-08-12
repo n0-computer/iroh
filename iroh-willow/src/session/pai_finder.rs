@@ -22,11 +22,11 @@ use crate::{
         grouping::AreaSubspace,
         meadowcap::{ReadAuthorisation, SubspaceCapability},
         pai::{Fragment, FragmentKind, FragmentSet, PaiScheme, PsiGroup, PsiScalar},
-        sync::{
+        wgps::{
             IntersectionHandle, IntersectionMessage, Message, PaiBindFragment, PaiReplyFragment,
             PaiRequestSubspaceCapability,
         },
-        willow::{NamespaceId, Path},
+        data_model::{NamespaceId, Path},
     },
     session::{
         resource::{MissingResource, ResourceMap},
@@ -514,7 +514,7 @@ mod tests {
                 IntersectionMessage, Message, PaiBindFragment, PaiReplyFragment,
                 PaiRequestSubspaceCapability,
             },
-            willow::{Path, PathExt},
+            data_model::{Path, PathExt},
         },
         session::{pai_finder::PaiIntersection, Error},
     };

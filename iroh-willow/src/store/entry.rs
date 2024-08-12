@@ -6,7 +6,7 @@ use tokio::sync::broadcast;
 
 use crate::proto::{
     grouping::Area,
-    willow::{AuthorisedEntry, NamespaceId},
+    data_model::{AuthorisedEntry, NamespaceId},
 };
 
 pub type SessionId = u64;

@@ -18,7 +18,7 @@ use crate::{
         grouping::ThreeDRange,
         keys::{NamespaceId, NamespaceKind, UserId, UserSecretKey},
         meadowcap::{self, AccessMode},
-        willow::{AuthorisedEntry, Entry},
+        data_model::{AuthorisedEntry, Entry},
     },
     session::{intents::Intent, run_session, Error, EventSender, SessionHandle},
     store::{

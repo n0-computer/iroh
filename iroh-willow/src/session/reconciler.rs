@@ -10,31 +10,17 @@ use iroh_blobs::store::Store as PayloadStore;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, trace};
 
-#[derive(Debug)]
-pub enum Input {
-    AoiIntersection(AoiIntersection),
-}
-
-#[derive(Debug)]
-pub enum Output {
-    ReconciledArea {
-        namespace: NamespaceId,
-        area: AreaOfInterest,
-    },
-    ReconciledAll,
-}
-
 use crate::{
     proto::{
         grouping::{AreaExt, AreaOfInterest, ThreeDRange},
         keys::NamespaceId,
-        sync::{
+        wgps::{
             AreaOfInterestHandle, Fingerprint, IsHandle, LengthyEntry,
             ReconciliationAnnounceEntries, ReconciliationMessage, ReconciliationSendEntry,
             ReconciliationSendFingerprint, ReconciliationSendPayload,
             ReconciliationTerminatePayload,
         },
-        willow::PayloadDigest,
+        data_model::PayloadDigest,
     },
     session::{
         aoi_finder::AoiIntersection,
@@ -50,6 +36,21 @@ use crate::{
     },
     util::{gen_stream::GenStream, stream::Cancelable},
 };
+
+#[derive(Debug)]
+pub enum Input {
+    AoiIntersection(AoiIntersection),
+}
+
+#[derive(Debug)]
+pub enum Output {
+    ReconciledArea {
+        namespace: NamespaceId,
+        area: AreaOfInterest,
+    },
+    ReconciledAll,
+}
+
 
 #[derive(derive_more::Debug)]
 pub struct Reconciler<S: Storage> {

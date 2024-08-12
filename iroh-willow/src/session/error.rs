@@ -3,8 +3,8 @@ use ed25519_dalek::SignatureError;
 use crate::{
     proto::{
         meadowcap::{UserId},
-        sync::ResourceHandle,
-        willow::Unauthorised,
+        wgps::ResourceHandle,
+        data_model::Unauthorised,
     },
     session::{pai_finder::PaiError, resource::MissingResource},
     store::traits::SecretStoreError,

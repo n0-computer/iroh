@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, trace};
 
 use crate::{
-    proto::sync::{
+    proto::wgps::{
         AccessChallenge, ChallengeHash, Channel, LogicalChannel, Message, CHALLENGE_HASH_LENGTH,
         MAX_PAYLOAD_SIZE_POWER,
     },
@@ -404,7 +404,7 @@ mod tests {
             grouping::ThreeDRange,
             keys::{NamespaceId, NamespaceKind, UserId},
             meadowcap::AccessMode,
-            sync::AccessChallenge,
+            wgps::AccessChallenge,
         },
         session::{intents::Intent, Role, SessionHandle, SessionInit, SessionMode},
     };

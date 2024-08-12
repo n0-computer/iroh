@@ -8,8 +8,8 @@ use crate::{
         grouping::ThreeDRange,
         keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
         meadowcap::{self, ReadAuthorisation},
-        sync::Fingerprint,
-        willow::{AuthorisedEntry, Entry, NamespaceId, WriteCapability},
+        wgps::Fingerprint,
+        data_model::{AuthorisedEntry, Entry, NamespaceId, WriteCapability},
     },
 };
 

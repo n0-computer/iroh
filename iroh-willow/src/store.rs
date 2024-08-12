@@ -7,7 +7,7 @@ use crate::{
     proto::{
         data_model::{AuthorisedEntry, PayloadDigest},
         keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserId},
-        willow::Entry,
+        data_model::Entry,
     },
     store::traits::SecretStorage,
     util::time::system_time_now,
