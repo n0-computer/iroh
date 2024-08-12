@@ -506,7 +506,7 @@ mod tests {
     use crate::{
         proto::{
             grouping::{Area, AreaSubspace},
-            keys::{NamespaceKind, NamespaceSecretKey, UserId, UserPublicKey, UserSecretKey},
+            keys::{NamespaceKind, NamespaceSecretKey, UserId, UserSecretKey},
             meadowcap::ReadAuthorisation,
             wgps::{
                 IntersectionMessage, Message, PaiBindFragment, PaiReplyFragment,
