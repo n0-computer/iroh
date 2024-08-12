@@ -12,7 +12,7 @@ use crate::{
     },
     proto::{
         data_model::WriteCapability,
-        grouping::{Area, AreaOfInterest, AreaOfInterestExt},
+        grouping::{AreaOfInterest},
         keys::{NamespaceId, UserId},
         meadowcap::{AccessMode, FailedDelegationError, McCapability, ReadAuthorisation},
     },

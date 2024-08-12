@@ -2,7 +2,7 @@ use ed25519_dalek::SignatureError;
 
 use crate::{
     proto::{
-        meadowcap::{self, UserId},
+        meadowcap::{UserId},
         sync::ResourceHandle,
         willow::Unauthorised,
     },

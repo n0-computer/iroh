@@ -3,7 +3,6 @@ use ufotofu::sync::{consumer::IntoVec, producer::FromSlice};
 use willow_data_model::{AuthorisationToken as _, InvalidPathError};
 use willow_encoding::sync::{Decodable, Encodable};
 
-use crate::proto::keys::UserSignature;
 
 use super::{
     keys,
