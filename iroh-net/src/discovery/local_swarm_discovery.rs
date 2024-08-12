@@ -12,7 +12,7 @@ use std::{
 use anyhow::Result;
 use derive_more::FromStr;
 use futures_lite::{stream::Boxed as BoxStream, StreamExt};
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, warn};
 
 use async_channel::Sender;
 use iroh_base::key::PublicKey;
@@ -61,7 +61,7 @@ impl LocalSwarmDiscovery {
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
     pub fn new(node_id: NodeId) -> Result<Self> {
-        debug!("Creating new LocalSwarmDiscovery service");
+        debug!(?node_id, "Creating new LocalSwarmDiscovery service");
         let (send, recv) = async_channel::bounded(64);
         let task_sender = send.clone();
         let rt = tokio::runtime::Handle::current();
@@ -79,7 +79,7 @@ impl LocalSwarmDiscovery {
                 HashMap::default();
             let mut timeouts = JoinSet::new();
             loop {
-                trace!(?node_addrs, "LocalSwarmDiscovery Service loop tick");
+                debug!(?node_addrs, "LocalSwarmDiscovery Service loop tick");
                 let msg = match recv.recv().await {
                     Err(err) => {
                         error!("LocalSwarmDiscovery service error: {err:?}");
@@ -91,7 +91,7 @@ impl LocalSwarmDiscovery {
                 };
                 match msg {
                     Message::Discovery(discovered_node_id, peer_info) => {
-                        trace!(
+                        debug!(
                             ?discovered_node_id,
                             ?peer_info,
                             "LocalSwarmDiscovery Message::Discovery"
@@ -112,7 +112,7 @@ impl LocalSwarmDiscovery {
                         }
 
                         if peer_info.is_expiry() {
-                            trace!(
+                            debug!(
                                 ?discovered_node_id,
                                 "removing node from LocalSwarmDiscovery address book"
                             );
@@ -123,11 +123,11 @@ impl LocalSwarmDiscovery {
                         if let Some(senders) = senders.get(&discovered_node_id) {
                             for sender in senders.values() {
                                 let item: DiscoveryItem = (&peer_info).into();
-                                trace!(?item, "sending DiscoveryItem");
+                                debug!(?item, "sending DiscoveryItem");
                                 sender.send(Ok(item)).await.ok();
                             }
                         }
-                        trace!(
+                        debug!(
                             ?discovered_node_id,
                             ?peer_info,
                             "adding node to LocalSwarmDiscovery address book"
@@ -137,7 +137,7 @@ impl LocalSwarmDiscovery {
                     Message::SendAddrs(node_id, sender) => {
                         let id = last_id + 1;
                         last_id = id;
-                        trace!(?node_id, "LocalSwarmDiscovery Message::SendAddrs");
+                        debug!(?node_id, "LocalSwarmDiscovery Message::SendAddrs");
                         if let Some(peer_info) = node_addrs.get(&node_id) {
                             let item: DiscoveryItem = peer_info.into();
                             debug!(?item, "sending DiscoveryItem");
@@ -153,7 +153,7 @@ impl LocalSwarmDiscovery {
                         let timeout_sender = task_sender.clone();
                         timeouts.spawn(async move {
                             tokio::time::sleep(DISCOVERY_DURATION).await;
-                            trace!(?node_id, "discovery timeout");
+                            debug!(?node_id, "discovery timeout");
                             timeout_sender
                                 .send(Message::Timeout(node_id, id))
                                 .await
@@ -161,7 +161,7 @@ impl LocalSwarmDiscovery {
                         });
                     }
                     Message::Timeout(node_id, id) => {
-                        trace!(?node_id, "LocalSwarmDiscovery Message::Timeout");
+                        debug!(?node_id, "LocalSwarmDiscovery Message::Timeout");
                         if let Some(senders_for_node_id) = senders.get_mut(&node_id) {
                             senders_for_node_id.remove(&id);
                             if senders_for_node_id.is_empty() {
@@ -170,7 +170,11 @@ impl LocalSwarmDiscovery {
                         }
                     }
                     Message::ChangeLocalAddrs(addrs) => {
-                        trace!(?addrs, "LocalSwarmDiscovery Message::ChangeLocalAddrs");
+                        debug!(
+                            ?node_id,
+                            ?addrs,
+                            "LocalSwarmDiscovery Message::ChangeLocalAddrs"
+                        );
                         discovery.remove_all();
                         let addrs =
                             LocalSwarmDiscovery::socketaddrs_to_addrs(addrs.direct_addresses);
@@ -194,7 +198,7 @@ impl LocalSwarmDiscovery {
         rt: &tokio::runtime::Handle,
     ) -> Result<DropGuard> {
         let callback = move |node_id: &str, peer: &Peer| {
-            trace!(
+            debug!(
                 node_id,
                 ?peer,
                 "Received peer information from LocalSwarmDiscovery"
