@@ -485,9 +485,6 @@
 <a href="#485" id="485">485</a>
 <a href="#486" id="486">486</a>
 <a href="#487" id="487">487</a>
-<a href="#488" id="488">488</a>
-<a href="#489" id="489">489</a>
-<a href="#490" id="490">490</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, sync::Arc};
 
 <span class="kw">use </span>futures_concurrency::{future::TryJoin, stream::StreamExt <span class="kw">as _</span>};
@@ -500,10 +497,7 @@
 
 <span class="kw">use crate</span>::{
     net::ConnHandle,
-    proto::{
-        data_model::Unauthorised,
-        wgps::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
-    },
+    proto::wgps::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
     session::{
         aoi_finder::{<span class="self">self</span>, IntersectionFinder},
         capabilities::Capabilities,
@@ -814,7 +808,7 @@
             <span class="kw">let </span>area_of_interest = area_of_interest.<span class="number">0</span>;
             <span class="kw">let </span>cap = caps.get_theirs_eventually(authorisation).<span class="kw">await</span>;
             <span class="kw">if </span>!cap.granted_area().includes_area(<span class="kw-2">&amp;</span>area_of_interest.area) {
-                <span class="kw">return </span><span class="prelude-val">Err</span>(Unauthorised.into());
+                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::UnauthorisedArea);
             }
             <span class="kw">let </span>namespace = <span class="kw-2">*</span>cap.granted_namespace();
             intersection_inbox

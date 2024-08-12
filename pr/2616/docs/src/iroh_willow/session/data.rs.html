@@ -267,7 +267,7 @@
     }
 
     <span class="kw">async fn </span>send_entry(<span class="kw-2">&amp;mut </span><span class="self">self</span>, authorised_entry: AuthorisedEntry) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
-        <span class="kw">let </span>AuthorisedEntry(entry, token) = authorised_entry;
+        <span class="kw">let </span>(entry, token) = authorised_entry.into_parts();
         <span class="kw">let </span>static_token: StaticToken = token.capability.into();
         <span class="kw">let </span>dynamic_token = token.signature;
         <span class="comment">// TODO: partial payloads
@@ -345,7 +345,7 @@
                 channel: EntryChannel::Data,
             },
         )<span class="question-mark">?</span>;
-        <span class="kw">let </span>entry = authorised_entry.<span class="number">0</span>;
+        <span class="kw">let </span>(entry, _token) = authorised_entry.into_parts();
         <span class="comment">// TODO: handle offset
         </span><span class="self">self</span>.current_payload
             .set(<span class="kw-2">*</span>entry.payload_digest(), entry.payload_length())<span class="question-mark">?</span>;

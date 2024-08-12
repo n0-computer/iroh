@@ -135,13 +135,10 @@
 <a href="#135" id="135">135</a>
 <a href="#136" id="136">136</a>
 <a href="#137" id="137">137</a>
-<a href="#138" id="138">138</a>
-<a href="#139" id="139">139</a>
-<a href="#140" id="140">140</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>ed25519_dalek::SignatureError;
 
 <span class="kw">use crate</span>::{
-    proto::{data_model::Unauthorised, meadowcap::UserId, wgps::ResourceHandle},
+    proto::{data_model::UnauthorisedWriteError, meadowcap::UserId, wgps::ResourceHandle},
     session::{pai_finder::PaiError, resource::MissingResource},
     store::traits::SecretStoreError,
     util::channel::{ReadError, WriteError},
@@ -183,8 +180,10 @@
     </span>AreaOfInterestNamespaceMismatch,
     <span class="attr">#[error(<span class="string">"our and their area of interests do not overlap"</span>)]
     </span>AreaOfInterestDoesNotOverlap,
+    <span class="attr">#[error(<span class="string">"received an area of interest which is not authorised"</span>)]
+    </span>UnauthorisedArea,
     <span class="attr">#[error(<span class="string">"received an entry which is not authorised"</span>)]
-    </span>UnauthorisedEntryReceived,
+    </span>UnauthorisedWrite(<span class="attr">#[from] </span>UnauthorisedWriteError),
     <span class="attr">#[error(<span class="string">"received an unsupported message type"</span>)]
     </span>UnsupportedMessage,
     <span class="attr">#[error(<span class="string">"received a message that is intended for another channel"</span>)]
@@ -250,11 +249,6 @@
 
 <span class="kw">impl </span>Eq <span class="kw">for </span>Error {}
 
-<span class="kw">impl </span>From&lt;Unauthorised&gt; <span class="kw">for </span>Error {
-    <span class="kw">fn </span>from(_value: Unauthorised) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::UnauthorisedEntryReceived
-    }
-}
 <span class="comment">// impl From&lt;meadowcap::InvalidCapability&gt; for Error {
 //     fn from(_value: meadowcap::InvalidCapability) -&gt; Self {
 //         Self::InvalidCapability
