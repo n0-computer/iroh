@@ -112,7 +112,7 @@ impl PathExt for Path {
     fn new(slices: &[&[u8]]) -> Result<Self, InvalidPathError2> {
         let component_count = slices.len();
         let total_len = slices.iter().map(|x| x.len()).sum::<usize>();
-        let iter = slices.iter().map(|c| Component::new(c)).flatten();
+        let iter = slices.iter().filter_map(|c| Component::new(c));
         // TODO: Avoid this alloc by adding willow_data_model::Path::try_new_from_iter or such.
         let mut iter = iter.collect::<Vec<_>>().into_iter();
         let path = willow_data_model::Path::new_from_iter(total_len, &mut iter)?;

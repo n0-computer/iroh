@@ -287,7 +287,7 @@ impl PeerManager {
                     channel_streams,
                 })
             };
-            let abort_handle = spawn_conn_task(&mut self.conn_tasks, &peer_info, fut);
+            let abort_handle = spawn_conn_task(&mut self.conn_tasks, peer_info, fut);
             peer_info.abort_handle = Some(abort_handle);
         }
     }
@@ -329,7 +329,7 @@ impl PeerManager {
                         channel_streams,
                     })
                 };
-                let abort_handle = spawn_conn_task(&mut self.conn_tasks, &peer_info, fut);
+                let abort_handle = spawn_conn_task(&mut self.conn_tasks, peer_info, fut);
                 peer_info.abort_handle = Some(abort_handle);
                 peer_info.state = PeerState::Pending {
                     intents: vec![intent],
@@ -518,7 +518,7 @@ impl PeerManager {
                 let session_handle = self.actor.init_session(conn_handle, intents).await?;
 
                 let fut = fut.map_ok(move |()| ConnStep::Done { conn });
-                let abort_handle = spawn_conn_task(&mut self.conn_tasks, &peer_info, fut);
+                let abort_handle = spawn_conn_task(&mut self.conn_tasks, peer_info, fut);
 
                 let SessionHandle {
                     cancel_token,
@@ -542,7 +542,7 @@ impl PeerManager {
                     let error = terminate_gracefully(&conn, me, peer, we_cancelled).await?;
                     Ok(ConnStep::Closed { conn, error })
                 };
-                let abort_handle = spawn_conn_task(&mut self.conn_tasks, &peer_info, fut);
+                let abort_handle = spawn_conn_task(&mut self.conn_tasks, peer_info, fut);
                 if let PeerState::Closing { .. } = &peer_info.state {
                     peer_info.abort_handle = Some(abort_handle);
                 } else {

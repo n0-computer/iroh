@@ -210,7 +210,7 @@ pub mod serde_encoding {
             let decoded = {
                 let mut producer = FromSlice::new(&data);
                 let decoded = McCapability::relative_decode(&relative, &mut producer)
-                    .map_err(|e| serde::de::Error::custom(e))?;
+                    .map_err(serde::de::Error::custom)?;
                 Self(decoded)
             };
             Ok(decoded)
@@ -242,7 +242,7 @@ pub mod serde_encoding {
             let decoded = {
                 let mut producer = FromSlice::new(&data);
                 let decoded = McSubspaceCapability::decode(&mut producer)
-                    .map_err(|e| serde::de::Error::custom(e))?;
+                    .map_err(serde::de::Error::custom)?;
                 Self(decoded)
             };
             Ok(decoded)

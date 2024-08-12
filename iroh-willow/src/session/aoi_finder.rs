@@ -154,7 +154,7 @@ impl IntersectionFinder {
             self.co
                 .yield_(Output::SignAndSendCapability {
                     handle,
-                    capability: authorisation.read_cap().clone().into(),
+                    capability: authorisation.read_cap().clone(),
                 })
                 .await;
         }

@@ -409,7 +409,7 @@ impl<S: Storage> Target<S> {
     }
 
     async fn initiate(&mut self, shared: &Shared<S>) -> Result<(), Error> {
-        let range = self.intersection.area().into_range();
+        let range = self.intersection.area().to_range();
         let fingerprint = self.snapshot.fingerprint(self.namespace(), &range)?;
         self.send_fingerprint(shared, range, fingerprint, None)
             .await?;
@@ -572,7 +572,7 @@ impl<S: Storage> Target<S> {
             let msg = ReconciliationSendEntry {
                 entry: LengthyEntry::new(entry, available),
                 static_token_handle,
-                dynamic_token: dynamic_token.into(),
+                dynamic_token,
             };
             shared.send.send(msg).await?;
 

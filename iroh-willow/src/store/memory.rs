@@ -219,14 +219,14 @@ impl traits::EntryStorage for Rc<RefCell<EntryStore>> {
                 return Ok(false);
             }
             if existing.subspace_id() == new.subspace_id()
-                && existing.path().is_prefix_of(&new.path())
+                && existing.path().is_prefix_of(new.path())
                 && existing.is_newer_than(new)
             {
                 // we cannot insert the entry, a newer entry exists
                 return Ok(false);
             }
             if new.subspace_id() == existing.subspace_id()
-                && new.path().is_prefix_of(&existing.path())
+                && new.path().is_prefix_of(existing.path())
                 && new.is_newer_than(existing)
             {
                 to_remove.push(i);

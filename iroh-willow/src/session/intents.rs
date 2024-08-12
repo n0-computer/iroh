@@ -302,8 +302,7 @@ impl<S: Storage> IntentDispatcher<S> {
             let event_tx = info.event_tx;
             let update_rx = self.intent_update_rx.remove(&id);
             let update_rx = update_rx
-                .map(|stream| stream.into_inner())
-                .flatten()
+                .and_then(|stream| stream.into_inner())
                 .map(|stream| stream.into_inner());
             let channels = match (event_tx, update_rx) {
                 (Some(event_tx), Some(update_rx)) => Some(IntentChannels {

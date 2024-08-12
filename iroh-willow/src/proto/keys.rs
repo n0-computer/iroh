@@ -575,10 +575,7 @@ mod willow_impls {
 
     impl willow_data_model::SubspaceId for UserId {
         fn successor(&self) -> Option<Self> {
-            match increment_by_one(self.as_bytes()) {
-                Some(bytes) => Some(Self::from_bytes_unchecked(bytes)),
-                None => None,
-            }
+            increment_by_one(self.as_bytes()).map(Self::from_bytes_unchecked)
         }
     }
 

@@ -70,11 +70,11 @@ pub type AreaOfInterest = willow_data_model::grouping::AreaOfInterest<
 >;
 
 pub trait AreaOfInterestExt {
-    fn new(area: Area) -> AreaOfInterest;
+    fn with_area(area: Area) -> AreaOfInterest;
 }
 
 impl AreaOfInterestExt for AreaOfInterest {
-    fn new(area: Area) -> AreaOfInterest {
+    fn with_area(area: Area) -> AreaOfInterest {
         AreaOfInterest {
             area,
             max_count: 0,
@@ -86,7 +86,7 @@ impl AreaOfInterestExt for AreaOfInterest {
 pub trait AreaExt {
     fn includes_point(&self, point: &Point) -> bool;
     fn new_path(path: Path) -> Area;
-    fn into_range(&self) -> Range3d;
+    fn to_range(&self) -> Range3d;
 }
 
 impl AreaExt for Area {
@@ -98,7 +98,7 @@ impl AreaExt for Area {
         Self::new(AreaSubspace::Any, path, Range::full())
     }
 
-    fn into_range(&self) -> Range3d {
+    fn to_range(&self) -> Range3d {
         let subspaces = match self.subspace() {
             AreaSubspace::Id(id) => match id.successor() {
                 None => Range::new_open(*id),
@@ -111,7 +111,7 @@ impl AreaExt for Area {
             None => Range::new_open(path.clone()),
             Some(end) => Range::new_closed(path.clone(), end).expect("successor is bigger"),
         };
-        Range3d::new(subspaces, path_range, self.times().clone())
+        Range3d::new(subspaces, path_range, *self.times())
     }
 }
 
@@ -154,7 +154,7 @@ impl Point {
     }
     pub fn from_entry(entry: &Entry) -> Self {
         Self {
-            path: entry.path().clone().into(),
+            path: entry.path().clone(),
             timestamp: entry.timestamp(),
             subspace_id: *entry.subspace_id(),
         }
@@ -206,10 +206,9 @@ pub mod serde_encoding {
                 Deserialize::deserialize(deserializer)?;
             let decoded_area = {
                 let mut producer = FromSlice::new(&encoded_area);
-                let decoded =
-                    willow_data_model::grouping::Area::relative_decode(&relative, &mut producer)
-                        .map_err(|err| serde::de::Error::custom(format!("{err}")))?;
-                decoded
+                
+                willow_data_model::grouping::Area::relative_decode(&relative, &mut producer)
+                        .map_err(|err| serde::de::Error::custom(format!("{err}")))?
             };
             let aoi = willow_data_model::grouping::AreaOfInterest {
                 area: decoded_area,
@@ -254,10 +253,9 @@ pub mod serde_encoding {
             let encoded_range: Vec<u8> = Deserialize::deserialize(deserializer)?;
             let decoded_range = {
                 let mut producer = FromSlice::new(&encoded_range);
-                let decoded =
-                    willow_data_model::grouping::Range3d::relative_decode(&relative, &mut producer)
-                        .map_err(|err| serde::de::Error::custom(format!("{err}")))?;
-                decoded
+                
+                willow_data_model::grouping::Range3d::relative_decode(&relative, &mut producer)
+                        .map_err(|err| serde::de::Error::custom(format!("{err}")))?
             };
             Ok(Self(decoded_range))
         }

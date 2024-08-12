@@ -71,7 +71,7 @@ impl Capabilities {
     ) -> Result<SetupBindReadCapability, Error> {
         let inner = self.0.borrow();
         let signable = inner.challenge.signable()?;
-        let signature = secret_store.sign_user(&capability.receiver(), &signable)?;
+        let signature = secret_store.sign_user(capability.receiver(), &signable)?;
         Ok(SetupBindReadCapability {
             capability: capability.into(),
             handle: intersection_handle,
@@ -153,7 +153,7 @@ impl Capabilities {
     ) -> Result<PaiReplySubspaceCapability, Error> {
         let inner = self.0.borrow();
         let signable = inner.challenge.signable()?;
-        let signature = secrets.sign_user(&cap.receiver(), &signable)?;
+        let signature = secrets.sign_user(cap.receiver(), &signable)?;
         let message = PaiReplySubspaceCapability {
             handle,
             capability: cap.clone().into(),
