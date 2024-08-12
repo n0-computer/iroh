@@ -266,7 +266,7 @@ pub fn is_wider_than(a: &McCapability, b: &McCapability) -> bool {
 // use super::{
 //     grouping::{Area, AreaInArea},
 //     keys::{self, NamespaceSecretKey, UserSecretKey, PUBLIC_KEY_LENGTH, SIGNATURE_LENGTH},
-//     willow::{AuthorisedEntry, Entry, Unauthorised},
+//     data_model::{AuthorisedEntry, Entry, Unauthorised},
 // };
 
 // pub type UserPublicKey = keys::UserPublicKey;

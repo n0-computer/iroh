@@ -9,7 +9,7 @@ use crate::{
     proto::{
         keys::UserSignature,
         meadowcap::{ReadCapability, SubspaceCapability},
-        sync::{
+        wgps::{
             AccessChallenge, CapabilityHandle, ChallengeHash, CommitmentReveal, IntersectionHandle,
             PaiReplySubspaceCapability, SetupBindReadCapability,
         },

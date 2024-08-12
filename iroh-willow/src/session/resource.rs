@@ -3,7 +3,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use crate::proto::sync::{IsHandle, ResourceHandle};
+use crate::proto::wgps::{IsHandle, ResourceHandle};
 
 use super::Error;
 

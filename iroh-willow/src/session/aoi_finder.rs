@@ -9,7 +9,7 @@ use crate::{
         grouping::{Area, AreaOfInterest},
         keys::NamespaceId,
         meadowcap::{ReadAuthorisation, ReadCapability},
-        sync::{
+        wgps::{
             AreaOfInterestHandle, CapabilityHandle, IntersectionHandle, SetupBindAreaOfInterest,
         },
     },

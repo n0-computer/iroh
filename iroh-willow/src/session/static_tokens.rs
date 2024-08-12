@@ -7,8 +7,8 @@ use std::{
 
 use crate::{
     proto::{
-        sync::{DynamicToken, SetupBindStaticToken, StaticToken, StaticTokenHandle},
-        willow::{AuthorisationToken, AuthorisedEntry, Entry},
+        wgps::{DynamicToken, SetupBindStaticToken, StaticToken, StaticTokenHandle},
+        data_model::{AuthorisationToken, AuthorisedEntry, Entry},
     },
     session::{channels::ChannelSenders, resource::ResourceMap, Error},
 };

@@ -7,7 +7,7 @@ use iroh_blobs::{
 };
 
 use crate::{
-    proto::{sync::Message, willow::PayloadDigest},
+    proto::{wgps::Message, data_model::PayloadDigest},
     session::channels::ChannelSenders,
 };
 

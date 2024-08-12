@@ -9,7 +9,7 @@ use futures_lite::Stream;
 use tracing::trace;
 
 use crate::{
-    proto::sync::{
+    proto::wgps::{
         Channel, DataMessage, IntersectionMessage, LogicalChannel, Message, ReconciliationMessage,
         SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken,
     },

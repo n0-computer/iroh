@@ -11,7 +11,7 @@ use crate::{
         },
         meadowcap::{self},
         wgps::AccessChallenge,
-        willow::Entry,
+        data_model::Entry,
     },
     util::codec::{DecodeOutcome, Decoder, Encoder},
 };

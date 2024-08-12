@@ -17,7 +17,7 @@ use tokio::io::AsyncRead;
 use crate::proto::{
     data_model::SerdeWriteCapability,
     keys::UserId,
-    willow::{Entry, NamespaceId, Path, SubspaceId, Timestamp},
+    data_model::{Entry, NamespaceId, Path, SubspaceId, Timestamp},
 };
 
 /// Sources where payload data can come from.
