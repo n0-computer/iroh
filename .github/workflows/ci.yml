@@ -299,7 +299,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v1
+      - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           arguments: --workspace --all-features
           command: check
@@ -324,7 +324,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.4
+      uses: mozilla-actions/sccache-action@v0.0.5
 
     - name: Build iroh
       run: |

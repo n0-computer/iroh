@@ -50,10 +50,20 @@ fn cli_provide_one_file_basic() -> Result<()> {
 }
 
 #[test]
-fn cli_provide_one_file_large() -> Result<()> {
+fn cli_provide_one_file_external_outboard() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
-    make_rand_file(1024 * 1024 * 1024, &path)?;
+    // The cutoff point at which an outboard is stored externally is 16KiB by default.
+    // Outboards end up approaching ~1/256th the size of the source file.
+    // So if the source file is 16 KiB * 256, we *almost* have a file big enough that
+    // causes its outboard to be stored externally.
+    // We add a bit of margin, just to be safe.
+    let outboard_size_to_file_size = 256;
+    let safety_margin = 20;
+    let file_size = iroh::blobs::store::fs::InlineOptions::default().max_outboard_inlined
+        * (outboard_size_to_file_size + safety_margin);
+    // At current defaults, `file_size` ends up being ~4.5MB
+    make_rand_file(file_size as usize, &path)?;
     // provide a path to a file, do not pipe from stdin, do not pipe to stdout
     test_provide_get_loop(Input::Path(path), Output::Path)
 }
@@ -350,7 +360,6 @@ fn run_cli(
 }
 
 #[test]
-#[ignore = "flaky"]
 fn cli_bao_store_migration() -> anyhow::Result<()> {
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh_data_dir");

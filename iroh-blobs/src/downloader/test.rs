@@ -9,7 +9,10 @@ use futures_util::future::FutureExt;
 use iroh_net::key::SecretKey;
 
 use crate::{
-    get::{db::BlobId, progress::TransferState},
+    get::{
+        db::BlobId,
+        progress::{BlobProgress, TransferState},
+    },
     util::{
         local_pool::LocalPool,
         progress::{AsyncChannelProgressSender, IdGenerator},
@@ -286,16 +289,26 @@ async fn concurrent_progress() {
     let req = DownloadRequest::new(kind_1, vec![peer]).progress_sender(prog_b_tx);
     let handle_b = downloader.queue(req).await;
 
-    start_tx.send(()).unwrap();
-
     let mut state_a = TransferState::new(hash);
     let mut state_b = TransferState::new(hash);
     let mut state_c = TransferState::new(hash);
 
+    let prog0_b = prog_b_rx.recv().await.unwrap();
+    assert!(matches!(
+        prog0_b,
+        DownloadProgress::InitialState(state) if state.root.hash == hash && state.root.progress == BlobProgress::Pending,
+    ));
+
+    start_tx.send(()).unwrap();
+
     let prog1_a = prog_a_rx.recv().await.unwrap();
     let prog1_b = prog_b_rx.recv().await.unwrap();
-    assert!(matches!(prog1_a, DownloadProgress::Found { hash, size: 100, ..} if hash == hash));
-    assert!(matches!(prog1_b, DownloadProgress::Found { hash, size: 100, ..} if hash == hash));
+    assert!(
+        matches!(prog1_a, DownloadProgress::Found { hash: found_hash, size: 100, ..} if found_hash == hash)
+    );
+    assert!(
+        matches!(prog1_b, DownloadProgress::Found { hash: found_hash, size: 100, ..} if found_hash == hash)
+    );
 
     state_a.on_progress(prog1_a);
     state_b.on_progress(prog1_b);

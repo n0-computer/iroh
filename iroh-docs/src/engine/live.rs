@@ -9,7 +9,7 @@ use iroh_blobs::downloader::{DownloadError, DownloadRequest, Downloader};
 use iroh_blobs::get::Stats;
 use iroh_blobs::HashAndFormat;
 use iroh_blobs::{store::EntryStatus, Hash};
-use iroh_gossip::{net::Gossip, proto::TopicId};
+use iroh_gossip::net::Gossip;
 use iroh_metrics::inc;
 use iroh_net::NodeId;
 use iroh_net::{key::PublicKey, Endpoint, NodeAddr};
@@ -18,9 +18,8 @@ use tokio::{
     sync::{self, mpsc, oneshot},
     task::JoinSet,
 };
-use tracing::{debug, error, error_span, info, instrument, trace, warn, Instrument, Span};
+use tracing::{debug, error, info, instrument, trace, warn, Instrument, Span};
 
-use crate::metrics::Metrics;
 use crate::{
     actor::{OpenOpts, SyncHandle},
     net::{
@@ -29,8 +28,9 @@ use crate::{
     },
     AuthorHeads, ContentStatus, NamespaceId, SignedEntry,
 };
+use crate::{engine::gossip::GossipState, metrics::Metrics};
 
-use super::gossip::{GossipActor, ToGossipActor};
+// use super::gossip::{GossipActor, ToGossipActor};
 use super::state::{NamespaceStates, Origin, SyncReason};
 
 /// Name used for logging when new node addresses are added from the docs engine.
@@ -150,7 +150,6 @@ pub struct LiveActor<B: iroh_blobs::store::Store> {
     inbox: mpsc::Receiver<ToLiveActor>,
     sync: SyncHandle,
     endpoint: Endpoint,
-    gossip: Gossip,
     bao_store: B,
     downloader: Downloader,
     replica_events_tx: async_channel::Sender<crate::Event>,
@@ -160,7 +159,7 @@ pub struct LiveActor<B: iroh_blobs::store::Store> {
     /// Note: Must not be used in methods called from `Self::run` directly to prevent deadlocks.
     /// Only clone into newly spawned tasks.
     sync_actor_tx: mpsc::Sender<ToLiveActor>,
-    gossip_actor_tx: mpsc::Sender<ToGossipActor>,
+    gossip: GossipState,
 
     /// Running sync futures (from connect).
     running_sync_connect: JoinSet<SyncConnectRes>,
@@ -190,20 +189,19 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         downloader: Downloader,
         inbox: mpsc::Receiver<ToLiveActor>,
         sync_actor_tx: mpsc::Sender<ToLiveActor>,
-        gossip_actor_tx: mpsc::Sender<ToGossipActor>,
     ) -> Self {
         let (replica_events_tx, replica_events_rx) = async_channel::bounded(1024);
+        let gossip_state = GossipState::new(gossip, sync.clone(), sync_actor_tx.clone());
         Self {
             inbox,
             sync,
             replica_events_rx,
             replica_events_tx,
             endpoint,
-            gossip,
+            gossip: gossip_state,
             bao_store,
             downloader,
             sync_actor_tx,
-            gossip_actor_tx,
             running_sync_connect: Default::default(),
             running_sync_accept: Default::default(),
             subscribers: Default::default(),
@@ -215,22 +213,11 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
     }
 
     /// Run the actor loop.
-    pub async fn run(mut self, mut gossip_actor: GossipActor) -> Result<()> {
-        let me = self.endpoint.node_id().fmt_short();
-        let gossip_handle = tokio::task::spawn(
-            async move {
-                if let Err(err) = gossip_actor.run().await {
-                    error!("gossip recv actor failed: {err:?}");
-                }
-            }
-            .instrument(error_span!("sync", %me)),
-        );
-
+    pub async fn run(mut self) -> Result<()> {
         let shutdown_reply = self.run_inner().await;
         if let Err(err) = self.shutdown().await {
             error!(?err, "Error during shutdown");
         }
-        gossip_handle.await?;
         drop(self);
         match shutdown_reply {
             Ok(reply) => {
@@ -288,7 +275,11 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                     inc!(Metrics, doc_live_tick_pending_downloads);
                     let (namespace, hash, res) = res.context("pending_downloads closed")?;
                     self.on_download_ready(namespace, hash, res).await;
-
+                }
+                res = self.gossip.progress(), if !self.gossip.is_empty() => {
+                    if let Err(error) = res {
+                        warn!(?error, "gossip state failed");
+                    }
                 }
             }
         }
@@ -379,13 +370,15 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
     async fn shutdown(&mut self) -> anyhow::Result<()> {
         // cancel all subscriptions
         self.subscribers.clear();
-        // shutdown gossip actor
-        self.gossip_actor_tx
-            .send(ToGossipActor::Shutdown)
-            .await
-            .ok();
-        // shutdown sync thread
-        let _store = self.sync.shutdown().await;
+        let (gossip_shutdown_res, _store) = tokio::join!(
+            // quit the gossip topics and task loops.
+            self.gossip.shutdown(),
+            // shutdown sync thread
+            self.sync.shutdown()
+        );
+        gossip_shutdown_res?;
+        // TODO: abort_all and join_next all JoinSets to catch panics
+        // (they are aborted on drop, but that swallows panics)
         Ok(())
     }
 
@@ -439,10 +432,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 .unsubscribe(namespace, self.replica_events_tx.clone())
                 .await?;
             self.sync.close(namespace).await?;
-            self.gossip_actor_tx
-                .send(ToGossipActor::Leave { namespace })
-                .await
-                .context("gossip actor failure")?;
+            self.gossip.quit(&namespace);
         }
         if kill_subscribers {
             self.subscribers.remove(&namespace);
@@ -450,11 +440,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         Ok(())
     }
 
-    async fn join_peers(
-        &mut self,
-        namespace: NamespaceId,
-        peers: Vec<NodeAddr>,
-    ) -> anyhow::Result<()> {
+    async fn join_peers(&mut self, namespace: NamespaceId, peers: Vec<NodeAddr>) -> Result<()> {
         let mut peer_ids = Vec::new();
 
         // add addresses of peers to our endpoint address book
@@ -477,12 +463,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         }
 
         // tell gossip to join
-        self.gossip_actor_tx
-            .send(ToGossipActor::Join {
-                namespace,
-                peers: peer_ids.clone(),
-            })
-            .await?;
+        self.gossip.join(namespace, peer_ids.clone()).await?;
 
         if !peer_ids.is_empty() {
             // trigger initial sync with initial peers
@@ -644,18 +625,9 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             }
         };
         // TODO: We should debounce and merge these neighbor announcements likely.
-        if let Err(err) = self
-            .gossip
-            .broadcast_neighbors(namespace.into(), msg.into())
-            .await
-        {
-            error!(
-                namespace = %namespace.fmt_short(),
-                %op,
-                ?err,
-                "Failed to broadcast to neighbors"
-            );
-        }
+        self.gossip
+            .broadcast_neighbors(&namespace, msg.into())
+            .await;
     }
 
     async fn on_download_ready(
@@ -725,12 +697,11 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         match event {
             crate::Event::LocalInsert { namespace, entry } => {
                 debug!(namespace=%namespace.fmt_short(), "replica event: LocalInsert");
-                let topic = TopicId::from_bytes(*namespace.as_bytes());
                 // A new entry was inserted locally. Broadcast a gossip message.
                 if self.state.is_syncing(&namespace) {
                     let op = Op::Put(entry.clone());
                     let message = postcard::to_stdvec(&op)?.into();
-                    self.gossip.broadcast(topic, message).await?;
+                    self.gossip.broadcast(&namespace, message).await;
                 }
             }
             crate::Event::RemoteInsert {

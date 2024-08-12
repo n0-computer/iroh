@@ -3,18 +3,13 @@
 //! [`Connection`]: iroh_net::endpoint::Connection
 
 use crate::{
-    get::{db::get_to_db, error::GetError},
+    get::{db::get_to_db_in_steps, error::GetError},
     store::Store,
 };
 use futures_lite::FutureExt;
-#[cfg(feature = "metrics")]
-use iroh_metrics::{inc, inc_by};
 use iroh_net::endpoint;
 
-#[cfg(feature = "metrics")]
-use crate::metrics::Metrics;
-
-use super::{progress::BroadcastProgressSender, DownloadKind, FailureAction, GetFut, Getter};
+use super::{progress::BroadcastProgressSender, DownloadKind, FailureAction, GetStartFut, Getter};
 
 impl From<GetError> for FailureAction {
     fn from(e: GetError) -> Self {
@@ -39,46 +34,63 @@ pub(crate) struct IoGetter<S: Store> {
 
 impl<S: Store> Getter for IoGetter<S> {
     type Connection = endpoint::Connection;
+    type NeedsConn = crate::get::db::GetStateNeedsConn;
 
     fn get(
         &mut self,
         kind: DownloadKind,
-        conn: Self::Connection,
         progress_sender: BroadcastProgressSender,
-    ) -> GetFut {
+    ) -> GetStartFut<Self::NeedsConn> {
         let store = self.store.clone();
-        let fut = async move {
-            let get_conn = || async move { Ok(conn) };
-            let res = get_to_db(&store, get_conn, &kind.hash_and_format(), progress_sender).await;
-            match res {
-                Ok(stats) => {
-                    #[cfg(feature = "metrics")]
-                    {
-                        let crate::get::Stats {
-                            bytes_written,
-                            bytes_read: _,
-                            elapsed,
-                        } = stats;
-
-                        inc!(Metrics, downloads_success);
-                        inc_by!(Metrics, download_bytes_total, bytes_written);
-                        inc_by!(Metrics, download_time_total, elapsed.as_millis() as u64);
-                    }
-                    Ok(stats)
+        async move {
+            match get_to_db_in_steps(store, kind.hash_and_format(), progress_sender).await {
+                Err(err) => Err(err.into()),
+                Ok(crate::get::db::GetState::Complete(stats)) => {
+                    Ok(super::GetOutput::Complete(stats))
                 }
-                Err(e) => {
-                    // record metrics according to the error
-                    #[cfg(feature = "metrics")]
-                    {
-                        match &e {
-                            GetError::NotFound(_) => inc!(Metrics, downloads_notfound),
-                            _ => inc!(Metrics, downloads_error),
-                        }
-                    }
-                    Err(e.into())
+                Ok(crate::get::db::GetState::NeedsConn(needs_conn)) => {
+                    Ok(super::GetOutput::NeedsConn(needs_conn))
                 }
             }
-        };
-        fut.boxed_local()
+        }
+        .boxed_local()
+    }
+}
+
+impl super::NeedsConn<endpoint::Connection> for crate::get::db::GetStateNeedsConn {
+    fn proceed(self, conn: endpoint::Connection) -> super::GetProceedFut {
+        async move {
+            let res = self.proceed(conn).await;
+            #[cfg(feature = "metrics")]
+            track_metrics(&res);
+            match res {
+                Ok(stats) => Ok(stats),
+                Err(err) => Err(err.into()),
+            }
+        }
+        .boxed_local()
+    }
+}
+
+#[cfg(feature = "metrics")]
+fn track_metrics(res: &Result<crate::get::Stats, GetError>) {
+    use crate::metrics::Metrics;
+    use iroh_metrics::{inc, inc_by};
+    match res {
+        Ok(stats) => {
+            let crate::get::Stats {
+                bytes_written,
+                bytes_read: _,
+                elapsed,
+            } = stats;
+
+            inc!(Metrics, downloads_success);
+            inc_by!(Metrics, download_bytes_total, *bytes_written);
+            inc_by!(Metrics, download_time_total, elapsed.as_millis() as u64);
+        }
+        Err(e) => match &e {
+            GetError::NotFound(_) => inc!(Metrics, downloads_notfound),
+            _ => inc!(Metrics, downloads_error),
+        },
     }
 }
