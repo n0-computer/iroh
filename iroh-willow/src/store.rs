@@ -76,12 +76,19 @@ impl<S: Storage> Store<S> {
             .secrets()
             .get_user(&user_id)
             .context("Missing user keypair")?;
+
+        // TODO(frando): This should use `authorisation_token_unchecked` if we uphold the invariant
+        // that `user_id` is a pubkey for `secret_key`. However, that is `unsafe` at the moment
+        // (but should not be, IMO).
+        // Not using the `_unchecked` variant has the cost of an additional signature verification,
+        // so significant.
         let token = capability.authorisation_token(&entry, secret_key)?;
-        let authorised_entry = AuthorisedEntry(entry, token);
+        let authorised_entry = AuthorisedEntry::new_unchecked(entry, token);
         let inserted = self
             .entries()
             .ingest(&authorised_entry, EntryOrigin::Local)?;
-        Ok((authorised_entry.0, inserted))
+        let (entry, _token) = authorised_entry.into_parts();
+        Ok((entry, inserted))
     }
 
     pub fn create_namespace(

@@ -54,13 +54,8 @@ impl StaticTokens {
         })
         .await;
 
-        let token = AuthorisationToken {
-            signature: dynamic_token,
-            capability: static_token.into(),
-        };
-
-        let authorised_entry = AuthorisedEntry::try_authorise(entry, token)?;
-
+        let token = AuthorisationToken::new(static_token.0, dynamic_token);
+        let authorised_entry = AuthorisedEntry::new(entry, token)?;
         Ok(authorised_entry)
     }
 }

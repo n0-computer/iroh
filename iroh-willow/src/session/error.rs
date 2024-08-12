@@ -1,7 +1,7 @@
 use ed25519_dalek::SignatureError;
 
 use crate::{
-    proto::{data_model::Unauthorised, meadowcap::UserId, wgps::ResourceHandle},
+    proto::{data_model::UnauthorisedWriteError, meadowcap::UserId, wgps::ResourceHandle},
     session::{pai_finder::PaiError, resource::MissingResource},
     store::traits::SecretStoreError,
     util::channel::{ReadError, WriteError},
@@ -43,8 +43,10 @@ pub enum Error {
     AreaOfInterestNamespaceMismatch,
     #[error("our and their area of interests do not overlap")]
     AreaOfInterestDoesNotOverlap,
+    #[error("received an area of interest which is not authorised")]
+    UnauthorisedArea,
     #[error("received an entry which is not authorised")]
-    UnauthorisedEntryReceived,
+    UnauthorisedWrite(#[from] UnauthorisedWriteError),
     #[error("received an unsupported message type")]
     UnsupportedMessage,
     #[error("received a message that is intended for another channel")]
@@ -110,11 +112,6 @@ impl PartialEq for Error {
 
 impl Eq for Error {}
 
-impl From<Unauthorised> for Error {
-    fn from(_value: Unauthorised) -> Self {
-        Self::UnauthorisedEntryReceived
-    }
-}
 // impl From<meadowcap::InvalidCapability> for Error {
 //     fn from(_value: meadowcap::InvalidCapability) -> Self {
 //         Self::InvalidCapability

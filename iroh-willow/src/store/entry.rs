@@ -148,7 +148,7 @@ impl Broadcaster {
     }
 
     fn broadcast(&mut self, entry: &AuthorisedEntry, origin: EntryOrigin) {
-        let Some(sessions) = self.watched_areas.get_mut(entry.namespace_id()) else {
+        let Some(sessions) = self.watched_areas.get_mut(entry.entry().namespace_id()) else {
             return;
         };
         let mut dropped_receivers = vec![];

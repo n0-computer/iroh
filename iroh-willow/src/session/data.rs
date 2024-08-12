@@ -85,7 +85,7 @@ impl<S: Storage> DataSender<S> {
     }
 
     async fn send_entry(&mut self, authorised_entry: AuthorisedEntry) -> Result<(), Error> {
-        let AuthorisedEntry(entry, token) = authorised_entry;
+        let (entry, token) = authorised_entry.into_parts();
         let static_token: StaticToken = token.capability.into();
         let dynamic_token = token.signature;
         // TODO: partial payloads
@@ -163,7 +163,7 @@ impl<S: Storage> DataReceiver<S> {
                 channel: EntryChannel::Data,
             },
         )?;
-        let entry = authorised_entry.0;
+        let (entry, _token) = authorised_entry.into_parts();
         // TODO: handle offset
         self.current_payload
             .set(*entry.payload_digest(), entry.payload_length())?;
