@@ -60,6 +60,13 @@ pub fn is_authorised_write(entry: &Entry, token: &McAuthorisationToken) -> bool 
     token.is_authorised_write(entry)
 }
 
+pub type FailedDelegationError = meadowcap::FailedDelegationError<
+    MAX_COMPONENT_LENGTH,
+    MAX_COMPONENT_COUNT,
+    MAX_PATH_LENGTH,
+    keys::UserId,
+>;
+
 /// Represents an authorisation to read an area of data in a Namespace.
 // TODO: Move somewhere else?
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -119,12 +126,6 @@ impl ReadAuthorisation {
     }
 }
 
-// #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
-// pub enum AccessMode {
-//     ReadOnly,
-//     ReadWrite,
-// }
-
 pub mod serde_encoding {
     use serde::{Deserialize, Deserializer};
     use ufotofu::sync::{consumer::IntoVec, producer::FromSlice};
@@ -134,28 +135,52 @@ pub mod serde_encoding {
 
     use super::*;
 
-    #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
-    pub struct SerdeReadAuthorisation(SerdeMcCapability, Option<SerdeMcSubspaceCapability>);
+    #[derive(
+        Debug, Clone, Eq, PartialEq, Hash, derive_more::From, derive_more::Into, derive_more::Deref,
+    )]
+    pub struct SerdeReadAuthorisation(pub ReadAuthorisation);
 
-    impl From<ReadAuthorisation> for SerdeReadAuthorisation {
-        fn from(value: ReadAuthorisation) -> Self {
-            Self(
-                SerdeMcCapability::from(value.0),
-                value.1.map(SerdeMcSubspaceCapability::from),
-            )
+    impl Serialize for SerdeReadAuthorisation {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let relative = Area::new_full();
+            let encoded_cap = {
+                let mut consumer = IntoVec::<u8>::new();
+                self.0
+                     .0
+                    .relative_encode(&relative, &mut consumer)
+                    .expect("encoding not to fail");
+                consumer.into_vec()
+            };
+
+            let encoded_subspace_cap = self.0 .1.as_ref().map(|cap| {
+                let mut consumer = IntoVec::<u8>::new();
+                cap.encode(&mut consumer).expect("encoding not to fail");
+                consumer.into_vec()
+            });
+            (encoded_cap, encoded_subspace_cap).serialize(serializer)
         }
     }
 
-    impl From<SerdeReadAuthorisation> for ReadAuthorisation {
-        fn from(value: SerdeReadAuthorisation) -> Self {
-            Self(value.0.into(), value.1.map(Into::into))
+    impl<'de> Deserialize<'de> for SerdeReadAuthorisation {
+        fn deserialize<D>(deserializer: D) -> Result<SerdeReadAuthorisation, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let (read_cap, subspace_cap) =
+                <(SerdeMcCapability, Option<SerdeMcSubspaceCapability>)>::deserialize(
+                    deserializer,
+                )?;
+            Ok(Self(ReadAuthorisation(
+                read_cap.into(),
+                subspace_cap.map(Into::into),
+            )))
         }
     }
 
     #[derive(
         Debug, Clone, Eq, PartialEq, Hash, derive_more::From, derive_more::Into, derive_more::Deref,
     )]
-    pub struct SerdeMcCapability(McCapability);
+    pub struct SerdeMcCapability(pub McCapability);
 
     impl Serialize for SerdeMcCapability {
         fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -181,7 +206,7 @@ pub mod serde_encoding {
             let decoded = {
                 let mut producer = FromSlice::new(&data);
                 let decoded = McCapability::relative_decode(&relative, &mut producer)
-                    .expect("decoding not to fail");
+                    .map_err(|e| serde::de::Error::custom(e))?;
                 Self(decoded)
             };
             Ok(decoded)
@@ -191,7 +216,7 @@ pub mod serde_encoding {
     #[derive(
         Debug, Clone, Eq, PartialEq, Hash, derive_more::From, derive_more::Into, derive_more::Deref,
     )]
-    pub struct SerdeMcSubspaceCapability(McSubspaceCapability);
+    pub struct SerdeMcSubspaceCapability(pub McSubspaceCapability);
 
     impl Serialize for SerdeMcSubspaceCapability {
         fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -212,13 +237,20 @@ pub mod serde_encoding {
             let data: Vec<u8> = Deserialize::deserialize(deserializer)?;
             let decoded = {
                 let mut producer = FromSlice::new(&data);
-                let decoded =
-                    McSubspaceCapability::decode(&mut producer).expect("decoding not to fail");
+                let decoded = McSubspaceCapability::decode(&mut producer)
+                    .map_err(|e| serde::de::Error::custom(e))?;
                 Self(decoded)
             };
             Ok(decoded)
         }
     }
+}
+
+/// Returns `true` if `self` covers a larger area than `other`,
+/// or if covers the same area and has less delegations.
+pub fn is_wider_than(a: &McCapability, b: &McCapability) -> bool {
+    (a.granted_area().includes_area(&b.granted_area()))
+        || (a.granted_area() == b.granted_area() && a.delegations().len() < b.delegations().len())
 }
 
 // use std::{io::Write, sync::Arc};

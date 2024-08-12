@@ -4,13 +4,12 @@ use std::{
 };
 use tokio::sync::broadcast;
 
-use crate::{
-    proto::{
-        grouping::Area,
-        willow::{AuthorisedEntry, NamespaceId},
-    },
-    session::SessionId,
+use crate::proto::{
+    grouping::Area,
+    willow::{AuthorisedEntry, NamespaceId},
 };
+
+pub type SessionId = u64;
 
 use super::traits::EntryStorage;
 

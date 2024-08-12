@@ -3,7 +3,7 @@ use std::fmt;
 use iroh_blobs::Hash;
 use serde::{Deserialize, Serialize};
 
-use crate::proto::data_model::Entry;
+use crate::proto::data_model::{Entry, EntryExt};
 
 #[derive(Default, Serialize, Deserialize, Eq, PartialEq, Clone, Copy)]
 pub struct Fingerprint(pub [u8; 32]);
@@ -17,7 +17,7 @@ impl fmt::Debug for Fingerprint {
 impl Fingerprint {
     pub fn add_entry(&mut self, entry: &Entry) {
         // TODO: Don't allocate
-        let encoded = entry.encode();
+        let encoded = entry.encode_to_vec();
         let next = Fingerprint(*Hash::new(&encoded).as_bytes());
         *self ^= next;
     }

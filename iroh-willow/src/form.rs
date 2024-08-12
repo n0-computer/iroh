@@ -14,13 +14,10 @@ use iroh_blobs::{
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
 
-use crate::{
-    proto::{
-        keys::UserId,
-        willow::{Entry, NamespaceId, Path, SubspaceId, Timestamp, WriteCapability},
-    },
-    store::{traits::Storage, Store},
-    util::time::system_time_now,
+use crate::proto::{
+    data_model::SerdeWriteCapability,
+    keys::UserId,
+    willow::{Entry, NamespaceId, Path, SubspaceId, Timestamp},
 };
 
 /// Sources where payload data can come from.
@@ -113,35 +110,6 @@ impl EntryForm {
             payload: PayloadForm::Bytes(payload.into()),
         }
     }
-
-    /// Convert the form into an [`Entry`] by filling the fields with data from the environment and
-    /// the provided [`Store`].
-    ///
-    /// `user_id` must be set to the user who is authenticating the entry.
-    pub async fn into_entry<S: Storage>(
-        self,
-        store: &Store<S>,
-        user_id: UserId, // auth: AuthForm,
-    ) -> anyhow::Result<Entry> {
-        let timestamp = match self.timestamp {
-            TimestampForm::Now => system_time_now(),
-            TimestampForm::Exact(timestamp) => timestamp,
-        };
-        let subspace_id = match self.subspace_id {
-            SubspaceForm::User => user_id,
-            SubspaceForm::Exact(subspace) => subspace,
-        };
-        let (payload_digest, payload_length) = self.payload.submit(store.payloads()).await?;
-        let entry = Entry {
-            namespace_id: self.namespace_id,
-            subspace_id,
-            path: self.path,
-            timestamp,
-            payload_length,
-            payload_digest,
-        };
-        Ok(entry)
-    }
 }
 
 /// Select which capability to use for authenticating a new entry.
@@ -151,7 +119,7 @@ pub enum AuthForm {
     /// user.
     Any(UserId),
     /// Use the provided [`WriteCapability`].
-    Exact(WriteCapability),
+    Exact(SerdeWriteCapability),
 }
 
 impl AuthForm {
@@ -160,7 +128,7 @@ impl AuthForm {
     pub fn user_id(&self) -> UserId {
         match self {
             AuthForm::Any(user) => *user,
-            AuthForm::Exact(cap) => cap.receiver().id(),
+            AuthForm::Exact(cap) => *cap.receiver(),
         }
     }
 }

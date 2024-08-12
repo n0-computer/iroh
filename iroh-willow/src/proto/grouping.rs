@@ -1,10 +1,8 @@
-use willow_data_model::grouping::RangeEnd;
+pub use willow_data_model::grouping::{Range, RangeEnd};
 
 use super::data_model::{
     Entry, Path, SubspaceId, Timestamp, MAX_COMPONENT_COUNT, MAX_COMPONENT_LENGTH, MAX_PATH_LENGTH,
 };
-
-pub type Range<T> = willow_data_model::grouping::Range<T>;
 
 // /// A three-dimensional range that includes every [`Entry`] included in all three of its ranges.
 // #[derive(
@@ -54,15 +52,35 @@ pub type AreaSubspace = willow_data_model::grouping::AreaSubspace<SubspaceId>;
 /// A grouping of [`crate::Entry`]s that are among the newest in some [store](https://willowprotocol.org/specs/data-model/index.html#store).
 ///
 /// [Definition](https://willowprotocol.org/specs/grouping-entries/index.html#aois).
-#[derive(Debug, Clone, Eq, PartialEq, derive_more::From, derive_more::Into, derive_more::Deref)]
-pub struct AreaOfInterest(
-    willow_data_model::grouping::AreaOfInterest<
-        MAX_COMPONENT_LENGTH,
-        MAX_COMPONENT_COUNT,
-        MAX_PATH_LENGTH,
-        SubspaceId,
-    >,
-);
+// #[derive(Debug, Clone, Eq, PartialEq, derive_more::From, derive_more::Into, derive_more::Deref)]
+// pub struct AreaOfInterest(
+//     willow_data_model::grouping::AreaOfInterest<
+//         MAX_COMPONENT_LENGTH,
+//         MAX_COMPONENT_COUNT,
+//         MAX_PATH_LENGTH,
+//         SubspaceId,
+//     >,
+// );
+pub type AreaOfInterest = willow_data_model::grouping::AreaOfInterest<
+    MAX_COMPONENT_LENGTH,
+    MAX_COMPONENT_COUNT,
+    MAX_PATH_LENGTH,
+    SubspaceId,
+>;
+
+pub trait AreaOfInterestExt {
+    fn new(area: Area) -> AreaOfInterest;
+}
+
+impl AreaOfInterestExt for AreaOfInterest {
+    fn new(area: Area) -> AreaOfInterest {
+        AreaOfInterest {
+            area,
+            max_count: 0,
+            max_size: 0,
+        }
+    }
+}
 
 pub trait AreaExt {
     fn includes_point(&self, point: &Point) -> bool;
@@ -140,7 +158,12 @@ pub mod serde_encoding {
 
     use super::*;
 
-    impl Serialize for AreaOfInterest {
+    #[derive(
+        Debug, Clone, Eq, PartialEq, derive_more::From, derive_more::Into, derive_more::Deref,
+    )]
+    pub struct SerdeAreaOfInterest(AreaOfInterest);
+
+    impl Serialize for SerdeAreaOfInterest {
         fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
             let relative = Area::new_full();
             let encoded_area = {
@@ -155,7 +178,7 @@ pub mod serde_encoding {
         }
     }
 
-    impl<'de> Deserialize<'de> for AreaOfInterest {
+    impl<'de> Deserialize<'de> for SerdeAreaOfInterest {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where
             D: Deserializer<'de>,

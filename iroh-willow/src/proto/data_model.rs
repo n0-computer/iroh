@@ -17,6 +17,9 @@ pub type SubspaceId = keys::UserId;
 /// The capability type needed to authorize writes.
 pub type WriteCapability = meadowcap::McCapability;
 
+/// The capability type needed to authorize writes (serializable).
+pub type SerdeWriteCapability = meadowcap::serde_encoding::SerdeMcCapability;
+
 /// A Timestamp is a 64-bit unsigned integer, that is, a natural number between zero (inclusive) and 2^64 - 1 (exclusive).
 /// Timestamps are to be interpreted as a time in microseconds since the Unix epoch.
 pub type Timestamp = willow_data_model::Timestamp;
@@ -122,44 +125,66 @@ impl PathExt for Path {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, derive_more::From, derive_more::Into, derive_more::Deref)]
-pub struct Entry(
-    willow_data_model::Entry<
-        MAX_COMPONENT_LENGTH,
-        MAX_COMPONENT_COUNT,
-        MAX_PATH_LENGTH,
-        NamespaceId,
-        SubspaceId,
-        PayloadDigest,
-    >,
-);
+// #[derive(Debug, Clone, Eq, PartialEq, derive_more::From, derive_more::Into, derive_more::Deref)]
+pub type Entry = willow_data_model::Entry<
+    MAX_COMPONENT_LENGTH,
+    MAX_COMPONENT_COUNT,
+    MAX_PATH_LENGTH,
+    NamespaceId,
+    SubspaceId,
+    PayloadDigest,
+>;
 
-impl Entry {
-    pub fn encode(&self) -> Vec<u8> {
+pub trait EntryExt {
+    fn encode_to_vec(&self) -> Vec<u8>;
+    fn decode_from_slice(bytes: &[u8]) -> anyhow::Result<Entry>;
+    fn as_set_sort_tuple(&self) -> (&NamespaceId, &SubspaceId, &Path);
+}
+
+impl EntryExt for Entry {
+    fn encode_to_vec(&self) -> Vec<u8> {
         let mut consumer = IntoVec::<u8>::new();
-        self.0.encode(&mut consumer).expect("encoding not to fail");
+        self.encode(&mut consumer).expect("encoding not to fail");
         consumer.into_vec()
     }
-
-    pub fn decode(bytes: &[u8]) -> anyhow::Result<Self> {
+    fn decode_from_slice(bytes: &[u8]) -> anyhow::Result<Self> {
         let mut producer = FromSlice::<u8>::new(bytes);
         let entry = willow_data_model::Entry::decode(&mut producer)?;
-        Ok(Self(entry))
+        Ok(entry)
+    }
+
+    fn as_set_sort_tuple(&self) -> (&NamespaceId, &SubspaceId, &Path) {
+        (self.namespace_id(), self.subspace_id(), self.path())
     }
 }
 
-#[derive(Debug, Clone, derive_more::From, derive_more::Into, derive_more::Deref)]
-pub struct AuthorisedEntry(
-    willow_data_model::AuthorisedEntry<
-        MAX_COMPONENT_LENGTH,
-        MAX_COMPONENT_COUNT,
-        MAX_PATH_LENGTH,
-        NamespaceId,
-        SubspaceId,
-        PayloadDigest,
-        AuthorisationToken,
-    >,
-);
+#[derive(Debug, Clone)]
+pub struct AuthorisedEntry(pub Entry, pub AuthorisationToken);
+
+impl std::ops::Deref for AuthorisedEntry {
+    type Target = Entry;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AuthorisedEntry {
+    pub fn entry(&self) -> &Entry {
+        &self.0
+    }
+}
+
+// #[derive(Debug, Clone, derive_more::From, derive_more::Into, derive_more::Deref)]
+// pub type AuthorisedEntry =
+//     willow_data_model::AuthorisedEntry<
+//         MAX_COMPONENT_LENGTH,
+//         MAX_COMPONENT_COUNT,
+//         MAX_PATH_LENGTH,
+//         NamespaceId,
+//         SubspaceId,
+//         PayloadDigest,
+//         AuthorisationToken,
+//     >;
 
 // pub type Path = willow_data_model::Path<MAX_COMPONENT_LENGTH, MAX_COMPONENT_COUNT, MAX_PATH_LENGTH>;
 
@@ -231,7 +256,10 @@ pub mod serde_encoding {
 
     use super::*;
 
-    impl Serialize for Entry {
+    #[derive(Debug, Clone, derive_more::From, derive_more::Into, derive_more::Deref)]
+    pub struct SerdeEntry(pub Entry);
+
+    impl Serialize for SerdeEntry {
         fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
             let encoded = {
                 let mut consumer = IntoVec::<u8>::new();
@@ -242,16 +270,16 @@ pub mod serde_encoding {
         }
     }
 
-    impl<'de> Deserialize<'de> for Entry {
-        fn deserialize<D>(deserializer: D) -> Result<Entry, D::Error>
+    impl<'de> Deserialize<'de> for SerdeEntry {
+        fn deserialize<D>(deserializer: D) -> Result<SerdeEntry, D::Error>
         where
             D: Deserializer<'de>,
         {
             let data: Vec<u8> = Deserialize::deserialize(deserializer)?;
             let decoded = {
                 let mut producer = FromSlice::new(&data);
-                let decoded =
-                    willow_data_model::Entry::decode(&mut producer).expect("decoding not to fail");
+                let decoded = willow_data_model::Entry::decode(&mut producer)
+                    .map_err(serde::de::Error::custom)?;
                 Self(decoded)
             };
             Ok(decoded)
