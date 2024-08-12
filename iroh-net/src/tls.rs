@@ -9,6 +9,8 @@ use quinn::crypto::rustls::{NoInitialCipherSuite, QuicClientConfig, QuicServerCo
 
 use crate::key::{PublicKey, SecretKey};
 
+use self::certificate::AlwaysResolvesCert;
+
 pub mod certificate;
 mod verifier;
 
@@ -36,6 +38,11 @@ pub fn make_client_config(
 ) -> Result<QuicClientConfig, CreateConfigError> {
     let (certificate, secret_key) = certificate::generate(secret_key)?;
 
+    let cert_resolver = Arc::new(
+        AlwaysResolvesCert::new(certificate, &secret_key)
+            .expect("Client cert key DER is valid; qed"),
+    );
+
     let mut crypto = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
@@ -45,8 +52,7 @@ pub fn make_client_config(
     .with_custom_certificate_verifier(Arc::new(
         verifier::Libp2pCertificateVerifier::with_remote_peer_id(remote_peer_id),
     ))
-    .with_client_auth_cert(vec![certificate], secret_key)
-    .expect("Client cert key DER is valid; qed");
+    .with_client_cert_resolver(cert_resolver);
     crypto.alpn_protocols = alpn_protocols;
     if keylog {
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
@@ -67,14 +73,18 @@ pub fn make_server_config(
 ) -> Result<QuicServerConfig, CreateConfigError> {
     let (certificate, secret_key) = certificate::generate(secret_key)?;
 
+    let cert_resolver = Arc::new(
+        AlwaysResolvesCert::new(certificate, &secret_key)
+            .expect("Server cert key DER is valid; qed"),
+    );
+
     let mut crypto = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
     .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
     .expect("fixed config")
     .with_client_cert_verifier(Arc::new(verifier::Libp2pCertificateVerifier::new()))
-    .with_single_cert(vec![certificate], secret_key)
-    .expect("Server cert key DER is valid; qed");
+    .with_cert_resolver(cert_resolver);
     crypto.alpn_protocols = alpn_protocols;
     if keylog {
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
