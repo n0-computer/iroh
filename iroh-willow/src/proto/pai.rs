@@ -136,7 +136,6 @@ impl FragmentKit {
             FragmentKit::Complete(namespace_id, path) => {
                 let pairs = path
                     .all_prefixes()
-                    .into_iter()
                     .map(|prefix| (namespace_id, prefix))
                     .collect();
                 FragmentSet::Complete(pairs)
