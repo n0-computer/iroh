@@ -189,7 +189,7 @@ impl LocalSwarmDiscovery {
                                 .map(|(ipaddr, port)| SocketAddr::new(*ipaddr, *port))
                                 .collect();
                             sender
-                                .send(NodeAddr::from_parts(public_key.clone().into(), None, addrs))
+                                .send(NodeAddr::from_parts(*public_key, None, addrs))
                                 .await
                                 .ok();
                         }
