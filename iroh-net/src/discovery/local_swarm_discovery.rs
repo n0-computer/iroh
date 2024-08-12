@@ -11,17 +11,16 @@ use std::{
 
 use anyhow::Result;
 use derive_more::FromStr;
-use futures_lite::{stream::Boxed as BoxStream, StreamExt};
+use futures_lite::stream::Boxed as BoxStream;
 use tracing::{debug, error, trace, warn};
 
-use async_channel::Sender;
 use iroh_base::key::PublicKey;
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
-use tokio::task::JoinSet;
+use tokio::{sync::mpsc, task::JoinSet};
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
-    util::AbortingJoinHandle,
+    util::{send_blocking, AbortingJoinHandle},
     AddrInfo, Endpoint, NodeId,
 };
 
@@ -39,13 +38,13 @@ const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
 pub struct LocalSwarmDiscovery {
     #[allow(dead_code)]
     handle: AbortingJoinHandle<()>,
-    sender: Sender<Message>,
+    sender: mpsc::Sender<Message>,
 }
 
 #[derive(Debug)]
 enum Message {
     Discovery(String, Peer),
-    SendAddrs(NodeId, Sender<Result<DiscoveryItem>>),
+    SendAddrs(NodeId, mpsc::Sender<Result<DiscoveryItem>>),
     ChangeLocalAddrs(AddrInfo),
     Timeout(NodeId, usize),
 }
@@ -62,7 +61,7 @@ impl LocalSwarmDiscovery {
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
     pub fn new(node_id: NodeId) -> Result<Self> {
         debug!("Creating new LocalSwarmDiscovery service");
-        let (send, recv) = async_channel::bounded(64);
+        let (send, mut recv) = mpsc::channel(64);
         let task_sender = send.clone();
         let rt = tokio::runtime::Handle::current();
         let discovery = LocalSwarmDiscovery::spawn_discoverer(
@@ -75,19 +74,21 @@ impl LocalSwarmDiscovery {
         let handle = tokio::spawn(async move {
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
             let mut last_id = 0;
-            let mut senders: HashMap<PublicKey, HashMap<usize, Sender<Result<DiscoveryItem>>>> =
-                HashMap::default();
+            let mut senders: HashMap<
+                PublicKey,
+                HashMap<usize, mpsc::Sender<Result<DiscoveryItem>>>,
+            > = HashMap::default();
             let mut timeouts = JoinSet::new();
             loop {
                 trace!(?node_addrs, "LocalSwarmDiscovery Service loop tick");
                 let msg = match recv.recv().await {
-                    Err(err) => {
-                        error!("LocalSwarmDiscovery service error: {err:?}");
+                    None => {
+                        error!("LocalSwarmDiscovery channel closed");
                         error!("closing LocalSwarmDiscovery");
                         timeouts.abort_all();
                         return;
                     }
-                    Ok(msg) => msg,
+                    Some(msg) => msg,
                 };
                 match msg {
                     Message::Discovery(discovered_node_id, peer_info) => {
@@ -189,7 +190,7 @@ impl LocalSwarmDiscovery {
 
     fn spawn_discoverer(
         node_id: PublicKey,
-        sender: Sender<Message>,
+        sender: mpsc::Sender<Message>,
         socketaddrs: BTreeSet<SocketAddr>,
         rt: &tokio::runtime::Handle,
     ) -> Result<DropGuard> {
@@ -200,9 +201,11 @@ impl LocalSwarmDiscovery {
                 "Received peer information from LocalSwarmDiscovery"
             );
 
-            sender
-                .send_blocking(Message::Discovery(node_id.to_string(), peer.clone()))
-                .ok();
+            send_blocking(
+                &sender,
+                Message::Discovery(node_id.to_string(), peer.clone()),
+            )
+            .ok();
         };
         let addrs = LocalSwarmDiscovery::socketaddrs_to_addrs(socketaddrs);
         let mut discoverer =
@@ -247,7 +250,7 @@ impl From<&Peer> for DiscoveryItem {
 
 impl Discovery for LocalSwarmDiscovery {
     fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
-        let (send, recv) = async_channel::bounded(20);
+        let (send, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
         tokio::spawn(async move {
             discovery_sender
@@ -255,7 +258,8 @@ impl Discovery for LocalSwarmDiscovery {
                 .await
                 .ok();
         });
-        Some(recv.boxed())
+        let stream = tokio_stream::wrappers::ReceiverStream::new(recv);
+        Some(Box::pin(stream))
     }
 
     fn publish(&self, info: &AddrInfo) {
@@ -273,6 +277,7 @@ impl Discovery for LocalSwarmDiscovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_lite::StreamExt;
     use testresult::TestResult;
 
     #[tokio::test]
