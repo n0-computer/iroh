@@ -11,8 +11,8 @@ use tracing::{debug, error_span, trace, warn, Instrument, Span};
 use crate::{
     net::ConnHandle,
     proto::{
-        wgps::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
         data_model::Unauthorised,
+        wgps::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
     },
     session::{
         aoi_finder::{self, IntersectionFinder},

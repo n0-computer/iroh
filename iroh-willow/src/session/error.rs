@@ -1,11 +1,7 @@
 use ed25519_dalek::SignatureError;
 
 use crate::{
-    proto::{
-        meadowcap::{UserId},
-        wgps::ResourceHandle,
-        data_model::Unauthorised,
-    },
+    proto::{data_model::Unauthorised, meadowcap::UserId, wgps::ResourceHandle},
     session::{pai_finder::PaiError, resource::MissingResource},
     store::traits::SecretStoreError,
     util::channel::{ReadError, WriteError},

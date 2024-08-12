@@ -5,10 +5,15 @@ use futures_concurrency::future::TryJoin;
 use futures_lite::StreamExt;
 
 use iroh_willow::{
-    interest::{Interests, IntoAreaOfInterest}, proto::{grouping::{Area, AreaExt}, willow::{Path, PathExt}}, session::{
+    interest::{Interests, IntoAreaOfInterest},
+    proto::{
+        grouping::{Area, AreaExt},
+        willow::{Path, PathExt},
+    },
+    session::{
         intents::{Completion, EventKind},
         SessionInit, SessionMode,
-    }
+    },
 };
 
 use self::util::{create_rng, insert, setup_and_delegate, spawn_two, Peer};
@@ -72,7 +77,8 @@ async fn peer_manager_two_intents() -> Result<()> {
         async move {
             let path = Path::from_bytes(&[b"bar"]).unwrap();
 
-            let interests = Interests::builder().add_area(namespace, [Area::new_path(path.clone())]);
+            let interests =
+                Interests::builder().add_area(namespace, [Area::new_path(path.clone())]);
             let init = SessionInit::new(interests, SessionMode::ReconcileOnce);
 
             let mut intent = alfie.sync_with_peer(betty_node_id, init).await.unwrap();
@@ -280,11 +286,15 @@ mod util {
     use tokio::task::JoinHandle;
 
     use iroh_willow::{
-        engine::{AcceptOpts, Engine}, form::EntryForm, interest::{CapSelector, DelegateTo, RestrictArea}, net::ALPN, proto::{
+        engine::{AcceptOpts, Engine},
+        form::EntryForm,
+        interest::{CapSelector, DelegateTo, RestrictArea},
+        net::ALPN,
+        proto::{
             keys::{NamespaceId, NamespaceKind, UserId},
             meadowcap::AccessMode,
             willow::{Path, PathExt},
-        }
+        },
     };
 
     pub fn create_rng(seed: &str) -> ChaCha12Rng {

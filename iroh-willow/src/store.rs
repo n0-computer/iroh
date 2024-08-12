@@ -5,9 +5,9 @@ use crate::{
     form::{AuthForm, EntryForm, EntryOrForm, SubspaceForm, TimestampForm},
     interest::{CapSelector, ReceiverSelector},
     proto::{
+        data_model::Entry,
         data_model::{AuthorisedEntry, PayloadDigest},
         keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserId},
-        data_model::Entry,
     },
     store::traits::SecretStorage,
     util::time::system_time_now,

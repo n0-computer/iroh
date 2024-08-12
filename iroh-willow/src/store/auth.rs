@@ -12,7 +12,7 @@ use crate::{
     },
     proto::{
         data_model::WriteCapability,
-        grouping::{AreaOfInterest},
+        grouping::AreaOfInterest,
         keys::{NamespaceId, UserId},
         meadowcap::{AccessMode, FailedDelegationError, McCapability, ReadAuthorisation},
     },
@@ -167,7 +167,12 @@ impl<S: Storage> Auth<S> {
                 .secrets
                 .get_namespace(&namespace_key)
                 .ok_or(AuthError::MissingNamespaceSecret(namespace_key))?;
-            McCapability::new_owned(namespace_key, &namespace_secret, user_key, AccessMode::Write)?
+            McCapability::new_owned(
+                namespace_key,
+                &namespace_secret,
+                user_key,
+                AccessMode::Write,
+            )?
         };
         let pack = CapabilityPack::Write(cap.into());
         Ok(pack)

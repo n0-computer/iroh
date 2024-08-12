@@ -5,11 +5,11 @@ use anyhow::Result;
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
-        grouping::ThreeDRange,
+        data_model::{AuthorisedEntry, Entry, NamespaceId, WriteCapability},
+        grouping::Range3d,
         keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
         meadowcap::{self, ReadAuthorisation},
         wgps::Fingerprint,
-        data_model::{AuthorisedEntry, Entry, NamespaceId, WriteCapability},
     },
 };
 
@@ -79,27 +79,27 @@ pub trait EntryStorage: EntryReader + Clone + Debug + 'static {
 }
 
 pub trait EntryReader: Debug + 'static {
-    fn fingerprint(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<Fingerprint>;
+    fn fingerprint(&self, namespace: NamespaceId, range: &Range3d) -> Result<Fingerprint>;
 
     fn split_range(
         &self,
         namespace: NamespaceId,
-        range: &ThreeDRange,
+        range: &Range3d,
         config: &SplitOpts,
     ) -> Result<impl Iterator<Item = Result<RangeSplit>>>;
 
-    fn count(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64>;
+    fn count(&self, namespace: NamespaceId, range: &Range3d) -> Result<u64>;
 
     fn get_entries_with_authorisation<'a>(
         &'a self,
         namespace: NamespaceId,
-        range: &ThreeDRange,
+        range: &Range3d,
     ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a;
 
     fn get_entries(
         &self,
         namespace: NamespaceId,
-        range: &ThreeDRange,
+        range: &Range3d,
     ) -> impl Iterator<Item = Result<Entry>> {
         self.get_entries_with_authorisation(namespace, range)
             .map(|e| e.map(|e| e.0))
@@ -120,7 +120,7 @@ pub enum KeyScope {
     User,
 }
 
-pub type RangeSplit = (ThreeDRange, SplitAction);
+pub type RangeSplit = (Range3d, SplitAction);
 
 #[derive(Debug)]
 pub enum SplitAction {

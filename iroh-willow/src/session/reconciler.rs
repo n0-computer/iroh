@@ -12,7 +12,8 @@ use tracing::{debug, trace};
 
 use crate::{
     proto::{
-        grouping::{AreaExt, AreaOfInterest, ThreeDRange},
+        data_model::PayloadDigest,
+        grouping::{AreaExt, AreaOfInterest, Range3d},
         keys::NamespaceId,
         wgps::{
             AreaOfInterestHandle, Fingerprint, IsHandle, LengthyEntry,
@@ -20,7 +21,6 @@ use crate::{
             ReconciliationSendFingerprint, ReconciliationSendPayload,
             ReconciliationTerminatePayload,
         },
-        data_model::PayloadDigest,
     },
     session::{
         aoi_finder::AoiIntersection,
@@ -50,7 +50,6 @@ pub enum Output {
     },
     ReconciledAll,
 }
-
 
 #[derive(derive_more::Debug)]
 pub struct Reconciler<S: Storage> {
@@ -512,7 +511,7 @@ impl<S: Storage> Target<S> {
     async fn send_fingerprint(
         &mut self,
         shared: &Shared<S>,
-        range: ThreeDRange,
+        range: Range3d,
         fingerprint: Fingerprint,
         covers: Option<u64>,
     ) -> anyhow::Result<()> {
@@ -531,7 +530,7 @@ impl<S: Storage> Target<S> {
     async fn announce_and_send_entries(
         &mut self,
         shared: &Shared<S>,
-        range: &ThreeDRange,
+        range: &Range3d,
         want_response: bool,
         covers: Option<u64>,
         our_entry_count: Option<u64>,
