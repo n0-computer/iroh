@@ -2459,7 +2459,7 @@
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="kw">use </span>anyhow::Context <span class="kw">as _</span>;
-    <span class="kw">use </span>iroh_blobs::hashseq::HashSeq;
+    <span class="kw">use </span>iroh_blobs::{hashseq::HashSeq, provider::EventSender};
     <span class="kw">use </span>iroh_net::NodeId;
     <span class="kw">use </span>rand::RngCore;
     <span class="kw">use </span>testresult::TestResult;
@@ -2772,13 +2772,13 @@
         sender: mpsc::Sender&lt;iroh_blobs::provider::Event&gt;,
     }
     <span class="kw">impl </span>BlobEvents {
-        <span class="kw">fn </span>new(cap: usize) -&gt; (<span class="self">Self</span>, mpsc::Receiver&lt;iroh_blobs::provider::Event&gt;) {
+        <span class="kw">fn </span>new(cap: usize) -&gt; (EventSender, mpsc::Receiver&lt;iroh_blobs::provider::Event&gt;) {
             <span class="kw">let </span>(s, r) = mpsc::channel(cap);
-            (<span class="self">Self </span>{ sender: s }, r)
+            (EventSender::new(<span class="prelude-val">Some</span>(Arc::new(<span class="self">Self </span>{ sender: s }))), r)
         }
     }
 
-    <span class="kw">impl </span>iroh_blobs::provider::EventSender <span class="kw">for </span>BlobEvents {
+    <span class="kw">impl </span>iroh_blobs::provider::EventSenderPlugin <span class="kw">for </span>BlobEvents {
         <span class="kw">fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, event: iroh_blobs::provider::Event) -&gt; futures_lite::future::Boxed&lt;()&gt; {
             <span class="kw">let </span>sender = <span class="self">self</span>.sender.clone();
             Box::pin(<span class="kw">async move </span>{

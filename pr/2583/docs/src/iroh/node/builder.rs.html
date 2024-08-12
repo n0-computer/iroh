@@ -936,16 +936,6 @@
 <a href="#936" id="936">936</a>
 <a href="#937" id="937">937</a>
 <a href="#938" id="938">938</a>
-<a href="#939" id="939">939</a>
-<a href="#940" id="940">940</a>
-<a href="#941" id="941">941</a>
-<a href="#942" id="942">942</a>
-<a href="#943" id="943">943</a>
-<a href="#944" id="944">944</a>
-<a href="#945" id="945">945</a>
-<a href="#946" id="946">946</a>
-<a href="#947" id="947">947</a>
-<a href="#948" id="948">948</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
@@ -958,6 +948,7 @@
 <span class="kw">use </span>iroh_base::key::SecretKey;
 <span class="kw">use </span>iroh_blobs::{
     downloader::Downloader,
+    provider::EventSender,
     store::{Map, Store <span class="kw">as </span>BaoStore},
     util::local_pool::{<span class="self">self</span>, LocalPool, LocalPoolHandle, PanicMode},
 };
@@ -989,9 +980,7 @@
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-<span class="kw">use super</span>::{
-    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, MockEventSender, Node, NodeInner,
-};
+<span class="kw">use super</span>::{docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, Node, NodeInner};
 
 <span class="doccomment">/// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak &lt;https://simple.wikipedia.org/wiki/Leet&gt;
@@ -1041,10 +1030,9 @@
 ///
 /// [number 0]: https://n0.computer
 </span><span class="attr">#[derive(derive_more::Debug)]
-</span><span class="kw">pub struct </span>Builder&lt;D, E = MockEventSender&gt;
+</span><span class="kw">pub struct </span>Builder&lt;D&gt;
 <span class="kw">where
     </span>D: Map,
-    E: iroh_blobs::provider::EventSender,
 {
     storage: StorageConfig,
     bind_port: <span class="prelude-ty">Option</span>&lt;u16&gt;,
@@ -1063,7 +1051,7 @@
     <span class="doccomment">/// Callback to register when a gc loop is done
     </span><span class="attr">#[debug(<span class="string">"callback"</span>)]
     </span>gc_done_callback: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() + Send&gt;&gt;,
-    blob_events: E,
+    blob_events: EventSender,
 }
 
 <span class="doccomment">/// Configuration for storage.
@@ -1189,7 +1177,7 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             gc_done_callback: <span class="prelude-val">None</span>,
-            blob_events: MockEventSender,
+            blob_events: Default::default(),
         }
     }
 }
@@ -1223,21 +1211,17 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             gc_done_callback: <span class="prelude-val">None</span>,
-            blob_events: MockEventSender,
+            blob_events: Default::default(),
         }
     }
 }
 
-<span class="kw">impl</span>&lt;D, E&gt; Builder&lt;D, E&gt;
+<span class="kw">impl</span>&lt;D&gt; Builder&lt;D&gt;
 <span class="kw">where
     </span>D: BaoStore,
-    E: iroh_blobs::provider::EventSender,
 {
     <span class="doccomment">/// Set the blobs event sender.
-    </span><span class="kw">pub fn </span>set_blobs_events&lt;F: iroh_blobs::provider::EventSender&gt;(
-        <span class="self">self</span>,
-        blob_events: F,
-    ) -&gt; Builder&lt;D, F&gt; {
+    </span><span class="kw">pub fn </span>set_blobs_events(<span class="self">self</span>, blob_events: EventSender) -&gt; Builder&lt;D&gt; {
         Builder {
             storage: <span class="self">self</span>.storage,
             bind_port: <span class="self">self</span>.bind_port,
@@ -1259,16 +1243,15 @@
     }
 }
 
-<span class="kw">impl</span>&lt;D, E&gt; Builder&lt;D, E&gt;
+<span class="kw">impl</span>&lt;D&gt; Builder&lt;D&gt;
 <span class="kw">where
     </span>D: BaoStore,
-    E: iroh_blobs::provider::EventSender,
 {
     <span class="doccomment">/// Persist all node data in the provided directory.
     </span><span class="kw">pub async fn </span>persist(
         <span class="self">self</span>,
         root: <span class="kw">impl </span>AsRef&lt;Path&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;Builder&lt;iroh_blobs::store::fs::Store, E&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;Builder&lt;iroh_blobs::store::fs::Store&gt;&gt; {
         <span class="kw">let </span>root = root.as_ref();
         <span class="kw">let </span>blob_dir = IrohPaths::BaoStoreDir.with_root(root);
 
@@ -1334,12 +1317,12 @@
     }
 
     <span class="doccomment">/// Configure the default iroh rpc endpoint, on the default address.
-    </span><span class="kw">pub async fn </span>enable_rpc(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Builder&lt;D, E&gt;&gt; {
+    </span><span class="kw">pub async fn </span>enable_rpc(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Builder&lt;D&gt;&gt; {
         <span class="self">self</span>.enable_rpc_with_addr(DEFAULT_RPC_ADDR).<span class="kw">await
     </span>}
 
     <span class="doccomment">/// Configure the default iroh rpc endpoint.
-    </span><span class="kw">pub async fn </span>enable_rpc_with_addr(<span class="self">self</span>, <span class="kw-2">mut </span>rpc_addr: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;Builder&lt;D, E&gt;&gt; {
+    </span><span class="kw">pub async fn </span>enable_rpc_with_addr(<span class="self">self</span>, <span class="kw-2">mut </span>rpc_addr: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;Builder&lt;D&gt;&gt; {
         <span class="kw">let </span>(ep, actual_rpc_port) = make_rpc_endpoint(<span class="kw-2">&amp;</span><span class="self">self</span>.secret_key, rpc_addr)<span class="question-mark">?</span>;
         rpc_addr.set_port(actual_rpc_port);
 
@@ -1737,10 +1720,7 @@
     }
 
     <span class="doccomment">/// Registers the core iroh protocols (blobs, gossip, docs).
-    </span><span class="kw">fn </span>register_iroh_protocols&lt;E: iroh_blobs::provider::EventSender&gt;(
-        <span class="kw-2">mut </span><span class="self">self</span>,
-        blob_events: E,
-    ) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">fn </span>register_iroh_protocols(<span class="kw-2">mut </span><span class="self">self</span>, blob_events: EventSender) -&gt; <span class="self">Self </span>{
         <span class="comment">// Register blobs.
         </span><span class="kw">let </span>blobs_proto = BlobsProtocol::new_with_events(
             <span class="self">self</span>.blobs_db().clone(),

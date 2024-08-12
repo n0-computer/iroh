@@ -527,8 +527,32 @@
 <a href="#527" id="527">527</a>
 <a href="#528" id="528">528</a>
 <a href="#529" id="529">529</a>
+<a href="#530" id="530">530</a>
+<a href="#531" id="531">531</a>
+<a href="#532" id="532">532</a>
+<a href="#533" id="533">533</a>
+<a href="#534" id="534">534</a>
+<a href="#535" id="535">535</a>
+<a href="#536" id="536">536</a>
+<a href="#537" id="537">537</a>
+<a href="#538" id="538">538</a>
+<a href="#539" id="539">539</a>
+<a href="#540" id="540">540</a>
+<a href="#541" id="541">541</a>
+<a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
+<a href="#546" id="546">546</a>
+<a href="#547" id="547">547</a>
+<a href="#548" id="548">548</a>
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server side API
 </span><span class="kw">use </span>std::fmt::Debug;
+<span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Duration;
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
@@ -708,12 +732,12 @@
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-</span><span class="kw">pub async fn </span>transfer_collection&lt;D: Map, E: EventSender&gt;(
+</span><span class="kw">pub async fn </span>transfer_collection&lt;D: Map&gt;(
     request: GetRequest,
     <span class="comment">// Store from which to fetch blobs.
     </span>db: <span class="kw-2">&amp;</span>D,
     <span class="comment">// Response writer, containing the quinn stream.
-    </span>writer: <span class="kw-2">&amp;mut </span>ResponseWriter&lt;E&gt;,
+    </span>writer: <span class="kw-2">&amp;mut </span>ResponseWriter,
     <span class="comment">// the collection to transfer
     </span><span class="kw-2">mut </span>outboard: <span class="kw">impl </span>Outboard,
     <span class="kw-2">mut </span>data: <span class="kw">impl </span>AsyncSliceReader,
@@ -728,7 +752,7 @@
         </span><span class="kw">let </span>(stream, num_blobs) = parse_hash_seq(<span class="kw-2">&amp;mut </span>data).<span class="kw">await</span><span class="question-mark">?</span>;
         writer
             .events
-            .send(Event::TransferHashSeqStarted {
+            .send(|| Event::TransferHashSeqStarted {
                 connection_id: writer.connection_id(),
                 request_id: writer.request_id(),
                 num_blobs,
@@ -782,7 +806,7 @@
 
                 writer
                     .events
-                    .send(Event::TransferBlobCompleted {
+                    .send(|| Event::TransferBlobCompleted {
                         connection_id: writer.connection_id(),
                         request_id: writer.request_id(),
                         hash,
@@ -803,16 +827,40 @@
 }
 
 <span class="doccomment">/// Trait for sending events.
-</span><span class="kw">pub trait </span>EventSender: std::fmt::Debug + Clone + Sync + Send + <span class="lifetime">'static </span>{
+</span><span class="kw">pub trait </span>EventSenderPlugin: std::fmt::Debug + Sync + Send + <span class="lifetime">'static </span>{
     <span class="doccomment">/// Send an event.
     </span><span class="kw">fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, event: Event) -&gt; BoxFuture&lt;()&gt;;
 }
 
+<span class="doccomment">///
+</span><span class="attr">#[derive(Debug, Clone, Default)]
+</span><span class="kw">pub struct </span>EventSender {
+    inner: <span class="prelude-ty">Option</span>&lt;Arc&lt;<span class="kw">dyn </span>EventSenderPlugin&gt;&gt;,
+}
+
+<span class="kw">impl </span>EventSender {
+    <span class="doccomment">/// Create a new event sender.
+    </span><span class="kw">pub fn </span>new(inner: <span class="prelude-ty">Option</span>&lt;Arc&lt;<span class="kw">dyn </span>EventSenderPlugin&gt;&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{ inner }
+    }
+
+    <span class="doccomment">/// Send an event.
+    ///
+    /// If the inner sender is not set, the function to produce the event will
+    /// not be called.
+    </span><span class="kw">pub async fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, event: <span class="kw">impl </span>FnOnce() -&gt; Event) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(inner) = <span class="kw-2">&amp;</span><span class="self">self</span>.inner {
+            <span class="kw">let </span>event = event();
+            inner.as_ref().send(event).<span class="kw">await</span>;
+        }
+    }
+}
+
 <span class="doccomment">/// Handle a single connection.
-</span><span class="kw">pub async fn </span>handle_connection&lt;D: Map, E: EventSender&gt;(
+</span><span class="kw">pub async fn </span>handle_connection&lt;D: Map&gt;(
     connection: endpoint::Connection,
     db: D,
-    events: E,
+    events: EventSender,
     rt: LocalPoolHandle,
 ) {
     <span class="kw">let </span>remote_addr = connection.remote_address();
@@ -829,7 +877,9 @@
                 events: events.clone(),
                 inner: writer,
             };
-            events.send(Event::ClientConnected { connection_id }).<span class="kw">await</span>;
+            events
+                .send(|| Event::ClientConnected { connection_id })
+                .<span class="kw">await</span>;
             <span class="kw">let </span>db = db.clone();
             rt.spawn_detached(|| {
                 <span class="kw">async move </span>{
@@ -845,11 +895,7 @@
     .<span class="kw">await
 </span>}
 
-<span class="kw">async fn </span>handle_stream&lt;D: Map, E: EventSender&gt;(
-    db: D,
-    reader: RecvStream,
-    writer: ResponseWriter&lt;E&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<span class="kw">async fn </span>handle_stream&lt;D: Map&gt;(db: D, reader: RecvStream, writer: ResponseWriter) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="comment">// 1. Decode the request.
     </span><span class="macro">debug!</span>(<span class="string">"reading request"</span>);
     <span class="kw">let </span>request = <span class="kw">match </span>read_request(reader).<span class="kw">await </span>{
@@ -866,16 +912,16 @@
 }
 
 <span class="doccomment">/// Handle a single standard get request.
-</span><span class="kw">pub async fn </span>handle_get&lt;D: Map, E: EventSender&gt;(
+</span><span class="kw">pub async fn </span>handle_get&lt;D: Map&gt;(
     db: D,
     request: GetRequest,
-    <span class="kw-2">mut </span>writer: ResponseWriter&lt;E&gt;,
+    <span class="kw-2">mut </span>writer: ResponseWriter,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="kw">let </span>hash = request.hash;
     <span class="macro">debug!</span>(%hash, <span class="string">"received request"</span>);
     writer
         .events
-        .send(Event::GetRequestReceived {
+        .send(|| Event::GetRequestReceived {
             hash,
             connection_id: writer.connection_id(),
             request_id: writer.request_id(),
@@ -926,13 +972,13 @@
 
 <span class="doccomment">/// A helper struct that combines a quinn::SendStream with auxiliary information
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>ResponseWriter&lt;E&gt; {
+</span><span class="kw">pub struct </span>ResponseWriter {
     inner: SendStream,
-    events: E,
+    events: EventSender,
     connection_id: u64,
 }
 
-<span class="kw">impl</span>&lt;E: EventSender&gt; ResponseWriter&lt;E&gt; {
+<span class="kw">impl </span>ResponseWriter {
     <span class="kw">fn </span>tracking_writer(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; TrackingStreamWriter&lt;TokioStreamWriter&lt;<span class="kw-2">&amp;mut </span>SendStream&gt;&gt; {
         TrackingStreamWriter::new(TokioStreamWriter(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner))
     }
@@ -978,7 +1024,7 @@
         <span class="macro">info!</span>(<span class="string">"transfer completed for {}"</span>, hash);
         <span class="self">Self</span>::print_stats(<span class="kw-2">&amp;</span>stats);
         <span class="self">self</span>.events
-            .send(Event::TransferCompleted {
+            .send(<span class="kw">move </span>|| Event::TransferCompleted {
                 connection_id: <span class="self">self</span>.connection_id(),
                 request_id: <span class="self">self</span>.request_id(),
                 stats,
@@ -991,7 +1037,7 @@
             <span class="self">Self</span>::print_stats(stats);
         };
         <span class="self">self</span>.events
-            .send(Event::TransferAborted {
+            .send(<span class="kw">move </span>|| Event::TransferAborted {
                 connection_id: <span class="self">self</span>.connection_id(),
                 request_id: <span class="self">self</span>.request_id(),
                 stats,

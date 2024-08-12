@@ -1,3 +1,0 @@
-(function() {var implementors = {
-"iroh":[["impl <a class=\"trait\" href=\"iroh/blobs/provider/trait.EventSender.html\" title=\"trait iroh::blobs::provider::EventSender\">EventSender</a> for <a class=\"struct\" href=\"iroh/node/struct.MockEventSender.html\" title=\"struct iroh::node::MockEventSender\">MockEventSender</a>"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
