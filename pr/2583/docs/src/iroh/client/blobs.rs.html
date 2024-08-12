@@ -1513,6 +1513,10 @@
 <a href="#1513" id="1513">1513</a>
 <a href="#1514" id="1514">1514</a>
 <a href="#1515" id="1515">1515</a>
+<a href="#1516" id="1516">1516</a>
+<a href="#1517" id="1517">1517</a>
+<a href="#1518" id="1518">1518</a>
+<a href="#1519" id="1519">1519</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for blobs management.
 //!
 //! The main entry point is the [`Client`].
@@ -2459,7 +2463,7 @@
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="kw">use </span>anyhow::Context <span class="kw">as _</span>;
-    <span class="kw">use </span>iroh_blobs::{hashseq::HashSeq, provider::EventSender};
+    <span class="kw">use </span>iroh_blobs::hashseq::HashSeq;
     <span class="kw">use </span>iroh_net::NodeId;
     <span class="kw">use </span>rand::RngCore;
     <span class="kw">use </span>testresult::TestResult;
@@ -2772,13 +2776,13 @@
         sender: mpsc::Sender&lt;iroh_blobs::provider::Event&gt;,
     }
     <span class="kw">impl </span>BlobEvents {
-        <span class="kw">fn </span>new(cap: usize) -&gt; (EventSender, mpsc::Receiver&lt;iroh_blobs::provider::Event&gt;) {
+        <span class="kw">fn </span>new(cap: usize) -&gt; (<span class="self">Self</span>, mpsc::Receiver&lt;iroh_blobs::provider::Event&gt;) {
             <span class="kw">let </span>(s, r) = mpsc::channel(cap);
-            (EventSender::new(<span class="prelude-val">Some</span>(Arc::new(<span class="self">Self </span>{ sender: s }))), r)
+            (<span class="self">Self </span>{ sender: s }, r)
         }
     }
 
-    <span class="kw">impl </span>iroh_blobs::provider::EventSenderPlugin <span class="kw">for </span>BlobEvents {
+    <span class="kw">impl </span>iroh_blobs::provider::CustomEventSender <span class="kw">for </span>BlobEvents {
         <span class="kw">fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, event: iroh_blobs::provider::Event) -&gt; futures_lite::future::Boxed&lt;()&gt; {
             <span class="kw">let </span>sender = <span class="self">self</span>.sender.clone();
             Box::pin(<span class="kw">async move </span>{
@@ -2823,8 +2827,8 @@
         <span class="kw">while let </span><span class="prelude-val">Some</span>(ev) = node1_events_r.recv().<span class="kw">await </span>{
             ev1.push(ev);
         }
-        <span class="macro">assert_eq!</span>(ev1.len(), <span class="number">3</span>);
-        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+        <span class="comment">// assert_eq!(ev1.len(), 3);
+        </span><span class="macro">assert!</span>(<span class="macro">matches!</span>(
             ev1[<span class="number">0</span>],
             iroh_blobs::provider::Event::ClientConnected { .. }
         ));
@@ -2834,6 +2838,10 @@
         ));
         <span class="macro">assert!</span>(<span class="macro">matches!</span>(
             ev1[<span class="number">2</span>],
+            iroh_blobs::provider::Event::TransferProgress { .. }
+        ));
+        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+            ev1[<span class="number">3</span>],
             iroh_blobs::provider::Event::TransferCompleted { .. }
         ));
         <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>ev1);

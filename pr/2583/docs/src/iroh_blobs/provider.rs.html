@@ -550,6 +550,55 @@
 <a href="#550" id="550">550</a>
 <a href="#551" id="551">551</a>
 <a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a>
+<a href="#558" id="558">558</a>
+<a href="#559" id="559">559</a>
+<a href="#560" id="560">560</a>
+<a href="#561" id="561">561</a>
+<a href="#562" id="562">562</a>
+<a href="#563" id="563">563</a>
+<a href="#564" id="564">564</a>
+<a href="#565" id="565">565</a>
+<a href="#566" id="566">566</a>
+<a href="#567" id="567">567</a>
+<a href="#568" id="568">568</a>
+<a href="#569" id="569">569</a>
+<a href="#570" id="570">570</a>
+<a href="#571" id="571">571</a>
+<a href="#572" id="572">572</a>
+<a href="#573" id="573">573</a>
+<a href="#574" id="574">574</a>
+<a href="#575" id="575">575</a>
+<a href="#576" id="576">576</a>
+<a href="#577" id="577">577</a>
+<a href="#578" id="578">578</a>
+<a href="#579" id="579">579</a>
+<a href="#580" id="580">580</a>
+<a href="#581" id="581">581</a>
+<a href="#582" id="582">582</a>
+<a href="#583" id="583">583</a>
+<a href="#584" id="584">584</a>
+<a href="#585" id="585">585</a>
+<a href="#586" id="586">586</a>
+<a href="#587" id="587">587</a>
+<a href="#588" id="588">588</a>
+<a href="#589" id="589">589</a>
+<a href="#590" id="590">590</a>
+<a href="#591" id="591">591</a>
+<a href="#592" id="592">592</a>
+<a href="#593" id="593">593</a>
+<a href="#594" id="594">594</a>
+<a href="#595" id="595">595</a>
+<a href="#596" id="596">596</a>
+<a href="#597" id="597">597</a>
+<a href="#598" id="598">598</a>
+<a href="#599" id="599">599</a>
+<a href="#600" id="600">600</a>
+<a href="#601" id="601">601</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server side API
 </span><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::sync::Arc;
@@ -602,15 +651,6 @@
         <span class="doccomment">/// The hash for which the client wants to receive data.
         </span>hash: Hash,
     },
-    <span class="doccomment">/// A request was received from a client.
-    </span>CustomGetRequestReceived {
-        <span class="doccomment">/// An unique connection id.
-        </span>connection_id: u64,
-        <span class="doccomment">/// An identifier uniquely identifying this transfer request.
-        </span>request_id: u64,
-        <span class="doccomment">/// The size of the custom get request.
-        </span>len: usize,
-    },
     <span class="doccomment">/// A sequence of hashes has been found and is being transferred.
     </span>TransferHashSeqStarted {
         <span class="doccomment">/// An unique connection id.
@@ -619,6 +659,17 @@
         </span>request_id: u64,
         <span class="doccomment">/// The number of blobs in the sequence.
         </span>num_blobs: u64,
+    },
+    <span class="doccomment">/// A sequence of hashes has been found and is being transferred.
+    </span>TransferProgress {
+        <span class="doccomment">/// An unique connection id.
+        </span>connection_id: u64,
+        <span class="doccomment">/// An identifier uniquely identifying this transfer request.
+        </span>request_id: u64,
+        <span class="doccomment">/// The hash for which we are transferring data.
+        </span>hash: Hash,
+        <span class="doccomment">/// Offset
+        </span>offset: u64,
     },
     <span class="doccomment">/// A blob in a sequence was transferred.
     </span>TransferBlobCompleted {
@@ -744,6 +795,9 @@
     stats: <span class="kw-2">&amp;mut </span>TransferStats,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;SentStatus&gt; {
     <span class="kw">let </span>hash = request.hash;
+    <span class="kw">let </span>events = writer.events.clone();
+    <span class="kw">let </span>request_id = writer.request_id();
+    <span class="kw">let </span>connection_id = writer.connection_id();
 
     <span class="comment">// if the request is just for the root, we don't need to deserialize the collection
     </span><span class="kw">let </span>just_root = <span class="macro">matches!</span>(request.ranges.as_single(), <span class="prelude-val">Some</span>((<span class="number">0</span>, <span class="kw">_</span>)));
@@ -763,6 +817,13 @@
         <span class="prelude-val">None
     </span>};
 
+    <span class="kw">let </span>mk_progress = |offset| Event::TransferProgress {
+        connection_id,
+        request_id,
+        hash,
+        offset,
+    };
+
     <span class="kw">let </span><span class="kw-2">mut </span>prev = <span class="number">0</span>;
     <span class="kw">for </span>(offset, ranges) <span class="kw">in </span>request.ranges.iter_non_empty() {
         <span class="comment">// create a tracking writer so we can get some stats for writing
@@ -771,11 +832,13 @@
             <span class="macro">debug!</span>(<span class="string">"writing ranges '{:?}' of sequence {}"</span>, ranges, hash);
             <span class="comment">// wrap the data reader in a tracking reader so we can get some stats for reading
             </span><span class="kw">let </span><span class="kw-2">mut </span>tracking_reader = TrackingSliceReader::new(<span class="kw-2">&amp;mut </span>data);
+            <span class="kw">let </span><span class="kw-2">mut </span>sending_reader =
+                SendingSliceReader::new(<span class="kw-2">&amp;mut </span>tracking_reader, events.clone(), mk_progress);
             <span class="comment">// send the root
             </span>tw.write(outboard.tree().size().to_le_bytes().as_slice())
                 .<span class="kw">await</span><span class="question-mark">?</span>;
             encode_ranges_validated(
-                <span class="kw-2">&amp;mut </span>tracking_reader,
+                <span class="kw-2">&amp;mut </span>sending_reader,
                 <span class="kw-2">&amp;mut </span>outboard,
                 <span class="kw-2">&amp;</span>ranges.to_chunk_ranges(),
                 <span class="kw-2">&amp;mut </span>tw,
@@ -796,7 +859,8 @@
             }
             <span class="kw">if let </span><span class="prelude-val">Some</span>(hash) = c.next().<span class="kw">await</span><span class="question-mark">? </span>{
                 tokio::task::yield_now().<span class="kw">await</span>;
-                <span class="kw">let </span>(status, size, blob_read_stats) = send_blob(db, hash, ranges, <span class="kw-2">&amp;mut </span>tw).<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="kw">let </span>(status, size, blob_read_stats) =
+                    send_blob(db, hash, ranges, <span class="kw-2">&amp;mut </span>tw, events.clone(), mk_progress).<span class="kw">await</span><span class="question-mark">?</span>;
                 stats.send += tw.stats();
                 stats.read += blob_read_stats;
                 <span class="kw">if </span>SentStatus::NotFound == status {
@@ -826,8 +890,31 @@
     <span class="prelude-val">Ok</span>(SentStatus::Sent)
 }
 
+<span class="kw">struct </span>SendingSliceReader&lt;R, F&gt; {
+    inner: R,
+    sender: EventSender,
+    f: F,
+}
+
+<span class="kw">impl</span>&lt;R: AsyncSliceReader, F: Fn(u64) -&gt; Event&gt; SendingSliceReader&lt;R, F&gt; {
+    <span class="kw">fn </span>new(inner: R, sender: EventSender, f: F) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{ inner, sender, f }
+    }
+}
+
+<span class="kw">impl</span>&lt;R: AsyncSliceReader, F: Fn(u64) -&gt; Event&gt; AsyncSliceReader <span class="kw">for </span>SendingSliceReader&lt;R, F&gt; {
+    <span class="kw">async fn </span>read_at(<span class="kw-2">&amp;mut </span><span class="self">self</span>, offset: u64, len: usize) -&gt; std::io::Result&lt;bytes::Bytes&gt; {
+        <span class="self">self</span>.sender.send(|| (<span class="self">self</span>.f)(offset)).<span class="kw">await</span>;
+        <span class="self">self</span>.inner.read_at(offset, len).<span class="kw">await
+    </span>}
+
+    <span class="kw">async fn </span>size(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; std::io::Result&lt;u64&gt; {
+        <span class="self">self</span>.inner.size().<span class="kw">await
+    </span>}
+}
+
 <span class="doccomment">/// Trait for sending events.
-</span><span class="kw">pub trait </span>EventSenderPlugin: std::fmt::Debug + Sync + Send + <span class="lifetime">'static </span>{
+</span><span class="kw">pub trait </span>CustomEventSender: std::fmt::Debug + Sync + Send + <span class="lifetime">'static </span>{
     <span class="doccomment">/// Send an event.
     </span><span class="kw">fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, event: Event) -&gt; BoxFuture&lt;()&gt;;
 }
@@ -835,12 +922,20 @@
 <span class="doccomment">///
 </span><span class="attr">#[derive(Debug, Clone, Default)]
 </span><span class="kw">pub struct </span>EventSender {
-    inner: <span class="prelude-ty">Option</span>&lt;Arc&lt;<span class="kw">dyn </span>EventSenderPlugin&gt;&gt;,
+    inner: <span class="prelude-ty">Option</span>&lt;Arc&lt;<span class="kw">dyn </span>CustomEventSender&gt;&gt;,
+}
+
+<span class="kw">impl</span>&lt;T: CustomEventSender&gt; From&lt;T&gt; <span class="kw">for </span>EventSender {
+    <span class="kw">fn </span>from(inner: T) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            inner: <span class="prelude-val">Some</span>(Arc::new(inner)),
+        }
+    }
 }
 
 <span class="kw">impl </span>EventSender {
     <span class="doccomment">/// Create a new event sender.
-    </span><span class="kw">pub fn </span>new(inner: <span class="prelude-ty">Option</span>&lt;Arc&lt;<span class="kw">dyn </span>EventSenderPlugin&gt;&gt;) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>new(inner: <span class="prelude-ty">Option</span>&lt;Arc&lt;<span class="kw">dyn </span>CustomEventSender&gt;&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{ inner }
     }
 
@@ -1061,15 +1156,18 @@
     hash: Hash,
     ranges: <span class="kw-2">&amp;</span>RangeSpec,
     <span class="kw-2">mut </span>writer: W,
+    events: EventSender,
+    mk_progress: <span class="kw">impl </span>Fn(u64) -&gt; Event,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(SentStatus, u64, SliceReaderStats)&gt; {
     <span class="kw">match </span>db.get(<span class="kw-2">&amp;</span>hash).<span class="kw">await</span><span class="question-mark">? </span>{
         <span class="prelude-val">Some</span>(entry) =&gt; {
             <span class="kw">let </span>outboard = entry.outboard().<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span>size = outboard.tree().size();
             <span class="kw">let </span><span class="kw-2">mut </span>file_reader = TrackingSliceReader::new(entry.data_reader().<span class="kw">await</span><span class="question-mark">?</span>);
+            <span class="kw">let </span><span class="kw-2">mut </span>sending_reader = SendingSliceReader::new(<span class="kw-2">&amp;mut </span>file_reader, events, mk_progress);
             writer.write(size.to_le_bytes().as_slice()).<span class="kw">await</span><span class="question-mark">?</span>;
             encode_ranges_validated(
-                <span class="kw-2">&amp;mut </span>file_reader,
+                <span class="kw-2">&amp;mut </span>sending_reader,
                 outboard,
                 <span class="kw-2">&amp;</span>ranges.to_chunk_ranges(),
                 writer,
