@@ -536,7 +536,7 @@
                                 .map(|(ipaddr, port)| SocketAddr::new(<span class="kw-2">*</span>ipaddr, <span class="kw-2">*</span>port))
                                 .collect();
                             sender
-                                .send(NodeAddr::from_parts(public_key.clone().into(), <span class="prelude-val">None</span>, addrs))
+                                .send(NodeAddr::from_parts(<span class="kw-2">*</span>public_key, <span class="prelude-val">None</span>, addrs))
                                 .<span class="kw">await
                                 </span>.ok();
                         }
