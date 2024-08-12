@@ -650,7 +650,7 @@
     session::{
         aoi_finder::AoiIntersection,
         channels::{ChannelSenders, MessageReceiver},
-        payload::{send_payload_chunked, CurrentPayload},
+        payload::{send_payload_chunked, CurrentPayload, DEFAULT_CHUNK_SIZE},
         static_tokens::StaticTokens,
         Error, Role, SessionId,
     },
@@ -698,6 +698,7 @@
         session_id: SessionId,
         send: ChannelSenders,
         our_role: Role,
+        max_eager_payload_size: u64,
     ) -&gt; <span class="kw">impl </span>futures_lite::Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;Output, Error&gt;&gt; {
         GenStream::new(|co| {
             <span class="kw">let </span>shared = Shared {
@@ -707,6 +708,7 @@
                 send,
                 static_tokens,
                 session_id,
+                max_eager_payload_size,
             };
             <span class="self">Self </span>{
                 shared,
@@ -991,6 +993,7 @@
     send: ChannelSenders,
     static_tokens: StaticTokens,
     session_id: SessionId,
+    max_eager_payload_size: u64,
 }
 
 <span class="attr">#[derive(Debug)]
@@ -1188,7 +1191,8 @@
             <span class="kw">let </span>static_token = token.capability.into();
             <span class="kw">let </span>dynamic_token = token.signature;
             <span class="comment">// TODO: partial payloads
-            </span><span class="kw">let </span>available = entry.payload_length();
+            </span><span class="kw">let </span>payload_len = entry.payload_length();
+            <span class="kw">let </span>available = payload_len;
             <span class="kw">let </span>static_token_handle = shared
                 .static_tokens
                 .bind_and_send_ours(static_token, <span class="kw-2">&amp;</span>shared.send)
@@ -1202,21 +1206,17 @@
             shared.send.send(msg).<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="comment">// TODO: only send payload if configured to do so and/or under size limit.
-            </span><span class="kw">let </span>send_payloads = <span class="bool-val">true</span>;
-            <span class="kw">let </span>chunk_size = <span class="number">1024 </span>* <span class="number">64</span>;
-            <span class="kw">if </span>send_payloads
-                &amp;&amp; send_payload_chunked(
+            </span><span class="kw">if </span>payload_len &lt;= shared.max_eager_payload_size {
+                send_payload_chunked(
                     digest,
                     shared.store.payloads(),
                     <span class="kw-2">&amp;</span>shared.send,
-                    chunk_size,
+                    DEFAULT_CHUNK_SIZE,
                     |bytes| ReconciliationSendPayload { bytes }.into(),
                 )
-                .<span class="kw">await</span><span class="question-mark">?
-            </span>{
-                <span class="kw">let </span>msg = ReconciliationTerminatePayload;
-                shared.send.send(msg).<span class="kw">await</span><span class="question-mark">?</span>;
+                .<span class="kw">await</span><span class="question-mark">?</span>;
             }
+            shared.send.send(ReconciliationTerminatePayload).<span class="kw">await</span><span class="question-mark">?</span>;
         }
         <span class="prelude-val">Ok</span>(())
     }
