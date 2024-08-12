@@ -50,15 +50,6 @@ pub enum Event {
         /// The hash for which the client wants to receive data.
         hash: Hash,
     },
-    /// A request was received from a client.
-    CustomGetRequestReceived {
-        /// An unique connection id.
-        connection_id: u64,
-        /// An identifier uniquely identifying this transfer request.
-        request_id: u64,
-        /// The size of the custom get request.
-        len: usize,
-    },
     /// A sequence of hashes has been found and is being transferred.
     TransferHashSeqStarted {
         /// An unique connection id.
@@ -67,6 +58,17 @@ pub enum Event {
         request_id: u64,
         /// The number of blobs in the sequence.
         num_blobs: u64,
+    },
+    /// A sequence of hashes has been found and is being transferred.
+    TransferProgress {
+        /// An unique connection id.
+        connection_id: u64,
+        /// An identifier uniquely identifying this transfer request.
+        request_id: u64,
+        /// The hash for which we are transferring data.
+        hash: Hash,
+        /// Offset
+        offset: u64,
     },
     /// A blob in a sequence was transferred.
     TransferBlobCompleted {
@@ -192,6 +194,9 @@ pub async fn transfer_collection<D: Map>(
     stats: &mut TransferStats,
 ) -> Result<SentStatus> {
     let hash = request.hash;
+    let events = writer.events.clone();
+    let request_id = writer.request_id();
+    let connection_id = writer.connection_id();
 
     // if the request is just for the root, we don't need to deserialize the collection
     let just_root = matches!(request.ranges.as_single(), Some((0, _)));
@@ -211,6 +216,13 @@ pub async fn transfer_collection<D: Map>(
         None
     };
 
+    let mk_progress = |offset| Event::TransferProgress {
+        connection_id,
+        request_id,
+        hash,
+        offset,
+    };
+
     let mut prev = 0;
     for (offset, ranges) in request.ranges.iter_non_empty() {
         // create a tracking writer so we can get some stats for writing
@@ -219,11 +231,13 @@ pub async fn transfer_collection<D: Map>(
             debug!("writing ranges '{:?}' of sequence {}", ranges, hash);
             // wrap the data reader in a tracking reader so we can get some stats for reading
             let mut tracking_reader = TrackingSliceReader::new(&mut data);
+            let mut sending_reader =
+                SendingSliceReader::new(&mut tracking_reader, events.clone(), mk_progress);
             // send the root
             tw.write(outboard.tree().size().to_le_bytes().as_slice())
                 .await?;
             encode_ranges_validated(
-                &mut tracking_reader,
+                &mut sending_reader,
                 &mut outboard,
                 &ranges.to_chunk_ranges(),
                 &mut tw,
@@ -244,7 +258,8 @@ pub async fn transfer_collection<D: Map>(
             }
             if let Some(hash) = c.next().await? {
                 tokio::task::yield_now().await;
-                let (status, size, blob_read_stats) = send_blob(db, hash, ranges, &mut tw).await?;
+                let (status, size, blob_read_stats) =
+                    send_blob(db, hash, ranges, &mut tw, events.clone(), mk_progress).await?;
                 stats.send += tw.stats();
                 stats.read += blob_read_stats;
                 if SentStatus::NotFound == status {
@@ -274,28 +289,60 @@ pub async fn transfer_collection<D: Map>(
     Ok(SentStatus::Sent)
 }
 
+struct SendingSliceReader<R, F> {
+    inner: R,
+    sender: EventSender,
+    f: F,
+}
+
+impl<R: AsyncSliceReader, F: Fn(u64) -> Event> SendingSliceReader<R, F> {
+    fn new(inner: R, sender: EventSender, f: F) -> Self {
+        Self { inner, sender, f }
+    }
+}
+
+impl<R: AsyncSliceReader, F: Fn(u64) -> Event> AsyncSliceReader for SendingSliceReader<R, F> {
+    async fn read_at(&mut self, offset: u64, len: usize) -> std::io::Result<bytes::Bytes> {
+        self.sender.send(|| (self.f)(offset)).await;
+        self.inner.read_at(offset, len).await
+    }
+
+    async fn size(&mut self) -> std::io::Result<u64> {
+        self.inner.size().await
+    }
+}
+
 /// Trait for sending events.
-pub trait EventSenderPlugin: std::fmt::Debug + Sync + Send + 'static {
+pub trait CustomEventSender: std::fmt::Debug + Sync + Send + 'static {
     /// Send an event.
     fn send(&self, event: Event) -> BoxFuture<()>;
 }
 
-///
+/// A possibly disabled sender for events.
 #[derive(Debug, Clone, Default)]
 pub struct EventSender {
-    inner: Option<Arc<dyn EventSenderPlugin>>,
+    inner: Option<Arc<dyn CustomEventSender>>,
+}
+
+impl<T: CustomEventSender> From<T> for EventSender {
+    fn from(inner: T) -> Self {
+        Self {
+            inner: Some(Arc::new(inner)),
+        }
+    }
 }
 
 impl EventSender {
     /// Create a new event sender.
-    pub fn new(inner: Option<Arc<dyn EventSenderPlugin>>) -> Self {
+    pub fn new(inner: Option<Arc<dyn CustomEventSender>>) -> Self {
         Self { inner }
     }
 
     /// Send an event.
     ///
     /// If the inner sender is not set, the function to produce the event will
-    /// not be called.
+    /// not be called. So any cost associated with gathering information for the
+    /// event will not be incurred.
     pub async fn send(&self, event: impl FnOnce() -> Event) {
         if let Some(inner) = &self.inner {
             let event = event();
@@ -509,15 +556,18 @@ pub async fn send_blob<D: Map, W: AsyncStreamWriter>(
     hash: Hash,
     ranges: &RangeSpec,
     mut writer: W,
+    events: EventSender,
+    mk_progress: impl Fn(u64) -> Event,
 ) -> Result<(SentStatus, u64, SliceReaderStats)> {
     match db.get(&hash).await? {
         Some(entry) => {
             let outboard = entry.outboard().await?;
             let size = outboard.tree().size();
             let mut file_reader = TrackingSliceReader::new(entry.data_reader().await?);
+            let mut sending_reader = SendingSliceReader::new(&mut file_reader, events, mk_progress);
             writer.write(size.to_le_bytes().as_slice()).await?;
             encode_ranges_validated(
-                &mut file_reader,
+                &mut sending_reader,
                 outboard,
                 &ranges.to_chunk_ranges(),
                 writer,

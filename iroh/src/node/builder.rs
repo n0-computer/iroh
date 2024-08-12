@@ -283,32 +283,11 @@ where
     D: BaoStore,
 {
     /// Set the blobs event sender.
-    pub fn set_blobs_events(self, blob_events: EventSender) -> Builder<D> {
-        Builder {
-            storage: self.storage,
-            bind_port: self.bind_port,
-            secret_key: self.secret_key,
-            blobs_store: self.blobs_store,
-            keylog: self.keylog,
-            rpc_endpoint: self.rpc_endpoint,
-            rpc_addr: self.rpc_addr,
-            relay_mode: self.relay_mode,
-            dns_resolver: self.dns_resolver,
-            gc_policy: self.gc_policy,
-            docs_storage: self.docs_storage,
-            node_discovery: self.node_discovery,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: false,
-            gc_done_callback: self.gc_done_callback,
-            blob_events,
-        }
+    pub fn set_blobs_events(mut self, blob_events: impl Into<EventSender>) -> Self {
+        self.blob_events = blob_events.into();
+        self
     }
-}
 
-impl<D> Builder<D>
-where
-    D: BaoStore,
-{
     /// Persist all node data in the provided directory.
     pub async fn persist(
         self,
