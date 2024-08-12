@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Channel","LogicalChannel"],"struct":["InvalidChannelId","LogicalChannelIter"]};
