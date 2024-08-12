@@ -82,6 +82,16 @@
 <a href="#82" id="82">82</a>
 <a href="#83" id="83">83</a>
 <a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! TLS configuration based on libp2p TLS specs.
 //!
 //! See &lt;https://github.com/libp2p/specs/blob/master/tls/tls.md&gt;.
@@ -92,6 +102,8 @@
 <span class="kw">use </span>quinn::crypto::rustls::{NoInitialCipherSuite, QuicClientConfig, QuicServerConfig};
 
 <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
+
+<span class="kw">use </span><span class="self">self</span>::certificate::AlwaysResolvesCert;
 
 <span class="kw">pub mod </span>certificate;
 <span class="kw">mod </span>verifier;
@@ -120,6 +132,11 @@
 ) -&gt; <span class="prelude-ty">Result</span>&lt;QuicClientConfig, CreateConfigError&gt; {
     <span class="kw">let </span>(certificate, secret_key) = certificate::generate(secret_key)<span class="question-mark">?</span>;
 
+    <span class="kw">let </span>cert_resolver = Arc::new(
+        AlwaysResolvesCert::new(certificate, <span class="kw-2">&amp;</span>secret_key)
+            .expect(<span class="string">"Client cert key DER is valid; qed"</span>),
+    );
+
     <span class="kw">let </span><span class="kw-2">mut </span>crypto = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
@@ -129,8 +146,7 @@
     .with_custom_certificate_verifier(Arc::new(
         verifier::Libp2pCertificateVerifier::with_remote_peer_id(remote_peer_id),
     ))
-    .with_client_auth_cert(<span class="macro">vec!</span>[certificate], secret_key)
-    .expect(<span class="string">"Client cert key DER is valid; qed"</span>);
+    .with_client_cert_resolver(cert_resolver);
     crypto.alpn_protocols = alpn_protocols;
     <span class="kw">if </span>keylog {
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
@@ -151,14 +167,18 @@
 ) -&gt; <span class="prelude-ty">Result</span>&lt;QuicServerConfig, CreateConfigError&gt; {
     <span class="kw">let </span>(certificate, secret_key) = certificate::generate(secret_key)<span class="question-mark">?</span>;
 
+    <span class="kw">let </span>cert_resolver = Arc::new(
+        AlwaysResolvesCert::new(certificate, <span class="kw-2">&amp;</span>secret_key)
+            .expect(<span class="string">"Server cert key DER is valid; qed"</span>),
+    );
+
     <span class="kw">let </span><span class="kw-2">mut </span>crypto = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
     .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
     .expect(<span class="string">"fixed config"</span>)
     .with_client_cert_verifier(Arc::new(verifier::Libp2pCertificateVerifier::new()))
-    .with_single_cert(<span class="macro">vec!</span>[certificate], secret_key)
-    .expect(<span class="string">"Server cert key DER is valid; qed"</span>);
+    .with_cert_resolver(cert_resolver);
     crypto.alpn_protocols = alpn_protocols;
     <span class="kw">if </span>keylog {
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
