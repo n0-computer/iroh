@@ -51,7 +51,7 @@ pub enum Error {
     UnsupportedMessage,
     #[error("received a message that is intended for another channel")]
     WrongChannel,
-    #[error("the received nonce does not match the received committment")]
+    #[error("the received nonce does not match the received commitment")]
     BrokenCommittement,
     #[error("received an actor message for unknown session")]
     SessionNotFound,

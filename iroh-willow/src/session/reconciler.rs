@@ -65,6 +65,7 @@ impl<S: Storage> Reconciler<S> {
     /// Run the [`Reconciler`].
     ///
     /// The returned stream is a generator, so it must be polled repeatedly to progress.
+    #[allow(clippy::too_many_arguments)]
     pub fn run_gen(
         inbox: Cancelable<ReceiverStream<Input>>,
         store: Store<S>,
