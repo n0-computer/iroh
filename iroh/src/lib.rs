@@ -80,6 +80,7 @@
 //! - [iroh_base] as [`base`]
 //! - [iroh_blobs] as [`blobs`]
 //! - [iroh_docs] as [`docs`]
+//! - [iroh_gossip] as [`gossip`]
 //! - [iroh_net] as [`net`]
 //!
 //! ## Feature Flags

@@ -73,12 +73,23 @@ pub enum DocsStorage {
 /// Blob store implementations are available in [`iroh_blobs::store`].
 /// Document store implementations are available in [`iroh_docs::store`].
 ///
-/// Everything else is optional.
+/// Everything else is optional, with some sensible defaults.
+///
+/// The default **relay servers** are hosted by [number 0] on the `iroh.network` domain.  To
+/// customise this use the [`Builder::relay_mode`] function.
+///
+/// For **node discovery** the default is to use the [number 0] hosted DNS server hosted on
+/// `iroh.link`.  To customise this use the [`Builder::node_discovery`] function.
+///
+/// Note that some defaults change when running using `cfg(test)`, see the individual
+/// methods for details.
 ///
 /// Finally you can create and run the node by calling [`Builder::spawn`].
 ///
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
+///
+/// [number 0]: https://n0.computer
 #[derive(derive_more::Debug)]
 pub struct Builder<D>
 where
@@ -125,13 +136,37 @@ impl StorageConfig {
 }
 
 /// Configuration for node discovery.
+///
+/// Node discovery enables connecting to other peers by only the [`NodeId`].  This usually
+/// works by the nodes publishing their [`RelayUrl`] and/or their direct addresses to some
+/// publicly available service.
+///
+/// [`NodeId`]: crate::base::key::NodeId
+/// [`RelayUrl`]: crate::base::node_addr::RelayUrl
 #[derive(Debug, Default)]
 pub enum DiscoveryConfig {
     /// Use no node discovery mechanism.
     None,
     /// Use the default discovery mechanism.
     ///
-    /// This enables the [`DnsDiscovery`] service.
+    /// This uses two discovery services concurrently:
+    ///
+    /// - It publishes to a pkarr service operated by [number 0] which makes the information
+    ///   available via DNS in the `iroh.link` domain.
+    ///
+    /// - It uses an mDNS-like system to announce itself on the local network.
+    ///
+    /// # Usage during tests
+    ///
+    /// Note that the default changes when compiling with `cfg(test)` or the `test-utils`
+    /// cargo feature from [iroh-net] is enabled.  In this case only the Pkarr/DNS service
+    /// is used, but on the `iroh.test` domain.  This domain is not integrated with the
+    /// global DNS network and thus node discovery is effectively disabled.  To use node
+    /// discovery in a test use the [`iroh_net::test_utils::DnsPkarrServer`] in the test and
+    /// configure it here as a custom discovery mechanism ([`DiscoveryConfig::Custom`]).
+    ///
+    /// [number 0]: https://n0.computer
+    /// [iroh-net]: crate::net
     #[default]
     Default,
     /// Use a custom discovery mechanism.
@@ -354,18 +389,30 @@ where
     /// establish connections between peers by being an initial relay for traffic while
     /// assisting in holepunching to establish a direct connection between peers.
     ///
-    /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
-    /// configured relay node.  If an invalid [`iroh_net::relay::RelayMode`]
-    /// is provided [`Self::spawn`] will result in an error.
-    pub fn relay_mode(mut self, dm: RelayMode) -> Self {
-        self.relay_mode = dm;
+    /// When using [`RelayMode::Custom`], the provided `relay_map` must contain at least one
+    /// configured relay node.  If an invalid [`iroh_net::relay::RelayMode`] is provided
+    /// [`Self::spawn`] will result in an error.
+    ///
+    /// # Usage during tests
+    ///
+    /// Note that while the default is [`RelayMode::Default`], when using `cfg(test)` or
+    /// when the `test-utils` cargo feature [`RelayMode::Staging`] is the default.
+    pub fn relay_mode(mut self, relay_mode: RelayMode) -> Self {
+        self.relay_mode = relay_mode;
         self
     }
 
     /// Sets the node discovery mechanism.
     ///
-    /// The default is [`DiscoveryConfig::Default`]. Use [`DiscoveryConfig::Custom`] to pass a
-    /// custom [`Discovery`].
+    /// Node discovery enables connecting to other peers by only the [`NodeId`].  This
+    /// usually works by the nodes publishing their [`RelayUrl`] and/or their direct
+    /// addresses to some publicly available service.
+    ///
+    /// See [`DiscoveryConfig::default`] for the defaults, note that the defaults change
+    /// when using `cfg(test)`.
+    ///
+    /// [`NodeId`]: crate::base::key::NodeId
+    /// [`RelayUrl`]: crate::base::node_addr::RelayUrl
     pub fn node_discovery(mut self, config: DiscoveryConfig) -> Self {
         self.node_discovery = config;
         self

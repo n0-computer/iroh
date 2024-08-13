@@ -9,12 +9,16 @@ use crate::defaults::DEFAULT_STUN_PORT;
 
 use super::RelayUrl;
 
-/// Configuration options for the relay servers of the magic endpoint.
+/// Configuration of the relay servers for an [`Endpoint`].
+///
+/// [`Endpoint`]: crate::endpoint::Endpoint
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelayMode {
     /// Disable relay servers completely.
     Disabled,
     /// Use the default relay map, with production relay servers from n0.
+    ///
+    /// See [`crate::defaults::prod`] for the severs used.
     Default,
     /// Use the staging relay servers from n0.
     Staging,
