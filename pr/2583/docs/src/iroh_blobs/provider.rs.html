@@ -629,7 +629,6 @@
 <a href="#629" id="629">629</a>
 <a href="#630" id="630">630</a>
 <a href="#631" id="631">631</a>
-<a href="#632" id="632">632</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server side API
 </span><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::sync::Arc;
@@ -694,8 +693,7 @@
     <span class="doccomment">/// A chunk of a blob was transferred.
     ///
     /// These events will be sent with try_send, so you can not assume that you
-    /// will receive all of them. To update a progress bar, you should compute
-    /// the end offset.
+    /// will receive all of them.
     </span>TransferProgress {
         <span class="doccomment">/// An unique connection id.
         </span>connection_id: u64,
