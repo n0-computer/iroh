@@ -94,5 +94,5 @@ jobs:
         if: ${{ env.TESTS_RESULT != 'cancelled' }}
         with:
           severity: ${{ env.TESTS_RESULT == 'failure' && 'warn' || 'info' }}
-          details: ${{ env.TESTS_RESULT == 'failure' && steps.make_summary.outputs.summary || 'No flaky failure!' }}
+          details: ${{ env.TESTS_RESULT == 'failure' && steps.make_summary.outputs.summary || 'No flaky failures!' }}
           webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
