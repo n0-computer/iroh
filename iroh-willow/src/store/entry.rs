@@ -59,10 +59,10 @@ impl<ES: EntryStorage> WatchableEntryStore<ES> {
         }
     }
 
-    /// Returns a store reader.
-    pub fn reader(&self) -> ES::Reader {
-        self.storage.reader()
-    }
+    // /// Returns a store reader.
+    // pub fn reader(&self) -> ES::Reader {
+    //     self.storage.reader()
+    // }
 
     /// Returns a store snapshot.
     pub fn snapshot(&self) -> anyhow::Result<ES::Snapshot> {
