@@ -365,7 +365,7 @@ impl PeerManager {
                 senders,
                 remaining_intents,
                 mut update_receiver,
-                we_cancelled: _
+                we_cancelled: _,
             } => {
                 trace!(error=?result.err(), ?remaining_intents, "session complete");
 
