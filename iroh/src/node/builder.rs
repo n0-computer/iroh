@@ -507,7 +507,7 @@ where
                 DiscoveryConfig::Custom(discovery) => Some(discovery),
                 DiscoveryConfig::Default => {
                     #[cfg(not(test))]
-                    let discovery: Option<Box<dyn Discovery>> = {
+                    let discovery = {
                         let mut discovery_services: Vec<Box<dyn Discovery>> = vec![
                             // Enable DNS discovery by default
                             Box::new(DnsDiscovery::n0_dns()),
@@ -523,13 +523,16 @@ where
                                 discovery_services.push(Box::new(service));
                             }
                         }
-                        Some(Box::new(ConcurrentDiscovery::from_services(
-                            discovery_services,
-                        )))
+                        ConcurrentDiscovery::from_services(discovery_services)
                     };
                     #[cfg(test)]
-                    let discovery = None;
-                    discovery
+                    let discovery = ConcurrentDiscovery::from_services(vec![
+                        // Enable DNS discovery by default
+                        Box::new(DnsDiscovery::n0_dns()),
+                        // Enable pkarr publishing by default
+                        Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
+                    ]);
+                    Some(Box::new(discovery))
                 }
             };
 
