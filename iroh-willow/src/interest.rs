@@ -1,3 +1,5 @@
+//! Types for defining synchronisation interests.
+
 use std::collections::{hash_map, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
@@ -13,27 +15,37 @@ use crate::proto::{
 
 pub type InterestMap = HashMap<ReadAuthorisation, HashSet<AreaOfInterest>>;
 
+/// Enum for describing synchronisation interests.
+///
+/// You should use [`Self::builder`] for a straightforward way to construct this.
 #[derive(Debug, Default, Clone)]
 pub enum Interests {
+    /// Use all the capabilities we have.
     #[default]
     All,
+    /// Use the selected capabilities and areas.
     Select(HashMap<CapSelector, AreaOfInterestSelector>),
+    /// Use exactly the specified capabilities and areas.
     Exact(InterestMap),
 }
 
 impl Interests {
-    pub fn builder() -> SelectBuilder {
-        SelectBuilder::default()
+    /// Returns a [`SelectBuilder`] to build our [`Interests`].
+    pub fn builder() -> InterestBuilder {
+        InterestBuilder::default()
     }
 
+    /// Creates interests that include all our capabilities.
     pub fn all() -> Self {
         Self::All
     }
 }
 
+/// Builder for [`Interests`].
 #[derive(Default, Debug)]
-pub struct SelectBuilder(HashMap<CapSelector, AreaOfInterestSelector>);
+pub struct InterestBuilder(HashMap<CapSelector, AreaOfInterestSelector>);
 
+/// Helper trait to accept both [`Area`] and [`AreaOfInterest`] in the [`InterestBuilder`].
 pub trait IntoAreaOfInterest {
     fn into_area_of_interest(self) -> AreaOfInterest;
 }
@@ -50,13 +62,19 @@ impl IntoAreaOfInterest for Area {
     }
 }
 
-impl SelectBuilder {
+impl InterestBuilder {
+    /// Add the full area of a capability we have into the interests.
+    ///
+    /// See [`CapSelector`] for how to specifiy the capability to use.
     pub fn add_full_cap(mut self, cap: impl Into<CapSelector>) -> Self {
         let cap = cap.into();
         self.0.insert(cap, AreaOfInterestSelector::Widest);
         self
     }
 
+    /// Add a specific area included in one of our capabilities into the interests.
+    ///
+    /// See [`CapSelector`] for how to specifiy the capability to use.
     pub fn add_area(
         mut self,
         cap: impl Into<CapSelector>,
@@ -77,21 +95,25 @@ impl SelectBuilder {
         self
     }
 
+    /// Converts this builder into [`Interests`].
     pub fn build(self) -> Interests {
         Interests::Select(self.0)
     }
 }
 
-impl From<SelectBuilder> for Interests {
-    fn from(builder: SelectBuilder) -> Self {
+impl From<InterestBuilder> for Interests {
+    fn from(builder: InterestBuilder) -> Self {
         builder.build()
     }
 }
 
+/// Selector for an [`AreaOfInterest`].
 #[derive(Debug, Default, Clone)]
 pub enum AreaOfInterestSelector {
+    /// Use the widest area allowed by a capability, with no further limits.
     #[default]
     Widest,
+    /// Use the specified set of [`AreaOfInterest`].
     Exact(HashSet<AreaOfInterest>),
 }
 

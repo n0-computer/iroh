@@ -1,3 +1,5 @@
+//! Types for the basic data model of Willow.
+
 use iroh_base::hash::Hash;
 use ufotofu::sync::{consumer::IntoVec, producer::FromSlice};
 use willow_encoding::sync::{Decodable, Encodable};
@@ -70,7 +72,13 @@ impl Default for PayloadDigest {
 
 impl willow_data_model::PayloadDigest for PayloadDigest {}
 
+/// An immutable Willow [path].
+///
+/// Thread-safe, cheap to clone, cheap to take prefixes of, expensive to append to.
+///
 /// See [`willow_data_model::Path`].
+///
+/// [path]: https://willowprotocol.org/specs/data-model/index.html#Path
 pub type Path = willow_data_model::Path<MAX_COMPONENT_LENGTH, MAX_COMPONENT_COUNT, MAX_PATH_LENGTH>;
 
 /// Extension methods for [`Path`].

@@ -1,3 +1,5 @@
+//! Networking implementation for iroh-willow.
+
 use std::{future::Future, time::Duration};
 
 use anyhow::{anyhow, ensure, Context as _, Result};
@@ -26,7 +28,8 @@ use crate::{
     },
 };
 
-pub const CHANNEL_CAP: usize = 1024 * 64;
+/// Default capacity for the in-memory pipes between networking and session.
+const CHANNEL_CAP: usize = 1024 * 64;
 
 /// The ALPN protocol name for iroh-willow.
 pub const ALPN: &[u8] = b"iroh-willow/0";
@@ -43,8 +46,10 @@ pub const ERROR_CODE_DUPLICATE_CONN: VarInt = VarInt::from_u32(3);
 /// QUIC application error code when closing connection because our node is shutting down.
 pub const ERROR_CODE_SHUTDOWN: VarInt = VarInt::from_u32(4);
 
-pub const ESTABLISH_TIMEOUT: Duration = Duration::from_secs(10);
-pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+/// Timeout until we abort a connection attempt.
+const ESTABLISH_TIMEOUT: Duration = Duration::from_secs(10);
+/// Timeout until we abort a graceful termination attempt.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The handle to an active peer connection.
 ///
@@ -307,16 +312,21 @@ pub(crate) async fn terminate_gracefully(conn: &Connection) -> Result<()> {
     send_stream.finish().await?;
     // Wait until we either receive the goodbye byte from the other peer, or for the other peer
     // to close the connection with the expected error code.
-    match wait_for_goodbye_or_graceful_close(conn).await {
-        Ok(()) => {
+    match tokio::time::timeout(SHUTDOWN_TIMEOUT, wait_for_goodbye_or_graceful_close(conn)).await {
+        Ok(Ok(())) => {
             conn.close(ERROR_CODE_OK, b"bye");
             trace!("connection terminated gracefully");
             Ok(())
         }
-        Err(err) => {
+        Ok(Err(err)) => {
             conn.close(ERROR_CODE_FAIL, b"failed-while-closing");
             trace!(?err, "connection failed while terminating");
             Err(err)
+        }
+        Err(err) => {
+            conn.close(ERROR_CODE_FAIL, b"timeout-while-closing");
+            trace!("connection timed out while terminating");
+            Err(err.into())
         }
     }
 }
@@ -653,8 +663,8 @@ mod tests {
             }
         });
 
-        let init_alfie = SessionInit::new(Interests::All, SessionMode::Live);
-        let init_betty = SessionInit::new(Interests::All, SessionMode::Live);
+        let init_alfie = SessionInit::new(Interests::All, SessionMode::Continous);
+        let init_betty = SessionInit::new(Interests::All, SessionMode::Continous);
 
         let (intent_alfie, mut intent_handle_alfie) = Intent::new(init_alfie);
         let (intent_betty, mut intent_handle_betty) = Intent::new(init_betty);

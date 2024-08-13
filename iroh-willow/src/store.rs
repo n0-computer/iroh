@@ -1,3 +1,11 @@
+//! Store for entries, secrets, and capabilities used in the Willow engine.
+//!
+//! The [`Store`] is the high-level wrapper for the different stores we need.
+//!
+//! The storage backend is defined in the [`Storage`] trait and its associated types.
+//!
+//! The only implementation is currently an in-memory store at [`memory`].
+
 use anyhow::{anyhow, Context, Result};
 use rand_core::CryptoRngCore;
 
@@ -16,15 +24,16 @@ use crate::{
 use self::auth::{Auth, AuthError};
 use self::traits::Storage;
 
-pub use self::entry::{EntryOrigin, WatchableEntryStore};
+pub(crate) use self::entry::{EntryOrigin, WatchableEntryStore};
 
-pub mod auth;
-pub mod entry;
+pub(crate) mod auth;
+pub(crate) mod entry;
 pub mod memory;
 pub mod traits;
 
+/// Storage for the Willow engine.
 #[derive(Debug, Clone)]
-pub struct Store<S: Storage> {
+pub(crate) struct Store<S: Storage> {
     entries: WatchableEntryStore<S::Entries>,
     secrets: S::Secrets,
     payloads: S::Payloads,

@@ -1,3 +1,12 @@
+//! The `session` module contains an implementation of the Willow General Purpose Sync Protocol
+//! (WGPS).
+//!
+//! It exposes a few public types used to initiate sessions, and the [`intents`] module which
+//! contains handle, event and command types for controlling sessions.
+//!
+//! Internally, this module contains the full implementation of the protocol, which is started with
+//! the `run_session` function (which is not public).
+
 use std::sync::Arc;
 
 use channels::ChannelSenders;
@@ -12,9 +21,9 @@ use crate::{
 mod aoi_finder;
 mod capabilities;
 mod challenge;
-pub mod channels;
+pub(crate) mod channels;
 mod data;
-pub mod error;
+mod error;
 pub mod intents;
 mod pai_finder;
 mod payload;
@@ -28,7 +37,8 @@ pub(crate) use self::channels::Channels;
 pub(crate) use self::error::Error;
 pub(crate) use self::run::run_session;
 
-pub type SessionId = u64;
+/// Id per session to identify store subscriptions.
+pub(crate) type SessionId = u64;
 
 /// To break symmetry, we refer to the peer that initiated the synchronisation session as Alfie,
 /// and the other peer as Betty.
@@ -51,25 +61,32 @@ impl Role {
     }
 }
 
+/// A session can either run a single reconciliation, or keep open until closed by either peer.
+///
+/// * [`Self::Continous`] will enable the live data channels to synchronize updates in real-time.
+/// * [`Self::ReconcileOnce`] will run a single reconciliation of the interests declared at session
+///   start, and then close the session.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SessionMode {
     /// Run a single, full reconciliation, and then quit.
     ReconcileOnce,
     /// Run reconciliations and data mode, until intentionally closed.
-    Live,
+    Continous,
 }
 
 impl SessionMode {
+    /// Returns `true` if the session runs in live mode.
     pub fn is_live(&self) -> bool {
-        matches!(self, Self::Live)
+        matches!(self, Self::Continous)
     }
 }
 
-/// Options to initialize a session with.
+/// Options to initialize a session.
 #[derive(Debug)]
 pub struct SessionInit {
-    /// List of interests we wish to synchronize, together with our capabilities to read them.
+    /// Selects the areas we wish to synchronize.
     pub interests: Interests,
+    /// Selects the session mode (once or continous).
     pub mode: SessionMode,
 }
 
@@ -79,41 +96,37 @@ impl SessionInit {
         Self { interests, mode }
     }
 
+    /// Creates a new [`SessionInit`] with [`SessionMode::Continous`].
     pub fn continuous(interests: impl Into<Interests>) -> Self {
-        Self::new(interests, SessionMode::Live)
+        Self::new(interests, SessionMode::Continous)
     }
 
+    /// Creates a new [`SessionInit`] with [`SessionMode::ReconcileOnce`].
     pub fn reconcile_once(interests: impl Into<Interests>) -> Self {
         Self::new(interests, SessionMode::ReconcileOnce)
     }
 }
 
-/// The bind scope for resources.
-///
-/// Resources are bound by either peer
-#[derive(Copy, Clone, Debug)]
-pub enum Scope {
-    /// Resources bound by ourselves.
-    Ours,
-    /// Resources bound by the other peer.
-    Theirs,
-}
-
+/// Sender for session events
 #[derive(Debug, Clone)]
-pub struct EventSender(pub mpsc::Sender<SessionEvent>);
+pub(crate) struct EventSender(pub mpsc::Sender<SessionEvent>);
 
 impl EventSender {
-    pub async fn send(&self, event: SessionEvent) -> Result<(), ChannelReceiverDropped> {
+    pub(crate) async fn send(&self, event: SessionEvent) -> Result<(), ChannelReceiverDropped> {
         self.0.send(event).await.map_err(|_| ChannelReceiverDropped)
     }
 }
 
+/// Events emitted from a session.
+///
+/// These are handled in the [`PeerManager`](crate::engine::peer_manager::PeerManager).
 #[derive(derive_more::Debug)]
-pub enum SessionEvent {
+pub(crate) enum SessionEvent {
     Established,
     Complete {
         result: Result<(), Arc<Error>>,
-        // who_cancelled: WhoCancelled,
+        // TODO(Frando): Not sure if we should make use of this somewhere, maybe just remove.
+        #[allow(unused)]
         we_cancelled: bool,
         #[debug("ChannelSenders")]
         senders: ChannelSenders,
@@ -123,24 +136,34 @@ pub enum SessionEvent {
     },
 }
 
+/// Update commands for an active session.
 #[derive(Debug)]
-pub enum SessionUpdate {
+pub(crate) enum SessionUpdate {
     SubmitIntent(Intent),
 }
 
+/// Handle to an active session.
+///
+/// This is not made public, the only public interface are [`intents`] handles.
 #[derive(Debug)]
-pub struct SessionHandle {
-    pub cancel_token: CancellationToken,
-    pub update_tx: mpsc::Sender<SessionUpdate>,
-    pub event_rx: mpsc::Receiver<SessionEvent>,
+pub(crate) struct SessionHandle {
+    pub(crate) cancel_token: CancellationToken,
+    pub(crate) update_tx: mpsc::Sender<SessionUpdate>,
+    pub(crate) event_rx: mpsc::Receiver<SessionEvent>,
 }
 
 impl SessionHandle {
+    // TODO(Frando): Previously the [`SessionHandle`] was exposed through the `net` module.
+    // Now all public interaction goes through the [`Engine`], which does not use the handle as
+    // such, but splits into the fields. Leaving this here for the moment in case we decide to
+    // expose the session handle (without relying on intents) publicly.
+
     /// Wait for the session to finish.
     ///
     /// Returns the channel senders and a boolean indicating if we cancelled the session.
     /// Returns an error if the session failed to complete.
-    pub async fn complete(&mut self) -> Result<(ChannelSenders, bool), Arc<Error>> {
+    #[cfg(test)]
+    pub(crate) async fn complete(&mut self) -> Result<(ChannelSenders, bool), Arc<Error>> {
         while let Some(event) = self.event_rx.recv().await {
             if let SessionEvent::Complete {
                 result,
@@ -155,20 +178,21 @@ impl SessionHandle {
         Err(Arc::new(Error::ActorFailed))
     }
 
-    /// Submit a new synchronisation intent.
-    pub async fn submit_intent(&self, intent: Intent) -> anyhow::Result<()> {
-        self.update_tx
-            .send(SessionUpdate::SubmitIntent(intent))
-            .await?;
-        Ok(())
-    }
+    // /// Submit a new synchronisation intent.
+    // pub(crate) async fn submit_intent(&self, intent: Intent) -> anyhow::Result<()> {
+    //     self.update_tx
+    //         .send(SessionUpdate::SubmitIntent(intent))
+    //         .await?;
+    //     Ok(())
+    // }
 
     /// Finish the session gracefully.
     ///
     /// After calling this, no further protocol messages will be sent from this node.
     /// Previously queued messages will still be sent out. The session will only be closed
     /// once the other peer closes their senders as well.
-    pub fn close(&self) {
+    #[cfg(test)]
+    pub(crate) fn close(&self) {
         tracing::debug!("close session (session handle close called)");
         self.cancel_token.cancel();
     }

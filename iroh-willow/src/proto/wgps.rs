@@ -1,8 +1,10 @@
-pub mod challenge;
-pub mod channels;
-pub mod fingerprint;
-pub mod handles;
-pub mod messages;
+//! Types and helpers for the Willow General Purpose Sync protocol.
+
+mod challenge;
+mod channels;
+mod fingerprint;
+mod handles;
+mod messages;
 
 pub use challenge::*;
 pub use channels::*;

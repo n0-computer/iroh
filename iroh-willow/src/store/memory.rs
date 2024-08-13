@@ -1,3 +1,10 @@
+//! In-memory storage implementation for testing purposes.
+//!
+//! This is a minimal, but spec-compliant (unless there's bugs) implementation of a willow store.
+//!
+//! It does not have good performance, it does a lot of iterating. But it is concise and can
+//! hopefully easily kept correct.
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;

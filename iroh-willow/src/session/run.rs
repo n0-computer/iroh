@@ -74,7 +74,7 @@ pub(crate) async fn run_session<S: Storage>(
         .fold(SessionMode::ReconcileOnce, |cur, intent| {
             match intent.init.mode {
                 SessionMode::ReconcileOnce => cur,
-                SessionMode::Live => SessionMode::Live,
+                SessionMode::Continous => SessionMode::Continous,
             }
         });
 
@@ -107,7 +107,7 @@ pub(crate) async fn run_session<S: Storage>(
 
     // Setup data channels only if in live mode.
     // TODO: Adapt to changing mode.
-    let (data_inbox, data_inbox_rx) = if mode == SessionMode::Live {
+    let (data_inbox, data_inbox_rx) = if mode == SessionMode::Continous {
         let (data_inbox, data_inbox_rx) =
             cancelable_channel::<data::Input>(2, cancel_token.clone());
         (Some(data_inbox), Some(data_inbox_rx))

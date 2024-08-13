@@ -3239,7 +3239,7 @@ checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 [[package]]
 name = "meadowcap"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/willow-rs.git?branch=iroh-dev#f04f641b319e5a29c589f033154a92670b63472c"
+source = "git+https://github.com/n0-computer/willow-rs.git?branch=iroh-dev#9553d8f9aa73092b0deaae2e832964876f2c7caa"
 dependencies = [
  "either",
  "signature",
@@ -6639,7 +6639,7 @@ checksum = "7219d36b6eac893fa81e84ebe06485e7dcbb616177469b142df14f1f4deb1311"
 [[package]]
 name = "willow-data-model"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/willow-rs.git?branch=iroh-dev#f04f641b319e5a29c589f033154a92670b63472c"
+source = "git+https://github.com/n0-computer/willow-rs.git?branch=iroh-dev#9553d8f9aa73092b0deaae2e832964876f2c7caa"
 dependencies = [
  "bytes",
  "either",
@@ -6651,7 +6651,7 @@ dependencies = [
 [[package]]
 name = "willow-encoding"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/willow-rs.git?branch=iroh-dev#f04f641b319e5a29c589f033154a92670b63472c"
+source = "git+https://github.com/n0-computer/willow-rs.git?branch=iroh-dev#9553d8f9aa73092b0deaae2e832964876f2c7caa"
 dependencies = [
  "either",
  "syncify",

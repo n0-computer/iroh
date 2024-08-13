@@ -29,8 +29,8 @@ use crate::{
         },
     },
     session::{
-        resource::{MissingResource, ResourceMap},
-        Error, Scope,
+        resource::{MissingResource, ResourceMap, Scope},
+        Error, 
     },
     util::gen_stream::GenStream,
 };

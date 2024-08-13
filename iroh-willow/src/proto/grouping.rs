@@ -1,3 +1,5 @@
+//! Utilities for Willow's entry [groupings](https://willowprotocol.org/specs/grouping-entries/index.html#grouping_entries).
+
 pub use willow_data_model::grouping::{Range, RangeEnd};
 use willow_data_model::SubspaceId as _;
 

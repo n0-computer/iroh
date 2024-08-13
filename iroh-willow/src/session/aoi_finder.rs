@@ -14,8 +14,10 @@ use crate::{
         },
     },
     session::{
-        capabilities::Capabilities, pai_finder::PaiIntersection, resource::ResourceMap, Error,
-        Scope,
+        capabilities::Capabilities,
+        pai_finder::PaiIntersection,
+        resource::{ResourceMap, Scope},
+        Error,
     },
     util::gen_stream::GenStream,
 };

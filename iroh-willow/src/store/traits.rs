@@ -1,3 +1,5 @@
+//! Traits for storage backends for the Willow store.
+
 use std::fmt::Debug;
 
 use anyhow::Result;
@@ -13,6 +15,9 @@ use crate::{
     },
 };
 
+/// Storage backend.
+///
+/// This type combines the different stores needed.
 pub trait Storage: Debug + Clone + 'static {
     type Entries: EntryStorage;
     type Secrets: SecretStorage;
@@ -24,6 +29,7 @@ pub trait Storage: Debug + Clone + 'static {
     fn caps(&self) -> &Self::Caps;
 }
 
+/// Storage for user and namespace secrets.
 pub trait SecretStorage: Debug + Clone + 'static {
     fn insert(&self, secret: meadowcap::SecretKey) -> Result<(), SecretStoreError>;
     fn get_user(&self, id: &UserId) -> Option<UserSecretKey>;
@@ -69,6 +75,7 @@ pub trait SecretStorage: Debug + Clone + 'static {
     }
 }
 
+/// Storage for entries.
 pub trait EntryStorage: EntryReader + Clone + Debug + 'static {
     type Reader: EntryReader;
     type Snapshot: EntryReader + Clone;
@@ -78,6 +85,7 @@ pub trait EntryStorage: EntryReader + Clone + Debug + 'static {
     fn ingest_entry(&self, entry: &AuthorisedEntry) -> Result<bool>;
 }
 
+/// Read-only interface to [`EntryStorage`].
 pub trait EntryReader: Debug + 'static {
     fn fingerprint(&self, namespace: NamespaceId, range: &Range3d) -> Result<Fingerprint>;
 
@@ -106,6 +114,7 @@ pub trait EntryReader: Debug + 'static {
     }
 }
 
+/// Error returned from [`SecretStorage`].
 #[derive(Debug, thiserror::Error)]
 pub enum SecretStoreError {
     #[error("store failed: {0}")]
@@ -145,6 +154,7 @@ impl Default for SplitOpts {
     }
 }
 
+/// Capability storage.
 pub trait CapsStorage: Debug + Clone {
     fn insert(&self, cap: CapabilityPack) -> Result<()>;
 
