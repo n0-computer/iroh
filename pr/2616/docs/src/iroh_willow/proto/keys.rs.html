@@ -789,6 +789,7 @@
 <a href="#789" id="789">789</a>
 <a href="#790" id="790">790</a>
 <a href="#791" id="791">791</a>
+<a href="#792" id="792">792</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Public-key crypto types for willow
 //!
 //! This modules defines types which are wrappers around [`ed25519_dalek`] public-key crypto types.
@@ -803,6 +804,8 @@
 <span class="kw">use </span>iroh_base::base32;
 <span class="kw">use </span>rand_core::CryptoRngCore;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
+
+<span class="kw">use </span><span class="kw">super</span>::meadowcap::IsCommunal;
 
 <span class="kw">pub const </span>PUBLIC_KEY_LENGTH: usize = ed25519_dalek::PUBLIC_KEY_LENGTH;
 <span class="kw">pub const </span>SECRET_KEY_LENGTH: usize = ed25519_dalek::SECRET_KEY_LENGTH;
@@ -836,13 +839,17 @@
     };
 }
 
-<span class="doccomment">/// Returns `true` if the last bit of a byte slice is 1, which defines a communal namespace in this
-/// willow implementation.
-</span><span class="kw">fn </span>is_communal(pubkey_bytes: <span class="kw-2">&amp;</span>[u8; <span class="number">32</span>]) -&gt; bool {
-    <span class="kw">let </span>last = pubkey_bytes.last().expect(<span class="string">"pubkey is not empty"</span>);
-    <span class="comment">// Check if last bit is 1.
-    </span>(<span class="kw-2">*</span>last &amp; <span class="number">0x1</span>) == <span class="number">0x1
-</span>}
+<span class="kw">impl </span>IsCommunal <span class="kw">for </span>NamespaceId {
+    <span class="kw">fn </span>is_communal(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="self">self</span>.as_bytes()[<span class="number">31</span>] == <span class="number">0
+    </span>}
+}
+
+<span class="kw">impl </span>IsCommunal <span class="kw">for </span>NamespacePublicKey{
+    <span class="kw">fn </span>is_communal(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="self">self</span>.id().is_communal()
+    }
+}
 
 <span class="doccomment">/// The type of the namespace, either communal or owned.
 ///
@@ -912,11 +919,6 @@
 <span class="macro">bytestring!</span>(NamespacePublicKey, PUBLIC_KEY_LENGTH);
 
 <span class="kw">impl </span>NamespacePublicKey {
-    <span class="doccomment">/// Whether this is the key for a communal namespace.
-    </span><span class="kw">pub fn </span>is_communal(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        is_communal(<span class="self">self</span>.as_bytes())
-    }
-
     <span class="kw">pub fn </span>kind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NamespaceKind {
         <span class="kw">if </span><span class="self">self</span>.is_communal() {
             NamespaceKind::Communal

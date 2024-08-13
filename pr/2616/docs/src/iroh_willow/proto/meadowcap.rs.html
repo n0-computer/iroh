@@ -211,12 +211,6 @@
 <a href="#211" id="211">211</a>
 <a href="#212" id="212">212</a>
 <a href="#213" id="213">213</a>
-<a href="#214" id="214">214</a>
-<a href="#215" id="215">215</a>
-<a href="#216" id="216">216</a>
-<a href="#217" id="217">217</a>
-<a href="#218" id="218">218</a>
-<a href="#219" id="219">219</a>
 </pre></div><pre class="rust"><code><span class="kw">use super</span>::{
     grouping::Area,
     keys::{<span class="self">self</span>, NamespaceSecretKey, UserSecretKey},
@@ -234,7 +228,7 @@
 
 <span class="kw">use </span><span class="kw">super</span>::data_model::{Entry, MAX_COMPONENT_COUNT, MAX_COMPONENT_LENGTH, MAX_PATH_LENGTH};
 
-<span class="kw">pub use </span>meadowcap::AccessMode;
+<span class="kw">pub use </span>meadowcap::{AccessMode, IsCommunal};
 
 <span class="attr">#[derive(Debug, derive_more::From)]
 </span><span class="kw">pub enum </span>SecretKey {
@@ -272,12 +266,6 @@
     keys::UserId,
     keys::UserSignature,
 &gt;;
-
-<span class="kw">impl </span>meadowcap::IsCommunal <span class="kw">for </span>NamespaceId {
-    <span class="kw">fn </span>is_communal(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.as_bytes()[<span class="number">31</span>] == <span class="number">0
-    </span>}
-}
 
 <span class="kw">pub fn </span>is_authorised_write(entry: <span class="kw-2">&amp;</span>Entry, token: <span class="kw-2">&amp;</span>McAuthorisationToken) -&gt; bool {
     token.is_authorised_write(entry)
