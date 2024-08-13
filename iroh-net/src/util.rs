@@ -135,11 +135,14 @@ pub(crate) fn relay_only_mode() -> bool {
 }
 
 /// Send an element blocking, automtically handling the existence of a runtime.
-pub fn send_blocking<T: Send>(sender: &mpsc::Sender<T>, el: T) -> std::result::Result<(), mpsc::error::SendError<T>> {
+pub fn send_blocking<T: Send + 'static>(sender: &mpsc::Sender<T>, el: T) -> std::result::Result<(), mpsc::error::SendError<T>> {
     match tokio::runtime::Handle::try_current() {
         Ok(h) => {
             dbg!(&h);
-            h.spawn(sender.send(el));
+            let sender = sender.clone();
+            h.spawn(async move {
+                sender.send(el).await.ok();
+            });
             // can not send result
             Ok(())
         }
