@@ -130,7 +130,7 @@ harness = false
 duct = "0.13.6"
 
 [features]
-default = ["metrics", "local_swarm_discovery", "iroh-relay"]
+default = ["metrics"]
 iroh-relay = [
     "dep:tokio-rustls-acme",
     "dep:axum",
