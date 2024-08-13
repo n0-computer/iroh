@@ -32,16 +32,16 @@ pub const CHANNEL_CAP: usize = 1024 * 64;
 pub const ALPN: &[u8] = b"iroh-willow/0";
 
 /// QUIC application error code for closing with failure.
-pub const ERROR_CODE_FAIL: VarInt = VarInt::from_u32(0);
+pub const ERROR_CODE_FAIL: VarInt = VarInt::from_u32(1);
 
 /// QUIC application error code for graceful connection termination.
-pub const ERROR_CODE_OK: VarInt = VarInt::from_u32(1);
+pub const ERROR_CODE_OK: VarInt = VarInt::from_u32(2);
 
 /// QUIC application error code for closing connections because another connection is preferred.
-pub const ERROR_CODE_DUPLICATE_CONN: VarInt = VarInt::from_u32(2);
+pub const ERROR_CODE_DUPLICATE_CONN: VarInt = VarInt::from_u32(3);
 
 /// QUIC application error code when closing connection because our node is shutting down.
-pub const ERROR_CODE_SHUTDOWN: VarInt = VarInt::from_u32(3);
+pub const ERROR_CODE_SHUTDOWN: VarInt = VarInt::from_u32(4);
 
 pub const ESTABLISH_TIMEOUT: Duration = Duration::from_secs(10);
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -312,9 +312,9 @@ pub(crate) async fn terminate_gracefully(conn: &Connection) -> Result<()> {
             conn.close(ERROR_CODE_OK, b"bye");
             trace!("connection terminated gracefully");
             Ok(())
-        },
+        }
         Err(err) => {
-            conn.close(ERROR_CODE_FAIL, b"peer-failed-while-closing");
+            conn.close(ERROR_CODE_FAIL, b"failed-while-closing");
             trace!(?err, "connection failed while terminating");
             Err(err)
         }
