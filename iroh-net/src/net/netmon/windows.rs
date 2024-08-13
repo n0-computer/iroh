@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
 use libc::c_void;
+use tokio::sync::mpsc;
 use tracing::{trace, warn};
 use windows::Win32::{
     Foundation::{BOOLEAN, HANDLE as Handle},
@@ -19,7 +20,7 @@ pub(super) struct RouteMonitor {
 }
 
 impl RouteMonitor {
-    pub(super) fn new(sender: async_channel::Sender<NetworkMessage>) -> Result<Self> {
+    pub(super) fn new(sender: mpsc::Sender<NetworkMessage>) -> Result<Self> {
         // Register two callbacks with the windows api
         let mut cb_handler = CallbackHandler::default();
 

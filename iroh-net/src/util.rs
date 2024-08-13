@@ -7,9 +7,9 @@ use std::{
     task::{Context, Poll},
 };
 
-use tokio::sync::mpsc;
 use futures_lite::future::Boxed as BoxFuture;
 use futures_util::{future::Shared, FutureExt};
+use tokio::sync::mpsc;
 
 pub mod chain;
 
@@ -134,11 +134,13 @@ pub(crate) fn relay_only_mode() -> bool {
     std::option_env!("DEV_RELAY_ONLY").is_some()
 }
 
-/// Send an element blocking, automtically handling the existence of a runtime.
-pub fn send_blocking<T: Send + 'static>(sender: &mpsc::Sender<T>, el: T) -> std::result::Result<(), mpsc::error::SendError<T>> {
+/// Send an element blocking, automatically handling the existence of a runtime.
+pub fn send_blocking<T: Send + 'static>(
+    sender: &mpsc::Sender<T>,
+    el: T,
+) -> std::result::Result<(), mpsc::error::SendError<T>> {
     match tokio::runtime::Handle::try_current() {
         Ok(h) => {
-            dbg!(&h);
             let sender = sender.clone();
             h.spawn(async move {
                 sender.send(el).await.ok();
@@ -152,7 +154,6 @@ pub fn send_blocking<T: Send + 'static>(sender: &mpsc::Sender<T>, el: T) -> std:
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
