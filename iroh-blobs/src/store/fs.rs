@@ -81,6 +81,7 @@ use futures_lite::{Stream, StreamExt};
 
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
+use iroh_net::util::AbortingJoinHandle;
 use redb::{AccessGuard, DatabaseError, ReadableTable, StorageError};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -636,7 +637,7 @@ pub(crate) enum ActorMessage {
     /// Sync the entire database to disk.
     ///
     /// This just makes sure that there is no write transaction open.
-    Sync { tx: oneshot::Sender<()> },
+    Sync { tx: Option<oneshot::Sender<()>> },
     /// Internal method: dump the entire database to stdout.
     Dump,
     /// Internal method: validate the entire database.
@@ -1045,7 +1046,9 @@ impl StoreInner {
 
     async fn sync(&self) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send_async(ActorMessage::Sync { tx }).await?;
+        self.tx
+            .send_async(ActorMessage::Sync { tx: Some(tx) })
+            .await?;
         Ok(rx.await?)
     }
 
@@ -1181,7 +1184,8 @@ struct ActorState {
     handles: BTreeMap<Hash, BaoFileHandleWeak>,
     protected: BTreeSet<Hash>,
     temp: Arc<RwLock<TempCounterMap>>,
-    msgs: flume::Receiver<ActorMessage>,
+    msgs_rx: flume::Receiver<ActorMessage>,
+    msgs_tx: flume::Sender<ActorMessage>,
     create_options: Arc<BaoFileConfig>,
     options: Options,
     rt: tokio::runtime::Handle,
@@ -1471,7 +1475,8 @@ impl Actor {
                     temp,
                     handles: BTreeMap::new(),
                     protected: BTreeSet::new(),
-                    msgs: rx,
+                    msgs_rx: rx,
+                    msgs_tx: tx.clone(),
                     options,
                     create_options: Arc::new(create_options),
                     rt,
@@ -1481,8 +1486,19 @@ impl Actor {
         ))
     }
 
+    fn send_delayed_sync(&self, duration: Duration) -> AbortingJoinHandle<()> {
+        let tx = self.state.msgs_tx.clone();
+        self.state
+            .rt
+            .spawn(async move {
+                tokio::time::sleep(duration).await;
+                tx.send(ActorMessage::Sync { tx: None }).ok();
+            })
+            .into()
+    }
+
     fn run_batched(mut self) -> ActorResult<()> {
-        let mut msgs = PeekableFlumeReceiver::new(self.state.msgs.clone());
+        let mut msgs = PeekableFlumeReceiver::new(self.state.msgs_rx.clone());
         while let Some(msg) = msgs.recv() {
             if let ActorMessage::Shutdown { tx } = msg {
                 // Make sure the database is dropped before we send the reply.
@@ -1503,7 +1519,8 @@ impl Actor {
                     let tables = ReadOnlyTables::new(&txn)?;
                     let count = self.state.options.batch.max_read_batch;
                     let timeout = self.state.options.batch.max_read_duration;
-                    for msg in msgs.batch_iter(count, timeout) {
+                    let _task = self.send_delayed_sync(timeout);
+                    for msg in msgs.iter().take(count) {
                         if let Err(msg) = self.state.handle_readonly(&tables, msg)? {
                             msgs.push_back(msg).expect("just recv'd");
                             break;
@@ -1519,7 +1536,8 @@ impl Actor {
                     let mut tables = Tables::new(&txn, &mut delete_after_commit)?;
                     let count = self.state.options.batch.max_write_batch;
                     let timeout = self.state.options.batch.max_write_duration;
-                    for msg in msgs.batch_iter(count, timeout) {
+                    let _task = self.send_delayed_sync(timeout);
+                    for msg in msgs.iter().take(count) {
                         if let Err(msg) = self.state.handle_readwrite(&mut tables, msg)? {
                             msgs.push_back(msg).expect("just recv'd");
                             break;
@@ -2189,7 +2207,9 @@ impl ActorState {
                 tx.send(res).ok();
             }
             ActorMessage::Sync { tx } => {
-                tx.send(()).ok();
+                if let Some(tx) = tx {
+                    tx.send(()).ok();
+                }
             }
             x => {
                 return Err(ActorError::Inconsistent(format!(
