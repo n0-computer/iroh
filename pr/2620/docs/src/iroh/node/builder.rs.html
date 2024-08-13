@@ -901,6 +901,23 @@
 <a href="#901" id="901">901</a>
 <a href="#902" id="902">902</a>
 <a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
@@ -913,6 +930,7 @@
 <span class="kw">use </span>iroh_base::key::SecretKey;
 <span class="kw">use </span>iroh_blobs::{
     downloader::Downloader,
+    provider::EventSender,
     store::{Map, Store <span class="kw">as </span>BaoStore},
     util::local_pool::{<span class="self">self</span>, LocalPool, LocalPoolHandle, PanicMode},
 };
@@ -1015,6 +1033,7 @@
     <span class="doccomment">/// Callback to register when a gc loop is done
     </span><span class="attr">#[debug(<span class="string">"callback"</span>)]
     </span>gc_done_callback: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() + Send&gt;&gt;,
+    blob_events: EventSender,
 }
 
 <span class="doccomment">/// Configuration for storage.
@@ -1140,6 +1159,7 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             gc_done_callback: <span class="prelude-val">None</span>,
+            blob_events: Default::default(),
         }
     }
 }
@@ -1173,6 +1193,7 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             gc_done_callback: <span class="prelude-val">None</span>,
+            blob_events: Default::default(),
         }
     }
 }
@@ -1181,6 +1202,15 @@
 <span class="kw">where
     </span>D: BaoStore,
 {
+    <span class="doccomment">/// Configure a blob events sender. This will replace the previous blob
+    /// event sender. By default, no events are sent.
+    ///
+    /// To define an event sender, implement the [`iroh_blobs::provider::CustomEventSender`] trait.
+    </span><span class="kw">pub fn </span>blobs_events(<span class="kw-2">mut </span><span class="self">self</span>, blob_events: <span class="kw">impl </span>Into&lt;EventSender&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.blob_events = blob_events.into();
+        <span class="self">self
+    </span>}
+
     <span class="doccomment">/// Persist all node data in the provided directory.
     </span><span class="kw">pub async fn </span>persist(
         <span class="self">self</span>,
@@ -1237,6 +1267,7 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             gc_done_callback: <span class="self">self</span>.gc_done_callback,
+            blob_events: <span class="self">self</span>.blob_events,
         })
     }
 
@@ -1530,7 +1561,7 @@
             local_pool: lp,
         };
 
-        <span class="kw">let </span>protocol_builder = protocol_builder.register_iroh_protocols();
+        <span class="kw">let </span>protocol_builder = protocol_builder.register_iroh_protocols(<span class="self">self</span>.blob_events);
 
         <span class="prelude-val">Ok</span>(protocol_builder)
     }
@@ -1653,10 +1684,13 @@
     }
 
     <span class="doccomment">/// Registers the core iroh protocols (blobs, gossip, docs).
-    </span><span class="kw">fn </span>register_iroh_protocols(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">fn </span>register_iroh_protocols(<span class="kw-2">mut </span><span class="self">self</span>, blob_events: EventSender) -&gt; <span class="self">Self </span>{
         <span class="comment">// Register blobs.
-        </span><span class="kw">let </span>blobs_proto =
-            BlobsProtocol::new(<span class="self">self</span>.blobs_db().clone(), <span class="self">self</span>.local_pool_handle().clone());
+        </span><span class="kw">let </span>blobs_proto = BlobsProtocol::new_with_events(
+            <span class="self">self</span>.blobs_db().clone(),
+            <span class="self">self</span>.local_pool_handle().clone(),
+            blob_events,
+        );
         <span class="self">self </span>= <span class="self">self</span>.accept(iroh_blobs::protocol::ALPN, Arc::new(blobs_proto));
 
         <span class="comment">// Register gossip.
