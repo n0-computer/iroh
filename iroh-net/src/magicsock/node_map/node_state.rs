@@ -1495,7 +1495,7 @@ pub struct DirectAddrInfo {
     /// [`ControlMsg::Ping`] and [`ControlMsg::Pong`] are received on the path to
     /// [`DirectAddrInfo::addr`] itself and thus convey very different information.
     // TODO: Remove this!  It is a totally useless piece of information.
-    #[deprecated(since = "0.23", note = "this is confusing internal information")]
+    #[deprecated(since = "0.23.0", note = "this is confusing internal information")]
     pub last_control: Option<(Duration, ControlMsg)>,
     /// Elapsed time since the last payload message was received on this network path.
     ///
@@ -1578,7 +1578,7 @@ impl NodeInfo {
     /// Get the duration since the last activity we received from this endpoint
     /// on any of its direct addresses.
     // TODO: This does not contain what it claims to contain!  It can not be fixed easily.
-    #[deprecated(since = "0.23", note = "this is broken")]
+    #[deprecated(since = "0.23.0", note = "this is broken")]
     pub fn last_received(&self) -> Option<Duration> {
         #[allow(deprecated)]
         self.addrs
@@ -1588,7 +1588,10 @@ impl NodeInfo {
     }
 
     /// Returns the elapsed time since the relay path to the node last received data.
-    #[deprecated(since = "0.23", note = "access relay_url.last_alive directly instead")]
+    #[deprecated(
+        since = "0.23.0",
+        note = "access relay_url.last_alive directly instead"
+    )]
     pub fn last_alive_relay(&self) -> Option<Duration> {
         self.relay_url.as_ref().and_then(|r| r.last_alive)
     }
