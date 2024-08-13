@@ -86,7 +86,7 @@ impl SessionMode {
 pub struct SessionInit {
     /// Selects the areas we wish to synchronize.
     pub interests: Interests,
-    /// Selects the session mode (once or continous).
+    /// Selects the session mode (once or continuous).
     pub mode: SessionMode,
 }
 
