@@ -746,17 +746,6 @@
 <a href="#746" id="746">746</a>
 <a href="#747" id="747">747</a>
 <a href="#748" id="748">748</a>
-<a href="#749" id="749">749</a>
-<a href="#750" id="750">750</a>
-<a href="#751" id="751">751</a>
-<a href="#752" id="752">752</a>
-<a href="#753" id="753">753</a>
-<a href="#754" id="754">754</a>
-<a href="#755" id="755">755</a>
-<a href="#756" id="756">756</a>
-<a href="#757" id="757">757</a>
-<a href="#758" id="758">758</a>
-<a href="#759" id="759">759</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
@@ -1067,6 +1056,7 @@
                 <span class="kw">let </span>cancel_dial2 = cancel_dial.clone();
                 <span class="comment">// Future that dials and establishes the connection. Can be cancelled for simultaneous connection.
                 </span><span class="kw">let </span>fut = <span class="kw">async move </span>{
+                    <span class="macro">debug!</span>(<span class="string">"connecting"</span>);
                     <span class="kw">let </span>conn = <span class="macro">tokio::select!</span> {
                         res = endpoint.connect_by_node_id(peer, ALPN) =&gt; res,
                         <span class="kw">_ </span>= cancel_dial.cancelled() =&gt; {
@@ -1121,12 +1111,12 @@
             SessionEvent::Established =&gt; {}
             SessionEvent::Complete {
                 result,
-                we_cancelled,
                 senders,
                 remaining_intents,
                 <span class="kw-2">mut </span>update_receiver,
+                we_cancelled: <span class="kw">_</span>,
             } =&gt; {
-                <span class="macro">trace!</span>(error=<span class="question-mark">?</span>result.err(), <span class="question-mark">?</span>we_cancelled, <span class="question-mark">?</span>remaining_intents, <span class="string">"session complete"</span>);
+                <span class="macro">trace!</span>(error=<span class="question-mark">?</span>result.err(), <span class="question-mark">?</span>remaining_intents, <span class="string">"session complete"</span>);
 
                 <span class="comment">// Close the channel senders. This will cause our send loops to close,
                 // which in turn causes the receive loops of the other peer to close.
@@ -1153,8 +1143,7 @@
                     old_intents: remaining_intents,
                     new_intents,
                 };
-                <span class="comment">// Store whether we initiated the termination. We will need this for the graceful termination logic later.
-                </span>peer_info.we_cancelled = we_cancelled;
+                <span class="macro">debug!</span>(<span class="string">"entering closing state"</span>);
             }
         }
     }
@@ -1191,10 +1180,10 @@
                         }
                     }
                     <span class="kw">_ </span>=&gt; {
-                        <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"connection failed"</span>);
                         <span class="kw">let </span>peer = <span class="self">self</span>.peers.remove(<span class="kw-2">&amp;</span>peer).expect(<span class="string">"just checked"</span>);
                         <span class="kw">match </span>peer.state {
                             PeerState::Pending { intents, .. } =&gt; {
+                                <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"connection failed while pending"</span>);
                                 <span class="comment">// If we were still in pending state, terminate all pending intents.
                                 </span><span class="kw">let </span>err = Arc::new(Error::Net(err));
                                 join_all(
@@ -1208,6 +1197,7 @@
                                 old_intents,
                                 new_intents,
                             } =&gt; {
+                                <span class="macro">debug!</span>(<span class="question-mark">?</span>err, <span class="string">"connection failed to close gracefully"</span>);
                                 <span class="comment">// If we were are in closing state, we still forward the connection error to the intents.
                                 // This would be the place where we'd implement retries: instead of aborting the intents, resubmit them.
                                 // Right now, we only resubmit intents that were submitted while terminating a session, and only if the session closed gracefully.
@@ -1220,12 +1210,19 @@
                                 )
                                 .<span class="kw">await</span>;
                             }
-                            <span class="kw">_ </span>=&gt; {
-                                <span class="comment">// TODO: Not sure if this is good practice?
+                            PeerState::Active { .. } =&gt; {
+                                <span class="comment">// We do not care about intents here, they will be handled in the
+                                // session (which will error as well because all channels are now
+                                // closed).
+                                </span><span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"connection failed while active"</span>);
+                                <span class="comment">// TODO:(Frando): Not sure if this is good practice?
                                 // A `debug_assert` is far too much, because this can be triggered by other peers.
                                 // However in tests I want to make sure that *all* connections terminate gracefully.
                                 </span><span class="attr">#[cfg(test)]
                                 </span><span class="macro">panic!</span>(<span class="string">"connection failed: {err:?}"</span>);
+                            }
+                            PeerState::None =&gt; {
+                                <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"connection failed while peer is in None state"</span>);
                             }
                         }
                     }
@@ -1295,11 +1292,9 @@
             }
             <span class="prelude-val">Ok</span>(ConnStep::Done { conn }) =&gt; {
                 <span class="macro">trace!</span>(<span class="string">"connection loop finished"</span>);
-                <span class="kw">let </span>we_cancelled = peer_info.we_cancelled;
-                <span class="kw">let </span>me = <span class="self">self</span>.endpoint.node_id();
                 <span class="kw">let </span>fut = <span class="kw">async move </span>{
-                    <span class="kw">let </span>error = terminate_gracefully(<span class="kw-2">&amp;</span>conn, me, peer, we_cancelled).<span class="kw">await</span><span class="question-mark">?</span>;
-                    <span class="prelude-val">Ok</span>(ConnStep::Closed { conn, error })
+                    terminate_gracefully(<span class="kw-2">&amp;</span>conn).<span class="kw">await</span><span class="question-mark">?</span>;
+                    <span class="prelude-val">Ok</span>(ConnStep::Closed { conn })
                 };
                 <span class="kw">let </span>abort_handle = spawn_conn_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn_tasks, peer_info, fut);
                 <span class="kw">if let </span>PeerState::Closing { .. } = <span class="kw-2">&amp;</span>peer_info.state {
@@ -1308,42 +1303,28 @@
                     <span class="comment">// TODO: What do we do with the closing abort handle in case we have a new connection already?
                 </span>}
             }
-            <span class="prelude-val">Ok</span>(ConnStep::Closed { error, conn }) =&gt; {
-                <span class="kw">match </span><span class="kw-2">&amp;</span>error {
-                    <span class="prelude-val">None </span>=&gt; <span class="macro">debug!</span>(<span class="string">"connection closed gracefully"</span>),
-                    <span class="prelude-val">Some</span>(error) =&gt; <span class="macro">warn!</span>(<span class="question-mark">?</span>error, <span class="string">"failed to close connection gracefully"</span>),
-                }
+            <span class="prelude-val">Ok</span>(ConnStep::Closed { conn }) =&gt; {
+                <span class="macro">debug!</span>(<span class="string">"connection closed gracefully"</span>);
+                drop(conn);
+                <span class="kw">let </span>peer_info = <span class="self">self</span>.peers.remove(<span class="kw-2">&amp;</span>peer).expect(<span class="string">"just checked"</span>);
                 <span class="kw">if let </span>PeerState::Closing {
-                    <span class="kw-2">ref mut </span>new_intents,
-                    <span class="kw-2">ref mut </span>old_intents,
+                    new_intents,
+                    old_intents,
                 } = peer_info.state
                 {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(error) = error {
-                        <span class="comment">// If the connection did not close gracefully, terminate the pending intents with the connection error.
-                        </span><span class="kw">let </span>err = Arc::new(Error::Net(error.into()));
-                        join_all(
-                            old_intents
-                                .drain(..)
-                                .map(|intent| intent.send_abort(err.clone())),
-                        )
-                        .<span class="kw">await</span>;
-                    } <span class="kw">else </span>{
-                        <span class="comment">// Otherwise, just drop the old intents.
-                        </span><span class="kw">let _ </span>= old_intents.drain(..);
-                    };
-                    <span class="kw">let </span>intents = std::mem::take(new_intents);
-                    <span class="self">self</span>.peers.remove(<span class="kw-2">&amp;</span>peer);
-                    <span class="kw">if </span>!intents.is_empty() {
+                    drop(old_intents);
+                    <span class="kw">if </span>!new_intents.is_empty() {
                         <span class="macro">debug!</span>(
                             <span class="string">"resubmitting {} intents that were not yet processed"</span>,
-                            intents.len()
+                            new_intents.len()
                         );
-                        <span class="kw">for </span>intent <span class="kw">in </span>intents {
+                        <span class="kw">for </span>intent <span class="kw">in </span>new_intents {
                             <span class="self">self</span>.submit_intent(peer, intent).<span class="kw">await</span>;
                         }
                     }
+                } <span class="kw">else </span>{
+                    <span class="macro">warn!</span>(state=%peer_info.state, <span class="string">"reached closed step for peer in wrong state"</span>);
                 }
-                drop(conn);
             }
         }
         <span class="prelude-val">Ok</span>(())
@@ -1391,7 +1372,6 @@
     abort_handle: <span class="prelude-ty">Option</span>&lt;AbortHandle&gt;,
     state: PeerState,
     span: Span,
-    we_cancelled: bool,
 }
 
 <span class="kw">impl </span>PeerInfo {
@@ -1402,7 +1382,6 @@
             abort_handle: <span class="prelude-val">None</span>,
             state: PeerState::None,
             span: <span class="macro">error_span!</span>(<span class="string">"conn"</span>, peer=%peer.fmt_short()),
-            we_cancelled: <span class="bool-val">false</span>,
         }
     }
 }
@@ -1436,7 +1415,6 @@
     },
     Closed {
         conn: Connection,
-        error: <span class="prelude-ty">Option</span>&lt;ConnectionError&gt;,
     },
 }
 
