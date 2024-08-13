@@ -185,15 +185,15 @@
 }
 
 <span class="kw">impl</span>&lt;T: TryFrom&lt;Message&gt;&gt; MessageReceiver&lt;T&gt; {
-    <span class="kw">pub async fn </span>recv(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;T, Error&gt;&gt; {
-        poll_fn(|cx| <span class="self">self</span>.poll_recv(cx)).<span class="kw">await
-    </span>}
+    <span class="comment">// pub async fn recv(&amp;mut self) -&gt; Option&lt;Result&lt;T, Error&gt;&gt; {
+    //     poll_fn(|cx| self.poll_recv(cx)).await
+    // }
 
-    <span class="kw">pub fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="self">self</span>.inner.close()
-    }
+    // pub fn close(&amp;self) {
+    //     self.inner.close()
+    // }
 
-    <span class="kw">pub fn </span>poll_recv(<span class="kw-2">&amp;mut </span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;T, Error&gt;&gt;&gt; {
+    </span><span class="kw">pub fn </span>poll_recv(<span class="kw-2">&amp;mut </span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;T, Error&gt;&gt;&gt; {
         <span class="kw">let </span>message = <span class="macro">ready!</span>(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll_next(cx));
         <span class="kw">let </span>message = <span class="kw">match </span>message {
             <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
@@ -235,15 +235,15 @@
 }
 
 <span class="kw">impl </span>LogicalChannelReceivers {
-    <span class="kw">pub fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="self">self</span>.intersection_recv.close();
-        <span class="self">self</span>.reconciliation_recv.close();
-        <span class="self">self</span>.static_tokens_recv.close();
-        <span class="self">self</span>.capability_recv.close();
-        <span class="self">self</span>.aoi_recv.close();
-        <span class="self">self</span>.data_recv.close();
-    }
-}
+    <span class="comment">// pub fn close(&amp;self) {
+    //     self.intersection_recv.close();
+    //     self.reconciliation_recv.close();
+    //     self.static_tokens_recv.close();
+    //     self.capability_recv.close();
+    //     self.aoi_recv.close();
+    //     self.data_recv.close();
+    // }
+</span>}
 
 <span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>LogicalChannelSenders {
