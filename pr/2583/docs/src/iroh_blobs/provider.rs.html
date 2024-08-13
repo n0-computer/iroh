@@ -619,6 +619,17 @@
 <a href="#619" id="619">619</a>
 <a href="#620" id="620">620</a>
 <a href="#621" id="621">621</a>
+<a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
+<a href="#624" id="624">624</a>
+<a href="#625" id="625">625</a>
+<a href="#626" id="626">626</a>
+<a href="#627" id="627">627</a>
+<a href="#628" id="628">628</a>
+<a href="#629" id="629">629</a>
+<a href="#630" id="630">630</a>
+<a href="#631" id="631">631</a>
+<a href="#632" id="632">632</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server side API
 </span><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::sync::Arc;
@@ -680,7 +691,11 @@
         <span class="doccomment">/// The number of blobs in the sequence.
         </span>num_blobs: u64,
     },
-    <span class="doccomment">/// A sequence of hashes has been found and is being transferred.
+    <span class="doccomment">/// A chunk of a blob was transferred.
+    ///
+    /// These events will be sent with try_send, so you can not assume that you
+    /// will receive all of them. To update a progress bar, you should compute
+    /// the end offset.
     </span>TransferProgress {
         <span class="doccomment">/// An unique connection id.
         </span>connection_id: u64,
@@ -688,8 +703,8 @@
         </span>request_id: u64,
         <span class="doccomment">/// The hash for which we are transferring data.
         </span>hash: Hash,
-        <span class="doccomment">/// Offset
-        </span>offset: u64,
+        <span class="doccomment">/// Offset up to which we have transferred data.
+        </span>end_offset: u64,
     },
     <span class="doccomment">/// A blob in a sequence was transferred.
     </span>TransferBlobCompleted {
@@ -837,11 +852,11 @@
         <span class="prelude-val">None
     </span>};
 
-    <span class="kw">let </span>mk_progress = |offset| Event::TransferProgress {
+    <span class="kw">let </span>mk_progress = |end_offset| Event::TransferProgress {
         connection_id,
         request_id,
         hash,
-        offset,
+        end_offset,
     };
 
     <span class="kw">let </span><span class="kw-2">mut </span>prev = <span class="number">0</span>;
@@ -853,7 +868,7 @@
             <span class="comment">// wrap the data reader in a tracking reader so we can get some stats for reading
             </span><span class="kw">let </span><span class="kw-2">mut </span>tracking_reader = TrackingSliceReader::new(<span class="kw-2">&amp;mut </span>data);
             <span class="kw">let </span><span class="kw-2">mut </span>sending_reader =
-                SendingSliceReader::new(<span class="kw-2">&amp;mut </span>tracking_reader, events.clone(), mk_progress);
+                SendingSliceReader::new(<span class="kw-2">&amp;mut </span>tracking_reader, <span class="kw-2">&amp;</span>events, mk_progress);
             <span class="comment">// send the root
             </span>tw.write(outboard.tree().size().to_le_bytes().as_slice())
                 .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -910,14 +925,14 @@
     <span class="prelude-val">Ok</span>(SentStatus::Sent)
 }
 
-<span class="kw">struct </span>SendingSliceReader&lt;R, F&gt; {
+<span class="kw">struct </span>SendingSliceReader&lt;<span class="lifetime">'a</span>, R, F&gt; {
     inner: R,
-    sender: EventSender,
+    sender: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>EventSender,
     make_event: F,
 }
 
-<span class="kw">impl</span>&lt;R: AsyncSliceReader, F: Fn(u64) -&gt; Event&gt; SendingSliceReader&lt;R, F&gt; {
-    <span class="kw">fn </span>new(inner: R, sender: EventSender, make_event: F) -&gt; <span class="self">Self </span>{
+<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, R: AsyncSliceReader, F: Fn(u64) -&gt; Event&gt; SendingSliceReader&lt;<span class="lifetime">'a</span>, R, F&gt; {
+    <span class="kw">fn </span>new(inner: R, sender: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>EventSender, make_event: F) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             inner,
             sender,
@@ -926,11 +941,17 @@
     }
 }
 
-<span class="kw">impl</span>&lt;R: AsyncSliceReader, F: Fn(u64) -&gt; Event&gt; AsyncSliceReader <span class="kw">for </span>SendingSliceReader&lt;R, F&gt; {
+<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, R: AsyncSliceReader, F: Fn(u64) -&gt; Event&gt; AsyncSliceReader
+    <span class="kw">for </span>SendingSliceReader&lt;<span class="lifetime">'a</span>, R, F&gt;
+{
     <span class="kw">async fn </span>read_at(<span class="kw-2">&amp;mut </span><span class="self">self</span>, offset: u64, len: usize) -&gt; std::io::Result&lt;bytes::Bytes&gt; {
-        <span class="self">self</span>.sender.try_send(|| (<span class="self">self</span>.make_event)(offset));
-        <span class="self">self</span>.inner.read_at(offset, len).<span class="kw">await
-    </span>}
+        <span class="kw">let </span>res = <span class="self">self</span>.inner.read_at(offset, len).<span class="kw">await</span>;
+        <span class="kw">if let </span><span class="prelude-val">Ok</span>(res) = res.as_ref() {
+            <span class="kw">let </span>end_offset = offset + res.len() <span class="kw">as </span>u64;
+            <span class="self">self</span>.sender.try_send(|| (<span class="self">self</span>.make_event)(end_offset));
+        }
+        res
+    }
 
     <span class="kw">async fn </span>size(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; std::io::Result&lt;u64&gt; {
         <span class="self">self</span>.inner.size().<span class="kw">await
@@ -1204,7 +1225,8 @@
             <span class="kw">let </span>outboard = entry.outboard().<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span>size = outboard.tree().size();
             <span class="kw">let </span><span class="kw-2">mut </span>file_reader = TrackingSliceReader::new(entry.data_reader().<span class="kw">await</span><span class="question-mark">?</span>);
-            <span class="kw">let </span><span class="kw-2">mut </span>sending_reader = SendingSliceReader::new(<span class="kw-2">&amp;mut </span>file_reader, events, mk_progress);
+            <span class="kw">let </span><span class="kw-2">mut </span>sending_reader =
+                SendingSliceReader::new(<span class="kw-2">&amp;mut </span>file_reader, <span class="kw-2">&amp;</span>events, mk_progress);
             writer.write(size.to_le_bytes().as_slice()).<span class="kw">await</span><span class="question-mark">?</span>;
             encode_ranges_validated(
                 <span class="kw-2">&amp;mut </span>sending_reader,
