@@ -63,7 +63,7 @@ impl Role {
 
 /// A session can either run a single reconciliation, or keep open until closed by either peer.
 ///
-/// * [`Self::Continous`] will enable the live data channels to synchronize updates in real-time.
+/// * [`Self::Continuous`] will enable the live data channels to synchronize updates in real-time.
 /// * [`Self::ReconcileOnce`] will run a single reconciliation of the interests declared at session
 ///   start, and then close the session.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -71,13 +71,13 @@ pub enum SessionMode {
     /// Run a single, full reconciliation, and then quit.
     ReconcileOnce,
     /// Run reconciliations and data mode, until intentionally closed.
-    Continous,
+    Continuous,
 }
 
 impl SessionMode {
     /// Returns `true` if the session runs in live mode.
     pub fn is_live(&self) -> bool {
-        matches!(self, Self::Continous)
+        matches!(self, Self::Continuous)
     }
 }
 
@@ -96,9 +96,9 @@ impl SessionInit {
         Self { interests, mode }
     }
 
-    /// Creates a new [`SessionInit`] with [`SessionMode::Continous`].
+    /// Creates a new [`SessionInit`] with [`SessionMode::Continuous`].
     pub fn continuous(interests: impl Into<Interests>) -> Self {
-        Self::new(interests, SessionMode::Continous)
+        Self::new(interests, SessionMode::Continuous)
     }
 
     /// Creates a new [`SessionInit`] with [`SessionMode::ReconcileOnce`].

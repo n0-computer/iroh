@@ -86,7 +86,7 @@ impl Engine {
     ///
     /// `init` contains the initialisation options for this synchronisation intent.
     ///
-    /// Returns an [`IntentHandle`] which receives events and can submit udpates into the session.
+    /// Returns an [`IntentHandle`] which receives events and can submit updates into the session.
     ///
     /// This can freely be called multiple times for the same peer. The engine will merge the
     /// intents and make sure that only a single session is opened per peer.

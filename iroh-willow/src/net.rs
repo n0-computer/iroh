@@ -663,8 +663,8 @@ mod tests {
             }
         });
 
-        let init_alfie = SessionInit::new(Interests::All, SessionMode::Continous);
-        let init_betty = SessionInit::new(Interests::All, SessionMode::Continous);
+        let init_alfie = SessionInit::new(Interests::All, SessionMode::Continuous);
+        let init_betty = SessionInit::new(Interests::All, SessionMode::Continuous);
 
         let (intent_alfie, mut intent_handle_alfie) = Intent::new(init_alfie);
         let (intent_betty, mut intent_handle_betty) = Intent::new(init_betty);

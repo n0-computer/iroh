@@ -137,7 +137,7 @@ async fn peer_manager_update_intent() -> Result<()> {
 
     let path = Path::from_bytes(&[b"foo"]).unwrap();
     let interests = Interests::builder().add_area(namespace, [Area::new_path(path.clone())]);
-    let init = SessionInit::new(interests, SessionMode::Continous);
+    let init = SessionInit::new(interests, SessionMode::Continuous);
     let mut intent = alfie.sync_with_peer(betty_node_id, init).await.unwrap();
 
     assert_eq!(
