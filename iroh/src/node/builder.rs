@@ -282,8 +282,11 @@ impl<D> Builder<D>
 where
     D: BaoStore,
 {
-    /// Set the blobs event sender.
-    pub fn set_blobs_events(mut self, blob_events: impl Into<EventSender>) -> Self {
+    /// Configure a blob events sender. This will replace the previous blob
+    /// event sender. By default, no events are sent.
+    ///
+    /// To define an event sender, implement the [`iroh_blobs::provider::CustomEventSender`] trait.
+    pub fn blobs_events(mut self, blob_events: impl Into<EventSender>) -> Self {
         self.blob_events = blob_events.into();
         self
     }

@@ -1256,6 +1256,7 @@ mod tests {
     struct BlobEvents {
         sender: mpsc::Sender<iroh_blobs::provider::Event>,
     }
+
     impl BlobEvents {
         fn new(cap: usize) -> (Self, mpsc::Receiver<iroh_blobs::provider::Event>) {
             let (s, r) = mpsc::channel(cap);
@@ -1270,6 +1271,10 @@ mod tests {
                 sender.send(event).await.ok();
             })
         }
+
+        fn try_send(&self, event: iroh_blobs::provider::Event) {
+            self.sender.try_send(event).ok();
+        }
     }
 
     #[tokio::test]
@@ -1278,13 +1283,13 @@ mod tests {
 
         let (node1_events, mut node1_events_r) = BlobEvents::new(16);
         let node1 = crate::node::Node::memory()
-            .set_blobs_events(node1_events)
+            .blobs_events(node1_events)
             .spawn()
             .await?;
 
         let (node2_events, mut node2_events_r) = BlobEvents::new(16);
         let node2 = crate::node::Node::memory()
-            .set_blobs_events(node2_events)
+            .blobs_events(node2_events)
             .spawn()
             .await?;
 

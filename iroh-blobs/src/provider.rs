@@ -292,18 +292,22 @@ pub async fn transfer_collection<D: Map>(
 struct SendingSliceReader<R, F> {
     inner: R,
     sender: EventSender,
-    f: F,
+    make_event: F,
 }
 
 impl<R: AsyncSliceReader, F: Fn(u64) -> Event> SendingSliceReader<R, F> {
-    fn new(inner: R, sender: EventSender, f: F) -> Self {
-        Self { inner, sender, f }
+    fn new(inner: R, sender: EventSender, make_event: F) -> Self {
+        Self {
+            inner,
+            sender,
+            make_event,
+        }
     }
 }
 
 impl<R: AsyncSliceReader, F: Fn(u64) -> Event> AsyncSliceReader for SendingSliceReader<R, F> {
     async fn read_at(&mut self, offset: u64, len: usize) -> std::io::Result<bytes::Bytes> {
-        self.sender.send(|| (self.f)(offset)).await;
+        self.sender.try_send(|| (self.make_event)(offset));
         self.inner.read_at(offset, len).await
     }
 
@@ -312,10 +316,13 @@ impl<R: AsyncSliceReader, F: Fn(u64) -> Event> AsyncSliceReader for SendingSlice
     }
 }
 
-/// Trait for sending events.
+/// Trait for sending blob events.
 pub trait CustomEventSender: std::fmt::Debug + Sync + Send + 'static {
-    /// Send an event.
+    /// Send an event and wait for it to be sent.
     fn send(&self, event: Event) -> BoxFuture<()>;
+
+    /// Try to send an event.
+    fn try_send(&self, event: Event);
 }
 
 /// A possibly disabled sender for events.
@@ -347,6 +354,18 @@ impl EventSender {
         if let Some(inner) = &self.inner {
             let event = event();
             inner.as_ref().send(event).await;
+        }
+    }
+
+    /// Try to send an event.
+    ///
+    /// This will just drop the event if it can not be sent immediately. So it
+    /// is only appropriate for events that are not critical, such as
+    /// self-contained progress updates.
+    pub fn try_send(&self, event: impl FnOnce() -> Event) {
+        if let Some(inner) = &self.inner {
+            let event = event();
+            inner.as_ref().try_send(event);
         }
     }
 }
