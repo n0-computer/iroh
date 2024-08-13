@@ -70,9 +70,9 @@ use iroh_io::AsyncSliceWriter;
 ///
 /// If you don't want to report progress, you can use the [IgnoreProgressSender] type.
 ///
-/// # Flume progress sender
+/// # Async channel progress sender
 ///
-/// If you want to use a flume channel, you can use the [FlumeProgressSender] type.
+/// If you want to use an async channel, you can use the [AsyncChannelProgressSender] type.
 ///
 /// # Implementing your own progress sender
 ///
@@ -443,77 +443,6 @@ impl<
             self.0.blocking_send(msg)
         } else {
             Ok(())
-        }
-    }
-}
-
-/// A progress sender that uses a flume channel.
-pub struct FlumeProgressSender<T> {
-    sender: flume::Sender<T>,
-    id: std::sync::Arc<std::sync::atomic::AtomicU64>,
-}
-
-impl<T> std::fmt::Debug for FlumeProgressSender<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FlumeProgressSender")
-            .field("id", &self.id)
-            .field("sender", &self.sender)
-            .finish()
-    }
-}
-
-impl<T> Clone for FlumeProgressSender<T> {
-    fn clone(&self) -> Self {
-        Self {
-            sender: self.sender.clone(),
-            id: self.id.clone(),
-        }
-    }
-}
-
-impl<T> FlumeProgressSender<T> {
-    /// Create a new progress sender from a flume sender.
-    pub fn new(sender: flume::Sender<T>) -> Self {
-        Self {
-            sender,
-            id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        }
-    }
-
-    /// Returns true if `other` sends on the same `flume` channel as `self`.
-    pub fn same_channel(&self, other: &FlumeProgressSender<T>) -> bool {
-        self.sender.same_channel(&other.sender)
-    }
-}
-
-impl<T> IdGenerator for FlumeProgressSender<T> {
-    fn new_id(&self) -> u64 {
-        self.id.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-    }
-}
-
-impl<T: Send + Sync + 'static> ProgressSender for FlumeProgressSender<T> {
-    type Msg = T;
-
-    async fn send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
-        self.sender
-            .send_async(msg)
-            .await
-            .map_err(|_| ProgressSendError::ReceiverDropped)
-    }
-
-    fn try_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
-        match self.sender.try_send(msg) {
-            Ok(_) => Ok(()),
-            Err(flume::TrySendError::Full(_)) => Ok(()),
-            Err(flume::TrySendError::Disconnected(_)) => Err(ProgressSendError::ReceiverDropped),
-        }
-    }
-
-    fn blocking_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
-        match self.sender.send(msg) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(ProgressSendError::ReceiverDropped),
         }
     }
 }
