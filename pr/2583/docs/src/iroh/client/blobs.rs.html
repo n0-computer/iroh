@@ -1517,6 +1517,11 @@
 <a href="#1517" id="1517">1517</a>
 <a href="#1518" id="1518">1518</a>
 <a href="#1519" id="1519">1519</a>
+<a href="#1520" id="1520">1520</a>
+<a href="#1521" id="1521">1521</a>
+<a href="#1522" id="1522">1522</a>
+<a href="#1523" id="1523">1523</a>
+<a href="#1524" id="1524">1524</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for blobs management.
 //!
 //! The main entry point is the [`Client`].
@@ -2775,6 +2780,7 @@
     </span><span class="kw">struct </span>BlobEvents {
         sender: mpsc::Sender&lt;iroh_blobs::provider::Event&gt;,
     }
+
     <span class="kw">impl </span>BlobEvents {
         <span class="kw">fn </span>new(cap: usize) -&gt; (<span class="self">Self</span>, mpsc::Receiver&lt;iroh_blobs::provider::Event&gt;) {
             <span class="kw">let </span>(s, r) = mpsc::channel(cap);
@@ -2789,6 +2795,10 @@
                 sender.send(event).<span class="kw">await</span>.ok();
             })
         }
+
+        <span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, event: iroh_blobs::provider::Event) {
+            <span class="self">self</span>.sender.try_send(event).ok();
+        }
     }
 
     <span class="attr">#[tokio::test]
@@ -2797,13 +2807,13 @@
 
         <span class="kw">let </span>(node1_events, <span class="kw-2">mut </span>node1_events_r) = BlobEvents::new(<span class="number">16</span>);
         <span class="kw">let </span>node1 = <span class="kw">crate</span>::node::Node::memory()
-            .set_blobs_events(node1_events)
+            .blobs_events(node1_events)
             .spawn()
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>(node2_events, <span class="kw-2">mut </span>node2_events_r) = BlobEvents::new(<span class="number">16</span>);
         <span class="kw">let </span>node2 = <span class="kw">crate</span>::node::Node::memory()
-            .set_blobs_events(node2_events)
+            .blobs_events(node2_events)
             .spawn()
             .<span class="kw">await</span><span class="question-mark">?</span>;
 

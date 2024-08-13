@@ -915,6 +915,9 @@
 <a href="#915" id="915">915</a>
 <a href="#916" id="916">916</a>
 <a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
@@ -1199,8 +1202,11 @@
 <span class="kw">where
     </span>D: BaoStore,
 {
-    <span class="doccomment">/// Set the blobs event sender.
-    </span><span class="kw">pub fn </span>set_blobs_events(<span class="kw-2">mut </span><span class="self">self</span>, blob_events: <span class="kw">impl </span>Into&lt;EventSender&gt;) -&gt; <span class="self">Self </span>{
+    <span class="doccomment">/// Configure a blob events sender. This will replace the previous blob
+    /// event sender. By default, no events are sent.
+    ///
+    /// To define an event sender, implement the [`iroh_blobs::provider::CustomEventSender`] trait.
+    </span><span class="kw">pub fn </span>blobs_events(<span class="kw-2">mut </span><span class="self">self</span>, blob_events: <span class="kw">impl </span>Into&lt;EventSender&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.blob_events = blob_events.into();
         <span class="self">self
     </span>}

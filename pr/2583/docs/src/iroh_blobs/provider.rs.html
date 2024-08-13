@@ -600,6 +600,25 @@
 <a href="#600" id="600">600</a>
 <a href="#601" id="601">601</a>
 <a href="#602" id="602">602</a>
+<a href="#603" id="603">603</a>
+<a href="#604" id="604">604</a>
+<a href="#605" id="605">605</a>
+<a href="#606" id="606">606</a>
+<a href="#607" id="607">607</a>
+<a href="#608" id="608">608</a>
+<a href="#609" id="609">609</a>
+<a href="#610" id="610">610</a>
+<a href="#611" id="611">611</a>
+<a href="#612" id="612">612</a>
+<a href="#613" id="613">613</a>
+<a href="#614" id="614">614</a>
+<a href="#615" id="615">615</a>
+<a href="#616" id="616">616</a>
+<a href="#617" id="617">617</a>
+<a href="#618" id="618">618</a>
+<a href="#619" id="619">619</a>
+<a href="#620" id="620">620</a>
+<a href="#621" id="621">621</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server side API
 </span><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::sync::Arc;
@@ -894,18 +913,22 @@
 <span class="kw">struct </span>SendingSliceReader&lt;R, F&gt; {
     inner: R,
     sender: EventSender,
-    f: F,
+    make_event: F,
 }
 
 <span class="kw">impl</span>&lt;R: AsyncSliceReader, F: Fn(u64) -&gt; Event&gt; SendingSliceReader&lt;R, F&gt; {
-    <span class="kw">fn </span>new(inner: R, sender: EventSender, f: F) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{ inner, sender, f }
+    <span class="kw">fn </span>new(inner: R, sender: EventSender, make_event: F) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            inner,
+            sender,
+            make_event,
+        }
     }
 }
 
 <span class="kw">impl</span>&lt;R: AsyncSliceReader, F: Fn(u64) -&gt; Event&gt; AsyncSliceReader <span class="kw">for </span>SendingSliceReader&lt;R, F&gt; {
     <span class="kw">async fn </span>read_at(<span class="kw-2">&amp;mut </span><span class="self">self</span>, offset: u64, len: usize) -&gt; std::io::Result&lt;bytes::Bytes&gt; {
-        <span class="self">self</span>.sender.send(|| (<span class="self">self</span>.f)(offset)).<span class="kw">await</span>;
+        <span class="self">self</span>.sender.try_send(|| (<span class="self">self</span>.make_event)(offset));
         <span class="self">self</span>.inner.read_at(offset, len).<span class="kw">await
     </span>}
 
@@ -914,10 +937,13 @@
     </span>}
 }
 
-<span class="doccomment">/// Trait for sending events.
+<span class="doccomment">/// Trait for sending blob events.
 </span><span class="kw">pub trait </span>CustomEventSender: std::fmt::Debug + Sync + Send + <span class="lifetime">'static </span>{
-    <span class="doccomment">/// Send an event.
+    <span class="doccomment">/// Send an event and wait for it to be sent.
     </span><span class="kw">fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, event: Event) -&gt; BoxFuture&lt;()&gt;;
+
+    <span class="doccomment">/// Try to send an event.
+    </span><span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, event: Event);
 }
 
 <span class="doccomment">/// A possibly disabled sender for events.
@@ -949,6 +975,18 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(inner) = <span class="kw-2">&amp;</span><span class="self">self</span>.inner {
             <span class="kw">let </span>event = event();
             inner.as_ref().send(event).<span class="kw">await</span>;
+        }
+    }
+
+    <span class="doccomment">/// Try to send an event.
+    ///
+    /// This will just drop the event if it can not be sent immediately. So it
+    /// is only appropriate for events that are not critical, such as
+    /// self-contained progress updates.
+    </span><span class="kw">pub fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, event: <span class="kw">impl </span>FnOnce() -&gt; Event) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(inner) = <span class="kw-2">&amp;</span><span class="self">self</span>.inner {
+            <span class="kw">let </span>event = event();
+            inner.as_ref().try_send(event);
         }
     }
 }
