@@ -31,6 +31,9 @@ pub const CHANNEL_CAP: usize = 1024 * 64;
 /// The ALPN protocol name for iroh-willow.
 pub const ALPN: &[u8] = b"iroh-willow/0";
 
+/// QUIC application error code for closing with failure.
+pub const ERROR_CODE_FAIL: VarInt = VarInt::from_u32(0);
+
 /// QUIC application error code for graceful connection termination.
 pub const ERROR_CODE_OK: VarInt = VarInt::from_u32(1);
 
@@ -304,11 +307,18 @@ pub(crate) async fn terminate_gracefully(conn: &Connection) -> Result<()> {
     send_stream.finish().await?;
     // Wait until we either receive the goodbye byte from the other peer, or for the other peer
     // to close the connection with the expected error code.
-    wait_for_goodbye_or_graceful_close(conn).await?;
-    // Only now close the connection.
-    conn.close(ERROR_CODE_OK, b"bye");
-    trace!("connection terminated gracefully");
-    Ok(())
+    match wait_for_goodbye_or_graceful_close(conn).await {
+        Ok(()) => {
+            conn.close(ERROR_CODE_OK, b"bye");
+            trace!("connection terminated gracefully");
+            Ok(())
+        },
+        Err(err) => {
+            conn.close(ERROR_CODE_FAIL, b"peer-failed-while-closing");
+            trace!(?err, "connection failed while terminating");
+            Err(err)
+        }
+    }
 }
 
 async fn wait_for_goodbye_or_graceful_close(conn: &Connection) -> Result<()> {
