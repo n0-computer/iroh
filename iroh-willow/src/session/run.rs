@@ -480,7 +480,10 @@ async fn with_span<T: std::fmt::Debug>(
     async {
         trace!("start");
         let res = fut.await;
-        trace!(?res, "done");
+        match &res {
+            Ok(_) => trace!("done"),
+            Err(err) => debug!(?err, "session task failed"),
+        }
         res
     }
     .instrument(span)
