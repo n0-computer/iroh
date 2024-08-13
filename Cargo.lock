@@ -3239,7 +3239,7 @@ checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 [[package]]
 name = "meadowcap"
 version = "0.1.0"
-source = "git+https://github.com/Frando/willow-rs.git?branch=iroh-dev#1785dc6c4e62dbc7c58d56a989345eacd6954d95"
+source = "git+https://github.com/n0-computer/willow-rs.git?branch=iroh-dev#f04f641b319e5a29c589f033154a92670b63472c"
 dependencies = [
  "either",
  "signature",
@@ -3808,9 +3808,9 @@ dependencies = [
 
 [[package]]
 name = "pest_derive"
-version = "2.7.9"
+version = "2.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f73541b156d32197eecda1a4014d7f868fd2bcb3c550d5386087cfba442bf69c"
+checksum = "2a548d2beca6773b1c244554d36fcf8548a8a58e74156968211567250e48e49a"
 dependencies = [
  "pest",
  "pest_generator",
@@ -3818,9 +3818,9 @@ dependencies = [
 
 [[package]]
 name = "pest_generator"
-version = "2.7.9"
+version = "2.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c35eeed0a3fab112f75165fdc026b3913f4183133f19b49be773ac9ea966e8bd"
+checksum = "3c93a82e8d145725dcbaf44e5ea887c8a869efdcc28706df2d08c69e17077183"
 dependencies = [
  "pest",
  "pest_meta",
@@ -3831,9 +3831,9 @@ dependencies = [
 
 [[package]]
 name = "pest_meta"
-version = "2.7.9"
+version = "2.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2adbf29bb9776f28caece835398781ab24435585fe0d4dc1374a61db5accedca"
+checksum = "a941429fea7e08bedec25e4f6785b6ffaacc6b755da98df5ef3e7dcf4a124c4f"
 dependencies = [
  "once_cell",
  "pest",
@@ -6639,7 +6639,7 @@ checksum = "7219d36b6eac893fa81e84ebe06485e7dcbb616177469b142df14f1f4deb1311"
 [[package]]
 name = "willow-data-model"
 version = "0.1.0"
-source = "git+https://github.com/Frando/willow-rs.git?branch=iroh-dev#1785dc6c4e62dbc7c58d56a989345eacd6954d95"
+source = "git+https://github.com/n0-computer/willow-rs.git?branch=iroh-dev#f04f641b319e5a29c589f033154a92670b63472c"
 dependencies = [
  "bytes",
  "either",
@@ -6651,7 +6651,7 @@ dependencies = [
 [[package]]
 name = "willow-encoding"
 version = "0.1.0"
-source = "git+https://github.com/Frando/willow-rs.git?branch=iroh-dev#1785dc6c4e62dbc7c58d56a989345eacd6954d95"
+source = "git+https://github.com/n0-computer/willow-rs.git?branch=iroh-dev#f04f641b319e5a29c589f033154a92670b63472c"
 dependencies = [
  "either",
  "syncify",
