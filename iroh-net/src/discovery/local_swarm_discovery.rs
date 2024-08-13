@@ -20,7 +20,7 @@ use tokio::{sync::mpsc, task::JoinSet};
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
-    util::{send_blocking, AbortingJoinHandle},
+    util::AbortingJoinHandle,
     AddrInfo, Endpoint, NodeId,
 };
 
@@ -194,6 +194,7 @@ impl LocalSwarmDiscovery {
         socketaddrs: BTreeSet<SocketAddr>,
         rt: &tokio::runtime::Handle,
     ) -> Result<DropGuard> {
+        let spawn_rt = rt.clone();
         let callback = move |node_id: &str, peer: &Peer| {
             trace!(
                 node_id,
@@ -201,11 +202,12 @@ impl LocalSwarmDiscovery {
                 "Received peer information from LocalSwarmDiscovery"
             );
 
-            send_blocking(
-                &sender,
-                Message::Discovery(node_id.to_string(), peer.clone()),
-            )
-            .ok();
+            let sender = sender.clone();
+            let node_id = node_id.to_string();
+            let peer = peer.clone();
+            spawn_rt.spawn(async move {
+                sender.send(Message::Discovery(node_id, peer)).await.ok();
+            });
         };
         let addrs = LocalSwarmDiscovery::socketaddrs_to_addrs(socketaddrs);
         let mut discoverer =

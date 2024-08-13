@@ -9,7 +9,6 @@ use std::{
 
 use futures_lite::future::Boxed as BoxFuture;
 use futures_util::{future::Shared, FutureExt};
-use tokio::sync::mpsc;
 
 pub mod chain;
 
@@ -132,52 +131,4 @@ impl<T: Future + Unpin> Future for MaybeFuture<T> {
 /// and do not attempt to do any hole punching.
 pub(crate) fn relay_only_mode() -> bool {
     std::option_env!("DEV_RELAY_ONLY").is_some()
-}
-
-/// Send an element blocking, automatically handling the existence of a runtime.
-pub fn send_blocking<T: Send + 'static>(
-    sender: &mpsc::Sender<T>,
-    el: T,
-) -> std::result::Result<(), mpsc::error::SendError<T>> {
-    match tokio::runtime::Handle::try_current() {
-        Ok(h) => {
-            let sender = sender.clone();
-            h.spawn(async move {
-                sender.send(el).await.ok();
-            });
-            // can not send result
-            Ok(())
-        }
-        Err(err) => {
-            dbg!(err);
-            sender.blocking_send(el)
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_send_blocking_no_runtime() {
-        let (sender, mut receiver) = mpsc::channel(2);
-
-        send_blocking(&sender, "hello").unwrap();
-        send_blocking(&sender, "world").unwrap();
-
-        assert_eq!(receiver.blocking_recv().unwrap(), "hello");
-        assert_eq!(receiver.blocking_recv().unwrap(), "world");
-    }
-
-    #[tokio::test]
-    async fn test_send_blocking_with_runtime() {
-        let (sender, mut receiver) = mpsc::channel(2);
-
-        send_blocking(&sender, "hello").unwrap();
-        send_blocking(&sender, "world").unwrap();
-
-        assert_eq!(receiver.recv().await.unwrap(), "hello");
-        assert_eq!(receiver.recv().await.unwrap(), "world");
-    }
 }
