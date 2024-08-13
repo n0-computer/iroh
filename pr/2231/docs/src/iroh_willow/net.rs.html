@@ -809,6 +809,7 @@
 <a href="#809" id="809">809</a>
 <a href="#810" id="810">810</a>
 <a href="#811" id="811">811</a>
+<a href="#812" id="812">812</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Networking implementation for iroh-willow.
 
 </span><span class="kw">use </span>std::{future::Future, time::Duration};
@@ -1564,6 +1565,7 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, NodeId, NodeAddr)&gt; {
         <span class="kw">let </span>ep = Endpoint::builder()
             .secret_key(SecretKey::generate_with_rng(rng))
+            .relay_mode(iroh_net::relay::RelayMode::Disabled)
             .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
             .bind(<span class="number">0</span>)
             .<span class="kw">await</span><span class="question-mark">?</span>;

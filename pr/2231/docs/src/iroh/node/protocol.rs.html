@@ -110,20 +110,12 @@
 <a href="#110" id="110">110</a>
 <a href="#111" id="111">111</a>
 <a href="#112" id="112">112</a>
-<a href="#113" id="113">113</a>
-<a href="#114" id="114">114</a>
-<a href="#115" id="115">115</a>
-<a href="#116" id="116">116</a>
-<a href="#117" id="117">117</a>
-<a href="#118" id="118">118</a>
-<a href="#119" id="119">119</a>
-<a href="#120" id="120">120</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{any::Any, collections::BTreeMap, fmt, sync::Arc};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::future::Boxed <span class="kw">as </span>BoxedFuture;
 <span class="kw">use </span>futures_util::future::join_all;
-<span class="kw">use </span>iroh_blobs::util::local_pool::LocalPoolHandle;
+<span class="kw">use </span>iroh_blobs::{provider::EventSender, util::local_pool::LocalPoolHandle};
 <span class="kw">use </span>iroh_net::endpoint::Connecting;
 
 <span class="doccomment">/// Handler for incoming connections.
@@ -201,11 +193,12 @@
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>BlobsProtocol&lt;S&gt; {
     rt: LocalPoolHandle,
     store: S,
+    events: EventSender,
 }
 
 <span class="kw">impl</span>&lt;S: iroh_blobs::store::Store&gt; BlobsProtocol&lt;S&gt; {
-    <span class="kw">pub fn </span>new(store: S, rt: LocalPoolHandle) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{ rt, store }
+    <span class="kw">pub fn </span>new_with_events(store: S, rt: LocalPoolHandle, events: EventSender) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{ rt, store, events }
     }
 }
 
@@ -215,21 +208,12 @@
             iroh_blobs::provider::handle_connection(
                 conn.<span class="kw">await</span><span class="question-mark">?</span>,
                 <span class="self">self</span>.store.clone(),
-                MockEventSender,
+                <span class="self">self</span>.events.clone(),
                 <span class="self">self</span>.rt.clone(),
             )
             .<span class="kw">await</span>;
             <span class="prelude-val">Ok</span>(())
         })
-    }
-}
-
-<span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">struct </span>MockEventSender;
-
-<span class="kw">impl </span>iroh_blobs::provider::EventSender <span class="kw">for </span>MockEventSender {
-    <span class="kw">fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, _event: iroh_blobs::provider::Event) -&gt; futures_lite::future::Boxed&lt;()&gt; {
-        Box::pin(std::future::ready(()))
     }
 }
 
