@@ -825,7 +825,7 @@
 
                 <span class="self">self</span>.tasks.spawn_local(<span class="kw">async move </span>{
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = future.<span class="kw">await </span>{
-                        <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>peer, <span class="question-mark">?</span>session_id, <span class="question-mark">?</span>err, <span class="string">"session failed"</span>);
+                        <span class="macro">debug!</span>(<span class="question-mark">?</span>peer, <span class="question-mark">?</span>session_id, <span class="question-mark">?</span>err, <span class="string">"session failed"</span>);
                     }
                 });
 
