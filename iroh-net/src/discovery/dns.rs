@@ -83,10 +83,6 @@ impl Discovery for DnsDiscovery {
     fn resolve(&self, ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let resolver = ep.dns_resolver().clone();
         let origin_domain = self.origin_domain.clone();
-        #[cfg(any(test, feature = "test-utils"))]
-        if origin_domain.contains(&TEST_DNS_NODE_ORIGIN.to_string()) {
-            panic!("wait. THIS IS ILLEGAL!");
-        }
         let fut = async move {
             let node_addr = resolver
                 .lookup_by_id_staggered(&node_id, &origin_domain, DNS_STAGGERING_MS)
