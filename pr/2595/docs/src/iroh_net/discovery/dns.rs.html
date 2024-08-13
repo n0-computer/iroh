@@ -97,10 +97,6 @@
 <a href="#97" id="97">97</a>
 <a href="#98" id="98">98</a>
 <a href="#99" id="99">99</a>
-<a href="#100" id="100">100</a>
-<a href="#101" id="101">101</a>
-<a href="#102" id="102">102</a>
-<a href="#103" id="103">103</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh-net
 
 </span><span class="kw">use </span>anyhow::Result;
@@ -186,10 +182,6 @@
     <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, ep: Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
         <span class="kw">let </span>resolver = ep.dns_resolver().clone();
         <span class="kw">let </span>origin_domain = <span class="self">self</span>.origin_domain.clone();
-        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-        </span><span class="kw">if </span>origin_domain.contains(<span class="kw-2">&amp;</span>TEST_DNS_NODE_ORIGIN.to_string()) {
-            <span class="macro">panic!</span>(<span class="string">"wait. THIS IS ILLEGAL!"</span>);
-        }
         <span class="kw">let </span>fut = <span class="kw">async move </span>{
             <span class="kw">let </span>node_addr = resolver
                 .lookup_by_id_staggered(<span class="kw-2">&amp;</span>node_id, <span class="kw-2">&amp;</span>origin_domain, DNS_STAGGERING_MS)
