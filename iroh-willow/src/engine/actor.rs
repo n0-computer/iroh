@@ -32,6 +32,7 @@ pub const INBOX_CAP: usize = 1024;
 pub const SESSION_EVENT_CHANNEL_CAP: usize = 64;
 pub const SESSION_UPDATE_CHANNEL_CAP: usize = 64;
 
+/// Handle to a Willow storage thread.
 #[derive(Debug, Clone)]
 pub struct ActorHandle {
     inbox_tx: flume::Sender<Input>,
