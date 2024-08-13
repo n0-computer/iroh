@@ -897,6 +897,7 @@
 <a href="#897" id="897">897</a>
 <a href="#898" id="898">898</a>
 <a href="#899" id="899">899</a>
+<a href="#900" id="900">900</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
@@ -916,11 +917,9 @@
 <span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
 <span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 <span class="attr">#[cfg(not(test))]
-</span><span class="kw">use </span>iroh_net::discovery::{
-    dns::DnsDiscovery, local_swarm_discovery::LocalSwarmDiscovery, pkarr::PkarrPublisher,
-};
+</span><span class="kw">use </span>iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 <span class="kw">use </span>iroh_net::{
-    discovery::{ConcurrentDiscovery, Discovery},
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
     relay::RelayMode,
     Endpoint,
@@ -1408,7 +1407,7 @@
                 DiscoveryConfig::Custom(discovery) =&gt; <span class="prelude-val">Some</span>(discovery),
                 DiscoveryConfig::Default =&gt; {
                     <span class="attr">#[cfg(not(test))]
-                    </span><span class="kw">let </span>discovery: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; = {
+                    </span><span class="kw">let </span>discovery = {
                         <span class="kw">let </span><span class="kw-2">mut </span>discovery_services: Vec&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; = <span class="macro">vec!</span>[
                             <span class="comment">// Enable DNS discovery by default
                             </span>Box::new(DnsDiscovery::n0_dns()),
@@ -1424,13 +1423,16 @@
                                 discovery_services.push(Box::new(service));
                             }
                         }
-                        <span class="prelude-val">Some</span>(Box::new(ConcurrentDiscovery::from_services(
-                            discovery_services,
-                        )))
+                        ConcurrentDiscovery::from_services(discovery_services)
                     };
                     <span class="attr">#[cfg(test)]
-                    </span><span class="kw">let </span>discovery = <span class="prelude-val">None</span>;
-                    discovery
+                    </span><span class="kw">let </span>discovery = ConcurrentDiscovery::from_services(<span class="macro">vec!</span>[
+                        <span class="comment">// Enable DNS discovery by default
+                        </span>Box::new(DnsDiscovery::n0_dns()),
+                        <span class="comment">// Enable pkarr publishing by default
+                        </span>Box::new(PkarrPublisher::n0_dns(<span class="self">self</span>.secret_key.clone())),
+                    ]);
+                    <span class="prelude-val">Some</span>(Box::new(discovery))
                 }
             };
 
