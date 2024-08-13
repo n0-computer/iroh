@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["AcceptOpts","Engine"]};
+window.SIDEBAR_ITEMS = {"struct":["AcceptOpts","ActorHandle","Engine"]};

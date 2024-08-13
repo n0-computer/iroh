@@ -459,6 +459,7 @@
 <a href="#459" id="459">459</a>
 <a href="#460" id="460">460</a>
 <a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{sync::Arc, thread::JoinHandle};
 
 <span class="kw">use </span>anyhow::Result;
@@ -493,7 +494,8 @@
 <span class="kw">pub const </span>SESSION_EVENT_CHANNEL_CAP: usize = <span class="number">64</span>;
 <span class="kw">pub const </span>SESSION_UPDATE_CHANNEL_CAP: usize = <span class="number">64</span>;
 
-<span class="attr">#[derive(Debug, Clone)]
+<span class="doccomment">/// Handle to a Willow storage thread.
+</span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>ActorHandle {
     inbox_tx: flume::Sender&lt;Input&gt;,
     join_handle: Arc&lt;<span class="prelude-ty">Option</span>&lt;JoinHandle&lt;()&gt;&gt;&gt;,

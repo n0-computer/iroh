@@ -129,7 +129,11 @@
 <a href="#129" id="129">129</a>
 <a href="#130" id="130">130</a>
 <a href="#131" id="131">131</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::Result;
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! Engine for driving a willow store and synchronisation sessions.
+
+</span><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>iroh_net::{endpoint::Connection, util::SharedAbortingJoinHandle, Endpoint, NodeId};
 <span class="kw">use </span>tokio::sync::{mpsc, oneshot};
 <span class="kw">use </span>tracing::{debug, error, error_span, Instrument};
@@ -147,7 +151,7 @@
 
 <span class="kw">use </span><span class="self">self</span>::peer_manager::PeerManager;
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::actor::ActorHandle;
+<span class="kw">pub use </span><span class="self">self</span>::actor::ActorHandle;
 <span class="kw">pub use </span><span class="self">self</span>::peer_manager::AcceptOpts;
 
 <span class="kw">const </span>PEER_MANAGER_INBOX_CAP: usize = <span class="number">128</span>;
