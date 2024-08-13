@@ -364,14 +364,19 @@ pub fn make_partial(
     path: &Path,
     f: impl Fn(Hash, u64) -> MakePartialResult + Send + Sync,
 ) -> io::Result<()> {
-    tokio::runtime::Builder::new_current_thread()
-        .build()?
-        .block_on(async move {
-            let blobs_path = path.join("blobs");
-            let store = Store::load(blobs_path).await?;
-            store
-                .transform_entries(|hash, entry| match &entry {
-                    EntryData::Complete { data, outboard } => match f(hash, data.len() as u64) {
+    tracing::info!("starting runtime for make_partial");
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(async move {
+        let blobs_path = path.join("blobs");
+        let store = Store::load(blobs_path).await?;
+        store
+            .transform_entries(|hash, entry| match &entry {
+                EntryData::Complete { data, outboard } => {
+                    let res = f(hash, data.len() as u64);
+                    tracing::info!("make_partial: {} {:?}", hash, res);
+                    match res {
                         MakePartialResult::Retain => Some(entry),
                         MakePartialResult::Remove => None,
                         MakePartialResult::Truncate(size) => {
@@ -388,10 +393,14 @@ pub fn make_partial(
                                 Some(entry)
                             }
                         }
-                    },
-                    EntryData::Partial { .. } => Some(entry),
-                })
-                .await?;
-            Ok(())
-        })
+                    }
+                }
+                EntryData::Partial { .. } => Some(entry),
+            })
+            .await?;
+        std::io::Result::Ok(())
+    })?;
+    drop(rt);
+    tracing::info!("done with make_partial");
+    Ok(())
 }

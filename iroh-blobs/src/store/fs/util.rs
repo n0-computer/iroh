@@ -85,17 +85,11 @@ impl<T> PeekableFlumeReceiver<T> {
     ///
     /// Will block if there are no messages.
     /// Returns None only if there are no more messages (sender is dropped).
-    pub fn recv(&mut self) -> Option<T> {
+    pub async fn recv(&mut self) -> Option<T> {
         if let Some(msg) = self.msg.take() {
             return Some(msg);
         }
-        self.recv.recv().ok()
-    }
-
-    /// Create an iterator that pulls messages from the receiver for at most
-    /// `count` messages or `max_duration` time.
-    pub fn iter(&mut self) -> Iter<T> {
-        Iter::new(self)
+        self.recv.recv_async().await.ok()
     }
 
     /// Push back a message. This will only work if there is room for it.
@@ -107,23 +101,5 @@ impl<T> PeekableFlumeReceiver<T> {
         } else {
             Err(msg)
         }
-    }
-}
-
-pub(super) struct Iter<'a, T> {
-    recv: &'a mut PeekableFlumeReceiver<T>,
-}
-
-impl<'a, T> Iter<'a, T> {
-    fn new(recv: &'a mut PeekableFlumeReceiver<T>) -> Self {
-        Self { recv }
-    }
-}
-
-impl<'a, T> Iterator for Iter<'a, T> {
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.recv.recv()
     }
 }

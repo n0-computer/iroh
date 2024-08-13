@@ -22,6 +22,8 @@ impl RouteMonitor {
     pub(super) fn new(sender: async_channel::Sender<NetworkMessage>) -> Result<Self> {
         // Register two callbacks with the windows api
         let mut cb_handler = CallbackHandler::default();
+        let handle = tokio::runtime::Handle::current();
+        let handle2 = handle.clone();
 
         // 1. Unicast Address Changes
         let s = sender.clone();

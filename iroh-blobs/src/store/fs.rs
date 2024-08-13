@@ -81,7 +81,6 @@ use futures_lite::{Stream, StreamExt};
 
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
-use iroh_net::util::AbortingJoinHandle;
 use redb::{AccessGuard, DatabaseError, ReadableTable, StorageError};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -809,13 +808,15 @@ impl StoreInner {
         );
         std::fs::create_dir_all(path.parent().unwrap())?;
         let temp: Arc<RwLock<TempCounterMap>> = Default::default();
-        let (actor, tx) = Actor::new(&path, options.clone(), temp.clone(), rt)?;
+        let (actor, tx) = Actor::new(&path, options.clone(), temp.clone(), rt.clone())?;
         let handle = std::thread::Builder::new()
             .name("redb-actor".to_string())
             .spawn(move || {
-                if let Err(cause) = actor.run_batched() {
-                    tracing::error!("redb actor failed: {}", cause);
-                }
+                rt.block_on(async move {
+                    if let Err(cause) = actor.run_batched().await {
+                        tracing::error!("redb actor failed: {}", cause);
+                    }
+                });
             })
             .expect("failed to spawn thread");
         Ok(Self {
@@ -1185,7 +1186,6 @@ struct ActorState {
     protected: BTreeSet<Hash>,
     temp: Arc<RwLock<TempCounterMap>>,
     msgs_rx: flume::Receiver<ActorMessage>,
-    msgs_tx: flume::Sender<ActorMessage>,
     create_options: Arc<BaoFileConfig>,
     options: Options,
     rt: tokio::runtime::Handle,
@@ -1476,7 +1476,6 @@ impl Actor {
                     handles: BTreeMap::new(),
                     protected: BTreeSet::new(),
                     msgs_rx: rx,
-                    msgs_tx: tx.clone(),
                     options,
                     create_options: Arc::new(create_options),
                     rt,
@@ -1486,20 +1485,9 @@ impl Actor {
         ))
     }
 
-    fn send_delayed_sync(&self, duration: Duration) -> AbortingJoinHandle<()> {
-        let tx = self.state.msgs_tx.clone();
-        self.state
-            .rt
-            .spawn(async move {
-                tokio::time::sleep(duration).await;
-                tx.send(ActorMessage::Sync { tx: None }).ok();
-            })
-            .into()
-    }
-
-    fn run_batched(mut self) -> ActorResult<()> {
+    async fn run_batched(mut self) -> ActorResult<()> {
         let mut msgs = PeekableFlumeReceiver::new(self.state.msgs_rx.clone());
-        while let Some(msg) = msgs.recv() {
+        while let Some(msg) = msgs.recv().await {
             if let ActorMessage::Shutdown { tx } = msg {
                 // Make sure the database is dropped before we send the reply.
                 drop(self);
@@ -1518,12 +1506,24 @@ impl Actor {
                     let txn = self.db.begin_read()?;
                     let tables = ReadOnlyTables::new(&txn)?;
                     let count = self.state.options.batch.max_read_batch;
-                    let timeout = self.state.options.batch.max_read_duration;
-                    let _task = self.send_delayed_sync(timeout);
-                    for msg in msgs.iter().take(count) {
-                        if let Err(msg) = self.state.handle_readonly(&tables, msg)? {
-                            msgs.push_back(msg).expect("just recv'd");
-                            break;
+                    let timeout = tokio::time::sleep(self.state.options.batch.max_read_duration);
+                    tokio::pin!(timeout);
+                    for _ in 0..count {
+                        tokio::select! {
+                            msg = msgs.recv() => {
+                                if let Some(msg) = msg {
+                                    if let Err(msg) = self.state.handle_readonly(&tables, msg)? {
+                                        msgs.push_back(msg).expect("just recv'd");
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            _ = &mut timeout => {
+                                tracing::debug!("read transaction timed out");
+                                break;
+                            }
                         }
                     }
                     tracing::debug!("done with read transaction");
@@ -1535,12 +1535,24 @@ impl Actor {
                     let mut delete_after_commit = Default::default();
                     let mut tables = Tables::new(&txn, &mut delete_after_commit)?;
                     let count = self.state.options.batch.max_write_batch;
-                    let timeout = self.state.options.batch.max_write_duration;
-                    let _task = self.send_delayed_sync(timeout);
-                    for msg in msgs.iter().take(count) {
-                        if let Err(msg) = self.state.handle_readwrite(&mut tables, msg)? {
-                            msgs.push_back(msg).expect("just recv'd");
-                            break;
+                    let timeout = tokio::time::sleep(self.state.options.batch.max_read_duration);
+                    tokio::pin!(timeout);
+                    for _ in 0..count {
+                        tokio::select! {
+                            msg = msgs.recv() => {
+                                if let Some(msg) = msg {
+                                    if let Err(msg) = self.state.handle_readwrite(&mut tables, msg)? {
+                                        msgs.push_back(msg).expect("just recv'd");
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            _ = &mut timeout => {
+                                tracing::debug!("write transaction timed out");
+                                break;
+                            }
                         }
                     }
                     drop(tables);
