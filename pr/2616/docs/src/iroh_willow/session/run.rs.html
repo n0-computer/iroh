@@ -719,7 +719,7 @@
                         .<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 Output::SignAndSendSubspaceCap(handle, cap) =&gt; {
-                    <span class="kw">let </span>message = caps.sign_subspace_capabiltiy(store.secrets(), cap, handle)<span class="question-mark">?</span>;
+                    <span class="kw">let </span>message = caps.sign_subspace_capability(store.secrets(), cap, handle)<span class="question-mark">?</span>;
                     channel_sender.send(Box::new(message)).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
             }

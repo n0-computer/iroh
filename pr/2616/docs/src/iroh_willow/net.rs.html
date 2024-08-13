@@ -790,6 +790,15 @@
 <a href="#790" id="790">790</a>
 <a href="#791" id="791">791</a>
 <a href="#792" id="792">792</a>
+<a href="#793" id="793">793</a>
+<a href="#794" id="794">794</a>
+<a href="#795" id="795">795</a>
+<a href="#796" id="796">796</a>
+<a href="#797" id="797">797</a>
+<a href="#798" id="798">798</a>
+<a href="#799" id="799">799</a>
+<a href="#800" id="800">800</a>
+<a href="#801" id="801">801</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
@@ -1113,7 +1122,16 @@
     }
 }
 
-<span class="kw">async fn </span>wait_for_goodbye_or_graceful_close(conn: <span class="kw-2">&amp;</span>Connection) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<span class="doccomment">/// Waits for a goodbye byte or connection close, and then closes the connection.
+///
+/// Accepts a single uni stream and reads a single byte on it.
+///
+/// Returns once we received the goodbye byte or if the peer closed the connection with the
+/// graceful error code.
+///
+/// Returns an error if the connection was closed without the graceful error code or if reading the
+/// goodbye byte failed.
+</span><span class="kw">async fn </span>wait_for_goodbye_or_graceful_close(conn: <span class="kw-2">&amp;</span>Connection) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>recv_stream = <span class="kw">match </span>conn.accept_uni().<span class="kw">await </span>{
         <span class="comment">// The other peer closed the connection with the expected error code: They received our
         // goodbye byte after having sent theirs. We're free to close the connection.
@@ -1126,16 +1144,16 @@
     };
     <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>];
     <span class="kw">match </span>recv_stream.read_exact(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await </span>{
-        <span class="comment">// We received the goodbye byte: the other peer signals having read everything, we're freee
-        // to close the connection.
+        <span class="comment">// We received the goodbye byte: the other peer indicates to us that they are finished with
+        // everything and we are free to close the connection.
         </span><span class="prelude-val">Ok</span>(()) <span class="kw">if </span>buf == [<span class="number">1u8</span>] =&gt; <span class="prelude-val">Ok</span>(()),
         <span class="comment">// The other peer closed the connection with the expected error code: They received our
-        // goodbye byte after having sent theirs. We're free to close the connection.
+        // goodbye byte, and reacted by closing the connection. We're free to close too.
         </span><span class="prelude-val">Err</span>(ReadExactError::ReadError(ReadError::ConnectionLost(
             ConnectionError::ApplicationClosed(frame),
         ))) <span class="kw">if </span>frame.error_code == ERROR_CODE_OK =&gt; <span class="prelude-val">Ok</span>(()),
         <span class="comment">// The peer has sent invalid data on the goodbye stream.
-        </span><span class="prelude-val">Ok</span>(()) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"received unexpected closing byte from peer"</span>)),
+        </span><span class="prelude-val">Ok</span>(()) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Received unexpected closing byte from peer."</span>)),
         <span class="comment">// The peer closed the connection with an unexpected error coe.
         </span><span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err.into()),
     }
@@ -1411,7 +1429,7 @@
         <span class="kw">let </span>start = Instant::now();
         <span class="kw">let </span>(done_tx, done_rx) = tokio::sync::oneshot::channel();
 
-        <span class="comment">// alfie insert 3 enries after waiting a second
+        <span class="comment">// alfie insert 3 entries after waiting a second
         </span><span class="kw">let </span>_insert_task_alfie = tokio::task::spawn({
             <span class="kw">let </span>handle_alfie = handle_alfie.clone();
             <span class="kw">let </span>count = <span class="number">3</span>;

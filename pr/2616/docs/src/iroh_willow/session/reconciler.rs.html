@@ -623,6 +623,7 @@
 <a href="#623" id="623">623</a>
 <a href="#624" id="624">624</a>
 <a href="#625" id="625">625</a>
+<a href="#626" id="626">626</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{HashMap, HashSet},
     num::NonZeroU64,
@@ -690,6 +691,7 @@
     <span class="doccomment">/// Run the [`Reconciler`].
     ///
     /// The returned stream is a generator, so it must be polled repeatedly to progress.
+    </span><span class="attr">#[allow(clippy::too_many_arguments)]
     </span><span class="kw">pub fn </span>run_gen(
         inbox: Cancelable&lt;ReceiverStream&lt;Input&gt;&gt;,
         store: Store&lt;S&gt;,
