@@ -4,7 +4,8 @@ use anyhow::{anyhow, ensure, Context as _, Result};
 use futures_concurrency::future::TryJoin;
 use futures_util::future::TryFutureExt;
 use iroh_base::key::NodeId;
-use iroh_net::endpoint::{Connection, ConnectionError, RecvStream, SendStream, VarInt};
+use iroh_net::endpoint::{Connection, ConnectionError, ReadError, RecvStream, SendStream, VarInt};
+use quinn::ReadExactError;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, trace};
 
@@ -72,7 +73,7 @@ pub(crate) async fn establish(
     our_nonce: AccessChallenge,
 ) -> Result<(InitialTransmission, ChannelStreams)> {
     debug!(?our_role, "establishing connection");
-    // Run the initial transmission (which works on uni streams) concurrently
+    // Run the initial transmission (which uses uni streams) concurrently
     // with opening/accepting the bi streams for the channels.
     let fut = (
         initial_transmission(conn, our_nonce),
@@ -121,13 +122,13 @@ async fn open_channel_streams(conn: &Connection, our_role: Role) -> Result<Chann
         // channel id.
         Role::Alfie => {
             Channel::all()
-                .map(|ch| {
+                .map(|channel| {
                     let conn = conn.clone();
                     async move {
                         let (mut send, recv) = conn.open_bi().await?;
-                        send.write_u8(ch.id()).await?;
-                        trace!(?ch, "opened bi stream");
-                        Ok::<_, anyhow::Error>((ch, send, recv))
+                        send.write_u8(channel.id()).await?;
+                        trace!(?channel, "opened bi stream");
+                        Ok::<_, anyhow::Error>((channel, send, recv))
                     }
                 })
                 .try_join()
@@ -143,7 +144,7 @@ async fn open_channel_streams(conn: &Connection, our_role: Role) -> Result<Chann
                     let channel_id = recv.read_u8().await?;
                     // trace!("read channel id {channel_id}");
                     let channel = Channel::from_id(channel_id)?;
-                    trace!(?channel, "accepted bi stream for channel");
+                    trace!(?channel, "accepted bi stream");
                     Result::Ok((channel, send, recv))
                 })
                 .try_join()
@@ -254,7 +255,7 @@ async fn recv_loop(mut recv_stream: RecvStream, mut channel_writer: Writer) -> R
     }
     trace!("recv: stream close");
     channel_writer.close();
-    trace!("recv: loop close");
+    trace!("recv: done");
     Ok(())
 }
 
@@ -275,103 +276,66 @@ async fn send_loop(mut send_stream: SendStream, channel_reader: Reader) -> Resul
     Ok(())
 }
 
-/// Terminate a connection gracefully.
+/// Terminates a connection gracefully.
 ///
-/// QUIC does not allow us to rely on stream terminations, because those only signal
-/// reception in the peer's QUIC stack, not in the application. Closing a QUIC connection
-/// triggers immediate termination, so to make sure that all data was actually processed
-/// by our session, we exchange a single byte over a pair of uni streams. As this is the only
-/// use of uni streams after the initial connection handshake, we do not have to identify the
-/// streams specifically.
+/// This function should be called after all bidirectional streams are terminated (`finish` called
+/// for send streams and `read_to_end` awaited for recv stream) and no further streams will be
+/// opened or accepted by the application.
 ///
-/// This function may only be called once the session processing has fully terminated and all
-/// WGPS streams are closed (for send streams) and read to end (for recv streams) on our side.
+/// It will send a goodbye byte over a newly opened uni channel, and wait for the other peer to
+/// confirm either by sending a goodbye byte as well or closing the connection with
+/// [`ERROR_CODE_OK`], signalling that our goodbye byte was received.
 ///
-/// `we_cancelled` is a boolean indicating whether we are terminating the connection after
-/// we willfully terminated or completed our session. Pass `false` if the session terminated
-/// because the other peer closed their WGPS streams.
+/// We will only close the connection after having received the goodbye byte, or after the other
+/// peer closed the connection.
 ///
-/// If only one peer indicated that they initiated the termination by setting `we_cancelled`
-/// to `true`, this peer will *not* close the connection, but instead wait for the other peer
-/// to close the connection.
-/// If both peers indicated that they initiated the termination, the peer with the higher node id
-/// will close the connection first.
-/// If none of the peers said they closed, which likely is a bug in the implementation, both peers
-/// will close the connection.
+/// This flow guarantees that neither peer will close the connection too early.
 ///
 /// A connection is considered to be closed gracefully if and only if this procedure is run to end
 /// successfully, and if the connection is closed with the expected error code.
 ///
-/// Returns an error if the termination flow was aborted prematurely.
-/// Returns a  [`ConnectionError] if the termination flow was completed successfully, but the connection
-/// was not closed with the expected error code.
-pub(crate) async fn terminate_gracefully(
-    conn: &Connection,
-    me: NodeId,
-    peer: NodeId,
-    we_cancelled: bool,
-) -> Result<Option<ConnectionError>> {
-    trace!(?we_cancelled, "terminating connection");
-    let send = async {
-        let mut send_stream = conn.open_uni().await?;
-        let data = if we_cancelled { 1u8 } else { 0u8 };
-        send_stream.write_u8(data).await?;
-        send_stream.finish().await?;
-        Ok(())
-    };
+/// Returns an error if the termination flow was aborted prematurely or if the connection was not
+/// closed with the expected error code.
+pub(crate) async fn terminate_gracefully(conn: &Connection) -> Result<()> {
+    trace!("terminating connection");
+    // Send a single byte on a newly opened uni stream.
+    let mut send_stream = conn.open_uni().await?;
+    send_stream.write_u8(1).await?;
+    send_stream.finish().await?;
+    // Wait until we either receive the goodbye byte from the other peer, or for the other peer
+    // to close the connection with the expected error code.
+    wait_for_goodbye_or_graceful_close(conn).await?;
+    // Only now close the connection.
+    conn.close(ERROR_CODE_OK, b"bye");
+    trace!("connection terminated gracefully");
+    Ok(())
+}
 
-    let recv = async {
-        let mut recv_stream = conn.accept_uni().await?;
-        let data = recv_stream.read_u8().await?;
-        recv_stream.read_to_end(0).await?;
-        let they_cancelled = match data {
-            0 => false,
-            1 => true,
-            _ => return Err(anyhow!("received unexpected closing byte from peer")),
-        };
-        Ok(they_cancelled)
-    };
-
-    let send_and_recv = (send, recv).try_join();
-    let (_, they_cancelled) = tokio::time::timeout(SHUTDOWN_TIMEOUT, send_and_recv).await??;
-
-    #[derive(Debug)]
-    enum WhoCancelled {
-        WeDid,
-        TheyDid,
-        BothDid,
-        NoneDid,
-    }
-
-    let who_cancelled = match (we_cancelled, they_cancelled) {
-        (true, false) => WhoCancelled::WeDid,
-        (false, true) => WhoCancelled::TheyDid,
-        (true, true) => WhoCancelled::BothDid,
-        (false, false) => WhoCancelled::NoneDid,
-    };
-
-    let we_close_first = match who_cancelled {
-        WhoCancelled::WeDid => false,
-        WhoCancelled::TheyDid => true,
-        WhoCancelled::BothDid => me > peer,
-        WhoCancelled::NoneDid => true,
-    };
-    debug!(?who_cancelled, "connection complete");
-    if we_close_first {
-        conn.close(ERROR_CODE_OK, b"bye");
-    }
-    let reason = conn.closed().await;
-    let is_graceful = match &reason {
-        ConnectionError::LocallyClosed if we_close_first => true,
-        ConnectionError::ApplicationClosed(frame) if frame.error_code == ERROR_CODE_OK => {
-            !we_close_first || matches!(who_cancelled, WhoCancelled::NoneDid)
+async fn wait_for_goodbye_or_graceful_close(conn: &Connection) -> Result<()> {
+    let mut recv_stream = match conn.accept_uni().await {
+        // The other peer closed the connection with the expected error code: They received our
+        // goodbye byte after having sent theirs. We're free to close the connection.
+        Err(ConnectionError::ApplicationClosed(frame)) if frame.error_code == ERROR_CODE_OK => {
+            return Ok(())
         }
-        _ => false,
+        // The peer closed the connection with an unexpected error coe.
+        Err(err) => return Err(err.into()),
+        Ok(stream) => stream,
     };
-    if !is_graceful {
-        Ok(Some(reason))
-    } else {
-        Ok(None)
+    let mut buf = [0u8];
+    match recv_stream.read_exact(&mut buf).await {
+        // We received the goodbye byte: the other peer signals having read everything, we're freee
+        // to close the connection.
+        Ok(()) if buf == [1u8] => Ok(()),
+        // The other peer closed the connection with the expected error code: They received our
+        // goodbye byte after having sent theirs. We're free to close the connection.
+        Err(ReadExactError::ReadError(ReadError::ConnectionLost(
+            ConnectionError::ApplicationClosed(frame),
+        ))) if frame.error_code == ERROR_CODE_OK => Ok(()),
+        // The peer has sent invalid data on the goodbye stream.
+        Ok(()) => Err(anyhow!("received unexpected closing byte from peer")),
+        // The peer closed the connection with an unexpected error coe.
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -552,8 +516,8 @@ mod tests {
 
         info!(time=?start.elapsed(), "reconciliation finished");
 
-        let (senders_alfie, alfie_cancelled) = res_alfie.unwrap();
-        let (senders_betty, betty_cancelled) = res_betty.unwrap();
+        let (senders_alfie, _alfie_cancelled) = res_alfie.unwrap();
+        let (senders_betty, _betty_cancelled) = res_betty.unwrap();
         senders_alfie.close_all();
         senders_betty.close_all();
 
@@ -562,13 +526,11 @@ mod tests {
         r1.unwrap();
         r2.unwrap();
 
-        let (error_alfie, error_betty) = tokio::try_join!(
-            terminate_gracefully(&conn_alfie, node_id_alfie, node_id_betty, alfie_cancelled),
-            terminate_gracefully(&conn_betty, node_id_betty, node_id_alfie, betty_cancelled),
+        tokio::try_join!(
+            terminate_gracefully(&conn_alfie),
+            terminate_gracefully(&conn_betty),
         )
         .expect("failed to close both connections gracefully");
-        assert_eq!(error_alfie, None);
-        assert_eq!(error_betty, None);
 
         let alfie_entries = get_entries(&handle_alfie, namespace_id).await?;
         let betty_entries = get_entries(&handle_betty, namespace_id).await?;
@@ -708,14 +670,14 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         session_alfie.close();
-        let (senders_alfie, alfie_cancelled) = session_alfie
+        let (senders_alfie, _alfie_cancelled) = session_alfie
             .complete()
             .await
             .expect("failed to close alfie session");
         info!("close alfie session");
         senders_alfie.close_all();
 
-        let (senders_betty, betty_cancelled) = session_betty
+        let (senders_betty, _betty_cancelled) = session_betty
             .complete()
             .await
             .expect("failed to close alfie session");
@@ -736,13 +698,11 @@ mod tests {
         assert!(res_alfie.is_ok());
         assert!(res_betty.is_ok());
 
-        let (error_alfie, error_betty) = tokio::try_join!(
-            terminate_gracefully(&conn_alfie, node_id_alfie, node_id_betty, alfie_cancelled),
-            terminate_gracefully(&conn_betty, node_id_betty, node_id_alfie, betty_cancelled),
+        tokio::try_join!(
+            terminate_gracefully(&conn_alfie),
+            terminate_gracefully(&conn_betty),
         )
         .expect("failed to close both connections gracefully");
-        assert_eq!(error_alfie, None);
-        assert_eq!(error_betty, None);
 
         info!("alfie session res {:?}", res_alfie);
         info!("betty session res {:?}", res_betty);
