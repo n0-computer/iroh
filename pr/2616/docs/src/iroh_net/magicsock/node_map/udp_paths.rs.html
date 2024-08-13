@@ -177,6 +177,7 @@
 <a href="#177" id="177">177</a>
 <a href="#178" id="178">178</a>
 <a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Path state for UDP addresses of a single peer node.
 //!
 //! This started as simply moving the [`NodeState`]'s `direct_addresses` and `best_addr`
@@ -194,7 +195,8 @@
 <span class="kw">use </span><span class="kw">crate</span>::disco::SendAddr;
 
 <span class="kw">use </span><span class="kw">super</span>::best_addr::{<span class="self">self</span>, BestAddr};
-<span class="kw">use </span><span class="kw">super</span>::node_state::{PathState, PongReply};
+<span class="kw">use </span><span class="kw">super</span>::node_state::PongReply;
+<span class="kw">use </span><span class="kw">super</span>::path_state::PathState;
 <span class="kw">use </span><span class="kw">super</span>::IpPort;
 
 <span class="doccomment">/// The address on which to send datagrams over UDP.
