@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Completion","EventKind","IntentUpdate"],"struct":["Intent","IntentHandle"],"type":["IntentId"]};

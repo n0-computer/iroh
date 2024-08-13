@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["ChannelReceivers","ChannelSenders","Channels","LogicalChannelReceivers","LogicalChannelSenders","MessageReceiver"]};

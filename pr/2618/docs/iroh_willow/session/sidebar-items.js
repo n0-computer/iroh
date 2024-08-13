@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AreaOfInterestSelector","Interests","Role","Scope","SessionEvent","SessionMode","SessionUpdate"],"mod":["channels","error","intents"],"struct":["EventSender","SelectBuilder","SessionHandle","SessionInit"],"type":["SessionId"]};
