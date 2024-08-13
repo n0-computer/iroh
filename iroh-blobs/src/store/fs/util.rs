@@ -81,17 +81,6 @@ impl<T> PeekableFlumeReceiver<T> {
         Self { msg: None, recv }
     }
 
-    /// Peek at the next message.
-    ///
-    /// Will block if there are no messages.
-    /// Returns None only if there are no more messages (sender is dropped).
-    pub fn peek(&mut self) -> Option<&T> {
-        if self.msg.is_none() {
-            self.msg = self.recv.recv().ok();
-        }
-        self.msg.as_ref()
-    }
-
     /// Receive the next message.
     ///
     /// Will block if there are no messages.
