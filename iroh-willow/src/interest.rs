@@ -65,7 +65,7 @@ impl IntoAreaOfInterest for Area {
 impl InterestBuilder {
     /// Add the full area of a capability we have into the interests.
     ///
-    /// See [`CapSelector`] for how to specifiy the capability to use.
+    /// See [`CapSelector`] for how to specify the capability to use.
     pub fn add_full_cap(mut self, cap: impl Into<CapSelector>) -> Self {
         let cap = cap.into();
         self.0.insert(cap, AreaOfInterestSelector::Widest);
@@ -74,7 +74,7 @@ impl InterestBuilder {
 
     /// Add a specific area included in one of our capabilities into the interests.
     ///
-    /// See [`CapSelector`] for how to specifiy the capability to use.
+    /// See [`CapSelector`] for how to specify the capability to use.
     pub fn add_area(
         mut self,
         cap: impl Into<CapSelector>,
