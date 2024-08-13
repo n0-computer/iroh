@@ -218,8 +218,6 @@ fn cli_provide_tree_resume() -> Result<()> {
 
 #[test]
 fn cli_provide_file_resume() -> Result<()> {
-    tracing_subscriber::fmt::try_init().ok();
-    tracing::info!("starting test");
     use iroh::blobs::store::fs::test_support::{make_partial, MakePartialResult};
 
     /// Get all matches for match group 1 (an explicitly defined match group)

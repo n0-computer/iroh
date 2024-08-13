@@ -636,7 +636,7 @@ pub(crate) enum ActorMessage {
     /// Sync the entire database to disk.
     ///
     /// This just makes sure that there is no write transaction open.
-    Sync { tx: Option<oneshot::Sender<()>> },
+    Sync { tx: oneshot::Sender<()> },
     /// Internal method: dump the entire database to stdout.
     Dump,
     /// Internal method: validate the entire database.
@@ -1035,7 +1035,7 @@ impl StoreInner {
 
     async fn sync(&self) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send(ActorMessage::Sync { tx: Some(tx) }).await?;
+        self.tx.send(ActorMessage::Sync { tx }).await?;
         Ok(rx.await?)
     }
 
@@ -2207,9 +2207,7 @@ impl ActorState {
                 tx.send(res).ok();
             }
             ActorMessage::Sync { tx } => {
-                if let Some(tx) = tx {
-                    tx.send(()).ok();
-                }
+                tx.send(()).ok();
             }
             x => {
                 return Err(ActorError::Inconsistent(format!(
