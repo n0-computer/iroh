@@ -824,16 +824,16 @@
 </span><span class="kw">pub const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"iroh-willow/0"</span>;
 
 <span class="doccomment">/// QUIC application error code for closing with failure.
-</span><span class="kw">pub const </span>ERROR_CODE_FAIL: VarInt = VarInt::from_u32(<span class="number">0</span>);
+</span><span class="kw">pub const </span>ERROR_CODE_FAIL: VarInt = VarInt::from_u32(<span class="number">1</span>);
 
 <span class="doccomment">/// QUIC application error code for graceful connection termination.
-</span><span class="kw">pub const </span>ERROR_CODE_OK: VarInt = VarInt::from_u32(<span class="number">1</span>);
+</span><span class="kw">pub const </span>ERROR_CODE_OK: VarInt = VarInt::from_u32(<span class="number">2</span>);
 
 <span class="doccomment">/// QUIC application error code for closing connections because another connection is preferred.
-</span><span class="kw">pub const </span>ERROR_CODE_DUPLICATE_CONN: VarInt = VarInt::from_u32(<span class="number">2</span>);
+</span><span class="kw">pub const </span>ERROR_CODE_DUPLICATE_CONN: VarInt = VarInt::from_u32(<span class="number">3</span>);
 
 <span class="doccomment">/// QUIC application error code when closing connection because our node is shutting down.
-</span><span class="kw">pub const </span>ERROR_CODE_SHUTDOWN: VarInt = VarInt::from_u32(<span class="number">3</span>);
+</span><span class="kw">pub const </span>ERROR_CODE_SHUTDOWN: VarInt = VarInt::from_u32(<span class="number">4</span>);
 
 <span class="kw">pub const </span>ESTABLISH_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
 <span class="kw">pub const </span>SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
@@ -1104,9 +1104,9 @@
             conn.close(ERROR_CODE_OK, <span class="string">b"bye"</span>);
             <span class="macro">trace!</span>(<span class="string">"connection terminated gracefully"</span>);
             <span class="prelude-val">Ok</span>(())
-        },
+        }
         <span class="prelude-val">Err</span>(err) =&gt; {
-            conn.close(ERROR_CODE_FAIL, <span class="string">b"peer-failed-while-closing"</span>);
+            conn.close(ERROR_CODE_FAIL, <span class="string">b"failed-while-closing"</span>);
             <span class="macro">trace!</span>(<span class="question-mark">?</span>err, <span class="string">"connection failed while terminating"</span>);
             <span class="prelude-val">Err</span>(err)
         }
