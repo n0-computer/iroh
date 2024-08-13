@@ -72,12 +72,12 @@ pub fn read_and_remove(path: &Path) -> io::Result<Vec<u8>> {
 #[derive(Debug)]
 pub(super) struct PeekableFlumeReceiver<T> {
     msg: Option<T>,
-    recv: flume::Receiver<T>,
+    recv: async_channel::Receiver<T>,
 }
 
 #[allow(dead_code)]
 impl<T> PeekableFlumeReceiver<T> {
-    pub fn new(recv: flume::Receiver<T>) -> Self {
+    pub fn new(recv: async_channel::Receiver<T>) -> Self {
         Self { msg: None, recv }
     }
 
@@ -89,7 +89,7 @@ impl<T> PeekableFlumeReceiver<T> {
         if let Some(msg) = self.msg.take() {
             return Some(msg);
         }
-        self.recv.recv_async().await.ok()
+        self.recv.recv().await.ok()
     }
 
     /// Push back a message. This will only work if there is room for it.
