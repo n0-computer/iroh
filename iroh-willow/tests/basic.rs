@@ -137,7 +137,7 @@ async fn peer_manager_update_intent() -> Result<()> {
 
     let path = Path::from_bytes(&[b"foo"]).unwrap();
     let interests = Interests::builder().add_area(namespace, [Area::new_path(path.clone())]);
-    let init = SessionInit::new(interests, SessionMode::Live);
+    let init = SessionInit::new(interests, SessionMode::Continous);
     let mut intent = alfie.sync_with_peer(betty_node_id, init).await.unwrap();
 
     assert_eq!(
@@ -289,12 +289,12 @@ mod util {
         engine::{AcceptOpts, Engine},
         form::EntryForm,
         interest::{CapSelector, DelegateTo, RestrictArea},
-        net::ALPN,
         proto::{
             data_model::{Path, PathExt},
             keys::{NamespaceId, NamespaceKind, UserId},
             meadowcap::AccessMode,
         },
+        ALPN,
     };
 
     pub fn create_rng(seed: &str) -> ChaCha12Rng {

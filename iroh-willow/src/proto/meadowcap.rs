@@ -1,3 +1,7 @@
+//! The capability system of Willow.
+//!
+//! Contains an instantiation of [`meadowcap`] for use in iroh-willow.
+
 use super::{
     grouping::Area,
     keys::{self, NamespaceSecretKey, UserSecretKey},

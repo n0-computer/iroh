@@ -1,7 +1,7 @@
 use super::{Error, Role};
 use crate::proto::{
     keys::{UserPublicKey, UserSignature},
-    wgps::challenge::{AccessChallenge, AccessChallengeBytes, ChallengeHash},
+    wgps::{AccessChallenge, AccessChallengeBytes, ChallengeHash},
 };
 
 /// Data from the initial transmission

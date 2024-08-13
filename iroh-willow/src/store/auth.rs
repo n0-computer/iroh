@@ -1,3 +1,7 @@
+//! Authentication backend for Willow.
+//!
+//! Manages capabilities.
+
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;

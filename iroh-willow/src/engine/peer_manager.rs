@@ -25,7 +25,7 @@ use crate::{
         establish, prepare_channels, terminate_gracefully, ChannelStreams, ConnHandle, ALPN,
         ERROR_CODE_DUPLICATE_CONN, ERROR_CODE_FAIL, ERROR_CODE_SHUTDOWN,
     },
-    proto::wgps::challenge::AccessChallenge,
+    proto::wgps::AccessChallenge,
     session::{
         intents::{EventKind, Intent},
         Error, InitialTransmission, Role, SessionEvent, SessionHandle, SessionInit, SessionUpdate,
@@ -366,7 +366,7 @@ impl PeerManager {
                 senders,
                 remaining_intents,
                 mut update_receiver,
-                we_cancelled: _,
+                ..
             } => {
                 trace!(error=?result.err(), ?remaining_intents, "session complete");
 
