@@ -53,7 +53,7 @@ impl IsCommunal for NamespaceId {
     }
 }
 
-impl IsCommunal for NamespacePublicKey{
+impl IsCommunal for NamespacePublicKey {
     fn is_communal(&self) -> bool {
         self.id().is_communal()
     }
