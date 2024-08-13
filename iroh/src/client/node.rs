@@ -135,7 +135,7 @@ impl Client {
 
     /// Fetches node information about a remote iroh node identified by its [`NodeId`].
     ///
-    /// See also [`Endpoint::connection_info`](crate::net::Endpoint::connection_info).
+    /// See also [`Endpoint::node_info`](crate::net::Endpoint::node_info).
     pub async fn node_info(&self, node_id: NodeId) -> Result<Option<NodeInfo>> {
         let NodeInfoResponse { info: conn_info } =
             self.rpc.rpc(NodeInfoRequest { node_id }).await??;

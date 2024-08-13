@@ -1237,6 +1237,8 @@ pub struct DirectAddrInfo {
     /// returned.  If the remote node moved network and no longer has this path, this could
     /// be a long duration.  If the path was added via [`Endpoint::add_node_addr`] or some
     /// node discovery the path may never have been known to exist.
+    ///
+    /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
     // TODO: deprecate this as it is **so** confusing a name.  But we don't have a
     // replacement yet and I"m only documenting things in this PR."
     pub last_alive: Option<Duration>,
@@ -1275,6 +1277,8 @@ impl From<RelayUrlInfo> for RelayUrl {
 /// been connected to in the past.  There are various reasons a node might be known: it
 /// could have been manually added via [`Endpoint::add_node_addr`], it could have been added
 /// by some discovery mechanism.
+///
+/// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NodeInfo {
     /// The globally unique public identifier for this node.
