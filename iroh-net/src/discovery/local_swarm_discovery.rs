@@ -299,10 +299,10 @@ mod tests {
             tracing::debug!(?node_id_b, "Discovering node id b");
             // publish discovery_b's address
             discovery_b.publish(&addr_info);
-            let s1_res = tokio::time::timeout(Duration::from_secs(10), s1.next())
+            let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
                 .await?
                 .unwrap()?;
-            let s2_res = tokio::time::timeout(Duration::from_secs(10), s2.next())
+            let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
                 .await?
                 .unwrap()?;
             assert_eq!(s1_res.addr_info, addr_info);
