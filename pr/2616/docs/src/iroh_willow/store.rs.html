@@ -133,7 +133,24 @@
 <a href="#133" id="133">133</a>
 <a href="#134" id="134">134</a>
 <a href="#135" id="135">135</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! Store for entries, secrets, and capabilities used in the Willow engine.
+//!
+//! The [`Store`] is the high-level wrapper for the different stores we need.
+//!
+//! The storage backend is defined in the [`Storage`] trait and its associated types.
+//!
+//! The only implementation is currently an in-memory store at [`memory`].
+
+</span><span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>rand_core::CryptoRngCore;
 
 <span class="kw">use crate</span>::{
@@ -151,15 +168,16 @@
 <span class="kw">use </span><span class="self">self</span>::auth::{Auth, AuthError};
 <span class="kw">use </span><span class="self">self</span>::traits::Storage;
 
-<span class="kw">pub use </span><span class="self">self</span>::entry::{EntryOrigin, WatchableEntryStore};
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::entry::{EntryOrigin, WatchableEntryStore};
 
-<span class="kw">pub mod </span>auth;
-<span class="kw">pub mod </span>entry;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>auth;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>entry;
 <span class="kw">pub mod </span>memory;
 <span class="kw">pub mod </span>traits;
 
-<span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>Store&lt;S: Storage&gt; {
+<span class="doccomment">/// Storage for the Willow engine.
+</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Store&lt;S: Storage&gt; {
     entries: WatchableEntryStore&lt;S::Entries&gt;,
     secrets: S::Secrets,
     payloads: S::Payloads,

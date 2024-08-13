@@ -287,7 +287,31 @@
 <a href="#287" id="287">287</a>
 <a href="#288" id="288">288</a>
 <a href="#289" id="289">289</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{hash_map, HashMap, HashSet};
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! Types for defining synchronisation interests.
+
+</span><span class="kw">use </span>std::collections::{hash_map, HashMap, HashSet};
 
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
@@ -302,28 +326,38 @@
 
 <span class="kw">pub type </span>InterestMap = HashMap&lt;ReadAuthorisation, HashSet&lt;AreaOfInterest&gt;&gt;;
 
-<span class="attr">#[derive(Debug, Default, Clone)]
+<span class="doccomment">/// Enum for describing synchronisation interests.
+///
+/// You should use [`Self::builder`] for a straightforward way to construct this.
+</span><span class="attr">#[derive(Debug, Default, Clone)]
 </span><span class="kw">pub enum </span>Interests {
-    <span class="attr">#[default]
+    <span class="doccomment">/// Use all the capabilities we have.
+    </span><span class="attr">#[default]
     </span>All,
-    Select(HashMap&lt;CapSelector, AreaOfInterestSelector&gt;),
-    Exact(InterestMap),
+    <span class="doccomment">/// Use the selected capabilities and areas.
+    </span>Select(HashMap&lt;CapSelector, AreaOfInterestSelector&gt;),
+    <span class="doccomment">/// Use exactly the specified capabilities and areas.
+    </span>Exact(InterestMap),
 }
 
 <span class="kw">impl </span>Interests {
-    <span class="kw">pub fn </span>builder() -&gt; SelectBuilder {
-        SelectBuilder::default()
+    <span class="doccomment">/// Returns a [`SelectBuilder`] to build our [`Interests`].
+    </span><span class="kw">pub fn </span>builder() -&gt; InterestBuilder {
+        InterestBuilder::default()
     }
 
-    <span class="kw">pub fn </span>all() -&gt; <span class="self">Self </span>{
+    <span class="doccomment">/// Creates interests that include all our capabilities.
+    </span><span class="kw">pub fn </span>all() -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::All
     }
 }
 
-<span class="attr">#[derive(Default, Debug)]
-</span><span class="kw">pub struct </span>SelectBuilder(HashMap&lt;CapSelector, AreaOfInterestSelector&gt;);
+<span class="doccomment">/// Builder for [`Interests`].
+</span><span class="attr">#[derive(Default, Debug)]
+</span><span class="kw">pub struct </span>InterestBuilder(HashMap&lt;CapSelector, AreaOfInterestSelector&gt;);
 
-<span class="kw">pub trait </span>IntoAreaOfInterest {
+<span class="doccomment">/// Helper trait to accept both [`Area`] and [`AreaOfInterest`] in the [`InterestBuilder`].
+</span><span class="kw">pub trait </span>IntoAreaOfInterest {
     <span class="kw">fn </span>into_area_of_interest(<span class="self">self</span>) -&gt; AreaOfInterest;
 }
 
@@ -339,14 +373,20 @@
     }
 }
 
-<span class="kw">impl </span>SelectBuilder {
-    <span class="kw">pub fn </span>add_full_cap(<span class="kw-2">mut </span><span class="self">self</span>, cap: <span class="kw">impl </span>Into&lt;CapSelector&gt;) -&gt; <span class="self">Self </span>{
+<span class="kw">impl </span>InterestBuilder {
+    <span class="doccomment">/// Add the full area of a capability we have into the interests.
+    ///
+    /// See [`CapSelector`] for how to specifiy the capability to use.
+    </span><span class="kw">pub fn </span>add_full_cap(<span class="kw-2">mut </span><span class="self">self</span>, cap: <span class="kw">impl </span>Into&lt;CapSelector&gt;) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>cap = cap.into();
         <span class="self">self</span>.<span class="number">0</span>.insert(cap, AreaOfInterestSelector::Widest);
         <span class="self">self
     </span>}
 
-    <span class="kw">pub fn </span>add_area(
+    <span class="doccomment">/// Add a specific area included in one of our capabilities into the interests.
+    ///
+    /// See [`CapSelector`] for how to specifiy the capability to use.
+    </span><span class="kw">pub fn </span>add_area(
         <span class="kw-2">mut </span><span class="self">self</span>,
         cap: <span class="kw">impl </span>Into&lt;CapSelector&gt;,
         aois: <span class="kw">impl </span>IntoIterator&lt;Item = <span class="kw">impl </span>IntoAreaOfInterest&gt;,
@@ -366,22 +406,26 @@
         <span class="self">self
     </span>}
 
-    <span class="kw">pub fn </span>build(<span class="self">self</span>) -&gt; Interests {
+    <span class="doccomment">/// Converts this builder into [`Interests`].
+    </span><span class="kw">pub fn </span>build(<span class="self">self</span>) -&gt; Interests {
         Interests::Select(<span class="self">self</span>.<span class="number">0</span>)
     }
 }
 
-<span class="kw">impl </span>From&lt;SelectBuilder&gt; <span class="kw">for </span>Interests {
-    <span class="kw">fn </span>from(builder: SelectBuilder) -&gt; <span class="self">Self </span>{
+<span class="kw">impl </span>From&lt;InterestBuilder&gt; <span class="kw">for </span>Interests {
+    <span class="kw">fn </span>from(builder: InterestBuilder) -&gt; <span class="self">Self </span>{
         builder.build()
     }
 }
 
-<span class="attr">#[derive(Debug, Default, Clone)]
+<span class="doccomment">/// Selector for an [`AreaOfInterest`].
+</span><span class="attr">#[derive(Debug, Default, Clone)]
 </span><span class="kw">pub enum </span>AreaOfInterestSelector {
-    <span class="attr">#[default]
+    <span class="doccomment">/// Use the widest area allowed by a capability, with no further limits.
+    </span><span class="attr">#[default]
     </span>Widest,
-    Exact(HashSet&lt;AreaOfInterest&gt;),
+    <span class="doccomment">/// Use the specified set of [`AreaOfInterest`].
+    </span>Exact(HashSet&lt;AreaOfInterest&gt;),
 }
 
 <span class="doccomment">/// Selector for a capability.

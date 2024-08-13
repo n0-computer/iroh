@@ -173,7 +173,40 @@
 <a href="#173" id="173">173</a>
 <a href="#174" id="174">174</a>
 <a href="#175" id="175">175</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! The `session` module contains an implementation of the Willow General Purpose Sync Protocol
+//! (WGPS).
+//!
+//! It exposes a few public types used to initiate sessions, and the [`intents`] module which
+//! contains handle, event and command types for controlling sessions.
+//!
+//! Internally, this module contains the full implementation of the protocol, which is started with
+//! the `run_session` function (which is not public).
+
+</span><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>channels::ChannelSenders;
 <span class="kw">use </span>tokio::sync::mpsc;
@@ -187,9 +220,9 @@
 <span class="kw">mod </span>aoi_finder;
 <span class="kw">mod </span>capabilities;
 <span class="kw">mod </span>challenge;
-<span class="kw">pub mod </span>channels;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>channels;
 <span class="kw">mod </span>data;
-<span class="kw">pub mod </span>error;
+<span class="kw">mod </span>error;
 <span class="kw">pub mod </span>intents;
 <span class="kw">mod </span>pai_finder;
 <span class="kw">mod </span>payload;
@@ -203,7 +236,8 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::error::Error;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::run::run_session;
 
-<span class="kw">pub type </span>SessionId = u64;
+<span class="doccomment">/// Id per session to identify store subscriptions.
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>SessionId = u64;
 
 <span class="doccomment">/// To break symmetry, we refer to the peer that initiated the synchronisation session as Alfie,
 /// and the other peer as Betty.
@@ -226,26 +260,33 @@
     }
 }
 
-<span class="attr">#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+<span class="doccomment">/// A session can either run a single reconciliation, or keep open until closed by either peer.
+///
+/// * [`Self::Continous`] will enable the live data channels to synchronize updates in real-time.
+/// * [`Self::ReconcileOnce`] will run a single reconciliation of the interests declared at session
+///   start, and then close the session.
+</span><span class="attr">#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 </span><span class="kw">pub enum </span>SessionMode {
     <span class="doccomment">/// Run a single, full reconciliation, and then quit.
     </span>ReconcileOnce,
     <span class="doccomment">/// Run reconciliations and data mode, until intentionally closed.
-    </span>Live,
+    </span>Continous,
 }
 
 <span class="kw">impl </span>SessionMode {
-    <span class="kw">pub fn </span>is_live(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="macro">matches!</span>(<span class="self">self</span>, <span class="self">Self</span>::Live)
+    <span class="doccomment">/// Returns `true` if the session runs in live mode.
+    </span><span class="kw">pub fn </span>is_live(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="macro">matches!</span>(<span class="self">self</span>, <span class="self">Self</span>::Continous)
     }
 }
 
-<span class="doccomment">/// Options to initialize a session with.
+<span class="doccomment">/// Options to initialize a session.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>SessionInit {
-    <span class="doccomment">/// List of interests we wish to synchronize, together with our capabilities to read them.
+    <span class="doccomment">/// Selects the areas we wish to synchronize.
     </span><span class="kw">pub </span>interests: Interests,
-    <span class="kw">pub </span>mode: SessionMode,
+    <span class="doccomment">/// Selects the session mode (once or continous).
+    </span><span class="kw">pub </span>mode: SessionMode,
 }
 
 <span class="kw">impl </span>SessionInit {
@@ -254,41 +295,37 @@
         <span class="self">Self </span>{ interests, mode }
     }
 
-    <span class="kw">pub fn </span>continuous(interests: <span class="kw">impl </span>Into&lt;Interests&gt;) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::new(interests, SessionMode::Live)
+    <span class="doccomment">/// Creates a new [`SessionInit`] with [`SessionMode::Continous`].
+    </span><span class="kw">pub fn </span>continuous(interests: <span class="kw">impl </span>Into&lt;Interests&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::new(interests, SessionMode::Continous)
     }
 
-    <span class="kw">pub fn </span>reconcile_once(interests: <span class="kw">impl </span>Into&lt;Interests&gt;) -&gt; <span class="self">Self </span>{
+    <span class="doccomment">/// Creates a new [`SessionInit`] with [`SessionMode::ReconcileOnce`].
+    </span><span class="kw">pub fn </span>reconcile_once(interests: <span class="kw">impl </span>Into&lt;Interests&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::new(interests, SessionMode::ReconcileOnce)
     }
 }
 
-<span class="doccomment">/// The bind scope for resources.
-///
-/// Resources are bound by either peer
-</span><span class="attr">#[derive(Copy, Clone, Debug)]
-</span><span class="kw">pub enum </span>Scope {
-    <span class="doccomment">/// Resources bound by ourselves.
-    </span>Ours,
-    <span class="doccomment">/// Resources bound by the other peer.
-    </span>Theirs,
-}
-
-<span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>EventSender(<span class="kw">pub </span>mpsc::Sender&lt;SessionEvent&gt;);
+<span class="doccomment">/// Sender for session events
+</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>EventSender(<span class="kw">pub </span>mpsc::Sender&lt;SessionEvent&gt;);
 
 <span class="kw">impl </span>EventSender {
-    <span class="kw">pub async fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, event: SessionEvent) -&gt; <span class="prelude-ty">Result</span>&lt;(), ChannelReceiverDropped&gt; {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, event: SessionEvent) -&gt; <span class="prelude-ty">Result</span>&lt;(), ChannelReceiverDropped&gt; {
         <span class="self">self</span>.<span class="number">0</span>.send(event).<span class="kw">await</span>.map_err(|<span class="kw">_</span>| ChannelReceiverDropped)
     }
 }
 
-<span class="attr">#[derive(derive_more::Debug)]
-</span><span class="kw">pub enum </span>SessionEvent {
+<span class="doccomment">/// Events emitted from a session.
+///
+/// These are handled in the [`PeerManager`](crate::engine::peer_manager::PeerManager).
+</span><span class="attr">#[derive(derive_more::Debug)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>SessionEvent {
     Established,
     Complete {
         result: <span class="prelude-ty">Result</span>&lt;(), Arc&lt;Error&gt;&gt;,
-        <span class="comment">// who_cancelled: WhoCancelled,
+        <span class="comment">// TODO(Frando): Not sure if we should make use of this somewhere, maybe just remove.
+        </span><span class="attr">#[allow(unused)]
         </span>we_cancelled: bool,
         <span class="attr">#[debug(<span class="string">"ChannelSenders"</span>)]
         </span>senders: ChannelSenders,
@@ -298,24 +335,34 @@
     },
 }
 
-<span class="attr">#[derive(Debug)]
-</span><span class="kw">pub enum </span>SessionUpdate {
+<span class="doccomment">/// Update commands for an active session.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>SessionUpdate {
     SubmitIntent(Intent),
 }
 
-<span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>SessionHandle {
-    <span class="kw">pub </span>cancel_token: CancellationToken,
-    <span class="kw">pub </span>update_tx: mpsc::Sender&lt;SessionUpdate&gt;,
-    <span class="kw">pub </span>event_rx: mpsc::Receiver&lt;SessionEvent&gt;,
+<span class="doccomment">/// Handle to an active session.
+///
+/// This is not made public, the only public interface are [`intents`] handles.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>SessionHandle {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) cancel_token: CancellationToken,
+    <span class="kw">pub</span>(<span class="kw">crate</span>) update_tx: mpsc::Sender&lt;SessionUpdate&gt;,
+    <span class="kw">pub</span>(<span class="kw">crate</span>) event_rx: mpsc::Receiver&lt;SessionEvent&gt;,
 }
 
 <span class="kw">impl </span>SessionHandle {
-    <span class="doccomment">/// Wait for the session to finish.
+    <span class="comment">// TODO(Frando): Previously the [`SessionHandle`] was exposed through the `net` module.
+    // Now all public interaction goes through the [`Engine`], which does not use the handle as
+    // such, but splits into the fields. Leaving this here for the moment in case we decide to
+    // expose the session handle (without relying on intents) publicly.
+
+    </span><span class="doccomment">/// Wait for the session to finish.
     ///
     /// Returns the channel senders and a boolean indicating if we cancelled the session.
     /// Returns an error if the session failed to complete.
-    </span><span class="kw">pub async fn </span>complete(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(ChannelSenders, bool), Arc&lt;Error&gt;&gt; {
+    </span><span class="attr">#[cfg(test)]
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>complete(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(ChannelSenders, bool), Arc&lt;Error&gt;&gt; {
         <span class="kw">while let </span><span class="prelude-val">Some</span>(event) = <span class="self">self</span>.event_rx.recv().<span class="kw">await </span>{
             <span class="kw">if let </span>SessionEvent::Complete {
                 result,
@@ -330,20 +377,21 @@
         <span class="prelude-val">Err</span>(Arc::new(Error::ActorFailed))
     }
 
-    <span class="doccomment">/// Submit a new synchronisation intent.
-    </span><span class="kw">pub async fn </span>submit_intent(<span class="kw-2">&amp;</span><span class="self">self</span>, intent: Intent) -&gt; anyhow::Result&lt;()&gt; {
-        <span class="self">self</span>.update_tx
-            .send(SessionUpdate::SubmitIntent(intent))
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
+    <span class="comment">// /// Submit a new synchronisation intent.
+    // pub(crate) async fn submit_intent(&amp;self, intent: Intent) -&gt; anyhow::Result&lt;()&gt; {
+    //     self.update_tx
+    //         .send(SessionUpdate::SubmitIntent(intent))
+    //         .await?;
+    //     Ok(())
+    // }
 
-    <span class="doccomment">/// Finish the session gracefully.
+    </span><span class="doccomment">/// Finish the session gracefully.
     ///
     /// After calling this, no further protocol messages will be sent from this node.
     /// Previously queued messages will still be sent out. The session will only be closed
     /// once the other peer closes their senders as well.
-    </span><span class="kw">pub fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+    </span><span class="attr">#[cfg(test)]
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="macro">tracing::debug!</span>(<span class="string">"close session (session handle close called)"</span>);
         <span class="self">self</span>.cancel_token.cancel();
     }

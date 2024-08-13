@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AreaOfInterestSelector","AreaSelector","CapabilityPack","Interests","ReceiverSelector","RestrictArea"],"struct":["CapSelector","DelegateTo","InvalidCapabilityPack","SelectBuilder"],"trait":["IntoAreaOfInterest"],"type":["InterestMap"]};
+window.SIDEBAR_ITEMS = {"enum":["AreaOfInterestSelector","AreaSelector","CapabilityPack","Interests","ReceiverSelector","RestrictArea"],"struct":["CapSelector","DelegateTo","InterestBuilder","InvalidCapabilityPack"],"trait":["IntoAreaOfInterest"],"type":["InterestMap"]};

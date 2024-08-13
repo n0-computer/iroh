@@ -773,7 +773,7 @@
         establish, prepare_channels, terminate_gracefully, ChannelStreams, ConnHandle, ALPN,
         ERROR_CODE_DUPLICATE_CONN, ERROR_CODE_FAIL, ERROR_CODE_SHUTDOWN,
     },
-    proto::wgps::challenge::AccessChallenge,
+    proto::wgps::AccessChallenge,
     session::{
         intents::{EventKind, Intent},
         Error, InitialTransmission, Role, SessionEvent, SessionHandle, SessionInit, SessionUpdate,
@@ -1114,7 +1114,7 @@
                 senders,
                 remaining_intents,
                 <span class="kw-2">mut </span>update_receiver,
-                we_cancelled: <span class="kw">_</span>,
+                ..
             } =&gt; {
                 <span class="macro">trace!</span>(error=<span class="question-mark">?</span>result.err(), <span class="question-mark">?</span>remaining_intents, <span class="string">"session complete"</span>);
 

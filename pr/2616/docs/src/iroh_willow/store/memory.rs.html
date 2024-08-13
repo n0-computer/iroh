@@ -362,7 +362,21 @@
 <a href="#362" id="362">362</a>
 <a href="#363" id="363">363</a>
 <a href="#364" id="364">364</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::cell::RefCell;
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! In-memory storage implementation for testing purposes.
+//!
+//! This is a minimal, but spec-compliant (unless there's bugs) implementation of a willow store.
+//!
+//! It does not have good performance, it does a lot of iterating. But it is concise and can
+//! hopefully easily kept correct.
+
+</span><span class="kw">use </span>std::cell::RefCell;
 <span class="kw">use </span>std::collections::HashMap;
 <span class="kw">use </span>std::rc::Rc;
 

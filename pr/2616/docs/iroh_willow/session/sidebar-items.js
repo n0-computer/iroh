@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Role","Scope","SessionEvent","SessionMode","SessionUpdate"],"mod":["channels","error","intents"],"struct":["EventSender","SessionHandle","SessionInit"],"type":["SessionId"]};
+window.SIDEBAR_ITEMS = {"enum":["Role","SessionMode"],"mod":["intents"],"struct":["SessionInit"]};

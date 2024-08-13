@@ -241,6 +241,8 @@
 <a href="#241" id="241">241</a>
 <a href="#242" id="242">242</a>
 <a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::hash_map;
 
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
@@ -257,8 +259,10 @@
         },
     },
     session::{
-        capabilities::Capabilities, pai_finder::PaiIntersection, resource::ResourceMap, Error,
-        Scope,
+        capabilities::Capabilities,
+        pai_finder::PaiIntersection,
+        resource::{ResourceMap, Scope},
+        Error,
     },
     util::gen_stream::GenStream,
 };
