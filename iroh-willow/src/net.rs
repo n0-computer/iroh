@@ -753,6 +753,7 @@ mod tests {
     ) -> Result<(Endpoint, NodeId, NodeAddr)> {
         let ep = Endpoint::builder()
             .secret_key(SecretKey::generate_with_rng(rng))
+            .relay_mode(iroh_net::relay::RelayMode::Disabled)
             .alpns(vec![ALPN.to_vec()])
             .bind(0)
             .await?;
