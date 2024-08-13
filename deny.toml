@@ -35,4 +35,4 @@ ignore = [
 
 # TODO(Frando): added for iroh-willow development, maybe remove again before release?
 [sources.allow-org]
-github = ["n0-computer", "earthstar-project"]
+github = ["n0-computer"]
