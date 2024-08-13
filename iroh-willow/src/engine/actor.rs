@@ -364,7 +364,7 @@ impl<S: Storage> Actor<S> {
 
                 self.tasks.spawn_local(async move {
                     if let Err(err) = future.await {
-                        tracing::debug!(?peer, ?session_id, ?err, "session failed");
+                        debug!(?peer, ?session_id, ?err, "session failed");
                     }
                 });
 

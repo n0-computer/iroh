@@ -22,8 +22,7 @@ use tracing::{debug, error_span, instrument, trace, warn, Instrument, Span};
 use crate::{
     interest::Interests,
     net::{
-        establish, prepare_channels, terminate_gracefully, ChannelStreams, ConnHandle, ALPN,
-        ERROR_CODE_DUPLICATE_CONN, ERROR_CODE_SHUTDOWN,
+        establish, prepare_channels, terminate_gracefully, ChannelStreams, ConnHandle, ALPN, ERROR_CODE_DUPLICATE_CONN, ERROR_CODE_FAIL, ERROR_CODE_SHUTDOWN
     },
     proto::wgps::challenge::AccessChallenge,
     session::{
@@ -395,7 +394,7 @@ impl PeerManager {
                     old_intents: remaining_intents,
                     new_intents,
                 };
-                debug!("entering closing state");
+                trace!("entering closing state");
             }
         }
     }
@@ -489,6 +488,7 @@ impl PeerManager {
                     ref mut intents, ..
                 } = &mut peer_info.state
                 else {
+                    conn.close(ERROR_CODE_FAIL, b"invalid-state");
                     drop(conn);
                     // TODO: unreachable?
                     return Err(anyhow!(
@@ -546,7 +546,9 @@ impl PeerManager {
                 trace!("connection loop finished");
                 let fut = async move {
                     terminate_gracefully(&conn).await?;
-                    Ok(ConnStep::Closed { conn })
+                    // The connection is fully closed.
+                    drop(conn);
+                    Ok(ConnStep::Closed)
                 };
                 let abort_handle = spawn_conn_task(&mut self.conn_tasks, peer_info, fut);
                 if let PeerState::Closing { .. } = &peer_info.state {
@@ -555,9 +557,8 @@ impl PeerManager {
                     // TODO: What do we do with the closing abort handle in case we have a new connection already?
                 }
             }
-            Ok(ConnStep::Closed { conn }) => {
+            Ok(ConnStep::Closed) => {
                 debug!("connection closed gracefully");
-                drop(conn);
                 let peer_info = self.peers.remove(&peer).expect("just checked");
                 if let PeerState::Closing {
                     new_intents,
@@ -665,9 +666,7 @@ enum ConnStep {
     Done {
         conn: Connection,
     },
-    Closed {
-        conn: Connection,
-    },
+    Closed,
 }
 
 /// The internal handlers for the [`AcceptOpts].
