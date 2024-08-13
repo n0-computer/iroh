@@ -544,7 +544,7 @@
     <span class="kw">impl </span>DnsPkarrServer {
         <span class="doccomment">/// Run DNS and Pkarr servers on localhost.
         </span><span class="kw">pub async fn </span>run() -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
-            <span class="self">Self</span>::run_with_origin(<span class="string">"dns.iroh.test"</span>.to_string()).<span class="kw">await
+            <span class="self">Self</span>::run_with_origin(<span class="string">"dns.example"</span>.to_string()).<span class="kw">await
         </span>}
 
         <span class="doccomment">/// Run DNS and Pkarr servers on localhost with the specified `node_origin` domain.

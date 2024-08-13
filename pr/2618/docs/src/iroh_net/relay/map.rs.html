@@ -150,10 +150,6 @@
 <a href="#150" id="150">150</a>
 <a href="#151" id="151">151</a>
 <a href="#152" id="152">152</a>
-<a href="#153" id="153">153</a>
-<a href="#154" id="154">154</a>
-<a href="#155" id="155">155</a>
-<a href="#156" id="156">156</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/tailcfg/derpmap.go
 
 </span><span class="kw">use </span>std::{collections::BTreeMap, fmt, sync::Arc};
@@ -165,16 +161,12 @@
 
 <span class="kw">use </span><span class="kw">super</span>::RelayUrl;
 
-<span class="doccomment">/// Configuration of the relay servers for an [`Endpoint`].
-///
-/// [`Endpoint`]: crate::endpoint::Endpoint
+<span class="doccomment">/// Configuration options for the relay servers of the magic endpoint.
 </span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
 </span><span class="kw">pub enum </span>RelayMode {
     <span class="doccomment">/// Disable relay servers completely.
     </span>Disabled,
     <span class="doccomment">/// Use the default relay map, with production relay servers from n0.
-    ///
-    /// See [`crate::defaults::prod`] for the severs used.
     </span>Default,
     <span class="doccomment">/// Use the staging relay servers from n0.
     </span>Staging,

@@ -780,6 +780,16 @@
 <a href="#780" id="780">780</a>
 <a href="#781" id="781">781</a>
 <a href="#782" id="782">782</a>
+<a href="#783" id="783">783</a>
+<a href="#784" id="784">784</a>
+<a href="#785" id="785">785</a>
+<a href="#786" id="786">786</a>
+<a href="#787" id="787">787</a>
+<a href="#788" id="788">788</a>
+<a href="#789" id="789">789</a>
+<a href="#790" id="790">790</a>
+<a href="#791" id="791">791</a>
+<a href="#792" id="792">792</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
@@ -812,6 +822,9 @@
 
 <span class="doccomment">/// The ALPN protocol name for iroh-willow.
 </span><span class="kw">pub const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"iroh-willow/0"</span>;
+
+<span class="doccomment">/// QUIC application error code for closing with failure.
+</span><span class="kw">pub const </span>ERROR_CODE_FAIL: VarInt = VarInt::from_u32(<span class="number">0</span>);
 
 <span class="doccomment">/// QUIC application error code for graceful connection termination.
 </span><span class="kw">pub const </span>ERROR_CODE_OK: VarInt = VarInt::from_u32(<span class="number">1</span>);
@@ -1086,11 +1099,18 @@
     send_stream.finish().<span class="kw">await</span><span class="question-mark">?</span>;
     <span class="comment">// Wait until we either receive the goodbye byte from the other peer, or for the other peer
     // to close the connection with the expected error code.
-    </span>wait_for_goodbye_or_graceful_close(conn).<span class="kw">await</span><span class="question-mark">?</span>;
-    <span class="comment">// Only now close the connection.
-    </span>conn.close(ERROR_CODE_OK, <span class="string">b"bye"</span>);
-    <span class="macro">trace!</span>(<span class="string">"connection terminated gracefully"</span>);
-    <span class="prelude-val">Ok</span>(())
+    </span><span class="kw">match </span>wait_for_goodbye_or_graceful_close(conn).<span class="kw">await </span>{
+        <span class="prelude-val">Ok</span>(()) =&gt; {
+            conn.close(ERROR_CODE_OK, <span class="string">b"bye"</span>);
+            <span class="macro">trace!</span>(<span class="string">"connection terminated gracefully"</span>);
+            <span class="prelude-val">Ok</span>(())
+        },
+        <span class="prelude-val">Err</span>(err) =&gt; {
+            conn.close(ERROR_CODE_FAIL, <span class="string">b"peer-failed-while-closing"</span>);
+            <span class="macro">trace!</span>(<span class="question-mark">?</span>err, <span class="string">"connection failed while terminating"</span>);
+            <span class="prelude-val">Err</span>(err)
+        }
+    }
 }
 
 <span class="kw">async fn </span>wait_for_goodbye_or_graceful_close(conn: <span class="kw-2">&amp;</span>Connection) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {

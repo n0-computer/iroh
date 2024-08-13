@@ -995,9 +995,6 @@
 <a href="#995" id="995">995</a>
 <a href="#996" id="996">996</a>
 <a href="#997" id="997">997</a>
-<a href="#998" id="998">998</a>
-<a href="#999" id="999">999</a>
-<a href="#1000" id="1000">1000</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Networking for the `iroh-gossip` protocol
 
 </span><span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
@@ -1501,9 +1498,8 @@
                     neighbors,
                     event_senders,
                     command_rx_keys,
-                    joined,
                 } = state;
-                <span class="kw">if </span><span class="kw-2">*</span>joined {
+                <span class="kw">if </span>!neighbors.is_empty() {
                     <span class="kw">let </span>neighbors = neighbors.iter().copied().collect();
                     channels
                         .event_tx
@@ -1589,15 +1585,14 @@
                         <span class="kw">continue</span>;
                     };
                     <span class="kw">let </span>TopicState {
-                        joined,
                         neighbors,
                         event_senders,
                         command_rx_keys,
                     } = state;
                     <span class="kw">let </span>event = <span class="kw">if let </span>ProtoEvent::NeighborUp(neighbor) = event {
+                        <span class="kw">let </span>was_empty = neighbors.is_empty();
                         neighbors.insert(neighbor);
-                        <span class="kw">if </span>!<span class="kw-2">*</span>joined {
-                            <span class="kw-2">*</span>joined = <span class="bool-val">true</span>;
+                        <span class="kw">if </span>was_empty {
                             GossipEvent::Joined(<span class="macro">vec!</span>[neighbor])
                         } <span class="kw">else </span>{
                             GossipEvent::NeighborUp(neighbor)
@@ -1664,7 +1659,6 @@
 
 <span class="attr">#[derive(Debug, Default)]
 </span><span class="kw">struct </span>TopicState {
-    joined: bool,
     neighbors: BTreeSet&lt;NodeId&gt;,
     event_senders: EventSenders,
     command_rx_keys: HashSet&lt;stream_group::Key&gt;,

@@ -252,28 +252,6 @@
 <a href="#252" id="252">252</a>
 <a href="#253" id="253">253</a>
 <a href="#254" id="254">254</a>
-<a href="#255" id="255">255</a>
-<a href="#256" id="256">256</a>
-<a href="#257" id="257">257</a>
-<a href="#258" id="258">258</a>
-<a href="#259" id="259">259</a>
-<a href="#260" id="260">260</a>
-<a href="#261" id="261">261</a>
-<a href="#262" id="262">262</a>
-<a href="#263" id="263">263</a>
-<a href="#264" id="264">264</a>
-<a href="#265" id="265">265</a>
-<a href="#266" id="266">266</a>
-<a href="#267" id="267">267</a>
-<a href="#268" id="268">268</a>
-<a href="#269" id="269">269</a>
-<a href="#270" id="270">270</a>
-<a href="#271" id="271">271</a>
-<a href="#272" id="272">272</a>
-<a href="#273" id="273">273</a>
-<a href="#274" id="274">274</a>
-<a href="#275" id="275">275</a>
-<a href="#276" id="276">276</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Topic handles for sending and receiving on a gossip topic.
 //!
 //! These are returned from [`super::Gossip`].
@@ -284,7 +262,7 @@
     task::{Context, Poll},
 };
 
-<span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>iroh_net::NodeId;
@@ -388,7 +366,6 @@
     <span class="attr">#[debug(<span class="string">"EventStream"</span>)]
     </span>stream: EventStream,
     neighbors: HashSet&lt;NodeId&gt;,
-    joined: bool,
 }
 
 <span class="kw">impl </span>GossipReceiver {
@@ -396,7 +373,6 @@
         <span class="self">Self </span>{
             stream: events_rx,
             neighbors: Default::default(),
-            joined: <span class="bool-val">false</span>,
         }
     }
 
@@ -406,22 +382,9 @@
     }
 
     <span class="doccomment">/// Waits until we are connected to at least one node.
-    ///
-    /// This progresses the stream until we received [`GossipEvent::Joined`], which is the first
-    /// item emitted on the stream.
-    ///
-    /// Note that this consumes the [`GossipEvent::Joined`] event. If you want to act on these
-    /// initial neighbors, use [`Self::neighbors`] after awaiting [`Self::joined`].
     </span><span class="kw">pub async fn </span>joined(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">if </span>!<span class="self">self</span>.joined {
-            <span class="kw">match </span><span class="self">self
-                </span>.try_next()
-                .<span class="kw">await</span><span class="question-mark">?
-                </span>.context(<span class="string">"Gossip receiver closed before Joined event was received."</span>)<span class="question-mark">?
-            </span>{
-                Event::Gossip(GossipEvent::Joined(<span class="kw">_</span>)) =&gt; {}
-                <span class="kw">_ </span>=&gt; <span class="macro">anyhow::bail!</span>(<span class="string">"Expected Joined event to be the first event received."</span>),
-            }
+        <span class="kw">while </span><span class="self">self</span>.neighbors.is_empty() {
+            <span class="kw">let _ </span>= <span class="self">self</span>.try_next().<span class="kw">await</span><span class="question-mark">?</span>;
         }
         <span class="prelude-val">Ok</span>(())
     }
@@ -439,7 +402,6 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(item)) = <span class="kw-2">&amp;</span>item {
             <span class="kw">match </span>item {
                 Event::Gossip(GossipEvent::Joined(neighbors)) =&gt; {
-                    <span class="self">self</span>.joined = <span class="bool-val">true</span>;
                     <span class="self">self</span>.neighbors.extend(neighbors.iter().copied());
                 }
                 Event::Gossip(GossipEvent::NeighborUp(node_id)) =&gt; {
@@ -455,32 +417,26 @@
     }
 }
 
-<span class="doccomment">/// Events emitted from a gossip topic with a lagging notification.
-///
-/// This is the item of the [`GossipReceiver`] stream. It wraps the actual gossip events to also
-/// provide a notification if we missed gossip events for the topic.
+<span class="doccomment">/// Update from a subscribed gossip topic.
 </span><span class="attr">#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 </span><span class="kw">pub enum </span>Event {
-    <span class="doccomment">/// We received an event.
+    <span class="doccomment">/// A message was received.
     </span>Gossip(GossipEvent),
-    <span class="doccomment">/// We missed some messages because our [`GossipReceiver`] was not progressing fast enough.
+    <span class="doccomment">/// We missed some messages.
     </span>Lagged,
 }
 
-<span class="doccomment">/// Events emitted from a gossip topic.
-///
-/// These are the events emitted from a [`GossipReceiver`], wrapped in [`Event::Gossip`].
+<span class="doccomment">/// Gossip event
+/// An event to be emitted to the application for a particular topic.
 </span><span class="attr">#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 </span><span class="kw">pub enum </span>GossipEvent {
     <span class="doccomment">/// We joined the topic with at least one peer.
-    ///
-    /// This is the first event on a [`GossipReceiver`] and will only be emitted once.
     </span>Joined(Vec&lt;NodeId&gt;),
-    <span class="doccomment">/// We have a new, direct neighbor in the swarm membership layer for this topic.
+    <span class="doccomment">/// We have a new, direct neighbor in the swarm membership layer for this topic
     </span>NeighborUp(NodeId),
-    <span class="doccomment">/// We dropped direct neighbor in the swarm membership layer for this topic.
+    <span class="doccomment">/// We dropped direct neighbor in the swarm membership layer for this topic
     </span>NeighborDown(NodeId),
-    <span class="doccomment">/// We received a gossip message for this topic.
+    <span class="doccomment">/// A gossip message was received for this topic
     </span>Received(Message),
 }
 
