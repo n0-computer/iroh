@@ -58,7 +58,7 @@ ring = "0.17"
 rustls = { version = "0.21.11", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive", "rc"] }
 smallvec = "1.11.1"
-swarm-discovery = { version = "0.2.0", optional = true }
+swarm-discovery = { version = "0.2.1", optional = true }
 socket2 = "0.5.3"
 stun-rs = "0.1.5"
 surge-ping = "0.8.0"
