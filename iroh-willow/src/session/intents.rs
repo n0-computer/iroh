@@ -49,10 +49,7 @@ type Receiver<T> = mpsc::Receiver<T>;
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum EventKind {
     /// We found an intersection between our and the peer's capabilities.
-    CapabilityIntersection {
-        namespace: NamespaceId,
-        area: Area,
-    },
+    CapabilityIntersection { namespace: NamespaceId, area: Area },
     /// We found an intersection between our and the peer's interests and will start to synchronize
     /// the area.
     InterestIntersection {
@@ -67,9 +64,7 @@ pub enum EventKind {
     /// We reconciled all interests submitted in this intent.
     ReconciledAll,
     /// The session was closed with an error.
-    Abort {
-        error: Arc<Error>,
-    },
+    Abort { error: Arc<Error> },
 }
 
 impl EventKind {
