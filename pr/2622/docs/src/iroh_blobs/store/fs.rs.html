@@ -2561,8 +2561,6 @@
 <a href="#2561" id="2561">2561</a>
 <a href="#2562" id="2562">2562</a>
 <a href="#2563" id="2563">2563</a>
-<a href="#2564" id="2564">2564</a>
-<a href="#2565" id="2565">2565</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! redb backed storage
 //!
 //! Data can get into the store in two ways:
@@ -3201,7 +3199,7 @@
     <span class="doccomment">/// Sync the entire database to disk.
     ///
     /// This just makes sure that there is no write transaction open.
-    </span>Sync { tx: <span class="prelude-ty">Option</span>&lt;oneshot::Sender&lt;()&gt;&gt; },
+    </span>Sync { tx: oneshot::Sender&lt;()&gt; },
     <span class="doccomment">/// Internal method: dump the entire database to stdout.
     </span>Dump,
     <span class="doccomment">/// Internal method: validate the entire database.
@@ -3600,7 +3598,7 @@
 
     <span class="kw">async fn </span>sync(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; OuterResult&lt;()&gt; {
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
-        <span class="self">self</span>.tx.send(ActorMessage::Sync { tx: <span class="prelude-val">Some</span>(tx) }).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.tx.send(ActorMessage::Sync { tx }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">?</span>)
     }
 
@@ -4772,9 +4770,7 @@
                 tx.send(res).ok();
             }
             ActorMessage::Sync { tx } =&gt; {
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(tx) = tx {
-                    tx.send(()).ok();
-                }
+                tx.send(()).ok();
             }
             x =&gt; {
                 <span class="kw">return </span><span class="prelude-val">Err</span>(ActorError::Inconsistent(<span class="macro">format!</span>(
