@@ -244,8 +244,9 @@ where
 
 #[tokio::test]
 async fn test_server_close() {
-    // Prepare a Provider transferring a file.
     let _guard = iroh_test::logging::setup();
+
+    // Prepare a Provider transferring a file.
     let mut db = iroh_blobs::store::readonly_mem::Store::default();
     let child_hash = db.insert(b"hello there");
     let collection = Collection::from_iter([("hello", child_hash)]);
@@ -303,7 +304,7 @@ async fn test_ipv6() {
 #[tokio::test]
 #[ignore = "flaky"]
 async fn test_not_found() {
-    let _ = iroh_test::logging::setup();
+    let _guard = iroh_test::logging::setup();
 
     let db = iroh_blobs::store::readonly_mem::Store::default();
     let hash = blake3::hash(b"hello").into();
@@ -344,7 +345,7 @@ async fn test_not_found() {
 #[tokio::test]
 #[ignore = "flaky"]
 async fn test_chunk_not_found_1() {
-    let _ = iroh_test::logging::setup();
+    let _guard = iroh_test::logging::setup();
 
     let db = iroh_blobs::store::mem::Store::new();
     let data = (0..1024 * 64).map(|i| i as u8).collect::<Vec<_>>();
@@ -385,6 +386,8 @@ async fn test_chunk_not_found_1() {
 
 #[tokio::test]
 async fn test_run_ticket() {
+    let _guard = iroh_test::logging::setup();
+
     let (db, hash) = create_test_db([("test", b"hello")]);
     let node = test_node(db).spawn().await.unwrap();
     let _drop_guard = node.cancel_token().drop_guard();
@@ -436,6 +439,8 @@ async fn run_collection_get_request(
 #[tokio::test]
 #[ignore = "flaky"]
 async fn test_run_fsm() {
+    let _guard = iroh_test::logging::setup();
+
     let (db, hash) = create_test_db([("a", b"hello"), ("b", b"world")]);
     let node = test_node(db).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
@@ -482,6 +487,8 @@ fn make_test_data(n: usize) -> Vec<u8> {
 /// The verified last chunk also verifies the size.
 #[tokio::test]
 async fn test_size_request_blob() {
+    let _guard = iroh_test::logging::setup();
+
     let expected = make_test_data(1024 * 64 + 1234);
     let last_chunk = last_chunk(&expected);
     let (db, hashes) = iroh_blobs::store::readonly_mem::Store::new([("test", &expected)]);
@@ -511,6 +518,8 @@ async fn test_size_request_blob() {
 #[tokio::test]
 #[ignore = "flaky"]
 async fn test_collection_stat() {
+    let _guard = iroh_test::logging::setup();
+
     let child1 = make_test_data(123456);
     let child2 = make_test_data(345678);
     let (db, hash) = create_test_db([("a", &child1), ("b", &child2)]);
