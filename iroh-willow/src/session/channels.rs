@@ -1,5 +1,4 @@
 use std::{
-    future::poll_fn,
     marker::PhantomData,
     pin::Pin,
     task::{self, ready, Poll},
