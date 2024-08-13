@@ -262,7 +262,7 @@
 
 <span class="doccomment">/// A session can either run a single reconciliation, or keep open until closed by either peer.
 ///
-/// * [`Self::Continous`] will enable the live data channels to synchronize updates in real-time.
+/// * [`Self::Continuous`] will enable the live data channels to synchronize updates in real-time.
 /// * [`Self::ReconcileOnce`] will run a single reconciliation of the interests declared at session
 ///   start, and then close the session.
 </span><span class="attr">#[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -270,13 +270,13 @@
     <span class="doccomment">/// Run a single, full reconciliation, and then quit.
     </span>ReconcileOnce,
     <span class="doccomment">/// Run reconciliations and data mode, until intentionally closed.
-    </span>Continous,
+    </span>Continuous,
 }
 
 <span class="kw">impl </span>SessionMode {
     <span class="doccomment">/// Returns `true` if the session runs in live mode.
     </span><span class="kw">pub fn </span>is_live(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="macro">matches!</span>(<span class="self">self</span>, <span class="self">Self</span>::Continous)
+        <span class="macro">matches!</span>(<span class="self">self</span>, <span class="self">Self</span>::Continuous)
     }
 }
 
@@ -295,9 +295,9 @@
         <span class="self">Self </span>{ interests, mode }
     }
 
-    <span class="doccomment">/// Creates a new [`SessionInit`] with [`SessionMode::Continous`].
+    <span class="doccomment">/// Creates a new [`SessionInit`] with [`SessionMode::Continuous`].
     </span><span class="kw">pub fn </span>continuous(interests: <span class="kw">impl </span>Into&lt;Interests&gt;) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::new(interests, SessionMode::Continous)
+        <span class="self">Self</span>::new(interests, SessionMode::Continuous)
     }
 
     <span class="doccomment">/// Creates a new [`SessionInit`] with [`SessionMode::ReconcileOnce`].

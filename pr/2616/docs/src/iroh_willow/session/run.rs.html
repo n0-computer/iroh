@@ -565,7 +565,7 @@
         .fold(SessionMode::ReconcileOnce, |cur, intent| {
             <span class="kw">match </span>intent.init.mode {
                 SessionMode::ReconcileOnce =&gt; cur,
-                SessionMode::Continous =&gt; SessionMode::Continous,
+                SessionMode::Continuous =&gt; SessionMode::Continuous,
             }
         });
 
@@ -598,7 +598,7 @@
 
     <span class="comment">// Setup data channels only if in live mode.
     // TODO: Adapt to changing mode.
-    </span><span class="kw">let </span>(data_inbox, data_inbox_rx) = <span class="kw">if </span>mode == SessionMode::Continous {
+    </span><span class="kw">let </span>(data_inbox, data_inbox_rx) = <span class="kw">if </span>mode == SessionMode::Continuous {
         <span class="kw">let </span>(data_inbox, data_inbox_rx) =
             cancelable_channel::&lt;data::Input&gt;(<span class="number">2</span>, cancel_token.clone());
         (<span class="prelude-val">Some</span>(data_inbox), <span class="prelude-val">Some</span>(data_inbox_rx))

@@ -26,7 +26,7 @@ this thread, so that the <a href="../store/traits/trait.Storage.html" title="tra
 <p>Will try to establish a connection to <code>peer</code> if there is none already, and then open a
 synchronisation session.</p>
 <p><code>init</code> contains the initialisation options for this synchronisation intent.</p>
-<p>Returns an <a href="../session/intents/struct.IntentHandle.html" title="struct iroh_willow::session::intents::IntentHandle"><code>IntentHandle</code></a> which receives events and can submit udpates into the session.</p>
+<p>Returns an <a href="../session/intents/struct.IntentHandle.html" title="struct iroh_willow::session::intents::IntentHandle"><code>IntentHandle</code></a> which receives events and can submit updates into the session.</p>
 <p>This can freely be called multiple times for the same peer. The engine will merge the
 intents and make sure that only a single session is opened per peer.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.shutdown" class="method"><a class="src rightside" href="../../src/iroh_willow/engine.rs.html#105-122">source</a><h4 class="code-header">pub async fn <a href="#method.shutdown" class="fn">shutdown</a>(self) -&gt; <a class="type" href="https://docs.rs/anyhow/1.0.82/anyhow/type.Result.html" title="type anyhow::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section></summary><div class="docblock"><p>Shutdown the engine.</p>

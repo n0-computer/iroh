@@ -376,7 +376,7 @@
 <span class="kw">impl </span>InterestBuilder {
     <span class="doccomment">/// Add the full area of a capability we have into the interests.
     ///
-    /// See [`CapSelector`] for how to specifiy the capability to use.
+    /// See [`CapSelector`] for how to specify the capability to use.
     </span><span class="kw">pub fn </span>add_full_cap(<span class="kw-2">mut </span><span class="self">self</span>, cap: <span class="kw">impl </span>Into&lt;CapSelector&gt;) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>cap = cap.into();
         <span class="self">self</span>.<span class="number">0</span>.insert(cap, AreaOfInterestSelector::Widest);
@@ -385,7 +385,7 @@
 
     <span class="doccomment">/// Add a specific area included in one of our capabilities into the interests.
     ///
-    /// See [`CapSelector`] for how to specifiy the capability to use.
+    /// See [`CapSelector`] for how to specify the capability to use.
     </span><span class="kw">pub fn </span>add_area(
         <span class="kw-2">mut </span><span class="self">self</span>,
         cap: <span class="kw">impl </span>Into&lt;CapSelector&gt;,
