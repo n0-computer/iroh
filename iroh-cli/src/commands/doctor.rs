@@ -30,7 +30,7 @@ use iroh::{
         defaults::DEFAULT_STUN_PORT,
         discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
         dns::default_resolver,
-        endpoint::{self, Connection, ConnectionTypeStream, RecvStream, SendStream},
+        endpoint::{self, Connection, ConnectionTypeStream, NodeInfo, RecvStream, SendStream},
         key::{PublicKey, SecretKey},
         netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
@@ -424,8 +424,8 @@ impl Gui {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())
         };
-        let msg = match endpoint.connection_info(*node_id) {
-            Some(endpoint::ConnectionInfo {
+        let msg = match endpoint.node_info(*node_id) {
+            Some(NodeInfo {
                 relay_url,
                 conn_type,
                 latency,

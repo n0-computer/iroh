@@ -221,9 +221,7 @@ impl NodeState {
             ConnectionType::None => None,
         };
 
-        // .last_control_msg() is deprecated but we need it to populate the deprecated
-        // field.
-        #[allow(deprecated)]
+        #[allow(deprecated)] // last_control field is deprecated
         let addrs = self
             .udp_paths
             .paths
@@ -242,10 +240,7 @@ impl NodeState {
             })
             .collect();
 
-        // id is deprecated, but we need to populate it.
-        #[allow(deprecated)]
         NodeInfo {
-            id: self.id,
             node_id: self.node_id,
             relay_url: self.relay_url.clone().map(|r| r.into()),
             addrs,
@@ -1458,10 +1453,6 @@ pub enum DiscoPingPurpose {
 
 /// The type of control message we have received.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, derive_more::Display)]
-// TODO: This should really be deprecated, but we still use it in other fields and this
-//   becomes impossible.  All fields and functions which return it are already deprecated so
-//   that will do.  Should be removed once those uses are removed.
-//#[deprecated(since = "0.23", note = "internal information")]
 pub enum ControlMsg {
     /// We received a Ping from the node.
     #[display("ping←")]
@@ -1503,9 +1494,7 @@ pub struct DirectAddrInfo {
     /// Note that [`ControlMsg::CallMeMaybe`] is received via a relay path, while
     /// [`ControlMsg::Ping`] and [`ControlMsg::Pong`] are received on the path to
     /// [`DirectAddrInfo::addr`] itself and thus convey very different information.
-    // NOTE(flub): marking this for removal, this information is not used at all internally
-    // and is very weird and heterogeneous, advertising in a call-me-maybe is totally
-    // different from receiving a ping or pong.
+    // TODO: Remove this!  It is a totally useless piece of information.
     #[deprecated(since = "0.23", note = "this is confusing internal information")]
     pub last_control: Option<(Duration, ControlMsg)>,
     /// Elapsed time since the last payload message was received on this network path.
@@ -1564,9 +1553,6 @@ impl From<RelayUrlInfo> for RelayUrl {
 /// by some discovery mechanism.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NodeInfo {
-    /// The id in the node_map.
-    #[deprecated(since = "0.23", note = "this is internal information, use `node_id`")]
-    pub id: usize,
     /// The globally unique public identifier for this node.
     pub node_id: NodeId,
     /// Relay server information, if available.
@@ -1580,7 +1566,7 @@ pub struct NodeInfo {
     pub conn_type: ConnectionType,
     /// The latency of the current network path to the remote node.
     pub latency: Option<Duration>,
-    /// Time elapsed time since last sending to or receiving from the node.
+    /// Time elapsed time since last sending to, or received from the node.
     ///
     /// This is the duration since *any* data was sent or receive from the remote node,
     /// payload or control messsages.  Note that sending to the remote node does not imply
@@ -1591,11 +1577,8 @@ pub struct NodeInfo {
 impl NodeInfo {
     /// Get the duration since the last activity we received from this endpoint
     /// on any of its direct addresses.
-    // TODO: We need to fix this, but in a different PR.
-    #[deprecated(
-        since = "0.23",
-        note = "this does not contain the supposed information"
-    )]
+    // TODO: This does not contain what it claims to contain!  It can not be fixed easily.
+    #[deprecated(since = "0.23", note = "this is broken")]
     pub fn last_received(&self) -> Option<Duration> {
         #[allow(deprecated)]
         self.addrs
@@ -1802,7 +1785,6 @@ mod tests {
         #[allow(deprecated)]
         let mut expect = Vec::from([
             NodeInfo {
-                id: a_endpoint.id,
                 node_id: a_endpoint.node_id,
                 relay_url: None,
                 addrs: Vec::from([DirectAddrInfo {
@@ -1817,7 +1799,6 @@ mod tests {
                 last_used: Some(elapsed),
             },
             NodeInfo {
-                id: b_endpoint.id,
                 node_id: b_endpoint.node_id,
                 relay_url: Some(RelayUrlInfo {
                     relay_url: b_endpoint.relay_url.as_ref().unwrap().0.clone(),
@@ -1830,7 +1811,6 @@ mod tests {
                 last_used: Some(elapsed),
             },
             NodeInfo {
-                id: c_endpoint.id,
                 node_id: c_endpoint.node_id,
                 relay_url: Some(RelayUrlInfo {
                     relay_url: c_endpoint.relay_url.as_ref().unwrap().0.clone(),
@@ -1843,7 +1823,6 @@ mod tests {
                 last_used: Some(elapsed),
             },
             NodeInfo {
-                id: d_endpoint.id,
                 node_id: d_endpoint.node_id,
                 relay_url: Some(RelayUrlInfo {
                     relay_url: d_endpoint.relay_url.as_ref().unwrap().0.clone(),

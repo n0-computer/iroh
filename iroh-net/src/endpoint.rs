@@ -49,16 +49,7 @@ pub use super::magicsock::{
     DirectAddrsStream, NodeInfo,
 };
 
-#[allow(deprecated)]
-pub use super::magicsock::ControlMsg;
-
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
-
-/// Details about a remote iroh-net node which is known to this node.
-///
-/// See [`NodeInfo`] for documentation, which should be used instead.
-#[deprecated(since = "0.23", note = "use `NodeInfo` instead")]
-pub type ConnectionInfo = NodeInfo;
 
 /// The delay to fall back to discovery when direct addresses fail.
 ///
@@ -744,26 +735,6 @@ impl Endpoint {
     /// See also [`Endpoint::node_info`] to only retrieve information about a single node.
     pub fn node_info_iter(&self) -> impl Iterator<Item = NodeInfo> {
         self.msock.node_info_all_nodes().into_iter()
-    }
-
-    /// Returns information about a specific remote node know to this [`Endpoint`].
-    ///
-    /// See [`Endpoint::node_info`] for documentation, which should be preferred as this
-    /// method will be removed in a future release.
-    #[allow(deprecated)] // The return type is also deprecated
-    #[deprecated(since = "0.23", note = "please use `node_info` instead")]
-    pub fn connection_info(&self, node_id: NodeId) -> Option<ConnectionInfo> {
-        self.msock.node_info(node_id)
-    }
-
-    /// Returns information about all the remote nodes this [`Endpoint`] knows about.
-    ///
-    /// See [`Endpoint::iter_node_info`] for documentation, which should be preferred as
-    /// this method will be removed in a future release.
-    #[allow(deprecated)] // The return type is also deprecated
-    #[deprecated(since = "0.23", note = "please use `iter_node_info` instead")]
-    pub fn connection_infos(&self) -> Vec<ConnectionInfo> {
-        self.msock.node_info_all_nodes()
     }
 
     // # Methods for less common getters.

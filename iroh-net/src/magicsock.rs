@@ -80,8 +80,6 @@ pub(crate) use node_map::Source;
 pub(super) use self::timer::Timer;
 
 pub use self::metrics::Metrics;
-#[allow(deprecated)]
-pub use self::node_map::ControlMsg;
 pub use self::node_map::{ConnectionType, ConnectionTypeStream, DirectAddrInfo, NodeInfo};
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically

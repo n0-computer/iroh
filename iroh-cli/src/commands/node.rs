@@ -9,7 +9,7 @@ use comfy_table::{presets::NOTHING, Cell};
 use futures_lite::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
 use iroh::client::Iroh;
-use iroh::net::endpoint::{ConnectionInfo, DirectAddrInfo};
+use iroh::net::endpoint::{DirectAddrInfo, NodeInfo};
 use iroh::net::relay::RelayUrl;
 use iroh::net::{NodeAddr, NodeId};
 
@@ -127,7 +127,7 @@ impl NodeCommands {
 }
 
 async fn fmt_connections(
-    mut infos: impl Stream<Item = Result<ConnectionInfo, anyhow::Error>> + Unpin,
+    mut infos: impl Stream<Item = Result<NodeInfo, anyhow::Error>> + Unpin,
 ) -> String {
     let mut table = Table::new();
     table.load_preset(NOTHING).set_header(
@@ -157,9 +157,8 @@ async fn fmt_connections(
     table.to_string()
 }
 
-fn fmt_connection(info: ConnectionInfo) -> String {
-    let ConnectionInfo {
-        id: _,
+fn fmt_connection(info: NodeInfo) -> String {
+    let NodeInfo {
         node_id,
         relay_url,
         addrs,
@@ -196,6 +195,7 @@ fn fmt_connection(info: ConnectionInfo) -> String {
 }
 
 fn direct_addr_row(info: DirectAddrInfo) -> comfy_table::Row {
+    #[allow(deprecated)]
     let DirectAddrInfo {
         addr,
         latency,
