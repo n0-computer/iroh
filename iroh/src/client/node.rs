@@ -122,23 +122,21 @@ impl Client {
         Ok(res.stats)
     }
 
-    /// Fetches information about currently known connections.
+    /// Fetches information about currently known remote nodes.
     ///
     /// This streams a *current snapshot*. It does not keep the stream open after finishing
     /// transferring the snapshot.
     ///
-    /// See also [`Endpoint::connection_infos`](crate::net::Endpoint::connection_infos).
-    // TODO: Bad bad name.  fix me
-    pub async fn connections(&self) -> Result<impl Stream<Item = Result<NodeInfo>>> {
+    /// See also [`Endpoint::node_info_iter`](crate::net::Endpoint::node_info_iter).
+    pub async fn node_info_iter(&self) -> Result<impl Stream<Item = Result<NodeInfo>>> {
         let stream = self.rpc.server_streaming(AllNodeInfoRequest {}).await?;
         Ok(flatten(stream).map(|res| res.map(|res| res.info)))
     }
 
-    /// Fetches connection information about a connection to another node identified by its [`NodeId`].
+    /// Fetches node information about a remote iroh node identified by its [`NodeId`].
     ///
     /// See also [`Endpoint::connection_info`](crate::net::Endpoint::connection_info).
-    // TODO: Bad bad name.  fix me
-    pub async fn connection_info(&self, node_id: NodeId) -> Result<Option<NodeInfo>> {
+    pub async fn node_info(&self, node_id: NodeId) -> Result<Option<NodeInfo>> {
         let NodeInfoResponse { info: conn_info } =
             self.rpc.rpc(NodeInfoRequest { node_id }).await??;
         Ok(conn_info)

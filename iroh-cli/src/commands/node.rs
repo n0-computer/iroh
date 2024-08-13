@@ -16,10 +16,10 @@ use iroh::net::{NodeAddr, NodeId};
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum NodeCommands {
-    /// Get information about the different connections we have made
-    Connections,
-    /// Get connection information about a particular node
-    ConnectionInfo { node_id: NodeId },
+    /// Get information about the different remote nodes.
+    NodeInfoList,
+    /// Get information about a particular remote node.
+    NodeInfo { node_id: NodeId },
     /// Get status of the running node.
     Status,
     /// Get statistics and metrics from the running node.
@@ -48,8 +48,8 @@ pub enum NodeCommands {
 impl NodeCommands {
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
-            Self::Connections => {
-                let connections = iroh.connections().await?;
+            Self::NodeInfoList => {
+                let connections = iroh.node_info_iter().await?;
                 let timestamp = time::OffsetDateTime::now_utc()
                     .format(&time::format_description::well_known::Rfc2822)
                     .unwrap_or_else(|_| String::from("failed to get current time"));
@@ -61,8 +61,8 @@ impl NodeCommands {
                     fmt_connections(connections).await
                 );
             }
-            Self::ConnectionInfo { node_id } => {
-                let conn_info = iroh.connection_info(node_id).await?;
+            Self::NodeInfo { node_id } => {
+                let conn_info = iroh.node_info(node_id).await?;
                 match conn_info {
                     Some(info) => println!("{}", fmt_connection(info)),
                     None => println!("Not Found"),
