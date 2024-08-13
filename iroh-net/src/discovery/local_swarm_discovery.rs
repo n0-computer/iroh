@@ -127,7 +127,7 @@ impl LocalSwarmDiscovery {
                                 sender.send(Ok(item)).await.ok();
                             }
                         }
-                        trace!(
+                        debug!(
                             ?discovered_node_id,
                             ?peer_info,
                             "adding node to LocalSwarmDiscovery address book"
