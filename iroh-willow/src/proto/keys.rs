@@ -13,6 +13,8 @@ use iroh_base::base32;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
+use super::meadowcap::IsCommunal;
+
 pub const PUBLIC_KEY_LENGTH: usize = ed25519_dalek::PUBLIC_KEY_LENGTH;
 pub const SECRET_KEY_LENGTH: usize = ed25519_dalek::SECRET_KEY_LENGTH;
 pub const SIGNATURE_LENGTH: usize = ed25519_dalek::SIGNATURE_LENGTH;
@@ -45,12 +47,16 @@ macro_rules! bytestring {
     };
 }
 
-/// Returns `true` if the last bit of a byte slice is 1, which defines a communal namespace in this
-/// willow implementation.
-fn is_communal(pubkey_bytes: &[u8; 32]) -> bool {
-    let last = pubkey_bytes.last().expect("pubkey is not empty");
-    // Check if last bit is 1.
-    (*last & 0x1) == 0x1
+impl IsCommunal for NamespaceId {
+    fn is_communal(&self) -> bool {
+        self.as_bytes()[31] == 0
+    }
+}
+
+impl IsCommunal for NamespacePublicKey{
+    fn is_communal(&self) -> bool {
+        self.id().is_communal()
+    }
 }
 
 /// The type of the namespace, either communal or owned.
@@ -121,11 +127,6 @@ pub struct NamespacePublicKey(VerifyingKey);
 bytestring!(NamespacePublicKey, PUBLIC_KEY_LENGTH);
 
 impl NamespacePublicKey {
-    /// Whether this is the key for a communal namespace.
-    pub fn is_communal(&self) -> bool {
-        is_communal(self.as_bytes())
-    }
-
     pub fn kind(&self) -> NamespaceKind {
         if self.is_communal() {
             NamespaceKind::Communal

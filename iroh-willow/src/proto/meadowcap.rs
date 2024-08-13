@@ -15,7 +15,7 @@ pub type NamespaceSignature = keys::NamespaceSignature;
 
 use super::data_model::{Entry, MAX_COMPONENT_COUNT, MAX_COMPONENT_LENGTH, MAX_PATH_LENGTH};
 
-pub use meadowcap::AccessMode;
+pub use meadowcap::{AccessMode, IsCommunal};
 
 #[derive(Debug, derive_more::From)]
 pub enum SecretKey {
@@ -53,12 +53,6 @@ pub type McAuthorisationToken = meadowcap::McAuthorisationToken<
     keys::UserId,
     keys::UserSignature,
 >;
-
-impl meadowcap::IsCommunal for NamespaceId {
-    fn is_communal(&self) -> bool {
-        self.as_bytes()[31] == 0
-    }
-}
 
 pub fn is_authorised_write(entry: &Entry, token: &McAuthorisationToken) -> bool {
     token.is_authorised_write(entry)
