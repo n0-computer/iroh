@@ -30,7 +30,7 @@ use crate::{
     },
     session::{
         resource::{MissingResource, ResourceMap, Scope},
-        Error, 
+        Error,
     },
     util::gen_stream::GenStream,
 };
