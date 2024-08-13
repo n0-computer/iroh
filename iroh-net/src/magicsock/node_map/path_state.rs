@@ -11,8 +11,8 @@ use crate::disco::SendAddr;
 use crate::magicsock::HEARTBEAT_INTERVAL;
 use crate::stun;
 
-use super::node_state::{PongReply, SESSION_ACTIVE_TIMEOUT};
-use super::{ControlMsg, IpPort, PingRole};
+use super::node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT};
+use super::{IpPort, PingRole};
 
 /// The minimum time between pings to an endpoint.
 ///
