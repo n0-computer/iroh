@@ -790,43 +790,14 @@
 <a href="#790" id="790">790</a>
 <a href="#791" id="791">791</a>
 <a href="#792" id="792">792</a>
-<a href="#793" id="793">793</a>
-<a href="#794" id="794">794</a>
-<a href="#795" id="795">795</a>
-<a href="#796" id="796">796</a>
-<a href="#797" id="797">797</a>
-<a href="#798" id="798">798</a>
-<a href="#799" id="799">799</a>
-<a href="#800" id="800">800</a>
-<a href="#801" id="801">801</a>
-<a href="#802" id="802">802</a>
-<a href="#803" id="803">803</a>
-<a href="#804" id="804">804</a>
-<a href="#805" id="805">805</a>
-<a href="#806" id="806">806</a>
-<a href="#807" id="807">807</a>
-<a href="#808" id="808">808</a>
-<a href="#809" id="809">809</a>
-<a href="#810" id="810">810</a>
-<a href="#811" id="811">811</a>
-<a href="#812" id="812">812</a>
-<a href="#813" id="813">813</a>
-<a href="#814" id="814">814</a>
-<a href="#815" id="815">815</a>
-<a href="#816" id="816">816</a>
-<a href="#817" id="817">817</a>
-<a href="#818" id="818">818</a>
-<a href="#819" id="819">819</a>
-<a href="#820" id="820">820</a>
-<a href="#821" id="821">821</a>
-<a href="#822" id="822">822</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_concurrency::future::TryJoin;
 <span class="kw">use </span>futures_util::future::TryFutureExt;
 <span class="kw">use </span>iroh_base::key::NodeId;
-<span class="kw">use </span>iroh_net::endpoint::{Connection, ConnectionError, RecvStream, SendStream, VarInt};
+<span class="kw">use </span>iroh_net::endpoint::{Connection, ConnectionError, ReadError, RecvStream, SendStream, VarInt};
+<span class="kw">use </span>quinn::ReadExactError;
 <span class="kw">use </span>tokio::io::{AsyncReadExt, AsyncWriteExt};
 <span class="kw">use </span>tracing::{debug, trace};
 
@@ -852,14 +823,17 @@
 <span class="doccomment">/// The ALPN protocol name for iroh-willow.
 </span><span class="kw">pub const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"iroh-willow/0"</span>;
 
+<span class="doccomment">/// QUIC application error code for closing with failure.
+</span><span class="kw">pub const </span>ERROR_CODE_FAIL: VarInt = VarInt::from_u32(<span class="number">1</span>);
+
 <span class="doccomment">/// QUIC application error code for graceful connection termination.
-</span><span class="kw">pub const </span>ERROR_CODE_OK: VarInt = VarInt::from_u32(<span class="number">1</span>);
+</span><span class="kw">pub const </span>ERROR_CODE_OK: VarInt = VarInt::from_u32(<span class="number">2</span>);
 
 <span class="doccomment">/// QUIC application error code for closing connections because another connection is preferred.
-</span><span class="kw">pub const </span>ERROR_CODE_DUPLICATE_CONN: VarInt = VarInt::from_u32(<span class="number">2</span>);
+</span><span class="kw">pub const </span>ERROR_CODE_DUPLICATE_CONN: VarInt = VarInt::from_u32(<span class="number">3</span>);
 
 <span class="doccomment">/// QUIC application error code when closing connection because our node is shutting down.
-</span><span class="kw">pub const </span>ERROR_CODE_SHUTDOWN: VarInt = VarInt::from_u32(<span class="number">3</span>);
+</span><span class="kw">pub const </span>ERROR_CODE_SHUTDOWN: VarInt = VarInt::from_u32(<span class="number">4</span>);
 
 <span class="kw">pub const </span>ESTABLISH_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
 <span class="kw">pub const </span>SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
@@ -894,7 +868,7 @@
     our_nonce: AccessChallenge,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(InitialTransmission, ChannelStreams)&gt; {
     <span class="macro">debug!</span>(<span class="question-mark">?</span>our_role, <span class="string">"establishing connection"</span>);
-    <span class="comment">// Run the initial transmission (which works on uni streams) concurrently
+    <span class="comment">// Run the initial transmission (which uses uni streams) concurrently
     // with opening/accepting the bi streams for the channels.
     </span><span class="kw">let </span>fut = (
         initial_transmission(conn, our_nonce),
@@ -943,13 +917,13 @@
         // channel id.
         </span>Role::Alfie =&gt; {
             Channel::all()
-                .map(|ch| {
+                .map(|channel| {
                     <span class="kw">let </span>conn = conn.clone();
                     <span class="kw">async move </span>{
                         <span class="kw">let </span>(<span class="kw-2">mut </span>send, recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
-                        send.write_u8(ch.id()).<span class="kw">await</span><span class="question-mark">?</span>;
-                        <span class="macro">trace!</span>(<span class="question-mark">?</span>ch, <span class="string">"opened bi stream"</span>);
-                        <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, anyhow::Error&gt;((ch, send, recv))
+                        send.write_u8(channel.id()).<span class="kw">await</span><span class="question-mark">?</span>;
+                        <span class="macro">trace!</span>(<span class="question-mark">?</span>channel, <span class="string">"opened bi stream"</span>);
+                        <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, anyhow::Error&gt;((channel, send, recv))
                     }
                 })
                 .try_join()
@@ -965,7 +939,7 @@
                     </span><span class="kw">let </span>channel_id = recv.read_u8().<span class="kw">await</span><span class="question-mark">?</span>;
                     <span class="comment">// trace!("read channel id {channel_id}");
                     </span><span class="kw">let </span>channel = Channel::from_id(channel_id)<span class="question-mark">?</span>;
-                    <span class="macro">trace!</span>(<span class="question-mark">?</span>channel, <span class="string">"accepted bi stream for channel"</span>);
+                    <span class="macro">trace!</span>(<span class="question-mark">?</span>channel, <span class="string">"accepted bi stream"</span>);
                     Result::Ok((channel, send, recv))
                 })
                 .try_join()
@@ -1076,7 +1050,7 @@
     </span>}
     <span class="macro">trace!</span>(<span class="string">"recv: stream close"</span>);
     channel_writer.close();
-    <span class="macro">trace!</span>(<span class="string">"recv: loop close"</span>);
+    <span class="macro">trace!</span>(<span class="string">"recv: done"</span>);
     <span class="prelude-val">Ok</span>(())
 }
 
@@ -1097,103 +1071,73 @@
     <span class="prelude-val">Ok</span>(())
 }
 
-<span class="doccomment">/// Terminate a connection gracefully.
+<span class="doccomment">/// Terminates a connection gracefully.
 ///
-/// QUIC does not allow us to rely on stream terminations, because those only signal
-/// reception in the peer's QUIC stack, not in the application. Closing a QUIC connection
-/// triggers immediate termination, so to make sure that all data was actually processed
-/// by our session, we exchange a single byte over a pair of uni streams. As this is the only
-/// use of uni streams after the initial connection handshake, we do not have to identify the
-/// streams specifically.
+/// This function should be called after all bidirectional streams are terminated (`finish` called
+/// for send streams and `read_to_end` awaited for recv stream) and no further streams will be
+/// opened or accepted by the application.
 ///
-/// This function may only be called once the session processing has fully terminated and all
-/// WGPS streams are closed (for send streams) and read to end (for recv streams) on our side.
+/// It will send a goodbye byte over a newly opened uni channel, and wait for the other peer to
+/// confirm either by sending a goodbye byte as well or closing the connection with
+/// [`ERROR_CODE_OK`], signalling that our goodbye byte was received.
 ///
-/// `we_cancelled` is a boolean indicating whether we are terminating the connection after
-/// we willfully terminated or completed our session. Pass `false` if the session terminated
-/// because the other peer closed their WGPS streams.
+/// We will only close the connection after having received the goodbye byte, or after the other
+/// peer closed the connection.
 ///
-/// If only one peer indicated that they initiated the termination by setting `we_cancelled`
-/// to `true`, this peer will *not* close the connection, but instead wait for the other peer
-/// to close the connection.
-/// If both peers indicated that they initiated the termination, the peer with the higher node id
-/// will close the connection first.
-/// If none of the peers said they closed, which likely is a bug in the implementation, both peers
-/// will close the connection.
+/// This flow guarantees that neither peer will close the connection too early.
 ///
 /// A connection is considered to be closed gracefully if and only if this procedure is run to end
 /// successfully, and if the connection is closed with the expected error code.
 ///
-/// Returns an error if the termination flow was aborted prematurely.
-/// Returns a  [`ConnectionError] if the termination flow was completed successfully, but the connection
-/// was not closed with the expected error code.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>terminate_gracefully(
-    conn: <span class="kw-2">&amp;</span>Connection,
-    me: NodeId,
-    peer: NodeId,
-    we_cancelled: bool,
-) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;ConnectionError&gt;&gt; {
-    <span class="macro">trace!</span>(<span class="question-mark">?</span>we_cancelled, <span class="string">"terminating connection"</span>);
-    <span class="kw">let </span>send = <span class="kw">async </span>{
-        <span class="kw">let </span><span class="kw-2">mut </span>send_stream = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>data = <span class="kw">if </span>we_cancelled { <span class="number">1u8 </span>} <span class="kw">else </span>{ <span class="number">0u8 </span>};
-        send_stream.write_u8(data).<span class="kw">await</span><span class="question-mark">?</span>;
-        send_stream.finish().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
-    };
-
-    <span class="kw">let </span>recv = <span class="kw">async </span>{
-        <span class="kw">let </span><span class="kw-2">mut </span>recv_stream = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>data = recv_stream.read_u8().<span class="kw">await</span><span class="question-mark">?</span>;
-        recv_stream.read_to_end(<span class="number">0</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>they_cancelled = <span class="kw">match </span>data {
-            <span class="number">0 </span>=&gt; <span class="bool-val">false</span>,
-            <span class="number">1 </span>=&gt; <span class="bool-val">true</span>,
-            <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"received unexpected closing byte from peer"</span>)),
-        };
-        <span class="prelude-val">Ok</span>(they_cancelled)
-    };
-
-    <span class="kw">let </span>send_and_recv = (send, recv).try_join();
-    <span class="kw">let </span>(<span class="kw">_</span>, they_cancelled) = tokio::time::timeout(SHUTDOWN_TIMEOUT, send_and_recv).<span class="kw">await</span><span class="question-mark">??</span>;
-
-    <span class="attr">#[derive(Debug)]
-    </span><span class="kw">enum </span>WhoCancelled {
-        WeDid,
-        TheyDid,
-        BothDid,
-        NoneDid,
-    }
-
-    <span class="kw">let </span>who_cancelled = <span class="kw">match </span>(we_cancelled, they_cancelled) {
-        (<span class="bool-val">true</span>, <span class="bool-val">false</span>) =&gt; WhoCancelled::WeDid,
-        (<span class="bool-val">false</span>, <span class="bool-val">true</span>) =&gt; WhoCancelled::TheyDid,
-        (<span class="bool-val">true</span>, <span class="bool-val">true</span>) =&gt; WhoCancelled::BothDid,
-        (<span class="bool-val">false</span>, <span class="bool-val">false</span>) =&gt; WhoCancelled::NoneDid,
-    };
-
-    <span class="kw">let </span>we_close_first = <span class="kw">match </span>who_cancelled {
-        WhoCancelled::WeDid =&gt; <span class="bool-val">false</span>,
-        WhoCancelled::TheyDid =&gt; <span class="bool-val">true</span>,
-        WhoCancelled::BothDid =&gt; me &gt; peer,
-        WhoCancelled::NoneDid =&gt; <span class="bool-val">true</span>,
-    };
-    <span class="macro">debug!</span>(<span class="question-mark">?</span>who_cancelled, <span class="string">"connection complete"</span>);
-    <span class="kw">if </span>we_close_first {
-        conn.close(ERROR_CODE_OK, <span class="string">b"bye"</span>);
-    }
-    <span class="kw">let </span>reason = conn.closed().<span class="kw">await</span>;
-    <span class="kw">let </span>is_graceful = <span class="kw">match </span><span class="kw-2">&amp;</span>reason {
-        ConnectionError::LocallyClosed <span class="kw">if </span>we_close_first =&gt; <span class="bool-val">true</span>,
-        ConnectionError::ApplicationClosed(frame) <span class="kw">if </span>frame.error_code == ERROR_CODE_OK =&gt; {
-            !we_close_first || <span class="macro">matches!</span>(who_cancelled, WhoCancelled::NoneDid)
+/// Returns an error if the termination flow was aborted prematurely or if the connection was not
+/// closed with the expected error code.
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>terminate_gracefully(conn: <span class="kw-2">&amp;</span>Connection) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="macro">trace!</span>(<span class="string">"terminating connection"</span>);
+    <span class="comment">// Send a single byte on a newly opened uni stream.
+    </span><span class="kw">let </span><span class="kw-2">mut </span>send_stream = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+    send_stream.write_u8(<span class="number">1</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+    send_stream.finish().<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="comment">// Wait until we either receive the goodbye byte from the other peer, or for the other peer
+    // to close the connection with the expected error code.
+    </span><span class="kw">match </span>wait_for_goodbye_or_graceful_close(conn).<span class="kw">await </span>{
+        <span class="prelude-val">Ok</span>(()) =&gt; {
+            conn.close(ERROR_CODE_OK, <span class="string">b"bye"</span>);
+            <span class="macro">trace!</span>(<span class="string">"connection terminated gracefully"</span>);
+            <span class="prelude-val">Ok</span>(())
         }
-        <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
+        <span class="prelude-val">Err</span>(err) =&gt; {
+            conn.close(ERROR_CODE_FAIL, <span class="string">b"failed-while-closing"</span>);
+            <span class="macro">trace!</span>(<span class="question-mark">?</span>err, <span class="string">"connection failed while terminating"</span>);
+            <span class="prelude-val">Err</span>(err)
+        }
+    }
+}
+
+<span class="kw">async fn </span>wait_for_goodbye_or_graceful_close(conn: <span class="kw-2">&amp;</span>Connection) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">let </span><span class="kw-2">mut </span>recv_stream = <span class="kw">match </span>conn.accept_uni().<span class="kw">await </span>{
+        <span class="comment">// The other peer closed the connection with the expected error code: They received our
+        // goodbye byte after having sent theirs. We're free to close the connection.
+        </span><span class="prelude-val">Err</span>(ConnectionError::ApplicationClosed(frame)) <span class="kw">if </span>frame.error_code == ERROR_CODE_OK =&gt; {
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(())
+        }
+        <span class="comment">// The peer closed the connection with an unexpected error coe.
+        </span><span class="prelude-val">Err</span>(err) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(err.into()),
+        <span class="prelude-val">Ok</span>(stream) =&gt; stream,
     };
-    <span class="kw">if </span>!is_graceful {
-        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(reason))
-    } <span class="kw">else </span>{
-        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
+    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>];
+    <span class="kw">match </span>recv_stream.read_exact(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await </span>{
+        <span class="comment">// We received the goodbye byte: the other peer signals having read everything, we're freee
+        // to close the connection.
+        </span><span class="prelude-val">Ok</span>(()) <span class="kw">if </span>buf == [<span class="number">1u8</span>] =&gt; <span class="prelude-val">Ok</span>(()),
+        <span class="comment">// The other peer closed the connection with the expected error code: They received our
+        // goodbye byte after having sent theirs. We're free to close the connection.
+        </span><span class="prelude-val">Err</span>(ReadExactError::ReadError(ReadError::ConnectionLost(
+            ConnectionError::ApplicationClosed(frame),
+        ))) <span class="kw">if </span>frame.error_code == ERROR_CODE_OK =&gt; <span class="prelude-val">Ok</span>(()),
+        <span class="comment">// The peer has sent invalid data on the goodbye stream.
+        </span><span class="prelude-val">Ok</span>(()) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"received unexpected closing byte from peer"</span>)),
+        <span class="comment">// The peer closed the connection with an unexpected error coe.
+        </span><span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err.into()),
     }
 }
 
@@ -1374,8 +1318,8 @@
 
         <span class="macro">info!</span>(time=<span class="question-mark">?</span>start.elapsed(), <span class="string">"reconciliation finished"</span>);
 
-        <span class="kw">let </span>(senders_alfie, alfie_cancelled) = res_alfie.unwrap();
-        <span class="kw">let </span>(senders_betty, betty_cancelled) = res_betty.unwrap();
+        <span class="kw">let </span>(senders_alfie, _alfie_cancelled) = res_alfie.unwrap();
+        <span class="kw">let </span>(senders_betty, _betty_cancelled) = res_betty.unwrap();
         senders_alfie.close_all();
         senders_betty.close_all();
 
@@ -1384,13 +1328,11 @@
         r1.unwrap();
         r2.unwrap();
 
-        <span class="kw">let </span>(error_alfie, error_betty) = <span class="macro">tokio::try_join!</span>(
-            terminate_gracefully(<span class="kw-2">&amp;</span>conn_alfie, node_id_alfie, node_id_betty, alfie_cancelled),
-            terminate_gracefully(<span class="kw-2">&amp;</span>conn_betty, node_id_betty, node_id_alfie, betty_cancelled),
+        <span class="macro">tokio::try_join!</span>(
+            terminate_gracefully(<span class="kw-2">&amp;</span>conn_alfie),
+            terminate_gracefully(<span class="kw-2">&amp;</span>conn_betty),
         )
         .expect(<span class="string">"failed to close both connections gracefully"</span>);
-        <span class="macro">assert_eq!</span>(error_alfie, <span class="prelude-val">None</span>);
-        <span class="macro">assert_eq!</span>(error_betty, <span class="prelude-val">None</span>);
 
         <span class="kw">let </span>alfie_entries = get_entries(<span class="kw-2">&amp;</span>handle_alfie, namespace_id).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>betty_entries = get_entries(<span class="kw-2">&amp;</span>handle_betty, namespace_id).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1530,14 +1472,14 @@
         </span>tokio::time::sleep(Duration::from_secs(<span class="number">1</span>)).<span class="kw">await</span>;
 
         session_alfie.close();
-        <span class="kw">let </span>(senders_alfie, alfie_cancelled) = session_alfie
+        <span class="kw">let </span>(senders_alfie, _alfie_cancelled) = session_alfie
             .complete()
             .<span class="kw">await
             </span>.expect(<span class="string">"failed to close alfie session"</span>);
         <span class="macro">info!</span>(<span class="string">"close alfie session"</span>);
         senders_alfie.close_all();
 
-        <span class="kw">let </span>(senders_betty, betty_cancelled) = session_betty
+        <span class="kw">let </span>(senders_betty, _betty_cancelled) = session_betty
             .complete()
             .<span class="kw">await
             </span>.expect(<span class="string">"failed to close alfie session"</span>);
@@ -1558,13 +1500,11 @@
         <span class="macro">assert!</span>(res_alfie.is_ok());
         <span class="macro">assert!</span>(res_betty.is_ok());
 
-        <span class="kw">let </span>(error_alfie, error_betty) = <span class="macro">tokio::try_join!</span>(
-            terminate_gracefully(<span class="kw-2">&amp;</span>conn_alfie, node_id_alfie, node_id_betty, alfie_cancelled),
-            terminate_gracefully(<span class="kw-2">&amp;</span>conn_betty, node_id_betty, node_id_alfie, betty_cancelled),
+        <span class="macro">tokio::try_join!</span>(
+            terminate_gracefully(<span class="kw-2">&amp;</span>conn_alfie),
+            terminate_gracefully(<span class="kw-2">&amp;</span>conn_betty),
         )
         .expect(<span class="string">"failed to close both connections gracefully"</span>);
-        <span class="macro">assert_eq!</span>(error_alfie, <span class="prelude-val">None</span>);
-        <span class="macro">assert_eq!</span>(error_betty, <span class="prelude-val">None</span>);
 
         <span class="macro">info!</span>(<span class="string">"alfie session res {:?}"</span>, res_alfie);
         <span class="macro">info!</span>(<span class="string">"betty session res {:?}"</span>, res_betty);
