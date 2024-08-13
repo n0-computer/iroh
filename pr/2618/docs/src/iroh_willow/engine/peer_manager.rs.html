@@ -1112,8 +1112,8 @@
                 senders,
                 remaining_intents,
                 <span class="kw-2">mut </span>update_receiver,
-                we_cancelled: <span class="kw">_
-            </span>} =&gt; {
+                we_cancelled: <span class="kw">_</span>,
+            } =&gt; {
                 <span class="macro">trace!</span>(error=<span class="question-mark">?</span>result.err(), <span class="question-mark">?</span>remaining_intents, <span class="string">"session complete"</span>);
 
                 <span class="comment">// Close the channel senders. This will cause our send loops to close,
