@@ -23,8 +23,8 @@ use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::node::{
-    AddAddrRequest, AddrRequest, ConnectionInfoRequest, ConnectionInfoResponse, ConnectionsRequest,
-    CounterStats, IdRequest, RelayRequest, ShutdownRequest, StatsRequest, StatusRequest,
+    AddAddrRequest, AddrRequest, AllNodeInfoRequest, CounterStats, IdRequest, NodeInfoRequest,
+    NodeInfoResponse, RelayRequest, ShutdownRequest, StatsRequest, StatusRequest,
 };
 
 use super::{flatten, RpcClient};
@@ -130,8 +130,8 @@ impl Client {
     /// See also [`Endpoint::connection_infos`](crate::net::Endpoint::connection_infos).
     // TODO: Bad bad name.  fix me
     pub async fn connections(&self) -> Result<impl Stream<Item = Result<NodeInfo>>> {
-        let stream = self.rpc.server_streaming(ConnectionsRequest {}).await?;
-        Ok(flatten(stream).map(|res| res.map(|res| res.conn_info)))
+        let stream = self.rpc.server_streaming(AllNodeInfoRequest {}).await?;
+        Ok(flatten(stream).map(|res| res.map(|res| res.info)))
     }
 
     /// Fetches connection information about a connection to another node identified by its [`NodeId`].
@@ -139,8 +139,8 @@ impl Client {
     /// See also [`Endpoint::connection_info`](crate::net::Endpoint::connection_info).
     // TODO: Bad bad name.  fix me
     pub async fn connection_info(&self, node_id: NodeId) -> Result<Option<NodeInfo>> {
-        let ConnectionInfoResponse { conn_info } =
-            self.rpc.rpc(ConnectionInfoRequest { node_id }).await??;
+        let NodeInfoResponse { info: conn_info } =
+            self.rpc.rpc(NodeInfoRequest { node_id }).await??;
         Ok(conn_info)
     }
 

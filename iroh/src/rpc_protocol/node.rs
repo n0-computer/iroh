@@ -29,10 +29,10 @@ pub enum Request {
     Stats(StatsRequest),
     #[rpc(response = ())]
     Shutdown(ShutdownRequest),
-    #[server_streaming(response = RpcResult<ConnectionsResponse>)]
-    Connections(ConnectionsRequest),
-    #[rpc(response = RpcResult<ConnectionInfoResponse>)]
-    ConnectionInfo(ConnectionInfoRequest),
+    #[server_streaming(response = RpcResult<AllNodeInfoResponse>)]
+    Connections(AllNodeInfoRequest),
+    #[rpc(response = RpcResult<NodeInfoResponse>)]
+    ConnectionInfo(NodeInfoRequest),
     #[server_streaming(response = WatchResponse)]
     Watch(NodeWatchRequest),
 }
@@ -46,38 +46,39 @@ pub enum Response {
     Addr(RpcResult<NodeAddr>),
     Relay(RpcResult<Option<RelayUrl>>),
     Stats(RpcResult<StatsResponse>),
-    Connections(RpcResult<ConnectionsResponse>),
-    ConnectionInfo(RpcResult<ConnectionInfoResponse>),
+    Connections(RpcResult<AllNodeInfoResponse>),
+    ConnectionInfo(RpcResult<NodeInfoResponse>),
     Shutdown(()),
     Watch(WatchResponse),
 }
 
-/// List connection information about all the nodes we know about
+/// List network path information about all the remote nodes know by this node.
 ///
-/// These can be nodes that we have explicitly connected to or nodes
-/// that have initiated connections to us.
+/// There may never have been connections to these nodes, and connections may not even be
+/// possible.  As well due to connections nodes can become known due to discovery mechanims
+/// or be added manually.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConnectionsRequest;
+pub struct AllNodeInfoRequest;
 
 /// A response to a connections request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConnectionsResponse {
+pub struct AllNodeInfoResponse {
     /// Information about a connection
-    pub conn_info: ConnectionInfo,
+    pub info: NodeInfo,
 }
 
 /// Get connection information about a specific node
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConnectionInfoRequest {
+pub struct NodeInfoRequest {
     /// The node identifier
     pub node_id: PublicKey,
 }
 
 /// A response to a connection request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConnectionInfoResponse {
+pub struct NodeInfoResponse {
     /// Information about a connection to a node
-    pub conn_info: Option<ConnectionInfo>,
+    pub info: Option<NodeInfo>,
 }
 
 /// A request to shutdown the node

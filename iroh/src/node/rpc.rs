@@ -55,9 +55,9 @@ use crate::rpc_protocol::{
     },
     gossip, node,
     node::{
-        AddAddrRequest, AddrRequest, ConnectionInfoRequest, ConnectionInfoResponse,
-        ConnectionsRequest, ConnectionsResponse, IdRequest, NodeWatchRequest, RelayRequest,
-        ShutdownRequest, StatsRequest, StatsResponse, StatusRequest, WatchResponse,
+        AddAddrRequest, AddrRequest, AllNodeInfoRequest, AllNodeInfoResponse, IdRequest,
+        NodeInfoRequest, NodeInfoResponse, NodeWatchRequest, RelayRequest, ShutdownRequest,
+        StatsRequest, StatsResponse, StatusRequest, WatchResponse,
     },
     tags,
     tags::{DeleteRequest as TagDeleteRequest, ListRequest as ListTagsRequest},
@@ -150,11 +150,8 @@ impl<D: BaoStore> Handler<D> {
             Relay(msg) => chan.rpc(msg, self, Self::node_relay).await,
             Shutdown(msg) => chan.rpc(msg, self, Self::node_shutdown).await,
             Stats(msg) => chan.rpc(msg, self, Self::node_stats).await,
-            Connections(msg) => {
-                chan.server_streaming(msg, self, Self::node_connections)
-                    .await
-            }
-            ConnectionInfo(msg) => chan.rpc(msg, self, Self::node_connection_info).await,
+            Connections(msg) => chan.server_streaming(msg, self, Self::all_node_info).await,
+            ConnectionInfo(msg) => chan.rpc(msg, self, Self::node_info).await,
             AddAddr(msg) => chan.rpc(msg, self, Self::node_add_addr).await,
         }
     }
@@ -1054,17 +1051,19 @@ impl<D: BaoStore> Handler<D> {
         rx
     }
 
-    fn node_connections(
+    fn all_node_info(
         self,
-        _: ConnectionsRequest,
-    ) -> impl Stream<Item = RpcResult<ConnectionsResponse>> + Send + 'static {
+        _: AllNodeInfoRequest,
+    ) -> impl Stream<Item = RpcResult<AllNodeInfoResponse>> + Send + 'static {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = async_channel::bounded(32);
-        let mut conn_infos = self.inner.endpoint.connection_infos();
-        conn_infos.sort_by_key(|n| n.node_id.to_string());
+        let mut node_infos: Vec<_> = self.inner.endpoint.node_info_iter().collect();
+        node_infos.sort_by_key(|n| n.node_id.to_string());
         self.local_pool_handle().spawn_detached(|| async move {
-            for conn_info in conn_infos {
-                tx.send(Ok(ConnectionsResponse { conn_info })).await.ok();
+            for conn_info in node_infos {
+                tx.send(Ok(AllNodeInfoResponse { info: conn_info }))
+                    .await
+                    .ok();
             }
         });
         rx
@@ -1072,13 +1071,10 @@ impl<D: BaoStore> Handler<D> {
 
     // This method is called as an RPC method, which have to be async
     #[allow(clippy::unused_async)]
-    async fn node_connection_info(
-        self,
-        req: ConnectionInfoRequest,
-    ) -> RpcResult<ConnectionInfoResponse> {
-        let ConnectionInfoRequest { node_id } = req;
-        let conn_info = self.inner.endpoint.connection_info(node_id);
-        Ok(ConnectionInfoResponse { conn_info })
+    async fn node_info(self, req: NodeInfoRequest) -> RpcResult<NodeInfoResponse> {
+        let NodeInfoRequest { node_id } = req;
+        let node_info = self.inner.endpoint.node_info(node_id);
+        Ok(NodeInfoResponse { info: node_info })
     }
 
     // This method is called as an RPC method, which have to be async

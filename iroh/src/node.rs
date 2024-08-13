@@ -563,8 +563,7 @@ async fn handle_connection(
 }
 
 fn node_addresses_for_storage(ep: &Endpoint) -> Vec<NodeAddr> {
-    ep.connection_infos()
-        .into_iter()
+    ep.node_info_iter()
         .filter_map(node_address_for_storage)
         .collect()
 }
