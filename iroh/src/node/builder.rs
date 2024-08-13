@@ -507,35 +507,29 @@ where
             let discovery: Option<Box<dyn Discovery>> = match self.node_discovery {
                 DiscoveryConfig::None => None,
                 DiscoveryConfig::Custom(discovery) => Some(discovery),
+                #[cfg(not(test))]
                 DiscoveryConfig::Default => {
-                    #[cfg(not(test))]
-                    let discovery = {
-                        let mut discovery_services: Vec<Box<dyn Discovery>> = vec![
-                            // Enable DNS discovery by default
-                            Box::new(DnsDiscovery::n0_dns()),
-                            // Enable pkarr publishing by default
-                            Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
-                        ];
-                        // Enable local swarm discovery by default, but fail silently if it errors
-                        match LocalSwarmDiscovery::new(self.secret_key.public()) {
-                            Err(e) => {
-                                tracing::error!("unable to start LocalSwarmDiscoveryService: {e:?}")
-                            }
-                            Ok(service) => {
-                                discovery_services.push(Box::new(service));
-                            }
-                        }
-                        ConcurrentDiscovery::from_services(discovery_services)
-                    };
-                    #[cfg(test)]
-                    let discovery = ConcurrentDiscovery::from_services(vec![
+                    let mut discovery_services: Vec<Box<dyn Discovery>> = vec![
                         // Enable DNS discovery by default
                         Box::new(DnsDiscovery::n0_dns()),
                         // Enable pkarr publishing by default
                         Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
-                    ]);
-                    Some(Box::new(discovery))
+                    ];
+                    // Enable local swarm discovery by default, but fail silently if it errors
+                    match LocalSwarmDiscovery::new(self.secret_key.public()) {
+                        Err(e) => {
+                            tracing::error!("unable to start LocalSwarmDiscoveryService: {e:?}")
+                        }
+                        Ok(service) => {
+                            discovery_services.push(Box::new(service));
+                        }
+                    }
+                    Some(Box::new(ConcurrentDiscovery::from_services(
+                        discovery_services,
+                    )))
                 }
+                #[cfg(test)]
+                DiscoveryConfig::Default => None,
             };
 
             let endpoint = Endpoint::builder()
