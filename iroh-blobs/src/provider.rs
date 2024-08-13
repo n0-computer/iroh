@@ -59,7 +59,10 @@ pub enum Event {
         /// The number of blobs in the sequence.
         num_blobs: u64,
     },
-    /// A sequence of hashes has been found and is being transferred.
+    /// A chunk of a blob was transferred.
+    ///
+    /// These events will be sent with try_send, so you can not assume that you
+    /// will receive all of them.
     TransferProgress {
         /// An unique connection id.
         connection_id: u64,
@@ -67,8 +70,8 @@ pub enum Event {
         request_id: u64,
         /// The hash for which we are transferring data.
         hash: Hash,
-        /// Offset
-        offset: u64,
+        /// Offset up to which we have transferred data.
+        end_offset: u64,
     },
     /// A blob in a sequence was transferred.
     TransferBlobCompleted {
@@ -216,11 +219,11 @@ pub async fn transfer_collection<D: Map>(
         None
     };
 
-    let mk_progress = |offset| Event::TransferProgress {
+    let mk_progress = |end_offset| Event::TransferProgress {
         connection_id,
         request_id,
         hash,
-        offset,
+        end_offset,
     };
 
     let mut prev = 0;
@@ -232,7 +235,7 @@ pub async fn transfer_collection<D: Map>(
             // wrap the data reader in a tracking reader so we can get some stats for reading
             let mut tracking_reader = TrackingSliceReader::new(&mut data);
             let mut sending_reader =
-                SendingSliceReader::new(&mut tracking_reader, events.clone(), mk_progress);
+                SendingSliceReader::new(&mut tracking_reader, &events, mk_progress);
             // send the root
             tw.write(outboard.tree().size().to_le_bytes().as_slice())
                 .await?;
@@ -289,14 +292,14 @@ pub async fn transfer_collection<D: Map>(
     Ok(SentStatus::Sent)
 }
 
-struct SendingSliceReader<R, F> {
+struct SendingSliceReader<'a, R, F> {
     inner: R,
-    sender: EventSender,
+    sender: &'a EventSender,
     make_event: F,
 }
 
-impl<R: AsyncSliceReader, F: Fn(u64) -> Event> SendingSliceReader<R, F> {
-    fn new(inner: R, sender: EventSender, make_event: F) -> Self {
+impl<'a, R: AsyncSliceReader, F: Fn(u64) -> Event> SendingSliceReader<'a, R, F> {
+    fn new(inner: R, sender: &'a EventSender, make_event: F) -> Self {
         Self {
             inner,
             sender,
@@ -305,10 +308,16 @@ impl<R: AsyncSliceReader, F: Fn(u64) -> Event> SendingSliceReader<R, F> {
     }
 }
 
-impl<R: AsyncSliceReader, F: Fn(u64) -> Event> AsyncSliceReader for SendingSliceReader<R, F> {
+impl<'a, R: AsyncSliceReader, F: Fn(u64) -> Event> AsyncSliceReader
+    for SendingSliceReader<'a, R, F>
+{
     async fn read_at(&mut self, offset: u64, len: usize) -> std::io::Result<bytes::Bytes> {
-        self.sender.try_send(|| (self.make_event)(offset));
-        self.inner.read_at(offset, len).await
+        let res = self.inner.read_at(offset, len).await;
+        if let Ok(res) = res.as_ref() {
+            let end_offset = offset + res.len() as u64;
+            self.sender.try_send(|| (self.make_event)(end_offset));
+        }
+        res
     }
 
     async fn size(&mut self) -> std::io::Result<u64> {
@@ -583,7 +592,8 @@ pub async fn send_blob<D: Map, W: AsyncStreamWriter>(
             let outboard = entry.outboard().await?;
             let size = outboard.tree().size();
             let mut file_reader = TrackingSliceReader::new(entry.data_reader().await?);
-            let mut sending_reader = SendingSliceReader::new(&mut file_reader, events, mk_progress);
+            let mut sending_reader =
+                SendingSliceReader::new(&mut file_reader, &events, mk_progress);
             writer.write(size.to_le_bytes().as_slice()).await?;
             encode_ranges_validated(
                 &mut sending_reader,
