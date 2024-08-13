@@ -1,3 +1,5 @@
+//! Engine for driving a willow store and synchronisation sessions.
+
 use anyhow::Result;
 use iroh_net::{endpoint::Connection, util::SharedAbortingJoinHandle, Endpoint, NodeId};
 use tokio::sync::{mpsc, oneshot};
@@ -16,7 +18,7 @@ mod peer_manager;
 
 use self::peer_manager::PeerManager;
 
-pub(crate) use self::actor::ActorHandle;
+pub use self::actor::ActorHandle;
 pub use self::peer_manager::AcceptOpts;
 
 const PEER_MANAGER_INBOX_CAP: usize = 128;
