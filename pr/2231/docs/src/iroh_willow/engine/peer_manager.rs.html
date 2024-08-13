@@ -745,6 +745,7 @@
 <a href="#745" id="745">745</a>
 <a href="#746" id="746">746</a>
 <a href="#747" id="747">747</a>
+<a href="#748" id="748">748</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
@@ -767,14 +768,15 @@
 <span class="kw">use </span>tracing::{debug, error_span, instrument, trace, warn, Instrument, Span};
 
 <span class="kw">use crate</span>::{
+    interest::Interests,
     net::{
         establish, prepare_channels, terminate_gracefully, ChannelStreams, ConnHandle, ALPN,
-        ERROR_CODE_DUPLICATE_CONN, ERROR_CODE_SHUTDOWN,
+        ERROR_CODE_DUPLICATE_CONN, ERROR_CODE_FAIL, ERROR_CODE_SHUTDOWN,
     },
-    proto::sync::{AccessChallenge, InitialTransmission},
+    proto::wgps::AccessChallenge,
     session::{
         intents::{EventKind, Intent},
-        Error, Interests, Role, SessionEvent, SessionHandle, SessionInit, SessionUpdate,
+        Error, InitialTransmission, Role, SessionEvent, SessionHandle, SessionInit, SessionUpdate,
     },
 };
 
@@ -1033,7 +1035,7 @@
                     channel_streams,
                 })
             };
-            <span class="kw">let </span>abort_handle = spawn_conn_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn_tasks, <span class="kw-2">&amp;</span>peer_info, fut);
+            <span class="kw">let </span>abort_handle = spawn_conn_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn_tasks, peer_info, fut);
             peer_info.abort_handle = <span class="prelude-val">Some</span>(abort_handle);
         }
     }
@@ -1076,7 +1078,7 @@
                         channel_streams,
                     })
                 };
-                <span class="kw">let </span>abort_handle = spawn_conn_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn_tasks, <span class="kw-2">&amp;</span>peer_info, fut);
+                <span class="kw">let </span>abort_handle = spawn_conn_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn_tasks, peer_info, fut);
                 peer_info.abort_handle = <span class="prelude-val">Some</span>(abort_handle);
                 peer_info.state = PeerState::Pending {
                     intents: <span class="macro">vec!</span>[intent],
@@ -1112,7 +1114,7 @@
                 senders,
                 remaining_intents,
                 <span class="kw-2">mut </span>update_receiver,
-                we_cancelled: <span class="kw">_</span>,
+                ..
             } =&gt; {
                 <span class="macro">trace!</span>(error=<span class="question-mark">?</span>result.err(), <span class="question-mark">?</span>remaining_intents, <span class="string">"session complete"</span>);
 
@@ -1141,7 +1143,7 @@
                     old_intents: remaining_intents,
                     new_intents,
                 };
-                <span class="macro">debug!</span>(<span class="string">"entering closing state"</span>);
+                <span class="macro">trace!</span>(<span class="string">"entering closing state"</span>);
             }
         }
     }
@@ -1235,6 +1237,7 @@
                     <span class="kw-2">ref mut </span>intents, ..
                 } = <span class="kw-2">&amp;mut </span>peer_info.state
                 <span class="kw">else </span>{
+                    conn.close(ERROR_CODE_FAIL, <span class="string">b"invalid-state"</span>);
                     drop(conn);
                     <span class="comment">// TODO: unreachable?
                     </span><span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(
@@ -1272,7 +1275,7 @@
                 <span class="kw">let </span>session_handle = <span class="self">self</span>.actor.init_session(conn_handle, intents).<span class="kw">await</span><span class="question-mark">?</span>;
 
                 <span class="kw">let </span>fut = fut.map_ok(<span class="kw">move </span>|()| ConnStep::Done { conn });
-                <span class="kw">let </span>abort_handle = spawn_conn_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn_tasks, <span class="kw-2">&amp;</span>peer_info, fut);
+                <span class="kw">let </span>abort_handle = spawn_conn_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn_tasks, peer_info, fut);
 
                 <span class="kw">let </span>SessionHandle {
                     cancel_token,
@@ -1292,18 +1295,19 @@
                 <span class="macro">trace!</span>(<span class="string">"connection loop finished"</span>);
                 <span class="kw">let </span>fut = <span class="kw">async move </span>{
                     terminate_gracefully(<span class="kw-2">&amp;</span>conn).<span class="kw">await</span><span class="question-mark">?</span>;
-                    <span class="prelude-val">Ok</span>(ConnStep::Closed { conn })
+                    <span class="comment">// The connection is fully closed.
+                    </span>drop(conn);
+                    <span class="prelude-val">Ok</span>(ConnStep::Closed)
                 };
-                <span class="kw">let </span>abort_handle = spawn_conn_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn_tasks, <span class="kw-2">&amp;</span>peer_info, fut);
+                <span class="kw">let </span>abort_handle = spawn_conn_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn_tasks, peer_info, fut);
                 <span class="kw">if let </span>PeerState::Closing { .. } = <span class="kw-2">&amp;</span>peer_info.state {
                     peer_info.abort_handle = <span class="prelude-val">Some</span>(abort_handle);
                 } <span class="kw">else </span>{
                     <span class="comment">// TODO: What do we do with the closing abort handle in case we have a new connection already?
                 </span>}
             }
-            <span class="prelude-val">Ok</span>(ConnStep::Closed { conn }) =&gt; {
+            <span class="prelude-val">Ok</span>(ConnStep::Closed) =&gt; {
                 <span class="macro">debug!</span>(<span class="string">"connection closed gracefully"</span>);
-                drop(conn);
                 <span class="kw">let </span>peer_info = <span class="self">self</span>.peers.remove(<span class="kw-2">&amp;</span>peer).expect(<span class="string">"just checked"</span>);
                 <span class="kw">if let </span>PeerState::Closing {
                     new_intents,
@@ -1411,9 +1415,7 @@
     Done {
         conn: Connection,
     },
-    Closed {
-        conn: Connection,
-    },
+    Closed,
 }
 
 <span class="doccomment">/// The internal handlers for the [`AcceptOpts].

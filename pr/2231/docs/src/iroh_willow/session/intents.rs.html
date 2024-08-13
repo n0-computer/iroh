@@ -594,7 +594,39 @@
 <a href="#594" id="594">594</a>
 <a href="#595" id="595">595</a>
 <a href="#596" id="596">596</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#597" id="597">597</a>
+<a href="#598" id="598">598</a>
+<a href="#599" id="599">599</a>
+<a href="#600" id="600">600</a>
+<a href="#601" id="601">601</a>
+<a href="#602" id="602">602</a>
+<a href="#603" id="603">603</a>
+<a href="#604" id="604">604</a>
+<a href="#605" id="605">605</a>
+<a href="#606" id="606">606</a>
+<a href="#607" id="607">607</a>
+<a href="#608" id="608">608</a>
+<a href="#609" id="609">609</a>
+<a href="#610" id="610">610</a>
+<a href="#611" id="611">611</a>
+<a href="#612" id="612">612</a>
+<a href="#613" id="613">613</a>
+<a href="#614" id="614">614</a>
+<a href="#615" id="615">615</a>
+<a href="#616" id="616">616</a>
+<a href="#617" id="617">617</a>
+<a href="#618" id="618">618</a>
+<a href="#619" id="619">619</a>
+<a href="#620" id="620">620</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! Intents are handles onto a Willow synchronisation session.
+//!
+//! They are created with [`crate::Engine::sync_with_peer`].
+//!
+//! An intent receives events from the session, and can submit new interests to be synchronized.
+//!
+//! Once all intents for a peer are complete, the session is closed.
+
+</span><span class="kw">use </span>std::{
     collections::{HashMap, HashSet, VecDeque},
     future::Future,
     pin::Pin,
@@ -613,13 +645,13 @@
 <span class="kw">use </span>tracing::{debug, trace, warn};
 
 <span class="kw">use crate</span>::{
-    auth::{Auth, InterestMap},
+    interest::{InterestMap, Interests},
     proto::{
         grouping::{Area, AreaOfInterest},
         keys::NamespaceId,
     },
-    session::{error::ChannelReceiverDropped, Error, Interests, SessionInit, SessionMode},
-    store::traits::Storage,
+    session::{error::ChannelReceiverDropped, Error, SessionInit, SessionMode},
+    store::{auth::Auth, traits::Storage},
     util::gen_stream::GenStream,
 };
 
@@ -633,28 +665,31 @@
 <span class="kw">type </span>Sender&lt;T&gt; = mpsc::Sender&lt;T&gt;;
 <span class="kw">type </span>Receiver&lt;T&gt; = mpsc::Receiver&lt;T&gt;;
 
-<span class="attr">#[derive(Debug, Clone, Eq, PartialEq)]
+<span class="doccomment">/// Events emitted from a session for an synchronisation intent.
+</span><span class="attr">#[derive(Debug, Clone, Eq, PartialEq)]
 </span><span class="kw">pub enum </span>EventKind {
-    CapabilityIntersection {
-        namespace: NamespaceId,
-        area: Area,
-    },
-    InterestIntersection {
-        namespace: NamespaceId,
-        area: AreaOfInterest,
-    },
-    Reconciled {
+    <span class="doccomment">/// We found an intersection between our and the peer's capabilities.
+    </span>CapabilityIntersection { namespace: NamespaceId, area: Area },
+    <span class="doccomment">/// We found an intersection between our and the peer's interests and will start to synchronize
+    /// the area.
+    </span>InterestIntersection {
         namespace: NamespaceId,
         area: AreaOfInterest,
     },
-    ReconciledAll,
-    Abort {
-        error: Arc&lt;Error&gt;,
+    <span class="doccomment">/// We reconciled an area.
+    </span>Reconciled {
+        namespace: NamespaceId,
+        area: AreaOfInterest,
     },
+    <span class="doccomment">/// We reconciled all interests submitted in this intent.
+    </span>ReconciledAll,
+    <span class="doccomment">/// The session was closed with an error.
+    </span>Abort { error: Arc&lt;Error&gt; },
 }
 
 <span class="kw">impl </span>EventKind {
-    <span class="kw">pub fn </span>namespace(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;NamespaceId&gt; {
+    <span class="doccomment">/// Returns the namespace if the event is related to a namespace.
+    </span><span class="kw">pub fn </span>namespace(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;NamespaceId&gt; {
         <span class="kw">match </span><span class="self">self </span>{
             EventKind::CapabilityIntersection { namespace, .. } =&gt; <span class="prelude-val">Some</span>(<span class="kw-2">*</span>namespace),
             EventKind::InterestIntersection { namespace, .. } =&gt; <span class="prelude-val">Some</span>(<span class="kw-2">*</span>namespace),
@@ -664,10 +699,16 @@
     }
 }
 
-<span class="attr">#[derive(Debug)]
+<span class="doccomment">/// Updates that may be submitted from an intent into the synchronisation session.
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub enum </span>IntentUpdate {
-    AddInterests(Interests),
-    Close,
+    <span class="doccomment">/// Submit new interests into the session.
+    </span>AddInterests(Interests),
+    <span class="doccomment">/// Close the intent.
+    ///
+    /// It is not required to send this, but may reduce the time an intent is lingering while no
+    /// subscriber is live anymore.
+    </span>Close,
 }
 
 <span class="doccomment">/// A synchronisation intent.
@@ -740,7 +781,8 @@
     }
 }
 
-<span class="attr">#[derive(Debug, Eq, PartialEq)]
+<span class="doccomment">/// Outcome of driving an intent to completion.
+</span><span class="attr">#[derive(Debug, Eq, PartialEq)]
 </span><span class="kw">pub enum </span>Completion {
     <span class="doccomment">/// All interests were reconciled.
     </span>Complete,
@@ -898,8 +940,7 @@
             <span class="kw">let </span>event_tx = info.event_tx;
             <span class="kw">let </span>update_rx = <span class="self">self</span>.intent_update_rx.remove(<span class="kw-2">&amp;</span>id);
             <span class="kw">let </span>update_rx = update_rx
-                .map(|stream| stream.into_inner())
-                .flatten()
+                .and_then(|stream| stream.into_inner())
                 .map(|stream| stream.into_inner());
             <span class="kw">let </span>channels = <span class="kw">match </span>(event_tx, update_rx) {
                 (<span class="prelude-val">Some</span>(event_tx), <span class="prelude-val">Some</span>(update_rx)) =&gt; <span class="prelude-val">Some</span>(IntentChannels {
@@ -1122,7 +1163,11 @@
     <span class="kw">fn </span>matches_area(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: <span class="kw-2">&amp;</span>NamespaceId, area: <span class="kw-2">&amp;</span>Area) -&gt; bool {
         <span class="self">self</span>.interests
             .get(namespace)
-            .map(|interests| interests.iter().any(|x| x.area.has_intersection(area)))
+            .map(|interests| {
+                interests
+                    .iter()
+                    .any(|x| x.area.intersection(area).is_some())
+            })
             .unwrap_or(<span class="bool-val">false</span>)
     }
 
@@ -1130,7 +1175,10 @@
         <span class="kw">let </span><span class="kw-2">mut </span>namespace_complete = <span class="bool-val">false</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>matches = <span class="bool-val">false</span>;
         <span class="kw">if let </span><span class="prelude-val">Some</span>(interests) = <span class="self">self</span>.interests.get_mut(namespace) {
-            <span class="kw">if </span>interests.iter().any(|x| x.area.has_intersection(area)) {
+            <span class="kw">if </span>interests
+                .iter()
+                .any(|x| x.area.intersection(area).is_some())
+            {
                 matches = <span class="bool-val">true</span>;
                 interests.retain(|x| !area.includes_area(<span class="kw-2">&amp;</span>x.area));
                 <span class="kw">if </span>interests.is_empty() {

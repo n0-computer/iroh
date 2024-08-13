@@ -94,31 +94,90 @@
 <a href="#94" id="94">94</a>
 <a href="#95" id="95">95</a>
 <a href="#96" id="96">96</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! Store for entries, secrets, and capabilities used in the Willow engine.
+//!
+//! The [`Store`] is the high-level wrapper for the different stores we need.
+//!
+//! The storage backend is defined in the [`Storage`] trait and its associated types.
+//!
+//! The only implementation is currently an in-memory store at [`memory`].
+
+</span><span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>rand_core::CryptoRngCore;
 
 <span class="kw">use crate</span>::{
-    auth::{Auth, AuthError, CapSelector, ReceiverSelector},
-    form::{AuthForm, EntryOrForm},
+    form::{AuthForm, EntryForm, EntryOrForm, SubspaceForm, TimestampForm},
+    interest::{CapSelector, ReceiverSelector},
     proto::{
+        data_model::Entry,
+        data_model::{AuthorisedEntry, PayloadDigest},
         keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserId},
-        willow::Entry,
     },
-    session::Error,
     store::traits::SecretStorage,
+    util::time::system_time_now,
 };
 
+<span class="kw">use </span><span class="self">self</span>::auth::{Auth, AuthError};
 <span class="kw">use </span><span class="self">self</span>::traits::Storage;
 
-<span class="kw">pub use </span><span class="self">self</span>::entry::{EntryOrigin, WatchableEntryStore};
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::entry::{EntryOrigin, WatchableEntryStore};
 
-<span class="kw">pub mod </span>auth;
-<span class="kw">pub mod </span>entry;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>auth;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>entry;
 <span class="kw">pub mod </span>memory;
 <span class="kw">pub mod </span>traits;
 
-<span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>Store&lt;S: Storage&gt; {
+<span class="doccomment">/// Storage for the Willow engine.
+</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Store&lt;S: Storage&gt; {
     entries: WatchableEntryStore&lt;S::Entries&gt;,
     secrets: S::Secrets,
     payloads: S::Payloads,
@@ -155,10 +214,10 @@
         <span class="kw">let </span>user_id = auth.user_id();
         <span class="kw">let </span>entry = <span class="kw">match </span>entry {
             EntryOrForm::Entry(entry) =&gt; <span class="prelude-val">Ok</span>(entry),
-            EntryOrForm::Form(form) =&gt; form.into_entry(<span class="self">self</span>, user_id).<span class="kw">await</span>,
+            EntryOrForm::Form(form) =&gt; <span class="self">self</span>.form_to_entry(form, user_id).<span class="kw">await</span>,
         }<span class="question-mark">?</span>;
         <span class="kw">let </span>capability = <span class="kw">match </span>auth {
-            AuthForm::Exact(cap) =&gt; cap,
+            AuthForm::Exact(cap) =&gt; cap.<span class="number">0</span>,
             AuthForm::Any(user_id) =&gt; {
                 <span class="kw">let </span>selector = CapSelector::for_entry(<span class="kw-2">&amp;</span>entry, ReceiverSelector::Exact(user_id));
                 <span class="self">self</span>.auth()
@@ -169,12 +228,20 @@
         <span class="kw">let </span>secret_key = <span class="self">self
             </span>.secrets()
             .get_user(<span class="kw-2">&amp;</span>user_id)
-            .ok_or(Error::MissingUserKey(user_id))<span class="question-mark">?</span>;
-        <span class="kw">let </span>authorised_entry = entry.attach_authorisation(capability, <span class="kw-2">&amp;</span>secret_key)<span class="question-mark">?</span>;
+            .context(<span class="string">"Missing user keypair"</span>)<span class="question-mark">?</span>;
+
+        <span class="comment">// TODO(frando): This should use `authorisation_token_unchecked` if we uphold the invariant
+        // that `user_id` is a pubkey for `secret_key`. However, that is `unsafe` at the moment
+        // (but should not be, IMO).
+        // Not using the `_unchecked` variant has the cost of an additional signature verification,
+        // so significant.
+        </span><span class="kw">let </span>token = capability.authorisation_token(<span class="kw-2">&amp;</span>entry, secret_key)<span class="question-mark">?</span>;
+        <span class="kw">let </span>authorised_entry = AuthorisedEntry::new_unchecked(entry, token);
         <span class="kw">let </span>inserted = <span class="self">self
             </span>.entries()
             .ingest(<span class="kw-2">&amp;</span>authorised_entry, EntryOrigin::Local)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>((authorised_entry.into_entry(), inserted))
+        <span class="kw">let </span>(entry, _token) = authorised_entry.into_parts();
+        <span class="prelude-val">Ok</span>((entry, inserted))
     }
 
     <span class="kw">pub fn </span>create_namespace(
@@ -188,6 +255,35 @@
         <span class="self">self</span>.secrets().insert_namespace(namespace_secret)<span class="question-mark">?</span>;
         <span class="self">self</span>.auth().create_full_caps(namespace_id, owner)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(namespace_id)
+    }
+
+    <span class="doccomment">/// Convert the form into an [`Entry`] by filling the fields with data from the environment and
+    /// the provided [`Store`].
+    ///
+    /// `user_id` must be set to the user who is authenticating the entry.
+    </span><span class="kw">pub async fn </span>form_to_entry(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        form: EntryForm,
+        user_id: UserId, <span class="comment">// auth: AuthForm,
+    </span>) -&gt; anyhow::Result&lt;Entry&gt; {
+        <span class="kw">let </span>timestamp = <span class="kw">match </span>form.timestamp {
+            TimestampForm::Now =&gt; system_time_now(),
+            TimestampForm::Exact(timestamp) =&gt; timestamp,
+        };
+        <span class="kw">let </span>subspace_id = <span class="kw">match </span>form.subspace_id {
+            SubspaceForm::User =&gt; user_id,
+            SubspaceForm::Exact(subspace) =&gt; subspace,
+        };
+        <span class="kw">let </span>(payload_digest, payload_length) = form.payload.submit(<span class="self">self</span>.payloads()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>entry = Entry::new(
+            form.namespace_id,
+            subspace_id,
+            form.path,
+            timestamp,
+            payload_length,
+            PayloadDigest(payload_digest),
+        );
+        <span class="prelude-val">Ok</span>(entry)
     }
 }
 </code></pre></div></section></main></body></html>

@@ -176,6 +176,18 @@
 <a href="#176" id="176">176</a>
 <a href="#177" id="177">177</a>
 <a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Primitives for [Private Area Intersection]
 //!
 //! * Uses ristretto255 and SHA512 for `hash_into_group`.
@@ -186,15 +198,15 @@
 //! [RFC 9380]: https://www.rfc-editor.org/rfc/rfc9380
 
 </span><span class="kw">use </span>curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint, Scalar};
+<span class="kw">use </span>ufotofu::sync::consumer::IntoVec;
+<span class="kw">use </span>willow_encoding::sync::Encodable;
 
-<span class="kw">use crate</span>::{
-    proto::{
-        grouping::SubspaceArea,
-        sync::ReadCapability,
-        willow::{NamespaceId, Path, SubspaceId},
-    },
-    util::codec::Encoder,
+<span class="kw">use </span><span class="kw">crate</span>::proto::{
+    data_model::{NamespaceId, Path, SubspaceId},
+    grouping::AreaSubspace,
 };
+
+<span class="kw">type </span>ReadCapability = <span class="kw">super</span>::meadowcap::McCapability;
 
 <span class="attr">#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 </span><span class="kw">pub struct </span>PsiGroup(RistrettoPoint);
@@ -223,7 +235,13 @@
 
 <span class="kw">impl </span>PaiScheme {
     <span class="kw">pub fn </span>hash_into_group(fragment: <span class="kw-2">&amp;</span>Fragment) -&gt; PsiGroup {
-        <span class="kw">let </span>encoded = fragment.encode().expect(<span class="string">"encoding not to fail"</span>);
+        <span class="kw">let </span>encoded = {
+            <span class="kw">let </span><span class="kw-2">mut </span>consumer = IntoVec::&lt;u8&gt;::new();
+            fragment
+                .encode(<span class="kw-2">&amp;mut </span>consumer)
+                .expect(<span class="string">"encoding not to fail"</span>);
+            consumer.into_vec()
+        };
         <span class="kw">let </span>point = RistrettoPoint::hash_from_bytes::&lt;sha2::Sha512&gt;(<span class="kw-2">&amp;</span>encoded);
         PsiGroup(point)
     }
@@ -242,13 +260,13 @@
 
     <span class="kw">pub fn </span>get_fragment_kit(cap: <span class="kw-2">&amp;</span>ReadCapability) -&gt; FragmentKit {
         <span class="kw">let </span>granted_area = cap.granted_area();
-        <span class="kw">let </span>granted_namespace = cap.granted_namespace().id();
-        <span class="kw">let </span>granted_path = granted_area.path.clone();
+        <span class="kw">let </span>granted_namespace = cap.granted_namespace();
+        <span class="kw">let </span>granted_path = granted_area.path().clone();
 
-        <span class="kw">match </span>granted_area.subspace {
-            SubspaceArea::Any =&gt; FragmentKit::Complete(granted_namespace, granted_path),
-            SubspaceArea::Id(granted_subspace) =&gt; {
-                FragmentKit::Selective(granted_namespace, granted_subspace, granted_path)
+        <span class="kw">match </span>granted_area.subspace() {
+            AreaSubspace::Any =&gt; FragmentKit::Complete(<span class="kw-2">*</span>granted_namespace, granted_path),
+            AreaSubspace::Id(granted_subspace) =&gt; {
+                FragmentKit::Selective(<span class="kw-2">*</span>granted_namespace, <span class="kw-2">*</span>granted_subspace, granted_path)
             }
         }
     }
@@ -261,38 +279,13 @@
 }
 
 <span class="kw">impl </span>Fragment {
-    <span class="kw">pub fn </span>into_parts(<span class="self">self</span>) -&gt; (NamespaceId, SubspaceArea, Path) {
+    <span class="kw">pub fn </span>into_parts(<span class="self">self</span>) -&gt; (NamespaceId, AreaSubspace, Path) {
         <span class="kw">match </span><span class="self">self </span>{
-            Fragment::Pair((namespace_id, path)) =&gt; (namespace_id, SubspaceArea::Any, path),
+            Fragment::Pair((namespace_id, path)) =&gt; (namespace_id, AreaSubspace::Any, path),
             Fragment::Triple((namespace_id, subspace_id, path)) =&gt; {
-                (namespace_id, SubspaceArea::Id(subspace_id), path)
+                (namespace_id, AreaSubspace::Id(subspace_id), path)
             }
         }
-    }
-}
-
-<span class="kw">impl </span>Encoder <span class="kw">for </span>Fragment {
-    <span class="kw">fn </span>encoded_len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="kw">match </span><span class="self">self </span>{
-            Fragment::Pair((<span class="kw">_</span>, path)) =&gt; NamespaceId::LENGTH + path.encoded_len(),
-            Fragment::Triple((<span class="kw">_</span>, <span class="kw">_</span>, path)) =&gt; {
-                NamespaceId::LENGTH + SubspaceId::LENGTH + path.encoded_len()
-            }
-        }
-    }
-    <span class="kw">fn </span>encode_into&lt;W: std::io::Write&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, out: <span class="kw-2">&amp;mut </span>W) -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">match </span><span class="self">self </span>{
-            Fragment::Pair((namespace_id, path)) =&gt; {
-                out.write_all(namespace_id.as_bytes())<span class="question-mark">?</span>;
-                path.encode_into(out)<span class="question-mark">?</span>;
-            }
-            Fragment::Triple((namespace_id, subspace_id, path)) =&gt; {
-                out.write_all(namespace_id.as_bytes())<span class="question-mark">?</span>;
-                out.write_all(subspace_id.as_bytes())<span class="question-mark">?</span>;
-                path.encode_into(out)<span class="question-mark">?</span>;
-            }
-        }
-        <span class="prelude-val">Ok</span>(())
     }
 }
 
@@ -333,24 +326,55 @@
             FragmentKit::Complete(namespace_id, path) =&gt; {
                 <span class="kw">let </span>pairs = path
                     .all_prefixes()
-                    .into_iter()
                     .map(|prefix| (namespace_id, prefix))
                     .collect();
                 FragmentSet::Complete(pairs)
             }
             FragmentKit::Selective(namespace_id, subspace_id, path) =&gt; {
-                <span class="kw">let </span>all_prefixes = path.all_prefixes();
-                <span class="kw">let </span>primary = all_prefixes
-                    .iter()
-                    .cloned()
+                <span class="kw">let </span>primary = path
+                    .all_prefixes()
                     .map(|prefix| (namespace_id, subspace_id, prefix))
                     .collect();
-                <span class="kw">let </span>secondary = all_prefixes
-                    .into_iter()
+                <span class="kw">let </span>secondary = path
+                    .all_prefixes()
                     .map(|prefix| (namespace_id, prefix))
                     .collect();
                 FragmentSet::Selective { primary, secondary }
             }
+        }
+    }
+}
+
+<span class="kw">use </span>syncify::syncify;
+<span class="kw">use </span>syncify::syncify_replace;
+
+<span class="attr">#[syncify(encoding_sync)]
+</span><span class="kw">mod </span>encoding {
+    <span class="attr">#[syncify_replace(<span class="kw">use </span>ufotofu::sync::BulkConsumer;)]
+    </span><span class="kw">use </span>ufotofu::local_nb::BulkConsumer;
+
+    <span class="attr">#[syncify_replace(<span class="kw">use </span>willow_encoding::sync::Encodable;)]
+    </span><span class="kw">use </span>willow_encoding::Encodable;
+
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+
+    <span class="kw">impl </span>Encodable <span class="kw">for </span>Fragment {
+        <span class="kw">async fn </span>encode&lt;Consumer&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, consumer: <span class="kw-2">&amp;mut </span>Consumer) -&gt; <span class="prelude-ty">Result</span>&lt;(), Consumer::Error&gt;
+        <span class="kw">where
+            </span>Consumer: BulkConsumer&lt;Item = u8&gt;,
+        {
+            <span class="kw">match </span><span class="self">self </span>{
+                Fragment::Pair((namespace_id, path)) =&gt; {
+                    namespace_id.encode(consumer).<span class="kw">await</span><span class="question-mark">?</span>;
+                    path.encode(consumer).<span class="kw">await</span><span class="question-mark">?</span>;
+                }
+                Fragment::Triple((namespace_id, subspace_id, path)) =&gt; {
+                    namespace_id.encode(consumer).<span class="kw">await</span><span class="question-mark">?</span>;
+                    subspace_id.encode(consumer).<span class="kw">await</span><span class="question-mark">?</span>;
+                    path.encode(consumer).<span class="kw">await</span><span class="question-mark">?</span>;
+                }
+            }
+            <span class="prelude-val">Ok</span>(())
         }
     }
 }

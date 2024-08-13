@@ -721,13 +721,19 @@
 <a href="#721" id="721">721</a>
 <a href="#722" id="722">722</a>
 <a href="#723" id="723">723</a>
+<a href="#724" id="724">724</a>
+<a href="#725" id="725">725</a>
+<a href="#726" id="726">726</a>
+<a href="#727" id="727">727</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Private Area Intersection finder
 //!
 //! As defined by the willow spec: [Private Area Intersection](https://willowprotocol.org/specs/pai/index.html)
 //!
 //! Partly ported from the implementation in earthstar and willow:
+//!
 //! * https://github.com/earthstar-project/willow-js/blob/0db4b9ec7710fb992ab75a17bd8557040d9a1062/src/wgps/pai/pai_finder.ts
 //! * https://github.com/earthstar-project/earthstar/blob/16d6d4028c22fdbb72f7395013b29be7dcd9217a/src/schemes/schemes.ts#L662
+//!
 //! Licensed under LGPL and ported into this MIT/Apache codebase with explicit permission
 //! from the original author (gwil).
 
@@ -740,17 +746,18 @@
 
 <span class="kw">use crate</span>::{
     proto::{
-        grouping::SubspaceArea,
+        data_model::{NamespaceId, Path},
+        grouping::AreaSubspace,
+        meadowcap::{ReadAuthorisation, SubspaceCapability},
         pai::{Fragment, FragmentKind, FragmentSet, PaiScheme, PsiGroup, PsiScalar},
-        sync::{
+        wgps::{
             IntersectionHandle, IntersectionMessage, Message, PaiBindFragment, PaiReplyFragment,
-            PaiRequestSubspaceCapability, ReadAuthorisation, SubspaceCapability,
+            PaiRequestSubspaceCapability,
         },
-        willow::{NamespaceId, Path},
     },
     session::{
-        resource::{MissingResource, ResourceMap},
-        Error, Scope,
+        resource::{MissingResource, ResourceMap, Scope},
+        Error,
     },
     util::gen_stream::GenStream,
 };
@@ -1110,7 +1117,7 @@
     </span>path: Path,
     <span class="comment">// will be needed for spec-compliant encodings of read capabilities
     </span><span class="attr">#[allow(dead_code)]
-    </span>subspace: SubspaceArea,
+    </span>subspace: AreaSubspace,
 }
 
 <span class="kw">impl </span>LocalFragmentInfo {
@@ -1227,13 +1234,14 @@
 
     <span class="kw">use crate</span>::{
         proto::{
-            grouping::{Area, SubspaceArea},
-            keys::{NamespaceKind, NamespaceSecretKey, UserPublicKey, UserSecretKey},
-            sync::{
+            data_model::{Path, PathExt},
+            grouping::{Area, AreaSubspace},
+            keys::{NamespaceKind, NamespaceSecretKey, UserId, UserSecretKey},
+            meadowcap::ReadAuthorisation,
+            wgps::{
                 IntersectionMessage, Message, PaiBindFragment, PaiReplyFragment,
-                PaiRequestSubspaceCapability, ReadAuthorisation,
+                PaiRequestSubspaceCapability,
             },
-            willow::Path,
         },
         session::{pai_finder::PaiIntersection, Error},
     };
@@ -1252,8 +1260,8 @@
         <span class="kw">let </span>(<span class="kw">_</span>, alfie_public) = keypair(<span class="kw-2">&amp;mut </span>rng);
         <span class="kw">let </span>(<span class="kw">_</span>, betty_public) = keypair(<span class="kw-2">&amp;mut </span>rng);
 
-        <span class="kw">let </span>auth_alfie = ReadAuthorisation::new_owned(<span class="kw-2">&amp;</span>namespace_secret, alfie_public);
-        <span class="kw">let </span>auth_betty = ReadAuthorisation::new_owned(<span class="kw-2">&amp;</span>namespace_secret, betty_public);
+        <span class="kw">let </span>auth_alfie = ReadAuthorisation::new_owned(<span class="kw-2">&amp;</span>namespace_secret, alfie_public).unwrap();
+        <span class="kw">let </span>auth_betty = ReadAuthorisation::new_owned(<span class="kw-2">&amp;</span>namespace_secret, betty_public).unwrap();
 
         <span class="kw">let </span>(alfie, betty) = Handle::create_two();
 
@@ -1282,15 +1290,15 @@
         <span class="kw">let </span>namespace = NamespaceSecretKey::generate(<span class="kw-2">&amp;mut </span>rng, NamespaceKind::Owned);
 
         <span class="kw">let </span>(root_secret, root_public) = keypair(<span class="kw-2">&amp;mut </span>rng);
-        <span class="kw">let </span>root_auth = ReadAuthorisation::new_owned(<span class="kw-2">&amp;</span>namespace, root_public);
+        <span class="kw">let </span>root_auth = ReadAuthorisation::new_owned(<span class="kw-2">&amp;</span>namespace, root_public).unwrap();
 
         <span class="kw">let </span>(<span class="kw">_</span>, alfie_public) = keypair(<span class="kw-2">&amp;mut </span>rng);
         <span class="kw">let </span>(<span class="kw">_</span>, betty_public) = keypair(<span class="kw-2">&amp;mut </span>rng);
         <span class="kw">let </span>(<span class="kw">_</span>, gemma_public) = keypair(<span class="kw-2">&amp;mut </span>rng);
 
         <span class="kw">let </span>alfie_area = Area::new(
-            SubspaceArea::Id(gemma_public.id()),
-            Path::empty(),
+            AreaSubspace::Id(gemma_public),
+            Path::new_empty(),
             Default::default(),
         );
         <span class="kw">let </span>alfie_auth = root_auth
@@ -1299,8 +1307,8 @@
         <span class="macro">assert!</span>(alfie_auth.subspace_cap().is_none());
 
         <span class="kw">let </span>betty_area = Area::new(
-            SubspaceArea::Any,
-            Path::new(<span class="kw-2">&amp;</span>[<span class="string">b"chess"</span>]).unwrap(),
+            AreaSubspace::Any,
+            Path::from_bytes(<span class="kw-2">&amp;</span>[<span class="string">b"chess"</span>]).unwrap(),
             Default::default(),
         );
         <span class="kw">let </span>betty_auth = root_auth
@@ -1336,9 +1344,9 @@
         };
 
         <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>cap, betty_auth.subspace_cap().unwrap());
-        <span class="kw">let </span>namespace = cap.granted_namespace().id();
+        <span class="kw">let </span>namespace = cap.granted_namespace();
         alfie
-            .input(Input::ReceivedVerifiedSubspaceCapReply(handle, namespace))
+            .input(Input::ReceivedVerifiedSubspaceCapReply(handle, <span class="kw-2">*</span>namespace))
             .<span class="kw">await</span>;
 
         <span class="kw">let </span>next = alfie.next_intersection().<span class="kw">await</span>;
@@ -1354,10 +1362,10 @@
         betty.join().<span class="kw">await</span>;
     }
 
-    <span class="kw">fn </span>keypair&lt;R: CryptoRngCore + <span class="question-mark">?</span>Sized&gt;(rng: <span class="kw-2">&amp;mut </span>R) -&gt; (UserSecretKey, UserPublicKey) {
+    <span class="kw">fn </span>keypair&lt;R: CryptoRngCore + <span class="question-mark">?</span>Sized&gt;(rng: <span class="kw-2">&amp;mut </span>R) -&gt; (UserSecretKey, UserId) {
         <span class="kw">let </span>secret = UserSecretKey::generate(rng);
         <span class="kw">let </span>public = secret.public_key();
-        (secret, public)
+        (secret, public.id())
     }
 
     <span class="kw">async fn </span>transfer&lt;T: TryFrom&lt;Message&gt; + Into&lt;IntersectionMessage&gt;&gt;(from: <span class="kw-2">&amp;</span>Handle, to: <span class="kw-2">&amp;</span>Handle) {

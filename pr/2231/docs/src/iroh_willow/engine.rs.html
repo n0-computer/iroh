@@ -92,7 +92,48 @@
 <a href="#92" id="92">92</a>
 <a href="#93" id="93">93</a>
 <a href="#94" id="94">94</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::Result;
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! Engine for driving a willow store and synchronisation sessions.
+
+</span><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>iroh_net::{endpoint::Connection, util::SharedAbortingJoinHandle, Endpoint, NodeId};
 <span class="kw">use </span>tokio::sync::{mpsc, oneshot};
 <span class="kw">use </span>tracing::{debug, error, error_span, Instrument};
@@ -115,7 +156,14 @@
 
 <span class="kw">const </span>PEER_MANAGER_INBOX_CAP: usize = <span class="number">128</span>;
 
-<span class="attr">#[derive(Debug, Clone)]
+<span class="doccomment">/// The [`Engine`] is the main handle onto a Willow store with networking.
+///
+/// It runs a dedicated thread for all storage operations, and a peer manager to coordinate network
+/// connections to other peers.
+///
+/// The engine does not establish any peer connections on its own. Synchronisation sessions can be
+/// started with [`Engine::sync_with_peer`].
+</span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>Engine {
     actor_handle: ActorHandle,
     peer_manager_inbox: mpsc::Sender&lt;peer_manager::Input&gt;,
@@ -123,7 +171,21 @@
 }
 
 <span class="kw">impl </span>Engine {
-    <span class="kw">pub fn </span>spawn&lt;S: Storage&gt;(
+    <span class="doccomment">/// Start the Willow engine.
+    ///
+    /// This needs an `endpoint` to connect to other peers, and a `create_store` closure which
+    /// returns a [`Storage`] instance.
+    ///
+    /// You also need to pass [`AcceptOpts`] to configure what to do with incoming connections.
+    /// Its default implementation will accept all connections and run sync with all our interests.
+    ///
+    /// To actually accept connections, an [`Endpoint::accept`] loop has to be run outside of the
+    /// engine, passing all connections that match [`crate::net::ALPN`] to the engine with
+    /// [`Engine::handle_connection`].
+    ///
+    /// The engine will spawn a dedicated storage thread, and the `create_store` closure will be called on
+    /// this thread, so that the [`Storage`] does not have to be `Send`.
+    </span><span class="kw">pub fn </span>spawn&lt;S: Storage&gt;(
         endpoint: Endpoint,
         create_store: <span class="kw">impl </span><span class="lifetime">'static </span>+ Send + FnOnce() -&gt; S,
         accept_opts: AcceptOpts,
@@ -144,14 +206,26 @@
         }
     }
 
-    <span class="kw">pub async fn </span>handle_connection(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="doccomment">/// Handle an incoming connection.
+    </span><span class="kw">pub async fn </span>handle_connection(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="self">self</span>.peer_manager_inbox
             .send(peer_manager::Input::HandleConnection { conn })
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">pub async fn </span>sync_with_peer(<span class="kw-2">&amp;</span><span class="self">self</span>, peer: NodeId, init: SessionInit) -&gt; <span class="prelude-ty">Result</span>&lt;IntentHandle&gt; {
+    <span class="doccomment">/// Synchronises with a peer.
+    ///
+    /// Will try to establish a connection to `peer` if there is none already, and then open a
+    /// synchronisation session.
+    ///
+    /// `init` contains the initialisation options for this synchronisation intent.
+    ///
+    /// Returns an [`IntentHandle`] which receives events and can submit updates into the session.
+    ///
+    /// This can freely be called multiple times for the same peer. The engine will merge the
+    /// intents and make sure that only a single session is opened per peer.
+    </span><span class="kw">pub async fn </span>sync_with_peer(<span class="kw-2">&amp;</span><span class="self">self</span>, peer: NodeId, init: SessionInit) -&gt; <span class="prelude-ty">Result</span>&lt;IntentHandle&gt; {
         <span class="kw">let </span>(intent, handle) = Intent::new(init);
         <span class="self">self</span>.peer_manager_inbox
             .send(peer_manager::Input::SubmitIntent { peer, intent })
@@ -159,7 +233,11 @@
         <span class="prelude-val">Ok</span>(handle)
     }
 
-    <span class="kw">pub async fn </span>shutdown(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="doccomment">/// Shutdown the engine.
+    ///
+    /// This will try to close all connections gracefully for up to 10 seconds,
+    /// and abort them otherwise.
+    </span><span class="kw">pub async fn </span>shutdown(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="macro">debug!</span>(<span class="string">"shutdown engine"</span>);
         <span class="kw">let </span>(reply, reply_rx) = oneshot::channel();
         <span class="self">self</span>.peer_manager_inbox

@@ -241,24 +241,28 @@
 <a href="#241" id="241">241</a>
 <a href="#242" id="242">242</a>
 <a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::hash_map;
 
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>genawaiter::rc::Co;
 
 <span class="kw">use crate</span>::{
-    auth::InterestMap,
+    interest::InterestMap,
     proto::{
         grouping::{Area, AreaOfInterest},
         keys::NamespaceId,
-        sync::{
-            AreaOfInterestHandle, CapabilityHandle, IntersectionHandle, ReadAuthorisation,
-            ReadCapability, SetupBindAreaOfInterest,
+        meadowcap::{ReadAuthorisation, ReadCapability},
+        wgps::{
+            AreaOfInterestHandle, CapabilityHandle, IntersectionHandle, SetupBindAreaOfInterest,
         },
     },
     session::{
-        capabilities::Capabilities, pai_finder::PaiIntersection, resource::ResourceMap, Error,
-        Scope,
+        capabilities::Capabilities,
+        pai_finder::PaiIntersection,
+        resource::{ResourceMap, Scope},
+        Error,
     },
     util::gen_stream::GenStream,
 };
@@ -428,7 +432,7 @@
         <span class="self">self</span>.bind_validated(co, Scope::Ours, namespace, aoi.clone())
             .<span class="kw">await</span>;
         <span class="kw">let </span>msg = SetupBindAreaOfInterest {
-            area_of_interest: aoi,
+            area_of_interest: aoi.into(),
             authorisation,
         };
         co.yield_(Output::SendMessage(msg)).<span class="kw">await</span>;

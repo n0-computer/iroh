@@ -162,22 +162,37 @@
 <a href="#162" id="162">162</a>
 <a href="#163" id="163">163</a>
 <a href="#164" id="164">164</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! Traits for storage backends for the Willow store.
+
+</span><span class="kw">use </span>std::fmt::Debug;
 
 <span class="kw">use </span>anyhow::Result;
 
 <span class="kw">use crate</span>::{
-    auth::{CapSelector, CapabilityPack},
+    interest::{CapSelector, CapabilityPack},
     proto::{
-        grouping::ThreeDRange,
+        data_model::{AuthorisedEntry, Entry, NamespaceId, WriteCapability},
+        grouping::Range3d,
         keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
-        meadowcap,
-        sync::{Fingerprint, ReadAuthorisation},
-        willow::{AuthorisedEntry, Entry, NamespaceId, WriteCapability},
+        meadowcap::{<span class="self">self</span>, ReadAuthorisation},
+        wgps::Fingerprint,
     },
 };
 
-<span class="kw">pub trait </span>Storage: Debug + Clone + <span class="lifetime">'static </span>{
+<span class="doccomment">/// Storage backend.
+///
+/// This type combines the different stores needed.
+</span><span class="kw">pub trait </span>Storage: Debug + Clone + <span class="lifetime">'static </span>{
     <span class="kw">type </span>Entries: EntryStorage;
     <span class="kw">type </span>Secrets: SecretStorage;
     <span class="kw">type </span>Payloads: iroh_blobs::store::Store;
@@ -188,7 +203,8 @@
     <span class="kw">fn </span>caps(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="self">Self</span>::Caps;
 }
 
-<span class="kw">pub trait </span>SecretStorage: Debug + Clone + <span class="lifetime">'static </span>{
+<span class="doccomment">/// Storage for user and namespace secrets.
+</span><span class="kw">pub trait </span>SecretStorage: Debug + Clone + <span class="lifetime">'static </span>{
     <span class="kw">fn </span>insert(<span class="kw-2">&amp;</span><span class="self">self</span>, secret: meadowcap::SecretKey) -&gt; <span class="prelude-ty">Result</span>&lt;(), SecretStoreError&gt;;
     <span class="kw">fn </span>get_user(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>UserId) -&gt; <span class="prelude-ty">Option</span>&lt;UserSecretKey&gt;;
     <span class="kw">fn </span>get_namespace(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>NamespaceId) -&gt; <span class="prelude-ty">Option</span>&lt;NamespaceSecretKey&gt;;
@@ -233,7 +249,8 @@
     }
 }
 
-<span class="kw">pub trait </span>EntryStorage: EntryReader + Clone + Debug + <span class="lifetime">'static </span>{
+<span class="doccomment">/// Storage for entries.
+</span><span class="kw">pub trait </span>EntryStorage: EntryReader + Clone + Debug + <span class="lifetime">'static </span>{
     <span class="kw">type </span>Reader: EntryReader;
     <span class="kw">type </span>Snapshot: EntryReader + Clone;
 
@@ -242,35 +259,37 @@
     <span class="kw">fn </span>ingest_entry(<span class="kw-2">&amp;</span><span class="self">self</span>, entry: <span class="kw-2">&amp;</span>AuthorisedEntry) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt;;
 }
 
-<span class="kw">pub trait </span>EntryReader: Debug + <span class="lifetime">'static </span>{
-    <span class="kw">fn </span>fingerprint(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>ThreeDRange) -&gt; <span class="prelude-ty">Result</span>&lt;Fingerprint&gt;;
+<span class="doccomment">/// Read-only interface to [`EntryStorage`].
+</span><span class="kw">pub trait </span>EntryReader: Debug + <span class="lifetime">'static </span>{
+    <span class="kw">fn </span>fingerprint(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>Range3d) -&gt; <span class="prelude-ty">Result</span>&lt;Fingerprint&gt;;
 
     <span class="kw">fn </span>split_range(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         namespace: NamespaceId,
-        range: <span class="kw-2">&amp;</span>ThreeDRange,
+        range: <span class="kw-2">&amp;</span>Range3d,
         config: <span class="kw-2">&amp;</span>SplitOpts,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;RangeSplit&gt;&gt;&gt;;
 
-    <span class="kw">fn </span>count(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>ThreeDRange) -&gt; <span class="prelude-ty">Result</span>&lt;u64&gt;;
+    <span class="kw">fn </span>count(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>Range3d) -&gt; <span class="prelude-ty">Result</span>&lt;u64&gt;;
 
     <span class="kw">fn </span>get_entries_with_authorisation&lt;<span class="lifetime">'a</span>&gt;(
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
         namespace: NamespaceId,
-        range: <span class="kw-2">&amp;</span>ThreeDRange,
+        range: <span class="kw-2">&amp;</span>Range3d,
     ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;AuthorisedEntry&gt;&gt; + <span class="lifetime">'a</span>;
 
     <span class="kw">fn </span>get_entries(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         namespace: NamespaceId,
-        range: <span class="kw-2">&amp;</span>ThreeDRange,
+        range: <span class="kw-2">&amp;</span>Range3d,
     ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;Entry&gt;&gt; {
         <span class="self">self</span>.get_entries_with_authorisation(namespace, range)
-            .map(|e| e.map(|e| e.into_entry()))
+            .map(|e| e.map(|e| e.into_parts().<span class="number">0</span>))
     }
 }
 
-<span class="attr">#[derive(Debug, thiserror::Error)]
+<span class="doccomment">/// Error returned from [`SecretStorage`].
+</span><span class="attr">#[derive(Debug, thiserror::Error)]
 </span><span class="kw">pub enum </span>SecretStoreError {
     <span class="attr">#[error(<span class="string">"store failed: {0}"</span>)]
     </span>Store(<span class="attr">#[from] </span>anyhow::Error),
@@ -284,7 +303,7 @@
     User,
 }
 
-<span class="kw">pub type </span>RangeSplit = (ThreeDRange, SplitAction);
+<span class="kw">pub type </span>RangeSplit = (Range3d, SplitAction);
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub enum </span>SplitAction {
@@ -309,7 +328,8 @@
     }
 }
 
-<span class="kw">pub trait </span>CapsStorage: Debug + Clone {
+<span class="doccomment">/// Capability storage.
+</span><span class="kw">pub trait </span>CapsStorage: Debug + Clone {
     <span class="kw">fn </span>insert(<span class="kw-2">&amp;</span><span class="self">self</span>, cap: CapabilityPack) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt;;
 
     <span class="kw">fn </span>list_read_caps(

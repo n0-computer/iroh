@@ -135,30 +135,23 @@
 <a href="#135" id="135">135</a>
 <a href="#136" id="136">136</a>
 <a href="#137" id="137">137</a>
-<a href="#138" id="138">138</a>
-<a href="#139" id="139">139</a>
-<a href="#140" id="140">140</a>
-<a href="#141" id="141">141</a>
-<a href="#142" id="142">142</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>ed25519_dalek::SignatureError;
 
 <span class="kw">use crate</span>::{
-    proto::{
-        meadowcap::{<span class="self">self</span>, UserId},
-        sync::ResourceHandle,
-        willow::Unauthorised,
-    },
+    proto::{data_model::UnauthorisedWriteError, meadowcap::UserId, wgps::ResourceHandle},
     session::{pai_finder::PaiError, resource::MissingResource},
     store::traits::SecretStoreError,
     util::channel::{ReadError, WriteError},
 };
 
-<span class="attr">#[derive(Debug, thiserror::Error)]
+<span class="comment">// This is a catch-all error type for the session module.
+// TODO: Split this into multiple error types
+</span><span class="attr">#[derive(Debug, thiserror::Error)]
 </span><span class="kw">pub enum </span>Error {
     <span class="attr">#[error(<span class="string">"local store failed: {0}"</span>)]
     </span>Store(<span class="attr">#[from] </span>anyhow::Error),
     <span class="attr">#[error(<span class="string">"authentication error: {0}"</span>)]
-    </span>Auth(<span class="attr">#[from] </span><span class="kw">crate</span>::auth::AuthError),
+    </span>Auth(<span class="attr">#[from] </span><span class="kw">crate</span>::store::auth::AuthError),
     <span class="attr">#[error(<span class="string">"payload store failed: {0}"</span>)]
     </span>PayloadStore(std::io::Error),
     <span class="attr">#[error(<span class="string">"payload digest does not match expected digest"</span>)]
@@ -187,13 +180,15 @@
     </span>AreaOfInterestNamespaceMismatch,
     <span class="attr">#[error(<span class="string">"our and their area of interests do not overlap"</span>)]
     </span>AreaOfInterestDoesNotOverlap,
+    <span class="attr">#[error(<span class="string">"received an area of interest which is not authorised"</span>)]
+    </span>UnauthorisedArea,
     <span class="attr">#[error(<span class="string">"received an entry which is not authorised"</span>)]
-    </span>UnauthorisedEntryReceived,
+    </span>UnauthorisedWrite(<span class="attr">#[from] </span>UnauthorisedWriteError),
     <span class="attr">#[error(<span class="string">"received an unsupported message type"</span>)]
     </span>UnsupportedMessage,
     <span class="attr">#[error(<span class="string">"received a message that is intended for another channel"</span>)]
     </span>WrongChannel,
-    <span class="attr">#[error(<span class="string">"the received nonce does not match the received committment"</span>)]
+    <span class="attr">#[error(<span class="string">"the received nonce does not match the received commitment"</span>)]
     </span>BrokenCommittement,
     <span class="attr">#[error(<span class="string">"received an actor message for unknown session"</span>)]
     </span>SessionNotFound,
@@ -254,30 +249,25 @@
 
 <span class="kw">impl </span>Eq <span class="kw">for </span>Error {}
 
-<span class="kw">impl </span>From&lt;Unauthorised&gt; <span class="kw">for </span>Error {
-    <span class="kw">fn </span>from(_value: Unauthorised) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::UnauthorisedEntryReceived
-    }
-}
-<span class="kw">impl </span>From&lt;meadowcap::InvalidCapability&gt; <span class="kw">for </span>Error {
-    <span class="kw">fn </span>from(_value: meadowcap::InvalidCapability) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::InvalidCapability
-    }
-}
+<span class="comment">// impl From&lt;meadowcap::InvalidCapability&gt; for Error {
+//     fn from(_value: meadowcap::InvalidCapability) -&gt; Self {
+//         Self::InvalidCapability
+//     }
+// }
 
-<span class="kw">impl </span>From&lt;SignatureError&gt; <span class="kw">for </span>Error {
+</span><span class="kw">impl </span>From&lt;SignatureError&gt; <span class="kw">for </span>Error {
     <span class="kw">fn </span>from(_value: SignatureError) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::InvalidSignature
     }
 }
 
-<span class="kw">impl </span>From&lt;meadowcap::InvalidParams&gt; <span class="kw">for </span>Error {
-    <span class="kw">fn </span>from(_value: meadowcap::InvalidParams) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::InvalidParameters(<span class="string">""</span>)
-    }
-}
+<span class="comment">// impl From&lt;meadowcap::InvalidParams&gt; for Error {
+//     fn from(_value: meadowcap::InvalidParams) -&gt; Self {
+//         Self::InvalidParameters("")
+//     }
+// }
 
-<span class="kw">impl </span>From&lt;MissingResource&gt; <span class="kw">for </span>Error {
+</span><span class="kw">impl </span>From&lt;MissingResource&gt; <span class="kw">for </span>Error {
     <span class="kw">fn </span>from(value: MissingResource) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::MissingResource(value.<span class="number">0</span>)
     }

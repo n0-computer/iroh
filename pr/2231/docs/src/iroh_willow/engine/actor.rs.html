@@ -459,6 +459,7 @@
 <a href="#459" id="459">459</a>
 <a href="#460" id="460">460</a>
 <a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{sync::Arc, thread::JoinHandle};
 
 <span class="kw">use </span>anyhow::Result;
@@ -472,16 +473,16 @@
 <span class="kw">use </span>tracing::{debug, error, error_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
-    auth::{CapSelector, CapabilityPack, DelegateTo, InterestMap},
     form::{AuthForm, EntryForm, EntryOrForm},
+    interest::{CapSelector, CapabilityPack, DelegateTo, InterestMap, Interests},
     net::ConnHandle,
     proto::{
-        grouping::ThreeDRange,
+        data_model::{AuthorisedEntry, Entry},
+        grouping::Range3d,
         keys::{NamespaceId, NamespaceKind, UserId, UserSecretKey},
         meadowcap::{<span class="self">self</span>, AccessMode},
-        willow::{AuthorisedEntry, Entry},
     },
-    session::{intents::Intent, run_session, Error, EventSender, Interests, SessionHandle},
+    session::{intents::Intent, run_session, Error, EventSender, SessionHandle},
     store::{
         entry::EntryOrigin,
         traits::{EntryReader, SecretStorage, Storage},
@@ -493,7 +494,8 @@
 <span class="kw">pub const </span>SESSION_EVENT_CHANNEL_CAP: usize = <span class="number">64</span>;
 <span class="kw">pub const </span>SESSION_UPDATE_CHANNEL_CAP: usize = <span class="number">64</span>;
 
-<span class="attr">#[derive(Debug, Clone)]
+<span class="doccomment">/// Handle to a Willow storage thread.
+</span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>ActorHandle {
     inbox_tx: flume::Sender&lt;Input&gt;,
     join_handle: Arc&lt;<span class="prelude-ty">Option</span>&lt;JoinHandle&lt;()&gt;&gt;&gt;,
@@ -584,7 +586,7 @@
     <span class="kw">pub async fn </span>get_entries(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         namespace: NamespaceId,
-        range: ThreeDRange,
+        range: Range3d,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = anyhow::Result&lt;Entry&gt;&gt;&gt; {
         <span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">1024</span>);
         <span class="self">self</span>.send(Input::GetEntries {
@@ -691,7 +693,7 @@
     },
     GetEntries {
         namespace: NamespaceId,
-        range: ThreeDRange,
+        range: Range3d,
         <span class="attr">#[debug(skip)]
         </span>reply: flume::Sender&lt;<span class="prelude-ty">Result</span>&lt;Entry&gt;&gt;,
     },
@@ -825,7 +827,7 @@
 
                 <span class="self">self</span>.tasks.spawn_local(<span class="kw">async move </span>{
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = future.<span class="kw">await </span>{
-                        <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>peer, <span class="question-mark">?</span>session_id, <span class="question-mark">?</span>err, <span class="string">"session failed"</span>);
+                        <span class="macro">debug!</span>(<span class="question-mark">?</span>peer, <span class="question-mark">?</span>session_id, <span class="question-mark">?</span>err, <span class="string">"session failed"</span>);
                     }
                 });
 

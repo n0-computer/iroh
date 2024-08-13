@@ -482,6 +482,13 @@
 <a href="#482" id="482">482</a>
 <a href="#483" id="483">483</a>
 <a href="#484" id="484">484</a>
+<a href="#485" id="485">485</a>
+<a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
+<a href="#488" id="488">488</a>
+<a href="#489" id="489">489</a>
+<a href="#490" id="490">490</a>
+<a href="#491" id="491">491</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, sync::Arc};
 
 <span class="kw">use </span>futures_concurrency::{future::TryJoin, stream::StreamExt <span class="kw">as _</span>};
@@ -494,7 +501,7 @@
 
 <span class="kw">use crate</span>::{
     net::ConnHandle,
-    proto::sync::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
+    proto::wgps::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
     session::{
         aoi_finder::{<span class="self">self</span>, IntersectionFinder},
         capabilities::Capabilities,
@@ -558,7 +565,7 @@
         .fold(SessionMode::ReconcileOnce, |cur, intent| {
             <span class="kw">match </span>intent.init.mode {
                 SessionMode::ReconcileOnce =&gt; cur,
-                SessionMode::Live =&gt; SessionMode::Live,
+                SessionMode::Continuous =&gt; SessionMode::Continuous,
             }
         });
 
@@ -591,7 +598,7 @@
 
     <span class="comment">// Setup data channels only if in live mode.
     // TODO: Adapt to changing mode.
-    </span><span class="kw">let </span>(data_inbox, data_inbox_rx) = <span class="kw">if </span>mode == SessionMode::Live {
+    </span><span class="kw">let </span>(data_inbox, data_inbox_rx) = <span class="kw">if </span>mode == SessionMode::Continuous {
         <span class="kw">let </span>(data_inbox, data_inbox_rx) =
             cancelable_channel::&lt;data::Input&gt;(<span class="number">2</span>, cancel_token.clone());
         (<span class="prelude-val">Some</span>(data_inbox), <span class="prelude-val">Some</span>(data_inbox_rx))
@@ -715,7 +722,7 @@
                         .<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 Output::SignAndSendSubspaceCap(handle, cap) =&gt; {
-                    <span class="kw">let </span>message = caps.sign_subspace_capabiltiy(store.secrets(), cap, handle)<span class="question-mark">?</span>;
+                    <span class="kw">let </span>message = caps.sign_subspace_capability(store.secrets(), cap, handle)<span class="question-mark">?</span>;
                     channel_sender.send(Box::new(message)).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
             }
@@ -733,6 +740,7 @@
             session_id,
             channel_sender.clone(),
             our_role,
+            initial_transmission.their_max_payload_size,
         );
         <span class="kw">while let </span><span class="prelude-val">Some</span>(output) = gen.try_next().<span class="kw">await</span><span class="question-mark">? </span>{
             <span class="kw">match </span>output {
@@ -767,7 +775,7 @@
     <span class="kw">let </span>caps_recv_loop = with_span(<span class="macro">error_span!</span>(<span class="string">"caps_recv"</span>), <span class="kw">async </span>{
         <span class="kw">while let </span><span class="prelude-val">Some</span>(message) = capability_recv.try_next().<span class="kw">await</span><span class="question-mark">? </span>{
             <span class="kw">let </span>handle = message.handle;
-            caps.validate_and_bind_theirs(message.capability, message.signature)<span class="question-mark">?</span>;
+            caps.validate_and_bind_theirs(message.capability.<span class="number">0</span>, message.signature)<span class="question-mark">?</span>;
             pai_inbox
                 .send(pai::Input::ReceivedReadCapForIntersection(handle))
                 .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -802,9 +810,12 @@
                 area_of_interest,
                 authorisation,
             } = message;
+            <span class="kw">let </span>area_of_interest = area_of_interest.<span class="number">0</span>;
             <span class="kw">let </span>cap = caps.get_theirs_eventually(authorisation).<span class="kw">await</span>;
-            cap.try_granted_area(<span class="kw-2">&amp;</span>area_of_interest.area)<span class="question-mark">?</span>;
-            <span class="kw">let </span>namespace = cap.granted_namespace().id();
+            <span class="kw">if </span>!cap.granted_area().includes_area(<span class="kw-2">&amp;</span>area_of_interest.area) {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::UnauthorisedArea);
+            }
+            <span class="kw">let </span>namespace = <span class="kw-2">*</span>cap.granted_namespace();
             intersection_inbox
                 .send(aoi_finder::Input::ReceivedValidatedAoi {
                     namespace,
@@ -916,7 +927,7 @@
                 pai_inbox
                     .send(pai::Input::ReceivedVerifiedSubspaceCapReply(
                         msg.handle,
-                        msg.capability.granted_namespace().id(),
+                        <span class="kw-2">*</span>msg.capability.granted_namespace(),
                     ))
                     .<span class="kw">await</span><span class="question-mark">?</span>;
             }
@@ -960,7 +971,10 @@
     <span class="kw">async </span>{
         <span class="macro">trace!</span>(<span class="string">"start"</span>);
         <span class="kw">let </span>res = fut.<span class="kw">await</span>;
-        <span class="macro">trace!</span>(<span class="question-mark">?</span>res, <span class="string">"done"</span>);
+        <span class="kw">match </span><span class="kw-2">&amp;</span>res {
+            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="macro">trace!</span>(<span class="string">"done"</span>),
+            <span class="prelude-val">Err</span>(err) =&gt; <span class="macro">debug!</span>(<span class="question-mark">?</span>err, <span class="string">"session task failed"</span>),
+        }
         res
     }
     .instrument(span)

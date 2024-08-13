@@ -6,12 +6,46 @@
 <a href="#6" id="6">6</a>
 <a href="#7" id="7">7</a>
 <a href="#8" id="8">8</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! Various utilties and data structures used in this crate.
+<a href="#9" id="9">9</a>
+<a href="#10" id="10">10</a>
+<a href="#11" id="11">11</a>
+<a href="#12" id="12">12</a>
+<a href="#13" id="13">13</a>
+<a href="#14" id="14">14</a>
+<a href="#15" id="15">15</a>
+<a href="#16" id="16">16</a>
+<a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
+<a href="#22" id="22">22</a>
+<a href="#23" id="23">23</a>
+<a href="#24" id="24">24</a>
+<a href="#25" id="25">25</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! Various utilities and data structures used in this crate.
 
 </span><span class="kw">pub mod </span>channel;
 <span class="kw">pub mod </span>codec;
+<span class="kw">pub mod </span>codec2;
 <span class="kw">pub mod </span>gen_stream;
 <span class="kw">pub mod </span>queue;
 <span class="kw">pub mod </span>stream;
 <span class="kw">pub mod </span>time;
+
+<span class="doccomment">/// Increment a fixed-length byte string by one, by incrementing the last byte that is not 255 by one.
+///
+/// Returns None if all bytes are 255.
+</span><span class="kw">pub fn </span>increment_by_one&lt;<span class="kw">const </span>N: usize&gt;(value: <span class="kw-2">&amp;</span>[u8; N]) -&gt; <span class="prelude-ty">Option</span>&lt;[u8; N]&gt; {
+    <span class="kw">let </span><span class="kw-2">mut </span>out = <span class="kw-2">*</span>value;
+    <span class="kw">for </span>char <span class="kw">in </span>out.iter_mut().rev() {
+        <span class="kw">if </span><span class="kw-2">*</span>char != <span class="number">255 </span>{
+            <span class="kw-2">*</span>char += <span class="number">1</span>;
+            <span class="kw">return </span><span class="prelude-val">Some</span>(out);
+        } <span class="kw">else </span>{
+            <span class="kw-2">*</span>char = <span class="number">0</span>;
+        }
+    }
+    <span class="prelude-val">None
+</span>}
 </code></pre></div></section></main></body></html>

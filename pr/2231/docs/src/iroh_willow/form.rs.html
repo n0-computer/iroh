@@ -151,38 +151,6 @@
 <a href="#151" id="151">151</a>
 <a href="#152" id="152">152</a>
 <a href="#153" id="153">153</a>
-<a href="#154" id="154">154</a>
-<a href="#155" id="155">155</a>
-<a href="#156" id="156">156</a>
-<a href="#157" id="157">157</a>
-<a href="#158" id="158">158</a>
-<a href="#159" id="159">159</a>
-<a href="#160" id="160">160</a>
-<a href="#161" id="161">161</a>
-<a href="#162" id="162">162</a>
-<a href="#163" id="163">163</a>
-<a href="#164" id="164">164</a>
-<a href="#165" id="165">165</a>
-<a href="#166" id="166">166</a>
-<a href="#167" id="167">167</a>
-<a href="#168" id="168">168</a>
-<a href="#169" id="169">169</a>
-<a href="#170" id="170">170</a>
-<a href="#171" id="171">171</a>
-<a href="#172" id="172">172</a>
-<a href="#173" id="173">173</a>
-<a href="#174" id="174">174</a>
-<a href="#175" id="175">175</a>
-<a href="#176" id="176">176</a>
-<a href="#177" id="177">177</a>
-<a href="#178" id="178">178</a>
-<a href="#179" id="179">179</a>
-<a href="#180" id="180">180</a>
-<a href="#181" id="181">181</a>
-<a href="#182" id="182">182</a>
-<a href="#183" id="183">183</a>
-<a href="#184" id="184">184</a>
-<a href="#185" id="185">185</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Structs that allow constructing entries and other structs where some fields may be
 //! automatically filled.
 
@@ -199,13 +167,10 @@
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::io::AsyncRead;
 
-<span class="kw">use crate</span>::{
-    proto::{
-        keys::UserId,
-        willow::{Entry, NamespaceId, Path, SubspaceId, Timestamp, WriteCapability},
-    },
-    store::{traits::Storage, Store},
-    util::time::system_time_now,
+<span class="kw">use </span><span class="kw">crate</span>::proto::{
+    data_model::SerdeWriteCapability,
+    data_model::{Entry, NamespaceId, Path, SubspaceId, Timestamp},
+    keys::UserId,
 };
 
 <span class="doccomment">/// Sources where payload data can come from.
@@ -298,35 +263,6 @@
             payload: PayloadForm::Bytes(payload.into()),
         }
     }
-
-    <span class="doccomment">/// Convert the form into an [`Entry`] by filling the fields with data from the environment and
-    /// the provided [`Store`].
-    ///
-    /// `user_id` must be set to the user who is authenticating the entry.
-    </span><span class="kw">pub async fn </span>into_entry&lt;S: Storage&gt;(
-        <span class="self">self</span>,
-        store: <span class="kw-2">&amp;</span>Store&lt;S&gt;,
-        user_id: UserId, <span class="comment">// auth: AuthForm,
-    </span>) -&gt; anyhow::Result&lt;Entry&gt; {
-        <span class="kw">let </span>timestamp = <span class="kw">match </span><span class="self">self</span>.timestamp {
-            TimestampForm::Now =&gt; system_time_now(),
-            TimestampForm::Exact(timestamp) =&gt; timestamp,
-        };
-        <span class="kw">let </span>subspace_id = <span class="kw">match </span><span class="self">self</span>.subspace_id {
-            SubspaceForm::User =&gt; user_id,
-            SubspaceForm::Exact(subspace) =&gt; subspace,
-        };
-        <span class="kw">let </span>(payload_digest, payload_length) = <span class="self">self</span>.payload.submit(store.payloads()).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>entry = Entry {
-            namespace_id: <span class="self">self</span>.namespace_id,
-            subspace_id,
-            path: <span class="self">self</span>.path,
-            timestamp,
-            payload_length,
-            payload_digest,
-        };
-        <span class="prelude-val">Ok</span>(entry)
-    }
 }
 
 <span class="doccomment">/// Select which capability to use for authenticating a new entry.
@@ -336,7 +272,7 @@
     /// user.
     </span>Any(UserId),
     <span class="doccomment">/// Use the provided [`WriteCapability`].
-    </span>Exact(WriteCapability),
+    </span>Exact(SerdeWriteCapability),
 }
 
 <span class="kw">impl </span>AuthForm {
@@ -345,7 +281,7 @@
     </span><span class="kw">pub fn </span>user_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; UserId {
         <span class="kw">match </span><span class="self">self </span>{
             AuthForm::Any(user) =&gt; <span class="kw-2">*</span>user,
-            AuthForm::Exact(cap) =&gt; cap.receiver().id(),
+            AuthForm::Exact(cap) =&gt; <span class="kw-2">*</span>cap.receiver(),
         }
     }
 }

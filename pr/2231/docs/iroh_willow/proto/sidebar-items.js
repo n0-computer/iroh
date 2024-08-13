@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["challenge","grouping","keys","meadowcap","pai","sync","willow"]};
+window.SIDEBAR_ITEMS = {"mod":["data_model","grouping","keys","meadowcap","pai","wgps"]};

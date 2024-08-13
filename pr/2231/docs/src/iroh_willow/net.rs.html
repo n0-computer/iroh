@@ -790,7 +790,28 @@
 <a href="#790" id="790">790</a>
 <a href="#791" id="791">791</a>
 <a href="#792" id="792">792</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, time::Duration};
+<a href="#793" id="793">793</a>
+<a href="#794" id="794">794</a>
+<a href="#795" id="795">795</a>
+<a href="#796" id="796">796</a>
+<a href="#797" id="797">797</a>
+<a href="#798" id="798">798</a>
+<a href="#799" id="799">799</a>
+<a href="#800" id="800">800</a>
+<a href="#801" id="801">801</a>
+<a href="#802" id="802">802</a>
+<a href="#803" id="803">803</a>
+<a href="#804" id="804">804</a>
+<a href="#805" id="805">805</a>
+<a href="#806" id="806">806</a>
+<a href="#807" id="807">807</a>
+<a href="#808" id="808">808</a>
+<a href="#809" id="809">809</a>
+<a href="#810" id="810">810</a>
+<a href="#811" id="811">811</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! Networking implementation for iroh-willow.
+
+</span><span class="kw">use </span>std::{future::Future, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_concurrency::future::TryJoin;
@@ -802,23 +823,24 @@
 <span class="kw">use </span>tracing::{debug, trace};
 
 <span class="kw">use crate</span>::{
-    proto::sync::{
-        AccessChallenge, ChallengeHash, Channel, InitialTransmission, LogicalChannel, Message,
-        CHALLENGE_HASH_LENGTH, MAX_PAYLOAD_SIZE_POWER,
+    proto::wgps::{
+        AccessChallenge, ChallengeHash, Channel, LogicalChannel, Message, CHALLENGE_HASH_LENGTH,
+        MAX_PAYLOAD_SIZE_POWER,
     },
     session::{
         channels::{
             ChannelReceivers, ChannelSenders, Channels, LogicalChannelReceivers,
             LogicalChannelSenders,
         },
-        Role,
+        InitialTransmission, Role,
     },
     util::channel::{
         inbound_channel, outbound_channel, Guarantees, Reader, Receiver, Sender, Writer,
     },
 };
 
-<span class="kw">pub const </span>CHANNEL_CAP: usize = <span class="number">1024 </span>* <span class="number">64</span>;
+<span class="doccomment">/// Default capacity for the in-memory pipes between networking and session.
+</span><span class="kw">const </span>CHANNEL_CAP: usize = <span class="number">1024 </span>* <span class="number">64</span>;
 
 <span class="doccomment">/// The ALPN protocol name for iroh-willow.
 </span><span class="kw">pub const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"iroh-willow/0"</span>;
@@ -835,8 +857,10 @@
 <span class="doccomment">/// QUIC application error code when closing connection because our node is shutting down.
 </span><span class="kw">pub const </span>ERROR_CODE_SHUTDOWN: VarInt = VarInt::from_u32(<span class="number">4</span>);
 
-<span class="kw">pub const </span>ESTABLISH_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
-<span class="kw">pub const </span>SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
+<span class="doccomment">/// Timeout until we abort a connection attempt.
+</span><span class="kw">const </span>ESTABLISH_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
+<span class="doccomment">/// Timeout until we abort a graceful termination attempt.
+</span><span class="kw">const </span>SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
 
 <span class="doccomment">/// The handle to an active peer connection.
 ///
@@ -1099,21 +1123,35 @@
     send_stream.finish().<span class="kw">await</span><span class="question-mark">?</span>;
     <span class="comment">// Wait until we either receive the goodbye byte from the other peer, or for the other peer
     // to close the connection with the expected error code.
-    </span><span class="kw">match </span>wait_for_goodbye_or_graceful_close(conn).<span class="kw">await </span>{
-        <span class="prelude-val">Ok</span>(()) =&gt; {
+    </span><span class="kw">match </span>tokio::time::timeout(SHUTDOWN_TIMEOUT, wait_for_goodbye_or_graceful_close(conn)).<span class="kw">await </span>{
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(())) =&gt; {
             conn.close(ERROR_CODE_OK, <span class="string">b"bye"</span>);
             <span class="macro">trace!</span>(<span class="string">"connection terminated gracefully"</span>);
             <span class="prelude-val">Ok</span>(())
         }
-        <span class="prelude-val">Err</span>(err) =&gt; {
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
             conn.close(ERROR_CODE_FAIL, <span class="string">b"failed-while-closing"</span>);
             <span class="macro">trace!</span>(<span class="question-mark">?</span>err, <span class="string">"connection failed while terminating"</span>);
             <span class="prelude-val">Err</span>(err)
         }
+        <span class="prelude-val">Err</span>(err) =&gt; {
+            conn.close(ERROR_CODE_FAIL, <span class="string">b"timeout-while-closing"</span>);
+            <span class="macro">trace!</span>(<span class="string">"connection timed out while terminating"</span>);
+            <span class="prelude-val">Err</span>(err.into())
+        }
     }
 }
 
-<span class="kw">async fn </span>wait_for_goodbye_or_graceful_close(conn: <span class="kw-2">&amp;</span>Connection) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<span class="doccomment">/// Waits for a goodbye byte or connection close, and then closes the connection.
+///
+/// Accepts a single uni stream and reads a single byte on it.
+///
+/// Returns once we received the goodbye byte or if the peer closed the connection with the
+/// graceful error code.
+///
+/// Returns an error if the connection was closed without the graceful error code or if reading the
+/// goodbye byte failed.
+</span><span class="kw">async fn </span>wait_for_goodbye_or_graceful_close(conn: <span class="kw-2">&amp;</span>Connection) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>recv_stream = <span class="kw">match </span>conn.accept_uni().<span class="kw">await </span>{
         <span class="comment">// The other peer closed the connection with the expected error code: They received our
         // goodbye byte after having sent theirs. We're free to close the connection.
@@ -1126,16 +1164,16 @@
     };
     <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>];
     <span class="kw">match </span>recv_stream.read_exact(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await </span>{
-        <span class="comment">// We received the goodbye byte: the other peer signals having read everything, we're freee
-        // to close the connection.
+        <span class="comment">// We received the goodbye byte: the other peer indicates to us that they are finished with
+        // everything and we are free to close the connection.
         </span><span class="prelude-val">Ok</span>(()) <span class="kw">if </span>buf == [<span class="number">1u8</span>] =&gt; <span class="prelude-val">Ok</span>(()),
         <span class="comment">// The other peer closed the connection with the expected error code: They received our
-        // goodbye byte after having sent theirs. We're free to close the connection.
+        // goodbye byte, and reacted by closing the connection. We're free to close too.
         </span><span class="prelude-val">Err</span>(ReadExactError::ReadError(ReadError::ConnectionLost(
             ConnectionError::ApplicationClosed(frame),
         ))) <span class="kw">if </span>frame.error_code == ERROR_CODE_OK =&gt; <span class="prelude-val">Ok</span>(()),
         <span class="comment">// The peer has sent invalid data on the goodbye stream.
-        </span><span class="prelude-val">Ok</span>(()) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"received unexpected closing byte from peer"</span>)),
+        </span><span class="prelude-val">Ok</span>(()) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Received unexpected closing byte from peer."</span>)),
         <span class="comment">// The peer closed the connection with an unexpected error coe.
         </span><span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err.into()),
     }
@@ -1161,18 +1199,18 @@
     <span class="kw">use </span>tracing::{info, Instrument};
 
     <span class="kw">use crate</span>::{
-        auth::{CapSelector, DelegateTo, RestrictArea},
         engine::ActorHandle,
         form::{AuthForm, EntryForm, PayloadForm, SubspaceForm, TimestampForm},
+        interest::{CapSelector, DelegateTo, Interests, RestrictArea},
         net::{terminate_gracefully, ConnHandle},
         proto::{
-            grouping::ThreeDRange,
+            data_model::{Entry, InvalidPathError2, Path, PathExt},
+            grouping::Range3d,
             keys::{NamespaceId, NamespaceKind, UserId},
             meadowcap::AccessMode,
-            sync::AccessChallenge,
-            willow::{Entry, InvalidPath, Path},
+            wgps::AccessChallenge,
         },
-        session::{intents::Intent, Interests, Role, SessionHandle, SessionInit, SessionMode},
+        session::{intents::Intent, Role, SessionHandle, SessionInit, SessionMode},
     };
 
     <span class="kw">use super</span>::{establish, prepare_channels};
@@ -1235,7 +1273,7 @@
         <span class="kw">let </span>cap_for_betty = handle_alfie
             .delegate_caps(
                 CapSelector::widest(namespace_id),
-                AccessMode::ReadWrite,
+                AccessMode::Write,
                 DelegateTo::new(user_betty, RestrictArea::None),
             )
             .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1247,7 +1285,7 @@
             namespace_id,
             user_alfie,
             n_alfie,
-            |n| Path::new(<span class="kw-2">&amp;</span>[<span class="string">b"alfie"</span>, n.to_string().as_bytes()]),
+            |n| Path::from_bytes(<span class="kw-2">&amp;</span>[<span class="string">b"alfie"</span>, n.to_string().as_bytes()]),
             |n| <span class="macro">format!</span>(<span class="string">"alfie{n}"</span>),
             <span class="kw-2">&amp;mut </span>expected_entries,
         )
@@ -1258,7 +1296,7 @@
             namespace_id,
             user_betty,
             n_betty,
-            |n| Path::new(<span class="kw-2">&amp;</span>[<span class="string">b"betty"</span>, n.to_string().as_bytes()]),
+            |n| Path::from_bytes(<span class="kw-2">&amp;</span>[<span class="string">b"betty"</span>, n.to_string().as_bytes()]),
             |n| <span class="macro">format!</span>(<span class="string">"betty{n}"</span>),
             <span class="kw-2">&amp;mut </span>expected_entries,
         )
@@ -1366,7 +1404,7 @@
         <span class="kw">let </span>cap_for_betty = handle_alfie
             .delegate_caps(
                 CapSelector::widest(namespace_id),
-                AccessMode::ReadWrite,
+                AccessMode::Write,
                 DelegateTo::new(user_betty, RestrictArea::None),
             )
             .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1382,7 +1420,7 @@
             namespace_id,
             user_alfie,
             n_init,
-            |n| Path::new(<span class="kw-2">&amp;</span>[<span class="string">b"alfie-init"</span>, n.to_string().as_bytes()]),
+            |n| Path::from_bytes(<span class="kw-2">&amp;</span>[<span class="string">b"alfie-init"</span>, n.to_string().as_bytes()]),
             |n| <span class="macro">format!</span>(<span class="string">"alfie{n}"</span>),
             <span class="kw-2">&amp;mut </span>expected_entries,
         )
@@ -1393,7 +1431,7 @@
             namespace_id,
             user_betty,
             n_init,
-            |n| Path::new(<span class="kw-2">&amp;</span>[<span class="string">b"betty-init"</span>, n.to_string().as_bytes()]),
+            |n| Path::from_bytes(<span class="kw-2">&amp;</span>[<span class="string">b"betty-init"</span>, n.to_string().as_bytes()]),
             |n| <span class="macro">format!</span>(<span class="string">"betty{n}"</span>),
             <span class="kw-2">&amp;mut </span>expected_entries,
         )
@@ -1411,12 +1449,12 @@
         <span class="kw">let </span>start = Instant::now();
         <span class="kw">let </span>(done_tx, done_rx) = tokio::sync::oneshot::channel();
 
-        <span class="comment">// alfie insert 3 enries after waiting a second
+        <span class="comment">// alfie insert 3 entries after waiting a second
         </span><span class="kw">let </span>_insert_task_alfie = tokio::task::spawn({
             <span class="kw">let </span>handle_alfie = handle_alfie.clone();
             <span class="kw">let </span>count = <span class="number">3</span>;
             <span class="kw">let </span>content_fn = |i: usize| <span class="macro">format!</span>(<span class="string">"alfie live {i}"</span>);
-            <span class="kw">let </span>path_fn = |i: usize| Path::new(<span class="kw-2">&amp;</span>[<span class="string">b"alfie-live"</span>, i.to_string().as_bytes()]);
+            <span class="kw">let </span>path_fn = |i: usize| Path::from_bytes(<span class="kw-2">&amp;</span>[<span class="string">b"alfie-live"</span>, i.to_string().as_bytes()]);
             <span class="kw">let </span><span class="kw-2">mut </span>track_entries = <span class="macro">vec!</span>[];
 
             <span class="kw">async move </span>{
@@ -1436,8 +1474,8 @@
             }
         });
 
-        <span class="kw">let </span>init_alfie = SessionInit::new(Interests::All, SessionMode::Live);
-        <span class="kw">let </span>init_betty = SessionInit::new(Interests::All, SessionMode::Live);
+        <span class="kw">let </span>init_alfie = SessionInit::new(Interests::All, SessionMode::Continuous);
+        <span class="kw">let </span>init_betty = SessionInit::new(Interests::All, SessionMode::Continuous);
 
         <span class="kw">let </span>(intent_alfie, <span class="kw-2">mut </span>intent_handle_alfie) = Intent::new(init_alfie);
         <span class="kw">let </span>(intent_betty, <span class="kw-2">mut </span>intent_handle_betty) = Intent::new(init_betty);
@@ -1536,7 +1574,7 @@
 
     <span class="kw">async fn </span>get_entries(store: <span class="kw-2">&amp;</span>ActorHandle, namespace: NamespaceId) -&gt; <span class="prelude-ty">Result</span>&lt;BTreeSet&lt;Entry&gt;&gt; {
         <span class="kw">let </span>entries: <span class="prelude-ty">Result</span>&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt; = store
-            .get_entries(namespace, ThreeDRange::full())
+            .get_entries(namespace, Range3d::new_full())
             .<span class="kw">await</span><span class="question-mark">?
             </span>.try_collect()
             .<span class="kw">await</span>;
@@ -1548,7 +1586,7 @@
         namespace_id: NamespaceId,
         user_id: UserId,
         count: usize,
-        path_fn: <span class="kw">impl </span>Fn(usize) -&gt; <span class="prelude-ty">Result</span>&lt;Path, InvalidPath&gt;,
+        path_fn: <span class="kw">impl </span>Fn(usize) -&gt; <span class="prelude-ty">Result</span>&lt;Path, InvalidPathError2&gt;,
         content_fn: <span class="kw">impl </span>Fn(usize) -&gt; String,
         track_entries: <span class="kw-2">&amp;mut </span><span class="kw">impl </span>Extend&lt;Entry&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {

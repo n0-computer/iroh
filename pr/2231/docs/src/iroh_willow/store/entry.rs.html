@@ -172,20 +172,18 @@
 <a href="#172" id="172">172</a>
 <a href="#173" id="173">173</a>
 <a href="#174" id="174">174</a>
-<a href="#175" id="175">175</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
 <span class="kw">use </span>tokio::sync::broadcast;
 
-<span class="kw">use crate</span>::{
-    proto::{
-        grouping::Area,
-        willow::{AuthorisedEntry, NamespaceId},
-    },
-    session::SessionId,
+<span class="kw">use </span><span class="kw">crate</span>::proto::{
+    data_model::{AuthorisedEntry, NamespaceId},
+    grouping::Area,
 };
+
+<span class="kw">pub type </span>SessionId = u64;
 
 <span class="kw">use </span><span class="kw">super</span>::traits::EntryStorage;
 
@@ -235,12 +233,12 @@
         }
     }
 
-    <span class="doccomment">/// Returns a store reader.
-    </span><span class="kw">pub fn </span>reader(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ES::Reader {
-        <span class="self">self</span>.storage.reader()
-    }
+    <span class="comment">// /// Returns a store reader.
+    // pub fn reader(&amp;self) -&gt; ES::Reader {
+    //     self.storage.reader()
+    // }
 
-    <span class="doccomment">/// Returns a store snapshot.
+    </span><span class="doccomment">/// Returns a store snapshot.
     </span><span class="kw">pub fn </span>snapshot(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; anyhow::Result&lt;ES::Snapshot&gt; {
         <span class="self">self</span>.storage.snapshot()
     }
@@ -324,7 +322,7 @@
     }
 
     <span class="kw">fn </span>broadcast(<span class="kw-2">&amp;mut </span><span class="self">self</span>, entry: <span class="kw-2">&amp;</span>AuthorisedEntry, origin: EntryOrigin) {
-        <span class="kw">let </span><span class="prelude-val">Some</span>(sessions) = <span class="self">self</span>.watched_areas.get_mut(<span class="kw-2">&amp;</span>entry.namespace_id()) <span class="kw">else </span>{
+        <span class="kw">let </span><span class="prelude-val">Some</span>(sessions) = <span class="self">self</span>.watched_areas.get_mut(entry.entry().namespace_id()) <span class="kw">else </span>{
             <span class="kw">return</span>;
         };
         <span class="kw">let </span><span class="kw-2">mut </span>dropped_receivers = <span class="macro">vec!</span>[];

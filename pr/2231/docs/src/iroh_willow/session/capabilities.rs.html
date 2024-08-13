@@ -157,6 +157,11 @@
 <a href="#157" id="157">157</a>
 <a href="#158" id="158">158</a>
 <a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     cell::RefCell,
     future::poll_fn,
@@ -166,15 +171,14 @@
 
 <span class="kw">use crate</span>::{
     proto::{
-        challenge::ChallengeState,
         keys::UserSignature,
-        sync::{
+        meadowcap::{ReadCapability, SubspaceCapability},
+        wgps::{
             AccessChallenge, CapabilityHandle, ChallengeHash, CommitmentReveal, IntersectionHandle,
-            PaiReplySubspaceCapability, ReadCapability, SetupBindReadCapability,
-            SubspaceCapability,
+            PaiReplySubspaceCapability, SetupBindReadCapability,
         },
     },
-    session::{resource::ResourceMap, Error, Role},
+    session::{challenge::ChallengeState, resource::ResourceMap, Error, Role},
     store::traits::SecretStorage,
 };
 
@@ -231,9 +235,9 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;SetupBindReadCapability, Error&gt; {
         <span class="kw">let </span>inner = <span class="self">self</span>.<span class="number">0</span>.borrow();
         <span class="kw">let </span>signable = inner.challenge.signable()<span class="question-mark">?</span>;
-        <span class="kw">let </span>signature = secret_store.sign_user(<span class="kw-2">&amp;</span>capability.receiver().id(), <span class="kw-2">&amp;</span>signable)<span class="question-mark">?</span>;
+        <span class="kw">let </span>signature = secret_store.sign_user(capability.receiver(), <span class="kw-2">&amp;</span>signable)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(SetupBindReadCapability {
-            capability,
+            capability: capability.into(),
             handle: intersection_handle,
             signature,
         })
@@ -248,9 +252,12 @@
         capability: ReadCapability,
         signature: UserSignature,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
-        capability.validate()<span class="question-mark">?</span>;
-        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.<span class="number">0</span>.borrow_mut();
-        inner.challenge.verify(capability.receiver(), <span class="kw-2">&amp;</span>signature)<span class="question-mark">?</span>;
+        <span class="comment">// TODO(Frando): I *think* meadowcap caps are always validated (no way to construct invalid ones).
+        // capability.validate()?;
+        </span><span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.<span class="number">0</span>.borrow_mut();
+        <span class="comment">// TODO(Frando): We should somehow remove the `Id`/`PublicKey` split.
+        </span><span class="kw">let </span>receiver_key = capability.receiver().into_public_key()<span class="question-mark">?</span>;
+        inner.challenge.verify(<span class="kw-2">&amp;</span>receiver_key, <span class="kw-2">&amp;</span>signature)<span class="question-mark">?</span>;
         inner.theirs.bind(capability);
         <span class="prelude-val">Ok</span>(())
     }
@@ -269,11 +276,14 @@
         capability: <span class="kw-2">&amp;</span>SubspaceCapability,
         signature: <span class="kw-2">&amp;</span>UserSignature,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
-        capability.validate()<span class="question-mark">?</span>;
+        <span class="comment">// TODO(Frando): I *think* meadowcap caps are always validated (no way to construct invalid ones).
+        // capability.validate()?;
+        // TODO(Frando): We should somehow remove the `Id`/`PublicKey` split.
+        </span><span class="kw">let </span>receiver_key = capability.receiver().into_public_key()<span class="question-mark">?</span>;
         <span class="self">self</span>.<span class="number">0
             </span>.borrow_mut()
             .challenge
-            .verify(capability.receiver(), signature)<span class="question-mark">?</span>;
+            .verify(<span class="kw-2">&amp;</span>receiver_key, signature)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
@@ -299,7 +309,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">pub fn </span>sign_subspace_capabiltiy&lt;S: SecretStorage&gt;(
+    <span class="kw">pub fn </span>sign_subspace_capability&lt;S: SecretStorage&gt;(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         secrets: <span class="kw-2">&amp;</span>S,
         cap: SubspaceCapability,
@@ -307,10 +317,10 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;PaiReplySubspaceCapability, Error&gt; {
         <span class="kw">let </span>inner = <span class="self">self</span>.<span class="number">0</span>.borrow();
         <span class="kw">let </span>signable = inner.challenge.signable()<span class="question-mark">?</span>;
-        <span class="kw">let </span>signature = secrets.sign_user(<span class="kw-2">&amp;</span>cap.receiver().id(), <span class="kw-2">&amp;</span>signable)<span class="question-mark">?</span>;
+        <span class="kw">let </span>signature = secrets.sign_user(cap.receiver(), <span class="kw-2">&amp;</span>signable)<span class="question-mark">?</span>;
         <span class="kw">let </span>message = PaiReplySubspaceCapability {
             handle,
-            capability: cap.clone(),
+            capability: cap.clone().into(),
             signature,
         };
         <span class="prelude-val">Ok</span>(message)

@@ -179,14 +179,15 @@
 <a href="#179" id="179">179</a>
 <a href="#180" id="180">180</a>
 <a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>futures_lite::StreamExt;
 <span class="kw">use </span>tokio::sync::broadcast;
 <span class="kw">use </span>tokio_stream::wrappers::ReceiverStream;
 
 <span class="kw">use crate</span>::{
     proto::{
-        sync::{DataMessage, DataSendEntry, DataSendPayload},
-        willow::AuthorisedEntry,
+        data_model::AuthorisedEntry,
+        wgps::{DataMessage, DataSendEntry, DataSendPayload, StaticToken},
     },
     session::{
         channels::ChannelSenders, payload::DEFAULT_CHUNK_SIZE, static_tokens::StaticTokens, Error,
@@ -267,16 +268,17 @@
 
     <span class="kw">async fn </span>send_entry(<span class="kw-2">&amp;mut </span><span class="self">self</span>, authorised_entry: AuthorisedEntry) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="kw">let </span>(entry, token) = authorised_entry.into_parts();
-        <span class="kw">let </span>(static_token, dynamic_token) = token.into_parts();
+        <span class="kw">let </span>static_token: StaticToken = token.capability.into();
+        <span class="kw">let </span>dynamic_token = token.signature;
         <span class="comment">// TODO: partial payloads
         // let available = entry.payload_length;
         </span><span class="kw">let </span>static_token_handle = <span class="self">self
             </span>.static_tokens
             .bind_and_send_ours(static_token, <span class="kw-2">&amp;</span><span class="self">self</span>.send)
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>digest = entry.payload_digest;
+        <span class="kw">let </span>digest = <span class="kw-2">*</span>entry.payload_digest();
         <span class="kw">let </span>msg = DataSendEntry {
-            entry,
+            entry: entry.into(),
             static_token_handle,
             dynamic_token,
             offset: <span class="number">0</span>,
@@ -331,7 +333,7 @@
         <span class="kw">let </span>authorised_entry = <span class="self">self
             </span>.static_tokens
             .authorise_entry_eventually(
-                message.entry,
+                message.entry.into(),
                 message.static_token_handle,
                 message.dynamic_token,
             )
@@ -343,10 +345,10 @@
                 channel: EntryChannel::Data,
             },
         )<span class="question-mark">?</span>;
-        <span class="kw">let </span>entry = authorised_entry.into_entry();
+        <span class="kw">let </span>(entry, _token) = authorised_entry.into_parts();
         <span class="comment">// TODO: handle offset
         </span><span class="self">self</span>.current_payload
-            .set(entry.payload_digest, entry.payload_length)<span class="question-mark">?</span>;
+            .set(<span class="kw-2">*</span>entry.payload_digest(), entry.payload_length())<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 

@@ -59,7 +59,6 @@
 <a href="#59" id="59">59</a>
 <a href="#60" id="60">60</a>
 <a href="#61" id="61">61</a>
-<a href="#62" id="62">62</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     cell::RefCell,
     future::poll_fn,
@@ -69,8 +68,8 @@
 
 <span class="kw">use crate</span>::{
     proto::{
-        sync::{DynamicToken, SetupBindStaticToken, StaticToken, StaticTokenHandle},
-        willow::{AuthorisedEntry, Entry},
+        data_model::{AuthorisationToken, AuthorisedEntry, Entry},
+        wgps::{DynamicToken, SetupBindStaticToken, StaticToken, StaticTokenHandle},
     },
     session::{channels::ChannelSenders, resource::ResourceMap, Error},
 };
@@ -116,9 +115,8 @@
         })
         .<span class="kw">await</span>;
 
-        <span class="kw">let </span>authorised_entry =
-            AuthorisedEntry::try_from_parts(entry, static_token.clone(), dynamic_token)<span class="question-mark">?</span>;
-
+        <span class="kw">let </span>token = AuthorisationToken::new(static_token.<span class="number">0</span>, dynamic_token);
+        <span class="kw">let </span>authorised_entry = AuthorisedEntry::new(entry, token)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(authorised_entry)
     }
 }

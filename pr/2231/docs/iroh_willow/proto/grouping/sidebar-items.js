@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["RangeEnd","SubspaceArea"],"fn":["path_range_end","subspace_range_end"],"struct":["Area","AreaInArea","AreaOfInterest","NamespacedRange","NotIncluded","Point","Range","ThreeDRange"]};
+window.SIDEBAR_ITEMS = {"enum":["RangeEnd"],"mod":["serde_encoding"],"struct":["Point","Range"],"trait":["AreaExt","AreaOfInterestExt"],"type":["Area","AreaOfInterest","AreaSubspace","Range3d"]};

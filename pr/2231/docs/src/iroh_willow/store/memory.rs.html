@@ -361,20 +361,35 @@
 <a href="#361" id="361">361</a>
 <a href="#362" id="362">362</a>
 <a href="#363" id="363">363</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::cell::RefCell;
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! In-memory storage implementation for testing purposes.
+//!
+//! This is a minimal, but spec-compliant (unless there's bugs) implementation of a willow store.
+//!
+//! It does not have good performance, it does a lot of iterating. But it is concise and can
+//! hopefully easily kept correct.
+
+</span><span class="kw">use </span>std::cell::RefCell;
 <span class="kw">use </span>std::collections::HashMap;
 <span class="kw">use </span>std::rc::Rc;
 
 <span class="kw">use </span>anyhow::Result;
 
 <span class="kw">use crate</span>::{
-    auth::{CapSelector, CapabilityPack},
+    interest::{CapSelector, CapabilityPack},
     proto::{
-        grouping::{Range, RangeEnd, ThreeDRange},
-        keys::{NamespaceSecretKey, UserId, UserSecretKey},
-        meadowcap,
-        sync::{Fingerprint, ReadAuthorisation},
-        willow::{AuthorisedEntry, Entry, NamespaceId, WriteCapability},
+        data_model::{AuthorisedEntry, Entry, EntryExt, WriteCapability},
+        grouping::{Range, Range3d, RangeEnd},
+        keys::{NamespaceId, NamespaceSecretKey, UserId, UserSecretKey},
+        meadowcap::{<span class="self">self</span>, is_wider_than, ReadAuthorisation},
+        wgps::Fingerprint,
     },
     store::traits::{<span class="self">self</span>, RangeSplit, SplitAction, SplitOpts},
 };
@@ -457,7 +472,7 @@
 
 <span class="comment">// impl&lt;T: std::ops::Deref&lt;Target = MemoryEntryStore&gt; + 'static&gt; ReadonlyStore for T {
 </span><span class="kw">impl </span>traits::EntryReader <span class="kw">for </span>Rc&lt;RefCell&lt;EntryStore&gt;&gt; {
-    <span class="kw">fn </span>fingerprint(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>ThreeDRange) -&gt; <span class="prelude-ty">Result</span>&lt;Fingerprint&gt; {
+    <span class="kw">fn </span>fingerprint(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>Range3d) -&gt; <span class="prelude-ty">Result</span>&lt;Fingerprint&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>fingerprint = Fingerprint::default();
         <span class="kw">for </span>entry <span class="kw">in </span><span class="self">self</span>.get_entries(namespace, range) {
             <span class="kw">let </span>entry = entry<span class="question-mark">?</span>;
@@ -469,7 +484,7 @@
     <span class="kw">fn </span>split_range(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         namespace: NamespaceId,
-        range: <span class="kw-2">&amp;</span>ThreeDRange,
+        range: <span class="kw-2">&amp;</span>Range3d,
         config: <span class="kw-2">&amp;</span>SplitOpts,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;RangeSplit&gt;&gt;&gt; {
         <span class="kw">let </span>count = <span class="self">self</span>.get_entries(namespace, range).count();
@@ -483,50 +498,50 @@
             .filter_map(|e| e.ok())
             .collect();
 
-        entries.sort_by(|e1, e2| e1.as_set_sort_tuple().cmp(<span class="kw-2">&amp;</span>e2.as_set_sort_tuple()));
+        entries.sort_by(|e1, e2| e1.as_sortable_tuple().cmp(<span class="kw-2">&amp;</span>e2.as_sortable_tuple()));
 
         <span class="kw">let </span>split_index = count / <span class="number">2</span>;
         <span class="kw">let </span>mid = entries.get(split_index).expect(<span class="string">"not empty"</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>ranges = <span class="macro">vec!</span>[];
         <span class="comment">// split in two halves by subspace
-        </span><span class="kw">if </span>mid.subspace_id != range.subspaces.start {
-            ranges.push(ThreeDRange::new(
-                Range::new(range.subspaces.start, RangeEnd::Closed(mid.subspace_id)),
-                range.paths.clone(),
-                range.times,
+        </span><span class="kw">if </span><span class="kw-2">*</span>mid.subspace_id() != range.subspaces().start {
+            ranges.push(Range3d::new(
+                Range::new_closed(range.subspaces().start, <span class="kw-2">*</span>mid.subspace_id()).unwrap(),
+                range.paths().clone(),
+                <span class="kw-2">*</span>range.times(),
             ));
-            ranges.push(ThreeDRange::new(
-                Range::new(mid.subspace_id, range.subspaces.end),
-                range.paths.clone(),
-                range.times,
+            ranges.push(Range3d::new(
+                Range::new(<span class="kw-2">*</span>mid.subspace_id(), range.subspaces().end),
+                range.paths().clone(),
+                <span class="kw-2">*</span>range.times(),
             ));
         }
         <span class="comment">// split by path
-        </span><span class="kw">else if </span>mid.path != range.paths.start {
-            ranges.push(ThreeDRange::new(
-                range.subspaces,
+        </span><span class="kw">else if </span><span class="kw-2">*</span>mid.path() != range.paths().start {
+            ranges.push(Range3d::new(
+                <span class="kw-2">*</span>range.subspaces(),
                 Range::new(
-                    range.paths.start.clone(),
-                    RangeEnd::Closed(mid.path.clone()),
+                    range.paths().start.clone(),
+                    RangeEnd::Closed(mid.path().clone()),
                 ),
-                range.times,
+                <span class="kw-2">*</span>range.times(),
             ));
-            ranges.push(ThreeDRange::new(
-                range.subspaces,
-                Range::new(mid.path.clone(), range.paths.end.clone()),
-                range.times,
+            ranges.push(Range3d::new(
+                <span class="kw-2">*</span>range.subspaces(),
+                Range::new(mid.path().clone(), range.paths().end.clone()),
+                <span class="kw-2">*</span>range.times(),
             ));
         <span class="comment">// split by time
         </span>} <span class="kw">else </span>{
-            ranges.push(ThreeDRange::new(
-                range.subspaces,
-                range.paths.clone(),
-                Range::new(range.times.start, RangeEnd::Closed(mid.timestamp)),
+            ranges.push(Range3d::new(
+                <span class="kw-2">*</span>range.subspaces(),
+                range.paths().clone(),
+                Range::new(range.times().start, RangeEnd::Closed(mid.timestamp())),
             ));
-            ranges.push(ThreeDRange::new(
-                range.subspaces,
-                range.paths.clone(),
-                Range::new(mid.timestamp, range.times.end),
+            ranges.push(Range3d::new(
+                <span class="kw-2">*</span>range.subspaces(),
+                range.paths().clone(),
+                Range::new(mid.timestamp(), range.times().end),
             ));
         }
         <span class="kw">let </span><span class="kw-2">mut </span>out = <span class="macro">vec!</span>[];
@@ -537,14 +552,14 @@
         <span class="prelude-val">Ok</span>(out.into_iter())
     }
 
-    <span class="kw">fn </span>count(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>ThreeDRange) -&gt; <span class="prelude-ty">Result</span>&lt;u64&gt; {
+    <span class="kw">fn </span>count(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>Range3d) -&gt; <span class="prelude-ty">Result</span>&lt;u64&gt; {
         <span class="prelude-val">Ok</span>(<span class="self">self</span>.get_entries(namespace, range).count() <span class="kw">as </span>u64)
     }
 
     <span class="kw">fn </span>get_entries_with_authorisation&lt;<span class="lifetime">'a</span>&gt;(
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
         namespace: NamespaceId,
-        range: <span class="kw-2">&amp;</span>ThreeDRange,
+        range: <span class="kw-2">&amp;</span>Range3d,
     ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;AuthorisedEntry&gt;&gt; + <span class="lifetime">'a </span>{
         <span class="kw">let </span>slf = <span class="self">self</span>.borrow();
         slf.entries
@@ -573,7 +588,10 @@
 
     <span class="kw">fn </span>ingest_entry(<span class="kw-2">&amp;</span><span class="self">self</span>, entry: <span class="kw-2">&amp;</span>AuthorisedEntry) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>slf = <span class="self">self</span>.borrow_mut();
-        <span class="kw">let </span>entries = slf.entries.entry(entry.namespace_id()).or_default();
+        <span class="kw">let </span>entries = slf
+            .entries
+            .entry(<span class="kw-2">*</span>entry.entry().namespace_id())
+            .or_default();
         <span class="kw">let </span>new = entry.entry();
         <span class="kw">let </span><span class="kw-2">mut </span>to_remove = <span class="macro">vec!</span>[];
         <span class="kw">for </span>(i, existing) <span class="kw">in </span>entries.iter().enumerate() {
@@ -581,15 +599,15 @@
             <span class="kw">if </span>existing == new {
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
             }
-            <span class="kw">if </span>existing.subspace_id == new.subspace_id
-                &amp;&amp; existing.path.is_prefix_of(<span class="kw-2">&amp;</span>new.path)
+            <span class="kw">if </span>existing.subspace_id() == new.subspace_id()
+                &amp;&amp; existing.path().is_prefix_of(new.path())
                 &amp;&amp; existing.is_newer_than(new)
             {
                 <span class="comment">// we cannot insert the entry, a newer entry exists
                 </span><span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
             }
-            <span class="kw">if </span>new.subspace_id == existing.subspace_id
-                &amp;&amp; new.path.is_prefix_of(<span class="kw-2">&amp;</span>existing.path)
+            <span class="kw">if </span>new.subspace_id() == existing.subspace_id()
+                &amp;&amp; new.path().is_prefix_of(existing.path())
                 &amp;&amp; new.is_newer_than(existing)
             {
                 to_remove.push(i);
@@ -621,15 +639,13 @@
         <span class="comment">// Select the best candidate, by sorting for
         // * first: widest area
         // * then: smallest number of delegations
-        </span><span class="kw">let </span>best = candidates.reduce(
-            |prev, next| {
-                <span class="kw">if </span>next.is_wider_than(prev) {
-                    next
-                } <span class="kw">else </span>{
-                    prev
-                }
-            },
-        );
+        </span><span class="kw">let </span>best = candidates.reduce(|prev, next| {
+            <span class="kw">if </span>is_wider_than(next, prev) {
+                next
+            } <span class="kw">else </span>{
+                prev
+            }
+        });
         <span class="prelude-val">Ok</span>(best.cloned())
     }
 
@@ -644,7 +660,7 @@
         <span class="comment">// Select the best candidate, by sorting for
         // * widest area
         </span><span class="kw">let </span>best = candidates.reduce(|prev, next| {
-            <span class="kw">if </span>next.read_cap().is_wider_than(prev.read_cap()) {
+            <span class="kw">if </span>is_wider_than(next.read_cap(), prev.read_cap()) {
                 next
             } <span class="kw">else </span>{
                 prev
@@ -682,15 +698,15 @@
         <span class="kw">match </span>cap {
             CapabilityPack::Read(cap) =&gt; {
                 <span class="self">self</span>.read_caps
-                    .entry(cap.read_cap().granted_namespace().id())
+                    .entry(<span class="kw-2">*</span>cap.read_cap().granted_namespace())
                     .or_default()
-                    .push(cap);
+                    .push(cap.into());
             }
             CapabilityPack::Write(cap) =&gt; {
                 <span class="self">self</span>.write_caps
-                    .entry(cap.granted_namespace().id())
+                    .entry(<span class="kw-2">*</span>cap.granted_namespace())
                     .or_default()
-                    .push(cap);
+                    .push(cap.into());
             }
         }
     }

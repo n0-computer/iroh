@@ -621,6 +621,9 @@
 <a href="#621" id="621">621</a>
 <a href="#622" id="622">622</a>
 <a href="#623" id="623">623</a>
+<a href="#624" id="624">624</a>
+<a href="#625" id="625">625</a>
+<a href="#626" id="626">626</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{HashMap, HashSet},
     num::NonZeroU64,
@@ -632,6 +635,33 @@
 <span class="kw">use </span>iroh_blobs::store::Store <span class="kw">as </span>PayloadStore;
 <span class="kw">use </span>tokio_stream::wrappers::ReceiverStream;
 <span class="kw">use </span>tracing::{debug, trace};
+
+<span class="kw">use crate</span>::{
+    proto::{
+        data_model::PayloadDigest,
+        grouping::{AreaExt, AreaOfInterest, Range3d},
+        keys::NamespaceId,
+        wgps::{
+            AreaOfInterestHandle, Fingerprint, IsHandle, LengthyEntry,
+            ReconciliationAnnounceEntries, ReconciliationMessage, ReconciliationSendEntry,
+            ReconciliationSendFingerprint, ReconciliationSendPayload,
+            ReconciliationTerminatePayload,
+        },
+    },
+    session::{
+        aoi_finder::AoiIntersection,
+        channels::{ChannelSenders, MessageReceiver},
+        payload::{send_payload_chunked, CurrentPayload, DEFAULT_CHUNK_SIZE},
+        static_tokens::StaticTokens,
+        Error, Role, SessionId,
+    },
+    store::{
+        entry::{EntryChannel, EntryOrigin},
+        traits::{EntryReader, EntryStorage, SplitAction, SplitOpts, Storage},
+        Store,
+    },
+    util::{gen_stream::GenStream, stream::Cancelable},
+};
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub enum </span>Input {
@@ -647,33 +677,6 @@
     ReconciledAll,
 }
 
-<span class="kw">use crate</span>::{
-    proto::{
-        grouping::{AreaOfInterest, ThreeDRange},
-        keys::NamespaceId,
-        sync::{
-            AreaOfInterestHandle, Fingerprint, IsHandle, LengthyEntry,
-            ReconciliationAnnounceEntries, ReconciliationMessage, ReconciliationSendEntry,
-            ReconciliationSendFingerprint, ReconciliationSendPayload,
-            ReconciliationTerminatePayload,
-        },
-        willow::PayloadDigest,
-    },
-    session::{
-        aoi_finder::AoiIntersection,
-        channels::{ChannelSenders, MessageReceiver},
-        payload::{send_payload_chunked, CurrentPayload},
-        static_tokens::StaticTokens,
-        Error, Role, SessionId,
-    },
-    store::{
-        entry::{EntryChannel, EntryOrigin},
-        traits::{EntryReader, EntryStorage, SplitAction, SplitOpts, Storage},
-        Store,
-    },
-    util::{gen_stream::GenStream, stream::Cancelable},
-};
-
 <span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub struct </span>Reconciler&lt;S: Storage&gt; {
     shared: Shared&lt;S&gt;,
@@ -688,6 +691,7 @@
     <span class="doccomment">/// Run the [`Reconciler`].
     ///
     /// The returned stream is a generator, so it must be polled repeatedly to progress.
+    </span><span class="attr">#[allow(clippy::too_many_arguments)]
     </span><span class="kw">pub fn </span>run_gen(
         inbox: Cancelable&lt;ReceiverStream&lt;Input&gt;&gt;,
         store: Store&lt;S&gt;,
@@ -696,6 +700,7 @@
         session_id: SessionId,
         send: ChannelSenders,
         our_role: Role,
+        max_eager_payload_size: u64,
     ) -&gt; <span class="kw">impl </span>futures_lite::Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;Output, Error&gt;&gt; {
         GenStream::new(|co| {
             <span class="kw">let </span>shared = Shared {
@@ -705,6 +710,7 @@
                 send,
                 static_tokens,
                 session_id,
+                max_eager_payload_size,
             };
             <span class="self">Self </span>{
                 shared,
@@ -772,13 +778,13 @@
                     </span>.shared
                     .static_tokens
                     .authorise_entry_eventually(
-                        message.entry.entry,
+                        message.entry.entry.into(),
                         message.static_token_handle,
                         message.dynamic_token,
                     )
                     .<span class="kw">await</span><span class="question-mark">?</span>;
                 <span class="self">self</span>.current_entry.received_entry(
-                    authorised_entry.entry().payload_digest,
+                    <span class="kw-2">*</span>authorised_entry.entry().payload_digest(),
                     message.entry.available,
                 )<span class="question-mark">?</span>;
                 <span class="self">self</span>.shared.store.entries().ingest(
@@ -989,6 +995,7 @@
     send: ChannelSenders,
     static_tokens: StaticTokens,
     session_id: SessionId,
+    max_eager_payload_size: u64,
 }
 
 <span class="attr">#[derive(Debug)]
@@ -1032,7 +1039,7 @@
     }
 
     <span class="kw">async fn </span>initiate(<span class="kw-2">&amp;mut </span><span class="self">self</span>, shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
-        <span class="kw">let </span>range = <span class="self">self</span>.intersection.area().into_range();
+        <span class="kw">let </span>range = <span class="self">self</span>.intersection.area().to_range();
         <span class="kw">let </span>fingerprint = <span class="self">self</span>.snapshot.fingerprint(<span class="self">self</span>.namespace(), <span class="kw-2">&amp;</span>range)<span class="question-mark">?</span>;
         <span class="self">self</span>.send_fingerprint(shared, range, fingerprint, <span class="prelude-val">None</span>)
             .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1134,13 +1141,13 @@
     <span class="kw">async fn </span>send_fingerprint(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;,
-        range: ThreeDRange,
+        range: Range3d,
         fingerprint: Fingerprint,
         covers: <span class="prelude-ty">Option</span>&lt;u64&gt;,
     ) -&gt; anyhow::Result&lt;()&gt; {
         <span class="self">self</span>.mark_our_next_range_pending();
         <span class="kw">let </span>msg = ReconciliationSendFingerprint {
-            range,
+            range: range.into(),
             fingerprint,
             sender_handle: <span class="self">self</span>.intersection.our_handle,
             receiver_handle: <span class="self">self</span>.intersection.their_handle,
@@ -1153,7 +1160,7 @@
     <span class="kw">async fn </span>announce_and_send_entries(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;,
-        range: <span class="kw-2">&amp;</span>ThreeDRange,
+        range: <span class="kw-2">&amp;</span>Range3d,
         want_response: bool,
         covers: <span class="prelude-ty">Option</span>&lt;u64&gt;,
         our_entry_count: <span class="prelude-ty">Option</span>&lt;u64&gt;,
@@ -1163,7 +1170,7 @@
             <span class="prelude-val">None </span>=&gt; <span class="self">self</span>.snapshot.count(<span class="self">self</span>.namespace(), range)<span class="question-mark">?</span>,
         };
         <span class="kw">let </span>msg = ReconciliationAnnounceEntries {
-            range: range.clone(),
+            range: range.clone().into(),
             count: our_entry_count,
             want_response,
             will_sort: <span class="bool-val">false</span>, <span class="comment">// todo: sorted?
@@ -1182,14 +1189,17 @@
         {
             <span class="kw">let </span>authorised_entry = authorised_entry<span class="question-mark">?</span>;
             <span class="kw">let </span>(entry, token) = authorised_entry.into_parts();
-            <span class="kw">let </span>(static_token, dynamic_token) = token.into_parts();
+
+            <span class="kw">let </span>static_token = token.capability.into();
+            <span class="kw">let </span>dynamic_token = token.signature;
             <span class="comment">// TODO: partial payloads
-            </span><span class="kw">let </span>available = entry.payload_length;
+            </span><span class="kw">let </span>payload_len = entry.payload_length();
+            <span class="kw">let </span>available = payload_len;
             <span class="kw">let </span>static_token_handle = shared
                 .static_tokens
                 .bind_and_send_ours(static_token, <span class="kw-2">&amp;</span>shared.send)
                 .<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="kw">let </span>digest = entry.payload_digest;
+            <span class="kw">let </span>digest = <span class="kw-2">*</span>entry.payload_digest();
             <span class="kw">let </span>msg = ReconciliationSendEntry {
                 entry: LengthyEntry::new(entry, available),
                 static_token_handle,
@@ -1198,21 +1208,17 @@
             shared.send.send(msg).<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="comment">// TODO: only send payload if configured to do so and/or under size limit.
-            </span><span class="kw">let </span>send_payloads = <span class="bool-val">true</span>;
-            <span class="kw">let </span>chunk_size = <span class="number">1024 </span>* <span class="number">64</span>;
-            <span class="kw">if </span>send_payloads
-                &amp;&amp; send_payload_chunked(
+            </span><span class="kw">if </span>payload_len &lt;= shared.max_eager_payload_size {
+                send_payload_chunked(
                     digest,
                     shared.store.payloads(),
                     <span class="kw-2">&amp;</span>shared.send,
-                    chunk_size,
+                    DEFAULT_CHUNK_SIZE,
                     |bytes| ReconciliationSendPayload { bytes }.into(),
                 )
-                .<span class="kw">await</span><span class="question-mark">?
-            </span>{
-                <span class="kw">let </span>msg = ReconciliationTerminatePayload;
-                shared.send.send(msg).<span class="kw">await</span><span class="question-mark">?</span>;
+                .<span class="kw">await</span><span class="question-mark">?</span>;
             }
+            shared.send.send(ReconciliationTerminatePayload).<span class="kw">await</span><span class="question-mark">?</span>;
         }
         <span class="prelude-val">Ok</span>(())
     }

@@ -11,6 +11,6 @@ var srcIndex = new Map(JSON.parse('[\
 ["iroh_net_bench",["",[],["iroh.rs","lib.rs","quinn.rs","s2n.rs","stats.rs"]]],\
 ["iroh_relay",["",[],["iroh-relay.rs"]]],\
 ["iroh_test",["",[],["hexdump.rs","lib.rs","logging.rs"]]],\
-["iroh_willow",["",[["engine",[],["actor.rs","peer_manager.rs"]],["proto",[],["challenge.rs","grouping.rs","keys.rs","meadowcap.rs","pai.rs","sync.rs","willow.rs"]],["session",[],["aoi_finder.rs","capabilities.rs","channels.rs","data.rs","error.rs","intents.rs","pai_finder.rs","payload.rs","reconciler.rs","resource.rs","run.rs","static_tokens.rs"]],["store",[],["auth.rs","entry.rs","memory.rs","traits.rs"]],["util",[],["channel.rs","codec.rs","gen_stream.rs","queue.rs","stream.rs","time.rs"]]],["auth.rs","engine.rs","form.rs","lib.rs","net.rs","proto.rs","session.rs","store.rs","util.rs"]]]\
+["iroh_willow",["",[["engine",[],["actor.rs","peer_manager.rs"]],["proto",[["wgps",[],["challenge.rs","channels.rs","fingerprint.rs","handles.rs","messages.rs"]]],["data_model.rs","grouping.rs","keys.rs","meadowcap.rs","pai.rs","wgps.rs"]],["session",[],["aoi_finder.rs","capabilities.rs","challenge.rs","channels.rs","data.rs","error.rs","intents.rs","pai_finder.rs","payload.rs","reconciler.rs","resource.rs","run.rs","static_tokens.rs"]],["store",[],["auth.rs","entry.rs","memory.rs","traits.rs"]],["util",[],["channel.rs","codec.rs","codec2.rs","gen_stream.rs","queue.rs","stream.rs","time.rs"]]],["engine.rs","form.rs","interest.rs","lib.rs","net.rs","proto.rs","session.rs","store.rs","util.rs"]]]\
 ]'));
 createSrcSidebar();
