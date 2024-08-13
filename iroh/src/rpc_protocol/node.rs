@@ -55,7 +55,7 @@ pub enum Response {
 /// List network path information about all the remote nodes know by this node.
 ///
 /// There may never have been connections to these nodes, and connections may not even be
-/// possible.  As well due to connections nodes can become known due to discovery mechanims
+/// possible.  As well due to connections nodes can become known due to discovery mechanisms
 /// or be added manually.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AllNodeInfoRequest;
