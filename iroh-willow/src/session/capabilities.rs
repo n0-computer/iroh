@@ -145,7 +145,7 @@ impl Capabilities {
         Ok(())
     }
 
-    pub fn sign_subspace_capabiltiy<S: SecretStorage>(
+    pub fn sign_subspace_capability<S: SecretStorage>(
         &self,
         secrets: &S,
         cap: SubspaceCapability,

@@ -231,7 +231,7 @@ pub(crate) async fn run_session<S: Storage>(
                         .await?;
                 }
                 Output::SignAndSendSubspaceCap(handle, cap) => {
-                    let message = caps.sign_subspace_capabiltiy(store.secrets(), cap, handle)?;
+                    let message = caps.sign_subspace_capability(store.secrets(), cap, handle)?;
                     channel_sender.send(Box::new(message)).await?;
                 }
             }

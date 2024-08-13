@@ -1,4 +1,4 @@
-//! Various utilties and data structures used in this crate.
+//! Various utilities and data structures used in this crate.
 
 pub mod channel;
 pub mod codec;

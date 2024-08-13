@@ -321,6 +321,15 @@ pub(crate) async fn terminate_gracefully(conn: &Connection) -> Result<()> {
     }
 }
 
+/// Waits for a goodbye byte or connection close, and then closes the connection.
+///
+/// Accepts a single uni stream and reads a single byte on it.
+///
+/// Returns once we received the goodbye byte or if the peer closed the connection with the
+/// graceful error code.
+///
+/// Returns an error if the connection was closed without the graceful error code or if reading the
+/// goodbye byte failed.
 async fn wait_for_goodbye_or_graceful_close(conn: &Connection) -> Result<()> {
     let mut recv_stream = match conn.accept_uni().await {
         // The other peer closed the connection with the expected error code: They received our
@@ -334,16 +343,16 @@ async fn wait_for_goodbye_or_graceful_close(conn: &Connection) -> Result<()> {
     };
     let mut buf = [0u8];
     match recv_stream.read_exact(&mut buf).await {
-        // We received the goodbye byte: the other peer signals having read everything, we're freee
-        // to close the connection.
+        // We received the goodbye byte: the other peer indicates to us that they are finished with
+        // everything and we are free to close the connection.
         Ok(()) if buf == [1u8] => Ok(()),
         // The other peer closed the connection with the expected error code: They received our
-        // goodbye byte after having sent theirs. We're free to close the connection.
+        // goodbye byte, and reacted by closing the connection. We're free to close too.
         Err(ReadExactError::ReadError(ReadError::ConnectionLost(
             ConnectionError::ApplicationClosed(frame),
         ))) if frame.error_code == ERROR_CODE_OK => Ok(()),
         // The peer has sent invalid data on the goodbye stream.
-        Ok(()) => Err(anyhow!("received unexpected closing byte from peer")),
+        Ok(()) => Err(anyhow!("Received unexpected closing byte from peer.")),
         // The peer closed the connection with an unexpected error coe.
         Err(err) => Err(err.into()),
     }
@@ -619,7 +628,7 @@ mod tests {
         let start = Instant::now();
         let (done_tx, done_rx) = tokio::sync::oneshot::channel();
 
-        // alfie insert 3 enries after waiting a second
+        // alfie insert 3 entries after waiting a second
         let _insert_task_alfie = tokio::task::spawn({
             let handle_alfie = handle_alfie.clone();
             let count = 3;

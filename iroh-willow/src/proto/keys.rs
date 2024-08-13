@@ -61,7 +61,7 @@ fn is_communal(pubkey_bytes: &[u8; 32]) -> bool {
 pub enum NamespaceKind {
     /// Communal namespace, needs [`super::meadowcap::CommunalCapability`] to authorizse.
     Communal,
-    /// Owned namespace, neads [`super::meadowcap::OwnedCapability`] to authorize.
+    /// Owned namespace, needs [`super::meadowcap::OwnedCapability`] to authorize.
     Owned,
 }
 
