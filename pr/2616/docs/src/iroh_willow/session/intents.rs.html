@@ -618,11 +618,6 @@
 <a href="#618" id="618">618</a>
 <a href="#619" id="619">619</a>
 <a href="#620" id="620">620</a>
-<a href="#621" id="621">621</a>
-<a href="#622" id="622">622</a>
-<a href="#623" id="623">623</a>
-<a href="#624" id="624">624</a>
-<a href="#625" id="625">625</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Intents are handles onto a Willow synchronisation session.
 //!
 //! They are created with [`crate::Engine::sync_with_peer`].
@@ -674,10 +669,7 @@
 </span><span class="attr">#[derive(Debug, Clone, Eq, PartialEq)]
 </span><span class="kw">pub enum </span>EventKind {
     <span class="doccomment">/// We found an intersection between our and the peer's capabilities.
-    </span>CapabilityIntersection {
-        namespace: NamespaceId,
-        area: Area,
-    },
+    </span>CapabilityIntersection { namespace: NamespaceId, area: Area },
     <span class="doccomment">/// We found an intersection between our and the peer's interests and will start to synchronize
     /// the area.
     </span>InterestIntersection {
@@ -692,9 +684,7 @@
     <span class="doccomment">/// We reconciled all interests submitted in this intent.
     </span>ReconciledAll,
     <span class="doccomment">/// The session was closed with an error.
-    </span>Abort {
-        error: Arc&lt;Error&gt;,
-    },
+    </span>Abort { error: Arc&lt;Error&gt; },
 }
 
 <span class="kw">impl </span>EventKind {
