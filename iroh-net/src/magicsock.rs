@@ -19,7 +19,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     io,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
@@ -426,23 +426,6 @@ impl MagicSock {
             .ok();
     }
 
-    fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        let (mut v4, mut v6) = self.local_addr();
-
-        // Make sure to not use unspecified addresses
-        if v4.ip().is_unspecified() {
-            v4 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), v4.port());
-        }
-        if let Some(v6) = &mut v6 {
-            if v6.ip().is_unspecified() {
-                *v6 = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), v6.port());
-            }
-        }
-
-        let addr = if let Some(v6) = v6 { v6 } else { v4 };
-        Ok(addr)
-    }
-
     fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
         // To do this properly the MagicSock would need a registry of pollers.  For each
         // node we would look up the poller or create one.  Then on each try_send we can
@@ -718,8 +701,6 @@ impl MagicSock {
             Poll::Ready(n) => (n, true),
         };
 
-        // let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
-
         let mut quic_packets_total = 0;
 
         for (meta, buf) in metas.iter_mut().zip(bufs.iter_mut()).take(msgs) {
@@ -791,7 +772,7 @@ impl MagicSock {
                 meta.len = 0;
             }
             // Normalize local_ip
-            meta.dst_ip = None; //dst_ip;
+            // meta.dst_ip = None; //dst_ip;
         }
 
         if quic_packets_total > 0 {
@@ -1987,10 +1968,6 @@ impl Actor {
         false
     }
 
-    fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        self.msock.normalized_local_addr()
-    }
-
     fn process_relay_read_result(&mut self, dm: RelayReadResult) -> Vec<RelayRecvResult> {
         trace!("process_relay_read {} bytes", dm.buf.len());
         if dm.buf.is_empty() {
@@ -2005,8 +1982,6 @@ impl Actor {
         //
         // split the packet into these parts
         let parts = PacketSplitIter::new(dm.buf);
-        // Normalize local_ip
-        let _dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
 
         let mut out = Vec::new();
         for part in parts {
