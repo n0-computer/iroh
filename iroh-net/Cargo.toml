@@ -93,6 +93,7 @@ strum = { version = "0.26.2", features = ["derive"] }
 # local_swarm_discovery
 swarm-discovery = { version = "0.2.1", optional = true }
 tokio-stream = { version = "0.1.15", optional = true }
+genawaiter = "0.99.1"
 
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]

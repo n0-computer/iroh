@@ -2852,6 +2852,7 @@ dependencies = [
  "futures-lite 2.3.0",
  "futures-sink",
  "futures-util",
+ "genawaiter",
  "governor",
  "hex",
  "hickory-proto",
