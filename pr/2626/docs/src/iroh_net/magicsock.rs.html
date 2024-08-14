@@ -3606,6 +3606,7 @@
 <a href="#3606" id="3606">3606</a>
 <a href="#3607" id="3607">3607</a>
 <a href="#3608" id="3608">3608</a>
+<a href="#3609" id="3609">3609</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4383,7 +4384,8 @@
             }
             <span class="comment">// Normalize local_ip
             // meta.dst_ip = None; //dst_ip;
-        </span>}
+            </span><span class="macro">warn!</span>(<span class="string">"UDP recv: dst_ip: {:?}"</span>, meta.dst_ip);
+        }
         <span class="kw">if let </span><span class="prelude-val">Some</span>(meta) = metas.iter().next() {
             <span class="kw">if let </span><span class="prelude-val">Some</span>(ip) = meta.dst_ip {
                 <span class="self">self</span>.last_udp_dst.write().unwrap().replace(ip);
