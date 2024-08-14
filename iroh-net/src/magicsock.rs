@@ -791,7 +791,7 @@ impl MagicSock {
                 meta.len = 0;
             }
             // Normalize local_ip
-            meta.dst_ip = dst_ip;
+            meta.dst_ip = None; //dst_ip;
         }
 
         if quic_packets_total > 0 {
@@ -2021,7 +2021,7 @@ impl Actor {
                         len: part.len(),
                         stride: part.len(),
                         addr: quic_mapped_addr.0,
-                        dst_ip,
+                        dst_ip: None,
                         ecn: None,
                     };
                     out.push(Ok((dm.src, meta, part)));
