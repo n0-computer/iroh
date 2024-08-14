@@ -870,7 +870,7 @@
     }
 
     <span class="doccomment">/// Upgrade a temp tag to a persistent tag.
-    </span><span class="kw">pub async fn </span>upgrade(<span class="kw-2">&amp;</span><span class="self">self</span>, tt: TempTag) -&gt; <span class="prelude-ty">Result</span>&lt;Tag&gt; {
+    </span><span class="kw">pub async fn </span>persist(<span class="kw-2">&amp;</span><span class="self">self</span>, tt: TempTag) -&gt; <span class="prelude-ty">Result</span>&lt;Tag&gt; {
         <span class="kw">let </span>tag = <span class="self">self
             </span>.<span class="number">0
             </span>.rpc
@@ -884,7 +884,7 @@
     }
 
     <span class="doccomment">/// Upgrade a temp tag to a persistent tag with a specific name.
-    </span><span class="kw">pub async fn </span>upgrade_to(<span class="kw-2">&amp;</span><span class="self">self</span>, tt: TempTag, tag: Tag) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub async fn </span>persist_to(<span class="kw-2">&amp;</span><span class="self">self</span>, tt: TempTag, tag: Tag) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="self">self</span>.<span class="number">0
             </span>.rpc
             .rpc(tags::SetRequest {
@@ -901,9 +901,9 @@
     /// an automatically generated name.
     </span><span class="kw">pub async fn </span>upgrade_with_opts(<span class="kw-2">&amp;</span><span class="self">self</span>, tt: TempTag, opts: SetTagOption) -&gt; <span class="prelude-ty">Result</span>&lt;Tag&gt; {
         <span class="kw">match </span>opts {
-            SetTagOption::Auto =&gt; <span class="self">self</span>.upgrade(tt).<span class="kw">await</span>,
+            SetTagOption::Auto =&gt; <span class="self">self</span>.persist(tt).<span class="kw">await</span>,
             SetTagOption::Named(tag) =&gt; {
-                <span class="self">self</span>.upgrade_to(tt, tag.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="self">self</span>.persist_to(tt, tag.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
                 <span class="prelude-val">Ok</span>(tag)
             }
         }
