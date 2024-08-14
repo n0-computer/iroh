@@ -1,4 +1,5 @@
 use anyhow::Result;
+use tokio::sync::mpsc;
 
 use super::actor::NetworkMessage;
 
@@ -6,7 +7,7 @@ use super::actor::NetworkMessage;
 pub(super) struct RouteMonitor {}
 
 impl RouteMonitor {
-    pub(super) fn new(_sender: async_channel::Sender<NetworkMessage>) -> Result<Self> {
+    pub(super) fn new(_sender: mpsc::Sender<NetworkMessage>) -> Result<Self> {
         // Very sad monitor. Android doesn't allow us to do this
 
         Ok(RouteMonitor {})

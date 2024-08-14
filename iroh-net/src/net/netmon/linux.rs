@@ -9,7 +9,7 @@ use netlink_packet_core::NetlinkPayload;
 use netlink_packet_route::{address, constants::*, route, RtnlMessage};
 use netlink_sys::{AsyncSocket, SocketAddr};
 use rtnetlink::new_connection;
-use tokio::task::JoinHandle;
+use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{info, trace, warn};
 
 use crate::net::ip::is_link_local;
@@ -49,7 +49,7 @@ macro_rules! get_nla {
 }
 
 impl RouteMonitor {
-    pub(super) fn new(sender: async_channel::Sender<NetworkMessage>) -> Result<Self> {
+    pub(super) fn new(sender: mpsc::Sender<NetworkMessage>) -> Result<Self> {
         let (mut conn, mut _handle, mut messages) = new_connection()?;
 
         // Specify flags to listen on.
