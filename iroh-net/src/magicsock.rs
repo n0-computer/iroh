@@ -718,7 +718,7 @@ impl MagicSock {
             Poll::Ready(n) => (n, true),
         };
 
-        let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
+        // let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
 
         let mut quic_packets_total = 0;
 
@@ -2006,7 +2006,7 @@ impl Actor {
         // split the packet into these parts
         let parts = PacketSplitIter::new(dm.buf);
         // Normalize local_ip
-        let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
+        // let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
 
         let mut out = Vec::new();
         for part in parts {
