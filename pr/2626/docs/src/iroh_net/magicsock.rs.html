@@ -3597,6 +3597,15 @@
 <a href="#3597" id="3597">3597</a>
 <a href="#3598" id="3598">3598</a>
 <a href="#3599" id="3599">3599</a>
+<a href="#3600" id="3600">3600</a>
+<a href="#3601" id="3601">3601</a>
+<a href="#3602" id="3602">3602</a>
+<a href="#3603" id="3603">3603</a>
+<a href="#3604" id="3604">3604</a>
+<a href="#3605" id="3605">3605</a>
+<a href="#3606" id="3606">3606</a>
+<a href="#3607" id="3607">3607</a>
+<a href="#3608" id="3608">3608</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3789,6 +3798,8 @@
 
     <span class="doccomment">/// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
     </span>local_addrs: std::sync::RwLock&lt;(SocketAddr, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;)&gt;,
+
+    last_udp_dst: std::sync::RwLock&lt;<span class="prelude-ty">Option</span>&lt;IpAddr&gt;&gt;,
 
     <span class="doccomment">/// Preferred port from `Options::port`; 0 means auto.
     </span>port: AtomicU16,
@@ -4373,6 +4384,11 @@
             <span class="comment">// Normalize local_ip
             // meta.dst_ip = None; //dst_ip;
         </span>}
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(meta) = metas.iter().next() {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(ip) = meta.dst_ip {
+                <span class="self">self</span>.last_udp_dst.write().unwrap().replace(ip);
+            }
+        }
 
         <span class="kw">if </span>quic_packets_total &gt; <span class="number">0 </span>{
             <span class="macro">inc_by!</span>(MagicsockMetrics, recv_datagrams, quic_packets_total <span class="kw">as _</span>);
@@ -5022,6 +5038,7 @@
             secret_key,
             proxy_url,
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
+            last_udp_dst: Default::default(),
             closing: AtomicBool::new(<span class="bool-val">false</span>),
             closed: AtomicBool::new(<span class="bool-val">false</span>),
             relay_recv_receiver,
@@ -5583,6 +5600,7 @@
         </span><span class="kw">let </span>parts = PacketSplitIter::new(dm.buf);
 
         <span class="kw">let </span><span class="kw-2">mut </span>out = Vec::new();
+        <span class="kw">let </span>dst_ip = <span class="self">self</span>.msock.last_udp_dst.read().unwrap().clone();
         <span class="kw">for </span>part <span class="kw">in </span>parts {
             <span class="kw">match </span>part {
                 <span class="prelude-val">Ok</span>(part) =&gt; {
@@ -5595,7 +5613,7 @@
                         len: part.len(),
                         stride: part.len(),
                         addr: quic_mapped_addr.<span class="number">0</span>,
-                        dst_ip: <span class="prelude-val">None</span>,
+                        dst_ip,
                         ecn: <span class="prelude-val">None</span>,
                     };
                     out.push(<span class="prelude-val">Ok</span>((dm.src, meta, part)));
