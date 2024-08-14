@@ -1,9 +1,7 @@
-use std::{
-    collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap},
-    hash::Hash,
-    net::{IpAddr, SocketAddr},
-    time::{Duration, Instant},
-};
+use std::collections::{btree_map::Entry, BTreeSet, HashMap};
+use std::hash::Hash;
+use std::net::{IpAddr, SocketAddr};
+use std::time::{Duration, Instant};
 
 use iroh_metrics::inc;
 use serde::{Deserialize, Serialize};
@@ -11,21 +9,18 @@ use tokio::sync::mpsc;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
 use watchable::{Watchable, WatcherStream};
 
-use crate::{
-    disco::{self, SendAddr},
-    endpoint::AddrInfo,
-    key::PublicKey,
-    magicsock::{Timer, HEARTBEAT_INTERVAL},
-    net::ip::is_unicast_link_local,
-    relay::RelayUrl,
-    stun,
-    util::relay_only_mode,
-    NodeAddr, NodeId,
-};
+use crate::disco::{self, SendAddr};
+use crate::endpoint::AddrInfo;
+use crate::key::PublicKey;
+use crate::magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL};
+use crate::net::ip::is_unicast_link_local;
+use crate::relay::RelayUrl;
+use crate::util::relay_only_mode;
+use crate::{stun, NodeAddr, NodeId};
 
-use crate::magicsock::{metrics::Metrics as MagicsockMetrics, ActorMessage, QuicMappedAddr};
-
-use super::best_addr::{self, BestAddr, ClearReason, Source};
+use super::best_addr::{self, ClearReason, Source};
+use super::path_state::{summarize_node_paths, PathState};
+use super::udp_paths::{NodeUdpPaths, UdpSendAddr};
 use super::IpPort;
 
 /// Number of addresses that are not active that we keep around per node.
@@ -39,16 +34,12 @@ const LAST_ALIVE_PRUNE_DURATION: Duration = Duration::from_secs(120);
 /// How long we wait for a pong reply before assuming it's never coming.
 const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 
-/// The minimum time between pings to an endpoint. (Except in the case of CallMeMaybe frames
-/// resetting the counter, as the first pings likely didn't through the firewall)
-const DISCO_PING_INTERVAL: Duration = Duration::from_secs(5);
-
 /// The latency at or under which we don't try to upgrade to a better path.
 const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
 
 /// How long since the last activity we try to keep an established endpoint peering alive.
 /// It's also the idle time at which we stop doing STUN queries to keep NAT mappings alive.
-const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
+pub(super) const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// How often we try to upgrade to a better patheven if we have some non-relay route that works.
 const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
@@ -116,10 +107,7 @@ pub(super) struct NodeState {
     ///
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
     relay_url: Option<(RelayUrl, PathState)>,
-    /// Best non-relay path, i.e. a UDP address.
-    best_addr: BestAddr,
-    /// State for each of this node's direct paths.
-    direct_addr_state: BTreeMap<IpPort, PathState>,
+    udp_paths: NodeUdpPaths,
     sent_pings: HashMap<stun::TransactionId, SentPing>,
     /// Last time this node was used.
     ///
@@ -169,9 +157,8 @@ impl NodeState {
                     PathState::new(options.node_id, SendAddr::Relay(url)),
                 )
             }),
-            best_addr: Default::default(),
+            udp_paths: NodeUdpPaths::new(),
             sent_pings: HashMap::new(),
-            direct_addr_state: BTreeMap::new(),
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: None,
             conn_type: Watchable::new(ConnectionType::None),
@@ -203,7 +190,8 @@ impl NodeState {
         let conn_type = self.conn_type.get();
         let latency = match conn_type {
             ConnectionType::Direct(addr) => self
-                .direct_addr_state
+                .udp_paths
+                .paths
                 .get(&addr.into())
                 .and_then(|state| state.latency()),
             ConnectionType::Relay(ref url) => self
@@ -213,7 +201,8 @@ impl NodeState {
                 .and_then(|(_, state)| state.latency()),
             ConnectionType::Mixed(addr, ref url) => {
                 let addr_latency = self
-                    .direct_addr_state
+                    .udp_paths
+                    .paths
                     .get(&addr.into())
                     .and_then(|state| state.latency());
                 let relay_latency = self
@@ -226,7 +215,8 @@ impl NodeState {
             ConnectionType::None => None,
         };
         let addrs = self
-            .direct_addr_state
+            .udp_paths
+            .paths
             .iter()
             .map(|(addr, endpoint_state)| DirectAddrInfo {
                 addr: SocketAddr::from(*addr),
@@ -261,31 +251,34 @@ impl NodeState {
     /// Returns the address(es) that should be used for sending the next packet.
     ///
     /// This may return to send on one, both or no paths.
-    fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<RelayUrl>) {
+    fn addr_for_send(
+        &mut self,
+        now: &Instant,
+        have_ipv6: bool,
+    ) -> (Option<SocketAddr>, Option<RelayUrl>) {
         if relay_only_mode() {
             debug!("in `DEV_relay_ONLY` mode, giving the relay address as the only viable address for this endpoint");
             return (None, self.relay_url());
         }
-        // Update our best addr from candidate addresses (only if it is empty and if we have
-        // recent pongs).
-        self.assign_best_addr_from_candidates_if_empty();
-        let (best_addr, relay_url) = match self.best_addr.state(*now) {
-            best_addr::State::Valid(best_addr) => {
+        let (best_addr, relay_url) = match self.udp_paths.send_addr(*now, have_ipv6) {
+            UdpSendAddr::Valid(addr) => {
                 // If we have a valid address we use it.
-                trace!(addr = %best_addr.addr, latency = ?best_addr.latency,
-                       "best_addr is set and valid, use best_addr only");
-                (Some(best_addr.addr), None)
+                trace!(%addr, "UdpSendAddr is valid, use it");
+                (Some(addr), None)
             }
-            best_addr::State::Outdated(best_addr) => {
+            UdpSendAddr::Outdated(addr) => {
                 // If the address is outdated we use it, but send via relay at the same time.
                 // We also send disco pings so that it will become valid again if it still
                 // works (i.e. we don't need to holepunch again).
-                trace!(addr = %best_addr.addr, latency = ?best_addr.latency,
-                       "best_addr is set but outdated, use best_addr and relay");
-                (Some(best_addr.addr), self.relay_url())
+                trace!(%addr, "UdpSendAddr is outdated, use it together with relay");
+                (Some(addr), self.relay_url())
             }
-            best_addr::State::Empty => {
-                trace!("best_addr is unset, use relay");
+            UdpSendAddr::Unconfirmed(addr) => {
+                trace!(%addr, "UdpSendAddr is unconfirmed, use it together with relay");
+                (Some(addr), self.relay_url())
+            }
+            UdpSendAddr::None => {
+                trace!("No UdpSendAddr, use relay");
                 (None, self.relay_url())
             }
         };
@@ -295,8 +288,8 @@ impl NodeState {
             (None, Some(relay_url)) => ConnectionType::Relay(relay_url),
             (None, None) => ConnectionType::None,
         };
-        if self.conn_type.update(typ).is_ok() {
-            let typ = self.conn_type.get();
+        if let Ok(prev_typ) = self.conn_type.update(typ.clone()) {
+            // The connection type has changed.
             event!(
                 target: "events.net.conn_type.changed",
                 Level::DEBUG,
@@ -304,6 +297,35 @@ impl NodeState {
                 conn_type = ?typ,
             );
             info!(%typ, "new connection type");
+
+            // Update some metrics
+            match (prev_typ, typ) {
+                (ConnectionType::Relay(_), ConnectionType::Direct(_))
+                | (ConnectionType::Mixed(_, _), ConnectionType::Direct(_)) => {
+                    inc!(MagicsockMetrics, num_direct_conns_added);
+                    inc!(MagicsockMetrics, num_relay_conns_removed);
+                }
+                (ConnectionType::Direct(_), ConnectionType::Relay(_))
+                | (ConnectionType::Direct(_), ConnectionType::Mixed(_, _)) => {
+                    inc!(MagicsockMetrics, num_direct_conns_removed);
+                    inc!(MagicsockMetrics, num_relay_conns_added);
+                }
+                (ConnectionType::None, ConnectionType::Direct(_)) => {
+                    inc!(MagicsockMetrics, num_direct_conns_added)
+                }
+                (ConnectionType::Direct(_), ConnectionType::None) => {
+                    inc!(MagicsockMetrics, num_direct_conns_removed)
+                }
+                (ConnectionType::None, ConnectionType::Relay(_))
+                | (ConnectionType::None, ConnectionType::Mixed(_, _)) => {
+                    inc!(MagicsockMetrics, num_relay_conns_added)
+                }
+                (ConnectionType::Relay(_), ConnectionType::None)
+                | (ConnectionType::Mixed(_, _), ConnectionType::None) => {
+                    inc!(MagicsockMetrics, num_relay_conns_removed)
+                }
+                _ => (),
+            }
         }
         (best_addr, relay_url)
     }
@@ -312,7 +334,7 @@ impl NodeState {
     ///
     /// If this is also the best address, it will be cleared as well.
     pub(super) fn remove_direct_addr(&mut self, ip_port: &IpPort, reason: ClearReason) {
-        let Some(state) = self.direct_addr_state.remove(ip_port) else {
+        let Some(state) = self.udp_paths.paths.remove(ip_port) else {
             return;
         };
 
@@ -321,56 +343,11 @@ impl NodeState {
             None => debug!(%ip_port, last_seen=%"never", ?reason, "pruning address"),
         }
 
-        self.best_addr
-            .clear_if_equals((*ip_port).into(), reason, self.relay_url.is_some());
-    }
-
-    /// Fixup best_adrr from candidates.
-    ///
-    /// If somehow we end up in a state where we failed to set a best_addr, while we do have
-    /// valid candidates, this will chose a candidate and set best_addr again.  Most likely
-    /// this is a bug elsewhere though.
-    fn assign_best_addr_from_candidates_if_empty(&mut self) {
-        if !self.best_addr.is_empty() {
-            return;
-        }
-
-        // The highest acceptable latency for an endpoint path.  If the latency is higher
-        // then this the path will be ignored.
-        const MAX_LATENCY: Duration = Duration::from_secs(60 * 60);
-        let best_pong = self
-            .direct_addr_state
-            .iter()
-            .fold(None, |best_pong, (ipp, state)| {
-                let best_latency = best_pong
-                    .map(|p: &PongReply| p.latency)
-                    .unwrap_or(MAX_LATENCY);
-                match state.recent_pong() {
-                    // This pong is better if it has a lower latency, or if it has the same
-                    // latency but on an IPv6 path.
-                    Some(pong)
-                        if pong.latency < best_latency
-                            || (pong.latency == best_latency && ipp.ip().is_ipv6()) =>
-                    {
-                        Some(pong)
-                    }
-                    _ => best_pong,
-                }
-            });
-
-        // If we found a candidate, set to best addr
-        if let Some(pong) = best_pong {
-            if let SendAddr::Udp(addr) = pong.from {
-                warn!(%addr, "No best_addr was set, choose candidate with lowest latency");
-                self.best_addr.insert_if_better_or_reconfirm(
-                    addr,
-                    pong.latency,
-                    best_addr::Source::BestCandidate,
-                    pong.pong_at,
-                    self.relay_url.is_some(),
-                )
-            }
-        }
+        self.udp_paths.best_addr.clear_if_equals(
+            (*ip_port).into(),
+            reason,
+            self.relay_url.is_some(),
+        );
     }
 
     /// Whether we need to send another call-me-maybe to the endpoint.
@@ -387,7 +364,7 @@ impl NodeState {
             debug!("no previous full ping: need full ping");
             return true;
         };
-        match self.best_addr.state(*now) {
+        match self.udp_paths.best_addr.state(*now) {
             best_addr::State::Empty => {
                 debug!("best addr not set: need full ping");
                 true
@@ -418,7 +395,7 @@ impl NodeState {
             debug!(tx = %hex::encode(txid), addr = %sp.to, "pong not received in timeout");
             match sp.to {
                 SendAddr::Udp(addr) => {
-                    if let Some(path_state) = self.direct_addr_state.get_mut(&addr.into()) {
+                    if let Some(path_state) = self.udp_paths.paths.get_mut(&addr.into()) {
                         path_state.last_ping = None;
                         // only clear the best address if there was no sign of life from this path
                         // within the time the pong should have arrived
@@ -427,7 +404,7 @@ impl NodeState {
                             .map(|last_alive| last_alive.elapsed() <= PING_TIMEOUT_DURATION)
                             .unwrap_or(false);
                         if !consider_alive {
-                            self.best_addr.clear_if_equals(
+                            self.udp_paths.best_addr.clear_if_equals(
                                 addr,
                                 ClearReason::PongTimeout,
                                 self.relay_url().is_some(),
@@ -436,7 +413,7 @@ impl NodeState {
                     } else {
                         // If we have no state for the best addr it should have been cleared
                         // anyway.
-                        self.best_addr.clear_if_equals(
+                        self.udp_paths.best_addr.clear_if_equals(
                             addr,
                             ClearReason::PongTimeout,
                             self.relay_url.is_some(),
@@ -496,7 +473,7 @@ impl NodeState {
         let mut path_found = false;
         match to {
             SendAddr::Udp(addr) => {
-                if let Some(st) = self.direct_addr_state.get_mut(&addr.into()) {
+                if let Some(st) = self.udp_paths.paths.get_mut(&addr.into()) {
                     st.last_ping.replace(now);
                     path_found = true
                 }
@@ -590,7 +567,7 @@ impl NodeState {
     #[must_use = "actions must be handled"]
     fn send_pings(&mut self, now: Instant) -> Vec<PingAction> {
         // We allocate +1 in case the caller wants to add a call-me-maybe message.
-        let mut ping_msgs = Vec::with_capacity(self.direct_addr_state.len() + 1);
+        let mut ping_msgs = Vec::with_capacity(self.udp_paths.paths.len() + 1);
 
         if let Some((url, state)) = self.relay_url.as_ref() {
             if state.needs_ping(&now) {
@@ -610,7 +587,8 @@ impl NodeState {
         }
         self.prune_direct_addresses();
         let mut ping_dsts = String::from("[");
-        self.direct_addr_state
+        self.udp_paths
+            .paths
             .iter()
             .filter_map(|(ipp, state)| state.needs_ping(&now).then_some(*ipp))
             .filter_map(|ipp| {
@@ -625,7 +603,7 @@ impl NodeState {
         debug!(
             %ping_dsts,
             dst = %self.node_id.fmt_short(),
-            paths = %summarize_node_paths(&self.direct_addr_state),
+            paths = %summarize_node_paths(&self.udp_paths.paths),
             "sending pings to node",
         );
         self.last_full_ping.replace(now);
@@ -633,7 +611,7 @@ impl NodeState {
     }
 
     pub(super) fn update_from_node_addr(&mut self, n: &AddrInfo) {
-        if self.best_addr.is_empty() {
+        if self.udp_paths.best_addr.is_empty() {
             // we do not have a direct connection, so changing the relay information may
             // have an effect on our connection status
             if self.relay_url.is_none() && n.relay_url.is_some() {
@@ -659,11 +637,12 @@ impl NodeState {
         }
 
         for &addr in n.direct_addresses.iter() {
-            self.direct_addr_state
+            self.udp_paths
+                .paths
                 .entry(addr.into())
                 .or_insert_with(|| PathState::new(self.node_id, SendAddr::from(addr)));
         }
-        let paths = summarize_node_paths(&self.direct_addr_state);
+        let paths = summarize_node_paths(&self.udp_paths.paths);
         debug!(new = ?n.direct_addresses , %paths, "added new direct paths for endpoint");
     }
 
@@ -671,10 +650,11 @@ impl NodeState {
     #[instrument(skip_all, fields(node = %self.node_id.fmt_short()))]
     pub(super) fn reset(&mut self) {
         self.last_full_ping = None;
-        self.best_addr
+        self.udp_paths
+            .best_addr
             .clear(ClearReason::Reset, self.relay_url.is_some());
 
-        for es in self.direct_addr_state.values_mut() {
+        for es in self.udp_paths.paths.values_mut() {
             es.last_ping = None;
         }
     }
@@ -696,7 +676,7 @@ impl NodeState {
         let now = Instant::now();
 
         let role = match path {
-            SendAddr::Udp(addr) => match self.direct_addr_state.entry(addr.into()) {
+            SendAddr::Udp(addr) => match self.udp_paths.paths.entry(addr.into()) {
                 Entry::Occupied(mut occupied) => occupied.get_mut().handle_ping(tx_id, now),
                 Entry::Vacant(vacant) => {
                     info!(%addr, "new direct addr for node");
@@ -744,7 +724,7 @@ impl NodeState {
         // if the endpoint does not yet have a best_addrr
         let needs_ping_back = if matches!(path, SendAddr::Udp(_))
             && matches!(
-                self.best_addr.state(now),
+                self.udp_paths.best_addr.state(now),
                 best_addr::State::Empty | best_addr::State::Outdated(_)
             ) {
             // We also need to send a ping to make this path available to us as well.  This
@@ -760,7 +740,7 @@ impl NodeState {
         debug!(
             ?role,
             needs_ping_back = ?needs_ping_back.is_some(),
-            paths = %summarize_node_paths(&self.direct_addr_state),
+            paths = %summarize_node_paths(&self.udp_paths.paths),
             "endpoint handled ping",
         );
         PingHandled {
@@ -776,7 +756,8 @@ impl NodeState {
     pub(super) fn prune_direct_addresses(&mut self) {
         // prune candidates are addresses that are not active
         let mut prune_candidates: Vec<_> = self
-            .direct_addr_state
+            .udp_paths
+            .paths
             .iter()
             .filter(|(_ip_port, state)| !state.is_active())
             .map(|(ip_port, state)| (*ip_port, state.last_alive()))
@@ -791,7 +772,7 @@ impl NodeState {
         if prune_count == 0 {
             // nothing to do, within limits
             debug!(
-                paths = %summarize_node_paths(&self.direct_addr_state),
+                paths = %summarize_node_paths(&self.udp_paths.paths),
                 "prune addresses: {prune_count} pruned",
             );
             return;
@@ -805,7 +786,7 @@ impl NodeState {
             self.remove_direct_addr(&ip_port, ClearReason::Inactive)
         }
         debug!(
-            paths = %summarize_node_paths(&self.direct_addr_state),
+            paths = %summarize_node_paths(&self.udp_paths.paths),
             "prune addresses: {prune_count} pruned",
         );
     }
@@ -814,8 +795,8 @@ impl NodeState {
     /// assumptions about which paths work.
     #[instrument("disco", skip_all, fields(node = %self.node_id.fmt_short()))]
     pub(super) fn note_connectivity_change(&mut self) {
-        self.best_addr.clear_trust("connectivity changed");
-        for es in self.direct_addr_state.values_mut() {
+        self.udp_paths.best_addr.clear_trust("connectivity changed");
+        for es in self.udp_paths.paths.values_mut() {
             es.clear();
         }
     }
@@ -863,7 +844,7 @@ impl NodeState {
 
                 match src {
                     SendAddr::Udp(addr) => {
-                        match self.direct_addr_state.get_mut(&addr.into()) {
+                        match self.udp_paths.paths.get_mut(&addr.into()) {
                             None => {
                                 warn!("ignoring pong: no state for src addr");
                                 // This is no longer an endpoint we care about.
@@ -880,7 +861,7 @@ impl NodeState {
                             }
                         }
                         debug!(
-                            paths = %summarize_node_paths(&self.direct_addr_state),
+                            paths = %summarize_node_paths(&self.udp_paths.paths),
                             "handled pong",
                         );
                     }
@@ -911,12 +892,11 @@ impl NodeState {
                 // TODO(bradfitz): decide how latency vs. preference order affects decision
                 if let SendAddr::Udp(to) = sp.to {
                     debug_assert!(!is_relay, "mismatching relay & udp");
-                    self.best_addr.insert_if_better_or_reconfirm(
+                    self.udp_paths.best_addr.insert_if_better_or_reconfirm(
                         to,
                         latency,
                         best_addr::Source::ReceivedPong,
                         now,
-                        self.relay_url.is_some(),
                     );
                 }
 
@@ -949,7 +929,8 @@ impl NodeState {
             }
             let ipp = IpPort::from(*peer_sockaddr);
             call_me_maybe_ipps.insert(ipp);
-            self.direct_addr_state
+            self.udp_paths
+                .paths
                 .entry(ipp)
                 .or_insert_with(|| PathState::new(self.node_id, SendAddr::from(*peer_sockaddr)))
                 .call_me_maybe_time
@@ -959,7 +940,7 @@ impl NodeState {
         // Zero out all the last_ping times to force send_pings to send new ones, even if
         // it's been less than 5 seconds ago.  Also clear pongs for direct addresses not
         // included in the updated set.
-        for (ipp, st) in self.direct_addr_state.iter_mut() {
+        for (ipp, st) in self.udp_paths.paths.iter_mut() {
             st.last_ping = None;
             if !call_me_maybe_ipps.contains(ipp) {
                 // TODO: This seems like a weird way to signal that the endpoint no longer
@@ -972,16 +953,17 @@ impl NodeState {
         }
         // Clear trust on our best_addr if it is not included in the updated set.  Also
         // clear the last call-me-maybe send time so we will send one again.
-        if let Some(addr) = self.best_addr.addr() {
+        if let Some(addr) = self.udp_paths.best_addr.addr() {
             let ipp: IpPort = addr.into();
             if !call_me_maybe_ipps.contains(&ipp) {
-                self.best_addr
+                self.udp_paths
+                    .best_addr
                     .clear_trust("best_addr not in new call-me-maybe");
                 self.last_call_me_maybe = None;
             }
         }
         debug!(
-            paths = %summarize_node_paths(&self.direct_addr_state),
+            paths = %summarize_node_paths(&self.udp_paths.paths),
             "updated endpoint paths from call-me-maybe",
         );
         self.send_pings(now)
@@ -989,13 +971,14 @@ impl NodeState {
 
     /// Marks this endpoint as having received a UDP payload message.
     pub(super) fn receive_udp(&mut self, addr: IpPort, now: Instant) {
-        let Some(state) = self.direct_addr_state.get_mut(&addr) else {
+        let Some(state) = self.udp_paths.paths.get_mut(&addr) else {
             debug_assert!(false, "node map inconsistency by_ip_port <-> direct addr");
             return;
         };
         state.last_payload_msg = Some(now);
         self.last_used = Some(now);
-        self.best_addr
+        self.udp_paths
+            .best_addr
             .reconfirm_if_used(addr.into(), Source::Udp, now);
     }
 
@@ -1021,7 +1004,8 @@ impl NodeState {
     pub(super) fn last_ping(&self, addr: &SendAddr) -> Option<Instant> {
         match addr {
             SendAddr::Udp(addr) => self
-                .direct_addr_state
+                .udp_paths
+                .paths
                 .get(&(*addr).into())
                 .and_then(|ep| ep.last_ping),
             SendAddr::Relay(url) => self
@@ -1058,7 +1042,7 @@ impl NodeState {
         }
 
         // Send heartbeat ping to keep the current addr going as long as we need it.
-        if let Some(udp_addr) = self.best_addr.addr() {
+        if let Some(udp_addr) = self.udp_paths.best_addr.addr() {
             let elapsed = self.last_ping(&SendAddr::Udp(udp_addr)).map(|l| now - l);
             // Send a ping if the last ping is older than 2 seconds.
             let needs_ping = match elapsed {
@@ -1089,10 +1073,11 @@ impl NodeState {
     #[instrument("get_send_addrs", skip_all, fields(node = %self.node_id.fmt_short()))]
     pub(crate) fn get_send_addrs(
         &mut self,
+        have_ipv6: bool,
     ) -> (Option<SocketAddr>, Option<RelayUrl>, Vec<PingAction>) {
         let now = Instant::now();
         self.last_used.replace(now);
-        let (udp_addr, relay_url) = self.addr_for_send(&now);
+        let (udp_addr, relay_url) = self.addr_for_send(&now, have_ipv6);
         let mut ping_msgs = Vec::new();
 
         if self.want_call_me_maybe(&now) {
@@ -1111,12 +1096,12 @@ impl NodeState {
 
     /// Get the direct addresses for this endpoint.
     pub(super) fn direct_addresses(&self) -> impl Iterator<Item = IpPort> + '_ {
-        self.direct_addr_state.keys().copied()
+        self.udp_paths.paths.keys().copied()
     }
 
     #[cfg(test)]
     pub(super) fn direct_address_states(&self) -> impl Iterator<Item = (&IpPort, &PathState)> + '_ {
-        self.direct_addr_state.iter()
+        self.udp_paths.paths.iter()
     }
 
     pub(super) fn last_used(&self) -> Option<Instant> {
@@ -1140,260 +1125,6 @@ impl From<NodeInfo> for NodeAddr {
             },
         }
     }
-}
-
-/// State about a particular path to another [`NodeState`].
-///
-/// This state is used for both the relay path and any direct UDP paths.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(super) struct PathState {
-    /// The node for which this path exists.
-    node_id: NodeId,
-    /// The path this applies for.
-    path: SendAddr,
-    /// The last (outgoing) ping time.
-    last_ping: Option<Instant>,
-
-    /// If non-zero, means that this was an endpoint that we learned about at runtime (from an
-    /// incoming ping). If so, we keep the time updated and use it to discard old candidates.
-    // NOTE: tx_id Originally added in tailscale due to <https://github.com/tailscale/tailscale/issues/7078>.
-    last_got_ping: Option<(Instant, stun::TransactionId)>,
-
-    /// If non-zero, is the time this endpoint was advertised last via a call-me-maybe disco message.
-    call_me_maybe_time: Option<Instant>,
-
-    /// Last [`PongReply`] received.
-    pub(super) recent_pong: Option<PongReply>,
-    /// When was this endpoint last used to transmit payload data (removing ping, pong, etc).
-    pub(super) last_payload_msg: Option<Instant>,
-}
-
-impl PathState {
-    fn new(node_id: NodeId, path: SendAddr) -> Self {
-        Self {
-            node_id,
-            path,
-            last_ping: None,
-            last_got_ping: None,
-            call_me_maybe_time: None,
-            recent_pong: None,
-            last_payload_msg: None,
-        }
-    }
-
-    pub(super) fn with_last_payload(node_id: NodeId, path: SendAddr, now: Instant) -> Self {
-        PathState {
-            node_id,
-            path,
-            last_ping: None,
-            last_got_ping: None,
-            call_me_maybe_time: None,
-            recent_pong: None,
-            last_payload_msg: Some(now),
-        }
-    }
-
-    pub(super) fn with_ping(
-        node_id: NodeId,
-        path: SendAddr,
-        tx_id: stun::TransactionId,
-        now: Instant,
-    ) -> Self {
-        let mut new = PathState::new(node_id, path);
-        new.handle_ping(tx_id, now);
-        new
-    }
-
-    pub(super) fn add_pong_reply(&mut self, r: PongReply) {
-        if let SendAddr::Udp(ref path) = self.path {
-            if self.recent_pong.is_none() {
-                event!(
-                    target: "events.net.holepunched",
-                    Level::DEBUG,
-                    node = %self.node_id.fmt_short(),
-                    path = ?path,
-                    direction = "outgoing",
-                );
-            }
-        }
-        self.recent_pong = Some(r);
-    }
-
-    #[cfg(test)]
-    pub(super) fn with_pong_reply(node_id: NodeId, r: PongReply) -> Self {
-        PathState {
-            node_id,
-            path: r.from.clone(),
-            last_ping: None,
-            last_got_ping: None,
-            call_me_maybe_time: None,
-            recent_pong: Some(r),
-            last_payload_msg: None,
-        }
-    }
-
-    /// Check whether this path is considered active.
-    ///
-    /// Active means the path has received payload messages within the last
-    /// [`SESSION_ACTIVE_TIMEOUT`].
-    ///
-    /// Note that a path might be alive but not active if it's contactable but not in
-    /// use.
-    pub(super) fn is_active(&self) -> bool {
-        self.last_payload_msg
-            .as_ref()
-            .map(|instant| instant.elapsed() <= SESSION_ACTIVE_TIMEOUT)
-            .unwrap_or(false)
-    }
-
-    /// Returns the instant the last incoming ping was received.
-    pub(super) fn last_incoming_ping(&self) -> Option<&Instant> {
-        self.last_got_ping.as_ref().map(|(time, _tx_id)| time)
-    }
-
-    /// Reports the last instant this path was considered alive.
-    ///
-    /// Alive means the path is considered in use by the remote endpoint.  Either because we
-    /// received a payload message, a DISCO message (ping, pong) or it was advertised in a
-    /// call-me-maybe message.
-    ///
-    /// This is the most recent instant between:
-    /// - when last pong was received.
-    /// - when this path was last advertised in a received CallMeMaybe message.
-    /// - When the last payload transmission occurred.
-    /// - when the last ping from them was received.
-    pub(super) fn last_alive(&self) -> Option<Instant> {
-        self.recent_pong()
-            .map(|pong| &pong.pong_at)
-            .into_iter()
-            .chain(self.last_payload_msg.as_ref())
-            .chain(self.call_me_maybe_time.as_ref())
-            .chain(self.last_incoming_ping())
-            .max()
-            .copied()
-    }
-
-    pub(super) fn last_control_msg(&self, now: Instant) -> Option<(Duration, ControlMsg)> {
-        // get every control message and assign it its kind
-        let last_pong = self
-            .recent_pong()
-            .map(|pong| (pong.pong_at, ControlMsg::Pong));
-        let last_call_me_maybe = self
-            .call_me_maybe_time
-            .as_ref()
-            .map(|call_me| (*call_me, ControlMsg::CallMeMaybe));
-        let last_ping = self
-            .last_incoming_ping()
-            .map(|ping| (*ping, ControlMsg::Ping));
-
-        last_pong
-            .into_iter()
-            .chain(last_call_me_maybe)
-            .chain(last_ping)
-            .max_by_key(|(instant, _kind)| *instant)
-            .map(|(instant, kind)| (now.duration_since(instant), kind))
-    }
-
-    /// Returns the most recent pong if available.
-    fn recent_pong(&self) -> Option<&PongReply> {
-        self.recent_pong.as_ref()
-    }
-
-    /// Returns the latency from the most recent pong, if available.
-    fn latency(&self) -> Option<Duration> {
-        self.recent_pong.as_ref().map(|p| p.latency)
-    }
-
-    fn needs_ping(&self, now: &Instant) -> bool {
-        match self.last_ping {
-            None => true,
-            Some(last_ping) => {
-                let elapsed = now.duration_since(last_ping);
-
-                // TODO: remove!
-                // This logs "ping is too new" for each send whenever the endpoint does *not* need
-                // a ping. Pretty sure this is not a useful log, but maybe there was a reason?
-                // if !needs_ping {
-                //     debug!("ping is too new: {}ms", elapsed.as_millis());
-                // }
-                elapsed > DISCO_PING_INTERVAL
-            }
-        }
-    }
-
-    fn handle_ping(&mut self, tx_id: stun::TransactionId, now: Instant) -> PingRole {
-        if Some(&tx_id) == self.last_got_ping.as_ref().map(|(_t, tx_id)| tx_id) {
-            PingRole::Duplicate
-        } else {
-            let prev = self.last_got_ping.replace((now, tx_id));
-            let heartbeat_deadline = HEARTBEAT_INTERVAL + (HEARTBEAT_INTERVAL / 2);
-            match prev {
-                Some((prev_time, _tx)) if now.duration_since(prev_time) <= heartbeat_deadline => {
-                    PingRole::LikelyHeartbeat
-                }
-                Some((prev_time, _tx)) => {
-                    debug!(
-                        elapsed = ?now.duration_since(prev_time),
-                        "heartbeat missed, reactivating",
-                    );
-                    PingRole::Activate
-                }
-                None => {
-                    if let SendAddr::Udp(ref addr) = self.path {
-                        event!(
-                            target: "events.net.holepunched",
-                            Level::DEBUG,
-                            node = %self.node_id.fmt_short(),
-                            path = ?addr,
-                            direction = "incoming",
-                        );
-                    }
-                    PingRole::Activate
-                }
-            }
-        }
-    }
-
-    fn clear(&mut self) {
-        self.last_ping = None;
-        self.last_got_ping = None;
-        self.call_me_maybe_time = None;
-        self.recent_pong = None;
-    }
-
-    fn summary(&self, mut w: impl std::fmt::Write) -> std::fmt::Result {
-        write!(w, "{{ ")?;
-        if self.is_active() {
-            write!(w, "active ")?;
-        }
-        if let Some(ref pong) = self.recent_pong {
-            write!(w, "pong-received({:?} ago) ", pong.pong_at.elapsed())?;
-        }
-        if let Some(when) = self.last_incoming_ping() {
-            write!(w, "ping-received({:?} ago) ", when.elapsed())?;
-        }
-        if let Some(ref when) = self.last_ping {
-            write!(w, "ping-sent({:?} ago) ", when.elapsed())?;
-        }
-        write!(w, "}}")
-    }
-}
-
-// TODO: Make an `EndpointPaths` struct and do things nicely.
-fn summarize_node_paths(paths: &BTreeMap<IpPort, PathState>) -> String {
-    use std::fmt::Write;
-
-    let mut w = String::new();
-    write!(&mut w, "[").ok();
-    for (i, (ipp, state)) in paths.iter().enumerate() {
-        if i > 0 {
-            write!(&mut w, ", ").ok();
-        }
-        write!(&mut w, "{ipp}").ok();
-        state.summary(&mut w).ok();
-    }
-    write!(&mut w, "]").ok();
-    w
 }
 
 /// Whether to send a call-me-maybe message after sending pings to all known paths.
@@ -1560,13 +1291,14 @@ pub enum ConnectionType {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
+    use std::{collections::BTreeMap, net::Ipv4Addr};
 
-    use super::{
-        super::{NodeMap, NodeMapInner},
-        *,
-    };
     use crate::key::SecretKey;
+    use crate::magicsock::node_map::{NodeMap, NodeMapInner};
+
+    use best_addr::BestAddr;
+
+    use super::*;
 
     #[test]
     fn test_endpoint_infos() {
@@ -1617,13 +1349,15 @@ mod tests {
                     node_id: key.public(),
                     last_full_ping: None,
                     relay_url: None,
-                    best_addr: BestAddr::from_parts(
-                        ip_port.into(),
-                        latency,
-                        now,
-                        now + Duration::from_secs(100),
+                    udp_paths: NodeUdpPaths::from_parts(
+                        endpoint_state,
+                        BestAddr::from_parts(
+                            ip_port.into(),
+                            latency,
+                            now,
+                            now + Duration::from_secs(100),
+                        ),
                     ),
-                    direct_addr_state: endpoint_state,
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
                     last_call_me_maybe: None,
@@ -1642,8 +1376,7 @@ mod tests {
                 node_id: key.public(),
                 last_full_ping: None,
                 relay_url: relay_and_state(key.public(), send_addr.clone()),
-                best_addr: BestAddr::default(),
-                direct_addr_state: BTreeMap::default(),
+                udp_paths: NodeUdpPaths::new(),
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
@@ -1654,7 +1387,6 @@ mod tests {
         // endpoint w/ no best addr but a relay w/ no latency
         let c_endpoint = {
             // let socket_addr = "0.0.0.0:8".parse().unwrap();
-            let endpoint_state = BTreeMap::new();
             let key = SecretKey::generate();
             NodeState {
                 id: 2,
@@ -1665,8 +1397,7 @@ mod tests {
                     send_addr.clone(),
                     PathState::new(key.public(), SendAddr::from(send_addr.clone())),
                 )),
-                best_addr: BestAddr::default(),
-                direct_addr_state: endpoint_state,
+                udp_paths: NodeUdpPaths::new(),
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
@@ -1699,13 +1430,10 @@ mod tests {
                     node_id: key.public(),
                     last_full_ping: None,
                     relay_url: relay_and_state(key.public(), send_addr.clone()),
-                    best_addr: BestAddr::from_parts(
-                        socket_addr,
-                        Duration::from_millis(80),
-                        now,
-                        expired,
+                    udp_paths: NodeUdpPaths::from_parts(
+                        endpoint_state,
+                        BestAddr::from_parts(socket_addr, Duration::from_millis(80), now, expired),
                     ),
-                    direct_addr_state: endpoint_state,
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
                     last_call_me_maybe: None,

@@ -36,12 +36,11 @@
 //!
 //! Data can get out of the store in two ways:
 //!
-//! 1. the data and outboard of both partial and complete entries can be read
-//! at any time and shared over the network. Only data that is complete will
-//! be shared, everything else will lead to validation errors.
+//! 1. the data and outboard of both partial and complete entries can be read at any time and
+//!    shared over the network. Only data that is complete will be shared, everything else will
+//!    lead to validation errors.
 //!
-//! 2. entries can be exported to the file system. This currently only works
-//! for complete entries.
+//! 2. entries can be exported to the file system. This currently only works for complete entries.
 //!
 //! Tables:
 //!

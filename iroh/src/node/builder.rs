@@ -10,15 +10,13 @@ use futures_lite::StreamExt;
 use iroh_base::key::SecretKey;
 use iroh_blobs::{
     downloader::Downloader,
+    provider::EventSender,
     store::{Map, Store as BaoStore},
     util::local_pool::{self, LocalPool, LocalPoolHandle, PanicMode},
 };
 use iroh_docs::engine::DefaultAuthorStorage;
 use iroh_docs::net::DOCS_ALPN;
-use iroh_gossip::{
-    dispatcher::GossipDispatcher,
-    net::{Gossip, GOSSIP_ALPN},
-};
+use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 #[cfg(not(test))]
 use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 use iroh_net::{
@@ -57,7 +55,6 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 const MAX_CONNECTIONS: u32 = 1024;
-const MAX_STREAMS: u64 = 10;
 
 /// Storage backend for documents.
 #[derive(Debug, Clone)]
@@ -77,12 +74,23 @@ pub enum DocsStorage {
 /// Blob store implementations are available in [`iroh_blobs::store`].
 /// Document store implementations are available in [`iroh_docs::store`].
 ///
-/// Everything else is optional.
+/// Everything else is optional, with some sensible defaults.
+///
+/// The default **relay servers** are hosted by [number 0] on the `iroh.network` domain.  To
+/// customise this use the [`Builder::relay_mode`] function.
+///
+/// For **node discovery** the default is to use the [number 0] hosted DNS server hosted on
+/// `iroh.link`.  To customise this use the [`Builder::node_discovery`] function.
+///
+/// Note that some defaults change when running using `cfg(test)`, see the individual
+/// methods for details.
 ///
 /// Finally you can create and run the node by calling [`Builder::spawn`].
 ///
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
+///
+/// [number 0]: https://n0.computer
 #[derive(derive_more::Debug)]
 pub struct Builder<D>
 where
@@ -105,6 +113,7 @@ where
     /// Callback to register when a gc loop is done
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
+    blob_events: EventSender,
 }
 
 /// Configuration for storage.
@@ -129,13 +138,37 @@ impl StorageConfig {
 }
 
 /// Configuration for node discovery.
+///
+/// Node discovery enables connecting to other peers by only the [`NodeId`].  This usually
+/// works by the nodes publishing their [`RelayUrl`] and/or their direct addresses to some
+/// publicly available service.
+///
+/// [`NodeId`]: crate::base::key::NodeId
+/// [`RelayUrl`]: crate::base::node_addr::RelayUrl
 #[derive(Debug, Default)]
 pub enum DiscoveryConfig {
     /// Use no node discovery mechanism.
     None,
     /// Use the default discovery mechanism.
     ///
-    /// This enables the [`DnsDiscovery`] service.
+    /// This uses two discovery services concurrently:
+    ///
+    /// - It publishes to a pkarr service operated by [number 0] which makes the information
+    ///   available via DNS in the `iroh.link` domain.
+    ///
+    /// - It uses an mDNS-like system to announce itself on the local network.
+    ///
+    /// # Usage during tests
+    ///
+    /// Note that the default changes when compiling with `cfg(test)` or the `test-utils`
+    /// cargo feature from [iroh-net] is enabled.  In this case only the Pkarr/DNS service
+    /// is used, but on the `iroh.test` domain.  This domain is not integrated with the
+    /// global DNS network and thus node discovery is effectively disabled.  To use node
+    /// discovery in a test use the [`iroh_net::test_utils::DnsPkarrServer`] in the test and
+    /// configure it here as a custom discovery mechanism ([`DiscoveryConfig::Custom`]).
+    ///
+    /// [number 0]: https://n0.computer
+    /// [iroh-net]: crate::net
     #[default]
     Default,
     /// Use a custom discovery mechanism.
@@ -206,6 +239,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
+            blob_events: Default::default(),
         }
     }
 }
@@ -239,6 +273,7 @@ impl<D: Map> Builder<D> {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
+            blob_events: Default::default(),
         }
     }
 }
@@ -247,6 +282,15 @@ impl<D> Builder<D>
 where
     D: BaoStore,
 {
+    /// Configure a blob events sender. This will replace the previous blob
+    /// event sender. By default, no events are sent.
+    ///
+    /// To define an event sender, implement the [`iroh_blobs::provider::CustomEventSender`] trait.
+    pub fn blobs_events(mut self, blob_events: impl Into<EventSender>) -> Self {
+        self.blob_events = blob_events.into();
+        self
+    }
+
     /// Persist all node data in the provided directory.
     pub async fn persist(
         self,
@@ -303,6 +347,7 @@ where
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: self.gc_done_callback,
+            blob_events: self.blob_events,
         })
     }
 
@@ -358,18 +403,30 @@ where
     /// establish connections between peers by being an initial relay for traffic while
     /// assisting in holepunching to establish a direct connection between peers.
     ///
-    /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
-    /// configured relay node.  If an invalid [`iroh_net::relay::RelayMode`]
-    /// is provided [`Self::spawn`] will result in an error.
-    pub fn relay_mode(mut self, dm: RelayMode) -> Self {
-        self.relay_mode = dm;
+    /// When using [`RelayMode::Custom`], the provided `relay_map` must contain at least one
+    /// configured relay node.  If an invalid [`iroh_net::relay::RelayMode`] is provided
+    /// [`Self::spawn`] will result in an error.
+    ///
+    /// # Usage during tests
+    ///
+    /// Note that while the default is [`RelayMode::Default`], when using `cfg(test)` or
+    /// when the `test-utils` cargo feature [`RelayMode::Staging`] is the default.
+    pub fn relay_mode(mut self, relay_mode: RelayMode) -> Self {
+        self.relay_mode = relay_mode;
         self
     }
 
     /// Sets the node discovery mechanism.
     ///
-    /// The default is [`DiscoveryConfig::Default`]. Use [`DiscoveryConfig::Custom`] to pass a
-    /// custom [`Discovery`].
+    /// Node discovery enables connecting to other peers by only the [`NodeId`].  This
+    /// usually works by the nodes publishing their [`RelayUrl`] and/or their direct
+    /// addresses to some publicly available service.
+    ///
+    /// See [`DiscoveryConfig::default`] for the defaults, note that the defaults change
+    /// when using `cfg(test)`.
+    ///
+    /// [`NodeId`]: crate::base::key::NodeId
+    /// [`RelayUrl`]: crate::base::node_addr::RelayUrl
     pub fn node_discovery(mut self, config: DiscoveryConfig) -> Self {
         self.node_discovery = config;
         self
@@ -461,11 +518,6 @@ where
             ..Default::default()
         });
         let (endpoint, nodes_data_path) = {
-            let mut transport_config = quinn::TransportConfig::default();
-            transport_config
-                .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
-                .max_concurrent_uni_streams(0u32.into());
-
             let discovery: Option<Box<dyn Discovery>> = match self.node_discovery {
                 DiscoveryConfig::None => None,
                 DiscoveryConfig::Custom(discovery) => Some(discovery),
@@ -504,7 +556,6 @@ where
                 .secret_key(self.secret_key.clone())
                 .proxy_from_env()
                 .keylog(self.keylog)
-                .transport_config(transport_config)
                 .concurrent_connections(MAX_CONNECTIONS)
                 .relay_mode(self.relay_mode);
             let endpoint = match discovery {
@@ -557,7 +608,6 @@ where
             downloader.clone(),
         )
         .await?;
-        let gossip_dispatcher = GossipDispatcher::new(gossip.clone());
 
         // Initialize the internal RPC connection.
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection::<RpcService>(32);
@@ -577,7 +627,6 @@ where
             cancel_token: CancellationToken::new(),
             downloader,
             gossip,
-            gossip_dispatcher,
             local_pool_handle: lp.handle().clone(),
             blob_batches: Default::default(),
         });
@@ -593,7 +642,7 @@ where
             local_pool: lp,
         };
 
-        let protocol_builder = protocol_builder.register_iroh_protocols();
+        let protocol_builder = protocol_builder.register_iroh_protocols(self.blob_events);
 
         Ok(protocol_builder)
     }
@@ -716,10 +765,13 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     }
 
     /// Registers the core iroh protocols (blobs, gossip, docs).
-    fn register_iroh_protocols(mut self) -> Self {
+    fn register_iroh_protocols(mut self, blob_events: EventSender) -> Self {
         // Register blobs.
-        let blobs_proto =
-            BlobsProtocol::new(self.blobs_db().clone(), self.local_pool_handle().clone());
+        let blobs_proto = BlobsProtocol::new_with_events(
+            self.blobs_db().clone(),
+            self.local_pool_handle().clone(),
+            blob_events,
+        );
         self = self.accept(iroh_blobs::protocol::ALPN, Arc::new(blobs_proto));
 
         // Register gossip.
@@ -803,6 +855,8 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
 }
 
 /// Policy for garbage collection.
+// Please note that this is documented in the `iroh.computer` repository under
+// `src/app/docs/reference/config/page.mdx`.  Any changes to this need to be updated there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GcPolicy {
     /// Garbage collection is disabled.

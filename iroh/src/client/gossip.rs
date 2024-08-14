@@ -4,6 +4,8 @@
 //!
 //! The main entry point is the [`Client`].
 //!
+//! You obtain a [`Client`] via [`Iroh::gossip()`](crate::client::Iroh::gossip).
+//!
 //! The gossip API is extremely simple. You use [`subscribe`](Client::subscribe)
 //! to subscribe to a topic. This returns a sink to send updates to the topic
 //! and a stream of responses.
@@ -49,24 +51,24 @@ impl Default for SubscribeOpts {
 }
 
 impl Client {
-    /// Subscribe to a gossip topic.
+    /// Subscribes to a gossip topic.
     ///
     /// Returns a sink to send updates to the topic and a stream of responses.
     ///
-    /// Updates are either [Broadcast](iroh_gossip::dispatcher::Command::Broadcast)
-    /// or [BroadcastNeighbors](iroh_gossip::dispatcher::Command::BroadcastNeighbors).
+    /// Updates are either [Broadcast](iroh_gossip::net::Command::Broadcast)
+    /// or [BroadcastNeighbors](iroh_gossip::net::Command::BroadcastNeighbors).
     ///
     /// Broadcasts are gossiped to the entire swarm, while BroadcastNeighbors are sent to
     /// just the immediate neighbors of the node.
     ///
-    /// Responses are either [Gossip](iroh_gossip::dispatcher::Event::Gossip) or
-    /// [Lagged](iroh_gossip::dispatcher::Event::Lagged).
+    /// Responses are either [Gossip](iroh_gossip::net::Event::Gossip) or
+    /// [Lagged](iroh_gossip::net::Event::Lagged).
     ///
     /// Gossip events contain the actual message content, as well as information about the
     /// immediate neighbors of the node.
     ///
     /// A Lagged event indicates that the gossip stream has not been consumed quickly enough.
-    /// You can adjust the buffer size with the [] option.
+    /// You can adjust the buffer size with the [`SubscribeOpts::subscription_capacity`] option.
     pub async fn subscribe_with_opts(
         &self,
         topic: TopicId,
@@ -88,7 +90,7 @@ impl Client {
         Ok((sink, stream))
     }
 
-    /// Subscribe to a gossip topic with default options.
+    /// Subscribes to a gossip topic with default options.
     pub async fn subscribe(
         &self,
         topic: impl Into<TopicId>,

@@ -77,8 +77,8 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         // check that the count of futures we are polling for downloads is consistent with the
         // number of requests
         assert_eq!(
-            self.in_progress_downloads.len(),
             self.active_requests.len(),
+            self.in_progress_downloads.len(),
             "active_requests and in_progress_downloads are out of sync"
         );
         // check that the count of requests per peer matches the number of requests that have that

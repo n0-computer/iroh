@@ -3,13 +3,12 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, Result};
 use futures_buffered::BufferedStreamExt;
 use futures_lite::{Stream, StreamExt};
 use futures_util::FutureExt;
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::{RpcError, RpcResult};
-use iroh_blobs::downloader::{DownloadRequest, Downloader};
 use iroh_blobs::export::ExportProgress;
 use iroh_blobs::format::collection::Collection;
 use iroh_blobs::get::db::DownloadProgress;
@@ -17,12 +16,15 @@ use iroh_blobs::get::Stats;
 use iroh_blobs::provider::BatchAddPathProgress;
 use iroh_blobs::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
 use iroh_blobs::util::local_pool::LocalPoolHandle;
-use iroh_blobs::util::progress::ProgressSender;
+use iroh_blobs::util::progress::{AsyncChannelProgressSender, ProgressSender};
 use iroh_blobs::util::SetTagOption;
+use iroh_blobs::{
+    downloader::{DownloadRequest, Downloader},
+    get::db::GetState,
+};
 use iroh_blobs::{
     provider::AddProgress,
     store::{Store as BaoStore, ValidateProgress},
-    util::progress::FlumeProgressSender,
     HashAndFormat,
 };
 use iroh_blobs::{BlobFormat, Tag};
@@ -231,14 +233,15 @@ impl<D: BaoStore> Handler<D> {
         match msg {
             Subscribe(msg) => {
                 chan.bidi_streaming(msg, self, |handler, req, updates| {
-                    handler.inner.gossip_dispatcher.subscribe_with_opts(
+                    let stream = handler.inner.gossip.join_with_stream(
                         req.topic,
-                        iroh_gossip::dispatcher::SubscribeOptions {
+                        iroh_gossip::net::JoinOptions {
                             bootstrap: req.bootstrap,
                             subscription_capacity: req.subscription_capacity,
                         },
-                        Box::new(updates),
-                    )
+                        Box::pin(updates),
+                    );
+                    futures_util::TryStreamExt::map_err(stream, RpcError::from)
                 })
                 .await
             }
@@ -564,18 +567,18 @@ impl<D: BaoStore> Handler<D> {
         self,
         msg: ValidateRequest,
     ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
-        let (tx, rx) = flume::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         let tx2 = tx.clone();
         let db = self.inner.db.clone();
         tokio::task::spawn(async move {
             if let Err(e) = db
-                .validate(msg.repair, FlumeProgressSender::new(tx).boxed())
+                .validate(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
                 .await
             {
-                tx2.send_async(ValidateProgress::Abort(e.into())).await.ok();
+                tx2.send(ValidateProgress::Abort(e.into())).await.ok();
             }
         });
-        rx.into_stream()
+        rx
     }
 
     /// Invoke validate on the database and stream out the result
@@ -583,59 +586,59 @@ impl<D: BaoStore> Handler<D> {
         self,
         msg: ConsistencyCheckRequest,
     ) -> impl Stream<Item = ConsistencyCheckProgress> + Send + 'static {
-        let (tx, rx) = flume::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         let tx2 = tx.clone();
         let db = self.inner.db.clone();
         tokio::task::spawn(async move {
             if let Err(e) = db
-                .consistency_check(msg.repair, FlumeProgressSender::new(tx).boxed())
+                .consistency_check(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
                 .await
             {
-                tx2.send_async(ConsistencyCheckProgress::Abort(e.into()))
+                tx2.send(ConsistencyCheckProgress::Abort(e.into()))
                     .await
                     .ok();
             }
         });
-        rx.into_stream()
+        rx
     }
 
     fn blob_add_from_path(self, msg: AddPathRequest) -> impl Stream<Item = AddPathResponse> {
         // provide a little buffer so that we don't slow down the sender
-        let (tx, rx) = flume::bounded(32);
+        let (tx, rx) = async_channel::bounded(32);
         let tx2 = tx.clone();
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(e) = self.blob_add_from_path0(msg, tx).await {
-                tx2.send_async(AddProgress::Abort(e.into())).await.ok();
+                tx2.send(AddProgress::Abort(e.into())).await.ok();
             }
         });
-        rx.into_stream().map(AddPathResponse)
+        rx.map(AddPathResponse)
     }
 
     fn doc_import_file(self, msg: ImportFileRequest) -> impl Stream<Item = ImportFileResponse> {
         // provide a little buffer so that we don't slow down the sender
-        let (tx, rx) = flume::bounded(32);
+        let (tx, rx) = async_channel::bounded(32);
         let tx2 = tx.clone();
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(e) = self.doc_import_file0(msg, tx).await {
-                tx2.send_async(crate::client::docs::ImportProgress::Abort(e.into()))
+                tx2.send(crate::client::docs::ImportProgress::Abort(e.into()))
                     .await
                     .ok();
             }
         });
-        rx.into_stream().map(ImportFileResponse)
+        rx.map(ImportFileResponse)
     }
 
     async fn doc_import_file0(
         self,
         msg: ImportFileRequest,
-        progress: flume::Sender<crate::client::docs::ImportProgress>,
+        progress: async_channel::Sender<crate::client::docs::ImportProgress>,
     ) -> anyhow::Result<()> {
         let docs = self.docs().ok_or_else(|| anyhow!("docs are disabled"))?;
         use crate::client::docs::ImportProgress as DocImportProgress;
         use iroh_blobs::store::ImportMode;
         use std::collections::BTreeMap;
 
-        let progress = FlumeProgressSender::new(progress);
+        let progress = AsyncChannelProgressSender::new(progress);
         let names = Arc::new(Mutex::new(BTreeMap::new()));
         // convert import progress to provide progress
         let import_progress = progress.clone().with_filter_map(move |x| match x {
@@ -697,23 +700,23 @@ impl<D: BaoStore> Handler<D> {
     }
 
     fn doc_export_file(self, msg: ExportFileRequest) -> impl Stream<Item = ExportFileResponse> {
-        let (tx, rx) = flume::bounded(1024);
+        let (tx, rx) = async_channel::bounded(1024);
         let tx2 = tx.clone();
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(e) = self.doc_export_file0(msg, tx).await {
-                tx2.send_async(ExportProgress::Abort(e.into())).await.ok();
+                tx2.send(ExportProgress::Abort(e.into())).await.ok();
             }
         });
-        rx.into_stream().map(ExportFileResponse)
+        rx.map(ExportFileResponse)
     }
 
     async fn doc_export_file0(
         self,
         msg: ExportFileRequest,
-        progress: flume::Sender<ExportProgress>,
+        progress: async_channel::Sender<ExportProgress>,
     ) -> anyhow::Result<()> {
         let _docs = self.docs().ok_or_else(|| anyhow!("docs are disabled"))?;
-        let progress = FlumeProgressSender::new(progress);
+        let progress = AsyncChannelProgressSender::new(progress);
         let ExportFileRequest { entry, path, mode } = msg;
         let key = bytes::Bytes::from(entry.key().to_vec());
         let export_progress = progress.clone().with_map(move |mut x| {
@@ -737,11 +740,11 @@ impl<D: BaoStore> Handler<D> {
     }
 
     fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = DownloadResponse> {
-        let (sender, receiver) = flume::bounded(1024);
+        let (sender, receiver) = async_channel::bounded(1024);
         let db = self.inner.db.clone();
         let downloader = self.inner.downloader.clone();
         let endpoint = self.inner.endpoint.clone();
-        let progress = FlumeProgressSender::new(sender);
+        let progress = AsyncChannelProgressSender::new(sender);
         self.local_pool_handle().spawn_detached(move || async move {
             if let Err(err) = download(&db, endpoint, &downloader, msg, progress.clone()).await {
                 progress
@@ -751,12 +754,12 @@ impl<D: BaoStore> Handler<D> {
             }
         });
 
-        receiver.into_stream().map(DownloadResponse)
+        receiver.map(DownloadResponse)
     }
 
     fn blob_export(self, msg: ExportRequest) -> impl Stream<Item = ExportResponse> {
-        let (tx, rx) = flume::bounded(1024);
-        let progress = FlumeProgressSender::new(tx);
+        let (tx, rx) = async_channel::bounded(1024);
+        let progress = AsyncChannelProgressSender::new(tx);
         self.local_pool_handle().spawn_detached(move || async move {
             let res = iroh_blobs::export::export(
                 &self.inner.db,
@@ -772,18 +775,18 @@ impl<D: BaoStore> Handler<D> {
                 Err(err) => progress.send(ExportProgress::Abort(err.into())).await.ok(),
             };
         });
-        rx.into_stream().map(ExportResponse)
+        rx.map(ExportResponse)
     }
 
     async fn blob_add_from_path0(
         self,
         msg: AddPathRequest,
-        progress: flume::Sender<AddProgress>,
+        progress: async_channel::Sender<AddProgress>,
     ) -> anyhow::Result<()> {
         use iroh_blobs::store::ImportMode;
         use std::collections::BTreeMap;
 
-        let progress = FlumeProgressSender::new(progress);
+        let progress = AsyncChannelProgressSender::new(progress);
         let names = Arc::new(Mutex::new(BTreeMap::new()));
         // convert import progress to provide progress
         let import_progress = progress.clone().with_filter_map(move |x| match x {
@@ -999,17 +1002,17 @@ impl<D: BaoStore> Handler<D> {
         msg: BatchAddStreamRequest,
         stream: impl Stream<Item = BatchAddStreamUpdate> + Send + Unpin + 'static,
     ) -> impl Stream<Item = BatchAddStreamResponse> {
-        let (tx, rx) = flume::bounded(32);
+        let (tx, rx) = async_channel::bounded(32);
         let this = self.clone();
 
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(err) = this.batch_add_stream0(msg, stream, tx.clone()).await {
-                tx.send_async(BatchAddStreamResponse::Abort(err.into()))
+                tx.send(BatchAddStreamResponse::Abort(err.into()))
                     .await
                     .ok();
             }
         });
-        rx.into_stream()
+        rx
     }
 
     fn batch_add_from_path(
@@ -1017,25 +1020,23 @@ impl<D: BaoStore> Handler<D> {
         msg: BatchAddPathRequest,
     ) -> impl Stream<Item = BatchAddPathResponse> {
         // provide a little buffer so that we don't slow down the sender
-        let (tx, rx) = flume::bounded(32);
+        let (tx, rx) = async_channel::bounded(32);
         let tx2 = tx.clone();
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(e) = self.batch_add_from_path0(msg, tx).await {
-                tx2.send_async(BatchAddPathProgress::Abort(e.into()))
-                    .await
-                    .ok();
+                tx2.send(BatchAddPathProgress::Abort(e.into())).await.ok();
             }
         });
-        rx.into_stream().map(BatchAddPathResponse)
+        rx.map(BatchAddPathResponse)
     }
 
     async fn batch_add_stream0(
         self,
         msg: BatchAddStreamRequest,
         stream: impl Stream<Item = BatchAddStreamUpdate> + Send + Unpin + 'static,
-        progress: flume::Sender<BatchAddStreamResponse>,
+        progress: async_channel::Sender<BatchAddStreamResponse>,
     ) -> anyhow::Result<()> {
-        let progress = FlumeProgressSender::new(progress);
+        let progress = AsyncChannelProgressSender::new(progress);
 
         let stream = stream.map(|item| match item {
             BatchAddStreamUpdate::Chunk(chunk) => Ok(chunk),
@@ -1070,9 +1071,9 @@ impl<D: BaoStore> Handler<D> {
     async fn batch_add_from_path0(
         self,
         msg: BatchAddPathRequest,
-        progress: flume::Sender<BatchAddPathProgress>,
+        progress: async_channel::Sender<BatchAddPathProgress>,
     ) -> anyhow::Result<()> {
-        let progress = FlumeProgressSender::new(progress);
+        let progress = AsyncChannelProgressSender::new(progress);
         // convert import progress to provide progress
         let import_progress = progress.clone().with_filter_map(move |x| match x {
             ImportProgress::Size { size, .. } => Some(BatchAddPathProgress::Found { size }),
@@ -1112,25 +1113,25 @@ impl<D: BaoStore> Handler<D> {
         msg: AddStreamRequest,
         stream: impl Stream<Item = AddStreamUpdate> + Send + Unpin + 'static,
     ) -> impl Stream<Item = AddStreamResponse> {
-        let (tx, rx) = flume::bounded(32);
+        let (tx, rx) = async_channel::bounded(32);
         let this = self.clone();
 
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(err) = this.blob_add_stream0(msg, stream, tx.clone()).await {
-                tx.send_async(AddProgress::Abort(err.into())).await.ok();
+                tx.send(AddProgress::Abort(err.into())).await.ok();
             }
         });
 
-        rx.into_stream().map(AddStreamResponse)
+        rx.map(AddStreamResponse)
     }
 
     async fn blob_add_stream0(
         self,
         msg: AddStreamRequest,
         stream: impl Stream<Item = AddStreamUpdate> + Send + Unpin + 'static,
-        progress: flume::Sender<AddProgress>,
+        progress: async_channel::Sender<AddProgress>,
     ) -> anyhow::Result<()> {
-        let progress = FlumeProgressSender::new(progress);
+        let progress = AsyncChannelProgressSender::new(progress);
 
         let stream = stream.map(|item| match item {
             AddStreamUpdate::Chunk(chunk) => Ok(chunk),
@@ -1182,24 +1183,24 @@ impl<D: BaoStore> Handler<D> {
         self,
         req: ReadAtRequest,
     ) -> impl Stream<Item = RpcResult<ReadAtResponse>> + Send + 'static {
-        let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
+        let (tx, rx) = async_channel::bounded(RPC_BLOB_GET_CHANNEL_CAP);
         let db = self.inner.db.clone();
         self.local_pool_handle().spawn_detached(move || async move {
             if let Err(err) = read_loop(req, db, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
-                tx.send_async(RpcResult::Err(err.into())).await.ok();
+                tx.send(RpcResult::Err(err.into())).await.ok();
             }
         });
 
         async fn read_loop<D: iroh_blobs::store::Store>(
             req: ReadAtRequest,
             db: D,
-            tx: flume::Sender<RpcResult<ReadAtResponse>>,
+            tx: async_channel::Sender<RpcResult<ReadAtResponse>>,
             max_chunk_size: usize,
         ) -> anyhow::Result<()> {
             let entry = db.get(&req.hash).await?;
             let entry = entry.ok_or_else(|| anyhow!("Blob not found"))?;
             let size = entry.size();
-            tx.send_async(Ok(ReadAtResponse::Entry {
+            tx.send(Ok(ReadAtResponse::Entry {
                 size,
                 is_complete: entry.is_complete(),
             }))
@@ -1226,7 +1227,7 @@ impl<D: BaoStore> Handler<D> {
                 let chunk = reader.read_at(req.offset + read, chunk_size).await?;
                 let chunk_len = chunk.len();
                 if !chunk.is_empty() {
-                    tx.send_async(Ok(ReadAtResponse::Data { chunk })).await?;
+                    tx.send(Ok(ReadAtResponse::Data { chunk })).await?;
                 }
                 if chunk_len < chunk_size {
                     break;
@@ -1237,7 +1238,7 @@ impl<D: BaoStore> Handler<D> {
             Ok(())
         }
 
-        rx.into_stream()
+        rx
     }
 
     fn batch_create(
@@ -1275,17 +1276,15 @@ impl<D: BaoStore> Handler<D> {
         _: ConnectionsRequest,
     ) -> impl Stream<Item = RpcResult<ConnectionsResponse>> + Send + 'static {
         // provide a little buffer so that we don't slow down the sender
-        let (tx, rx) = flume::bounded(32);
+        let (tx, rx) = async_channel::bounded(32);
         let mut conn_infos = self.inner.endpoint.connection_infos();
         conn_infos.sort_by_key(|n| n.node_id.to_string());
         self.local_pool_handle().spawn_detached(|| async move {
             for conn_info in conn_infos {
-                tx.send_async(Ok(ConnectionsResponse { conn_info }))
-                    .await
-                    .ok();
+                tx.send(Ok(ConnectionsResponse { conn_info })).await.ok();
             }
         });
-        rx.into_stream()
+        rx
     }
 
     // This method is called as an RPC method, which have to be async
@@ -1344,7 +1343,7 @@ async fn download<D>(
     endpoint: Endpoint,
     downloader: &Downloader,
     req: BlobDownloadRequest,
-    progress: FlumeProgressSender<DownloadProgress>,
+    progress: AsyncChannelProgressSender<DownloadProgress>,
 ) -> Result<()>
 where
     D: iroh_blobs::store::Store,
@@ -1394,7 +1393,7 @@ async fn download_queued(
     downloader: &Downloader,
     hash_and_format: HashAndFormat,
     nodes: Vec<NodeAddr>,
-    progress: FlumeProgressSender<DownloadProgress>,
+    progress: AsyncChannelProgressSender<DownloadProgress>,
 ) -> Result<Stats> {
     let mut node_ids = Vec::with_capacity(nodes.len());
     let mut any_added = false;
@@ -1413,61 +1412,72 @@ async fn download_queued(
     Ok(stats)
 }
 
+#[tracing::instrument("download_direct", skip_all, fields(hash=%hash_and_format.hash.fmt_short()))]
 async fn download_direct_from_nodes<D>(
     db: &D,
     endpoint: Endpoint,
     hash_and_format: HashAndFormat,
     nodes: Vec<NodeAddr>,
-    progress: FlumeProgressSender<DownloadProgress>,
+    progress: AsyncChannelProgressSender<DownloadProgress>,
 ) -> Result<Stats>
 where
     D: BaoStore,
 {
-    ensure!(!nodes.is_empty(), "No nodes to download from provided.");
     let mut last_err = None;
-    for node in nodes {
-        let node_id = node.node_id;
-        match download_direct(
-            db,
-            endpoint.clone(),
-            hash_and_format,
-            node,
-            progress.clone(),
-        )
-        .await
+    let mut remaining_nodes = nodes.len();
+    let mut nodes_iter = nodes.into_iter();
+    'outer: loop {
+        match iroh_blobs::get::db::get_to_db_in_steps(db.clone(), hash_and_format, progress.clone())
+            .await?
         {
-            Ok(stats) => return Ok(stats),
-            Err(err) => {
-                debug!(?err, node = &node_id.fmt_short(), "Download failed");
-                last_err = Some(err)
+            GetState::Complete(stats) => return Ok(stats),
+            GetState::NeedsConn(needs_conn) => {
+                let (conn, node_id) = 'inner: loop {
+                    match nodes_iter.next() {
+                        None => break 'outer,
+                        Some(node) => {
+                            remaining_nodes -= 1;
+                            let node_id = node.node_id;
+                            if node_id == endpoint.node_id() {
+                                debug!(
+                                    ?remaining_nodes,
+                                    "skip node {} (it is the node id of ourselves)",
+                                    node_id.fmt_short()
+                                );
+                                continue 'inner;
+                            }
+                            match endpoint.connect(node, iroh_blobs::protocol::ALPN).await {
+                                Ok(conn) => break 'inner (conn, node_id),
+                                Err(err) => {
+                                    debug!(
+                                        ?remaining_nodes,
+                                        "failed to connect to {}: {err}",
+                                        node_id.fmt_short()
+                                    );
+                                    continue 'inner;
+                                }
+                            }
+                        }
+                    }
+                };
+                match needs_conn.proceed(conn).await {
+                    Ok(stats) => return Ok(stats),
+                    Err(err) => {
+                        warn!(
+                            ?remaining_nodes,
+                            "failed to download from {}: {err}",
+                            node_id.fmt_short()
+                        );
+                        last_err = Some(err);
+                    }
+                }
             }
         }
     }
-    Err(last_err.unwrap())
-}
-
-async fn download_direct<D>(
-    db: &D,
-    endpoint: Endpoint,
-    hash_and_format: HashAndFormat,
-    node: NodeAddr,
-    progress: FlumeProgressSender<DownloadProgress>,
-) -> Result<Stats>
-where
-    D: BaoStore,
-{
-    let get_conn = {
-        let progress = progress.clone();
-        move || async move {
-            let conn = endpoint.connect(node, iroh_blobs::protocol::ALPN).await?;
-            progress.send(DownloadProgress::Connected).await?;
-            Ok(conn)
-        }
-    };
-
-    let res = iroh_blobs::get::db::get_to_db(db, get_conn, &hash_and_format, progress).await;
-
-    res.map_err(Into::into)
+    match last_err {
+        Some(err) => Err(err.into()),
+        None => Err(anyhow!("No nodes to download from provided")),
+    }
 }
 
 fn docs_disabled() -> RpcError {

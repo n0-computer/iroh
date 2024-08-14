@@ -5,10 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use iroh_metrics::inc;
 use tracing::{debug, info};
-
-use crate::magicsock::metrics::Metrics as MagicsockMetrics;
 
 /// How long we trust a UDP address as the exclusive path (without using relay) without having heard a Pong reply.
 const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
@@ -93,12 +90,6 @@ impl BestAddr {
         let old = self.0.take();
         if let Some(old_addr) = old.as_ref().map(BestAddrInner::addr) {
             info!(?reason, ?has_relay, %old_addr, "clearing best_addr");
-            // no longer relying on the direct connection
-            inc!(MagicsockMetrics, num_direct_conns_removed);
-            if has_relay {
-                // we are now relying on the relay connection, add a relay conn
-                inc!(MagicsockMetrics, num_relay_conns_added);
-            }
         }
     }
 
@@ -126,16 +117,15 @@ impl BestAddr {
         latency: Duration,
         source: Source,
         confirmed_at: Instant,
-        has_relay: bool,
     ) {
         match self.0.as_mut() {
             None => {
-                self.insert(addr, latency, source, confirmed_at, has_relay);
+                self.insert(addr, latency, source, confirmed_at);
             }
             Some(state) => {
                 let candidate = AddrLatency { addr, latency };
                 if !state.is_trusted(confirmed_at) || candidate.is_better_than(&state.addr) {
-                    self.insert(addr, latency, source, confirmed_at, has_relay);
+                    self.insert(addr, latency, source, confirmed_at);
                 } else if state.addr.addr == addr {
                     state.confirmed_at = confirmed_at;
                     state.trust_until = Some(source.trust_until(confirmed_at));
@@ -160,7 +150,6 @@ impl BestAddr {
         latency: Duration,
         source: Source,
         confirmed_at: Instant,
-        has_relay: bool,
     ) {
         let trust_until = source.trust_until(confirmed_at);
 
@@ -184,22 +173,12 @@ impl BestAddr {
                "selecting new direct path for node"
             );
         }
-        let was_empty = self.is_empty();
         let inner = BestAddrInner {
             addr: AddrLatency { addr, latency },
             trust_until: Some(trust_until),
             confirmed_at,
         };
         self.0 = Some(inner);
-        if was_empty && has_relay {
-            // we now have a direct connection, adjust direct connection count
-            inc!(MagicsockMetrics, num_direct_conns_added);
-            if has_relay {
-                // we no longer rely on the relay connection, decrease the relay connection
-                // count
-                inc!(MagicsockMetrics, num_relay_conns_removed);
-            }
-        }
     }
 
     pub fn state(&self, now: Instant) -> State {

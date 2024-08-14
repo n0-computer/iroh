@@ -1,4 +1,6 @@
 //! Client to an Iroh node.
+//!
+//! See the documentation for [`Iroh`] for more information.
 
 use futures_lite::{Stream, StreamExt};
 use ref_cast::RefCast;
@@ -24,10 +26,23 @@ pub mod tags;
 /// Iroh rpc connection - boxed so that we can have a concrete type.
 pub(crate) type RpcConnection = quic_rpc::transport::boxed::Connection<RpcService>;
 
-/// Iroh rpc client.
-pub(crate) type RpcClient = quic_rpc::RpcClient<RpcService, RpcConnection>;
+// Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
+// will show up as `RpcClient<RpcService, Connection<RpcService>>` in the docs.
+/// Iroh rpc client - boxed so that we can have a concrete type.
+pub type RpcClient =
+    quic_rpc::RpcClient<RpcService, quic_rpc::transport::boxed::Connection<RpcService>>;
 
-/// Iroh client.
+/// An iroh client.
+///
+/// There are three ways to obtain this client, depending on which context
+/// you're running in relative to the main [`Node`](crate::node::Node):
+///
+/// 1. If you just spawned the client in rust the same process and have a reference to it:
+///    Use [`Node::client()`](crate::node::Node::client).
+/// 2. If the main node wasn't spawned in the same process, but on the same machine:
+///    Use [`Iroh::connect_path`].
+/// 3. If the main node was spawned somewhere else and has been made accessible via IP:
+///    Use [`Iroh::connect_addr`].
 #[derive(Debug, Clone)]
 pub struct Iroh {
     rpc: RpcClient,
@@ -42,37 +57,42 @@ impl Deref for Iroh {
 }
 
 impl Iroh {
-    /// Create a new high-level client to a Iroh node from the low-level RPC client.
+    /// Creates a new high-level client to a Iroh node from the low-level RPC client.
+    ///
+    /// Prefer using [`Node::client()`](crate::node::Node::client), [`Iroh::connect_path`]
+    /// or [`Iroh::connect_addr`] instead of calling this function.
+    ///
+    /// See also the [`Iroh`] struct documentation.
     pub fn new(rpc: RpcClient) -> Self {
         Self { rpc }
     }
 
-    /// Blobs client
+    /// Returns the blobs client.
     pub fn blobs(&self) -> &blobs::Client {
         blobs::Client::ref_cast(&self.rpc)
     }
 
-    /// Docs client
+    /// Returns the docs client.
     pub fn docs(&self) -> &docs::Client {
         docs::Client::ref_cast(&self.rpc)
     }
 
-    /// Authors client
+    /// Returns the authors client.
     pub fn authors(&self) -> &authors::Client {
         authors::Client::ref_cast(&self.rpc)
     }
 
-    /// Tags client
+    /// Returns the tags client.
     pub fn tags(&self) -> &tags::Client {
         tags::Client::ref_cast(&self.rpc)
     }
 
-    /// Gossip client
+    /// Returns the gossip client.
     pub fn gossip(&self) -> &gossip::Client {
         gossip::Client::ref_cast(&self.rpc)
     }
 
-    /// Node client
+    /// Returns the node client.
     pub fn node(&self) -> &node::Client {
         node::Client::ref_cast(&self.rpc)
     }

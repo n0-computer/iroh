@@ -1178,18 +1178,18 @@ dependencies = [
 
 [[package]]
 name = "derive_more"
-version = "1.0.0-beta.6"
+version = "1.0.0-beta.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7abbfc297053be59290e3152f8cbcd52c8642e0728b69ee187d991d4c1af08d"
+checksum = "3249c0372e72f5f93b5c0ca54c0ab76bbf6216b6f718925476fd9bc4ffabb4fe"
 dependencies = [
  "derive_more-impl",
 ]
 
 [[package]]
 name = "derive_more-impl"
-version = "1.0.0-beta.6"
+version = "1.0.0-beta.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bba3e9872d7c58ce7ef0fcf1844fcc3e23ef2a58377b50df35dd98e42a5726e"
+checksum = "27d919ced7590fc17b5d5a3c63b662e8a7d2324212c4e4dbbed975cafd22d16d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2475,9 +2475,10 @@ checksum = "8f518f335dce6725a761382244631d86cf0ccb2863413590b31338feb467f9c3"
 
 [[package]]
 name = "iroh"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "bao-tree",
  "bytes",
  "clap",
@@ -2524,12 +2525,13 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "url",
  "walkdir",
 ]
 
 [[package]]
 name = "iroh-base"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2573,7 +2575,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-blobs"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2625,9 +2627,10 @@ dependencies = [
 
 [[package]]
 name = "iroh-cli"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "bao-tree",
  "bytes",
  "clap",
@@ -2639,7 +2642,6 @@ dependencies = [
  "dialoguer",
  "dirs-next",
  "duct",
- "flume",
  "futures-buffered",
  "futures-lite 2.3.0",
  "futures-util",
@@ -2675,12 +2677,13 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "url",
  "walkdir",
 ]
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2729,13 +2732,13 @@ dependencies = [
 
 [[package]]
 name = "iroh-docs"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "bytes",
  "derive_more",
  "ed25519-dalek",
- "flume",
  "futures-buffered",
  "futures-lite 2.3.0",
  "futures-util",
@@ -2770,7 +2773,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-gossip"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2778,9 +2781,9 @@ dependencies = [
  "clap",
  "derive_more",
  "ed25519-dalek",
+ "futures-concurrency",
  "futures-lite 2.3.0",
  "futures-util",
- "genawaiter",
  "indexmap 2.2.6",
  "iroh-base",
  "iroh-blake3",
@@ -2814,7 +2817,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "erased_set",
@@ -2833,10 +2836,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-net"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
- "async-channel",
  "axum",
  "backoff",
  "base64 0.22.1",
@@ -2910,6 +2912,7 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.24.1",
  "tokio-rustls-acme",
+ "tokio-stream",
  "tokio-tungstenite",
  "tokio-tungstenite-wasm",
  "tokio-util",
@@ -2928,7 +2931,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-bench"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2994,7 +2997,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-test"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "tokio",
@@ -5575,9 +5578,9 @@ dependencies = [
 
 [[package]]
 name = "swarm-discovery"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0685d4eda80e2dfee7fc413ba861ef11411ca813d836a77ab8f0d3a00286488"
+checksum = "39769914108ae68e261d85ceac7bce7095947130f79c29d4535e9b31fc702a40"
 dependencies = [
  "acto",
  "anyhow",

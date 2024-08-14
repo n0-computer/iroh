@@ -2,6 +2,8 @@
 //!
 //! The main entry point is the [`Client`].
 //!
+//! You obtain a [`Client`] via [`Iroh::blobs()`](crate::client::Iroh::blobs).
+//!
 //! ## Interacting with the local blob store
 //!
 //! ### Importing data
@@ -967,8 +969,12 @@ pub enum DownloadMode {
 mod tests {
     use super::*;
 
+    use anyhow::Context as _;
+    use iroh_blobs::hashseq::HashSeq;
+    use iroh_net::NodeId;
     use rand::RngCore;
-    use tokio::io::AsyncWriteExt;
+    use testresult::TestResult;
+    use tokio::{io::AsyncWriteExt, sync::mpsc};
 
     #[tokio::test]
     async fn test_blob_create_collection() -> Result<()> {
@@ -1268,6 +1274,276 @@ mod tests {
 
         let status = client.blobs().status(import_outcome.hash).await?;
         assert_eq!(status, BlobStatus::Complete { size });
+
+        Ok(())
+    }
+
+    #[derive(Debug, Clone)]
+    struct BlobEvents {
+        sender: mpsc::Sender<iroh_blobs::provider::Event>,
+    }
+
+    impl BlobEvents {
+        fn new(cap: usize) -> (Self, mpsc::Receiver<iroh_blobs::provider::Event>) {
+            let (s, r) = mpsc::channel(cap);
+            (Self { sender: s }, r)
+        }
+    }
+
+    impl iroh_blobs::provider::CustomEventSender for BlobEvents {
+        fn send(&self, event: iroh_blobs::provider::Event) -> futures_lite::future::Boxed<()> {
+            let sender = self.sender.clone();
+            Box::pin(async move {
+                sender.send(event).await.ok();
+            })
+        }
+
+        fn try_send(&self, event: iroh_blobs::provider::Event) {
+            self.sender.try_send(event).ok();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_blob_provide_events() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let (node1_events, mut node1_events_r) = BlobEvents::new(16);
+        let node1 = crate::node::Node::memory()
+            .blobs_events(node1_events)
+            .spawn()
+            .await?;
+
+        let (node2_events, mut node2_events_r) = BlobEvents::new(16);
+        let node2 = crate::node::Node::memory()
+            .blobs_events(node2_events)
+            .spawn()
+            .await?;
+
+        let import_outcome = node1.blobs().add_bytes(&b"hello world"[..]).await?;
+
+        // Download in node2
+        let node1_addr = node1.node_addr().await?;
+        let res = node2
+            .blobs()
+            .download(import_outcome.hash, node1_addr)
+            .await?
+            .await?;
+        dbg!(&res);
+        assert_eq!(res.local_size, 0);
+        assert_eq!(res.downloaded_size, 11);
+
+        node1.shutdown().await?;
+        node2.shutdown().await?;
+
+        let mut ev1 = Vec::new();
+        while let Some(ev) = node1_events_r.recv().await {
+            ev1.push(ev);
+        }
+        // assert_eq!(ev1.len(), 3);
+        assert!(matches!(
+            ev1[0],
+            iroh_blobs::provider::Event::ClientConnected { .. }
+        ));
+        assert!(matches!(
+            ev1[1],
+            iroh_blobs::provider::Event::GetRequestReceived { .. }
+        ));
+        assert!(matches!(
+            ev1[2],
+            iroh_blobs::provider::Event::TransferProgress { .. }
+        ));
+        assert!(matches!(
+            ev1[3],
+            iroh_blobs::provider::Event::TransferCompleted { .. }
+        ));
+        dbg!(&ev1);
+
+        let mut ev2 = Vec::new();
+        while let Some(ev) = node2_events_r.recv().await {
+            ev2.push(ev);
+        }
+
+        // Node 2 did not provide anything
+        assert!(ev2.is_empty());
+        Ok(())
+    }
+    /// Download a existing blob from oneself
+    #[tokio::test]
+    async fn test_blob_get_self_existing() -> TestResult<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let node = crate::node::Node::memory().spawn().await?;
+        let node_id = node.node_id();
+        let client = node.client();
+
+        let AddOutcome { hash, size, .. } = client.blobs().add_bytes("foo").await?;
+
+        // Direct
+        let res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::Raw,
+                    nodes: vec![node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Direct,
+                },
+            )
+            .await?
+            .await?;
+
+        assert_eq!(res.local_size, size);
+        assert_eq!(res.downloaded_size, 0);
+
+        // Queued
+        let res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::Raw,
+                    nodes: vec![node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Queued,
+                },
+            )
+            .await?
+            .await?;
+
+        assert_eq!(res.local_size, size);
+        assert_eq!(res.downloaded_size, 0);
+
+        Ok(())
+    }
+
+    /// Download a missing blob from oneself
+    #[tokio::test]
+    async fn test_blob_get_self_missing() -> TestResult<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let node = crate::node::Node::memory().spawn().await?;
+        let node_id = node.node_id();
+        let client = node.client();
+
+        let hash = Hash::from_bytes([0u8; 32]);
+
+        // Direct
+        let res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::Raw,
+                    nodes: vec![node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Direct,
+                },
+            )
+            .await?
+            .await;
+        assert!(res.is_err());
+        assert_eq!(
+            res.err().unwrap().to_string().as_str(),
+            "No nodes to download from provided"
+        );
+
+        // Queued
+        let res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::Raw,
+                    nodes: vec![node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Queued,
+                },
+            )
+            .await?
+            .await;
+        assert!(res.is_err());
+        assert_eq!(
+            res.err().unwrap().to_string().as_str(),
+            "No provider nodes found"
+        );
+
+        Ok(())
+    }
+
+    /// Download a existing collection. Check that things succeed and no download is performed.
+    #[tokio::test]
+    async fn test_blob_get_existing_collection() -> TestResult<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let node = crate::node::Node::memory().spawn().await?;
+        // We use a nonexisting node id because we just want to check that this succeeds without
+        // hitting the network.
+        let node_id = NodeId::from_bytes(&[0u8; 32])?;
+        let client = node.client();
+
+        let mut collection = Collection::default();
+        let mut tags = Vec::new();
+        let mut size = 0;
+        for value in ["iroh", "is", "cool"] {
+            let import_outcome = client.blobs().add_bytes(value).await.context("add bytes")?;
+            collection.push(value.to_string(), import_outcome.hash);
+            tags.push(import_outcome.tag);
+            size += import_outcome.size;
+        }
+
+        let (hash, _tag) = client
+            .blobs()
+            .create_collection(collection, SetTagOption::Auto, tags)
+            .await?;
+
+        // load the hashseq and collection header manually to calculate our expected size
+        let hashseq_bytes = client.blobs().read_to_bytes(hash).await?;
+        size += hashseq_bytes.len() as u64;
+        let hashseq = HashSeq::try_from(hashseq_bytes)?;
+        let collection_header_bytes = client
+            .blobs()
+            .read_to_bytes(hashseq.into_iter().next().expect("header to exist"))
+            .await?;
+        size += collection_header_bytes.len() as u64;
+
+        // Direct
+        let res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::HashSeq,
+                    nodes: vec![node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Direct,
+                },
+            )
+            .await?
+            .await
+            .context("direct (download)")?;
+
+        assert_eq!(res.local_size, size);
+        assert_eq!(res.downloaded_size, 0);
+
+        // Queued
+        let res = client
+            .blobs()
+            .download_with_opts(
+                hash,
+                DownloadOptions {
+                    format: BlobFormat::HashSeq,
+                    nodes: vec![node_id.into()],
+                    tag: SetTagOption::Auto,
+                    mode: DownloadMode::Queued,
+                },
+            )
+            .await?
+            .await
+            .context("queued")?;
+
+        assert_eq!(res.local_size, size);
+        assert_eq!(res.downloaded_size, 0);
 
         Ok(())
     }

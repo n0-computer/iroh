@@ -36,6 +36,9 @@ on:
           type: boolean
           default: false
 
+env:
+  IROH_FORCE_STAGING_RELAYS: "1"
+
 jobs:
     build_and_publish:
       timeout-minutes: 30
