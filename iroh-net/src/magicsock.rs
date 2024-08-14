@@ -191,6 +191,8 @@ pub(crate) struct MagicSock {
     /// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
     local_addrs: std::sync::RwLock<(SocketAddr, Option<SocketAddr>)>,
 
+    last_udp_dst: std::sync::RwLock<Option<IpAddr>>,
+
     /// Preferred port from `Options::port`; 0 means auto.
     port: AtomicU16,
 
@@ -773,6 +775,11 @@ impl MagicSock {
             }
             // Normalize local_ip
             // meta.dst_ip = None; //dst_ip;
+        }
+        if let Some(meta) = metas.iter().next() {
+            if let Some(ip) = meta.dst_ip {
+                self.last_udp_dst.write().unwrap().replace(ip);
+            }
         }
 
         if quic_packets_total > 0 {
@@ -1423,6 +1430,7 @@ impl Handle {
             secret_key,
             proxy_url,
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
+            last_udp_dst: Default::default(),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             relay_recv_receiver,
@@ -1984,6 +1992,7 @@ impl Actor {
         let parts = PacketSplitIter::new(dm.buf);
 
         let mut out = Vec::new();
+        let dst_ip = self.msock.last_udp_dst.read().unwrap().clone();
         for part in parts {
             match part {
                 Ok(part) => {
@@ -1996,7 +2005,7 @@ impl Actor {
                         len: part.len(),
                         stride: part.len(),
                         addr: quic_mapped_addr.0,
-                        dst_ip: None,
+                        dst_ip,
                         ecn: None,
                     };
                     out.push(Ok((dm.src, meta, part)));
