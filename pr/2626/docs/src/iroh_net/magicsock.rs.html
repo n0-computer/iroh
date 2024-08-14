@@ -3597,31 +3597,6 @@
 <a href="#3597" id="3597">3597</a>
 <a href="#3598" id="3598">3598</a>
 <a href="#3599" id="3599">3599</a>
-<a href="#3600" id="3600">3600</a>
-<a href="#3601" id="3601">3601</a>
-<a href="#3602" id="3602">3602</a>
-<a href="#3603" id="3603">3603</a>
-<a href="#3604" id="3604">3604</a>
-<a href="#3605" id="3605">3605</a>
-<a href="#3606" id="3606">3606</a>
-<a href="#3607" id="3607">3607</a>
-<a href="#3608" id="3608">3608</a>
-<a href="#3609" id="3609">3609</a>
-<a href="#3610" id="3610">3610</a>
-<a href="#3611" id="3611">3611</a>
-<a href="#3612" id="3612">3612</a>
-<a href="#3613" id="3613">3613</a>
-<a href="#3614" id="3614">3614</a>
-<a href="#3615" id="3615">3615</a>
-<a href="#3616" id="3616">3616</a>
-<a href="#3617" id="3617">3617</a>
-<a href="#3618" id="3618">3618</a>
-<a href="#3619" id="3619">3619</a>
-<a href="#3620" id="3620">3620</a>
-<a href="#3621" id="3621">3621</a>
-<a href="#3622" id="3622">3622</a>
-<a href="#3623" id="3623">3623</a>
-<a href="#3624" id="3624">3624</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3643,7 +3618,7 @@
     collections::{BTreeMap, HashMap},
     fmt::Display,
     io,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
@@ -4050,23 +4025,6 @@
             </span>.ok();
     }
 
-    <span class="kw">fn </span>normalized_local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
-        <span class="kw">let </span>(<span class="kw-2">mut </span>v4, <span class="kw-2">mut </span>v6) = <span class="self">self</span>.local_addr();
-
-        <span class="comment">// Make sure to not use unspecified addresses
-        </span><span class="kw">if </span>v4.ip().is_unspecified() {
-            v4 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), v4.port());
-        }
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(v6) = <span class="kw-2">&amp;mut </span>v6 {
-            <span class="kw">if </span>v6.ip().is_unspecified() {
-                <span class="kw-2">*</span>v6 = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), v6.port());
-            }
-        }
-
-        <span class="kw">let </span>addr = <span class="kw">if let </span><span class="prelude-val">Some</span>(v6) = v6 { v6 } <span class="kw">else </span>{ v4 };
-        <span class="prelude-val">Ok</span>(addr)
-    }
-
     <span class="kw">fn </span>create_io_poller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
         <span class="comment">// To do this properly the MagicSock would need a registry of pollers.  For each
         // node we would look up the poller or create one.  Then on each try_send we can
@@ -4342,9 +4300,7 @@
             Poll::Ready(n) =&gt; (n, <span class="bool-val">true</span>),
         };
 
-        <span class="comment">// let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
-
-        </span><span class="kw">let </span><span class="kw-2">mut </span>quic_packets_total = <span class="number">0</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>quic_packets_total = <span class="number">0</span>;
 
         <span class="kw">for </span>(meta, buf) <span class="kw">in </span>metas.iter_mut().zip(bufs.iter_mut()).take(msgs) {
             <span class="kw">let </span><span class="kw-2">mut </span>start = <span class="number">0</span>;
@@ -4415,7 +4371,7 @@
                 </span>meta.len = <span class="number">0</span>;
             }
             <span class="comment">// Normalize local_ip
-            </span>meta.dst_ip = <span class="prelude-val">None</span>; <span class="comment">//dst_ip;
+            // meta.dst_ip = None; //dst_ip;
         </span>}
 
         <span class="kw">if </span>quic_packets_total &gt; <span class="number">0 </span>{
@@ -5611,10 +5567,6 @@
         <span class="bool-val">false
     </span>}
 
-    <span class="kw">fn </span>normalized_local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
-        <span class="self">self</span>.msock.normalized_local_addr()
-    }
-
     <span class="kw">fn </span>process_relay_read_result(<span class="kw-2">&amp;mut </span><span class="self">self</span>, dm: RelayReadResult) -&gt; Vec&lt;RelayRecvResult&gt; {
         <span class="macro">trace!</span>(<span class="string">"process_relay_read {} bytes"</span>, dm.buf.len());
         <span class="kw">if </span>dm.buf.is_empty() {
@@ -5629,8 +5581,6 @@
         //
         // split the packet into these parts
         </span><span class="kw">let </span>parts = PacketSplitIter::new(dm.buf);
-        <span class="comment">// Normalize local_ip
-        </span><span class="kw">let </span>_dst_ip = <span class="self">self</span>.normalized_local_addr().ok().map(|addr| addr.ip());
 
         <span class="kw">let </span><span class="kw-2">mut </span>out = Vec::new();
         <span class="kw">for </span>part <span class="kw">in </span>parts {
