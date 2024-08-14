@@ -196,7 +196,7 @@
     <span class="doccomment">/// Create a new mutable mem storage from the given data
     </span><span class="kw">pub fn </span>complete(
         bytes: Bytes,
-        cb: <span class="kw">impl </span>Fn(u64) -&gt; () + Send + Sync + <span class="lifetime">'static</span>,
+        cb: <span class="kw">impl </span>Fn(u64) + Send + Sync + <span class="lifetime">'static</span>,
     ) -&gt; (<span class="self">Self</span>, iroh_base::hash::Hash) {
         <span class="kw">let </span>(hash, outboard) = compute_outboard(<span class="kw-2">&amp;</span>bytes[..], bytes.len() <span class="kw">as </span>u64, <span class="kw">move </span>|offset| {
             cb(offset);

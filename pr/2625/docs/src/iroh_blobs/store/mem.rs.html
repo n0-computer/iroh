@@ -452,6 +452,7 @@
 <a href="#452" id="452">452</a>
 <a href="#453" id="453">453</a>
 <a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A full in memory database for iroh-blobs
 //!
 //! Main entry point is [Store].
@@ -539,7 +540,8 @@
         progress.blocking_send(ImportProgress::OutboardProgress { id, offset: <span class="number">0 </span>})<span class="question-mark">?</span>;
         <span class="kw">let </span>progress2 = progress.clone();
         <span class="kw">let </span>cb = <span class="kw">move </span>|offset| {
-            progress2.try_send(ImportProgress::OutboardProgress { id, offset })
+            progress2
+                .try_send(ImportProgress::OutboardProgress { id, offset })
                 .ok();
         };
         <span class="kw">let </span>(storage, hash) = MutableMemStorage::complete(bytes, cb);
