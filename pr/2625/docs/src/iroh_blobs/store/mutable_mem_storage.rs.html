@@ -126,6 +126,9 @@
 <a href="#126" id="126">126</a>
 <a href="#127" id="127">127</a>
 <a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>bao_tree::{
     io::{fsm::BaoContentItem, sync::WriteAt},
     BaoTree,
@@ -195,8 +198,11 @@
         bytes: Bytes,
         cb: <span class="kw">impl </span>Fn(u64) -&gt; () + Send + Sync + <span class="lifetime">'static</span>,
     ) -&gt; (<span class="self">Self</span>, iroh_base::hash::Hash) {
-        <span class="kw">let </span>(hash, outboard) =
-            compute_outboard(<span class="kw-2">&amp;</span>bytes[..], bytes.len() <span class="kw">as </span>u64, <span class="kw">move </span>|offset| <span class="prelude-val">Ok</span>(cb(offset))).unwrap();
+        <span class="kw">let </span>(hash, outboard) = compute_outboard(<span class="kw-2">&amp;</span>bytes[..], bytes.len() <span class="kw">as </span>u64, <span class="kw">move </span>|offset| {
+            cb(offset);
+            <span class="prelude-val">Ok</span>(())
+        })
+        .unwrap();
         <span class="kw">let </span>outboard = outboard.unwrap_or_default();
         <span class="kw">let </span>res = <span class="self">Self </span>{
             data: bytes.to_vec().into(),
