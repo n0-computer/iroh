@@ -775,6 +775,7 @@ impl MagicSock {
             }
             // Normalize local_ip
             // meta.dst_ip = None; //dst_ip;
+            warn!("UDP recv: dst_ip: {:?}", meta.dst_ip);
         }
         if let Some(meta) = metas.iter().next() {
             if let Some(ip) = meta.dst_ip {
