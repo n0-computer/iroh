@@ -234,6 +234,6 @@ async fn wrong_batch() -> anyhow::Result<()> {
     let tag = batch.add_bytes(data).await?;
     drop(batch);
     let batch = client.batch().await?;
-    assert!(batch.upgrade(tag).await.is_err());
+    assert!(batch.persist(tag).await.is_err());
     Ok(())
 }

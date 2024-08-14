@@ -410,7 +410,7 @@ impl Batch {
     }
 
     /// Upgrade a temp tag to a persistent tag.
-    pub async fn upgrade(&self, tt: TempTag) -> Result<Tag> {
+    pub async fn persist(&self, tt: TempTag) -> Result<Tag> {
         let tag = self
             .0
             .rpc
@@ -424,7 +424,7 @@ impl Batch {
     }
 
     /// Upgrade a temp tag to a persistent tag with a specific name.
-    pub async fn upgrade_to(&self, tt: TempTag, tag: Tag) -> Result<()> {
+    pub async fn persist_to(&self, tt: TempTag, tag: Tag) -> Result<()> {
         self.0
             .rpc
             .rpc(tags::SetRequest {
@@ -441,9 +441,9 @@ impl Batch {
     /// an automatically generated name.
     pub async fn upgrade_with_opts(&self, tt: TempTag, opts: SetTagOption) -> Result<Tag> {
         match opts {
-            SetTagOption::Auto => self.upgrade(tt).await,
+            SetTagOption::Auto => self.persist(tt).await,
             SetTagOption::Named(tag) => {
-                self.upgrade_to(tt, tag.clone()).await?;
+                self.persist_to(tt, tag.clone()).await?;
                 Ok(tag)
             }
         }

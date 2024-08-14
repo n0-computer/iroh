@@ -969,7 +969,6 @@ pub enum DownloadMode {
 mod tests {
     use super::*;
 
-    use anyhow::Context as _;
     use iroh_blobs::hashseq::HashSeq;
     use iroh_net::NodeId;
     use rand::RngCore;
