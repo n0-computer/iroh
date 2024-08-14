@@ -46,7 +46,7 @@ pub use quinn::{
 
 pub use super::magicsock::{
     ConnectionInfo, ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo,
-    DirectAddrType, DirectAddrsStream,
+    DirectAddrType, DirectAddrsStream, LocalSwarmDiscovery, NodeMap,
 };
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
@@ -83,6 +83,7 @@ pub struct Builder {
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
+    mdns: bool,
 }
 
 impl Default for Builder {
@@ -100,6 +101,10 @@ impl Default for Builder {
             dns_resolver: None,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
+            #[cfg(test)]
+            mdns: false,
+            #[cfg(not(test))]
+            mdns: true,
         }
     }
 }
@@ -136,6 +141,7 @@ impl Builder {
             relay_map,
             node_map: self.node_map,
             discovery: self.discovery,
+            mdns: self.mdns,
             proxy_url: self.proxy_url,
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
@@ -200,6 +206,22 @@ impl Builder {
     /// See the documentation of the [`Discovery`] trait for details.
     pub fn discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
         self.discovery = Some(discovery);
+        self
+    }
+
+    /// When `true`, the endpoint will launch a [`LocalSwarmDiscovery`]
+    /// service that listens over mDNS and adds any nodes discovered
+    /// on the local network to the [`Endpoint`]'s internal address
+    /// book.
+    ///
+    /// Also, this will add [`LocalSwarmDiscovery`] as an additional
+    /// discovery service, so that you may wait to dial a specific
+    /// node (that you know exists on the local network and also has
+    /// mDNS enabled) until you have discovered it via mDNS.
+    ///
+    /// Default is `true` in production and `false` in tests.
+    pub fn mdns(mut self, enable: bool) -> Self {
+        self.mdns = enable;
         self
     }
 
@@ -376,6 +398,7 @@ impl Endpoint {
         initial_alpns: Vec<Vec<u8>>,
     ) -> Result<Self> {
         let span = info_span!("magic_ep", me = %static_config.secret_key.public().fmt_short());
+
         let _guard = span.enter();
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");

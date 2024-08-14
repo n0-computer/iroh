@@ -64,7 +64,7 @@ use crate::{
 
 use self::{
     metrics::Metrics as MagicsockMetrics,
-    node_map::{NodeMap, PingAction, PingRole, SendPing},
+    node_map::{PingAction, PingRole, SendPing},
     relay_actor::{RelayActor, RelayActorMessage, RelayReadResult},
     udp_conn::UdpConn,
 };
@@ -75,9 +75,16 @@ mod relay_actor;
 mod timer;
 mod udp_conn;
 
+#[cfg(feature = "local_swarm_discovery")]
+mod local_swarm_discovery;
+
+#[cfg(feature = "local_swarm_discovery")]
+pub use self::local_swarm_discovery::LocalSwarmDiscovery;
+
 pub use self::metrics::Metrics;
 pub use self::node_map::{
     ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo as ConnectionInfo,
+    NodeMap,
 };
 pub(super) use self::timer::Timer;
 pub(crate) use node_map::Source;
@@ -110,6 +117,12 @@ pub(crate) struct Options {
     /// Optional node discovery mechanism.
     pub(crate) discovery: Option<Box<dyn Discovery>>,
 
+    /// Optional mDNS, when `true`, it will also add mDNS as a
+    /// [`Discovery`] service as well.
+    // TODO(ramfox): can be an enum so we leave room for allowing
+    // folks to supply their own mdns service
+    pub(crate) mdns: bool,
+
     /// A DNS resolver to use for resolving relay URLs.
     ///
     /// You can use [`crate::dns::default_resolver`] for a resolver that uses the system's DNS
@@ -134,6 +147,10 @@ impl Default for Options {
             relay_map: RelayMap::empty(),
             node_map: None,
             discovery: None,
+            #[cfg(test)]
+            mdns: false,
+            #[cfg(not(test))]
+            mdns: true,
             proxy_url: None,
             dns_resolver: crate::dns::default_resolver().clone(),
             #[cfg(any(test, feature = "test-utils"))]
@@ -224,6 +241,10 @@ pub(crate) struct MagicSock {
 
     /// Optional discovery service
     discovery: Option<Box<dyn Discovery>>,
+
+    /// Optional mdns service. When not `None`, this implies that
+    /// mdns is also being used as part of discovery
+    mdns: Option<LocalSwarmDiscovery>,
 
     /// Our discovered direct addresses.
     direct_addrs: Watchable<DiscoveredDirectAddrs>,
@@ -1242,15 +1263,19 @@ impl MagicSock {
     ///
     /// Called whenever our addresses or home relay node changes.
     fn publish_my_addr(&self) {
+        let addrs = self.direct_addrs.read();
+        let relay_url = self.my_relay();
+        let direct_addresses = addrs.iter().map(|da| da.addr).collect();
+        let info = AddrInfo {
+            relay_url,
+            direct_addresses,
+        };
         if let Some(ref discovery) = self.discovery {
-            let addrs = self.direct_addrs.read();
-            let relay_url = self.my_relay();
-            let direct_addresses = addrs.iter().map(|da| da.addr).collect();
-            let info = AddrInfo {
-                relay_url,
-                direct_addresses,
-            };
             discovery.publish(&info);
+        }
+        if let Some(ref mdns) = self.mdns {
+            // TODO(ramfox): fix this when the API has settled
+            mdns.client().publish(&info);
         }
     }
 }
@@ -1374,6 +1399,7 @@ impl Handle {
             discovery,
             dns_resolver,
             proxy_url,
+            mdns,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
         } = opts;
@@ -1403,6 +1429,14 @@ impl Handle {
         let node_map = node_map.unwrap_or_default();
         let node_map = NodeMap::load_from_vec(node_map);
 
+        let mdns = match mdns {
+            true => Some(LocalSwarmDiscovery::new(
+                secret_key.public(),
+                Some(node_map.clone()),
+            )?),
+            false => None,
+        };
+
         let udp_state = quinn_udp::UdpState::default();
         let inner = Arc::new(MagicSock {
             me,
@@ -1429,6 +1463,7 @@ impl Handle {
             send_buffer: Default::default(),
             udp_disco_sender,
             discovery,
+            mdns,
             direct_addrs: Watchable::new(Default::default()),
             pending_call_me_maybes: Default::default(),
             direct_addr_update_state: DirectAddrUpdateState::new(),

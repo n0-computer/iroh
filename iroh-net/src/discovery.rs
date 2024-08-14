@@ -51,8 +51,6 @@ use crate::{AddrInfo, Endpoint, NodeId};
 
 pub mod dns;
 
-#[cfg(feature = "local_swarm_discovery")]
-pub mod local_swarm_discovery;
 pub mod pkarr;
 
 /// Name used for logging when new node addresses are added from discovery.

@@ -21,9 +21,12 @@ use tokio::task::JoinSet;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
+    magicsock::Source,
     util::AbortingJoinHandle,
     AddrInfo, Endpoint, NodeId,
 };
+
+use super::node_map::NodeMap;
 
 /// The n0 local swarm node discovery name
 const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
@@ -48,7 +51,6 @@ enum Message {
     SendAddrs(NodeId, Sender<Result<DiscoveryItem>>),
     ChangeLocalAddrs(AddrInfo),
     Timeout(NodeId, usize),
-    List(Sender<NodeAddr>),
 }
 
 impl LocalSwarmDiscovery {
@@ -61,7 +63,7 @@ impl LocalSwarmDiscovery {
     ///
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
-    pub fn new(node_id: NodeId) -> Result<Self> {
+    pub fn new(node_id: NodeId, node_map: Option<NodeMap>) -> Result<Self> {
         debug!("Creating new LocalSwarmDiscovery service");
         let (send, recv) = async_channel::bounded(64);
         let task_sender = send.clone();
@@ -133,7 +135,16 @@ impl LocalSwarmDiscovery {
                             ?peer_info,
                             "adding node to LocalSwarmDiscovery address book"
                         );
-                        node_addrs.insert(discovered_node_id, peer_info);
+                        node_addrs.insert(discovered_node_id, peer_info.clone());
+                        if let Some(ref nm) = node_map {
+                            let addrs = peer_info
+                                .addrs()
+                                .iter()
+                                .map(|(ipaddr, port)| SocketAddr::new(*ipaddr, *port))
+                                .collect();
+                            let node_addr = NodeAddr::from_parts(discovered_node_id, None, addrs);
+                            nm.add_node_addr(node_addr, Source::Mdns);
+                        }
                     }
                     Message::SendAddrs(node_id, sender) => {
                         let id = last_id + 1;
@@ -179,21 +190,6 @@ impl LocalSwarmDiscovery {
                             discovery.add(addr.0, addr.1)
                         }
                     }
-                    Message::List(sender) => {
-                        trace!("LocalSwarmDiscovery Message::List");
-                        for node_addr in node_addrs.iter() {
-                            let (public_key, peer_info) = node_addr;
-                            let addrs = peer_info
-                                .addrs()
-                                .iter()
-                                .map(|(ipaddr, port)| SocketAddr::new(*ipaddr, *port))
-                                .collect();
-                            sender
-                                .send(NodeAddr::from_parts(*public_key, None, addrs))
-                                .await
-                                .ok();
-                        }
-                    }
                 }
             }
         });
@@ -201,6 +197,13 @@ impl LocalSwarmDiscovery {
             handle: handle.into(),
             sender: send,
         })
+    }
+
+    /// Create a Client to interact with the running [`LocalSwarmDiscovery`].
+    ///
+    /// The [`Client`] satisfies the [`Discovery`] trait.
+    pub fn client(&self) -> Client {
+        Client(self.sender.clone())
     }
 
     fn spawn_discoverer(
@@ -261,10 +264,17 @@ impl From<&Peer> for DiscoveryItem {
     }
 }
 
-impl Discovery for LocalSwarmDiscovery {
+/// A local swarm discovery client. Allows you to interact with the running
+/// `LocalSwarmDiscovery`.
+///
+/// Satisfies the [`Discovery`] trait.
+#[derive(Clone, Debug)]
+pub struct Client(Sender<Message>);
+
+impl Discovery for Client {
     fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let (send, recv) = async_channel::bounded(20);
-        let discovery_sender = self.sender.clone();
+        let discovery_sender = self.0.clone();
         tokio::spawn(async move {
             discovery_sender
                 .send(Message::SendAddrs(node_id, send))
@@ -275,7 +285,7 @@ impl Discovery for LocalSwarmDiscovery {
     }
 
     fn publish(&self, info: &AddrInfo) {
-        let discovery_sender = self.sender.clone();
+        let discovery_sender = self.0.clone();
         let info = info.clone();
         tokio::spawn(async move {
             discovery_sender
@@ -283,16 +293,6 @@ impl Discovery for LocalSwarmDiscovery {
                 .await
                 .ok();
         });
-    }
-
-    /// Receive a list of the [`NodeAddr`]s that have been discovered on the local network so far.
-    fn locally_discovered_nodes(&self) -> Option<BoxStream<NodeAddr>> {
-        let (send, recv) = async_channel::bounded(20);
-        let discovery_sender = self.sender.clone();
-        tokio::spawn(async move {
-            discovery_sender.send(Message::List(send)).await.ok();
-        });
-        Some(recv.boxed())
     }
 }
 
@@ -302,7 +302,7 @@ mod tests {
     use testresult::TestResult;
 
     #[tokio::test]
-    async fn test_local_swarm_discovery() -> TestResult {
+    async fn test_local_swarm_discovery_client() -> TestResult {
         let _guard = iroh_test::logging::setup();
         let (_, discovery_a) = make_discoverer()?;
         let (node_id_b, discovery_b) = make_discoverer()?;
@@ -329,19 +329,11 @@ mod tests {
             .unwrap()?;
         assert_eq!(s1_res.addr_info, addr_info);
         assert_eq!(s2_res.addr_info, addr_info);
-        let locally_discovered_nodes: Vec<NodeAddr> = discovery_a
-            .locally_discovered_nodes()
-            .unwrap()
-            .collect()
-            .await;
-        assert!(locally_discovered_nodes
-            .iter()
-            .any(|node_addr| node_addr.node_id == node_id_b));
         Ok(())
     }
 
-    fn make_discoverer() -> Result<(PublicKey, LocalSwarmDiscovery)> {
+    fn make_discoverer() -> Result<(PublicKey, Client)> {
         let node_id = crate::key::SecretKey::generate().public();
-        Ok((node_id, LocalSwarmDiscovery::new(node_id)?))
+        Ok((node_id, LocalSwarmDiscovery::new(node_id, None)?.client()))
     }
 }

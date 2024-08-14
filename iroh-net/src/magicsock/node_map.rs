@@ -3,6 +3,7 @@ use std::{
     hash::Hash,
     net::{IpAddr, SocketAddr},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::Instant,
 };
@@ -57,9 +58,9 @@ const MAX_INACTIVE_NODES: usize = 30;
 ///   These come and go as the node moves around on the internet
 ///
 /// An index of nodeInfos by node key, QuicMappedAddr, and discovered ip:port endpoints.
-#[derive(Default, Debug)]
-pub(super) struct NodeMap {
-    inner: Mutex<NodeMapInner>,
+#[derive(Default, Debug, Clone)]
+pub struct NodeMap {
+    inner: Arc<Mutex<NodeMapInner>>,
 }
 
 #[derive(Default, Debug)]
@@ -99,6 +100,8 @@ pub(crate) enum Source {
     App,
     #[strum(serialize = "{name}")]
     NamedApp { name: &'static str },
+    /// Node discovered locally using MDNS
+    Mdns,
 }
 
 impl NodeMap {
@@ -109,7 +112,7 @@ impl NodeMap {
 
     fn from_inner(inner: NodeMapInner) -> Self {
         Self {
-            inner: Mutex::new(inner),
+            inner: Arc::new(Mutex::new(inner)),
         }
     }
 
