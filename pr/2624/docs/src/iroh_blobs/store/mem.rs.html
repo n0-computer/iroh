@@ -447,6 +447,12 @@
 <a href="#447" id="447">447</a>
 <a href="#448" id="448">448</a>
 <a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A full in memory database for iroh-blobs
 //!
 //! Main entry point is [Store].
@@ -532,7 +538,13 @@
         progress: <span class="kw">impl </span>ProgressSender&lt;Msg = ImportProgress&gt; + IdGenerator,
     ) -&gt; io::Result&lt;TempTag&gt; {
         progress.blocking_send(ImportProgress::OutboardProgress { id, offset: <span class="number">0 </span>})<span class="question-mark">?</span>;
-        <span class="kw">let </span>(storage, hash) = MutableMemStorage::complete(bytes);
+        <span class="kw">let </span>progress2 = progress.clone();
+        <span class="kw">let </span>cb = <span class="kw">move </span>|offset| {
+            progress2
+                .try_send(ImportProgress::OutboardProgress { id, offset })
+                .ok();
+        };
+        <span class="kw">let </span>(storage, hash) = MutableMemStorage::complete(bytes, cb);
         progress.blocking_send(ImportProgress::OutboardDone { id, hash })<span class="question-mark">?</span>;
         <span class="kw">use </span><span class="kw">super</span>::Store;
         <span class="kw">let </span>tag = <span class="self">self</span>.temp_tag(HashAndFormat { hash, format });
