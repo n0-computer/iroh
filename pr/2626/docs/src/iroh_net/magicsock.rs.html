@@ -5630,9 +5630,9 @@
         // split the packet into these parts
         </span><span class="kw">let </span>parts = PacketSplitIter::new(dm.buf);
         <span class="comment">// Normalize local_ip
-        // let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
+        </span><span class="kw">let </span>_dst_ip = <span class="self">self</span>.normalized_local_addr().ok().map(|addr| addr.ip());
 
-        </span><span class="kw">let </span><span class="kw-2">mut </span>out = Vec::new();
+        <span class="kw">let </span><span class="kw-2">mut </span>out = Vec::new();
         <span class="kw">for </span>part <span class="kw">in </span>parts {
             <span class="kw">match </span>part {
                 <span class="prelude-val">Ok</span>(part) =&gt; {
