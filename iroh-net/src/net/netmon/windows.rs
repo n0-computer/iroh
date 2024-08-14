@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
 use libc::c_void;
+use tokio::sync::mpsc;
 use tracing::{trace, warn};
 use windows::Win32::{
     Foundation::{BOOLEAN, HANDLE as Handle},
@@ -19,21 +20,21 @@ pub(super) struct RouteMonitor {
 }
 
 impl RouteMonitor {
-    pub(super) fn new(sender: async_channel::Sender<NetworkMessage>) -> Result<Self> {
+    pub(super) fn new(sender: mpsc::Sender<NetworkMessage>) -> Result<Self> {
         // Register two callbacks with the windows api
         let mut cb_handler = CallbackHandler::default();
 
         // 1. Unicast Address Changes
         let s = sender.clone();
         cb_handler.register_unicast_address_change_callback(Box::new(move || {
-            if let Err(err) = s.send_blocking(NetworkMessage::Change) {
+            if let Err(err) = s.blocking_send(NetworkMessage::Change) {
                 warn!("unable to send: unicast change notification: {:?}", err);
             }
         }))?;
 
         // 2. Route Changes
         cb_handler.register_route_change_callback(Box::new(move || {
-            if let Err(err) = sender.send_blocking(NetworkMessage::Change) {
+            if let Err(err) = sender.blocking_send(NetworkMessage::Change) {
                 warn!("unable to send: route change notification: {:?}", err);
             }
         }))?;
