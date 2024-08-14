@@ -1,5 +1,5 @@
 //! Utility functions and types.
-use bao_tree::{io::outboard::PreOrderMemOutboard, BaoTree, ChunkRanges};
+use bao_tree::{io::outboard::PreOrderOutboard, BaoTree, ChunkRanges};
 use bytes::Bytes;
 use derive_more::{Debug, Display, From, Into};
 use range_collections::range_set::RangeSetRange;
@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
     fmt,
+    io::{BufReader, Read},
     sync::{Arc, Weak},
     time::SystemTime,
 };
@@ -290,8 +291,68 @@ pub(crate) fn raw_outboard_size(size: u64) -> u64 {
     BaoTree::new(size, IROH_BLOCK_SIZE).outboard_size()
 }
 
+/// Synchronously compute the outboard of a file, and return hash and outboard.
+///
+/// It is assumed that the file is not modified while this is running.
+///
+/// If it is modified while or after this is running, the outboard will be
+/// invalid, so any attempt to compute a slice from it will fail.
+///
+/// If the size of the file is changed while this is running, an error will be
+/// returned.
+///
+/// The computed outboard is without length prefix.
+pub(crate) fn compute_outboard(
+    read: impl Read,
+    size: u64,
+    progress: impl Fn(u64) -> std::io::Result<()> + Send + Sync + 'static,
+) -> std::io::Result<(Hash, Option<Vec<u8>>)> {
+    use bao_tree::io::sync::CreateOutboard;
+
+    // wrap the reader in a progress reader, so we can report progress.
+    let reader = ProgressReader::new(read, progress);
+    // wrap the reader in a buffered reader, so we read in large chunks
+    // this reduces the number of io ops and also the number of progress reports
+    let buf_size = usize::try_from(size).unwrap_or(usize::MAX).min(1024 * 1024);
+    let reader = BufReader::with_capacity(buf_size, reader);
+
+    let ob = PreOrderOutboard::<Vec<u8>>::create_sized(reader, size, IROH_BLOCK_SIZE)?;
+    let root = ob.root.into();
+    let data = ob.data;
+    tracing::trace!(%root, "done");
+    let data = if !data.is_empty() { Some(data) } else { None };
+    Ok((root, data))
+}
+
 /// Compute raw outboard, without the size header.
+#[cfg(test)]
 pub(crate) fn raw_outboard(data: &[u8]) -> (Vec<u8>, Hash) {
-    let res = PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
+    let res = bao_tree::io::outboard::PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
     (res.data, res.root.into())
+}
+
+/// A reader that calls a callback with the number of bytes read after each read.
+pub(crate) struct ProgressReader<R, F: Fn(u64) -> std::io::Result<()>> {
+    inner: R,
+    offset: u64,
+    cb: F,
+}
+
+impl<R: std::io::Read, F: Fn(u64) -> std::io::Result<()>> ProgressReader<R, F> {
+    pub fn new(inner: R, cb: F) -> Self {
+        Self {
+            inner,
+            offset: 0,
+            cb,
+        }
+    }
+}
+
+impl<R: std::io::Read, F: Fn(u64) -> std::io::Result<()>> std::io::Read for ProgressReader<R, F> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        self.offset += read as u64;
+        (self.cb)(self.offset)?;
+        Ok(read)
+    }
 }
