@@ -537,9 +537,9 @@
         progress: <span class="kw">impl </span>ProgressSender&lt;Msg = ImportProgress&gt; + IdGenerator,
     ) -&gt; io::Result&lt;TempTag&gt; {
         progress.blocking_send(ImportProgress::OutboardProgress { id, offset: <span class="number">0 </span>})<span class="question-mark">?</span>;
-        <span class="kw">let </span>p2 = progress.clone();
+        <span class="kw">let </span>progress2 = progress.clone();
         <span class="kw">let </span>cb = <span class="kw">move </span>|offset| {
-            p2.try_send(ImportProgress::OutboardProgress { id, offset })
+            progress2.try_send(ImportProgress::OutboardProgress { id, offset })
                 .ok();
         };
         <span class="kw">let </span>(storage, hash) = MutableMemStorage::complete(bytes, cb);
