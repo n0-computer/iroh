@@ -4342,9 +4342,9 @@
             Poll::Ready(n) =&gt; (n, <span class="bool-val">true</span>),
         };
 
-        <span class="kw">let </span>dst_ip = <span class="self">self</span>.normalized_local_addr().ok().map(|addr| addr.ip());
+        <span class="comment">// let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
 
-        <span class="kw">let </span><span class="kw-2">mut </span>quic_packets_total = <span class="number">0</span>;
+        </span><span class="kw">let </span><span class="kw-2">mut </span>quic_packets_total = <span class="number">0</span>;
 
         <span class="kw">for </span>(meta, buf) <span class="kw">in </span>metas.iter_mut().zip(bufs.iter_mut()).take(msgs) {
             <span class="kw">let </span><span class="kw-2">mut </span>start = <span class="number">0</span>;
@@ -5630,9 +5630,9 @@
         // split the packet into these parts
         </span><span class="kw">let </span>parts = PacketSplitIter::new(dm.buf);
         <span class="comment">// Normalize local_ip
-        </span><span class="kw">let </span>dst_ip = <span class="self">self</span>.normalized_local_addr().ok().map(|addr| addr.ip());
+        // let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
 
-        <span class="kw">let </span><span class="kw-2">mut </span>out = Vec::new();
+        </span><span class="kw">let </span><span class="kw-2">mut </span>out = Vec::new();
         <span class="kw">for </span>part <span class="kw">in </span>parts {
             <span class="kw">match </span>part {
                 <span class="prelude-val">Ok</span>(part) =&gt; {
