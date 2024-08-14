@@ -318,6 +318,13 @@
 <a href="#318" id="318">318</a>
 <a href="#319" id="319">319</a>
 <a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
@@ -448,7 +455,7 @@
                                 sender.send(<span class="prelude-val">Ok</span>(item)).<span class="kw">await</span>.ok();
                             }
                         }
-                        <span class="macro">trace!</span>(
+                        <span class="macro">debug!</span>(
                             <span class="question-mark">?</span>discovered_node_id,
                             <span class="question-mark">?</span>peer_info,
                             <span class="string">"adding node to LocalSwarmDiscovery address book"
@@ -602,40 +609,47 @@
     <span class="kw">use </span>futures_lite::StreamExt;
     <span class="kw">use </span>testresult::TestResult;
 
-    <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_local_swarm_discovery() -&gt; TestResult {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-        <span class="kw">let </span>(<span class="kw">_</span>, discovery_a) = make_discoverer()<span class="question-mark">?</span>;
-        <span class="kw">let </span>(node_id_b, discovery_b) = make_discoverer()<span class="question-mark">?</span>;
+    <span class="doccomment">/// This module's name signals nextest to run test in a single thread (no other concurrent
+    /// tests)
+    </span><span class="kw">mod </span>run_in_isolation {
+        <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::<span class="kw-2">*</span>;
+        <span class="kw">use </span>testresult::TestResult;
 
-        <span class="comment">// make addr info for discoverer b
-        </span><span class="kw">let </span>addr_info = AddrInfo {
-            relay_url: <span class="prelude-val">None</span>,
-            direct_addresses: BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]),
-        };
+        <span class="attr">#[tokio::test]
+        </span><span class="kw">async fn </span>test_local_swarm_discovery() -&gt; TestResult {
+            <span class="kw">let </span>_guard = iroh_test::logging::setup();
+            <span class="kw">let </span>(<span class="kw">_</span>, discovery_a) = make_discoverer()<span class="question-mark">?</span>;
+            <span class="kw">let </span>(node_id_b, discovery_b) = make_discoverer()<span class="question-mark">?</span>;
 
-        <span class="comment">// pass in endpoint, this is never used
-        </span><span class="kw">let </span>ep = <span class="kw">crate</span>::endpoint::Builder::default().bind(<span class="number">0</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="comment">// resolve twice to ensure we can create separate streams for the same node_id
-        </span><span class="kw">let </span><span class="kw-2">mut </span>s1 = discovery_a.resolve(ep.clone(), node_id_b).unwrap();
-        <span class="kw">let </span><span class="kw-2">mut </span>s2 = discovery_a.resolve(ep, node_id_b).unwrap();
-        <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>node_id_b, <span class="string">"Discovering node id b"</span>);
-        <span class="comment">// publish discovery_b's address
-        </span>discovery_b.publish(<span class="kw-2">&amp;</span>addr_info);
-        <span class="kw">let </span>s1_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
-            .<span class="kw">await</span><span class="question-mark">?
-            </span>.unwrap()<span class="question-mark">?</span>;
-        <span class="kw">let </span>s2_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s2.next())
-            .<span class="kw">await</span><span class="question-mark">?
-            </span>.unwrap()<span class="question-mark">?</span>;
-        <span class="macro">assert_eq!</span>(s1_res.addr_info, addr_info);
-        <span class="macro">assert_eq!</span>(s2_res.addr_info, addr_info);
-        <span class="prelude-val">Ok</span>(())
-    }
+            <span class="comment">// make addr info for discoverer b
+            </span><span class="kw">let </span>addr_info = AddrInfo {
+                relay_url: <span class="prelude-val">None</span>,
+                direct_addresses: BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]),
+            };
 
-    <span class="kw">fn </span>make_discoverer() -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, LocalSwarmDiscovery)&gt; {
-        <span class="kw">let </span>node_id = <span class="kw">crate</span>::key::SecretKey::generate().public();
-        <span class="prelude-val">Ok</span>((node_id, LocalSwarmDiscovery::new(node_id)<span class="question-mark">?</span>))
+            <span class="comment">// pass in endpoint, this is never used
+            </span><span class="kw">let </span>ep = <span class="kw">crate</span>::endpoint::Builder::default().bind(<span class="number">0</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="comment">// resolve twice to ensure we can create separate streams for the same node_id
+            </span><span class="kw">let </span><span class="kw-2">mut </span>s1 = discovery_a.resolve(ep.clone(), node_id_b).unwrap();
+            <span class="kw">let </span><span class="kw-2">mut </span>s2 = discovery_a.resolve(ep, node_id_b).unwrap();
+            <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>node_id_b, <span class="string">"Discovering node id b"</span>);
+            <span class="comment">// publish discovery_b's address
+            </span>discovery_b.publish(<span class="kw-2">&amp;</span>addr_info);
+            <span class="kw">let </span>s1_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
+                .<span class="kw">await</span><span class="question-mark">?
+                </span>.unwrap()<span class="question-mark">?</span>;
+            <span class="kw">let </span>s2_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s2.next())
+                .<span class="kw">await</span><span class="question-mark">?
+                </span>.unwrap()<span class="question-mark">?</span>;
+            <span class="macro">assert_eq!</span>(s1_res.addr_info, addr_info);
+            <span class="macro">assert_eq!</span>(s2_res.addr_info, addr_info);
+            <span class="prelude-val">Ok</span>(())
+        }
+
+        <span class="kw">fn </span>make_discoverer() -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, LocalSwarmDiscovery)&gt; {
+            <span class="kw">let </span>node_id = <span class="kw">crate</span>::key::SecretKey::generate().public();
+            <span class="prelude-val">Ok</span>((node_id, LocalSwarmDiscovery::new(node_id)<span class="question-mark">?</span>))
+        }
     }
 }
 </code></pre></div></section></main></body></html>
