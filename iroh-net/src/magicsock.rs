@@ -19,7 +19,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     io,
-    net::{IpAddr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
@@ -427,7 +427,18 @@ impl MagicSock {
     }
 
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        let (v4, v6) = self.local_addr();
+        let (mut v4, mut v6) = self.local_addr();
+
+        // Make sure to not use unspecified addresses
+        if v4.ip().is_unspecified() {
+            v4 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), v4.port());
+        }
+        if let Some(v6) = &mut v6 {
+            if v6.ip().is_unspecified() {
+                *v6 = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), v6.port());
+            }
+        }
+
         let addr = if let Some(v6) = v6 { v6 } else { v4 };
         Ok(addr)
     }
@@ -1977,23 +1988,7 @@ impl Actor {
     }
 
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        let (v4, v6) = self.local_addr();
-        if let Some(v6) = v6 {
-            return v6;
-        }
-        v4
-    }
-
-    fn local_addr(&self) -> (io::Result<SocketAddr>, Option<io::Result<SocketAddr>>) {
-        // TODO: think more about this
-        // needs to pretend ipv6 always as the fake addrs are ipv6
-        let mut ipv6_addr = None;
-        if let Some(ref conn) = self.pconn6 {
-            ipv6_addr = Some(conn.local_addr());
-        }
-        let ipv4_addr = self.pconn4.local_addr();
-
-        (ipv4_addr, ipv6_addr)
+        self.msock.normalized_local_addr()
     }
 
     fn process_relay_read_result(&mut self, dm: RelayReadResult) -> Vec<RelayRecvResult> {
