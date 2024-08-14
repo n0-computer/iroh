@@ -174,7 +174,7 @@
 <span class="kw">use </span>netlink_packet_route::{address, constants::<span class="kw-2">*</span>, route, RtnlMessage};
 <span class="kw">use </span>netlink_sys::{AsyncSocket, SocketAddr};
 <span class="kw">use </span>rtnetlink::new_connection;
-<span class="kw">use </span>tokio::task::JoinHandle;
+<span class="kw">use </span>tokio::{sync::mpsc, task::JoinHandle};
 <span class="kw">use </span>tracing::{info, trace, warn};
 
 <span class="kw">use </span><span class="kw">crate</span>::net::ip::is_link_local;
@@ -214,7 +214,7 @@
 }
 
 <span class="kw">impl </span>RouteMonitor {
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(sender: async_channel::Sender&lt;NetworkMessage&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(sender: mpsc::Sender&lt;NetworkMessage&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>(<span class="kw-2">mut </span>conn, <span class="kw-2">mut </span>_handle, <span class="kw-2">mut </span>messages) = new_connection()<span class="question-mark">?</span>;
 
         <span class="comment">// Specify flags to listen on.
