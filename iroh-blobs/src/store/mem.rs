@@ -85,7 +85,8 @@ impl Store {
         progress.blocking_send(ImportProgress::OutboardProgress { id, offset: 0 })?;
         let progress2 = progress.clone();
         let cb = move |offset| {
-            progress2.try_send(ImportProgress::OutboardProgress { id, offset })
+            progress2
+                .try_send(ImportProgress::OutboardProgress { id, offset })
                 .ok();
         };
         let (storage, hash) = MutableMemStorage::complete(bytes, cb);
