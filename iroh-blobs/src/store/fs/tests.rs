@@ -7,6 +7,7 @@ use crate::store::bao_file::test_support::{
 };
 use crate::store::{Map as _, MapEntryMut, MapMut, ReadableStore, Store as _};
 use crate::util::raw_outboard;
+use crate::IROH_BLOCK_SIZE;
 
 macro_rules! assert_matches {
         ($expression:expr, $pattern:pat) => {

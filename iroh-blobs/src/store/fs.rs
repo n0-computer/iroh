@@ -65,7 +65,7 @@
 //! errors when communicating with the actor.
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::{self, BufReader, Read},
+    io,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
     time::{Duration, SystemTime},
@@ -73,7 +73,6 @@ use std::{
 
 use bao_tree::io::{
     fsm::Outboard,
-    outboard::PreOrderOutboard,
     sync::{ReadAt, Size},
 };
 use bytes::Bytes;
@@ -102,17 +101,18 @@ use crate::{
         bao_file::{BaoFileStorage, CompleteStorage},
         fs::{
             tables::BaoFilePart,
-            util::{overwrite_and_sync, read_and_remove, ProgressReader},
+            util::{overwrite_and_sync, read_and_remove},
         },
     },
     util::{
+        compute_outboard,
         progress::{
             BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSendError,
             ProgressSender,
         },
         raw_outboard_size, MemOrFile, TagCounter, TagDrop,
     },
-    Tag, TempTag, IROH_BLOCK_SIZE,
+    Tag, TempTag,
 };
 use tables::{ReadOnlyTables, ReadableTables, Tables};
 
@@ -2314,39 +2314,6 @@ fn export_file_copy(
     progress(size)?;
     drop(temp_tag);
     Ok(())
-}
-
-/// Synchronously compute the outboard of a file, and return hash and outboard.
-///
-/// It is assumed that the file is not modified while this is running.
-///
-/// If it is modified while or after this is running, the outboard will be
-/// invalid, so any attempt to compute a slice from it will fail.
-///
-/// If the size of the file is changed while this is running, an error will be
-/// returned.
-///
-/// The computed outboard is without length prefix.
-fn compute_outboard(
-    read: impl Read,
-    size: u64,
-    progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-) -> io::Result<(Hash, Option<Vec<u8>>)> {
-    use bao_tree::io::sync::CreateOutboard;
-
-    // wrap the reader in a progress reader, so we can report progress.
-    let reader = ProgressReader::new(read, progress);
-    // wrap the reader in a buffered reader, so we read in large chunks
-    // this reduces the number of io ops and also the number of progress reports
-    let buf_size = usize::try_from(size).unwrap_or(usize::MAX).min(1024 * 1024);
-    let reader = BufReader::with_capacity(buf_size, reader);
-
-    let ob = PreOrderOutboard::<Vec<u8>>::create_sized(reader, size, IROH_BLOCK_SIZE)?;
-    let root = ob.root.into();
-    let data = ob.data;
-    tracing::trace!(%root, "done");
-    let data = if !data.is_empty() { Some(data) } else { None };
-    Ok((root, data))
 }
 
 fn dump(tables: &impl ReadableTables) -> ActorResult<()> {

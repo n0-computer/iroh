@@ -5,32 +5,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// A reader that calls a callback with the number of bytes read after each read.
-pub(crate) struct ProgressReader<R, F: Fn(u64) -> io::Result<()>> {
-    inner: R,
-    offset: u64,
-    cb: F,
-}
-
-impl<R: io::Read, F: Fn(u64) -> io::Result<()>> ProgressReader<R, F> {
-    pub fn new(inner: R, cb: F) -> Self {
-        Self {
-            inner,
-            offset: 0,
-            cb,
-        }
-    }
-}
-
-impl<R: io::Read, F: Fn(u64) -> io::Result<()>> io::Read for ProgressReader<R, F> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let read = self.inner.read(buf)?;
-        self.offset += read as u64;
-        (self.cb)(self.offset)?;
-        Ok(read)
-    }
-}
-
 /// overwrite a file with the given data.
 ///
 /// This is almost like `std::fs::write`, but it does not truncate the file.
