@@ -458,6 +458,7 @@
 <a href="#458" id="458">458</a>
 <a href="#459" id="459">459</a>
 <a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     path::PathBuf,
@@ -632,11 +633,12 @@
         <span class="self">self</span>.add_stream_with_opts(input, Default::default()).<span class="kw">await
     </span>}
 
-    <span class="doccomment">/// Create a temp tag to protect some content (blob or hashseq) from being deleted.
+    <span class="doccomment">/// Creates a temp tag to protect some content (blob or hashseq) from being deleted.
     ///
-    /// A typical use case is that you are downloading some data and want to protect it
-    /// from deletion while the download is ongoing, but don't want to protect it permanently
-    /// until the download is completed.
+    /// This is a lower-level API. The other functions in [`Batch`] already create [`TempTag`]s automatically.
+    ///
+    /// [`TempTag`]s allow you to protect some data from deletion while a download is ongoing,
+    /// even if you don't want to protect it permanently.
     </span><span class="kw">pub async fn </span>temp_tag(<span class="kw-2">&amp;</span><span class="self">self</span>, content: HashAndFormat) -&gt; <span class="prelude-ty">Result</span>&lt;TempTag&gt; {
         <span class="comment">// Notify the server that we want one temp tag for the given content
         </span><span class="self">self</span>.<span class="number">0
