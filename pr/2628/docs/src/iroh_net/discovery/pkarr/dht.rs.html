@@ -376,8 +376,6 @@
     time::Duration,
 };
 
-<span class="kw">use </span>futures_lite::StreamExt;
-<span class="kw">use </span>genawaiter::sync::{Co, Gen};
 <span class="kw">use crate</span>::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
@@ -388,6 +386,8 @@
     util::AbortingJoinHandle,
     AddrInfo, Endpoint, NodeId,
 };
+<span class="kw">use </span>futures_lite::StreamExt;
+<span class="kw">use </span>genawaiter::sync::{Co, Gen};
 <span class="kw">use </span>pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
     RelaySettings, SignedPacket,
