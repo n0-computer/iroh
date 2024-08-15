@@ -3620,6 +3620,8 @@
 <a href="#3620" id="3620">3620</a>
 <a href="#3621" id="3621">3621</a>
 <a href="#3622" id="3622">3622</a>
+<a href="#3623" id="3623">3623</a>
+<a href="#3624" id="3624">3624</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4332,7 +4334,8 @@
 
         <span class="attr">#[cfg(not(windows))]
         </span><span class="kw">let </span>dst_ip = <span class="self">self</span>.normalized_local_addr().ok().map(|addr| addr.ip());
-        <span class="attr">#[cfg(windows)]
+        <span class="comment">// Reasoning for this here: https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
+        </span><span class="attr">#[cfg(windows)]
         </span><span class="kw">let </span>dst_ip = <span class="prelude-val">None</span>;
 
         <span class="kw">let </span><span class="kw-2">mut </span>quic_packets_total = <span class="number">0</span>;
@@ -5625,7 +5628,8 @@
         <span class="comment">// Normalize local_ip
         </span><span class="attr">#[cfg(not(windows))]
         </span><span class="kw">let </span>dst_ip = <span class="self">self</span>.normalized_local_addr().ok().map(|addr| addr.ip());
-        <span class="attr">#[cfg(windows)]
+        <span class="comment">// Reasoning for this here: https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
+        </span><span class="attr">#[cfg(windows)]
         </span><span class="kw">let </span>dst_ip = <span class="prelude-val">None</span>;
 
         <span class="kw">let </span><span class="kw-2">mut </span>out = Vec::new();
