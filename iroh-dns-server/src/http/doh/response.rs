@@ -3,7 +3,7 @@
 // This module is mostly copied from
 // https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-core/src/dns.rs
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{ensure, Result};
 use hickory_proto as proto;
 use serde::{Deserialize, Serialize};
 
@@ -130,15 +130,11 @@ pub struct DohRecordJson {
 impl DohRecordJson {
     /// Create a new JSON record from a DNS record
     pub fn from_record(record: &proto::rr::Record) -> Result<Self> {
-        let data = record
-            .data()
-            .ok_or_else(|| anyhow!("Missing record data"))?;
-
         Ok(Self {
             name: record.name().to_string(),
             record_type: record.record_type().into(),
             ttl: record.ttl(),
-            data: data.to_string(),
+            data: record.data().to_string(),
         })
     }
 }

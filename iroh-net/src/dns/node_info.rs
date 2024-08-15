@@ -320,7 +320,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     pub fn from_hickory_records(records: &[hickory_proto::rr::Record]) -> Result<Self> {
         use hickory_proto::rr;
         let mut records = records.iter().filter_map(|rr| match rr.data() {
-            Some(rr::RData::TXT(txt)) => {
+            rr::RData::TXT(txt) => {
                 node_id_from_hickory_name(rr.name()).map(|node_id| (node_id, txt))
             }
             _ => None,
