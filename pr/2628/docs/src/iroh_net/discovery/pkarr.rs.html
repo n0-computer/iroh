@@ -313,6 +313,7 @@
 <a href="#313" id="313">313</a>
 <a href="#314" id="314">314</a>
 <a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information to a [pkarr] relay.
 //!
 //! [pkarr]: https://pkarr.org
@@ -336,7 +337,8 @@
     key::SecretKey,
     AddrInfo, Endpoint, NodeId,
 };
-<span class="kw">pub mod </span>dht;
+<span class="attr">#[cfg(feature = <span class="string">"dht_discovery"</span>)]
+</span><span class="kw">pub mod </span>dht;
 
 <span class="doccomment">/// The pkarr relay run by n0, for production.
 </span><span class="kw">pub const </span>N0_DNS_PKARR_RELAY_PROD: <span class="kw-2">&amp;</span>str = <span class="string">"https://dns.iroh.link/pkarr"</span>;
