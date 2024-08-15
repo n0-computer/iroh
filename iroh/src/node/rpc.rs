@@ -990,7 +990,6 @@ impl<D: BaoStore> Handler<D> {
         })
     }
 
-    #[allow(clippy::unused_async)]
     async fn batch_create_temp_tag(self, msg: BatchCreateTempTagRequest) -> RpcResult<()> {
         let tag = self.inner.db.temp_tag(msg.content);
         self.inner.blob_batches.lock().await.store(msg.batch, tag);
