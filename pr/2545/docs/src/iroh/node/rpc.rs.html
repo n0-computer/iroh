@@ -1482,7 +1482,6 @@
 <a href="#1482" id="1482">1482</a>
 <a href="#1483" id="1483">1483</a>
 <a href="#1484" id="1484">1484</a>
-<a href="#1485" id="1485">1485</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::{Arc, Mutex};
@@ -2475,8 +2474,7 @@
         })
     }
 
-    <span class="attr">#[allow(clippy::unused_async)]
-    </span><span class="kw">async fn </span>batch_create_temp_tag(<span class="self">self</span>, msg: BatchCreateTempTagRequest) -&gt; RpcResult&lt;()&gt; {
+    <span class="kw">async fn </span>batch_create_temp_tag(<span class="self">self</span>, msg: BatchCreateTempTagRequest) -&gt; RpcResult&lt;()&gt; {
         <span class="kw">let </span>tag = <span class="self">self</span>.inner.db.temp_tag(msg.content);
         <span class="self">self</span>.inner.blob_batches.lock().<span class="kw">await</span>.store(msg.batch, tag);
         <span class="prelude-val">Ok</span>(())

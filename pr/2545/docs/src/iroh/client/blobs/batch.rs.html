@@ -459,6 +459,8 @@
 <a href="#459" id="459">459</a>
 <a href="#460" id="460">460</a>
 <a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     path::PathBuf,
@@ -617,7 +619,9 @@
 
     <span class="doccomment">/// Write a blob by passing an async reader.
     ///
-    /// This will use a default chunk size of 64KB, and a format of [BlobFormat::Raw].
+    /// This will consume the stream in 64KB chunks, and use a format of [BlobFormat::Raw].
+    ///
+    /// For more options, see [`Self::add_reader_with_opts`].
     </span><span class="kw">pub async fn </span>add_reader(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         reader: <span class="kw">impl </span>AsyncRead + Unpin + Send + <span class="lifetime">'static</span>,
@@ -654,7 +658,7 @@
 
     <span class="doccomment">/// Write a blob by passing an async reader.
     ///
-    /// This produces a stream from the reader with a hardcoded buffer size of 64KB.
+    /// This consumes the stream in chunks using `opts.chunk_size`. A good default is 64KB.
     </span><span class="kw">pub async fn </span>add_reader_with_opts(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         reader: <span class="kw">impl </span>AsyncRead + Unpin + Send + <span class="lifetime">'static</span>,
@@ -680,11 +684,11 @@
     /// `path` should be an absolute path valid for the file system on which
     /// the node runs, which refers to a file.
     ///
-    /// If you use [ImportMode::TryReference], Iroh will assume that the data will not
+    /// If you use [`ImportMode::TryReference`], Iroh will assume that the data will not
     /// change and will share it in place without copying to the Iroh data directory
     /// if appropriate. However, for tiny files, Iroh will copy the data.
     ///
-    /// If you use [ImportMode::Copy], Iroh will always copy the data.
+    /// If you use [`ImportMode::Copy`], Iroh will always copy the data.
     ///
     /// Will return a temp tag for the added blob, as well as the size of the file.
     </span><span class="kw">pub async fn </span>add_file_with_opts(
@@ -839,7 +843,7 @@
         <span class="prelude-val">Ok</span>(<span class="self">self</span>.local_temp_tag(HashAndFormat { hash, format }, <span class="prelude-val">Some</span>(size)))
     }
 
-    <span class="doccomment">/// Add a collection
+    <span class="doccomment">/// Add a collection.
     ///
     /// This is a convenience function that converts the collection into two blobs
     /// (the metadata and the hash sequence) and adds them, returning a temp tag for
@@ -871,7 +875,7 @@
         }
     }
 
-    <span class="doccomment">/// Upgrade a temp tag to a persistent tag.
+    <span class="doccomment">/// Upgrades a temp tag to a persistent tag.
     </span><span class="kw">pub async fn </span>persist(<span class="kw-2">&amp;</span><span class="self">self</span>, tt: TempTag) -&gt; <span class="prelude-ty">Result</span>&lt;Tag&gt; {
         <span class="kw">let </span>tag = <span class="self">self
             </span>.<span class="number">0
@@ -885,7 +889,7 @@
         <span class="prelude-val">Ok</span>(tag)
     }
 
-    <span class="doccomment">/// Upgrade a temp tag to a persistent tag with a specific name.
+    <span class="doccomment">/// Upgrades a temp tag to a persistent tag with a specific name.
     </span><span class="kw">pub async fn </span>persist_to(<span class="kw-2">&amp;</span><span class="self">self</span>, tt: TempTag, tag: Tag) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="self">self</span>.<span class="number">0
             </span>.rpc
@@ -899,7 +903,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="doccomment">/// Upgrade a temp tag to a persistent tag with either a specific name or
+    <span class="doccomment">/// Upgrades a temp tag to a persistent tag with either a specific name or
     /// an automatically generated name.
     </span><span class="kw">pub async fn </span>upgrade_with_opts(<span class="kw-2">&amp;</span><span class="self">self</span>, tt: TempTag, opts: SetTagOption) -&gt; <span class="prelude-ty">Result</span>&lt;Tag&gt; {
         <span class="kw">match </span>opts {
