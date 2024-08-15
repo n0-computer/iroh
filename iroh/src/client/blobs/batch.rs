@@ -380,7 +380,7 @@ impl Batch {
         Ok(self.local_temp_tag(HashAndFormat { hash, format }, Some(size)))
     }
 
-    /// Add a collection
+    /// Add a collection.
     ///
     /// This is a convenience function that converts the collection into two blobs
     /// (the metadata and the hash sequence) and adds them, returning a temp tag for
