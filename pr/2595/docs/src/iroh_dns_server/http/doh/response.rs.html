@@ -138,16 +138,12 @@
 <a href="#138" id="138">138</a>
 <a href="#139" id="139">139</a>
 <a href="#140" id="140">140</a>
-<a href="#141" id="141">141</a>
-<a href="#142" id="142">142</a>
-<a href="#143" id="143">143</a>
-<a href="#144" id="144">144</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! DNS Response
 
 </span><span class="comment">// This module is mostly copied from
 // https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-core/src/dns.rs
 
-</span><span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
+</span><span class="kw">use </span>anyhow::{ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>hickory_proto <span class="kw">as </span>proto;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
@@ -274,15 +270,11 @@
 <span class="kw">impl </span>DohRecordJson {
     <span class="doccomment">/// Create a new JSON record from a DNS record
     </span><span class="kw">pub fn </span>from_record(record: <span class="kw-2">&amp;</span>proto::rr::Record) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>data = record
-            .data()
-            .ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"Missing record data"</span>))<span class="question-mark">?</span>;
-
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             name: record.name().to_string(),
             record_type: record.record_type().into(),
             ttl: record.ttl(),
-            data: data.to_string(),
+            data: record.data().to_string(),
         })
     }
 }
