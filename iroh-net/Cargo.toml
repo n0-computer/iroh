@@ -123,6 +123,7 @@ iroh-test = { path = "../iroh-test" }
 iroh-net = { path = ".", features = ["iroh-relay"] }
 serde_json = "1.0.107"
 testresult = "0.4.0"
+mainline = "2.0.1"
 
 [[bench]]
 name = "key"
@@ -132,7 +133,7 @@ harness = false
 duct = "0.13.6"
 
 [features]
-default = ["metrics"]
+default = ["metrics", "dht_discovery"]
 iroh-relay = [
     "dep:tokio-rustls-acme",
     "dep:axum",

@@ -2871,6 +2871,7 @@ dependencies = [
  "iroh-quinn-udp",
  "iroh-test",
  "libc",
+ "mainline",
  "netdev",
  "netlink-packet-core",
  "netlink-packet-route",

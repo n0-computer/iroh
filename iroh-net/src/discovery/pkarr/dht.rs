@@ -315,7 +315,7 @@ impl DhtDiscovery {
         }
     }
 
-    async fn resolve(self, node_id: NodeId, co: Co<anyhow::Result<DiscoveryItem>>) {
+    async fn gen_resolve(self, node_id: NodeId, co: Co<anyhow::Result<DiscoveryItem>>) {
         let pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
         tokio::join!(
@@ -360,6 +360,59 @@ impl Discovery for DhtDiscovery {
         let pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", node_id, pkarr_public_key.to_z32());
-        Some(Gen::new(|co| async move { this.resolve(node_id, co).await }).boxed())
+        Some(Gen::new(|co| async move { this.gen_resolve(node_id, co).await }).boxed())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+    use iroh_base::node_addr::RelayUrl;
+    use mainline::dht::DhtSettings;
+    use testresult::TestResult;
+
+    #[tokio::test]
+    async fn dht_discovery_smoke() -> TestResult {
+        tracing_subscriber::fmt::init();
+        let testnet = mainline::dht::Testnet::new(5);
+        let settings = pkarr::Settings {
+            dht: DhtSettings {
+                bootstrap: Some(testnet.bootstrap.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let client = PkarrClient::new(settings)?;
+        let secret = SecretKey::generate();
+
+        let discovery = DhtDiscovery::builder()
+            .secret_key(secret.clone())
+            .client(client)
+            .build()?;
+        let relay_url: RelayUrl = Url::parse("https://example.com")?.into();
+        discovery.publish(&AddrInfo {
+            relay_url: Some(relay_url.clone()),
+            direct_addresses: Default::default(),
+        });
+        // publish is fire and forget, so we have no way to wait until it is done.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let ep = crate::Endpoint::builder().bind(0).await?;
+        let items = discovery
+            .resolve(ep, secret.public())
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+        let mut found_relay_urls = BTreeSet::new();
+        for item in items {
+            if let Ok(item) = item {
+                if let Some(url) = item.addr_info.relay_url {
+                    found_relay_urls.insert(url);
+                }
+            }
+        }
+        assert!(found_relay_urls.contains(&relay_url));
+        Ok(())
     }
 }
