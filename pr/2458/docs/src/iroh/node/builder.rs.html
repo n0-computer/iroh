@@ -854,6 +854,73 @@
 <a href="#854" id="854">854</a>
 <a href="#855" id="855">855</a>
 <a href="#856" id="856">856</a>
+<a href="#857" id="857">857</a>
+<a href="#858" id="858">858</a>
+<a href="#859" id="859">859</a>
+<a href="#860" id="860">860</a>
+<a href="#861" id="861">861</a>
+<a href="#862" id="862">862</a>
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a>
+<a href="#869" id="869">869</a>
+<a href="#870" id="870">870</a>
+<a href="#871" id="871">871</a>
+<a href="#872" id="872">872</a>
+<a href="#873" id="873">873</a>
+<a href="#874" id="874">874</a>
+<a href="#875" id="875">875</a>
+<a href="#876" id="876">876</a>
+<a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
+<a href="#891" id="891">891</a>
+<a href="#892" id="892">892</a>
+<a href="#893" id="893">893</a>
+<a href="#894" id="894">894</a>
+<a href="#895" id="895">895</a>
+<a href="#896" id="896">896</a>
+<a href="#897" id="897">897</a>
+<a href="#898" id="898">898</a>
+<a href="#899" id="899">899</a>
+<a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a>
+<a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
@@ -866,6 +933,7 @@
 <span class="kw">use </span>iroh_base::key::SecretKey;
 <span class="kw">use </span>iroh_blobs::{
     downloader::Downloader,
+    provider::EventSender,
     store::{Map, Store <span class="kw">as </span>BaoStore},
     util::local_pool::{<span class="self">self</span>, LocalPool, LocalPoolHandle, PanicMode},
 };
@@ -929,12 +997,23 @@
 /// Blob store implementations are available in [`iroh_blobs::store`].
 /// Document store implementations are available in [`iroh_docs::store`].
 ///
-/// Everything else is optional.
+/// Everything else is optional, with some sensible defaults.
+///
+/// The default **relay servers** are hosted by [number 0] on the `iroh.network` domain.  To
+/// customise this use the [`Builder::relay_mode`] function.
+///
+/// For **node discovery** the default is to use the [number 0] hosted DNS server hosted on
+/// `iroh.link`.  To customise this use the [`Builder::node_discovery`] function.
+///
+/// Note that some defaults change when running using `cfg(test)`, see the individual
+/// methods for details.
 ///
 /// Finally you can create and run the node by calling [`Builder::spawn`].
 ///
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
+///
+/// [number 0]: https://n0.computer
 </span><span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub struct </span>Builder&lt;D&gt;
 <span class="kw">where
@@ -957,6 +1036,7 @@
     <span class="doccomment">/// Callback to register when a gc loop is done
     </span><span class="attr">#[debug(<span class="string">"callback"</span>)]
     </span>gc_done_callback: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() + Send&gt;&gt;,
+    blob_events: EventSender,
 }
 
 <span class="doccomment">/// Configuration for storage.
@@ -981,13 +1061,37 @@
 }
 
 <span class="doccomment">/// Configuration for node discovery.
+///
+/// Node discovery enables connecting to other peers by only the [`NodeId`].  This usually
+/// works by the nodes publishing their [`RelayUrl`] and/or their direct addresses to some
+/// publicly available service.
+///
+/// [`NodeId`]: crate::base::key::NodeId
+/// [`RelayUrl`]: crate::base::node_addr::RelayUrl
 </span><span class="attr">#[derive(Debug, Default)]
 </span><span class="kw">pub enum </span>DiscoveryConfig {
     <span class="doccomment">/// Use no node discovery mechanism.
     </span><span class="prelude-val">None</span>,
     <span class="doccomment">/// Use the default discovery mechanism.
     ///
-    /// This enables the [`DnsDiscovery`] service.
+    /// This uses two discovery services concurrently:
+    ///
+    /// - It publishes to a pkarr service operated by [number 0] which makes the information
+    ///   available via DNS in the `iroh.link` domain.
+    ///
+    /// - It uses an mDNS-like system to announce itself on the local network.
+    ///
+    /// # Usage during tests
+    ///
+    /// Note that the default changes when compiling with `cfg(test)` or the `test-utils`
+    /// cargo feature from [iroh-net] is enabled.  In this case only the Pkarr/DNS service
+    /// is used, but on the `iroh.test` domain.  This domain is not integrated with the
+    /// global DNS network and thus node discovery is effectively disabled.  To use node
+    /// discovery in a test use the [`iroh_net::test_utils::DnsPkarrServer`] in the test and
+    /// configure it here as a custom discovery mechanism ([`DiscoveryConfig::Custom`]).
+    ///
+    /// [number 0]: https://n0.computer
+    /// [iroh-net]: crate::net
     </span><span class="attr">#[default]
     </span>Default,
     <span class="doccomment">/// Use a custom discovery mechanism.
@@ -1058,6 +1162,7 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             gc_done_callback: <span class="prelude-val">None</span>,
+            blob_events: Default::default(),
         }
     }
 }
@@ -1091,6 +1196,7 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             gc_done_callback: <span class="prelude-val">None</span>,
+            blob_events: Default::default(),
         }
     }
 }
@@ -1099,6 +1205,15 @@
 <span class="kw">where
     </span>D: BaoStore,
 {
+    <span class="doccomment">/// Configure a blob events sender. This will replace the previous blob
+    /// event sender. By default, no events are sent.
+    ///
+    /// To define an event sender, implement the [`iroh_blobs::provider::CustomEventSender`] trait.
+    </span><span class="kw">pub fn </span>blobs_events(<span class="kw-2">mut </span><span class="self">self</span>, blob_events: <span class="kw">impl </span>Into&lt;EventSender&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.blob_events = blob_events.into();
+        <span class="self">self
+    </span>}
+
     <span class="doccomment">/// Persist all node data in the provided directory.
     </span><span class="kw">pub async fn </span>persist(
         <span class="self">self</span>,
@@ -1115,14 +1230,16 @@
             })<span class="question-mark">?</span>;
         <span class="kw">let </span>docs_storage = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
 
-        <span class="kw">let </span>v0 = blobs_store
+        <span class="attr">#[allow(deprecated)]
+        </span><span class="kw">let </span>v0 = blobs_store
             .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
                 complete: root.join(<span class="string">"blobs.v0"</span>),
                 partial: root.join(<span class="string">"blobs-partial.v0"</span>),
                 meta: root.join(<span class="string">"blobs-meta.v0"</span>),
             })
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>v1 = blobs_store
+        <span class="attr">#[allow(deprecated)]
+        </span><span class="kw">let </span>v1 = blobs_store
             .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
                 complete: root.join(<span class="string">"blobs.v1"</span>).join(<span class="string">"complete"</span>),
                 partial: root.join(<span class="string">"blobs.v1"</span>).join(<span class="string">"partial"</span>),
@@ -1130,7 +1247,7 @@
             })
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">if </span>v0 || v1 {
-            <span class="macro">tracing::info!</span>(<span class="string">"flat data was imported - reapply inline options"</span>);
+            <span class="macro">tracing::warn!</span>(<span class="string">"Imported deprecated flat data. Future versions will stop supporting migrations from flat stores"</span>);
             blobs_store
                 .update_inline_options(iroh_blobs::store::fs::InlineOptions::default(), <span class="bool-val">true</span>)
                 .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1155,6 +1272,7 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             gc_done_callback: <span class="self">self</span>.gc_done_callback,
+            blob_events: <span class="self">self</span>.blob_events,
         })
     }
 
@@ -1210,18 +1328,30 @@
     /// establish connections between peers by being an initial relay for traffic while
     /// assisting in holepunching to establish a direct connection between peers.
     ///
-    /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
-    /// configured relay node.  If an invalid [`iroh_net::relay::RelayMode`]
-    /// is provided [`Self::spawn`] will result in an error.
-    </span><span class="kw">pub fn </span>relay_mode(<span class="kw-2">mut </span><span class="self">self</span>, dm: RelayMode) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.relay_mode = dm;
+    /// When using [`RelayMode::Custom`], the provided `relay_map` must contain at least one
+    /// configured relay node.  If an invalid [`iroh_net::relay::RelayMode`] is provided
+    /// [`Self::spawn`] will result in an error.
+    ///
+    /// # Usage during tests
+    ///
+    /// Note that while the default is [`RelayMode::Default`], when using `cfg(test)` or
+    /// when the `test-utils` cargo feature [`RelayMode::Staging`] is the default.
+    </span><span class="kw">pub fn </span>relay_mode(<span class="kw-2">mut </span><span class="self">self</span>, relay_mode: RelayMode) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.relay_mode = relay_mode;
         <span class="self">self
     </span>}
 
     <span class="doccomment">/// Sets the node discovery mechanism.
     ///
-    /// The default is [`DiscoveryConfig::Default`]. Use [`DiscoveryConfig::Custom`] to pass a
-    /// custom [`Discovery`].
+    /// Node discovery enables connecting to other peers by only the [`NodeId`].  This
+    /// usually works by the nodes publishing their [`RelayUrl`] and/or their direct
+    /// addresses to some publicly available service.
+    ///
+    /// See [`DiscoveryConfig::default`] for the defaults, note that the defaults change
+    /// when using `cfg(test)`.
+    ///
+    /// [`NodeId`]: crate::base::key::NodeId
+    /// [`RelayUrl`]: crate::base::node_addr::RelayUrl
     </span><span class="kw">pub fn </span>node_discovery(<span class="kw-2">mut </span><span class="self">self</span>, config: DiscoveryConfig) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.node_discovery = config;
         <span class="self">self
@@ -1423,6 +1553,7 @@
             downloader,
             gossip,
             local_pool_handle: lp.handle().clone(),
+            blob_batches: Default::default(),
         });
 
         <span class="kw">let </span>protocol_builder = ProtocolBuilder {
@@ -1436,7 +1567,7 @@
             local_pool: lp,
         };
 
-        <span class="kw">let </span>protocol_builder = protocol_builder.register_iroh_protocols();
+        <span class="kw">let </span>protocol_builder = protocol_builder.register_iroh_protocols(<span class="self">self</span>.blob_events);
 
         <span class="prelude-val">Ok</span>(protocol_builder)
     }
@@ -1559,10 +1690,13 @@
     }
 
     <span class="doccomment">/// Registers the core iroh protocols (blobs, gossip, docs).
-    </span><span class="kw">fn </span>register_iroh_protocols(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">fn </span>register_iroh_protocols(<span class="kw-2">mut </span><span class="self">self</span>, blob_events: EventSender) -&gt; <span class="self">Self </span>{
         <span class="comment">// Register blobs.
-        </span><span class="kw">let </span>blobs_proto =
-            BlobsProtocol::new(<span class="self">self</span>.blobs_db().clone(), <span class="self">self</span>.local_pool_handle().clone());
+        </span><span class="kw">let </span>blobs_proto = BlobsProtocol::new_with_events(
+            <span class="self">self</span>.blobs_db().clone(),
+            <span class="self">self</span>.local_pool_handle().clone(),
+            blob_events,
+        );
         <span class="self">self </span>= <span class="self">self</span>.accept(iroh_blobs::protocol::ALPN, Arc::new(blobs_proto));
 
         <span class="comment">// Register gossip.

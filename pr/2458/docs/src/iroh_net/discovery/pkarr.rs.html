@@ -307,6 +307,13 @@
 <a href="#307" id="307">307</a>
 <a href="#308" id="308">308</a>
 <a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information to a [pkarr] relay.
 //!
 //! [pkarr]: https://pkarr.org
@@ -330,6 +337,8 @@
     key::SecretKey,
     AddrInfo, Endpoint, NodeId,
 };
+<span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
+</span><span class="kw">pub mod </span>dht;
 
 <span class="doccomment">/// The pkarr relay run by n0, for production.
 </span><span class="kw">pub const </span>N0_DNS_PKARR_RELAY_PROD: <span class="kw-2">&amp;</span>str = <span class="string">"https://dns.iroh.link/pkarr"</span>;
@@ -462,12 +471,17 @@
         <span class="kw">loop </span>{
             <span class="kw">if let </span><span class="prelude-val">Some</span>(info) = <span class="self">self</span>.watcher.get() {
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.publish_current(info).<span class="kw">await </span>{
-                    <span class="macro">warn!</span>(<span class="question-mark">?</span>err, url = %<span class="self">self</span>.pkarr_client.pkarr_relay_url , <span class="string">"Failed to publish to pkarr"</span>);
                     failed_attempts += <span class="number">1</span>;
                     <span class="comment">// Retry after increasing timeout
-                    </span>republish
-                        .as_mut()
-                        .reset(Instant::now() + Duration::from_secs(failed_attempts));
+                    </span><span class="kw">let </span>retry_after = Duration::from_secs(failed_attempts);
+                    republish.as_mut().reset(Instant::now() + retry_after);
+                    <span class="macro">warn!</span>(
+                        err = %<span class="macro">format!</span>(<span class="string">"{err:#}"</span>),
+                        url = %<span class="self">self</span>.pkarr_client.pkarr_relay_url ,
+                        <span class="question-mark">?</span>retry_after,
+                        %failed_attempts,
+                        <span class="string">"Failed to publish to pkarr"</span>,
+                    );
                 } <span class="kw">else </span>{
                     failed_attempts = <span class="number">0</span>;
                     <span class="comment">// Republish after fixed interval
