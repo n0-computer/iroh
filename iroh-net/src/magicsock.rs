@@ -427,18 +427,7 @@ impl MagicSock {
     }
 
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        let (mut v4, mut v6) = self.local_addr();
-
-        // Make sure to not use unspecified addresses
-        if v4.ip().is_unspecified() {
-            v4 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), v4.port());
-        }
-        if let Some(v6) = &mut v6 {
-            if v6.ip().is_unspecified() {
-                *v6 = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), v6.port());
-            }
-        }
-
+        let (v4, v6) = self.local_addr();
         let addr = if let Some(v6) = v6 { v6 } else { v4 };
         Ok(addr)
     }
@@ -718,7 +707,10 @@ impl MagicSock {
             Poll::Ready(n) => (n, true),
         };
 
+        #[cfg(not(windows))]
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
+        #[cfg(windows)]
+        let dst_ip = None;
 
         let mut quic_packets_total = 0;
 
@@ -2006,7 +1998,10 @@ impl Actor {
         // split the packet into these parts
         let parts = PacketSplitIter::new(dm.buf);
         // Normalize local_ip
+        #[cfg(not(windows))]
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
+        #[cfg(windows)]
+        let dst_ip = None;
 
         let mut out = Vec::new();
         for part in parts {
