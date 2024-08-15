@@ -375,7 +375,9 @@ mod tests {
 
     #[tokio::test]
     async fn dht_discovery_smoke() -> TestResult {
-        tracing_subscriber::fmt::init();
+        let _ = tracing_subscriber::fmt::try_init();
+        let ep = crate::Endpoint::builder().bind(0).await?;
+        let secret = ep.secret_key().clone();
         let testnet = mainline::dht::Testnet::new(5);
         let settings = pkarr::Settings {
             dht: DhtSettings {
@@ -385,8 +387,6 @@ mod tests {
             ..Default::default()
         };
         let client = PkarrClient::new(settings)?;
-        let secret = SecretKey::generate();
-
         let discovery = DhtDiscovery::builder()
             .secret_key(secret.clone())
             .client(client)
@@ -398,18 +398,15 @@ mod tests {
         });
         // publish is fire and forget, so we have no way to wait until it is done.
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let ep = crate::Endpoint::builder().bind(0).await?;
         let items = discovery
             .resolve(ep, secret.public())
             .unwrap()
             .collect::<Vec<_>>()
             .await;
         let mut found_relay_urls = BTreeSet::new();
-        for item in items {
-            if let Ok(item) = item {
-                if let Some(url) = item.addr_info.relay_url {
-                    found_relay_urls.insert(url);
-                }
+        for item in items.into_iter().flatten() {
+            if let Some(url) = item.addr_info.relay_url {
+                found_relay_urls.insert(url);
             }
         }
         assert!(found_relay_urls.contains(&relay_url));
