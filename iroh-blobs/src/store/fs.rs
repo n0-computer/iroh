@@ -765,6 +765,10 @@ impl Store {
     }
 
     /// Import from a v0 or v1 flat store, for backwards compatibility.
+    #[deprecated(
+        since = "0.23.0",
+        note = "Flat stores are deprecated and future versions will not be able to migrate."
+    )]
     pub async fn import_flat_store(&self, paths: FlatStorePaths) -> io::Result<bool> {
         Ok(self.0.import_flat_store(paths).await?)
     }
