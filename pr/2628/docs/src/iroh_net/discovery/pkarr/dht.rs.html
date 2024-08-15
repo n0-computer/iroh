@@ -415,7 +415,6 @@
 <a href="#415" id="415">415</a>
 <a href="#416" id="416">416</a>
 <a href="#417" id="417">417</a>
-<a href="#418" id="418">418</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! # Pkarr based node discovery for iroh-net
 //!
 //! Node discovery is being able to find connecting information about an iroh node based on just its node id.
@@ -793,7 +792,9 @@
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>dht_discovery_smoke() -&gt; TestResult {
-        tracing_subscriber::fmt::init();
+        <span class="kw">let _ </span>= tracing_subscriber::fmt::try_init();
+        <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind(<span class="number">0</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>secret = ep.secret_key().clone();
         <span class="kw">let </span>testnet = mainline::dht::Testnet::new(<span class="number">5</span>);
         <span class="kw">let </span>settings = pkarr::Settings {
             dht: DhtSettings {
@@ -803,8 +804,6 @@
             ..Default::default()
         };
         <span class="kw">let </span>client = PkarrClient::new(settings)<span class="question-mark">?</span>;
-        <span class="kw">let </span>secret = SecretKey::generate();
-
         <span class="kw">let </span>discovery = DhtDiscovery::builder()
             .secret_key(secret.clone())
             .client(client)
@@ -816,7 +815,6 @@
         });
         <span class="comment">// publish is fire and forget, so we have no way to wait until it is done.
         </span>tokio::time::sleep(Duration::from_secs(<span class="number">1</span>)).<span class="kw">await</span>;
-        <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind(<span class="number">0</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>items = discovery
             .resolve(ep, secret.public())
             .unwrap()
