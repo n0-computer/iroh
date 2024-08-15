@@ -145,6 +145,7 @@ iroh-relay = [
 metrics = ["iroh-metrics/metrics"]
 test-utils = ["iroh-relay"]
 local_swarm_discovery = ["dep:swarm-discovery", "dep:tokio-stream"]
+dht_discovery = ["pkarr/dht"]
 
 [[bin]]
 name = "iroh-relay"
@@ -164,3 +165,7 @@ name = "listen-unreliable"
 
 [[example]]
 name = "connect-unreliable"
+
+[[example]]
+name = "dht_discovery"
+features = ["dht_discovery"]

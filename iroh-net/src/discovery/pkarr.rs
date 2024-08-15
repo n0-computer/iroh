@@ -21,6 +21,7 @@ use crate::{
     key::SecretKey,
     AddrInfo, Endpoint, NodeId,
 };
+#[cfg(feature = "dht_discovery")]
 pub mod dht;
 
 /// The pkarr relay run by n0, for production.
