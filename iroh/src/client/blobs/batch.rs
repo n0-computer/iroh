@@ -172,11 +172,12 @@ impl Batch {
         self.add_stream_with_opts(input, Default::default()).await
     }
 
-    /// Create a temp tag to protect some content (blob or hashseq) from being deleted.
+    /// Creates a temp tag to protect some content (blob or hashseq) from being deleted.
     ///
-    /// A typical use case is that you are downloading some data and want to protect it
-    /// from deletion while the download is ongoing, but don't want to protect it permanently
-    /// until the download is completed.
+    /// This is a lower-level API. The other functions in [`Batch`] already create [`TempTag`]s automatically.
+    ///
+    /// [`TempTag`]s allow you to protect some data from deletion while a download is ongoing,
+    /// even if you don't want to protect it permanently.
     pub async fn temp_tag(&self, content: HashAndFormat) -> Result<TempTag> {
         // Notify the server that we want one temp tag for the given content
         self.0
