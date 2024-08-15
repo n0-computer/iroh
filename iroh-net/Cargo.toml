@@ -93,7 +93,9 @@ strum = { version = "0.26.2", features = ["derive"] }
 # local_swarm_discovery
 swarm-discovery = { version = "0.2.1", optional = true }
 tokio-stream = { version = "0.1.15", optional = true }
-genawaiter = { version = "0.99.1" }
+
+# dht_discovery
+genawaiter = { version = "0.99.1", features = ["futures03"], optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
@@ -144,7 +146,7 @@ iroh-relay = [
 metrics = ["iroh-metrics/metrics"]
 test-utils = ["iroh-relay"]
 local_swarm_discovery = ["dep:swarm-discovery", "dep:tokio-stream"]
-dht_discovery = ["pkarr/dht", "genawaiter/futures03"]
+dht_discovery = ["pkarr/dht", "dep:genawaiter"]
 
 [[bin]]
 name = "iroh-relay"
