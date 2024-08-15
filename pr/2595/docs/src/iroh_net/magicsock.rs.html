@@ -3618,6 +3618,8 @@
 <a href="#3618" id="3618">3618</a>
 <a href="#3619" id="3619">3619</a>
 <a href="#3620" id="3620">3620</a>
+<a href="#3621" id="3621">3621</a>
+<a href="#3622" id="3622">3622</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4046,7 +4048,8 @@
             </span>.ok();
     }
 
-    <span class="kw">fn </span>normalized_local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
+    <span class="attr">#[cfg_attr(windows, allow(dead_code))]
+    </span><span class="kw">fn </span>normalized_local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
         <span class="kw">let </span>(v4, v6) = <span class="self">self</span>.local_addr();
         <span class="kw">let </span>addr = <span class="kw">if let </span><span class="prelude-val">Some</span>(v6) = v6 { v6 } <span class="kw">else </span>{ v4 };
         <span class="prelude-val">Ok</span>(addr)
@@ -5600,7 +5603,8 @@
         <span class="bool-val">false
     </span>}
 
-    <span class="kw">fn </span>normalized_local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
+    <span class="attr">#[cfg_attr(windows, allow(dead_code))]
+    </span><span class="kw">fn </span>normalized_local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
         <span class="self">self</span>.msock.normalized_local_addr()
     }
 
