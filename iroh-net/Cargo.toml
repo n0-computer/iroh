@@ -84,7 +84,7 @@ rustls-pemfile = { version = "2.1", optional = true }
 serde_with = { version = "3.3", optional = true }
 toml = { version = "0.8", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
-tokio-rustls-acme = { version = "0.3", optional = true }
+tokio-rustls-acme = { version = "0.4", optional = true }
 
 # metrics
 iroh-metrics = { version = "0.22.0", path = "../iroh-metrics", default-features = false }

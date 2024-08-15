@@ -2329,7 +2329,7 @@ dependencies = [
  "iana-time-zone-haiku",
  "js-sys",
  "wasm-bindgen",
- "windows-core 0.51.1",
+ "windows-core 0.52.0",
 ]
 
 [[package]]
@@ -5827,8 +5827,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls-acme"
-version = "0.3.0"
-source = "git+https://github.com/n0-computer/tokio-rustls-acme?branch=rustls-23#08470a7cd3140cff907ed13991e76e115c6e31f1"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4ee7cbca7da86fa030e33b0deac55bad0e0bf8ab909f1a84666f04447f6339b"
 dependencies = [
  "async-trait",
  "axum-server",
