@@ -3618,15 +3618,6 @@
 <a href="#3618" id="3618">3618</a>
 <a href="#3619" id="3619">3619</a>
 <a href="#3620" id="3620">3620</a>
-<a href="#3621" id="3621">3621</a>
-<a href="#3622" id="3622">3622</a>
-<a href="#3623" id="3623">3623</a>
-<a href="#3624" id="3624">3624</a>
-<a href="#3625" id="3625">3625</a>
-<a href="#3626" id="3626">3626</a>
-<a href="#3627" id="3627">3627</a>
-<a href="#3628" id="3628">3628</a>
-<a href="#3629" id="3629">3629</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3806,7 +3797,7 @@
     </span>proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
 
     <span class="doccomment">/// Used for receiving relay messages.
-    </span>relay_recv_receiver: async_channel::Receiver&lt;RelayRecvResult&gt;,
+    </span>relay_recv_receiver: parking_lot::Mutex&lt;mpsc::Receiver&lt;RelayRecvResult&gt;&gt;,
     <span class="doccomment">/// Stores wakers, to be called when relay_recv_ch receives new data.
     </span>network_recv_wakers: parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;,
     network_send_wakers: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
@@ -4336,7 +4327,10 @@
             Poll::Ready(n) =&gt; (n, <span class="bool-val">true</span>),
         };
 
-        <span class="kw">let </span>dst_ip = <span class="self">self</span>.normalized_local_addr().ok().map(|addr| addr.ip());
+        <span class="attr">#[cfg(not(windows))]
+        </span><span class="kw">let </span>dst_ip = <span class="self">self</span>.normalized_local_addr().ok().map(|addr| addr.ip());
+        <span class="attr">#[cfg(windows)]
+        </span><span class="kw">let </span>dst_ip = <span class="prelude-val">None</span>;
 
         <span class="kw">let </span><span class="kw-2">mut </span>quic_packets_total = <span class="number">0</span>;
 
@@ -4432,12 +4426,13 @@
             <span class="kw">if </span><span class="self">self</span>.is_closed() {
                 <span class="kw">break</span>;
             }
-            <span class="kw">match </span><span class="self">self</span>.relay_recv_receiver.try_recv() {
-                <span class="prelude-val">Err</span>(async_channel::TryRecvError::Empty) =&gt; {
+            <span class="kw">let </span><span class="kw-2">mut </span>relay_recv_receiver = <span class="self">self</span>.relay_recv_receiver.lock();
+            <span class="kw">match </span>relay_recv_receiver.try_recv() {
+                <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Empty) =&gt; {
                     <span class="self">self</span>.network_recv_wakers.lock().replace(cx.waker().clone());
                     <span class="kw">break</span>;
                 }
-                <span class="prelude-val">Err</span>(async_channel::TryRecvError::Closed) =&gt; {
+                <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Disconnected) =&gt; {
                     <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
                         io::ErrorKind::NotConnected,
                         <span class="string">"connection closed"</span>,
@@ -5029,7 +5024,7 @@
             </span>insecure_skip_relay_cert_verify,
         } = opts;
 
-        <span class="kw">let </span>(relay_recv_sender, relay_recv_receiver) = async_channel::bounded(<span class="number">128</span>);
+        <span class="kw">let </span>(relay_recv_sender, relay_recv_receiver) = mpsc::channel(<span class="number">128</span>);
 
         <span class="kw">let </span>(pconn4, pconn6) = bind(port)<span class="question-mark">?</span>;
         <span class="kw">let </span>port = pconn4.port();
@@ -5062,7 +5057,7 @@
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(<span class="bool-val">false</span>),
             closed: AtomicBool::new(<span class="bool-val">false</span>),
-            relay_recv_receiver,
+            relay_recv_receiver: parking_lot::Mutex::new(relay_recv_receiver),
             network_recv_wakers: parking_lot::Mutex::new(<span class="prelude-val">None</span>),
             network_send_wakers: Arc::new(parking_lot::Mutex::new(<span class="prelude-val">None</span>)),
             actor_sender: actor_sender.clone(),
@@ -5416,7 +5411,7 @@
     relay_actor_sender: mpsc::Sender&lt;RelayActorMessage&gt;,
     relay_actor_cancel_token: CancellationToken,
     <span class="doccomment">/// Channel to send received relay messages on, for processing.
-    </span>relay_recv_sender: async_channel::Sender&lt;RelayRecvResult&gt;,
+    </span>relay_recv_sender: mpsc::Sender&lt;RelayRecvResult&gt;,
     <span class="doccomment">/// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     </span>periodic_re_stun_timer: time::Interval,
     <span class="doccomment">/// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
@@ -5606,23 +5601,7 @@
     </span>}
 
     <span class="kw">fn </span>normalized_local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
-        <span class="kw">let </span>(v4, v6) = <span class="self">self</span>.local_addr();
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(v6) = v6 {
-            <span class="kw">return </span>v6;
-        }
-        v4
-    }
-
-    <span class="kw">fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (io::Result&lt;SocketAddr&gt;, <span class="prelude-ty">Option</span>&lt;io::Result&lt;SocketAddr&gt;&gt;) {
-        <span class="comment">// TODO: think more about this
-        // needs to pretend ipv6 always as the fake addrs are ipv6
-        </span><span class="kw">let </span><span class="kw-2">mut </span>ipv6_addr = <span class="prelude-val">None</span>;
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>conn) = <span class="self">self</span>.pconn6 {
-            ipv6_addr = <span class="prelude-val">Some</span>(conn.local_addr());
-        }
-        <span class="kw">let </span>ipv4_addr = <span class="self">self</span>.pconn4.local_addr();
-
-        (ipv4_addr, ipv6_addr)
+        <span class="self">self</span>.msock.normalized_local_addr()
     }
 
     <span class="kw">fn </span>process_relay_read_result(<span class="kw-2">&amp;mut </span><span class="self">self</span>, dm: RelayReadResult) -&gt; Vec&lt;RelayRecvResult&gt; {
@@ -5640,7 +5619,10 @@
         // split the packet into these parts
         </span><span class="kw">let </span>parts = PacketSplitIter::new(dm.buf);
         <span class="comment">// Normalize local_ip
+        </span><span class="attr">#[cfg(not(windows))]
         </span><span class="kw">let </span>dst_ip = <span class="self">self</span>.normalized_local_addr().ok().map(|addr| addr.ip());
+        <span class="attr">#[cfg(windows)]
+        </span><span class="kw">let </span>dst_ip = <span class="prelude-val">None</span>;
 
         <span class="kw">let </span><span class="kw-2">mut </span>out = Vec::new();
         <span class="kw">for </span>part <span class="kw">in </span>parts {

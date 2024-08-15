@@ -314,7 +314,7 @@
     <span class="doccomment">/// OS specific monitor.
     </span><span class="attr">#[allow(dead_code)]
     </span>route_monitor: RouteMonitor,
-    mon_receiver: async_channel::Receiver&lt;NetworkMessage&gt;,
+    mon_receiver: mpsc::Receiver&lt;NetworkMessage&gt;,
     actor_receiver: mpsc::Receiver&lt;ActorMessage&gt;,
     actor_sender: mpsc::Sender&lt;ActorMessage&gt;,
     <span class="doccomment">/// Callback registry.
@@ -341,7 +341,7 @@
         <span class="kw">let </span>wall_time = Instant::now();
 
         <span class="comment">// Use flume channels, as tokio::mpsc is not safe to use across ffi boundaries.
-        </span><span class="kw">let </span>(mon_sender, mon_receiver) = async_channel::bounded(MON_CHAN_CAPACITY);
+        </span><span class="kw">let </span>(mon_sender, mon_receiver) = mpsc::channel(MON_CHAN_CAPACITY);
         <span class="kw">let </span>route_monitor = RouteMonitor::new(mon_sender)<span class="question-mark">?</span>;
         <span class="kw">let </span>(actor_sender, actor_receiver) = mpsc::channel(ACTOR_CHAN_CAPACITY);
 
@@ -386,7 +386,7 @@
                         debounce_interval.reset_immediately();
                     }
                 }
-                <span class="prelude-val">Ok</span>(_event) = <span class="self">self</span>.mon_receiver.recv() =&gt; {
+                <span class="prelude-val">Some</span>(_event) = <span class="self">self</span>.mon_receiver.recv() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"network activity detected"</span>);
                     last_event.replace(<span class="bool-val">false</span>);
                     debounce_interval.reset_immediately();

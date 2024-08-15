@@ -395,6 +395,11 @@
 <a href="#395" id="395">395</a>
 <a href="#396" id="396">396</a>
 <a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! DB functions to support testing
 //!
 //! For some tests we need to modify the state of the store in ways that are not
@@ -503,36 +508,32 @@
 <span class="kw">impl </span>StoreInner {
     <span class="attr">#[cfg(test)]
     </span><span class="kw">async fn </span>entry_state(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: Hash) -&gt; OuterResult&lt;EntryStateResponse&gt; {
-        <span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">1</span>);
-        <span class="self">self</span>.tx
-            .send_async(ActorMessage::EntryState { hash, tx })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(rx.recv_async().<span class="kw">await</span><span class="question-mark">??</span>)
+        <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
+        <span class="self">self</span>.tx.send(ActorMessage::EntryState { hash, tx }).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(rx.recv().<span class="kw">await</span><span class="question-mark">??</span>)
     }
 
     <span class="kw">async fn </span>set_full_entry_state(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: Hash, entry: <span class="prelude-ty">Option</span>&lt;EntryData&gt;) -&gt; OuterResult&lt;()&gt; {
-        <span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">1</span>);
+        <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
         <span class="self">self</span>.tx
-            .send_async(ActorMessage::SetFullEntryState { hash, entry, tx })
+            .send(ActorMessage::SetFullEntryState { hash, entry, tx })
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(rx.recv_async().<span class="kw">await</span><span class="question-mark">??</span>)
+        <span class="prelude-val">Ok</span>(rx.recv().<span class="kw">await</span><span class="question-mark">??</span>)
     }
 
     <span class="kw">async fn </span>get_full_entry_state(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: Hash) -&gt; OuterResult&lt;<span class="prelude-ty">Option</span>&lt;EntryData&gt;&gt; {
-        <span class="kw">let </span>(tx, rx) = flume::bounded(<span class="number">1</span>);
+        <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
         <span class="self">self</span>.tx
-            .send_async(ActorMessage::GetFullEntryState { hash, tx })
+            .send(ActorMessage::GetFullEntryState { hash, tx })
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(rx.recv_async().<span class="kw">await</span><span class="question-mark">??</span>)
+        <span class="prelude-val">Ok</span>(rx.recv().<span class="kw">await</span><span class="question-mark">??</span>)
     }
 
     <span class="kw">async fn </span>all_blobs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; OuterResult&lt;Vec&lt;io::Result&lt;Hash&gt;&gt;&gt; {
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="kw">let </span>filter: FilterPredicate&lt;Hash, EntryState&gt; =
             Box::new(|_i, k, v| <span class="prelude-val">Some</span>((k.value(), v.value())));
-        <span class="self">self</span>.tx
-            .send_async(ActorMessage::Blobs { filter, tx })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.tx.send(ActorMessage::Blobs { filter, tx }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>blobs = rx.<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>res = blobs<span class="question-mark">?
             </span>.into_iter()
@@ -761,14 +762,19 @@
     path: <span class="kw-2">&amp;</span>Path,
     f: <span class="kw">impl </span>Fn(Hash, u64) -&gt; MakePartialResult + Send + Sync,
 ) -&gt; io::Result&lt;()&gt; {
-    tokio::runtime::Builder::new_current_thread()
-        .build()<span class="question-mark">?
-        </span>.block_on(<span class="kw">async move </span>{
-            <span class="kw">let </span>blobs_path = path.join(<span class="string">"blobs"</span>);
-            <span class="kw">let </span>store = Store::load(blobs_path).<span class="kw">await</span><span class="question-mark">?</span>;
-            store
-                .transform_entries(|hash, entry| <span class="kw">match </span><span class="kw-2">&amp;</span>entry {
-                    EntryData::Complete { data, outboard } =&gt; <span class="kw">match </span>f(hash, data.len() <span class="kw">as </span>u64) {
+    <span class="macro">tracing::info!</span>(<span class="string">"starting runtime for make_partial"</span>);
+    <span class="kw">let </span>rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()<span class="question-mark">?</span>;
+    rt.block_on(<span class="kw">async move </span>{
+        <span class="kw">let </span>blobs_path = path.join(<span class="string">"blobs"</span>);
+        <span class="kw">let </span>store = Store::load(blobs_path).<span class="kw">await</span><span class="question-mark">?</span>;
+        store
+            .transform_entries(|hash, entry| <span class="kw">match </span><span class="kw-2">&amp;</span>entry {
+                EntryData::Complete { data, outboard } =&gt; {
+                    <span class="kw">let </span>res = f(hash, data.len() <span class="kw">as </span>u64);
+                    <span class="macro">tracing::info!</span>(<span class="string">"make_partial: {} {:?}"</span>, hash, res);
+                    <span class="kw">match </span>res {
                         MakePartialResult::Retain =&gt; <span class="prelude-val">Some</span>(entry),
                         MakePartialResult::Remove =&gt; <span class="prelude-val">None</span>,
                         MakePartialResult::Truncate(size) =&gt; {
@@ -785,11 +791,15 @@
                                 <span class="prelude-val">Some</span>(entry)
                             }
                         }
-                    },
-                    EntryData::Partial { .. } =&gt; <span class="prelude-val">Some</span>(entry),
-                })
-                .<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="prelude-val">Ok</span>(())
-        })
+                    }
+                }
+                EntryData::Partial { .. } =&gt; <span class="prelude-val">Some</span>(entry),
+            })
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        std::io::Result::Ok(())
+    })<span class="question-mark">?</span>;
+    drop(rt);
+    <span class="macro">tracing::info!</span>(<span class="string">"done with make_partial"</span>);
+    <span class="prelude-val">Ok</span>(())
 }
 </code></pre></div></section></main></body></html>
