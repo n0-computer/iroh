@@ -334,6 +334,10 @@
 <a href="#334" id="334">334</a>
 <a href="#335" id="335">335</a>
 <a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A readonly in memory database for iroh-blobs, usable for testing and sharing static data.
 //!
 //! Main entry point is [Store].
@@ -669,5 +673,9 @@
     }
 
     <span class="kw">async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {}
+
+    <span class="kw">async fn </span>sync(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
+        <span class="prelude-val">Ok</span>(())
+    }
 }
 </code></pre></div></section></main></body></html>

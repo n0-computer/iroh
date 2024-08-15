@@ -2534,6 +2534,7 @@
 <a href="#2534" id="2534">2534</a>
 <a href="#2535" id="2535">2535</a>
 <a href="#2536" id="2536">2536</a>
+<a href="#2537" id="2537">2537</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! redb backed storage
 //!
 //! Data can get into the store in two ways:
@@ -3293,14 +3294,11 @@
         <span class="prelude-val">Ok</span>(<span class="self">self</span>.<span class="number">0</span>.dump().<span class="kw">await</span><span class="question-mark">?</span>)
     }
 
-    <span class="doccomment">/// Ensure that all operations before the sync are processed and persisted.
-    ///
-    /// This is done by closing any open write transaction.
-    </span><span class="kw">pub async fn </span>sync(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
-        <span class="prelude-val">Ok</span>(<span class="self">self</span>.<span class="number">0</span>.sync().<span class="kw">await</span><span class="question-mark">?</span>)
-    }
-
     <span class="doccomment">/// Import from a v0 or v1 flat store, for backwards compatibility.
+    </span><span class="attr">#[deprecated(
+        since = <span class="string">"0.23.0"</span>,
+        note = <span class="string">"Flat stores are deprecated and future versions will not be able to migrate."
+    </span>)]
     </span><span class="kw">pub async fn </span>import_flat_store(<span class="kw-2">&amp;</span><span class="self">self</span>, paths: FlatStorePaths) -&gt; io::Result&lt;bool&gt; {
         <span class="prelude-val">Ok</span>(<span class="self">self</span>.<span class="number">0</span>.import_flat_store(paths).<span class="kw">await</span><span class="question-mark">?</span>)
     }
@@ -3955,6 +3953,10 @@
 
     <span class="kw">fn </span>temp_tag(<span class="kw-2">&amp;</span><span class="self">self</span>, value: HashAndFormat) -&gt; TempTag {
         <span class="self">self</span>.<span class="number">0</span>.temp.temp_tag(value)
+    }
+
+    <span class="kw">async fn </span>sync(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.<span class="number">0</span>.sync().<span class="kw">await</span><span class="question-mark">?</span>)
     }
 
     <span class="kw">async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
