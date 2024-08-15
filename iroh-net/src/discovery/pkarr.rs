@@ -21,6 +21,8 @@ use crate::{
     key::SecretKey,
     AddrInfo, Endpoint, NodeId,
 };
+#[cfg(feature = "discovery-pkarr-dht")]
+pub mod dht;
 
 /// The pkarr relay run by n0, for production.
 pub const N0_DNS_PKARR_RELAY_PROD: &str = "https://dns.iroh.link/pkarr";
