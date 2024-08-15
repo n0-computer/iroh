@@ -4241,7 +4241,7 @@ dependencies = [
 [[package]]
 name = "quic-rpc"
 version = "0.11.0"
-source = "git+https://github.com/n0-computer/quic-rpc?branch=flub/quinn11-rustls23#bb47fdcb06ab275434e81733083b04ca45b16ac4"
+source = "git+https://github.com/n0-computer/quic-rpc?branch=dig/flub/quinn11#b3f8bfbca04ed911f19bb9e9b3cce9821e416d54"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4255,6 +4255,7 @@ dependencies = [
  "iroh-quinn",
  "pin-project",
  "serde",
+ "slab",
  "tokio",
  "tokio-serde",
  "tokio-util",
