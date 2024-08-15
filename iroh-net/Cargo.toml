@@ -90,10 +90,12 @@ tokio-rustls-acme = { version = "0.3", optional = true }
 iroh-metrics = { version = "0.22.0", path = "../iroh-metrics", default-features = false }
 strum = { version = "0.26.2", features = ["derive"] }
 
-# local_swarm_discovery
+# local-swarm-discovery
 swarm-discovery = { version = "0.2.1", optional = true }
 tokio-stream = { version = "0.1.15", optional = true }
 
+# dht_discovery
+genawaiter = { version = "0.99.1", features = ["futures03"], optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
@@ -121,6 +123,7 @@ iroh-test = { path = "../iroh-test" }
 iroh-net = { path = ".", features = ["iroh-relay"] }
 serde_json = "1.0.107"
 testresult = "0.4.0"
+mainline = "2.0.1"
 
 [[bench]]
 name = "key"
@@ -130,7 +133,7 @@ harness = false
 duct = "0.13.6"
 
 [features]
-default = ["metrics"]
+default = ["metrics", "discovery-pkarr-dht"]
 iroh-relay = [
     "dep:tokio-rustls-acme",
     "dep:axum",
@@ -143,7 +146,8 @@ iroh-relay = [
 ]
 metrics = ["iroh-metrics/metrics"]
 test-utils = ["iroh-relay"]
-local_swarm_discovery = ["dep:swarm-discovery", "dep:tokio-stream"]
+local-swarm-discovery = ["dep:swarm-discovery", "dep:tokio-stream"]
+discovery-pkarr-dht = ["pkarr/dht", "dep:genawaiter"]
 
 [[bin]]
 name = "iroh-relay"
@@ -163,3 +167,7 @@ name = "listen-unreliable"
 
 [[example]]
 name = "connect-unreliable"
+
+[[example]]
+name = "dht_discovery"
+required-features = ["discovery-pkarr-dht"]
