@@ -193,7 +193,7 @@ impl Batch {
 
     /// Write a blob by passing an async reader.
     ///
-    /// This produces a stream from the reader with a hardcoded buffer size of 64KB.
+    /// This consumes the stream in chunks using `opts.chunk_size`. A good default is 64KB.
     pub async fn add_reader_with_opts(
         &self,
         reader: impl AsyncRead + Unpin + Send + 'static,
