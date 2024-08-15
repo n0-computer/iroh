@@ -104,13 +104,13 @@ impl Store {
 impl StoreInner {
     #[cfg(test)]
     async fn entry_state(&self, hash: Hash) -> OuterResult<EntryStateResponse> {
-        let (tx, rx) = ::oneshot::channel();
+        let (tx, rx) = oneshot::channel();
         self.tx.send(ActorMessage::EntryState { hash, tx }).await?;
         Ok(rx.await??)
     }
 
     async fn set_full_entry_state(&self, hash: Hash, entry: Option<EntryData>) -> OuterResult<()> {
-        let (tx, rx) = ::oneshot::channel();
+        let (tx, rx) = oneshot::channel();
         self.tx
             .send(ActorMessage::SetFullEntryState { hash, entry, tx })
             .await?;
@@ -118,7 +118,7 @@ impl StoreInner {
     }
 
     async fn get_full_entry_state(&self, hash: Hash) -> OuterResult<Option<EntryData>> {
-        let (tx, rx) = ::oneshot::channel();
+        let (tx, rx) = oneshot::channel();
         self.tx
             .send(ActorMessage::GetFullEntryState { hash, tx })
             .await?;
@@ -126,7 +126,7 @@ impl StoreInner {
     }
 
     async fn all_blobs(&self) -> OuterResult<Vec<io::Result<Hash>>> {
-        let (tx, rx) = ::oneshot::channel();
+        let (tx, rx) = oneshot::channel();
         let filter: FilterPredicate<Hash, EntryState> =
             Box::new(|_i, k, v| Some((k.value(), v.value())));
         self.tx.send(ActorMessage::Blobs { filter, tx }).await?;

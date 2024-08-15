@@ -1236,7 +1236,7 @@ pub(crate) enum OuterError {
     #[error("progress send error: {0}")]
     ProgressSend(#[from] ProgressSendError),
     #[error("recv error: {0}")]
-    Recv2(#[from] oneshot::RecvError),
+    Recv(#[from] oneshot::RecvError),
     #[error("recv error: {0}")]
     AsyncChannelRecv(#[from] async_channel::RecvError),
     #[error("join error: {0}")]
