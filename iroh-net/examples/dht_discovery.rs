@@ -52,12 +52,11 @@ impl FromStr for PkarrRelay {
 
 fn build_discovery(args: Args) -> iroh_net::discovery::pkarr::dht::Builder {
     let builder = iroh_net::discovery::pkarr::dht::DhtDiscovery::builder().dht(!args.disable_dht);
-    let builder = match args.pkarr_relay {
+    match args.pkarr_relay {
         PkarrRelay::Disabled => builder,
         PkarrRelay::Iroh => builder.n0_dns_pkarr_relay(),
         PkarrRelay::Custom(url) => builder.pkarr_relay(url),
-    };
-    builder
+    }
 }
 
 async fn chat_server(args: Args) -> anyhow::Result<()> {
