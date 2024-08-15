@@ -710,6 +710,7 @@ impl MagicSock {
 
         #[cfg(not(windows))]
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
+        // Reasoning for this here: https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
         #[cfg(windows)]
         let dst_ip = None;
 
@@ -2003,6 +2004,7 @@ impl Actor {
         // Normalize local_ip
         #[cfg(not(windows))]
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
+        // Reasoning for this here: https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
         #[cfg(windows)]
         let dst_ip = None;
 
