@@ -179,7 +179,7 @@ pub(crate) struct MagicSock {
     proxy_url: Option<Url>,
 
     /// Used for receiving relay messages.
-    relay_recv_receiver: async_channel::Receiver<RelayRecvResult>,
+    relay_recv_receiver: parking_lot::Mutex<mpsc::Receiver<RelayRecvResult>>,
     /// Stores wakers, to be called when relay_recv_ch receives new data.
     network_recv_wakers: parking_lot::Mutex<Option<Waker>>,
     network_send_wakers: parking_lot::Mutex<Option<Waker>>,
@@ -790,12 +790,13 @@ impl MagicSock {
             if self.is_closed() {
                 break;
             }
-            match self.relay_recv_receiver.try_recv() {
-                Err(async_channel::TryRecvError::Empty) => {
+            let mut relay_recv_receiver = self.relay_recv_receiver.lock();
+            match relay_recv_receiver.try_recv() {
+                Err(mpsc::error::TryRecvError::Empty) => {
                     self.network_recv_wakers.lock().replace(cx.waker().clone());
                     break;
                 }
-                Err(async_channel::TryRecvError::Closed) => {
+                Err(mpsc::error::TryRecvError::Disconnected) => {
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::NotConnected,
                         "connection closed",
@@ -1380,7 +1381,7 @@ impl Handle {
             insecure_skip_relay_cert_verify,
         } = opts;
 
-        let (relay_recv_sender, relay_recv_receiver) = async_channel::bounded(128);
+        let (relay_recv_sender, relay_recv_receiver) = mpsc::channel(128);
 
         let (pconn4, pconn6) = bind(port)?;
         let port = pconn4.port();
@@ -1414,7 +1415,7 @@ impl Handle {
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            relay_recv_receiver,
+            relay_recv_receiver: parking_lot::Mutex::new(relay_recv_receiver),
             network_recv_wakers: parking_lot::Mutex::new(None),
             network_send_wakers: parking_lot::Mutex::new(None),
             actor_sender: actor_sender.clone(),
@@ -1706,7 +1707,7 @@ struct Actor {
     relay_actor_sender: mpsc::Sender<RelayActorMessage>,
     relay_actor_cancel_token: CancellationToken,
     /// Channel to send received relay messages on, for processing.
-    relay_recv_sender: async_channel::Sender<RelayRecvResult>,
+    relay_recv_sender: mpsc::Sender<RelayRecvResult>,
     /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.

@@ -83,7 +83,13 @@ impl Store {
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> io::Result<TempTag> {
         progress.blocking_send(ImportProgress::OutboardProgress { id, offset: 0 })?;
-        let (storage, hash) = MutableMemStorage::complete(bytes);
+        let progress2 = progress.clone();
+        let cb = move |offset| {
+            progress2
+                .try_send(ImportProgress::OutboardProgress { id, offset })
+                .ok();
+        };
+        let (storage, hash) = MutableMemStorage::complete(bytes, cb);
         progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
         use super::Store;
         let tag = self.temp_tag(HashAndFormat { hash, format });

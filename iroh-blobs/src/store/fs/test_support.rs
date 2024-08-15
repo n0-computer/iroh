@@ -106,36 +106,32 @@ impl Store {
 impl StoreInner {
     #[cfg(test)]
     async fn entry_state(&self, hash: Hash) -> OuterResult<EntryStateResponse> {
-        let (tx, rx) = flume::bounded(1);
-        self.tx
-            .send_async(ActorMessage::EntryState { hash, tx })
-            .await?;
-        Ok(rx.recv_async().await??)
+        let (tx, rx) = async_channel::bounded(1);
+        self.tx.send(ActorMessage::EntryState { hash, tx }).await?;
+        Ok(rx.recv().await??)
     }
 
     async fn set_full_entry_state(&self, hash: Hash, entry: Option<EntryData>) -> OuterResult<()> {
-        let (tx, rx) = flume::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         self.tx
-            .send_async(ActorMessage::SetFullEntryState { hash, entry, tx })
+            .send(ActorMessage::SetFullEntryState { hash, entry, tx })
             .await?;
-        Ok(rx.recv_async().await??)
+        Ok(rx.recv().await??)
     }
 
     async fn get_full_entry_state(&self, hash: Hash) -> OuterResult<Option<EntryData>> {
-        let (tx, rx) = flume::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         self.tx
-            .send_async(ActorMessage::GetFullEntryState { hash, tx })
+            .send(ActorMessage::GetFullEntryState { hash, tx })
             .await?;
-        Ok(rx.recv_async().await??)
+        Ok(rx.recv().await??)
     }
 
     async fn all_blobs(&self) -> OuterResult<Vec<io::Result<Hash>>> {
         let (tx, rx) = oneshot::channel();
         let filter: FilterPredicate<Hash, EntryState> =
             Box::new(|_i, k, v| Some((k.value(), v.value())));
-        self.tx
-            .send_async(ActorMessage::Blobs { filter, tx })
-            .await?;
+        self.tx.send(ActorMessage::Blobs { filter, tx }).await?;
         let blobs = rx.await?;
         let res = blobs?
             .into_iter()
@@ -364,14 +360,19 @@ pub fn make_partial(
     path: &Path,
     f: impl Fn(Hash, u64) -> MakePartialResult + Send + Sync,
 ) -> io::Result<()> {
-    tokio::runtime::Builder::new_current_thread()
-        .build()?
-        .block_on(async move {
-            let blobs_path = path.join("blobs");
-            let store = Store::load(blobs_path).await?;
-            store
-                .transform_entries(|hash, entry| match &entry {
-                    EntryData::Complete { data, outboard } => match f(hash, data.len() as u64) {
+    tracing::info!("starting runtime for make_partial");
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(async move {
+        let blobs_path = path.join("blobs");
+        let store = Store::load(blobs_path).await?;
+        store
+            .transform_entries(|hash, entry| match &entry {
+                EntryData::Complete { data, outboard } => {
+                    let res = f(hash, data.len() as u64);
+                    tracing::info!("make_partial: {} {:?}", hash, res);
+                    match res {
                         MakePartialResult::Retain => Some(entry),
                         MakePartialResult::Remove => None,
                         MakePartialResult::Truncate(size) => {
@@ -388,10 +389,14 @@ pub fn make_partial(
                                 Some(entry)
                             }
                         }
-                    },
-                    EntryData::Partial { .. } => Some(entry),
-                })
-                .await?;
-            Ok(())
-        })
+                    }
+                }
+                EntryData::Partial { .. } => Some(entry),
+            })
+            .await?;
+        std::io::Result::Ok(())
+    })?;
+    drop(rt);
+    tracing::info!("done with make_partial");
+    Ok(())
 }
