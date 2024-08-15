@@ -44,14 +44,12 @@ fn test_node<D: Store>(db: D) -> Builder<D> {
 }
 
 #[tokio::test]
-#[ignore = "flaky"]
 async fn basics() -> Result<()> {
     let _guard = iroh_test::logging::setup();
     transfer_data(vec![("hello_world", "hello world!".as_bytes().to_vec())]).await
 }
 
 #[tokio::test]
-#[ignore = "flaky"]
 async fn multi_file() -> Result<()> {
     let _guard = iroh_test::logging::setup();
 
@@ -66,7 +64,6 @@ async fn multi_file() -> Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "flaky"]
 async fn many_files() -> Result<()> {
     let _guard = iroh_test::logging::setup();
     let num_files = [10, 100];
@@ -85,7 +82,6 @@ async fn many_files() -> Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "flaky"]
 async fn sizes() -> Result<()> {
     let _guard = iroh_test::logging::setup();
 
@@ -111,7 +107,6 @@ async fn sizes() -> Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "flaky"]
 async fn empty_files() -> Result<()> {
     // try to transfer as many files as possible without hitting a limit
     // booo 400 is too small :(
@@ -302,7 +297,6 @@ async fn test_ipv6() {
 
 /// Simulate a node that has nothing
 #[tokio::test]
-#[ignore = "flaky"]
 async fn test_not_found() {
     let _guard = iroh_test::logging::setup();
 
@@ -343,7 +337,6 @@ async fn test_not_found() {
 
 /// Simulate a node that has just begun downloading a blob, but does not yet have any data
 #[tokio::test]
-#[ignore = "flaky"]
 async fn test_chunk_not_found_1() {
     let _guard = iroh_test::logging::setup();
 
@@ -437,7 +430,6 @@ async fn run_collection_get_request(
 }
 
 #[tokio::test]
-#[ignore = "flaky"]
 async fn test_run_fsm() {
     let _guard = iroh_test::logging::setup();
 
@@ -516,7 +508,6 @@ async fn test_size_request_blob() {
 }
 
 #[tokio::test]
-#[ignore = "flaky"]
 async fn test_collection_stat() {
     let _guard = iroh_test::logging::setup();
 

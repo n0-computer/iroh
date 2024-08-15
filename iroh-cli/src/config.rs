@@ -73,7 +73,7 @@ impl Default for NodeConfig {
         Self {
             relay_nodes,
             gc_policy: GcPolicyConfig::default(),
-            metrics_addr: Some(([127, 0, 0, 1], 9090).into()),
+            metrics_addr: None,
             file_logs: Default::default(),
             metrics_dump_path: None,
         }
