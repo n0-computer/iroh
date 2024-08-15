@@ -3012,8 +3012,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fd590a39a14cfc168efa4d894de5039d65641e62d8da4a80733018ababe3c33"
+source = "git+https://github.com/n0-computer/quinn.git?rev=a32092de#a32092de403b798a911d27da5f00df6d21731aed"
 dependencies = [
  "bytes",
  "iroh-quinn-proto",
@@ -3030,8 +3029,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.11.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fd0538ff12efe3d61ea1deda2d7913f4270873a519d43e6995c6e87a1558538"
+source = "git+https://github.com/n0-computer/quinn.git?rev=a32092de#a32092de403b798a911d27da5f00df6d21731aed"
 dependencies = [
  "bytes",
  "rand",
@@ -3048,14 +3046,13 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0619b59471fdd393ac8a6c047f640171119c1c8b41f7d2927db91776dcdbc5f"
+source = "git+https://github.com/n0-computer/quinn.git?rev=a32092de#a32092de403b798a911d27da5f00df6d21731aed"
 dependencies = [
  "libc",
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6654,15 +6651,6 @@ name = "windows-sys"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
-dependencies = [
- "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows-sys"
-version = "0.59.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
 dependencies = [
  "windows-targets 0.52.6",
 ]
