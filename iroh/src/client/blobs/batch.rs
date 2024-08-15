@@ -426,7 +426,7 @@ impl Batch {
         Ok(tag)
     }
 
-    /// Upgrade a temp tag to a persistent tag with a specific name.
+    /// Upgrades a temp tag to a persistent tag with a specific name.
     pub async fn persist_to(&self, tt: TempTag, tag: Tag) -> Result<()> {
         self.0
             .rpc
