@@ -630,6 +630,7 @@ where
             downloader,
             gossip,
             local_pool_handle: lp.handle().clone(),
+            blob_batches: Default::default(),
         });
 
         let protocol_builder = ProtocolBuilder {

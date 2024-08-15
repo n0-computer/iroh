@@ -23,6 +23,9 @@ pub mod gossip;
 pub mod node;
 pub mod tags;
 
+/// Iroh rpc connection - boxed so that we can have a concrete type.
+pub(crate) type RpcConnection = quic_rpc::transport::boxed::Connection<RpcService>;
+
 // Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
 // will show up as `RpcClient<RpcService, Connection<RpcService>>` in the docs.
 /// Iroh rpc client - boxed so that we can have a concrete type.
