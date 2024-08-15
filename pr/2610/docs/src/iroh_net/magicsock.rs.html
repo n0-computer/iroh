@@ -3541,6 +3541,7 @@
 <a href="#3541" id="3541">3541</a>
 <a href="#3542" id="3542">3542</a>
 <a href="#3543" id="3543">3543</a>
+<a href="#3544" id="3544">3544</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3722,7 +3723,7 @@
     </span>proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
 
     <span class="doccomment">/// Used for receiving relay messages.
-    </span>relay_recv_receiver: async_channel::Receiver&lt;RelayRecvResult&gt;,
+    </span>relay_recv_receiver: parking_lot::Mutex&lt;mpsc::Receiver&lt;RelayRecvResult&gt;&gt;,
     <span class="doccomment">/// Stores wakers, to be called when relay_recv_ch receives new data.
     </span>network_recv_wakers: parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;,
     network_send_wakers: parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;,
@@ -4333,12 +4334,13 @@
             <span class="kw">if </span><span class="self">self</span>.is_closed() {
                 <span class="kw">break</span>;
             }
-            <span class="kw">match </span><span class="self">self</span>.relay_recv_receiver.try_recv() {
-                <span class="prelude-val">Err</span>(async_channel::TryRecvError::Empty) =&gt; {
+            <span class="kw">let </span><span class="kw-2">mut </span>relay_recv_receiver = <span class="self">self</span>.relay_recv_receiver.lock();
+            <span class="kw">match </span>relay_recv_receiver.try_recv() {
+                <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Empty) =&gt; {
                     <span class="self">self</span>.network_recv_wakers.lock().replace(cx.waker().clone());
                     <span class="kw">break</span>;
                 }
-                <span class="prelude-val">Err</span>(async_channel::TryRecvError::Closed) =&gt; {
+                <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Disconnected) =&gt; {
                     <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
                         io::ErrorKind::NotConnected,
                         <span class="string">"connection closed"</span>,
@@ -4923,7 +4925,7 @@
             </span>insecure_skip_relay_cert_verify,
         } = opts;
 
-        <span class="kw">let </span>(relay_recv_sender, relay_recv_receiver) = async_channel::bounded(<span class="number">128</span>);
+        <span class="kw">let </span>(relay_recv_sender, relay_recv_receiver) = mpsc::channel(<span class="number">128</span>);
 
         <span class="kw">let </span>(pconn4, pconn6) = bind(port)<span class="question-mark">?</span>;
         <span class="kw">let </span>port = pconn4.port();
@@ -4957,7 +4959,7 @@
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(<span class="bool-val">false</span>),
             closed: AtomicBool::new(<span class="bool-val">false</span>),
-            relay_recv_receiver,
+            relay_recv_receiver: parking_lot::Mutex::new(relay_recv_receiver),
             network_recv_wakers: parking_lot::Mutex::new(<span class="prelude-val">None</span>),
             network_send_wakers: parking_lot::Mutex::new(<span class="prelude-val">None</span>),
             actor_sender: actor_sender.clone(),
@@ -5249,7 +5251,7 @@
     relay_actor_sender: mpsc::Sender&lt;RelayActorMessage&gt;,
     relay_actor_cancel_token: CancellationToken,
     <span class="doccomment">/// Channel to send received relay messages on, for processing.
-    </span>relay_recv_sender: async_channel::Sender&lt;RelayRecvResult&gt;,
+    </span>relay_recv_sender: mpsc::Sender&lt;RelayRecvResult&gt;,
     <span class="doccomment">/// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     </span>periodic_re_stun_timer: time::Interval,
     <span class="doccomment">/// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.

@@ -898,6 +898,9 @@
 <a href="#898" id="898">898</a>
 <a href="#899" id="899">899</a>
 <a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 </span><span class="kw">use </span>std::{collections::BTreeSet, future::Future, io, path::PathBuf};
 
@@ -1300,6 +1303,9 @@
     <span class="doccomment">/// Shutdown the store.
     </span><span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = ()&gt; + Send;
 
+    <span class="doccomment">/// Sync the store.
+    </span><span class="kw">fn </span>sync(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;()&gt;&gt; + Send;
+
     <span class="doccomment">/// Validate the database
     ///
     /// This will check that the file and outboard content is correct for all complete
@@ -1603,7 +1609,7 @@
 /// does not make any sense. E.g. an in memory implementation will always have
 /// to copy the file into memory. Also, a disk based implementation might choose
 /// to copy small files even if the mode is `Reference`.
-</span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+</span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 </span><span class="kw">pub enum </span>ImportMode {
     <span class="doccomment">/// This mode will copy the file into the database before hashing.
     ///
