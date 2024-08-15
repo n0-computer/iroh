@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["Builder","PkarrNodeDiscovery"]};
+window.SIDEBAR_ITEMS = {"struct":["Builder","DhtDiscovery"]};

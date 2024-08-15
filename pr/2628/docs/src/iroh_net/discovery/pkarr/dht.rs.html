@@ -408,9 +408,9 @@
 ///
 /// Calling publish will start a background task that periodically publishes the node address.
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>PkarrNodeDiscovery(Arc&lt;Inner&gt;);
+</span><span class="kw">pub struct </span>DhtDiscovery(Arc&lt;Inner&gt;);
 
-<span class="kw">impl </span>Default <span class="kw">for </span>PkarrNodeDiscovery {
+<span class="kw">impl </span>Default <span class="kw">for </span>DhtDiscovery {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::builder().build().expect(<span class="string">"valid builder"</span>)
     }
@@ -512,7 +512,7 @@
     </span>}
 
     <span class="doccomment">/// Build the discovery mechanism.
-    </span><span class="kw">pub fn </span>build(<span class="self">self</span>) -&gt; anyhow::Result&lt;PkarrNodeDiscovery&gt; {
+    </span><span class="kw">pub fn </span>build(<span class="self">self</span>) -&gt; anyhow::Result&lt;DhtDiscovery&gt; {
         <span class="kw">let </span>pkarr = <span class="self">self
             </span>.client
             .unwrap_or_else(|| PkarrClient::new(Default::default()).unwrap())
@@ -537,7 +537,7 @@
             <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
         };
 
-        <span class="prelude-val">Ok</span>(PkarrNodeDiscovery(Arc::new(Inner {
+        <span class="prelude-val">Ok</span>(DhtDiscovery(Arc::new(Inner {
             pkarr,
             pkarr_relay,
             secret_key: <span class="self">self</span>.secret_key,
@@ -550,7 +550,7 @@
     }
 }
 
-<span class="kw">impl </span>PkarrNodeDiscovery {
+<span class="kw">impl </span>DhtDiscovery {
     <span class="doccomment">/// Create a new builder for PkarrNodeDiscovery.
     </span><span class="kw">pub fn </span>builder() -&gt; Builder {
         Builder::default()
@@ -690,7 +690,7 @@
     }
 }
 
-<span class="kw">impl </span>Discovery <span class="kw">for </span>PkarrNodeDiscovery {
+<span class="kw">impl </span>Discovery <span class="kw">for </span>DhtDiscovery {
     <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
         <span class="kw">let </span><span class="prelude-val">Some</span>(keypair) = <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>.secret_key <span class="kw">else </span>{
             <span class="macro">tracing::debug!</span>(<span class="string">"no keypair set, not publishing"</span>);
