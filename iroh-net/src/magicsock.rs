@@ -426,6 +426,7 @@ impl MagicSock {
             .ok();
     }
 
+    #[cfg_attr(windows, allow(dead_code))]
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
         let (v4, v6) = self.local_addr();
         let addr = if let Some(v6) = v6 { v6 } else { v4 };
@@ -1980,6 +1981,7 @@ impl Actor {
         false
     }
 
+    #[cfg_attr(windows, allow(dead_code))]
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
         self.msock.normalized_local_addr()
     }
