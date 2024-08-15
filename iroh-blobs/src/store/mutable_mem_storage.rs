@@ -5,7 +5,7 @@ use bao_tree::{
 use bytes::Bytes;
 
 use crate::{
-    util::{copy_limited_slice, raw_outboard, SparseMemFile},
+    util::{compute_outboard, copy_limited_slice, SparseMemFile},
     IROH_BLOCK_SIZE,
 };
 
@@ -63,8 +63,16 @@ impl SizeInfo {
 
 impl MutableMemStorage {
     /// Create a new mutable mem storage from the given data
-    pub fn complete(bytes: Bytes) -> (Self, iroh_base::hash::Hash) {
-        let (outboard, hash) = raw_outboard(bytes.as_ref());
+    pub fn complete(
+        bytes: Bytes,
+        cb: impl Fn(u64) + Send + Sync + 'static,
+    ) -> (Self, iroh_base::hash::Hash) {
+        let (hash, outboard) = compute_outboard(&bytes[..], bytes.len() as u64, move |offset| {
+            cb(offset);
+            Ok(())
+        })
+        .unwrap();
+        let outboard = outboard.unwrap_or_default();
         let res = Self {
             data: bytes.to_vec().into(),
             outboard: outboard.into(),

@@ -2478,7 +2478,6 @@ dependencies = [
  "clap",
  "console",
  "derive_more",
- "flume",
  "futures-buffered",
  "futures-lite 2.3.0",
  "futures-util",
@@ -2577,7 +2576,6 @@ dependencies = [
  "bytes",
  "chrono",
  "derive_more",
- "flume",
  "futures-buffered",
  "futures-lite 2.3.0",
  "futures-util",
@@ -2835,7 +2833,6 @@ name = "iroh-net"
 version = "0.22.0"
 dependencies = [
  "anyhow",
- "async-channel",
  "axum",
  "backoff",
  "base64 0.22.1",
@@ -2909,6 +2906,7 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.26.0",
  "tokio-rustls-acme",
+ "tokio-stream",
  "tokio-tungstenite",
  "tokio-tungstenite-wasm",
  "tokio-util",

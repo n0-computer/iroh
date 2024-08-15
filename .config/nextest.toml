@@ -1,0 +1,10 @@
+[test-groups]
+run-in-isolation = { max-threads = 32 } 
+# these are tests that must not run with other tests concurrently. All tests in
+# this group can take up at most 32 threads among them, but each one requiring
+# 16 threads also. The effect should be that tests run isolated.
+
+[[profile.ci.overrides]]
+filter = 'test(::run_in_isolation::)'
+test-group = 'run-in-isolation'
+threads-required = 32

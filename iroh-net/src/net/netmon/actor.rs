@@ -57,7 +57,7 @@ pub(super) struct Actor {
     /// OS specific monitor.
     #[allow(dead_code)]
     route_monitor: RouteMonitor,
-    mon_receiver: async_channel::Receiver<NetworkMessage>,
+    mon_receiver: mpsc::Receiver<NetworkMessage>,
     actor_receiver: mpsc::Receiver<ActorMessage>,
     actor_sender: mpsc::Sender<ActorMessage>,
     /// Callback registry.
@@ -84,7 +84,7 @@ impl Actor {
         let wall_time = Instant::now();
 
         // Use flume channels, as tokio::mpsc is not safe to use across ffi boundaries.
-        let (mon_sender, mon_receiver) = async_channel::bounded(MON_CHAN_CAPACITY);
+        let (mon_sender, mon_receiver) = mpsc::channel(MON_CHAN_CAPACITY);
         let route_monitor = RouteMonitor::new(mon_sender)?;
         let (actor_sender, actor_receiver) = mpsc::channel(ACTOR_CHAN_CAPACITY);
 
@@ -129,7 +129,7 @@ impl Actor {
                         debounce_interval.reset_immediately();
                     }
                 }
-                Ok(_event) = self.mon_receiver.recv() => {
+                Some(_event) = self.mon_receiver.recv() => {
                     trace!("network activity detected");
                     last_event.replace(false);
                     debounce_interval.reset_immediately();
