@@ -156,7 +156,9 @@ impl Batch {
 
     /// Write a blob by passing an async reader.
     ///
-    /// This will use a default chunk size of 64KB, and a format of [BlobFormat::Raw].
+    /// This will consume the stream in 64KB chunks, and use a format of [BlobFormat::Raw].
+    ///
+    /// For more options, see [`add_dir_with_opts`].
     pub async fn add_reader(
         &self,
         reader: impl AsyncRead + Unpin + Send + 'static,
