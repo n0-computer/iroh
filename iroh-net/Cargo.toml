@@ -131,7 +131,7 @@ harness = false
 duct = "0.13.6"
 
 [features]
-default = ["metrics"]
+default = ["metrics", "dht_discovery"]
 iroh-relay = [
     "dep:tokio-rustls-acme",
     "dep:axum",

@@ -43,9 +43,9 @@ const INITIAL_PUBLISH_DELAY: Duration = Duration::from_millis(500);
 ///
 /// Calling publish will start a background task that periodically publishes the node address.
 #[derive(Debug, Clone)]
-pub struct PkarrNodeDiscovery(Arc<Inner>);
+pub struct DhtDiscovery(Arc<Inner>);
 
-impl Default for PkarrNodeDiscovery {
+impl Default for DhtDiscovery {
     fn default() -> Self {
         Self::builder().build().expect("valid builder")
     }
@@ -147,7 +147,7 @@ impl Builder {
     }
 
     /// Build the discovery mechanism.
-    pub fn build(self) -> anyhow::Result<PkarrNodeDiscovery> {
+    pub fn build(self) -> anyhow::Result<DhtDiscovery> {
         let pkarr = self
             .client
             .unwrap_or_else(|| PkarrClient::new(Default::default()).unwrap())
@@ -172,7 +172,7 @@ impl Builder {
             None => None,
         };
 
-        Ok(PkarrNodeDiscovery(Arc::new(Inner {
+        Ok(DhtDiscovery(Arc::new(Inner {
             pkarr,
             pkarr_relay,
             secret_key: self.secret_key,
@@ -185,7 +185,7 @@ impl Builder {
     }
 }
 
-impl PkarrNodeDiscovery {
+impl DhtDiscovery {
     /// Create a new builder for PkarrNodeDiscovery.
     pub fn builder() -> Builder {
         Builder::default()
@@ -325,7 +325,7 @@ impl PkarrNodeDiscovery {
     }
 }
 
-impl Discovery for PkarrNodeDiscovery {
+impl Discovery for DhtDiscovery {
     fn publish(&self, info: &AddrInfo) {
         let Some(keypair) = &self.0.secret_key else {
             tracing::debug!("no keypair set, not publishing");
