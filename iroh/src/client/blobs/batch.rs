@@ -412,7 +412,7 @@ impl Batch {
         }
     }
 
-    /// Upgrade a temp tag to a persistent tag.
+    /// Upgrades a temp tag to a persistent tag.
     pub async fn persist(&self, tt: TempTag) -> Result<Tag> {
         let tag = self
             .0
