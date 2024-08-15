@@ -363,6 +363,59 @@
 <a href="#363" id="363">363</a>
 <a href="#364" id="364">364</a>
 <a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
+<a href="#391" id="391">391</a>
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a>
+<a href="#396" id="396">396</a>
+<a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! # Pkarr based node discovery for iroh-net
 //!
 //! Node discovery is being able to find connecting information about an iroh node based on just its node id.
@@ -680,7 +733,7 @@
         }
     }
 
-    <span class="kw">async fn </span>resolve(<span class="self">self</span>, node_id: NodeId, co: Co&lt;anyhow::Result&lt;DiscoveryItem&gt;&gt;) {
+    <span class="kw">async fn </span>gen_resolve(<span class="self">self</span>, node_id: NodeId, co: Co&lt;anyhow::Result&lt;DiscoveryItem&gt;&gt;) {
         <span class="kw">let </span>pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect(<span class="string">"valid public key"</span>);
         <span class="macro">tokio::join!</span>(
@@ -725,7 +778,60 @@
         <span class="kw">let </span>pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect(<span class="string">"valid public key"</span>);
         <span class="macro">tracing::info!</span>(<span class="string">"resolving {} as {}"</span>, node_id, pkarr_public_key.to_z32());
-        <span class="prelude-val">Some</span>(Gen::new(|co| <span class="kw">async move </span>{ this.resolve(node_id, co).<span class="kw">await </span>}).boxed())
+        <span class="prelude-val">Some</span>(Gen::new(|co| <span class="kw">async move </span>{ this.gen_resolve(node_id, co).<span class="kw">await </span>}).boxed())
+    }
+}
+
+<span class="attr">#[cfg(test)]
+</span><span class="kw">mod </span>tests {
+    <span class="kw">use </span>std::collections::BTreeSet;
+
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span>iroh_base::node_addr::RelayUrl;
+    <span class="kw">use </span>mainline::dht::DhtSettings;
+    <span class="kw">use </span>testresult::TestResult;
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>dht_discovery_smoke() -&gt; TestResult {
+        tracing_subscriber::fmt::init();
+        <span class="kw">let </span>testnet = mainline::dht::Testnet::new(<span class="number">5</span>);
+        <span class="kw">let </span>settings = pkarr::Settings {
+            dht: DhtSettings {
+                bootstrap: <span class="prelude-val">Some</span>(testnet.bootstrap.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        <span class="kw">let </span>client = PkarrClient::new(settings)<span class="question-mark">?</span>;
+        <span class="kw">let </span>secret = SecretKey::generate();
+
+        <span class="kw">let </span>discovery = DhtDiscovery::builder()
+            .secret_key(secret.clone())
+            .client(client)
+            .build()<span class="question-mark">?</span>;
+        <span class="kw">let </span>relay_url: RelayUrl = Url::parse(<span class="string">"https://example.com"</span>)<span class="question-mark">?</span>.into();
+        discovery.publish(<span class="kw-2">&amp;</span>AddrInfo {
+            relay_url: <span class="prelude-val">Some</span>(relay_url.clone()),
+            direct_addresses: Default::default(),
+        });
+        <span class="comment">// publish is fire and forget, so we have no way to wait until it is done.
+        </span>tokio::time::sleep(Duration::from_secs(<span class="number">1</span>)).<span class="kw">await</span>;
+        <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind(<span class="number">0</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>items = discovery
+            .resolve(ep, secret.public())
+            .unwrap()
+            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+            .<span class="kw">await</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>found_relay_urls = BTreeSet::new();
+        <span class="kw">for </span>item <span class="kw">in </span>items {
+            <span class="kw">if let </span><span class="prelude-val">Ok</span>(item) = item {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = item.addr_info.relay_url {
+                    found_relay_urls.insert(url);
+                }
+            }
+        }
+        <span class="macro">assert!</span>(found_relay_urls.contains(<span class="kw-2">&amp;</span>relay_url));
+        <span class="prelude-val">Ok</span>(())
     }
 }
 </code></pre></div></section></main></body></html>

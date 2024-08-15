@@ -920,6 +920,7 @@
 <a href="#920" id="920">920</a>
 <a href="#921" id="921">921</a>
 <a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
@@ -1552,6 +1553,7 @@
             downloader,
             gossip,
             local_pool_handle: lp.handle().clone(),
+            blob_batches: Default::default(),
         });
 
         <span class="kw">let </span>protocol_builder = ProtocolBuilder {
