@@ -32,9 +32,3 @@ missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
 unused-async = "warn"
-
-[patch.crates-io]
-iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "iroh-0.11.x" }
-iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "iroh-0.11.x" }
-iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "iroh-0.11.x" }
-quic-rpc = { git = "https://github.com/n0-computer/quic-rpc", branch = "dig/flub/quinn11" }

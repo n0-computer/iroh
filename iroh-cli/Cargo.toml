@@ -47,7 +47,7 @@ parking_lot = "0.12.1"
 pkarr = { version = "2", default-features = false }
 portable-atomic = "1"
 postcard = "1.0.8"
-quic-rpc = { version = "0.11", features = ["flume-transport", "quinn-transport"] }
+quic-rpc = { version = "0.12", features = ["flume-transport", "quinn-transport"] }
 quinn = { package = "iroh-quinn", version = "0.11" }
 rand = "0.8.5"
 ratatui = "0.26.2"

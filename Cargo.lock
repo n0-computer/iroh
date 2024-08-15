@@ -3010,7 +3010,8 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.11.3"
-source = "git+https://github.com/n0-computer/quinn?branch=iroh-0.11.x#22c24560b7ab29bff4a1caa72cda2e9c8790705d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fd590a39a14cfc168efa4d894de5039d65641e62d8da4a80733018ababe3c33"
 dependencies = [
  "bytes",
  "iroh-quinn-proto",
@@ -3027,7 +3028,8 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.11.6"
-source = "git+https://github.com/n0-computer/quinn?branch=iroh-0.11.x#22c24560b7ab29bff4a1caa72cda2e9c8790705d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd0538ff12efe3d61ea1deda2d7913f4270873a519d43e6995c6e87a1558538"
 dependencies = [
  "bytes",
  "rand",
@@ -3044,7 +3046,8 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.5.4"
-source = "git+https://github.com/n0-computer/quinn?branch=iroh-0.11.x#22c24560b7ab29bff4a1caa72cda2e9c8790705d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0619b59471fdd393ac8a6c047f640171119c1c8b41f7d2927db91776dcdbc5f"
 dependencies = [
  "libc",
  "once_cell",
@@ -4240,8 +4243,9 @@ dependencies = [
 
 [[package]]
 name = "quic-rpc"
-version = "0.11.0"
-source = "git+https://github.com/n0-computer/quic-rpc?branch=dig/flub/quinn11#b3f8bfbca04ed911f19bb9e9b3cce9821e416d54"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87cb85690ab1688eade9a5de4d94545a9ceef60639b3370f5e1a28f525eb5589"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4264,9 +4268,9 @@ dependencies = [
 
 [[package]]
 name = "quic-rpc-derive"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b02c2d3637609d07aa2560f178588dce09cf2f4f5cdcc9b0caac0063a188a898"
+checksum = "6150a9fd3cf6c34d25730fe55a247b99d1c6e4fad6e7b7843f729a431a57e919"
 dependencies = [
  "proc-macro2",
  "quic-rpc",
