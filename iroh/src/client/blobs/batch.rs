@@ -440,7 +440,7 @@ impl Batch {
         Ok(())
     }
 
-    /// Upgrade a temp tag to a persistent tag with either a specific name or
+    /// Upgrades a temp tag to a persistent tag with either a specific name or
     /// an automatically generated name.
     pub async fn upgrade_with_opts(&self, tt: TempTag, opts: SetTagOption) -> Result<Tag> {
         match opts {
