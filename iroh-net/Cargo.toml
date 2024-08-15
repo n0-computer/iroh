@@ -167,4 +167,4 @@ name = "connect-unreliable"
 
 [[example]]
 name = "dht_discovery"
-features = ["dht_discovery"]
+required-features = ["dht_discovery"]
