@@ -218,7 +218,6 @@ impl NodeState {
             ConnectionType::None => None,
         };
 
-        #[allow(deprecated)] // last_control field is deprecated
         let addrs = self
             .udp_paths
             .paths
@@ -1218,8 +1217,6 @@ pub struct DirectAddrInfo {
     /// Note that [`ControlMsg::CallMeMaybe`] is received via a relay path, while
     /// [`ControlMsg::Ping`] and [`ControlMsg::Pong`] are received on the path to
     /// [`DirectAddrInfo::addr`] itself and thus convey very different information.
-    // TODO: Remove this!  It is a totally useless piece of information.
-    #[deprecated(since = "0.23.0", note = "this is confusing internal information")]
     pub last_control: Option<(Duration, ControlMsg)>,
     /// Elapsed time since the last payload message was received on this network path.
     ///
@@ -1308,7 +1305,6 @@ impl NodeInfo {
     // TODO: This does not contain what it claims to contain!  It can not be fixed easily.
     #[deprecated(since = "0.23.0", note = "this is broken")]
     pub fn last_received(&self) -> Option<Duration> {
-        #[allow(deprecated)]
         self.addrs
             .iter()
             .filter_map(|addr| addr.last_control.map(|x| x.0).min(addr.last_payload))
@@ -1512,7 +1508,6 @@ mod tests {
         };
 
         // Initialising a struct with some deprecated fields.
-        #[allow(deprecated)]
         let mut expect = Vec::from([
             NodeInfo {
                 node_id: a_endpoint.node_id,

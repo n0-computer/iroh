@@ -195,7 +195,6 @@ fn fmt_connection(info: NodeInfo) -> String {
 }
 
 fn direct_addr_row(info: DirectAddrInfo) -> comfy_table::Row {
-    #[allow(deprecated)]
     let DirectAddrInfo {
         addr,
         latency,
