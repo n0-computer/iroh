@@ -100,7 +100,7 @@ async fn main() -> Result<()> {
                         return;
                     }
                 };
-                iroh_blobs::provider::handle_connection(conn, db, MockEventSender, lp).await
+                iroh_blobs::provider::handle_connection(conn, db, Default::default(), lp).await
             });
         }
     });
@@ -112,16 +112,5 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Err(e) => Err(anyhow::anyhow!("unable to listen for ctrl-c: {e}")),
-    }
-}
-
-#[derive(Clone)]
-struct MockEventSender;
-
-use futures_lite::future::FutureExt;
-
-impl iroh_blobs::provider::EventSender for MockEventSender {
-    fn send(&self, _event: iroh_blobs::provider::Event) -> futures_lite::future::Boxed<()> {
-        async move {}.boxed()
     }
 }

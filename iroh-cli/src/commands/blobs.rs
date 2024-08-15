@@ -370,10 +370,15 @@ impl BlobCommands {
 
                 let (blob_status, size) = match (status, format) {
                     (BlobStatus::Complete { size }, BlobFormat::Raw) => ("blob", size),
-                    (BlobStatus::Partial { size }, BlobFormat::Raw) => ("incomplete blob", size),
+                    (BlobStatus::Partial { size }, BlobFormat::Raw) => {
+                        ("incomplete blob", size.value())
+                    }
                     (BlobStatus::Complete { size }, BlobFormat::HashSeq) => ("collection", size),
                     (BlobStatus::Partial { size }, BlobFormat::HashSeq) => {
-                        ("incomplete collection", size)
+                        ("incomplete collection", size.value())
+                    }
+                    (BlobStatus::NotFound, _) => {
+                        return Err(anyhow!("blob is missing"));
                     }
                 };
                 println!(
@@ -436,7 +441,7 @@ pub struct BlobAddOptions {
 pub enum ListCommands {
     /// List the available blobs on the running provider.
     Blobs,
-    /// List the available blobs on the running provider.
+    /// List the blobs on the running provider that are not full files.
     IncompleteBlobs,
     /// List the available collections on the running provider.
     Collections,

@@ -151,6 +151,7 @@ mod tests {
 
     use super::*;
     use anyhow::Result;
+    use tokio::sync::mpsc;
 
     const ALPN: &[u8] = b"n0/test/1";
 
@@ -192,7 +193,7 @@ mod tests {
         let (m2, _m2_key) = wrap_socket(m2)?;
 
         let m1_addr = SocketAddr::new(network.local_addr(), m1.local_addr()?.port());
-        let (m1_send, m1_recv) = async_channel::bounded(8);
+        let (m1_send, mut m1_recv) = mpsc::channel(8);
 
         let m1_task = tokio::task::spawn(async move {
             if let Some(conn) = m1.accept().await {
@@ -220,7 +221,7 @@ mod tests {
         drop(send_bi);
 
         // make sure the right values arrived
-        let val = m1_recv.recv().await?;
+        let val = m1_recv.recv().await.unwrap();
         assert_eq!(val, b"hello");
 
         m1_task.await??;

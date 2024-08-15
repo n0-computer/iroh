@@ -1,18 +1,22 @@
 use iroh_base::rpc::RpcResult;
-use iroh_blobs::Tag;
+use iroh_blobs::{HashAndFormat, Tag};
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
 use crate::client::tags::TagInfo;
 
-use super::RpcService;
+use super::{blobs::BatchId, RpcService};
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[enum_conversions(super::Request)]
 #[rpc_requests(RpcService)]
 pub enum Request {
+    #[rpc(response = RpcResult<Tag>)]
+    Create(CreateRequest),
+    #[rpc(response = RpcResult<()>)]
+    Set(SetRequest),
     #[rpc(response = RpcResult<()>)]
     DeleteTag(DeleteRequest),
     #[server_streaming(response = TagInfo)]
@@ -23,8 +27,43 @@ pub enum Request {
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[enum_conversions(super::Response)]
 pub enum Response {
+    Create(RpcResult<Tag>),
     ListTags(TagInfo),
     DeleteTag(RpcResult<()>),
+}
+
+/// Determine how to sync the db after a modification operation
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub enum SyncMode {
+    /// Fully sync the db
+    #[default]
+    Full,
+    /// Do not sync the db
+    None,
+}
+
+/// Create a tag
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateRequest {
+    /// Value of the tag
+    pub value: HashAndFormat,
+    /// Batch to use, none for global
+    pub batch: Option<BatchId>,
+    /// Sync mode
+    pub sync: SyncMode,
+}
+
+/// Set or delete a tag
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SetRequest {
+    /// Name of the tag
+    pub name: Tag,
+    /// Value of the tag, None to delete
+    pub value: Option<HashAndFormat>,
+    /// Batch to use, none for global
+    pub batch: Option<BatchId>,
+    /// Sync mode
+    pub sync: SyncMode,
 }
 
 /// List all collections
