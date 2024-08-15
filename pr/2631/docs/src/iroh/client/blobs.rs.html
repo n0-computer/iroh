@@ -1522,6 +1522,31 @@
 <a href="#1522" id="1522">1522</a>
 <a href="#1523" id="1523">1523</a>
 <a href="#1524" id="1524">1524</a>
+<a href="#1525" id="1525">1525</a>
+<a href="#1526" id="1526">1526</a>
+<a href="#1527" id="1527">1527</a>
+<a href="#1528" id="1528">1528</a>
+<a href="#1529" id="1529">1529</a>
+<a href="#1530" id="1530">1530</a>
+<a href="#1531" id="1531">1531</a>
+<a href="#1532" id="1532">1532</a>
+<a href="#1533" id="1533">1533</a>
+<a href="#1534" id="1534">1534</a>
+<a href="#1535" id="1535">1535</a>
+<a href="#1536" id="1536">1536</a>
+<a href="#1537" id="1537">1537</a>
+<a href="#1538" id="1538">1538</a>
+<a href="#1539" id="1539">1539</a>
+<a href="#1540" id="1540">1540</a>
+<a href="#1541" id="1541">1541</a>
+<a href="#1542" id="1542">1542</a>
+<a href="#1543" id="1543">1543</a>
+<a href="#1544" id="1544">1544</a>
+<a href="#1545" id="1545">1545</a>
+<a href="#1546" id="1546">1546</a>
+<a href="#1547" id="1547">1547</a>
+<a href="#1548" id="1548">1548</a>
+<a href="#1549" id="1549">1549</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for blobs management.
 //!
 //! The main entry point is the [`Client`].
@@ -1579,7 +1604,7 @@
     task::{Context, Poll},
 };
 
-<span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>futures_util::SinkExt;
@@ -1589,7 +1614,7 @@
     export::ExportProgress <span class="kw">as </span>BytesExportProgress,
     format::collection::{Collection, SimpleStore},
     get::db::DownloadProgress <span class="kw">as </span>BytesDownloadProgress,
-    store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
+    store::{BaoBlobSize, ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
     util::SetTagOption,
     BlobFormat, Hash, Tag,
 };
@@ -1601,12 +1626,14 @@
 <span class="kw">use </span>tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 <span class="kw">use </span>tokio_util::io::{ReaderStream, StreamReader};
 <span class="kw">use </span>tracing::warn;
+<span class="kw">mod </span>batch;
+<span class="kw">pub use </span>batch::{AddDirOpts, AddFileOpts, AddReaderOpts, Batch};
 
 <span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::blobs::{
-    AddPathRequest, AddStreamRequest, AddStreamUpdate, ConsistencyCheckRequest,
-    CreateCollectionRequest, CreateCollectionResponse, DeleteRequest, DownloadRequest,
-    ExportRequest, ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse,
-    ValidateRequest,
+    AddPathRequest, AddStreamRequest, AddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
+    BlobStatusRequest, ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse,
+    DeleteRequest, DownloadRequest, ExportRequest, ListIncompleteRequest, ListRequest,
+    ReadAtRequest, ReadAtResponse, ValidateRequest,
 };
 <span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::node::StatusRequest;
 
@@ -1626,6 +1653,38 @@
 }
 
 <span class="kw">impl </span>Client {
+    <span class="doccomment">/// Check if a blob is completely stored on the node.
+    ///
+    /// Note that this will return false for blobs that are partially stored on
+    /// the node.
+    </span><span class="kw">pub async fn </span>status(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: Hash) -&gt; <span class="prelude-ty">Result</span>&lt;BlobStatus&gt; {
+        <span class="kw">let </span>status = <span class="self">self</span>.rpc.rpc(BlobStatusRequest { hash }).<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="prelude-val">Ok</span>(status.<span class="number">0</span>)
+    }
+
+    <span class="doccomment">/// Check if a blob is completely stored on the node.
+    ///
+    /// This is just a convenience wrapper around `status` that returns a boolean.
+    </span><span class="kw">pub async fn </span>has(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: Hash) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
+        <span class="kw">match </span><span class="self">self</span>.status(hash).<span class="kw">await </span>{
+            <span class="prelude-val">Ok</span>(BlobStatus::Complete { .. }) =&gt; <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>),
+            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>),
+            <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err),
+        }
+    }
+
+    <span class="doccomment">/// Create a new batch for adding data.
+    ///
+    /// A batch is a context in which temp tags are created and data is added to the node. Temp tags
+    /// are automatically deleted when the batch is dropped, leading to the data being garbage collected
+    /// unless a permanent tag is created for it.
+    </span><span class="kw">pub async fn </span>batch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Batch&gt; {
+        <span class="kw">let </span>(updates, <span class="kw-2">mut </span>stream) = <span class="self">self</span>.rpc.bidi(BatchCreateRequest).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>BatchCreateResponse::Id(batch) = stream.next().<span class="kw">await</span>.context(<span class="string">"expected scope id"</span>)<span class="question-mark">??</span>;
+        <span class="kw">let </span>rpc = <span class="self">self</span>.rpc.clone();
+        <span class="prelude-val">Ok</span>(Batch::new(batch, rpc, updates, <span class="number">1024</span>))
+    }
+
     <span class="doccomment">/// Stream the contents of a a single blob.
     ///
     /// Returns a [`Reader`], which can report the size of the blob before reading it.
@@ -1948,17 +2007,6 @@
         <span class="prelude-val">Ok</span>(ticket)
     }
 
-    <span class="doccomment">/// Get the status of a blob.
-    </span><span class="kw">pub async fn </span>status(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: Hash) -&gt; <span class="prelude-ty">Result</span>&lt;BlobStatus&gt; {
-        <span class="comment">// TODO: this could be implemented more efficiently
-        </span><span class="kw">let </span>reader = <span class="self">self</span>.read(hash).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">if </span>reader.is_complete {
-            <span class="prelude-val">Ok</span>(BlobStatus::Complete { size: reader.size })
-        } <span class="kw">else </span>{
-            <span class="prelude-val">Ok</span>(BlobStatus::Partial { size: reader.size })
-        }
-    }
-
     <span class="kw">fn </span>tags_client(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; tags::Client {
         tags::Client {
             rpc: <span class="self">self</span>.rpc.clone(),
@@ -1973,9 +2021,10 @@
 }
 
 <span class="doccomment">/// Whether to wrap the added data in a collection.
-</span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
+</span><span class="attr">#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 </span><span class="kw">pub enum </span>WrapOption {
     <span class="doccomment">/// Do not wrap the file or directory.
+    </span><span class="attr">#[default]
     </span>NoWrap,
     <span class="doccomment">/// Wrap the file or directory in a collection.
     </span>Wrap {
@@ -1985,12 +2034,14 @@
 }
 
 <span class="doccomment">/// Status information about a blob.
-</span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
+</span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 </span><span class="kw">pub enum </span>BlobStatus {
+    <span class="doccomment">/// The blob is not stored at all.
+    </span>NotFound,
     <span class="doccomment">/// The blob is only stored partially.
     </span>Partial {
         <span class="doccomment">/// The size of the currently stored partial blob.
-        </span>size: u64,
+        </span>size: BaoBlobSize,
     },
     <span class="doccomment">/// The blob is stored completely.
     </span>Complete {
@@ -2467,7 +2518,6 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
-    <span class="kw">use </span>anyhow::Context <span class="kw">as _</span>;
     <span class="kw">use </span>iroh_blobs::hashseq::HashSeq;
     <span class="kw">use </span>iroh_net::NodeId;
     <span class="kw">use </span>rand::RngCore;
