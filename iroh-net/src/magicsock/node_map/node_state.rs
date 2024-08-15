@@ -1302,8 +1302,6 @@ pub struct NodeInfo {
 impl NodeInfo {
     /// Get the duration since the last activity we received from this endpoint
     /// on any of its direct addresses.
-    // TODO: This does not contain what it claims to contain!  It can not be fixed easily.
-    #[deprecated(since = "0.23.0", note = "this is broken")]
     pub fn last_received(&self) -> Option<Duration> {
         self.addrs
             .iter()
