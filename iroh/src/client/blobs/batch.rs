@@ -221,11 +221,11 @@ impl Batch {
     /// `path` should be an absolute path valid for the file system on which
     /// the node runs, which refers to a file.
     ///
-    /// If you use [ImportMode::TryReference], Iroh will assume that the data will not
+    /// If you use [`ImportMode::TryReference`], Iroh will assume that the data will not
     /// change and will share it in place without copying to the Iroh data directory
     /// if appropriate. However, for tiny files, Iroh will copy the data.
     ///
-    /// If you use [ImportMode::Copy], Iroh will always copy the data.
+    /// If you use [`ImportMode::Copy`], Iroh will always copy the data.
     ///
     /// Will return a temp tag for the added blob, as well as the size of the file.
     pub async fn add_file_with_opts(
