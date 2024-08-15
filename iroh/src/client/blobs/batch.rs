@@ -158,7 +158,7 @@ impl Batch {
     ///
     /// This will consume the stream in 64KB chunks, and use a format of [BlobFormat::Raw].
     ///
-    /// For more options, see [`add_dir_with_opts`].
+    /// For more options, see [`Self::add_reader_with_opts`].
     pub async fn add_reader(
         &self,
         reader: impl AsyncRead + Unpin + Send + 'static,
