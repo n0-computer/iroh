@@ -3,10 +3,6 @@
 incoming streams, and the various stream types) have been dropped, then the connection will be
 automatically closed with an <code>error_code</code> of 0 and an empty <code>reason</code>. You can also close the
 connection explicitly by calling <a href="struct.Connection.html#method.close" title="method iroh::net::endpoint::Connection::close"><code>Connection::close()</code></a>.</p>
-<p>Closing the connection immediately abandons efforts to deliver data to the peer.  Upon
-receiving CONNECTION_CLOSE the peer <em>may</em> drop any stream data not yet delivered to the
-application. <a href="struct.Connection.html#method.close" title="method iroh::net::endpoint::Connection::close"><code>Connection::close()</code></a> describes in more detail how to gracefully close a
-connection without losing application data.</p>
 <p>May be cloned to obtain another handle to the same connection.</p>
 </div></details><h2 id="implementations" class="section-header">Implementations<a href="#implementations" class="anchor">§</a></h2><div id="implementations-list"><details class="toggle implementors-toggle" open><summary><section id="impl-Connection" class="impl"><a href="#impl-Connection" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.Connection.html" title="struct iroh::net::endpoint::Connection">Connection</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.weak_handle" class="method"><h4 class="code-header">pub fn <a href="#method.weak_handle" class="fn">weak_handle</a>(&amp;self) -&gt; WeakConnectionHandle</h4></section></summary><div class="docblock"><p>Returns a weak reference to the inner connection struct.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.open_uni" class="method"><h4 class="code-header">pub fn <a href="#method.open_uni" class="fn">open_uni</a>(&amp;self) -&gt; OpenUni&lt;'_&gt;</h4></section></summary><div class="docblock"><p>Initiate a new outgoing unidirectional stream.</p>
@@ -31,26 +27,13 @@ and <a href="enum.ConnectionError.html#variant.ApplicationClosed" title="variant
 </div></details><details class="toggle method-toggle" open><summary><section id="method.close_reason" class="method"><h4 class="code-header">pub fn <a href="#method.close_reason" class="fn">close_reason</a>(&amp;self) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="enum" href="enum.ConnectionError.html" title="enum iroh::net::endpoint::ConnectionError">ConnectionError</a>&gt;</h4></section></summary><div class="docblock"><p>If the connection is closed, the reason why.</p>
 <p>Returns <code>None</code> if the connection is still open.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.close" class="method"><h4 class="code-header">pub fn <a href="#method.close" class="fn">close</a>(&amp;self, error_code: <a class="struct" href="struct.VarInt.html" title="struct iroh::net::endpoint::VarInt">VarInt</a>, reason: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>])</h4></section></summary><div class="docblock"><p>Close the connection immediately.</p>
-<p>Pending operations will fail immediately with <a href="enum.ConnectionError.html#variant.LocallyClosed" title="variant iroh::net::endpoint::ConnectionError::LocallyClosed"><code>ConnectionError::LocallyClosed</code></a>. No
-more data is sent to the peer and the peer may drop buffered data upon receiving
-the CONNECTION_CLOSE frame.</p>
+<p>Pending operations will fail immediately with <a href="enum.ConnectionError.html#variant.LocallyClosed" title="variant iroh::net::endpoint::ConnectionError::LocallyClosed"><code>ConnectionError::LocallyClosed</code></a>. Delivery
+of data on unfinished streams is not guaranteed, so the application must call this only
+when all important communications have been completed, e.g. by calling <a href="struct.SendStream.html#method.finish" title="method iroh::net::endpoint::SendStream::finish"><code>finish</code></a> on
+outstanding <a href="struct.SendStream.html" title="struct iroh::net::endpoint::SendStream"><code>SendStream</code></a>s and waiting for the resulting futures to complete.</p>
 <p><code>error_code</code> and <code>reason</code> are not interpreted, and are provided directly to the peer.</p>
 <p><code>reason</code> will be truncated to fit in a single packet with overhead; to improve odds that it
 is preserved in full, it should be kept under 1KiB.</p>
-<h5 id="gracefully-closing-a-connection"><a class="doc-anchor" href="#gracefully-closing-a-connection">§</a>Gracefully closing a connection</h5>
-<p>Only the peer last receiving application data can be certain that all data is
-delivered. The only reliable action it can then take is to close the connection,
-potentially with a custom error code. The delivery of the final CONNECTION_CLOSE
-frame is very likely if both endpoints stay online long enough, and
-<a href="crate::Endpoint::wait_idle"><code>Endpoint::wait_idle()</code></a> can be used to provide sufficient time. Otherwise, the
-remote peer will time out the connection, provided that the idle timeout is not
-disabled.</p>
-<p>The sending side can not guarantee all stream data is delivered to the remote
-application. It only knows the data is delivered to the QUIC stack of the remote
-endpoint. Once the local side sends a CONNECTION_CLOSE frame in response to calling
-<a href="struct.Connection.html#method.close" title="method iroh::net::endpoint::Connection::close"><code>close()</code></a> the remote endpoint may drop any data it received but is as yet
-undelivered to the application, including data that was acknowledged as received to
-the local endpoint.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.send_datagram" class="method"><h4 class="code-header">pub fn <a href="#method.send_datagram" class="fn">send_datagram</a>(&amp;self, data: Bytes) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, SendDatagramError&gt;</h4></section></summary><div class="docblock"><p>Transmit <code>data</code> as an unreliable, unordered application datagram</p>
 <p>Application datagrams are a low-level primitive. They may be lost or delivered out of order,
 and <code>data</code> must both fit inside a single QUIC packet and be smaller than the maximum
