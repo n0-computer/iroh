@@ -1634,11 +1634,6 @@
 <a href="#1634" id="1634">1634</a>
 <a href="#1635" id="1635">1635</a>
 <a href="#1636" id="1636">1636</a>
-<a href="#1637" id="1637">1637</a>
-<a href="#1638" id="1638">1638</a>
-<a href="#1639" id="1639">1639</a>
-<a href="#1640" id="1640">1640</a>
-<a href="#1641" id="1641">1641</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{btree_map::Entry, BTreeSet, HashMap};
 <span class="kw">use </span>std::hash::Hash;
 <span class="kw">use </span>std::net::{IpAddr, SocketAddr};
@@ -1859,8 +1854,7 @@
             ConnectionType::None =&gt; <span class="prelude-val">None</span>,
         };
 
-        <span class="attr">#[allow(deprecated)] </span><span class="comment">// last_control field is deprecated
-        </span><span class="kw">let </span>addrs = <span class="self">self
+        <span class="kw">let </span>addrs = <span class="self">self
             </span>.udp_paths
             .paths
             .iter()
@@ -2859,8 +2853,6 @@
     /// Note that [`ControlMsg::CallMeMaybe`] is received via a relay path, while
     /// [`ControlMsg::Ping`] and [`ControlMsg::Pong`] are received on the path to
     /// [`DirectAddrInfo::addr`] itself and thus convey very different information.
-    </span><span class="comment">// TODO: Remove this!  It is a totally useless piece of information.
-    </span><span class="attr">#[deprecated(since = <span class="string">"0.23.0"</span>, note = <span class="string">"this is confusing internal information"</span>)]
     </span><span class="kw">pub </span>last_control: <span class="prelude-ty">Option</span>&lt;(Duration, ControlMsg)&gt;,
     <span class="doccomment">/// Elapsed time since the last payload message was received on this network path.
     ///
@@ -2949,8 +2941,7 @@
     </span><span class="comment">// TODO: This does not contain what it claims to contain!  It can not be fixed easily.
     </span><span class="attr">#[deprecated(since = <span class="string">"0.23.0"</span>, note = <span class="string">"this is broken"</span>)]
     </span><span class="kw">pub fn </span>last_received(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Duration&gt; {
-        <span class="attr">#[allow(deprecated)]
-        </span><span class="self">self</span>.addrs
+        <span class="self">self</span>.addrs
             .iter()
             .filter_map(|addr| addr.last_control.map(|x| x.<span class="number">0</span>).min(addr.last_payload))
             .min()
@@ -3153,7 +3144,6 @@
         };
 
         <span class="comment">// Initialising a struct with some deprecated fields.
-        </span><span class="attr">#[allow(deprecated)]
         </span><span class="kw">let </span><span class="kw-2">mut </span>expect = Vec::from([
             NodeInfo {
                 node_id: a_endpoint.node_id,
