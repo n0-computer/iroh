@@ -504,13 +504,13 @@
 <span class="kw">impl </span>StoreInner {
     <span class="attr">#[cfg(test)]
     </span><span class="kw">async fn </span>entry_state(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: Hash) -&gt; OuterResult&lt;EntryStateResponse&gt; {
-        <span class="kw">let </span>(tx, rx) = ::oneshot::channel();
+        <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="self">self</span>.tx.send(ActorMessage::EntryState { hash, tx }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">??</span>)
     }
 
     <span class="kw">async fn </span>set_full_entry_state(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: Hash, entry: <span class="prelude-ty">Option</span>&lt;EntryData&gt;) -&gt; OuterResult&lt;()&gt; {
-        <span class="kw">let </span>(tx, rx) = ::oneshot::channel();
+        <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="self">self</span>.tx
             .send(ActorMessage::SetFullEntryState { hash, entry, tx })
             .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -518,7 +518,7 @@
     }
 
     <span class="kw">async fn </span>get_full_entry_state(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: Hash) -&gt; OuterResult&lt;<span class="prelude-ty">Option</span>&lt;EntryData&gt;&gt; {
-        <span class="kw">let </span>(tx, rx) = ::oneshot::channel();
+        <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="self">self</span>.tx
             .send(ActorMessage::GetFullEntryState { hash, tx })
             .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -526,7 +526,7 @@
     }
 
     <span class="kw">async fn </span>all_blobs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; OuterResult&lt;Vec&lt;io::Result&lt;Hash&gt;&gt;&gt; {
-        <span class="kw">let </span>(tx, rx) = ::oneshot::channel();
+        <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="kw">let </span>filter: FilterPredicate&lt;Hash, EntryState&gt; =
             Box::new(|_i, k, v| <span class="prelude-val">Some</span>((k.value(), v.value())));
         <span class="self">self</span>.tx.send(ActorMessage::Blobs { filter, tx }).<span class="kw">await</span><span class="question-mark">?</span>;
