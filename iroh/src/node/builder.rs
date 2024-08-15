@@ -307,6 +307,7 @@ where
             })?;
         let docs_storage = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
 
+        #[allow(deprecated)]
         let v0 = blobs_store
             .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
                 complete: root.join("blobs.v0"),
@@ -314,6 +315,7 @@ where
                 meta: root.join("blobs-meta.v0"),
             })
             .await?;
+        #[allow(deprecated)]
         let v1 = blobs_store
             .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
                 complete: root.join("blobs.v1").join("complete"),
@@ -322,7 +324,7 @@ where
             })
             .await?;
         if v0 || v1 {
-            tracing::info!("flat data was imported - reapply inline options");
+            tracing::warn!("Imported deprecated flat data. Future versions will stop supporting migrations from flat stores");
             blobs_store
                 .update_inline_options(iroh_blobs::store::fs::InlineOptions::default(), true)
                 .await?;
@@ -628,6 +630,7 @@ where
             downloader,
             gossip,
             local_pool_handle: lp.handle().clone(),
+            blob_batches: Default::default(),
         });
 
         let protocol_builder = ProtocolBuilder {

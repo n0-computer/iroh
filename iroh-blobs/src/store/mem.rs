@@ -243,6 +243,10 @@ impl super::Store for Store {
     }
 
     async fn shutdown(&self) {}
+
+    async fn sync(&self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default)]
