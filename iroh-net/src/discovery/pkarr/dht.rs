@@ -11,8 +11,6 @@ use std::{
     time::Duration,
 };
 
-use futures_lite::StreamExt;
-use genawaiter::sync::{Co, Gen};
 use crate::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
@@ -23,6 +21,8 @@ use crate::{
     util::AbortingJoinHandle,
     AddrInfo, Endpoint, NodeId,
 };
+use futures_lite::StreamExt;
+use genawaiter::sync::{Co, Gen};
 use pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
     RelaySettings, SignedPacket,
