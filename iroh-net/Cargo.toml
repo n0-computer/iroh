@@ -90,7 +90,7 @@ tokio-rustls-acme = { version = "0.3", optional = true }
 iroh-metrics = { version = "0.22.0", path = "../iroh-metrics", default-features = false }
 strum = { version = "0.26.2", features = ["derive"] }
 
-# local_swarm_discovery
+# local-swarm-discovery
 swarm-discovery = { version = "0.2.1", optional = true }
 tokio-stream = { version = "0.1.15", optional = true }
 
@@ -143,7 +143,7 @@ iroh-relay = [
 ]
 metrics = ["iroh-metrics/metrics"]
 test-utils = ["iroh-relay"]
-local_swarm_discovery = ["dep:swarm-discovery", "dep:tokio-stream"]
+local-swarm-discovery = ["dep:swarm-discovery", "dep:tokio-stream"]
 
 [[bin]]
 name = "iroh-relay"
