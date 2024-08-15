@@ -1632,8 +1632,6 @@
 <a href="#1632" id="1632">1632</a>
 <a href="#1633" id="1633">1633</a>
 <a href="#1634" id="1634">1634</a>
-<a href="#1635" id="1635">1635</a>
-<a href="#1636" id="1636">1636</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{btree_map::Entry, BTreeSet, HashMap};
 <span class="kw">use </span>std::hash::Hash;
 <span class="kw">use </span>std::net::{IpAddr, SocketAddr};
@@ -2938,8 +2936,6 @@
 <span class="kw">impl </span>NodeInfo {
     <span class="doccomment">/// Get the duration since the last activity we received from this endpoint
     /// on any of its direct addresses.
-    </span><span class="comment">// TODO: This does not contain what it claims to contain!  It can not be fixed easily.
-    </span><span class="attr">#[deprecated(since = <span class="string">"0.23.0"</span>, note = <span class="string">"this is broken"</span>)]
     </span><span class="kw">pub fn </span>last_received(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Duration&gt; {
         <span class="self">self</span>.addrs
             .iter()
