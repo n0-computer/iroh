@@ -16,7 +16,7 @@ use url::Url;
 use watchable::{Watchable, Watcher};
 
 use crate::{
-    discovery::{Discovery, DiscoveryItem},
+    discovery::{Discovery, DiscoveryEvents, DiscoveryItem},
     dns::node_info::NodeInfo,
     key::SecretKey,
     AddrInfo, Endpoint, NodeId,
@@ -209,6 +209,7 @@ impl PublisherService {
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrResolver {
     pkarr_client: PkarrRelayClient,
+    events: DiscoveryEvents,
 }
 
 impl PkarrResolver {
@@ -216,6 +217,7 @@ impl PkarrResolver {
     pub fn new(pkarr_relay: Url) -> Self {
         Self {
             pkarr_client: PkarrRelayClient::new(pkarr_relay),
+            events: DiscoveryEvents::new(),
         }
     }
 
@@ -239,17 +241,25 @@ impl Discovery for PkarrResolver {
         node_id: NodeId,
     ) -> Option<BoxStream<'static, Result<DiscoveryItem>>> {
         let pkarr_client = self.pkarr_client.clone();
+        let events = self.events.clone();
         let fut = async move {
             let signed_packet = pkarr_client.resolve(node_id).await?;
             let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)?;
-            Ok(DiscoveryItem {
+            let item = DiscoveryItem {
                 provenance: "pkarr",
                 last_updated: None,
                 addr_info: info.into(),
-            })
+            };
+            events.send_event(item.clone()).await;
+            Ok(item)
         };
         let stream = futures_lite::stream::once_future(fut);
         Some(Box::pin(stream))
+    }
+
+    fn subscribe(&self) -> Option<futures_lite::stream::Boxed<DiscoveryItem>> {
+        let (stream, _) = self.events.subscribe();
+        Some(stream)
     }
 }
 

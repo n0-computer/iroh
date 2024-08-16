@@ -14,13 +14,14 @@ use std::{
 use crate::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
-        Discovery, DiscoveryItem,
+        Discovery, DiscoveryEvents, DiscoveryItem,
     },
     dns::node_info::NodeInfo,
     key::SecretKey,
     AddrInfo, Endpoint, NodeId,
 };
-use futures_lite::StreamExt;
+use futures_lite::{stream::Boxed, StreamExt};
+
 use genawaiter::sync::{Co, Gen};
 use pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
@@ -78,6 +79,8 @@ struct Inner {
     initial_publish_delay: Duration,
     /// Republish delay for the DHT.
     republish_delay: Duration,
+    /// event loop that allows you to subscribe to discovery
+    events: DiscoveryEvents,
 }
 
 /// Builder for PkarrNodeDiscovery.
@@ -204,6 +207,7 @@ impl Builder {
             initial_publish_delay: self.initial_publish_delay,
             republish_delay: self.republish_delay,
             task: Default::default(),
+            events: DiscoveryEvents::new(),
         })))
     }
 }
@@ -283,12 +287,13 @@ impl DhtDiscovery {
                 if let Ok(node_info) = NodeInfo::from_pkarr_signed_packet(&signed_packet) {
                     let addr_info = node_info.into();
                     tracing::info!("discovered node info from relay {:?}", addr_info);
-                    co.yield_(Ok(DiscoveryItem {
+                    let item = DiscoveryItem {
                         provenance: "relay",
                         last_updated: None,
                         addr_info,
-                    }))
-                    .await;
+                    };
+                    self.0.events.send_event(item.clone()).await;
+                    co.yield_(Ok(item)).await;
                 } else {
                     tracing::debug!("failed to parse signed packet as node info");
                 }
@@ -327,12 +332,13 @@ impl DhtDiscovery {
         if let Ok(node_info) = NodeInfo::from_pkarr_signed_packet(&signed_packet) {
             let addr_info = node_info.into();
             tracing::info!("discovered node info from DHT {:?}", addr_info);
-            co.yield_(Ok(DiscoveryItem {
+            let item = DiscoveryItem {
                 provenance: "mainline",
                 last_updated: None,
                 addr_info,
-            }))
-            .await;
+            };
+            self.0.events.send_event(item.clone()).await;
+            co.yield_(Ok(item)).await;
         } else {
             tracing::debug!("failed to parse signed packet as node info");
         }
@@ -378,12 +384,17 @@ impl Discovery for DhtDiscovery {
         &self,
         _endpoint: Endpoint,
         node_id: NodeId,
-    ) -> Option<futures_lite::stream::Boxed<anyhow::Result<DiscoveryItem>>> {
+    ) -> Option<Boxed<anyhow::Result<DiscoveryItem>>> {
         let this = self.clone();
         let pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", node_id, pkarr_public_key.to_z32());
         Some(Gen::new(|co| async move { this.gen_resolve(node_id, co).await }).boxed())
+    }
+
+    fn subscribe(&self) -> Option<Boxed<DiscoveryItem>> {
+        let (stream, _) = self.0.events.subscribe();
+        Some(stream)
     }
 }
 

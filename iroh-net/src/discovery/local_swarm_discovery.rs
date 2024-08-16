@@ -47,6 +47,7 @@ enum Message {
     SendAddrs(NodeId, mpsc::Sender<Result<DiscoveryItem>>),
     ChangeLocalAddrs(AddrInfo),
     Timeout(NodeId, usize),
+    Subscribe(mpsc::Sender<DiscoveryItem>),
 }
 
 impl LocalSwarmDiscovery {
@@ -73,6 +74,7 @@ impl LocalSwarmDiscovery {
 
         let discovery_fut = async move {
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
+            let mut subscribers: Vec<mpsc::Sender<DiscoveryItem>> = vec![];
             let mut last_id = 0;
             let mut senders: HashMap<
                 PublicKey,
@@ -135,14 +137,26 @@ impl LocalSwarmDiscovery {
                             "adding node to LocalSwarmDiscovery address book"
                         );
 
+                        let item: DiscoveryItem = (&peer_info).into();
                         if let Some(senders) = senders.get(&discovered_node_id) {
-                            let item: DiscoveryItem = (&peer_info).into();
                             trace!(?item, senders = senders.len(), "sending DiscoveryItem");
                             for sender in senders.values() {
                                 sender.send(Ok(item.clone())).await.ok();
                             }
                         }
                         entry.or_insert(peer_info);
+
+                        // update and clean up subscribers
+                        let mut clean_up = vec![];
+                        for (i, subscriber) in subscribers.iter().enumerate() {
+                            // assume subscriber was dropped
+                            if let Err(_) = subscriber.send(item.clone()).await {
+                                clean_up.push(i.clone());
+                            }
+                        }
+                        for i in &clean_up {
+                            subscribers.swap_remove(*i);
+                        }
                     }
                     Message::SendAddrs(node_id, sender) => {
                         let id = last_id + 1;
@@ -187,6 +201,10 @@ impl LocalSwarmDiscovery {
                         for addr in addrs {
                             discovery.add(addr.0, addr.1)
                         }
+                    }
+                    Message::Subscribe(subscriber) => {
+                        trace!("LocalSwarmDiscovery Message::Subscribe");
+                        subscribers.push(subscriber);
                     }
                 }
             }
@@ -283,6 +301,17 @@ impl Discovery for LocalSwarmDiscovery {
                 .await
                 .ok();
         });
+    }
+
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+        let (sender, recv) = mpsc::channel(20);
+        let discovery_sender = self.sender.clone();
+        tokio::spawn(async move {
+            discovery_sender.send(Message::Subscribe(sender)).await.ok();
+        });
+
+        let stream = tokio_stream::wrappers::ReceiverStream::new(recv);
+        Some(Box::pin(stream))
     }
 }
 

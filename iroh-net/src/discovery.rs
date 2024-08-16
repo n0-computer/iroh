@@ -39,7 +39,7 @@
 //! [`PkarrResolver`]: pkarr::PkarrResolver
 //! [pkarr relay servers]: https://pkarr.org/#servers
 
-use std::time::Duration;
+use std::{sync::atomic::AtomicU64, time::Duration};
 
 use anyhow::{anyhow, ensure, Result};
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
@@ -94,6 +94,125 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
         _node_id: NodeId,
     ) -> Option<BoxStream<Result<DiscoveryItem>>> {
         None
+    }
+
+    /// Subscribe to all addresses that get discovered.
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+        None
+    }
+}
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::mpsc::{channel, Sender};
+use tracing::{error, trace};
+
+/// A loop that handles discovery event
+///
+/// When dropped, the inner task is cleaned up.
+#[derive(derive_more::Debug, Clone)]
+pub(crate) struct DiscoveryEvents(std::sync::Arc<Inner>);
+
+#[derive(derive_more::Debug)]
+struct Inner {
+    handle: JoinHandle<()>,
+    sender: tokio::sync::mpsc::Sender<Message>,
+    last_id: AtomicU64,
+}
+
+#[derive(derive_more::Debug)]
+enum Message {
+    Subscribe((u64, Sender<DiscoveryItem>)),
+    Unsubscribe(u64),
+    Event(DiscoveryItem),
+}
+
+impl Drop for DiscoveryEvents {
+    fn drop(&mut self) {
+        self.0.handle.abort();
+    }
+}
+
+impl DiscoveryEvents {
+    pub fn new() -> Self {
+        let (sender, mut recv) = channel(20);
+        let event_loop = async move {
+            loop {
+                let mut subscribers: HashMap<u64, Sender<DiscoveryItem>> = HashMap::default();
+                let msg = recv.recv().await;
+                match msg {
+                    Some(Message::Subscribe((id, subscriber))) => {
+                        trace!("Message::Subscribe - Adding new subscriber to discovery events");
+                        subscribers.insert(id, subscriber);
+                    }
+                    Some(Message::Unsubscribe(id)) => {
+                        trace!("Message::Unsubscribe - Removing subscriber {id}");
+                        subscribers.remove(&id);
+                    }
+                    Some(Message::Event(discovery_item)) => {
+                        let mut bad_subscribers = vec![];
+                        for (id, subscriber) in &subscribers {
+                            if let Err(e) = subscriber.send(discovery_item.clone()).await {
+                                error!("Message::Event - Subscriber {id} dropped: {e}");
+                                bad_subscribers.push(id.clone());
+                            }
+                        }
+                        for bad_subscriber in bad_subscribers {
+                            subscribers.remove(&bad_subscriber);
+                        }
+                    }
+                    None => {}
+                }
+            }
+        };
+
+        let handle = tokio::spawn(event_loop);
+        Self(Arc::new(Inner {
+            handle,
+            sender,
+            last_id: AtomicU64::new(0),
+        }))
+    }
+
+    pub async fn send_event(&self, discovery_item: DiscoveryItem) {
+        self.0
+            .sender
+            .send(Message::Event(discovery_item))
+            .await
+            .ok();
+    }
+
+    /// Allows you to subscribe to messages from the `DiscoveryEvent`
+    ///
+    /// Returns a stream of `DiscoveryItems` and an optional unsubscribe
+    /// function.
+    ///
+    /// If a stream is dropped, the `DiscoveryEvent` struct will clean
+    /// up the dangling subscription, even if you do not unsubscribe.
+    pub fn subscribe(
+        &self,
+    ) -> (
+        BoxStream<DiscoveryItem>,
+        impl std::future::Future<Output = ()>,
+    ) {
+        let (send, recv) = channel(20);
+        let id = self
+            .0
+            .last_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let subscribe_sender = self.0.sender.clone();
+        tokio::spawn(async move {
+            subscribe_sender
+                .send(Message::Subscribe((id, send)))
+                .await
+                .ok();
+        });
+        let unsubscribe_sender = self.0.sender.clone();
+        let unsubscribe = async move {
+            unsubscribe_sender.send(Message::Unsubscribe(id)).await.ok();
+        };
+        let stream = tokio_stream::wrappers::ReceiverStream::new(recv);
+        (Box::pin(stream), unsubscribe)
     }
 }
 
@@ -164,6 +283,16 @@ impl Discovery for ConcurrentDiscovery {
             .services
             .iter()
             .filter_map(|service| service.resolve(endpoint.clone(), node_id));
+
+        let streams = futures_buffered::Merge::from_iter(streams);
+        Some(Box::pin(streams))
+    }
+
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+        let streams = self
+            .services
+            .iter()
+            .filter_map(|service| service.subscribe());
 
         let streams = futures_buffered::Merge::from_iter(streams);
         Some(Box::pin(streams))
@@ -361,6 +490,7 @@ mod tests {
                 publish: true,
                 resolve_wrong: false,
                 delay: Duration::from_millis(200),
+                events: DiscoveryEvents::new(),
             }
         }
 
@@ -371,6 +501,7 @@ mod tests {
                 publish: false,
                 resolve_wrong: true,
                 delay: Duration::from_millis(100),
+                events: DiscoveryEvents::new(),
             }
         }
     }
@@ -381,6 +512,7 @@ mod tests {
         publish: bool,
         resolve_wrong: bool,
         delay: Duration,
+        events: DiscoveryEvents,
     }
 
     impl Discovery for TestDiscovery {
@@ -422,6 +554,7 @@ mod tests {
                         addr_info,
                     };
                     let delay = self.delay;
+                    let events = self.events.clone();
                     let fut = async move {
                         tokio::time::sleep(delay).await;
                         tracing::debug!(
@@ -429,12 +562,18 @@ mod tests {
                             endpoint.node_id().fmt_short(),
                             node_id.fmt_short()
                         );
+                        events.send_event(item.clone()).await;
                         Ok(item)
                     };
                     futures_lite::stream::once_future(fut).boxed()
                 }
                 None => futures_lite::stream::empty().boxed(),
             };
+            Some(stream)
+        }
+
+        fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+            let (stream, _) = self.events.subscribe();
             Some(stream)
         }
     }
@@ -449,6 +588,10 @@ mod tests {
             _endpoint: Endpoint,
             _node_id: NodeId,
         ) -> Option<BoxStream<Result<DiscoveryItem>>> {
+            Some(futures_lite::stream::empty().boxed())
+        }
+
+        fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
             Some(futures_lite::stream::empty().boxed())
         }
     }
