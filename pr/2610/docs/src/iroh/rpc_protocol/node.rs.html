@@ -147,7 +147,7 @@
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::BTreeMap;
 
 <span class="kw">use </span>iroh_base::rpc::RpcResult;
-<span class="kw">use </span>iroh_net::{endpoint::NodeInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
+<span class="kw">use </span>iroh_net::{endpoint::RemoteInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
 <span class="kw">use </span>nested_enum_utils::enum_conversions;
 <span class="kw">use </span>quic_rpc_derive::rpc_requests;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
@@ -175,10 +175,10 @@
     </span>Stats(StatsRequest),
     <span class="attr">#[rpc(response = ())]
     </span>Shutdown(ShutdownRequest),
-    <span class="attr">#[server_streaming(response = RpcResult&lt;NodeInfosIterResponse&gt;)]
-    </span>NodeInfosIter(NodeInfosIterRequest),
-    <span class="attr">#[rpc(response = RpcResult&lt;NodeInfoResponse&gt;)]
-    </span>NodeInfo(NodeInfoRequest),
+    <span class="attr">#[server_streaming(response = RpcResult&lt;RemoteInfosIterResponse&gt;)]
+    </span>RemoteInfosIter(RemoteInfosIterRequest),
+    <span class="attr">#[rpc(response = RpcResult&lt;RemoteInfoResponse&gt;)]
+    </span>RemoteInfo(RemoteInfoRequest),
     <span class="attr">#[server_streaming(response = WatchResponse)]
     </span>Watch(NodeWatchRequest),
 }
@@ -192,8 +192,8 @@
     Addr(RpcResult&lt;NodeAddr&gt;),
     Relay(RpcResult&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;),
     Stats(RpcResult&lt;StatsResponse&gt;),
-    NodeInfosIter(RpcResult&lt;NodeInfosIterResponse&gt;),
-    NodeInfo(RpcResult&lt;NodeInfoResponse&gt;),
+    RemoteInfosIter(RpcResult&lt;RemoteInfosIterResponse&gt;),
+    RemoteInfo(RpcResult&lt;RemoteInfoResponse&gt;),
     Shutdown(()),
     Watch(WatchResponse),
 }
@@ -204,27 +204,27 @@
 /// possible. Nodes can also become known due to discovery mechanisms
 /// or be added manually.
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>NodeInfosIterRequest;
+</span><span class="kw">pub struct </span>RemoteInfosIterRequest;
 
 <span class="doccomment">/// A response to a connections request
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>NodeInfosIterResponse {
+</span><span class="kw">pub struct </span>RemoteInfosIterResponse {
     <span class="doccomment">/// Information about a connection
-    </span><span class="kw">pub </span>info: NodeInfo,
+    </span><span class="kw">pub </span>info: RemoteInfo,
 }
 
 <span class="doccomment">/// Get connection information about a specific node
 </span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>NodeInfoRequest {
+</span><span class="kw">pub struct </span>RemoteInfoRequest {
     <span class="doccomment">/// The node identifier
     </span><span class="kw">pub </span>node_id: PublicKey,
 }
 
 <span class="doccomment">/// A response to a connection request
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>NodeInfoResponse {
+</span><span class="kw">pub struct </span>RemoteInfoResponse {
     <span class="doccomment">/// Information about a connection to a node
-    </span><span class="kw">pub </span>info: <span class="prelude-ty">Option</span>&lt;NodeInfo&gt;,
+    </span><span class="kw">pub </span>info: <span class="prelude-ty">Option</span>&lt;RemoteInfo&gt;,
 }
 
 <span class="doccomment">/// A request to shutdown the node

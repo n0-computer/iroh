@@ -1010,8 +1010,8 @@
     <span class="doccomment">/// We need discovery if we have no paths to the node, or if the paths we do have
     /// have timed out.
     </span><span class="kw">fn </span>needs_discovery(ep: <span class="kw-2">&amp;</span>Endpoint, node_id: NodeId) -&gt; bool {
-        <span class="kw">match </span>ep.node_info(node_id) {
-            <span class="comment">// No connection info means no path to node -&gt; start discovery.
+        <span class="kw">match </span>ep.remote_info(node_id) {
+            <span class="comment">// No info means no path to node -&gt; start discovery.
             </span><span class="prelude-val">None </span>=&gt; <span class="bool-val">true</span>,
             <span class="prelude-val">Some</span>(info) =&gt; {
                 <span class="kw">match </span>(

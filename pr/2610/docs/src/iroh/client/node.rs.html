@@ -201,7 +201,6 @@
 <a href="#201" id="201">201</a>
 <a href="#202" id="202">202</a>
 <a href="#203" id="203">203</a>
-<a href="#204" id="204">204</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API to manage the iroh node itself.
 //!
 //! The main entry point is the [`Client`].
@@ -222,13 +221,13 @@
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
-<span class="kw">use </span>iroh_net::{endpoint::NodeInfo, relay::RelayUrl, NodeAddr, NodeId};
+<span class="kw">use </span>iroh_net::{endpoint::RemoteInfo, relay::RelayUrl, NodeAddr, NodeId};
 <span class="kw">use </span>ref_cast::RefCast;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::node::{
-    AddAddrRequest, AddrRequest, CounterStats, IdRequest, NodeInfoRequest, NodeInfoResponse,
-    NodeInfosIterRequest, RelayRequest, ShutdownRequest, StatsRequest, StatusRequest,
+    AddAddrRequest, AddrRequest, CounterStats, IdRequest, RelayRequest, RemoteInfoRequest,
+    RemoteInfoResponse, RemoteInfosIterRequest, ShutdownRequest, StatsRequest, StatusRequest,
 };
 
 <span class="kw">use super</span>::{flatten, RpcClient};
@@ -331,19 +330,18 @@
     /// This streams a *current snapshot*. It does not keep the stream open after finishing
     /// transferring the snapshot.
     ///
-    /// See also [`Endpoint::node_infos_iter`](crate::net::Endpoint::node_infos_iter).
-    </span><span class="kw">pub async fn </span>node_infos_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;NodeInfo&gt;&gt;&gt; {
-        <span class="kw">let </span>stream = <span class="self">self</span>.rpc.server_streaming(NodeInfosIterRequest {}).<span class="kw">await</span><span class="question-mark">?</span>;
+    /// See also [`Endpoint::remote_infos_iter`](crate::net::Endpoint::remote_infos_iter).
+    </span><span class="kw">pub async fn </span>remote_infos_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;RemoteInfo&gt;&gt;&gt; {
+        <span class="kw">let </span>stream = <span class="self">self</span>.rpc.server_streaming(RemoteInfosIterRequest {}).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(flatten(stream).map(|res| res.map(|res| res.info)))
     }
 
     <span class="doccomment">/// Fetches node information about a remote iroh node identified by its [`NodeId`].
     ///
-    /// See also [`Endpoint::node_info`](crate::net::Endpoint::node_info).
-    </span><span class="kw">pub async fn </span>node_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;NodeInfo&gt;&gt; {
-        <span class="kw">let </span>NodeInfoResponse { info: conn_info } =
-            <span class="self">self</span>.rpc.rpc(NodeInfoRequest { node_id }).<span class="kw">await</span><span class="question-mark">??</span>;
-        <span class="prelude-val">Ok</span>(conn_info)
+    /// See also [`Endpoint::remote_info`](crate::net::Endpoint::remote_info).
+    </span><span class="kw">pub async fn </span>remote_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;RemoteInfo&gt;&gt; {
+        <span class="kw">let </span>RemoteInfoResponse { info } = <span class="self">self</span>.rpc.rpc(RemoteInfoRequest { node_id }).<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="prelude-val">Ok</span>(info)
     }
 
     <span class="doccomment">/// Fetches status information about this node.
