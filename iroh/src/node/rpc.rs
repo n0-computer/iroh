@@ -160,7 +160,7 @@ impl<D: BaoStore> Handler<D> {
             Shutdown(msg) => chan.rpc(msg, self, Self::node_shutdown).await,
             Stats(msg) => chan.rpc(msg, self, Self::node_stats).await,
             NodeInfosIter(msg) => {
-                chan.server_streaming(msg, self, Self::node_infos_iter)
+                chan.server_streaming(msg, self, Self::remote_infos_iter)
                     .await
             }
             NodeInfo(msg) => chan.rpc(msg, self, Self::node_info).await,
@@ -1270,13 +1270,13 @@ impl<D: BaoStore> Handler<D> {
         .into_stream()
     }
 
-    fn node_infos_iter(
+    fn remote_infos_iter(
         self,
         _: NodeInfosIterRequest,
     ) -> impl Stream<Item = RpcResult<NodeInfosIterResponse>> + Send + 'static {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = async_channel::bounded(32);
-        let mut node_infos: Vec<_> = self.inner.endpoint.node_infos_iter().collect();
+        let mut node_infos: Vec<_> = self.inner.endpoint.remote_infos_iter().collect();
         node_infos.sort_by_key(|n| n.node_id.to_string());
         self.local_pool_handle().spawn_detached(|| async move {
             for node_info in node_infos {

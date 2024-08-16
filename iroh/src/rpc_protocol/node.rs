@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use iroh_base::rpc::RpcResult;
-use iroh_net::{endpoint::NodeInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
+use iroh_net::{endpoint::RemoteInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
@@ -64,7 +64,7 @@ pub struct NodeInfosIterRequest;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NodeInfosIterResponse {
     /// Information about a connection
-    pub info: NodeInfo,
+    pub info: RemoteInfo,
 }
 
 /// Get connection information about a specific node
@@ -78,7 +78,7 @@ pub struct NodeInfoRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NodeInfoResponse {
     /// Information about a connection to a node
-    pub info: Option<NodeInfo>,
+    pub info: Option<RemoteInfo>,
 }
 
 /// A request to shutdown the node

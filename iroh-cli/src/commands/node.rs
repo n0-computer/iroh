@@ -9,7 +9,7 @@ use comfy_table::{presets::NOTHING, Cell};
 use futures_lite::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
 use iroh::client::Iroh;
-use iroh::net::endpoint::{DirectAddrInfo, NodeInfo};
+use iroh::net::endpoint::{DirectAddrInfo, RemoteInfo};
 use iroh::net::relay::RelayUrl;
 use iroh::net::{NodeAddr, NodeId};
 
@@ -49,7 +49,7 @@ impl NodeCommands {
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::NodeInfoList => {
-                let connections = iroh.node_infos_iter().await?;
+                let connections = iroh.remote_infos_iter().await?;
                 let timestamp = time::OffsetDateTime::now_utc()
                     .format(&time::format_description::well_known::Rfc2822)
                     .unwrap_or_else(|_| String::from("failed to get current time"));
@@ -127,7 +127,7 @@ impl NodeCommands {
 }
 
 async fn fmt_connections(
-    mut infos: impl Stream<Item = Result<NodeInfo, anyhow::Error>> + Unpin,
+    mut infos: impl Stream<Item = Result<RemoteInfo, anyhow::Error>> + Unpin,
 ) -> String {
     let mut table = Table::new();
     table.load_preset(NOTHING).set_header(
@@ -157,8 +157,8 @@ async fn fmt_connections(
     table.to_string()
 }
 
-fn fmt_connection(info: NodeInfo) -> String {
-    let NodeInfo {
+fn fmt_connection(info: RemoteInfo) -> String {
+    let RemoteInfo {
         node_id,
         relay_url,
         addrs,

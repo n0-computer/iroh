@@ -18,7 +18,7 @@ use std::{collections::BTreeMap, net::SocketAddr};
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use iroh_net::{endpoint::NodeInfo, relay::RelayUrl, NodeAddr, NodeId};
+use iroh_net::{endpoint::RemoteInfo, relay::RelayUrl, NodeAddr, NodeId};
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
@@ -127,8 +127,8 @@ impl Client {
     /// This streams a *current snapshot*. It does not keep the stream open after finishing
     /// transferring the snapshot.
     ///
-    /// See also [`Endpoint::node_infos_iter`](crate::net::Endpoint::node_infos_iter).
-    pub async fn node_infos_iter(&self) -> Result<impl Stream<Item = Result<NodeInfo>>> {
+    /// See also [`Endpoint::remote_infos_iter`](crate::net::Endpoint::remote_infos_iter).
+    pub async fn remote_infos_iter(&self) -> Result<impl Stream<Item = Result<RemoteInfo>>> {
         let stream = self.rpc.server_streaming(NodeInfosIterRequest {}).await?;
         Ok(flatten(stream).map(|res| res.map(|res| res.info)))
     }
@@ -136,7 +136,7 @@ impl Client {
     /// Fetches node information about a remote iroh node identified by its [`NodeId`].
     ///
     /// See also [`Endpoint::node_info`](crate::net::Endpoint::node_info).
-    pub async fn node_info(&self, node_id: NodeId) -> Result<Option<NodeInfo>> {
+    pub async fn node_info(&self, node_id: NodeId) -> Result<Option<RemoteInfo>> {
         let NodeInfoResponse { info: conn_info } =
             self.rpc.rpc(NodeInfoRequest { node_id }).await??;
         Ok(conn_info)

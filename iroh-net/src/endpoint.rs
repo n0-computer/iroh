@@ -46,7 +46,7 @@ pub use quinn::{
 
 pub use super::magicsock::{
     ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
-    DirectAddrsStream, NodeInfo,
+    DirectAddrsStream, RemoteInfo,
 };
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
@@ -717,9 +717,9 @@ impl Endpoint {
     /// [`Endpoint`] learns more about the node.  Thus future calls may return different
     /// information.  Node information may even be completely evicted.
     ///
-    /// See also [`Endpoint::node_infos_iter`] which returns information on all nodes known
+    /// See also [`Endpoint::remote_infos_iter`] which returns information on all nodes known
     /// by this [`Endpoint`].
-    pub fn node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
+    pub fn node_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
         self.msock.node_info(node_id)
     }
 
@@ -733,8 +733,8 @@ impl Endpoint {
     /// regardless of whether a connection was ever made or is even possible.
     ///
     /// See also [`Endpoint::node_info`] to only retrieve information about a single node.
-    pub fn node_infos_iter(&self) -> impl Iterator<Item = NodeInfo> {
-        self.msock.list_node_infos().into_iter()
+    pub fn remote_infos_iter(&self) -> impl Iterator<Item = RemoteInfo> {
+        self.msock.list_remote_infos().into_iter()
     }
 
     // # Methods for less common getters.
@@ -1286,11 +1286,11 @@ mod tests {
         // first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), None).await;
-        assert_eq!(endpoint.node_infos_iter().count(), 0);
+        assert_eq!(endpoint.remote_infos_iter().count(), 0);
         endpoint.add_node_addr(node_addr.clone()).unwrap();
 
         // Grab the current addrs
-        let node_addrs: Vec<NodeAddr> = endpoint.node_infos_iter().map(Into::into).collect();
+        let node_addrs: Vec<NodeAddr> = endpoint.remote_infos_iter().map(Into::into).collect();
         assert_eq!(node_addrs.len(), 1);
         assert_eq!(node_addrs[0], node_addr);
 
@@ -1301,7 +1301,7 @@ mod tests {
         info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
         let endpoint = new_endpoint(secret_key, Some(node_addrs)).await;
-        let NodeInfo { mut addrs, .. } = endpoint.node_info(peer_id).unwrap();
+        let RemoteInfo { mut addrs, .. } = endpoint.node_info(peer_id).unwrap();
         let conn_addr = addrs.pop().unwrap().addr;
         assert_eq!(conn_addr, direct_addr);
     }

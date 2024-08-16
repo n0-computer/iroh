@@ -81,7 +81,7 @@ pub(super) use self::timer::Timer;
 
 pub use self::metrics::Metrics;
 pub use self::node_map::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo,
+    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo,
 };
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -293,13 +293,13 @@ impl MagicSock {
             .unwrap_or(false)
     }
 
-    /// Return the [`NodeInfo`]s of all nodes in the node map.
-    pub(crate) fn list_node_infos(&self) -> Vec<NodeInfo> {
+    /// Return the [`RemoteInfo`]s of all nodes in the node map.
+    pub(crate) fn list_remote_infos(&self) -> Vec<RemoteInfo> {
         self.node_map.list_node_infos(Instant::now())
     }
 
-    /// Return the [`NodeInfo`] for a single node in the node map.
-    pub(crate) fn node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
+    /// Return the [`RemoteInfo`] for a single node in the node map.
+    pub(crate) fn node_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
         self.node_map.node_info(node_id)
     }
 
@@ -2784,7 +2784,7 @@ mod tests {
         fn tracked_endpoints(&self) -> Vec<PublicKey> {
             self.endpoint
                 .magic_sock()
-                .list_node_infos()
+                .list_remote_infos()
                 .into_iter()
                 .map(|ep| ep.node_id)
                 .collect()

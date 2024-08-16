@@ -189,7 +189,7 @@ impl NodeState {
     }
 
     /// Returns public info about this node.
-    pub(super) fn info(&self, now: Instant) -> NodeInfo {
+    pub(super) fn info(&self, now: Instant) -> RemoteInfo {
         let conn_type = self.conn_type.get();
         let latency = match conn_type {
             ConnectionType::Direct(addr) => self
@@ -236,7 +236,7 @@ impl NodeState {
             })
             .collect();
 
-        NodeInfo {
+        RemoteInfo {
             node_id: self.node_id,
             relay_url: self.relay_url.clone().map(|r| r.into()),
             addrs,
@@ -1112,8 +1112,8 @@ impl NodeState {
     }
 }
 
-impl From<NodeInfo> for NodeAddr {
-    fn from(info: NodeInfo) -> Self {
+impl From<RemoteInfo> for NodeAddr {
+    fn from(info: RemoteInfo) -> Self {
         let direct_addresses = info
             .addrs
             .into_iter()
@@ -1277,7 +1277,7 @@ impl From<RelayUrlInfo> for RelayUrl {
 ///
 /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct NodeInfo {
+pub struct RemoteInfo {
     /// The globally unique public identifier for this node.
     pub node_id: NodeId,
     /// Relay server information, if available.
@@ -1299,7 +1299,7 @@ pub struct NodeInfo {
     pub last_used: Option<Duration>,
 }
 
-impl NodeInfo {
+impl RemoteInfo {
     /// Get the duration since the last activity we received from this endpoint
     /// on any of its direct addresses.
     pub fn last_received(&self) -> Option<Duration> {
@@ -1507,7 +1507,7 @@ mod tests {
 
         // Initialising a struct with some deprecated fields.
         let mut expect = Vec::from([
-            NodeInfo {
+            RemoteInfo {
                 node_id: a_endpoint.node_id,
                 relay_url: None,
                 addrs: Vec::from([DirectAddrInfo {
@@ -1521,7 +1521,7 @@ mod tests {
                 latency: Some(latency),
                 last_used: Some(elapsed),
             },
-            NodeInfo {
+            RemoteInfo {
                 node_id: b_endpoint.node_id,
                 relay_url: Some(RelayUrlInfo {
                     relay_url: b_endpoint.relay_url.as_ref().unwrap().0.clone(),
@@ -1533,7 +1533,7 @@ mod tests {
                 latency: Some(latency),
                 last_used: Some(elapsed),
             },
-            NodeInfo {
+            RemoteInfo {
                 node_id: c_endpoint.node_id,
                 relay_url: Some(RelayUrlInfo {
                     relay_url: c_endpoint.relay_url.as_ref().unwrap().0.clone(),
@@ -1545,7 +1545,7 @@ mod tests {
                 latency: None,
                 last_used: Some(elapsed),
             },
-            NodeInfo {
+            RemoteInfo {
                 node_id: d_endpoint.node_id,
                 relay_url: Some(RelayUrlInfo {
                     relay_url: d_endpoint.relay_url.as_ref().unwrap().0.clone(),
@@ -1597,7 +1597,7 @@ mod tests {
         assert_eq!(expect, got);
     }
 
-    fn remove_non_deterministic_fields(infos: &mut [NodeInfo]) {
+    fn remove_non_deterministic_fields(infos: &mut [RemoteInfo]) {
         for info in infos.iter_mut() {
             if info.relay_url.is_some() {
                 info.relay_url.as_mut().unwrap().last_alive = None;

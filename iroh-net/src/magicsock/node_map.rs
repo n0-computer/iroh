@@ -35,7 +35,7 @@ mod udp_paths;
 
 pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
 
-pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, NodeInfo};
+pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -226,12 +226,12 @@ impl NodeMap {
     }
 
     /// Returns the [`NodeInfo`]s for each node in the node map.
-    pub(super) fn list_node_infos(&self, now: Instant) -> Vec<NodeInfo> {
+    pub(super) fn list_node_infos(&self, now: Instant) -> Vec<RemoteInfo> {
         // NOTE: calls to this method will often call `into_iter` (or similar methods). Note that
         // we can't avoid `collect` here since it would hold a lock for an indefinite time. Even if
         // we were to find this acceptable, dealing with the lifetimes of the mutex's guard and the
         // internal iterator will be a hassle, if possible at all.
-        self.inner.lock().node_infos_iter(now).collect()
+        self.inner.lock().remote_infos_iter(now).collect()
     }
 
     /// Returns a stream of [`ConnectionType`].
@@ -248,7 +248,7 @@ impl NodeMap {
     }
 
     /// Get the [`NodeInfo`]s for each endpoint
-    pub(super) fn node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
+    pub(super) fn node_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
         self.inner.lock().node_info(node_id)
     }
 
@@ -390,13 +390,13 @@ impl NodeMapInner {
         self.by_id.iter_mut()
     }
 
-    /// Get the [`NodeInfo`]s for each endpoint
-    fn node_infos_iter(&self, now: Instant) -> impl Iterator<Item = NodeInfo> + '_ {
+    /// Get the [`RemoteInfo`]s for each node.
+    fn remote_infos_iter(&self, now: Instant) -> impl Iterator<Item = RemoteInfo> + '_ {
         self.node_states().map(move |(_, ep)| ep.info(now))
     }
 
-    /// Get the [`NodeInfo`]s for each endpoint
-    fn node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
+    /// Get the [`RemoteInfo`]s for each node.
+    fn node_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
         self.get(NodeStateKey::NodeId(node_id))
             .map(|ep| ep.info(Instant::now()))
     }
