@@ -247,7 +247,7 @@ impl NodeMap {
         self.inner.lock().conn_type_stream(node_id)
     }
 
-    /// Get the [`RemoteInfo`]s for each endpoint
+    /// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
     pub(super) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
         self.inner.lock().remote_info(node_id)
     }
@@ -390,7 +390,7 @@ impl NodeMapInner {
         self.by_id.iter_mut()
     }
 
-    /// Get the [`RemoteInfo`]s for each node.
+    /// Get the [`RemoteInfo`]s for all nodes.
     fn remote_infos_iter(&self, now: Instant) -> impl Iterator<Item = RemoteInfo> + '_ {
         self.node_states().map(move |(_, ep)| ep.info(now))
     }

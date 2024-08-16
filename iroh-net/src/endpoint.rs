@@ -708,14 +708,14 @@ impl Endpoint {
 
     // # Getter methods for information about other nodes.
 
-    /// Returns information about the remote node known by this [`Endpoint`].
+    /// Returns information about the remote node identified by a [`NodeId`].
     ///
-    /// The [`Endpoint`] keeps some information about remote iroh-net nodes, which it uses
-    /// to find the best connection to a node.  Having information on a remote node however
-    /// does not mean it has ever been connected or even whether a connection is even
-    /// possible.  The information about a remote node will change over time, as the
-    /// [`Endpoint`] learns more about the node.  Thus future calls may return different
-    /// information.  Node information may even be completely evicted.
+    /// The [`Endpoint`] keeps some information about remote iroh-net nodes, which it uses to find
+    /// the best path to a node. Having information on a remote node, however, does not mean it has
+    /// ever been connected or even whether a connection is even possible. The information about a
+    /// remote node will change over time, as the [`Endpoint`] learns more about the node. Future
+    /// calls may return different information. Furthermore, node information may even be
+    /// completely evicted as it becomes stale.
     ///
     /// See also [`Endpoint::remote_infos_iter`] which returns information on all nodes known
     /// by this [`Endpoint`].
@@ -725,12 +725,12 @@ impl Endpoint {
 
     /// Returns information about all the remote nodes this [`Endpoint`] knows about.
     ///
-    /// This returns the same information as [`Endpoint::remote_info`] for each node known to
-    /// this [`Endpoint`].
+    /// This returns the same information as [`Endpoint::remote_info`] for each node known to this
+    /// [`Endpoint`].
     ///
-    /// The [`Endpoint`] keeps some information about remote iroh-net nodes, which it uses to
-    /// find the best connection to a node.  This returns all the nodes it knows about,
-    /// regardless of whether a connection was ever made or is even possible.
+    /// The [`Endpoint`] keeps some information about remote iroh-net nodes, which it uses to find
+    /// the best path to a node. This returns all the nodes it knows about, regardless of whether a
+    /// connection was ever made or is even possible.
     ///
     /// See also [`Endpoint::remote_info`] to only retrieve information about a single node.
     pub fn remote_infos_iter(&self) -> impl Iterator<Item = RemoteInfo> {

@@ -164,13 +164,12 @@ impl PathState {
 
     /// The last control or DISCO message **about** this path.
     ///
-    /// This is a combination of both when this was last advertised via a call-me-maybe
-    /// message as well as any direct ping-pong communication over this path.
+    /// This is the most recent instant between:
+    /// - when last pong was received.
+    /// - when this path was last advertised in a received CallMeMaybe message.
+    /// - when the last ping from them was received.
     ///
-    /// # Returns
-    ///
-    /// Returns the time elapsed since the last control message, and the type of control
-    /// message.
+    /// Returns the time elapsed since the last control message, and the type of control message.
     pub(super) fn last_control_msg(&self, now: Instant) -> Option<(Duration, ControlMsg)> {
         // get every control message and assign it its kind
         let last_pong = self

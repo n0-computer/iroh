@@ -112,10 +112,10 @@ pub(super) struct NodeState {
     /// Last time this node was used.
     ///
     /// A node is marked as in use when sending datagrams to them, or when having received
-    /// datagrams from it.  Regardless of whether the datagrams are payload or DISCO, and
-    /// whether they go via UDP or the relay.
+    /// datagrams from it. Regardless of whether the datagrams are payload or DISCO, and whether
+    /// they go via UDP or the relay.
     ///
-    /// Note that sending datagrams to a node does not mean the node receives them.  Whoops.
+    /// Note that sending datagrams to a node does not mean the node receives them.
     last_used: Option<Instant>,
     /// Last time we sent a call-me-maybe.
     ///
@@ -188,7 +188,7 @@ impl NodeState {
         self.conn_type.watch().into_stream()
     }
 
-    /// Returns public info about this node.
+    /// Returns info about this node.
     pub(super) fn info(&self, now: Instant) -> RemoteInfo {
         let conn_type = self.conn_type.get();
         let latency = match conn_type {
@@ -1190,16 +1190,9 @@ pub enum ControlMsg {
 
 /// Information about a *direct address*.
 ///
-/// The *direct address* of an iroh-net node are those that could be used by other nodes to
-/// establish direct connectivity, depending on the network situation.  So not all direct
-/// addresses of a node are usable by all peers.
-///
-/// A direct address of a remote node is also effectively the identifier of a *network path*
-/// between a node and it's remote peer.
-// TODO: bikeshedding: perhaps this would be better known as RemoteNodePath or so.  The
-// `DirectAddr` is already defined by `Endpoint::direct_addrs` as the possible UDP addresses
-// on which a node might be reachable.  But this is a lot of information about the path to a
-// remote node.
+/// The *direct addresses* of an iroh-net node are those that could be used by other nodes to
+/// establish direct connectivity, depending on the network situation. Due to NAT configurations,
+/// for example, not all direct addresses of a node are usable by all peers.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DirectAddrInfo {
     /// The UDP address reported by the remote node.
@@ -1236,8 +1229,6 @@ pub struct DirectAddrInfo {
     /// node discovery the path may never have been known to exist.
     ///
     /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
-    // TODO: deprecate this as it is **so** confusing a name.  But we don't have a
-    // replacement yet and I"m only documenting things in this PR."
     pub last_alive: Option<Duration>,
 }
 
@@ -1270,22 +1261,22 @@ impl From<RelayUrlInfo> for RelayUrl {
 
 /// Details about a remote iroh-net node which is known to this node.
 ///
-/// Having details of a node does not mean it can be connected to.  Nor that it has ever
-/// been connected to in the past.  There are various reasons a node might be known: it
-/// could have been manually added via [`Endpoint::add_node_addr`], it could have been added
-/// by some discovery mechanism.
+/// Having details of a node does not mean it can be connected to, nor that it has ever been
+/// connected to in the past. There are various reasons a node might be known: it could have been
+/// manually added via [`Endpoint::add_node_addr`], it could have been added by some discovery
+/// mechanism, or the node could have contacted this node.
 ///
 /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RemoteInfo {
-    /// The globally unique public identifier for this node.
+    /// The globally unique identifier for this node.
     pub node_id: NodeId,
     /// Relay server information, if available.
     pub relay_url: Option<RelayUrlInfo>,
     /// The addresses at which this node might be reachable.
     ///
-    /// Some of these addresses might only be valid for networks we are not part of, but the
-    /// remote node might be.
+    /// Some of these addresses might only be valid for networks we are not part of, but the remote
+    /// node might be a part of.
     pub addrs: Vec<DirectAddrInfo>,
     /// The type of connection we have to the node, either direct or over relay.
     pub conn_type: ConnectionType,
@@ -1327,23 +1318,22 @@ impl RemoteInfo {
     }
 }
 
-/// The type of connection we have to the remote node.
+/// The type of connection we have to the endpoint.
 #[derive(derive_more::Display, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ConnectionType {
-    /// Direct UDP connection.
+    /// Direct UDP connection
     #[display("direct")]
     Direct(SocketAddr),
-    /// A connection via a relay server.
+    /// Relay connection over relay
     #[display("relay")]
     Relay(RelayUrl),
     /// Both a UDP and a relay connection are used.
     ///
-    /// This is the case if there is a known UDP address, but no recent confirmation that
-    /// the address works.  Normally on a healthy network path this should not occur and the
-    /// connection should remain [`ConnectionType::Direct`].
+    /// This is the case if we do have a UDP address, but are missing a recent confirmation that
+    /// the address works.
     #[display("mixed")]
     Mixed(SocketAddr, RelayUrl),
-    /// There is no connection to the remote node.
+    /// We have no verified connection to this PublicKey
     #[display("none")]
     None,
 }
@@ -1505,7 +1495,6 @@ mod tests {
             )
         };
 
-        // Initialising a struct with some deprecated fields.
         let mut expect = Vec::from([
             RemoteInfo {
                 node_id: a_endpoint.node_id,

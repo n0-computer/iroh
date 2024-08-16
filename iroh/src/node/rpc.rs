@@ -1276,13 +1276,11 @@ impl<D: BaoStore> Handler<D> {
     ) -> impl Stream<Item = RpcResult<RemoteInfosIterResponse>> + Send + 'static {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = async_channel::bounded(32);
-        let mut node_infos: Vec<_> = self.inner.endpoint.remote_infos_iter().collect();
-        node_infos.sort_by_key(|n| n.node_id.to_string());
+        let mut infos: Vec<_> = self.inner.endpoint.remote_infos_iter().collect();
+        infos.sort_by_key(|n| n.node_id.to_string());
         self.local_pool_handle().spawn_detached(|| async move {
-            for node_info in node_infos {
-                tx.send(Ok(RemoteInfosIterResponse { info: node_info }))
-                    .await
-                    .ok();
+            for info in infos {
+                tx.send(Ok(RemoteInfosIterResponse { info })).await.ok();
             }
         });
         rx
@@ -1292,8 +1290,8 @@ impl<D: BaoStore> Handler<D> {
     #[allow(clippy::unused_async)]
     async fn remote_info(self, req: RemoteInfoRequest) -> RpcResult<RemoteInfoResponse> {
         let RemoteInfoRequest { node_id } = req;
-        let node_info = self.inner.endpoint.remote_info(node_id);
-        Ok(RemoteInfoResponse { info: node_info })
+        let info = self.inner.endpoint.remote_info(node_id);
+        Ok(RemoteInfoResponse { info })
     }
 
     // This method is called as an RPC method, which have to be async
