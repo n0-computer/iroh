@@ -2529,6 +2529,12 @@
 <a href="#2529" id="2529">2529</a>
 <a href="#2530" id="2530">2530</a>
 <a href="#2531" id="2531">2531</a>
+<a href="#2532" id="2532">2532</a>
+<a href="#2533" id="2533">2533</a>
+<a href="#2534" id="2534">2534</a>
+<a href="#2535" id="2535">2535</a>
+<a href="#2536" id="2536">2536</a>
+<a href="#2537" id="2537">2537</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! redb backed storage
 //!
 //! Data can get into the store in two ways:
@@ -2614,7 +2620,7 @@
 <span class="kw">use </span>redb::{AccessGuard, DatabaseError, ReadableTable, StorageError};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>smallvec::SmallVec;
-<span class="kw">use </span>tokio::{io::AsyncWriteExt, sync::oneshot};
+<span class="kw">use </span>tokio::io::AsyncWriteExt;
 <span class="kw">use </span>tracing::trace_span;
 
 <span class="kw">mod </span>import_flat_store;
@@ -3065,25 +3071,25 @@
     <span class="doccomment">/// Query method: get the rough entry status for a hash. Just complete, partial or not found.
     </span>EntryStatus {
         hash: Hash,
-        tx: async_channel::Sender&lt;ActorResult&lt;EntryStatus&gt;&gt;,
+        tx: oneshot::Sender&lt;ActorResult&lt;EntryStatus&gt;&gt;,
     },
     <span class="attr">#[cfg(test)]
     </span><span class="doccomment">/// Query method: get the full entry state for a hash, both in memory and in redb.
     /// This is everything we got about the entry, including the actual inline outboard and data.
     </span>EntryState {
         hash: Hash,
-        tx: async_channel::Sender&lt;ActorResult&lt;test_support::EntryStateResponse&gt;&gt;,
+        tx: oneshot::Sender&lt;ActorResult&lt;test_support::EntryStateResponse&gt;&gt;,
     },
     <span class="doccomment">/// Query method: get the full entry state for a hash.
     </span>GetFullEntryState {
         hash: Hash,
-        tx: async_channel::Sender&lt;ActorResult&lt;<span class="prelude-ty">Option</span>&lt;EntryData&gt;&gt;&gt;,
+        tx: oneshot::Sender&lt;ActorResult&lt;<span class="prelude-ty">Option</span>&lt;EntryData&gt;&gt;&gt;,
     },
     <span class="doccomment">/// Modification method: set the full entry state for a hash.
     </span>SetFullEntryState {
         hash: Hash,
         entry: <span class="prelude-ty">Option</span>&lt;EntryData&gt;,
-        tx: async_channel::Sender&lt;ActorResult&lt;()&gt;&gt;,
+        tx: oneshot::Sender&lt;ActorResult&lt;()&gt;&gt;,
     },
     <span class="doccomment">/// Modification method: get or create a file handle for a hash.
     ///
@@ -3106,7 +3112,7 @@
     /// At this point the size, hash and outboard must already be known.
     </span>Import {
         cmd: Import,
-        tx: async_channel::Sender&lt;ActorResult&lt;(TempTag, u64)&gt;&gt;,
+        tx: oneshot::Sender&lt;ActorResult&lt;(TempTag, u64)&gt;&gt;,
     },
     <span class="doccomment">/// Modification method: export data from a redb store
     ///
@@ -3452,18 +3458,18 @@
     }
 
     <span class="kw">async fn </span>entry_status(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: <span class="kw-2">&amp;</span>Hash) -&gt; OuterResult&lt;EntryStatus&gt; {
-        <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
+        <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="self">self</span>.tx
             .send(ActorMessage::EntryStatus { hash: <span class="kw-2">*</span>hash, tx })
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(rx.recv().<span class="kw">await</span><span class="question-mark">??</span>)
+        <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">??</span>)
     }
 
     <span class="kw">fn </span>entry_status_sync(<span class="kw-2">&amp;</span><span class="self">self</span>, hash: <span class="kw-2">&amp;</span>Hash) -&gt; OuterResult&lt;EntryStatus&gt; {
-        <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
+        <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="self">self</span>.tx
             .send_blocking(ActorMessage::EntryStatus { hash: <span class="kw-2">*</span>hash, tx })<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(rx.recv_blocking()<span class="question-mark">??</span>)
+        <span class="prelude-val">Ok</span>(rx.recv()<span class="question-mark">??</span>)
     }
 
     <span class="kw">async fn </span>complete(<span class="kw-2">&amp;</span><span class="self">self</span>, entry: Entry) -&gt; OuterResult&lt;()&gt; {
@@ -3659,7 +3665,7 @@
         </span><span class="kw">let </span>tag = <span class="self">self</span>.temp.temp_tag(HashAndFormat { hash, format });
         <span class="kw">let </span>hash = <span class="kw-2">*</span>tag.hash();
         <span class="comment">// blocking send for the import
-        </span><span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
+        </span><span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="self">self</span>.tx.send_blocking(ActorMessage::Import {
             cmd: Import {
                 content_id: HashAndFormat { hash, format },
@@ -3669,7 +3675,7 @@
             },
             tx,
         })<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(rx.recv_blocking()<span class="question-mark">??</span>)
+        <span class="prelude-val">Ok</span>(rx.recv()<span class="question-mark">??</span>)
     }
 
     <span class="kw">fn </span>temp_file_name(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PathBuf {
@@ -3762,16 +3768,22 @@
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>OuterError {
     <span class="attr">#[error(<span class="string">"inner error: {0}"</span>)]
     </span>Inner(<span class="attr">#[from] </span>ActorError),
-    <span class="attr">#[error(<span class="string">"send error: {0}"</span>)]
-    </span>Send(<span class="attr">#[from] </span>async_channel::SendError&lt;ActorMessage&gt;),
+    <span class="attr">#[error(<span class="string">"send error"</span>)]
+    </span>Send,
     <span class="attr">#[error(<span class="string">"progress send error: {0}"</span>)]
     </span>ProgressSend(<span class="attr">#[from] </span>ProgressSendError),
     <span class="attr">#[error(<span class="string">"recv error: {0}"</span>)]
-    </span>Recv(<span class="attr">#[from] </span>oneshot::error::RecvError),
+    </span>Recv(<span class="attr">#[from] </span>oneshot::RecvError),
     <span class="attr">#[error(<span class="string">"recv error: {0}"</span>)]
     </span>AsyncChannelRecv(<span class="attr">#[from] </span>async_channel::RecvError),
     <span class="attr">#[error(<span class="string">"join error: {0}"</span>)]
     </span>JoinTask(<span class="attr">#[from] </span>tokio::task::JoinError),
+}
+
+<span class="kw">impl </span>From&lt;async_channel::SendError&lt;ActorMessage&gt;&gt; <span class="kw">for </span>OuterError {
+    <span class="kw">fn </span>from(_e: async_channel::SendError&lt;ActorMessage&gt;) -&gt; <span class="self">Self </span>{
+        OuterError::Send
+    }
 }
 
 <span class="doccomment">/// Result type for calling the redb actor from the store.
@@ -4767,7 +4779,7 @@
             }
             ActorMessage::EntryStatus { hash, tx } =&gt; {
                 <span class="kw">let </span>res = <span class="self">self</span>.entry_status(tables, hash);
-                tx.send_blocking(res).ok();
+                tx.send(res).ok();
             }
             ActorMessage::Blobs { filter, tx } =&gt; {
                 <span class="kw">let </span>res = <span class="self">self</span>.blobs(tables, filter);
@@ -4787,11 +4799,11 @@
             }
             <span class="attr">#[cfg(test)]
             </span>ActorMessage::EntryState { hash, tx } =&gt; {
-                tx.send_blocking(<span class="self">self</span>.entry_state(tables, hash)).ok();
+                tx.send(<span class="self">self</span>.entry_state(tables, hash)).ok();
             }
             ActorMessage::GetFullEntryState { hash, tx } =&gt; {
                 <span class="kw">let </span>res = <span class="self">self</span>.get_full_entry_state(tables, hash);
-                tx.send_blocking(res).ok();
+                tx.send(res).ok();
             }
             x =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(x)),
         }
@@ -4806,7 +4818,7 @@
         <span class="kw">match </span>msg {
             ActorMessage::Import { cmd, tx } =&gt; {
                 <span class="kw">let </span>res = <span class="self">self</span>.import(tables, cmd);
-                tx.send_blocking(res).ok();
+                tx.send(res).ok();
             }
             ActorMessage::SetTag { tag, value, tx } =&gt; {
                 <span class="kw">let </span>res = <span class="self">self</span>.set_tag(tables, tag, value);
@@ -4837,7 +4849,7 @@
             }
             ActorMessage::SetFullEntryState { hash, entry, tx } =&gt; {
                 <span class="kw">let </span>res = <span class="self">self</span>.set_full_entry_state(tables, hash, entry);
-                tx.send_blocking(res).ok();
+                tx.send(res).ok();
             }
             msg =&gt; {
                 <span class="comment">// try to handle it as readonly
