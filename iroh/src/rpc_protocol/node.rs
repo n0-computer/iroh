@@ -60,24 +60,24 @@ pub enum Response {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RemoteInfosIterRequest;
 
-/// A response to a connections request
+/// A response to a [`Request::RemoteInfosIter`].
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RemoteInfosIterResponse {
-    /// Information about a connection
+    /// Information about a node.
     pub info: RemoteInfo,
 }
 
-/// Get connection information about a specific node
+/// Get information about a specific remote node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteInfoRequest {
     /// The node identifier
     pub node_id: PublicKey,
 }
 
-/// A response to a connection request
+/// A response to a [`Request::RenoteInfo`] request
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RemoteInfoResponse {
-    /// Information about a connection to a node
+    /// Information about a node
     pub info: Option<RemoteInfo>,
 }
 
