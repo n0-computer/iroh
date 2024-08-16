@@ -1279,8 +1279,8 @@ impl<D: BaoStore> Handler<D> {
         let mut node_infos: Vec<_> = self.inner.endpoint.node_infos_iter().collect();
         node_infos.sort_by_key(|n| n.node_id.to_string());
         self.local_pool_handle().spawn_detached(|| async move {
-            for conn_info in node_infos {
-                tx.send(Ok(NodeInfosIterResponse { info: conn_info }))
+            for node_info in node_infos {
+                tx.send(Ok(NodeInfosIterResponse { info: node_info }))
                     .await
                     .ok();
             }
