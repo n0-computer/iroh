@@ -127,7 +127,7 @@ impl Client {
     /// This streams a *current snapshot*. It does not keep the stream open after finishing
     /// transferring the snapshot.
     ///
-    /// See also [`Endpoint::node_info_iter`](crate::net::Endpoint::node_info_iter).
+    /// See also [`Endpoint::node_infos_iter`](crate::net::Endpoint::node_infos_iter).
     pub async fn node_info_iter(&self) -> Result<impl Stream<Item = Result<NodeInfo>>> {
         let stream = self.rpc.server_streaming(NodeInfosIterRequest {}).await?;
         Ok(flatten(stream).map(|res| res.map(|res| res.info)))
