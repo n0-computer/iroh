@@ -2597,6 +2597,7 @@ dependencies = [
  "iroh-quinn",
  "iroh-test",
  "num_cpus",
+ "oneshot",
  "parking_lot",
  "pin-project",
  "postcard",
@@ -3600,6 +3601,12 @@ name = "once_cell"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
+
+[[package]]
+name = "oneshot"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e296cf87e61c9cfc1a61c3c63a0f7f286ed4554e0e22be84e8a38e1d264a2a29"
 
 [[package]]
 name = "oorandom"
