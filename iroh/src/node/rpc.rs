@@ -159,7 +159,10 @@ impl<D: BaoStore> Handler<D> {
             Relay(msg) => chan.rpc(msg, self, Self::node_relay).await,
             Shutdown(msg) => chan.rpc(msg, self, Self::node_shutdown).await,
             Stats(msg) => chan.rpc(msg, self, Self::node_stats).await,
-            NodeInfosIter(msg) => chan.server_streaming(msg, self, Self::all_node_info).await,
+            NodeInfosIter(msg) => {
+                chan.server_streaming(msg, self, Self::node_infos_iter)
+                    .await
+            }
             NodeInfo(msg) => chan.rpc(msg, self, Self::node_info).await,
             AddAddr(msg) => chan.rpc(msg, self, Self::node_add_addr).await,
         }
@@ -1267,7 +1270,7 @@ impl<D: BaoStore> Handler<D> {
         .into_stream()
     }
 
-    fn all_node_info(
+    fn node_infos_iter(
         self,
         _: NodeInfosIterRequest,
     ) -> impl Stream<Item = RpcResult<NodeInfosIterResponse>> + Send + 'static {
