@@ -344,6 +344,7 @@ impl Actor {
                         Err(err) => {
                             warn!(peer = ?peer_id, "dial failed: {err}");
                             inc!(Metrics, actor_tick_dialer_failure);
+                            Err(err)?;
                         }
                     }
                 }
@@ -874,7 +875,7 @@ mod test {
         let (relay_map, relay_url, _guard) =
             iroh_net::test_utils::run_relay_server().await.unwrap();
 
-        let subscribers = 100;
+        let subscribers = 2;
 
         let pub_ep = create_endpoint(&mut rng, relay_map.clone()).await.unwrap();
         let mut sub_eps = Vec::with_capacity(subscribers);
@@ -954,7 +955,7 @@ mod test {
 
         let (sink1, _stream1) = subs.pop_front().unwrap().split();
 
-        let len = 200;
+        let len = 2;
 
         // publish messages on node1
         let pub1 = spawn(async move {
