@@ -226,8 +226,12 @@ impl NodeMap {
     }
 
     /// Returns the [`NodeInfo`]s for each node in the node map.
-    pub(super) fn node_infos(&self, now: Instant) -> Vec<NodeInfo> {
-        self.inner.lock().node_infos(now)
+    pub(super) fn list_node_infos(&self, now: Instant) -> Vec<NodeInfo> {
+        // NOTE: calls to this method will often call `into_iter` (or similar methods). Note that
+        // we can't avoid `collect` here since it would hold a lock for an indefinite time. Even if
+        // we were to find this acceptable, dealing with the lifetimes of the mutex's guard and the
+        // internal iterator will be a hassle, if possible at all.
+        self.inner.lock().node_infos_iter(now).collect()
     }
 
     /// Returns a stream of [`ConnectionType`].
@@ -387,8 +391,8 @@ impl NodeMapInner {
     }
 
     /// Get the [`NodeInfo`]s for each endpoint
-    fn node_infos(&self, now: Instant) -> Vec<NodeInfo> {
-        self.node_states().map(|(_, ep)| ep.info(now)).collect()
+    fn node_infos_iter(&self, now: Instant) -> impl Iterator<Item = NodeInfo> + '_ {
+        self.node_states().map(move |(_, ep)| ep.info(now))
     }
 
     /// Get the [`NodeInfo`]s for each endpoint
@@ -667,7 +671,7 @@ mod tests {
         node_map.add_test_addr(node_addr_d);
 
         let mut addrs: Vec<NodeAddr> = node_map
-            .node_infos(Instant::now())
+            .list_node_infos(Instant::now())
             .into_iter()
             .filter_map(|info| {
                 let addr: NodeAddr = info.into();
@@ -680,7 +684,7 @@ mod tests {
         let loaded_node_map = NodeMap::load_from_vec(addrs.clone());
 
         let mut loaded: Vec<NodeAddr> = loaded_node_map
-            .node_infos(Instant::now())
+            .list_node_infos(Instant::now())
             .into_iter()
             .filter_map(|info| {
                 let addr: NodeAddr = info.into();

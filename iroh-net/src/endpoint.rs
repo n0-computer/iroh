@@ -734,7 +734,7 @@ impl Endpoint {
     ///
     /// See also [`Endpoint::node_info`] to only retrieve information about a single node.
     pub fn node_infos_iter(&self) -> impl Iterator<Item = NodeInfo> {
-        self.msock.node_info_all_nodes().into_iter()
+        self.msock.list_node_infos().into_iter()
     }
 
     // # Methods for less common getters.

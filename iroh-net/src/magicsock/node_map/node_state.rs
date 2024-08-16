@@ -1590,7 +1590,7 @@ mod tests {
             ]),
             next_id: 5,
         });
-        let mut got = node_map.node_infos(later);
+        let mut got = node_map.list_node_infos(later);
         got.sort_by_key(|p| p.node_id);
         expect.sort_by_key(|p| p.node_id);
         remove_non_deterministic_fields(&mut got);

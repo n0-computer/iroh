@@ -293,9 +293,9 @@ impl MagicSock {
             .unwrap_or(false)
     }
 
-    /// Return all the [`NodeInfo`]s of all nodes in the node map.
-    pub(crate) fn node_info_all_nodes(&self) -> Vec<NodeInfo> {
-        self.node_map.node_infos(Instant::now())
+    /// Return the [`NodeInfo`]s of all nodes in the node map.
+    pub(crate) fn list_node_infos(&self) -> Vec<NodeInfo> {
+        self.node_map.list_node_infos(Instant::now())
     }
 
     /// Return the [`NodeInfo`] for a single node in the node map.
@@ -2784,7 +2784,7 @@ mod tests {
         fn tracked_endpoints(&self) -> Vec<PublicKey> {
             self.endpoint
                 .magic_sock()
-                .node_info_all_nodes()
+                .list_node_infos()
                 .into_iter()
                 .map(|ep| ep.node_id)
                 .collect()
