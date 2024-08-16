@@ -1292,7 +1292,7 @@ impl<D: BaoStore> Handler<D> {
     #[allow(clippy::unused_async)]
     async fn node_info(self, req: NodeInfoRequest) -> RpcResult<NodeInfoResponse> {
         let NodeInfoRequest { node_id } = req;
-        let node_info = self.inner.endpoint.node_info(node_id);
+        let node_info = self.inner.endpoint.remote_info(node_id);
         Ok(NodeInfoResponse { info: node_info })
     }
 

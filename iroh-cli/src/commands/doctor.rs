@@ -424,7 +424,7 @@ impl Gui {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())
         };
-        let msg = match endpoint.node_info(*node_id) {
+        let msg = match endpoint.remote_info(*node_id) {
             Some(RemoteInfo {
                 relay_url,
                 conn_type,

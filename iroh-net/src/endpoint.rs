@@ -719,7 +719,7 @@ impl Endpoint {
     ///
     /// See also [`Endpoint::remote_infos_iter`] which returns information on all nodes known
     /// by this [`Endpoint`].
-    pub fn node_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
+    pub fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
         self.msock.node_info(node_id)
     }
 
@@ -1301,7 +1301,7 @@ mod tests {
         info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
         let endpoint = new_endpoint(secret_key, Some(node_addrs)).await;
-        let RemoteInfo { mut addrs, .. } = endpoint.node_info(peer_id).unwrap();
+        let RemoteInfo { mut addrs, .. } = endpoint.remote_info(peer_id).unwrap();
         let conn_addr = addrs.pop().unwrap().addr;
         assert_eq!(conn_addr, direct_addr);
     }
