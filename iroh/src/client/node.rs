@@ -23,8 +23,8 @@ use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::node::{
-    AddAddrRequest, AddrRequest, AllNodeInfoRequest, CounterStats, IdRequest, NodeInfoRequest,
-    NodeInfoResponse, RelayRequest, ShutdownRequest, StatsRequest, StatusRequest,
+    AddAddrRequest, AddrRequest, CounterStats, IdRequest, NodeInfoRequest, NodeInfoResponse,
+    NodeInfosIterRequest, RelayRequest, ShutdownRequest, StatsRequest, StatusRequest,
 };
 
 use super::{flatten, RpcClient};
@@ -129,7 +129,7 @@ impl Client {
     ///
     /// See also [`Endpoint::node_info_iter`](crate::net::Endpoint::node_info_iter).
     pub async fn node_info_iter(&self) -> Result<impl Stream<Item = Result<NodeInfo>>> {
-        let stream = self.rpc.server_streaming(AllNodeInfoRequest {}).await?;
+        let stream = self.rpc.server_streaming(NodeInfosIterRequest {}).await?;
         Ok(flatten(stream).map(|res| res.map(|res| res.info)))
     }
 

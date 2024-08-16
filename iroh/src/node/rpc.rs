@@ -64,7 +64,7 @@ use crate::rpc_protocol::{
     },
     gossip, node,
     node::{
-        AddAddrRequest, AddrRequest, AllNodeInfoRequest, AllNodeInfoResponse, IdRequest,
+        AddAddrRequest, AddrRequest, NodeInfosIterRequest, NodeInfosIterResponse, IdRequest,
         NodeInfoRequest, NodeInfoResponse, NodeWatchRequest, RelayRequest, ShutdownRequest,
         StatsRequest, StatsResponse, StatusRequest, WatchResponse,
     },
@@ -159,8 +159,8 @@ impl<D: BaoStore> Handler<D> {
             Relay(msg) => chan.rpc(msg, self, Self::node_relay).await,
             Shutdown(msg) => chan.rpc(msg, self, Self::node_shutdown).await,
             Stats(msg) => chan.rpc(msg, self, Self::node_stats).await,
-            Connections(msg) => chan.server_streaming(msg, self, Self::all_node_info).await,
-            ConnectionInfo(msg) => chan.rpc(msg, self, Self::node_info).await,
+            NodeInfosIter(msg) => chan.server_streaming(msg, self, Self::all_node_info).await,
+            NodeInfo(msg) => chan.rpc(msg, self, Self::node_info).await,
             AddAddr(msg) => chan.rpc(msg, self, Self::node_add_addr).await,
         }
     }
@@ -1269,15 +1269,15 @@ impl<D: BaoStore> Handler<D> {
 
     fn all_node_info(
         self,
-        _: AllNodeInfoRequest,
-    ) -> impl Stream<Item = RpcResult<AllNodeInfoResponse>> + Send + 'static {
+        _: NodeInfosIterRequest,
+    ) -> impl Stream<Item = RpcResult<NodeInfosIterResponse>> + Send + 'static {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = async_channel::bounded(32);
         let mut node_infos: Vec<_> = self.inner.endpoint.node_info_iter().collect();
         node_infos.sort_by_key(|n| n.node_id.to_string());
         self.local_pool_handle().spawn_detached(|| async move {
             for conn_info in node_infos {
-                tx.send(Ok(AllNodeInfoResponse { info: conn_info }))
+                tx.send(Ok(NodeInfosIterResponse { info: conn_info }))
                     .await
                     .ok();
             }

@@ -29,10 +29,10 @@ pub enum Request {
     Stats(StatsRequest),
     #[rpc(response = ())]
     Shutdown(ShutdownRequest),
-    #[server_streaming(response = RpcResult<AllNodeInfoResponse>)]
-    Connections(AllNodeInfoRequest),
+    #[server_streaming(response = RpcResult<NodeInfosIterResponse>)]
+    NodeInfosIter(NodeInfosIterRequest),
     #[rpc(response = RpcResult<NodeInfoResponse>)]
-    ConnectionInfo(NodeInfoRequest),
+    NodeInfo(NodeInfoRequest),
     #[server_streaming(response = WatchResponse)]
     Watch(NodeWatchRequest),
 }
@@ -46,7 +46,7 @@ pub enum Response {
     Addr(RpcResult<NodeAddr>),
     Relay(RpcResult<Option<RelayUrl>>),
     Stats(RpcResult<StatsResponse>),
-    Connections(RpcResult<AllNodeInfoResponse>),
+    Connections(RpcResult<NodeInfosIterResponse>),
     ConnectionInfo(RpcResult<NodeInfoResponse>),
     Shutdown(()),
     Watch(WatchResponse),
@@ -58,11 +58,11 @@ pub enum Response {
 /// possible.  As well due to connections nodes can become known due to discovery mechanisms
 /// or be added manually.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AllNodeInfoRequest;
+pub struct NodeInfosIterRequest;
 
 /// A response to a connections request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AllNodeInfoResponse {
+pub struct NodeInfosIterResponse {
     /// Information about a connection
     pub info: NodeInfo,
 }
