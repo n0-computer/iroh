@@ -1621,17 +1621,6 @@
 <a href="#1621" id="1621">1621</a>
 <a href="#1622" id="1622">1622</a>
 <a href="#1623" id="1623">1623</a>
-<a href="#1624" id="1624">1624</a>
-<a href="#1625" id="1625">1625</a>
-<a href="#1626" id="1626">1626</a>
-<a href="#1627" id="1627">1627</a>
-<a href="#1628" id="1628">1628</a>
-<a href="#1629" id="1629">1629</a>
-<a href="#1630" id="1630">1630</a>
-<a href="#1631" id="1631">1631</a>
-<a href="#1632" id="1632">1632</a>
-<a href="#1633" id="1633">1633</a>
-<a href="#1634" id="1634">1634</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{btree_map::Entry, BTreeSet, HashMap};
 <span class="kw">use </span>std::hash::Hash;
 <span class="kw">use </span>std::net::{IpAddr, SocketAddr};
@@ -1746,10 +1735,10 @@
     <span class="doccomment">/// Last time this node was used.
     ///
     /// A node is marked as in use when sending datagrams to them, or when having received
-    /// datagrams from it.  Regardless of whether the datagrams are payload or DISCO, and
-    /// whether they go via UDP or the relay.
+    /// datagrams from it. Regardless of whether the datagrams are payload or DISCO, and whether
+    /// they go via UDP or the relay.
     ///
-    /// Note that sending datagrams to a node does not mean the node receives them.  Whoops.
+    /// Note that sending datagrams to a node does not mean the node receives them.
     </span>last_used: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
     <span class="doccomment">/// Last time we sent a call-me-maybe.
     ///
@@ -1822,7 +1811,7 @@
         <span class="self">self</span>.conn_type.watch().into_stream()
     }
 
-    <span class="doccomment">/// Returns public info about this node.
+    <span class="doccomment">/// Returns info about this node.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>info(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; RemoteInfo {
         <span class="kw">let </span>conn_type = <span class="self">self</span>.conn_type.get();
         <span class="kw">let </span>latency = <span class="kw">match </span>conn_type {
@@ -2824,16 +2813,9 @@
 
 <span class="doccomment">/// Information about a *direct address*.
 ///
-/// The *direct address* of an iroh-net node are those that could be used by other nodes to
-/// establish direct connectivity, depending on the network situation.  So not all direct
-/// addresses of a node are usable by all peers.
-///
-/// A direct address of a remote node is also effectively the identifier of a *network path*
-/// between a node and it's remote peer.
-</span><span class="comment">// TODO: bikeshedding: perhaps this would be better known as RemoteNodePath or so.  The
-// `DirectAddr` is already defined by `Endpoint::direct_addrs` as the possible UDP addresses
-// on which a node might be reachable.  But this is a lot of information about the path to a
-// remote node.
+/// The *direct addresses* of an iroh-net node are those that could be used by other nodes to
+/// establish direct connectivity, depending on the network situation. Due to NAT configurations,
+/// for example, not all direct addresses of a node are usable by all peers.
 </span><span class="attr">#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 </span><span class="kw">pub struct </span>DirectAddrInfo {
     <span class="doccomment">/// The UDP address reported by the remote node.
@@ -2870,8 +2852,6 @@
     /// node discovery the path may never have been known to exist.
     ///
     /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
-    </span><span class="comment">// TODO: deprecate this as it is **so** confusing a name.  But we don't have a
-    // replacement yet and I"m only documenting things in this PR."
     </span><span class="kw">pub </span>last_alive: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
 }
 
@@ -2904,22 +2884,22 @@
 
 <span class="doccomment">/// Details about a remote iroh-net node which is known to this node.
 ///
-/// Having details of a node does not mean it can be connected to.  Nor that it has ever
-/// been connected to in the past.  There are various reasons a node might be known: it
-/// could have been manually added via [`Endpoint::add_node_addr`], it could have been added
-/// by some discovery mechanism.
+/// Having details of a node does not mean it can be connected to, nor that it has ever been
+/// connected to in the past. There are various reasons a node might be known: it could have been
+/// manually added via [`Endpoint::add_node_addr`], it could have been added by some discovery
+/// mechanism, or the node could have contacted this node.
 ///
 /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
 </span><span class="attr">#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 </span><span class="kw">pub struct </span>RemoteInfo {
-    <span class="doccomment">/// The globally unique public identifier for this node.
+    <span class="doccomment">/// The globally unique identifier for this node.
     </span><span class="kw">pub </span>node_id: NodeId,
     <span class="doccomment">/// Relay server information, if available.
     </span><span class="kw">pub </span>relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrlInfo&gt;,
     <span class="doccomment">/// The addresses at which this node might be reachable.
     ///
-    /// Some of these addresses might only be valid for networks we are not part of, but the
-    /// remote node might be.
+    /// Some of these addresses might only be valid for networks we are not part of, but the remote
+    /// node might be a part of.
     </span><span class="kw">pub </span>addrs: Vec&lt;DirectAddrInfo&gt;,
     <span class="doccomment">/// The type of connection we have to the node, either direct or over relay.
     </span><span class="kw">pub </span>conn_type: ConnectionType,
@@ -2961,23 +2941,22 @@
     }
 }
 
-<span class="doccomment">/// The type of connection we have to the remote node.
+<span class="doccomment">/// The type of connection we have to the endpoint.
 </span><span class="attr">#[derive(derive_more::Display, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 </span><span class="kw">pub enum </span>ConnectionType {
-    <span class="doccomment">/// Direct UDP connection.
+    <span class="doccomment">/// Direct UDP connection
     </span><span class="attr">#[display(<span class="string">"direct"</span>)]
     </span>Direct(SocketAddr),
-    <span class="doccomment">/// A connection via a relay server.
+    <span class="doccomment">/// Relay connection over relay
     </span><span class="attr">#[display(<span class="string">"relay"</span>)]
     </span>Relay(RelayUrl),
     <span class="doccomment">/// Both a UDP and a relay connection are used.
     ///
-    /// This is the case if there is a known UDP address, but no recent confirmation that
-    /// the address works.  Normally on a healthy network path this should not occur and the
-    /// connection should remain [`ConnectionType::Direct`].
+    /// This is the case if we do have a UDP address, but are missing a recent confirmation that
+    /// the address works.
     </span><span class="attr">#[display(<span class="string">"mixed"</span>)]
     </span>Mixed(SocketAddr, RelayUrl),
-    <span class="doccomment">/// There is no connection to the remote node.
+    <span class="doccomment">/// We have no verified connection to this PublicKey
     </span><span class="attr">#[display(<span class="string">"none"</span>)]
     </span><span class="prelude-val">None</span>,
 }
@@ -3139,8 +3118,7 @@
             )
         };
 
-        <span class="comment">// Initialising a struct with some deprecated fields.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>expect = Vec::from([
+        <span class="kw">let </span><span class="kw-2">mut </span>expect = Vec::from([
             RemoteInfo {
                 node_id: a_endpoint.node_id,
                 relay_url: <span class="prelude-val">None</span>,

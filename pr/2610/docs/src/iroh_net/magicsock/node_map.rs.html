@@ -1050,7 +1050,7 @@
         <span class="self">self</span>.inner.lock().conn_type_stream(node_id)
     }
 
-    <span class="doccomment">/// Get the [`RemoteInfo`]s for each endpoint
+    <span class="doccomment">/// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>remote_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;RemoteInfo&gt; {
         <span class="self">self</span>.inner.lock().remote_info(node_id)
     }
@@ -1193,7 +1193,7 @@
         <span class="self">self</span>.by_id.iter_mut()
     }
 
-    <span class="doccomment">/// Get the [`RemoteInfo`]s for each node.
+    <span class="doccomment">/// Get the [`RemoteInfo`]s for all nodes.
     </span><span class="kw">fn </span>remote_infos_iter(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; <span class="kw">impl </span>Iterator&lt;Item = RemoteInfo&gt; + <span class="lifetime">'_ </span>{
         <span class="self">self</span>.node_states().map(<span class="kw">move </span>|(<span class="kw">_</span>, ep)| ep.info(now))
     }

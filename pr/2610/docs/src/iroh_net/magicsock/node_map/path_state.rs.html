@@ -292,7 +292,6 @@
 <a href="#292" id="292">292</a>
 <a href="#293" id="293">293</a>
 <a href="#294" id="294">294</a>
-<a href="#295" id="295">295</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The state kept for each network path to a remote node.
 
 </span><span class="kw">use </span>std::collections::BTreeMap;
@@ -459,13 +458,12 @@
 
     <span class="doccomment">/// The last control or DISCO message **about** this path.
     ///
-    /// This is a combination of both when this was last advertised via a call-me-maybe
-    /// message as well as any direct ping-pong communication over this path.
+    /// This is the most recent instant between:
+    /// - when last pong was received.
+    /// - when this path was last advertised in a received CallMeMaybe message.
+    /// - when the last ping from them was received.
     ///
-    /// # Returns
-    ///
-    /// Returns the time elapsed since the last control message, and the type of control
-    /// message.
+    /// Returns the time elapsed since the last control message, and the type of control message.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>last_control_msg(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; <span class="prelude-ty">Option</span>&lt;(Duration, ControlMsg)&gt; {
         <span class="comment">// get every control message and assign it its kind
         </span><span class="kw">let </span>last_pong = <span class="self">self

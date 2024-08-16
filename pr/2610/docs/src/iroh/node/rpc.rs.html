@@ -1479,8 +1479,6 @@
 <a href="#1479" id="1479">1479</a>
 <a href="#1480" id="1480">1480</a>
 <a href="#1481" id="1481">1481</a>
-<a href="#1482" id="1482">1482</a>
-<a href="#1483" id="1483">1483</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::{Arc, Mutex};
@@ -2759,13 +2757,11 @@
     ) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;RemoteInfosIterResponse&gt;&gt; + Send + <span class="lifetime">'static </span>{
         <span class="comment">// provide a little buffer so that we don't slow down the sender
         </span><span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">32</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>node_infos: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.inner.endpoint.remote_infos_iter().collect();
-        node_infos.sort_by_key(|n| n.node_id.to_string());
+        <span class="kw">let </span><span class="kw-2">mut </span>infos: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.inner.endpoint.remote_infos_iter().collect();
+        infos.sort_by_key(|n| n.node_id.to_string());
         <span class="self">self</span>.local_pool_handle().spawn_detached(|| <span class="kw">async move </span>{
-            <span class="kw">for </span>node_info <span class="kw">in </span>node_infos {
-                tx.send(<span class="prelude-val">Ok</span>(RemoteInfosIterResponse { info: node_info }))
-                    .<span class="kw">await
-                    </span>.ok();
+            <span class="kw">for </span>info <span class="kw">in </span>infos {
+                tx.send(<span class="prelude-val">Ok</span>(RemoteInfosIterResponse { info })).<span class="kw">await</span>.ok();
             }
         });
         rx
@@ -2775,8 +2771,8 @@
     </span><span class="attr">#[allow(clippy::unused_async)]
     </span><span class="kw">async fn </span>remote_info(<span class="self">self</span>, req: RemoteInfoRequest) -&gt; RpcResult&lt;RemoteInfoResponse&gt; {
         <span class="kw">let </span>RemoteInfoRequest { node_id } = req;
-        <span class="kw">let </span>node_info = <span class="self">self</span>.inner.endpoint.remote_info(node_id);
-        <span class="prelude-val">Ok</span>(RemoteInfoResponse { info: node_info })
+        <span class="kw">let </span>info = <span class="self">self</span>.inner.endpoint.remote_info(node_id);
+        <span class="prelude-val">Ok</span>(RemoteInfoResponse { info })
     }
 
     <span class="comment">// This method is called as an RPC method, which have to be async
