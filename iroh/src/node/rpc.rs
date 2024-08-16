@@ -64,9 +64,9 @@ use crate::rpc_protocol::{
     },
     gossip, node,
     node::{
-        AddAddrRequest, AddrRequest, NodeInfosIterRequest, NodeInfosIterResponse, IdRequest,
-        NodeInfoRequest, NodeInfoResponse, NodeWatchRequest, RelayRequest, ShutdownRequest,
-        StatsRequest, StatsResponse, StatusRequest, WatchResponse,
+        AddAddrRequest, AddrRequest, IdRequest, NodeInfoRequest, NodeInfoResponse,
+        NodeInfosIterRequest, NodeInfosIterResponse, NodeWatchRequest, RelayRequest,
+        ShutdownRequest, StatsRequest, StatsResponse, StatusRequest, WatchResponse,
     },
     tags,
     tags::{DeleteRequest as TagDeleteRequest, ListRequest as ListTagsRequest},
@@ -1273,7 +1273,7 @@ impl<D: BaoStore> Handler<D> {
     ) -> impl Stream<Item = RpcResult<NodeInfosIterResponse>> + Send + 'static {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = async_channel::bounded(32);
-        let mut node_infos: Vec<_> = self.inner.endpoint.node_info_iter().collect();
+        let mut node_infos: Vec<_> = self.inner.endpoint.node_infos_iter().collect();
         node_infos.sort_by_key(|n| n.node_id.to_string());
         self.local_pool_handle().spawn_detached(|| async move {
             for conn_info in node_infos {

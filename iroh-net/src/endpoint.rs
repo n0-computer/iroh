@@ -717,7 +717,7 @@ impl Endpoint {
     /// [`Endpoint`] learns more about the node.  Thus future calls may return different
     /// information.  Node information may even be completely evicted.
     ///
-    /// See also [`Endpoint::node_info_iter`] which returns information on all nodes known
+    /// See also [`Endpoint::node_infos_iter`] which returns information on all nodes known
     /// by this [`Endpoint`].
     pub fn node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
         self.msock.node_info(node_id)
@@ -733,7 +733,7 @@ impl Endpoint {
     /// regardless of whether a connection was ever made or is even possible.
     ///
     /// See also [`Endpoint::node_info`] to only retrieve information about a single node.
-    pub fn node_info_iter(&self) -> impl Iterator<Item = NodeInfo> {
+    pub fn node_infos_iter(&self) -> impl Iterator<Item = NodeInfo> {
         self.msock.node_info_all_nodes().into_iter()
     }
 
@@ -1286,11 +1286,11 @@ mod tests {
         // first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), None).await;
-        assert_eq!(endpoint.node_info_iter().count(), 0);
+        assert_eq!(endpoint.node_infos_iter().count(), 0);
         endpoint.add_node_addr(node_addr.clone()).unwrap();
 
         // Grab the current addrs
-        let node_addrs: Vec<NodeAddr> = endpoint.node_info_iter().map(Into::into).collect();
+        let node_addrs: Vec<NodeAddr> = endpoint.node_infos_iter().map(Into::into).collect();
         assert_eq!(node_addrs.len(), 1);
         assert_eq!(node_addrs[0], node_addr);
 
