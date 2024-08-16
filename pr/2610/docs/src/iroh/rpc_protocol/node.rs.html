@@ -192,16 +192,16 @@
     Addr(RpcResult&lt;NodeAddr&gt;),
     Relay(RpcResult&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;),
     Stats(RpcResult&lt;StatsResponse&gt;),
-    Connections(RpcResult&lt;NodeInfosIterResponse&gt;),
-    ConnectionInfo(RpcResult&lt;NodeInfoResponse&gt;),
+    NodeInfosIter(RpcResult&lt;NodeInfosIterResponse&gt;),
+    NodeInfo(RpcResult&lt;NodeInfoResponse&gt;),
     Shutdown(()),
     Watch(WatchResponse),
 }
 
-<span class="doccomment">/// List network path information about all the remote nodes know by this node.
+<span class="doccomment">/// List network path information about all the remote nodes known by this node.
 ///
 /// There may never have been connections to these nodes, and connections may not even be
-/// possible.  As well due to connections nodes can become known due to discovery mechanisms
+/// possible. Nodes can also become known due to discovery mechanisms
 /// or be added manually.
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
 </span><span class="kw">pub struct </span>NodeInfosIterRequest;
