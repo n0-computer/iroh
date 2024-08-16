@@ -867,67 +867,94 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn gossip_net_smoke() {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
-        let _guard = iroh_test::logging::setup();
+        let _guard = iroh_test::logging::setup_multithreaded();
         let (relay_map, relay_url, _guard) =
             iroh_net::test_utils::run_relay_server().await.unwrap();
 
-        let ep1 = create_endpoint(&mut rng, relay_map.clone()).await.unwrap();
-        let ep2 = create_endpoint(&mut rng, relay_map.clone()).await.unwrap();
-        let ep3 = create_endpoint(&mut rng, relay_map.clone()).await.unwrap();
-        let addr1 = AddrInfo {
-            relay_url: Some(relay_url.clone()),
-            direct_addresses: Default::default(),
-        };
-        let addr2 = AddrInfo {
-            relay_url: Some(relay_url.clone()),
-            direct_addresses: Default::default(),
-        };
-        let addr3 = AddrInfo {
+        let subscribers = 100;
+
+        let pub_ep = create_endpoint(&mut rng, relay_map.clone()).await.unwrap();
+        let mut sub_eps = Vec::with_capacity(subscribers);
+        for _ in 0..subscribers {
+            sub_eps.push(create_endpoint(&mut rng, relay_map.clone()).await.unwrap());
+        }
+
+        let addr_info = AddrInfo {
             relay_url: Some(relay_url.clone()),
             direct_addresses: Default::default(),
         };
 
-        let go1 = Gossip::from_endpoint(ep1.clone(), Default::default(), &addr1);
-        let go2 = Gossip::from_endpoint(ep2.clone(), Default::default(), &addr2);
-        let go3 = Gossip::from_endpoint(ep3.clone(), Default::default(), &addr3);
-        debug!("peer1 {:?}", ep1.node_id());
-        debug!("peer2 {:?}", ep2.node_id());
-        debug!("peer3 {:?}", ep3.node_id());
-        let pi1 = ep1.node_id();
-        let pi2 = ep2.node_id();
+        let pub_id = pub_ep.node_id();
+        let pub_gossip = Gossip::from_endpoint(pub_ep.clone(), Default::default(), &addr_info);
+        debug!("pub peer {pub_id:?}");
+        let mut sub_ids = Vec::with_capacity(subscribers);
+        let mut sub_gossips = Vec::with_capacity(subscribers);
+        for (i, sub_ep) in sub_eps.iter().enumerate() {
+            let sub_id = sub_ep.node_id();
+            sub_ids.push(sub_id);
+            sub_gossips.push(Gossip::from_endpoint(
+                sub_ep.clone(),
+                Default::default(),
+                &addr_info,
+            ));
+            debug!("sub peer{i} {sub_id:?}");
+        }
 
         let cancel = CancellationToken::new();
-        let tasks = [
-            spawn(endpoint_loop(ep1.clone(), go1.clone(), cancel.clone())),
-            spawn(endpoint_loop(ep2.clone(), go2.clone(), cancel.clone())),
-            spawn(endpoint_loop(ep3.clone(), go3.clone(), cancel.clone())),
-        ];
+        let pub_task = spawn(endpoint_loop(
+            pub_ep.clone(),
+            pub_gossip.clone(),
+            cancel.clone(),
+        ));
+        let sub_tasks = sub_eps
+            .iter()
+            .zip(sub_gossips.iter())
+            .map(|(sub_ep, sub_gossip)| {
+                spawn(endpoint_loop(
+                    sub_ep.clone(),
+                    sub_gossip.clone(),
+                    cancel.clone(),
+                ))
+            })
+            .collect::<Vec<_>>();
 
         debug!("----- adding peers  ----- ");
         let topic: TopicId = blake3::hash(b"foobar").into();
 
-        let addr1 = NodeAddr::new(pi1).with_relay_url(relay_url.clone());
-        let addr2 = NodeAddr::new(pi2).with_relay_url(relay_url);
-        ep2.add_node_addr(addr1.clone()).unwrap();
-        ep3.add_node_addr(addr2).unwrap();
+        for (sub_ep, prev_id) in sub_eps
+            .iter()
+            .zip(std::iter::once(&pub_id).chain(sub_ids.iter()))
+        {
+            let addr = NodeAddr::new(*prev_id).with_relay_url(relay_url.clone());
+            sub_ep.add_node_addr(addr).unwrap();
+        }
 
         debug!("----- joining  ----- ");
         // join the topics and wait for the connection to succeed
-        let [sub1, mut sub2, mut sub3] = [
-            go1.join(topic, vec![]),
-            go2.join(topic, vec![pi1]),
-            go3.join(topic, vec![pi2]),
-        ]
-        .try_join()
-        .await
-        .unwrap();
+        let subs = std::iter::once(&pub_gossip)
+            .chain(sub_gossips.iter())
+            .zip(
+                // offest the gossips with the bootstrap IDs by one
+                std::iter::once(Vec::new()).chain(
+                    std::iter::once(&pub_id)
+                        .chain(sub_ids.iter())
+                        .map(|id| vec![*id]),
+                ),
+            )
+            .map(|(gossip, bootstrap)| gossip.join(topic, bootstrap))
+            .collect::<Vec<_>>()
+            .try_join()
+            .await
+            .unwrap();
 
-        let (sink1, _stream1) = sub1.split();
+        let mut subs = VecDeque::from_iter(subs);
 
-        let len = 2;
+        let (sink1, _stream1) = subs.pop_front().unwrap().split();
+
+        let len = 200;
 
         // publish messages on node1
         let pub1 = spawn(async move {
@@ -939,62 +966,53 @@ mod test {
             }
         });
 
-        // wait for messages on node2
-        let sub2 = spawn(async move {
-            let mut recv = vec![];
-            loop {
-                let ev = sub2.next().await.unwrap().unwrap();
-                info!("go2 event: {ev:?}");
-                if let Event::Gossip(GossipEvent::Received(msg)) = ev {
-                    recv.push(msg.content);
-                }
-                if recv.len() == len {
-                    return recv;
-                }
-            }
-        });
+        // wait for messages on subscribers
+        let sub_waits = subs
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut sub)| {
+                spawn(async move {
+                    let mut recv = BTreeSet::new();
+                    loop {
+                        let ev = sub.next().await.unwrap().unwrap();
+                        info!("go{i} event: {ev:?}");
+                        if let Event::Gossip(GossipEvent::Received(msg)) = ev {
+                            recv.insert(msg.content);
+                        }
+                        if recv.len() == len {
+                            return recv;
+                        }
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
 
-        // wait for messages on node3
-        let sub3 = spawn(async move {
-            let mut recv = vec![];
-            loop {
-                let ev = sub3.next().await.unwrap().unwrap();
-                info!("go3 event: {ev:?}");
-                if let Event::Gossip(GossipEvent::Received(msg)) = ev {
-                    recv.push(msg.content);
-                }
-                if recv.len() == len {
-                    return recv;
-                }
-            }
-        });
-
-        timeout(Duration::from_secs(10), pub1)
-            .await
-            .unwrap()
-            .unwrap();
-        let recv2 = timeout(Duration::from_secs(10), sub2)
-            .await
-            .unwrap()
-            .unwrap();
-        let recv3 = timeout(Duration::from_secs(10), sub3)
+        timeout(Duration::from_secs(120), pub1)
             .await
             .unwrap()
             .unwrap();
 
-        let expected: Vec<Bytes> = (0..len)
+        let recvs = timeout(Duration::from_secs(120), sub_waits.try_join())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let expected: BTreeSet<Bytes> = (0..len)
             .map(|i| Bytes::from(format!("hi{i}").into_bytes()))
             .collect();
-        assert_eq!(recv2, expected);
-        assert_eq!(recv3, expected);
+        for recv in recvs {
+            assert_eq!(recv, expected);
+        }
 
         cancel.cancel();
-        for t in tasks {
-            timeout(Duration::from_secs(10), t)
-                .await
-                .unwrap()
-                .unwrap()
-                .unwrap();
-        }
+        timeout(Duration::from_secs(120), pub_task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        timeout(Duration::from_secs(120), sub_tasks.try_join())
+            .await
+            .unwrap()
+            .unwrap();
     }
 }
