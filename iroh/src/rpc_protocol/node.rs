@@ -74,7 +74,7 @@ pub struct RemoteInfoRequest {
     pub node_id: PublicKey,
 }
 
-/// A response to a [`Request::RenoteInfo`] request
+/// A response to a [`Request::RemoteInfo`] request
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RemoteInfoResponse {
     /// Information about a node
