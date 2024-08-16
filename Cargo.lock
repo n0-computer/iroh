@@ -390,7 +390,7 @@ dependencies = [
  "hyper 1.4.1",
  "hyper-util",
  "pin-project-lite",
- "rustls 0.23.10",
+ "rustls",
  "rustls-pemfile",
  "rustls-pki-types",
  "tokio",
@@ -2076,7 +2076,7 @@ dependencies = [
  "once_cell",
  "rand",
  "ring 0.17.8",
- "rustls 0.23.10",
+ "rustls",
  "rustls-pemfile",
  "serde",
  "thiserror",
@@ -2125,7 +2125,7 @@ dependencies = [
  "parking_lot",
  "rand",
  "resolv-conf",
- "rustls 0.23.10",
+ "rustls",
  "serde",
  "smallvec",
  "thiserror",
@@ -2150,7 +2150,7 @@ dependencies = [
  "hickory-resolver",
  "ipnet",
  "prefix-trie",
- "rustls 0.23.10",
+ "rustls",
  "serde",
  "thiserror",
  "time",
@@ -2353,7 +2353,7 @@ dependencies = [
  "http 1.1.0",
  "hyper 1.4.1",
  "hyper-util",
- "rustls 0.23.10",
+ "rustls",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
@@ -2667,7 +2667,7 @@ dependencies = [
  "redb 1.5.1",
  "redb 2.1.0",
  "reflink-copy",
- "rustls 0.23.10",
+ "rustls",
  "self_cell",
  "serde",
  "serde_json",
@@ -2769,7 +2769,7 @@ dependencies = [
  "rcgen 0.12.1",
  "redb 2.1.0",
  "regex",
- "rustls 0.23.10",
+ "rustls",
  "rustls-pemfile",
  "serde",
  "struct_iterable",
@@ -2955,7 +2955,7 @@ dependencies = [
  "reqwest",
  "ring 0.17.8",
  "rtnetlink",
- "rustls 0.23.10",
+ "rustls",
  "rustls-pemfile",
  "rustls-webpki",
  "serde",
@@ -3002,7 +3002,7 @@ dependencies = [
  "iroh-net",
  "iroh-quinn",
  "rcgen 0.11.3",
- "rustls 0.23.10",
+ "rustls",
  "socket2",
  "tokio",
  "tracing",
@@ -3020,7 +3020,7 @@ dependencies = [
  "iroh-quinn-udp",
  "pin-project-lite",
  "rustc-hash",
- "rustls 0.23.10",
+ "rustls",
  "socket2",
  "thiserror",
  "tokio",
@@ -3037,7 +3037,7 @@ dependencies = [
  "rand",
  "ring 0.17.8",
  "rustc-hash",
- "rustls 0.23.10",
+ "rustls",
  "rustls-platform-verifier",
  "slab",
  "thiserror",
@@ -3892,9 +3892,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pkarr"
-version = "2.0.3"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89f9e12544b00f5561253bbd3cb72a85ff3bc398483dc1bf82bdf095c774136b"
+checksum = "7945a08031b7e14de57e8385cea3bcc7e10a88701595dc11d82551ba07bae13e"
 dependencies = [
  "bytes",
  "document-features",
@@ -4297,7 +4297,7 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash",
- "rustls 0.23.10",
+ "rustls",
  "socket2",
  "thiserror",
  "tokio",
@@ -4314,7 +4314,7 @@ dependencies = [
  "rand",
  "ring 0.17.8",
  "rustc-hash",
- "rustls 0.23.10",
+ "rustls",
  "slab",
  "thiserror",
  "tinyvec",
@@ -4645,7 +4645,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "quinn",
- "rustls 0.23.10",
+ "rustls",
  "rustls-pemfile",
  "rustls-pki-types",
  "serde",
@@ -4797,20 +4797,6 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.22.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf4ef73721ac7bcd79b2b315da7779d8fc09718c6b3d2d1b2d94850eb8c18432"
-dependencies = [
- "log",
- "ring 0.17.8",
- "rustls-pki-types",
- "rustls-webpki",
- "subtle",
- "zeroize",
-]
-
-[[package]]
-name = "rustls"
 version = "0.23.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05cff451f60db80f490f3c182b77c35260baace73209e9cdbbe526bfe3a4d402"
@@ -4864,7 +4850,7 @@ dependencies = [
  "jni",
  "log",
  "once_cell",
- "rustls 0.23.10",
+ "rustls",
  "rustls-native-certs",
  "rustls-platform-verifier-android",
  "rustls-webpki",
@@ -5852,7 +5838,7 @@ version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c7bc40d0e5a97695bb96e27995cd3a08538541b0a846f65bba7a359f36700d4"
 dependencies = [
- "rustls 0.23.10",
+ "rustls",
  "rustls-pki-types",
  "tokio",
 ]
@@ -5875,7 +5861,7 @@ dependencies = [
  "rcgen 0.12.1",
  "reqwest",
  "ring 0.17.8",
- "rustls 0.23.10",
+ "rustls",
  "serde",
  "serde_json",
  "thiserror",
@@ -6284,16 +6270,15 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "ureq"
-version = "2.9.7"
+version = "2.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d11a831e3c0b56e438a28308e7c810799e3c118417f342d30ecec080105395cd"
+checksum = "b74fc6b57825be3373f7054754755f03ac3a8f5d70015ccad699ba2029956f4a"
 dependencies = [
  "base64 0.22.1",
  "log",
  "once_cell",
- "rustls 0.22.4",
+ "rustls",
  "rustls-pki-types",
- "rustls-webpki",
  "url",
  "webpki-roots",
 ]
