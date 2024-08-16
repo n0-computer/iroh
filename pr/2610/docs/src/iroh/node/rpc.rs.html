@@ -1478,6 +1478,9 @@
 <a href="#1478" id="1478">1478</a>
 <a href="#1479" id="1479">1479</a>
 <a href="#1480" id="1480">1480</a>
+<a href="#1481" id="1481">1481</a>
+<a href="#1482" id="1482">1482</a>
+<a href="#1483" id="1483">1483</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::{Arc, Mutex};
@@ -1639,7 +1642,10 @@
             Relay(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_relay).<span class="kw">await</span>,
             Shutdown(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_shutdown).<span class="kw">await</span>,
             Stats(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_stats).<span class="kw">await</span>,
-            NodeInfosIter(msg) =&gt; chan.server_streaming(msg, <span class="self">self</span>, <span class="self">Self</span>::all_node_info).<span class="kw">await</span>,
+            NodeInfosIter(msg) =&gt; {
+                chan.server_streaming(msg, <span class="self">self</span>, <span class="self">Self</span>::node_infos_iter)
+                    .<span class="kw">await
+            </span>}
             NodeInfo(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_info).<span class="kw">await</span>,
             AddAddr(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_add_addr).<span class="kw">await</span>,
         }
@@ -2747,7 +2753,7 @@
         .into_stream()
     }
 
-    <span class="kw">fn </span>all_node_info(
+    <span class="kw">fn </span>node_infos_iter(
         <span class="self">self</span>,
         <span class="kw">_</span>: NodeInfosIterRequest,
     ) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;NodeInfosIterResponse&gt;&gt; + Send + <span class="lifetime">'static </span>{
