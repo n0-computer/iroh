@@ -2656,7 +2656,6 @@ dependencies = [
  "iroh",
  "iroh-gossip",
  "iroh-metrics",
- "iroh-quinn",
  "nix 0.27.1",
  "parking_lot",
  "pkarr",
