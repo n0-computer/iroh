@@ -3224,7 +3224,7 @@
             ]),
             next_id: <span class="number">5</span>,
         });
-        <span class="kw">let </span><span class="kw-2">mut </span>got = node_map.node_infos(later);
+        <span class="kw">let </span><span class="kw-2">mut </span>got = node_map.list_node_infos(later);
         got.sort_by_key(|p| p.node_id);
         expect.sort_by_key(|p| p.node_id);
         remove_non_deterministic_fields(<span class="kw-2">&amp;mut </span>got);

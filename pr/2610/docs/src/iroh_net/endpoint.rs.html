@@ -2289,7 +2289,7 @@
     ///
     /// See also [`Endpoint::node_info`] to only retrieve information about a single node.
     </span><span class="kw">pub fn </span>node_infos_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = NodeInfo&gt; {
-        <span class="self">self</span>.msock.node_info_all_nodes().into_iter()
+        <span class="self">self</span>.msock.list_node_infos().into_iter()
     }
 
     <span class="comment">// # Methods for less common getters.

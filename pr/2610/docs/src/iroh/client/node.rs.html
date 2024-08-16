@@ -332,7 +332,7 @@
     /// transferring the snapshot.
     ///
     /// See also [`Endpoint::node_infos_iter`](crate::net::Endpoint::node_infos_iter).
-    </span><span class="kw">pub async fn </span>node_info_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;NodeInfo&gt;&gt;&gt; {
+    </span><span class="kw">pub async fn </span>node_infos_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;NodeInfo&gt;&gt;&gt; {
         <span class="kw">let </span>stream = <span class="self">self</span>.rpc.server_streaming(NodeInfosIterRequest {}).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(flatten(stream).map(|res| res.map(|res| res.info)))
     }

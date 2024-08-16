@@ -797,6 +797,10 @@
 <a href="#797" id="797">797</a>
 <a href="#798" id="798">798</a>
 <a href="#799" id="799">799</a>
+<a href="#800" id="800">800</a>
+<a href="#801" id="801">801</a>
+<a href="#802" id="802">802</a>
+<a href="#803" id="803">803</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, HashMap},
     hash::Hash,
@@ -1025,8 +1029,12 @@
     }
 
     <span class="doccomment">/// Returns the [`NodeInfo`]s for each node in the node map.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>node_infos(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; Vec&lt;NodeInfo&gt; {
-        <span class="self">self</span>.inner.lock().node_infos(now)
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>list_node_infos(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; Vec&lt;NodeInfo&gt; {
+        <span class="comment">// NOTE: calls to this method will often call `into_iter` (or similar methods). Note that
+        // we can't avoid `collect` here since it would hold a lock for an indefinite time. Even if
+        // we were to find this acceptable, dealing with the lifetimes of the mutex's guard and the
+        // internal iterator will be a hassle, if possible at all.
+        </span><span class="self">self</span>.inner.lock().node_infos_iter(now).collect()
     }
 
     <span class="doccomment">/// Returns a stream of [`ConnectionType`].
@@ -1186,8 +1194,8 @@
     }
 
     <span class="doccomment">/// Get the [`NodeInfo`]s for each endpoint
-    </span><span class="kw">fn </span>node_infos(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; Vec&lt;NodeInfo&gt; {
-        <span class="self">self</span>.node_states().map(|(<span class="kw">_</span>, ep)| ep.info(now)).collect()
+    </span><span class="kw">fn </span>node_infos_iter(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; <span class="kw">impl </span>Iterator&lt;Item = NodeInfo&gt; + <span class="lifetime">'_ </span>{
+        <span class="self">self</span>.node_states().map(<span class="kw">move </span>|(<span class="kw">_</span>, ep)| ep.info(now))
     }
 
     <span class="doccomment">/// Get the [`NodeInfo`]s for each endpoint
@@ -1466,7 +1474,7 @@
         node_map.add_test_addr(node_addr_d);
 
         <span class="kw">let </span><span class="kw-2">mut </span>addrs: Vec&lt;NodeAddr&gt; = node_map
-            .node_infos(Instant::now())
+            .list_node_infos(Instant::now())
             .into_iter()
             .filter_map(|info| {
                 <span class="kw">let </span>addr: NodeAddr = info.into();
@@ -1479,7 +1487,7 @@
         <span class="kw">let </span>loaded_node_map = NodeMap::load_from_vec(addrs.clone());
 
         <span class="kw">let </span><span class="kw-2">mut </span>loaded: Vec&lt;NodeAddr&gt; = loaded_node_map
-            .node_infos(Instant::now())
+            .list_node_infos(Instant::now())
             .into_iter()
             .filter_map(|info| {
                 <span class="kw">let </span>addr: NodeAddr = info.into();

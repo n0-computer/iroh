@@ -3837,9 +3837,9 @@
             .unwrap_or(<span class="bool-val">false</span>)
     }
 
-    <span class="doccomment">/// Return all the [`NodeInfo`]s of all nodes in the node map.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>node_info_all_nodes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;NodeInfo&gt; {
-        <span class="self">self</span>.node_map.node_infos(Instant::now())
+    <span class="doccomment">/// Return the [`NodeInfo`]s of all nodes in the node map.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>list_node_infos(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;NodeInfo&gt; {
+        <span class="self">self</span>.node_map.list_node_infos(Instant::now())
     }
 
     <span class="doccomment">/// Return the [`NodeInfo`] for a single node in the node map.
@@ -6328,7 +6328,7 @@
         <span class="kw">fn </span>tracked_endpoints(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;PublicKey&gt; {
             <span class="self">self</span>.endpoint
                 .magic_sock()
-                .node_info_all_nodes()
+                .list_node_infos()
                 .into_iter()
                 .map(|ep| ep.node_id)
                 .collect()
