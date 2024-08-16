@@ -175,10 +175,10 @@
     </span>Stats(StatsRequest),
     <span class="attr">#[rpc(response = ())]
     </span>Shutdown(ShutdownRequest),
-    <span class="attr">#[server_streaming(response = RpcResult&lt;AllNodeInfoResponse&gt;)]
-    </span>Connections(AllNodeInfoRequest),
+    <span class="attr">#[server_streaming(response = RpcResult&lt;NodeInfosIterResponse&gt;)]
+    </span>NodeInfosIter(NodeInfosIterRequest),
     <span class="attr">#[rpc(response = RpcResult&lt;NodeInfoResponse&gt;)]
-    </span>ConnectionInfo(NodeInfoRequest),
+    </span>NodeInfo(NodeInfoRequest),
     <span class="attr">#[server_streaming(response = WatchResponse)]
     </span>Watch(NodeWatchRequest),
 }
@@ -192,7 +192,7 @@
     Addr(RpcResult&lt;NodeAddr&gt;),
     Relay(RpcResult&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;),
     Stats(RpcResult&lt;StatsResponse&gt;),
-    Connections(RpcResult&lt;AllNodeInfoResponse&gt;),
+    Connections(RpcResult&lt;NodeInfosIterResponse&gt;),
     ConnectionInfo(RpcResult&lt;NodeInfoResponse&gt;),
     Shutdown(()),
     Watch(WatchResponse),
@@ -204,11 +204,11 @@
 /// possible.  As well due to connections nodes can become known due to discovery mechanisms
 /// or be added manually.
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>AllNodeInfoRequest;
+</span><span class="kw">pub struct </span>NodeInfosIterRequest;
 
 <span class="doccomment">/// A response to a connections request
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>AllNodeInfoResponse {
+</span><span class="kw">pub struct </span>NodeInfosIterResponse {
     <span class="doccomment">/// Information about a connection
     </span><span class="kw">pub </span>info: NodeInfo,
 }
