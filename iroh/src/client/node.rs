@@ -23,8 +23,8 @@ use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::node::{
-    AddAddrRequest, AddrRequest, CounterStats, IdRequest, NodeInfoRequest, NodeInfoResponse,
-    NodeInfosIterRequest, RelayRequest, ShutdownRequest, StatsRequest, StatusRequest,
+    AddAddrRequest, AddrRequest, CounterStats, IdRequest, RemoteInfoRequest, RemoteInfoResponse,
+    RemoteInfosIterRequest, RelayRequest, ShutdownRequest, StatsRequest, StatusRequest,
 };
 
 use super::{flatten, RpcClient};
@@ -129,7 +129,7 @@ impl Client {
     ///
     /// See also [`Endpoint::remote_infos_iter`](crate::net::Endpoint::remote_infos_iter).
     pub async fn remote_infos_iter(&self) -> Result<impl Stream<Item = Result<RemoteInfo>>> {
-        let stream = self.rpc.server_streaming(NodeInfosIterRequest {}).await?;
+        let stream = self.rpc.server_streaming(RemoteInfosIterRequest {}).await?;
         Ok(flatten(stream).map(|res| res.map(|res| res.info)))
     }
 
@@ -137,8 +137,8 @@ impl Client {
     ///
     /// See also [`Endpoint::node_info`](crate::net::Endpoint::node_info).
     pub async fn node_info(&self, node_id: NodeId) -> Result<Option<RemoteInfo>> {
-        let NodeInfoResponse { info: conn_info } =
-            self.rpc.rpc(NodeInfoRequest { node_id }).await??;
+        let RemoteInfoResponse { info: conn_info } =
+            self.rpc.rpc(RemoteInfoRequest { node_id }).await??;
         Ok(conn_info)
     }
 

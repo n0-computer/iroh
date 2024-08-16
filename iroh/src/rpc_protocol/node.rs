@@ -29,10 +29,10 @@ pub enum Request {
     Stats(StatsRequest),
     #[rpc(response = ())]
     Shutdown(ShutdownRequest),
-    #[server_streaming(response = RpcResult<NodeInfosIterResponse>)]
-    NodeInfosIter(NodeInfosIterRequest),
-    #[rpc(response = RpcResult<NodeInfoResponse>)]
-    NodeInfo(NodeInfoRequest),
+    #[server_streaming(response = RpcResult<RemoteInfosIterResponse>)]
+    RemoteInfosIter(RemoteInfosIterRequest),
+    #[rpc(response = RpcResult<RemoteInfoResponse>)]
+    RemoteInfo(RemoteInfoRequest),
     #[server_streaming(response = WatchResponse)]
     Watch(NodeWatchRequest),
 }
@@ -46,8 +46,8 @@ pub enum Response {
     Addr(RpcResult<NodeAddr>),
     Relay(RpcResult<Option<RelayUrl>>),
     Stats(RpcResult<StatsResponse>),
-    NodeInfosIter(RpcResult<NodeInfosIterResponse>),
-    NodeInfo(RpcResult<NodeInfoResponse>),
+    RemoteInfosIter(RpcResult<RemoteInfosIterResponse>),
+    RemoteInfo(RpcResult<RemoteInfoResponse>),
     Shutdown(()),
     Watch(WatchResponse),
 }
@@ -58,25 +58,25 @@ pub enum Response {
 /// possible. Nodes can also become known due to discovery mechanisms
 /// or be added manually.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NodeInfosIterRequest;
+pub struct RemoteInfosIterRequest;
 
 /// A response to a connections request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NodeInfosIterResponse {
+pub struct RemoteInfosIterResponse {
     /// Information about a connection
     pub info: RemoteInfo,
 }
 
 /// Get connection information about a specific node
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NodeInfoRequest {
+pub struct RemoteInfoRequest {
     /// The node identifier
     pub node_id: PublicKey,
 }
 
 /// A response to a connection request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NodeInfoResponse {
+pub struct RemoteInfoResponse {
     /// Information about a connection to a node
     pub info: Option<RemoteInfo>,
 }

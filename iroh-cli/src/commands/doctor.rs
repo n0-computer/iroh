@@ -30,7 +30,7 @@ use iroh::{
         defaults::DEFAULT_STUN_PORT,
         discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
         dns::default_resolver,
-        endpoint::{self, Connection, ConnectionTypeStream, RemoteInfo, RecvStream, SendStream},
+        endpoint::{self, Connection, ConnectionTypeStream, RecvStream, RemoteInfo, SendStream},
         key::{PublicKey, SecretKey},
         netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
@@ -401,7 +401,7 @@ impl Gui {
         let counter_task = tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
-                Self::update_connection_info(&conn_info, &endpoint, &node_id);
+                Self::update_remote_info(&conn_info, &endpoint, &node_id);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });
@@ -419,7 +419,7 @@ impl Gui {
         }
     }
 
-    fn update_connection_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &NodeId) {
+    fn update_remote_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &NodeId) {
         let format_latency = |x: Option<Duration>| {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())

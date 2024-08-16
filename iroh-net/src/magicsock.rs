@@ -288,19 +288,19 @@ impl MagicSock {
 
     /// Returns `true` if we have at least one candidate address where we can send packets to.
     pub(crate) fn has_send_address(&self, node_key: PublicKey) -> bool {
-        self.node_info(node_key)
+        self.remote_info(node_key)
             .map(|info| info.has_send_address())
             .unwrap_or(false)
     }
 
     /// Return the [`RemoteInfo`]s of all nodes in the node map.
     pub(crate) fn list_remote_infos(&self) -> Vec<RemoteInfo> {
-        self.node_map.list_node_infos(Instant::now())
+        self.node_map.list_remote_infos(Instant::now())
     }
 
     /// Return the [`RemoteInfo`] for a single node in the node map.
-    pub(crate) fn node_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
-        self.node_map.node_info(node_id)
+    pub(crate) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
+        self.node_map.remote_info(node_id)
     }
 
     /// Returns the direct addresses as a stream.

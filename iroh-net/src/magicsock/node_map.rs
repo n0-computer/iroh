@@ -225,8 +225,8 @@ impl NodeMap {
             .collect()
     }
 
-    /// Returns the [`NodeInfo`]s for each node in the node map.
-    pub(super) fn list_node_infos(&self, now: Instant) -> Vec<RemoteInfo> {
+    /// Returns the [`RemoteInfo`]s for each node in the node map.
+    pub(super) fn list_remote_infos(&self, now: Instant) -> Vec<RemoteInfo> {
         // NOTE: calls to this method will often call `into_iter` (or similar methods). Note that
         // we can't avoid `collect` here since it would hold a lock for an indefinite time. Even if
         // we were to find this acceptable, dealing with the lifetimes of the mutex's guard and the
@@ -247,9 +247,9 @@ impl NodeMap {
         self.inner.lock().conn_type_stream(node_id)
     }
 
-    /// Get the [`NodeInfo`]s for each endpoint
-    pub(super) fn node_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
-        self.inner.lock().node_info(node_id)
+    /// Get the [`RemoteInfo`]s for each endpoint
+    pub(super) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
+        self.inner.lock().remote_info(node_id)
     }
 
     /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
@@ -396,7 +396,7 @@ impl NodeMapInner {
     }
 
     /// Get the [`RemoteInfo`]s for each node.
-    fn node_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
+    fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
         self.get(NodeStateKey::NodeId(node_id))
             .map(|ep| ep.info(Instant::now()))
     }
@@ -671,7 +671,7 @@ mod tests {
         node_map.add_test_addr(node_addr_d);
 
         let mut addrs: Vec<NodeAddr> = node_map
-            .list_node_infos(Instant::now())
+            .list_remote_infos(Instant::now())
             .into_iter()
             .filter_map(|info| {
                 let addr: NodeAddr = info.into();
@@ -684,7 +684,7 @@ mod tests {
         let loaded_node_map = NodeMap::load_from_vec(addrs.clone());
 
         let mut loaded: Vec<NodeAddr> = loaded_node_map
-            .list_node_infos(Instant::now())
+            .list_remote_infos(Instant::now())
             .into_iter()
             .filter_map(|info| {
                 let addr: NodeAddr = info.into();

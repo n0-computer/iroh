@@ -17,9 +17,9 @@ use iroh::net::{NodeAddr, NodeId};
 #[allow(clippy::large_enum_variant)]
 pub enum NodeCommands {
     /// Get information about the different remote nodes.
-    NodeInfoList,
+    RemoteList,
     /// Get information about a particular remote node.
-    NodeInfo { node_id: NodeId },
+    Remote { node_id: NodeId },
     /// Get status of the running node.
     Status,
     /// Get statistics and metrics from the running node.
@@ -48,7 +48,7 @@ pub enum NodeCommands {
 impl NodeCommands {
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
-            Self::NodeInfoList => {
+            Self::RemoteList => {
                 let connections = iroh.remote_infos_iter().await?;
                 let timestamp = time::OffsetDateTime::now_utc()
                     .format(&time::format_description::well_known::Rfc2822)
@@ -61,7 +61,7 @@ impl NodeCommands {
                     fmt_connections(connections).await
                 );
             }
-            Self::NodeInfo { node_id } => {
+            Self::Remote { node_id } => {
                 let conn_info = iroh.node_info(node_id).await?;
                 match conn_info {
                     Some(info) => println!("{}", fmt_connection(info)),

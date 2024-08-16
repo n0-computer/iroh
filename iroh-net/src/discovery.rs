@@ -261,7 +261,7 @@ impl DiscoveryTask {
     /// have timed out.
     fn needs_discovery(ep: &Endpoint, node_id: NodeId) -> bool {
         match ep.remote_info(node_id) {
-            // No connection info means no path to node -> start discovery.
+            // No info means no path to node -> start discovery.
             None => true,
             Some(info) => {
                 match (

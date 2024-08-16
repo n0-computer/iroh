@@ -720,19 +720,19 @@ impl Endpoint {
     /// See also [`Endpoint::remote_infos_iter`] which returns information on all nodes known
     /// by this [`Endpoint`].
     pub fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
-        self.msock.node_info(node_id)
+        self.msock.remote_info(node_id)
     }
 
     /// Returns information about all the remote nodes this [`Endpoint`] knows about.
     ///
-    /// This returns the same information as [`Endpoint::node_info`] for each node known to
+    /// This returns the same information as [`Endpoint::remote_info`] for each node known to
     /// this [`Endpoint`].
     ///
     /// The [`Endpoint`] keeps some information about remote iroh-net nodes, which it uses to
     /// find the best connection to a node.  This returns all the nodes it knows about,
     /// regardless of whether a connection was ever made or is even possible.
     ///
-    /// See also [`Endpoint::node_info`] to only retrieve information about a single node.
+    /// See also [`Endpoint::remote_info`] to only retrieve information about a single node.
     pub fn remote_infos_iter(&self) -> impl Iterator<Item = RemoteInfo> {
         self.msock.list_remote_infos().into_iter()
     }

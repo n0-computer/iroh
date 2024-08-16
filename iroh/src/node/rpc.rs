@@ -64,9 +64,9 @@ use crate::rpc_protocol::{
     },
     gossip, node,
     node::{
-        AddAddrRequest, AddrRequest, IdRequest, NodeInfoRequest, NodeInfoResponse,
-        NodeInfosIterRequest, NodeInfosIterResponse, NodeWatchRequest, RelayRequest,
-        ShutdownRequest, StatsRequest, StatsResponse, StatusRequest, WatchResponse,
+        AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest, RemoteInfoRequest,
+        RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse, ShutdownRequest,
+        StatsRequest, StatsResponse, StatusRequest, WatchResponse,
     },
     tags,
     tags::{DeleteRequest as TagDeleteRequest, ListRequest as ListTagsRequest},
@@ -159,11 +159,11 @@ impl<D: BaoStore> Handler<D> {
             Relay(msg) => chan.rpc(msg, self, Self::node_relay).await,
             Shutdown(msg) => chan.rpc(msg, self, Self::node_shutdown).await,
             Stats(msg) => chan.rpc(msg, self, Self::node_stats).await,
-            NodeInfosIter(msg) => {
+            RemoteInfosIter(msg) => {
                 chan.server_streaming(msg, self, Self::remote_infos_iter)
                     .await
             }
-            NodeInfo(msg) => chan.rpc(msg, self, Self::node_info).await,
+            RemoteInfo(msg) => chan.rpc(msg, self, Self::remote_info).await,
             AddAddr(msg) => chan.rpc(msg, self, Self::node_add_addr).await,
         }
     }
@@ -1272,15 +1272,15 @@ impl<D: BaoStore> Handler<D> {
 
     fn remote_infos_iter(
         self,
-        _: NodeInfosIterRequest,
-    ) -> impl Stream<Item = RpcResult<NodeInfosIterResponse>> + Send + 'static {
+        _: RemoteInfosIterRequest,
+    ) -> impl Stream<Item = RpcResult<RemoteInfosIterResponse>> + Send + 'static {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = async_channel::bounded(32);
         let mut node_infos: Vec<_> = self.inner.endpoint.remote_infos_iter().collect();
         node_infos.sort_by_key(|n| n.node_id.to_string());
         self.local_pool_handle().spawn_detached(|| async move {
             for node_info in node_infos {
-                tx.send(Ok(NodeInfosIterResponse { info: node_info }))
+                tx.send(Ok(RemoteInfosIterResponse { info: node_info }))
                     .await
                     .ok();
             }
@@ -1290,10 +1290,10 @@ impl<D: BaoStore> Handler<D> {
 
     // This method is called as an RPC method, which have to be async
     #[allow(clippy::unused_async)]
-    async fn node_info(self, req: NodeInfoRequest) -> RpcResult<NodeInfoResponse> {
-        let NodeInfoRequest { node_id } = req;
+    async fn remote_info(self, req: RemoteInfoRequest) -> RpcResult<RemoteInfoResponse> {
+        let RemoteInfoRequest { node_id } = req;
         let node_info = self.inner.endpoint.remote_info(node_id);
-        Ok(NodeInfoResponse { info: node_info })
+        Ok(RemoteInfoResponse { info: node_info })
     }
 
     // This method is called as an RPC method, which have to be async
