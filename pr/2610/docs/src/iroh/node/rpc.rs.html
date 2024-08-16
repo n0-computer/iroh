@@ -2762,8 +2762,8 @@
         <span class="kw">let </span><span class="kw-2">mut </span>node_infos: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.inner.endpoint.node_infos_iter().collect();
         node_infos.sort_by_key(|n| n.node_id.to_string());
         <span class="self">self</span>.local_pool_handle().spawn_detached(|| <span class="kw">async move </span>{
-            <span class="kw">for </span>conn_info <span class="kw">in </span>node_infos {
-                tx.send(<span class="prelude-val">Ok</span>(NodeInfosIterResponse { info: conn_info }))
+            <span class="kw">for </span>node_info <span class="kw">in </span>node_infos {
+                tx.send(<span class="prelude-val">Ok</span>(NodeInfosIterResponse { info: node_info }))
                     .<span class="kw">await
                     </span>.ok();
             }
