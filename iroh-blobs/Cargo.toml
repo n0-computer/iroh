@@ -32,6 +32,7 @@ iroh-io = { version = "0.6.0", features = ["stats"] }
 iroh-metrics = { version = "0.22.0", path = "../iroh-metrics", default-features = false }
 iroh-net = { version = "0.22.0", path = "../iroh-net" }
 num_cpus = "1.15.0"
+oneshot = "0.1.8"
 parking_lot = { version = "0.12.1", optional = true }
 pin-project = "1.1.5"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
