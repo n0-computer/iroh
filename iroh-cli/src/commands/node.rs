@@ -58,13 +58,13 @@ impl NodeCommands {
                     " {}: {}\n\n{}",
                     "current time".bold(),
                     timestamp,
-                    fmt_connections(connections).await
+                    fmt_remote_infos(connections).await
                 );
             }
             Self::Remote { node_id } => {
-                let conn_info = iroh.node_info(node_id).await?;
-                match conn_info {
-                    Some(info) => println!("{}", fmt_connection(info)),
+                let info = iroh.remote_info(node_id).await?;
+                match info {
+                    Some(info) => println!("{}", fmt_info(info)),
                     None => println!("Not Found"),
                 }
             }
@@ -126,7 +126,7 @@ impl NodeCommands {
     }
 }
 
-async fn fmt_connections(
+async fn fmt_remote_infos(
     mut infos: impl Stream<Item = Result<RemoteInfo, anyhow::Error>> + Unpin,
 ) -> String {
     let mut table = Table::new();
@@ -135,19 +135,19 @@ async fn fmt_connections(
             .into_iter()
             .map(bold_cell),
     );
-    while let Some(Ok(conn_info)) = infos.next().await {
-        let node_id: Cell = conn_info.node_id.to_string().into();
-        let relay_url = conn_info
+    while let Some(Ok(info)) = infos.next().await {
+        let node_id: Cell = info.node_id.to_string().into();
+        let relay_url = info
             .relay_url
             .map_or(String::new(), |url_info| url_info.relay_url.to_string())
             .into();
-        let conn_type = conn_info.conn_type.to_string().into();
-        let latency = match conn_info.latency {
+        let conn_type = info.conn_type.to_string().into();
+        let latency = match info.latency {
             Some(latency) => latency.to_human_time_string(),
             None => String::from("unknown"),
         }
         .into();
-        let last_used = conn_info
+        let last_used = info
             .last_used
             .map(fmt_how_long_ago)
             .map(Cell::new)
@@ -157,7 +157,7 @@ async fn fmt_connections(
     table.to_string()
 }
 
-fn fmt_connection(info: RemoteInfo) -> String {
+fn fmt_info(info: RemoteInfo) -> String {
     let RemoteInfo {
         node_id,
         relay_url,
