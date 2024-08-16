@@ -2272,7 +2272,7 @@
     /// [`Endpoint`] learns more about the node.  Thus future calls may return different
     /// information.  Node information may even be completely evicted.
     ///
-    /// See also [`Endpoint::node_info_iter`] which returns information on all nodes known
+    /// See also [`Endpoint::node_infos_iter`] which returns information on all nodes known
     /// by this [`Endpoint`].
     </span><span class="kw">pub fn </span>node_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;NodeInfo&gt; {
         <span class="self">self</span>.msock.node_info(node_id)
@@ -2288,7 +2288,7 @@
     /// regardless of whether a connection was ever made or is even possible.
     ///
     /// See also [`Endpoint::node_info`] to only retrieve information about a single node.
-    </span><span class="kw">pub fn </span>node_info_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = NodeInfo&gt; {
+    </span><span class="kw">pub fn </span>node_infos_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = NodeInfo&gt; {
         <span class="self">self</span>.msock.node_info_all_nodes().into_iter()
     }
 
@@ -2841,11 +2841,11 @@
         <span class="comment">// first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
         </span><span class="kw">let </span>endpoint = new_endpoint(secret_key.clone(), <span class="prelude-val">None</span>).<span class="kw">await</span>;
-        <span class="macro">assert_eq!</span>(endpoint.node_info_iter().count(), <span class="number">0</span>);
+        <span class="macro">assert_eq!</span>(endpoint.node_infos_iter().count(), <span class="number">0</span>);
         endpoint.add_node_addr(node_addr.clone()).unwrap();
 
         <span class="comment">// Grab the current addrs
-        </span><span class="kw">let </span>node_addrs: Vec&lt;NodeAddr&gt; = endpoint.node_info_iter().map(Into::into).collect();
+        </span><span class="kw">let </span>node_addrs: Vec&lt;NodeAddr&gt; = endpoint.node_infos_iter().map(Into::into).collect();
         <span class="macro">assert_eq!</span>(node_addrs.len(), <span class="number">1</span>);
         <span class="macro">assert_eq!</span>(node_addrs[<span class="number">0</span>], node_addr);
 

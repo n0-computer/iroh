@@ -1596,7 +1596,7 @@
 }
 
 <span class="kw">fn </span>node_addresses_for_storage(ep: <span class="kw-2">&amp;</span>Endpoint) -&gt; Vec&lt;NodeAddr&gt; {
-    ep.node_info_iter()
+    ep.node_infos_iter()
         .filter_map(node_address_for_storage)
         .collect()
 }
