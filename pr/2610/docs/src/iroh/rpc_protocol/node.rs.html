@@ -206,24 +206,24 @@
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
 </span><span class="kw">pub struct </span>RemoteInfosIterRequest;
 
-<span class="doccomment">/// A response to a connections request
+<span class="doccomment">/// A response to a [`Request::RemoteInfosIter`].
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
 </span><span class="kw">pub struct </span>RemoteInfosIterResponse {
-    <span class="doccomment">/// Information about a connection
+    <span class="doccomment">/// Information about a node.
     </span><span class="kw">pub </span>info: RemoteInfo,
 }
 
-<span class="doccomment">/// Get connection information about a specific node
+<span class="doccomment">/// Get information about a specific remote node.
 </span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize)]
 </span><span class="kw">pub struct </span>RemoteInfoRequest {
     <span class="doccomment">/// The node identifier
     </span><span class="kw">pub </span>node_id: PublicKey,
 }
 
-<span class="doccomment">/// A response to a connection request
+<span class="doccomment">/// A response to a [`Request::RenoteInfo`] request
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
 </span><span class="kw">pub struct </span>RemoteInfoResponse {
-    <span class="doccomment">/// Information about a connection to a node
+    <span class="doccomment">/// Information about a node
     </span><span class="kw">pub </span>info: <span class="prelude-ty">Option</span>&lt;RemoteInfo&gt;,
 }
 
