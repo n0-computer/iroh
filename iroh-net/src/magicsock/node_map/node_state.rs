@@ -1284,7 +1284,7 @@ pub struct RemoteInfo {
     pub latency: Option<Duration>,
     /// Time elapsed time since last we have sent to or received from the node.
     ///
-    /// This is the duration since *any* data (payload or control messages) was sent or receive 
+    /// This is the duration since *any* data (payload or control messages) was sent or receive
     /// from the remote node. Note that sending to the remote node does not imply
     /// the remote node received anything.
     pub last_used: Option<Duration>,
