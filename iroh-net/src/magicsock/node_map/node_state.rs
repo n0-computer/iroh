@@ -1224,7 +1224,7 @@ pub struct DirectAddrInfo {
     /// remote node over this network path it also means the path exists.
     ///
     /// The elapsed time since *any* confirmation of the path's existence was received is
-    /// returned.  If the remote node moved network and no longer has this path, this could
+    /// returned.  If the remote node moved networks and no longer has this path, this could
     /// be a long duration.  If the path was added via [`Endpoint::add_node_addr`] or some
     /// node discovery the path may never have been known to exist.
     ///
@@ -1282,10 +1282,10 @@ pub struct RemoteInfo {
     pub conn_type: ConnectionType,
     /// The latency of the current network path to the remote node.
     pub latency: Option<Duration>,
-    /// Time elapsed time since last sending to, or received from the node.
+    /// Time elapsed time since last we have sent to or received from the node.
     ///
-    /// This is the duration since *any* data was sent or receive from the remote node,
-    /// payload or control messages.  Note that sending to the remote node does not imply
+    /// This is the duration since *any* data (payload or control messages) was sent or receive 
+    /// from the remote node. Note that sending to the remote node does not imply
     /// the remote node received anything.
     pub last_used: Option<Duration>,
 }

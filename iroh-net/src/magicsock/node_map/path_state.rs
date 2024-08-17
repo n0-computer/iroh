@@ -164,7 +164,7 @@ impl PathState {
 
     /// The last control or DISCO message **about** this path.
     ///
-    /// This is the most recent instant between:
+    /// This is the most recent instant among:
     /// - when last pong was received.
     /// - when this path was last advertised in a received CallMeMaybe message.
     /// - when the last ping from them was received.
