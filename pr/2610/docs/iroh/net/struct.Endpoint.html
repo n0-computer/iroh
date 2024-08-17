@@ -128,8 +128,8 @@ most recently discovered IP endpoints.</p>
 address if available.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.remote_info" class="method"><a class="src rightside" href="../../src/iroh_net/endpoint.rs.html#722">source</a><h4 class="code-header">pub fn <a href="#method.remote_info" class="fn">remote_info</a>(&amp;self, node_id: <a class="struct" href="key/struct.PublicKey.html" title="struct iroh::net::key::PublicKey">PublicKey</a>) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="endpoint/struct.RemoteInfo.html" title="struct iroh::net::endpoint::RemoteInfo">RemoteInfo</a>&gt;</h4></section></summary><div class="docblock"><p>Returns information about the remote node identified by a <a href="type.NodeId.html" title="type iroh::net::NodeId"><code>NodeId</code></a>.</p>
 <p>The <a href="struct.Endpoint.html" title="struct iroh::net::Endpoint"><code>Endpoint</code></a> keeps some information about remote iroh-net nodes, which it uses to find
-the best path to a node. Having information on a remote node, however, does not mean it has
-ever been connected or even whether a connection is even possible. The information about a
+the best path to a node. Having information on a remote node, however, does not mean we have
+ever connected to it to or even whether a connection is even possible. The information about a
 remote node will change over time, as the <a href="struct.Endpoint.html" title="struct iroh::net::Endpoint"><code>Endpoint</code></a> learns more about the node. Future
 calls may return different information. Furthermore, node information may even be
 completely evicted as it becomes stale.</p>
