@@ -2847,7 +2847,7 @@
     /// remote node over this network path it also means the path exists.
     ///
     /// The elapsed time since *any* confirmation of the path's existence was received is
-    /// returned.  If the remote node moved network and no longer has this path, this could
+    /// returned.  If the remote node moved networks and no longer has this path, this could
     /// be a long duration.  If the path was added via [`Endpoint::add_node_addr`] or some
     /// node discovery the path may never have been known to exist.
     ///
@@ -2905,10 +2905,10 @@
     </span><span class="kw">pub </span>conn_type: ConnectionType,
     <span class="doccomment">/// The latency of the current network path to the remote node.
     </span><span class="kw">pub </span>latency: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
-    <span class="doccomment">/// Time elapsed time since last sending to, or received from the node.
+    <span class="doccomment">/// Time elapsed time since last we have sent to or received from the node.
     ///
-    /// This is the duration since *any* data was sent or receive from the remote node,
-    /// payload or control messages.  Note that sending to the remote node does not imply
+    /// This is the duration since *any* data (payload or control messages) was sent or receive 
+    /// from the remote node. Note that sending to the remote node does not imply
     /// the remote node received anything.
     </span><span class="kw">pub </span>last_used: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
 }
