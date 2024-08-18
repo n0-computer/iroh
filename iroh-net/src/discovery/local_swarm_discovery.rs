@@ -11,13 +11,12 @@ use std::{
 
 use anyhow::Result;
 use derive_more::FromStr;
-use futures_lite::{stream::Boxed as BoxStream, StreamExt};
+use futures_lite::stream::Boxed as BoxStream;
 use tracing::{debug, error, trace, warn};
 
-use async_channel::Sender;
 use iroh_base::key::PublicKey;
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
-use tokio::task::JoinSet;
+use tokio::{sync::mpsc, task::JoinSet};
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
@@ -39,13 +38,13 @@ const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
 pub struct LocalSwarmDiscovery {
     #[allow(dead_code)]
     handle: AbortingJoinHandle<()>,
-    sender: Sender<Message>,
+    sender: mpsc::Sender<Message>,
 }
 
 #[derive(Debug)]
 enum Message {
     Discovery(String, Peer),
-    SendAddrs(NodeId, Sender<Result<DiscoveryItem>>),
+    SendAddrs(NodeId, mpsc::Sender<Result<DiscoveryItem>>),
     ChangeLocalAddrs(AddrInfo),
     Timeout(NodeId, usize),
 }
@@ -62,7 +61,7 @@ impl LocalSwarmDiscovery {
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
     pub fn new(node_id: NodeId) -> Result<Self> {
         debug!("Creating new LocalSwarmDiscovery service");
-        let (send, recv) = async_channel::bounded(64);
+        let (send, mut recv) = mpsc::channel(64);
         let task_sender = send.clone();
         let rt = tokio::runtime::Handle::current();
         let discovery = LocalSwarmDiscovery::spawn_discoverer(
@@ -75,19 +74,21 @@ impl LocalSwarmDiscovery {
         let handle = tokio::spawn(async move {
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
             let mut last_id = 0;
-            let mut senders: HashMap<PublicKey, HashMap<usize, Sender<Result<DiscoveryItem>>>> =
-                HashMap::default();
+            let mut senders: HashMap<
+                PublicKey,
+                HashMap<usize, mpsc::Sender<Result<DiscoveryItem>>>,
+            > = HashMap::default();
             let mut timeouts = JoinSet::new();
             loop {
                 trace!(?node_addrs, "LocalSwarmDiscovery Service loop tick");
                 let msg = match recv.recv().await {
-                    Err(err) => {
-                        error!("LocalSwarmDiscovery service error: {err:?}");
+                    None => {
+                        error!("LocalSwarmDiscovery channel closed");
                         error!("closing LocalSwarmDiscovery");
                         timeouts.abort_all();
                         return;
                     }
-                    Ok(msg) => msg,
+                    Some(msg) => msg,
                 };
                 match msg {
                     Message::Discovery(discovered_node_id, peer_info) => {
@@ -127,7 +128,7 @@ impl LocalSwarmDiscovery {
                                 sender.send(Ok(item)).await.ok();
                             }
                         }
-                        trace!(
+                        debug!(
                             ?discovered_node_id,
                             ?peer_info,
                             "adding node to LocalSwarmDiscovery address book"
@@ -189,10 +190,11 @@ impl LocalSwarmDiscovery {
 
     fn spawn_discoverer(
         node_id: PublicKey,
-        sender: Sender<Message>,
+        sender: mpsc::Sender<Message>,
         socketaddrs: BTreeSet<SocketAddr>,
         rt: &tokio::runtime::Handle,
     ) -> Result<DropGuard> {
+        let spawn_rt = rt.clone();
         let callback = move |node_id: &str, peer: &Peer| {
             trace!(
                 node_id,
@@ -200,9 +202,12 @@ impl LocalSwarmDiscovery {
                 "Received peer information from LocalSwarmDiscovery"
             );
 
-            sender
-                .send_blocking(Message::Discovery(node_id.to_string(), peer.clone()))
-                .ok();
+            let sender = sender.clone();
+            let node_id = node_id.to_string();
+            let peer = peer.clone();
+            spawn_rt.spawn(async move {
+                sender.send(Message::Discovery(node_id, peer)).await.ok();
+            });
         };
         let addrs = LocalSwarmDiscovery::socketaddrs_to_addrs(socketaddrs);
         let mut discoverer =
@@ -247,7 +252,7 @@ impl From<&Peer> for DiscoveryItem {
 
 impl Discovery for LocalSwarmDiscovery {
     fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
-        let (send, recv) = async_channel::bounded(20);
+        let (send, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
         tokio::spawn(async move {
             discovery_sender
@@ -255,7 +260,8 @@ impl Discovery for LocalSwarmDiscovery {
                 .await
                 .ok();
         });
-        Some(recv.boxed())
+        let stream = tokio_stream::wrappers::ReceiverStream::new(recv);
+        Some(Box::pin(stream))
     }
 
     fn publish(&self, info: &AddrInfo) {
@@ -272,42 +278,48 @@ impl Discovery for LocalSwarmDiscovery {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use testresult::TestResult;
 
-    #[tokio::test]
-    async fn test_local_swarm_discovery() -> TestResult {
-        let _guard = iroh_test::logging::setup();
-        let (_, discovery_a) = make_discoverer()?;
-        let (node_id_b, discovery_b) = make_discoverer()?;
+    /// This module's name signals nextest to run test in a single thread (no other concurrent
+    /// tests)
+    mod run_in_isolation {
+        use super::super::*;
+        use futures_lite::StreamExt;
+        use testresult::TestResult;
 
-        // make addr info for discoverer b
-        let addr_info = AddrInfo {
-            relay_url: None,
-            direct_addresses: BTreeSet::from(["0.0.0.0:11111".parse()?]),
-        };
+        #[tokio::test]
+        async fn test_local_swarm_discovery() -> TestResult {
+            let _guard = iroh_test::logging::setup();
+            let (_, discovery_a) = make_discoverer()?;
+            let (node_id_b, discovery_b) = make_discoverer()?;
 
-        // pass in endpoint, this is never used
-        let ep = crate::endpoint::Builder::default().bind(0).await?;
-        // resolve twice to ensure we can create separate streams for the same node_id
-        let mut s1 = discovery_a.resolve(ep.clone(), node_id_b).unwrap();
-        let mut s2 = discovery_a.resolve(ep, node_id_b).unwrap();
-        tracing::debug!(?node_id_b, "Discovering node id b");
-        // publish discovery_b's address
-        discovery_b.publish(&addr_info);
-        let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
-            .await?
-            .unwrap()?;
-        let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
-            .await?
-            .unwrap()?;
-        assert_eq!(s1_res.addr_info, addr_info);
-        assert_eq!(s2_res.addr_info, addr_info);
-        Ok(())
-    }
+            // make addr info for discoverer b
+            let addr_info = AddrInfo {
+                relay_url: None,
+                direct_addresses: BTreeSet::from(["0.0.0.0:11111".parse()?]),
+            };
 
-    fn make_discoverer() -> Result<(PublicKey, LocalSwarmDiscovery)> {
-        let node_id = crate::key::SecretKey::generate().public();
-        Ok((node_id, LocalSwarmDiscovery::new(node_id)?))
+            // pass in endpoint, this is never used
+            let ep = crate::endpoint::Builder::default().bind(0).await?;
+            // resolve twice to ensure we can create separate streams for the same node_id
+            let mut s1 = discovery_a.resolve(ep.clone(), node_id_b).unwrap();
+            let mut s2 = discovery_a.resolve(ep, node_id_b).unwrap();
+            tracing::debug!(?node_id_b, "Discovering node id b");
+            // publish discovery_b's address
+            discovery_b.publish(&addr_info);
+            let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
+                .await?
+                .unwrap()?;
+            let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
+                .await?
+                .unwrap()?;
+            assert_eq!(s1_res.addr_info, addr_info);
+            assert_eq!(s2_res.addr_info, addr_info);
+            Ok(())
+        }
+
+        fn make_discoverer() -> Result<(PublicKey, LocalSwarmDiscovery)> {
+            let node_id = crate::key::SecretKey::generate().public();
+            Ok((node_id, LocalSwarmDiscovery::new(node_id)?))
+        }
     }
 }
