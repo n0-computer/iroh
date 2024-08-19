@@ -413,6 +413,29 @@
 <a href="#413" id="413">413</a>
 <a href="#414" id="414">414</a>
 <a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! # Pkarr based node discovery for iroh-net
 //!
 //! Node discovery is being able to find connecting information about an iroh node based on just its node id.
@@ -488,6 +511,10 @@
     </span>ttl: u32,
     <span class="doccomment">/// True to include the direct addresses in the DNS packet.
     </span>include_direct_addresses: bool,
+    <span class="doccomment">/// Initial delay before the first publish.
+    </span>initial_publish_delay: Duration,
+    <span class="doccomment">/// Republish delay for the DHT.
+    </span>republish_delay: Duration,
 }
 
 <span class="doccomment">/// Builder for PkarrNodeDiscovery.
@@ -501,6 +528,8 @@
     pkarr_relay: <span class="prelude-ty">Option</span>&lt;Url&gt;,
     dht: bool,
     include_direct_addresses: bool,
+    initial_publish_delay: Duration,
+    republish_delay: Duration,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Builder {
@@ -512,6 +541,8 @@
             pkarr_relay: <span class="prelude-val">None</span>,
             dht: <span class="bool-val">true</span>,
             include_direct_addresses: <span class="bool-val">false</span>,
+            initial_publish_delay: INITIAL_PUBLISH_DELAY,
+            republish_delay: REPUBLISH_DELAY,
         }
     }
 }
@@ -561,6 +592,18 @@
         <span class="self">self
     </span>}
 
+    <span class="doccomment">/// Set the initial delay before the first publish.
+    </span><span class="kw">pub fn </span>initial_publish_delay(<span class="kw-2">mut </span><span class="self">self</span>, initial_publish_delay: Duration) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.initial_publish_delay = initial_publish_delay;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Set the republish delay for the DHT.
+    </span><span class="kw">pub fn </span>republish_delay(<span class="kw-2">mut </span><span class="self">self</span>, republish_delay: Duration) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.republish_delay = republish_delay;
+        <span class="self">self
+    </span>}
+
     <span class="doccomment">/// Build the discovery mechanism.
     </span><span class="kw">pub fn </span>build(<span class="self">self</span>) -&gt; anyhow::Result&lt;DhtDiscovery&gt; {
         <span class="kw">let </span>pkarr = <span class="self">self
@@ -590,11 +633,13 @@
         <span class="prelude-val">Ok</span>(DhtDiscovery(Arc::new(Inner {
             pkarr,
             pkarr_relay,
-            secret_key: <span class="self">self</span>.secret_key,
             ttl,
             relay_url,
             dht,
             include_direct_addresses,
+            secret_key: <span class="self">self</span>.secret_key,
+            initial_publish_delay: <span class="self">self</span>.initial_publish_delay,
+            republish_delay: <span class="self">self</span>.republish_delay,
             task: Default::default(),
         })))
     }
@@ -614,7 +659,7 @@
             .to_z32();
         <span class="comment">// initial delay. If the task gets aborted before this delay is over,
         // we have not published anything to the DHT yet.
-        </span>tokio::time::sleep(INITIAL_PUBLISH_DELAY).<span class="kw">await</span>;
+        </span>tokio::time::sleep(this.<span class="number">0</span>.initial_publish_delay).<span class="kw">await</span>;
         <span class="kw">loop </span>{
             <span class="comment">// publish to the DHT if enabled
             </span><span class="kw">let </span>dht_publish = <span class="kw">async </span>{
@@ -655,7 +700,7 @@
             };
             <span class="comment">// do both at the same time
             </span><span class="macro">tokio::join!</span>(relay_publish, dht_publish);
-            tokio::time::sleep(REPUBLISH_DELAY).<span class="kw">await</span>;
+            tokio::time::sleep(this.<span class="number">0</span>.republish_delay).<span class="kw">await</span>;
         }
     }
 
@@ -793,7 +838,7 @@
         <span class="kw">let _ </span>= tracing_subscriber::fmt::try_init();
         <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind(<span class="number">0</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>secret = ep.secret_key().clone();
-        <span class="kw">let </span>testnet = mainline::dht::Testnet::new(<span class="number">5</span>);
+        <span class="kw">let </span>testnet = mainline::dht::Testnet::new(<span class="number">2</span>);
         <span class="kw">let </span>settings = pkarr::Settings {
             dht: DhtSettings {
                 bootstrap: <span class="prelude-val">Some</span>(testnet.bootstrap.clone()),
@@ -804,6 +849,7 @@
         <span class="kw">let </span>client = PkarrClient::new(settings)<span class="question-mark">?</span>;
         <span class="kw">let </span>discovery = DhtDiscovery::builder()
             .secret_key(secret.clone())
+            .initial_publish_delay(Duration::ZERO)
             .client(client)
             .build()<span class="question-mark">?</span>;
         <span class="kw">let </span>relay_url: RelayUrl = Url::parse(<span class="string">"https://example.com"</span>)<span class="question-mark">?</span>.into();

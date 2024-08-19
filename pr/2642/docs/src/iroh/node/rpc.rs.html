@@ -2757,7 +2757,7 @@
     ) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;RemoteInfosIterResponse&gt;&gt; + Send + <span class="lifetime">'static </span>{
         <span class="comment">// provide a little buffer so that we don't slow down the sender
         </span><span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">32</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>infos: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.inner.endpoint.remote_infos_iter().collect();
+        <span class="kw">let </span><span class="kw-2">mut </span>infos: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.inner.endpoint.remote_info_iter().collect();
         infos.sort_by_key(|n| n.node_id.to_string());
         <span class="self">self</span>.local_pool_handle().spawn_detached(|| <span class="kw">async move </span>{
             <span class="kw">for </span>info <span class="kw">in </span>infos {

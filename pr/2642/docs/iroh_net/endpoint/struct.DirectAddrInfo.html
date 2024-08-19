@@ -23,9 +23,9 @@ is returned.</p>
 from this <a href="struct.DirectAddrInfo.html#structfield.addr" title="field iroh_net::endpoint::DirectAddrInfo::addr"><code>DirectAddrInfo::addr</code></a>.  It indicates the network path was in use to
 transport payload data.</p>
 </div><span id="structfield.last_alive" class="structfield section-header"><a href="#structfield.last_alive" class="anchor field">§</a><code>last_alive: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/core/time/struct.Duration.html" title="struct core::time::Duration">Duration</a>&gt;</code></span><div class="docblock"><p>Elapsed time since this network path was known to exist.</p>
-<p>A network path be considered to exist only because the remote node advertised it.
-It may not mean the path is usable.  However if there was any communication with the
-remote node over this network path it also means the path exists.</p>
+<p>A network path is considered to exist only because the remote node advertised it.
+It may not mean the path is usable.  However, if there was any communication with
+the remote node over this network path it also means the path exists.</p>
 <p>The elapsed time since <em>any</em> confirmation of the path’s existence was received is
 returned.  If the remote node moved networks and no longer has this path, this could
 be a long duration.  If the path was added via <a href="struct.Endpoint.html#method.add_node_addr" title="method iroh_net::endpoint::Endpoint::add_node_addr"><code>Endpoint::add_node_addr</code></a> or some
