@@ -328,7 +328,7 @@
 }
 
 <span class="doccomment">/// Contains all timeouts that we use in `iroh-net`.
-</span><span class="kw">pub mod </span>timeouts {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>timeouts {
     <span class="kw">use </span>std::time::Duration;
 
     <span class="comment">// Timeouts for netcheck
@@ -376,7 +376,7 @@
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>NAT_PMP_RECV_TIMEOUT: Duration = Duration::from_millis(<span class="number">500</span>);
 
     <span class="doccomment">/// Timeouts specifically used in the iroh-relay
-    </span><span class="kw">pub mod </span>relay {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>relay {
         <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
         <span class="doccomment">/// Timeout used by the relay client while connecting to the relay server,
