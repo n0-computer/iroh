@@ -112,7 +112,7 @@ jobs:
       env:
         ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       run: | 
-        cargo install cargo-ndk
+        cargo install --version 3.5.4 cargo-ndk
         cargo ndk --target ${{ matrix.target }} build
 
   cross_test:
@@ -428,6 +428,11 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.5
 
+      - name: Cleanup Docker
+        continue-on-error: true
+        run: |
+          docker kill $(docker ps -q)
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -446,11 +451,6 @@ jobs:
         run: |
           docker run -p 9090:9090 -p 4919:4919/udp -Pd n0computer/iroh-test:latest --rpc-addr 0.0.0.0:4919 start
           cargo run --bin iroh -- --rpc-addr 127.0.0.1:4919 node stats
-
-      - name: Cleanup Docker
-        continue-on-error: true
-        run: |
-          docker kill $(docker ps -q)
 
   codespell:
     runs-on: ubuntu-latest
