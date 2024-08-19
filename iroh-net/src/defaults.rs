@@ -141,7 +141,7 @@ pub mod timeouts {
     /// The total time we wait for all the probes.
     ///
     /// This includes the STUN, ICMP and HTTPS probes, which will all
-    /// start at different times based on the [`ProbePlan`].
+    /// start at different times based on the ProbePlan.
     pub(crate) const PROBES_TIMEOUT: Duration = Duration::from_secs(3);
 
     /// How long to await for a captive-portal result.
