@@ -928,6 +928,7 @@ mod test {
             NodeAddr::new(sub_id1).with_relay_url(relay_url.clone()),
         ];
 
+        // We all know each other. We're all friends!
         for ep in [&pub_ep, &sub_ep0, &sub_ep1] {
             for addr in addrs.iter() {
                 if addr.node_id != ep.node_id() {
@@ -941,7 +942,7 @@ mod test {
         [
             pub_gossip.join(topic, vec![]),
             sub_gossip0.join(topic, vec![pub_id]),
-            sub_gossip1.join(topic, vec![sub_id0]),
+            sub_gossip1.join(topic, vec![pub_id]),
         ]
         .try_join()
         .await
