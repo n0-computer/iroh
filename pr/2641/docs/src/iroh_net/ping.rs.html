@@ -199,7 +199,7 @@
     time::Duration,
 };
 
-<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::DEFAULT_PINGER_TIMEOUT;
+<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::DEFAULT_PINGER_TIMEOUT <span class="kw">as </span>DEFAULT_TIMEOUT;
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};
 <span class="kw">use </span>tracing::debug;
@@ -281,7 +281,7 @@
         <span class="kw">let </span>ident = PingIdentifier(rand::random());
         <span class="macro">debug!</span>(%addr, %ident, <span class="string">"Creating pinger"</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>pinger = client.pinger(addr, ident).<span class="kw">await</span>;
-        pinger.timeout(DEFAULT_PINGER_TIMEOUT); <span class="comment">// todo: timeout too large for netcheck
+        pinger.timeout(DEFAULT_TIMEOUT); <span class="comment">// todo: timeout too large for netcheck
         </span><span class="kw">match </span>pinger.ping(PingSequence(<span class="number">0</span>), data).<span class="kw">await</span><span class="question-mark">? </span>{
             (IcmpPacket::V4(packet), dur) =&gt; {
                 <span class="macro">debug!</span>(
