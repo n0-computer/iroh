@@ -49,7 +49,7 @@ impl NodeCommands {
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::RemoteList => {
-                let connections = iroh.remote_infos_iter().await?;
+                let connections = iroh.remote_info_iter().await?;
                 let timestamp = time::OffsetDateTime::now_utc()
                     .format(&time::format_description::well_known::Rfc2822)
                     .unwrap_or_else(|_| String::from("failed to get current time"));
