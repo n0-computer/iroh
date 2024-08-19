@@ -1219,9 +1219,9 @@ pub struct DirectAddrInfo {
     pub last_payload: Option<Duration>,
     /// Elapsed time since this network path was known to exist.
     ///
-    /// A network path be considered to exist only because the remote node advertised it.
-    /// It may not mean the path is usable.  However if there was any communication with the
-    /// remote node over this network path it also means the path exists.
+    /// A network path is considered to exist only because the remote node advertised it.
+    /// It may not mean the path is usable.  However, if there was any communication with
+    /// the remote node over this network path it also means the path exists.
     ///
     /// The elapsed time since *any* confirmation of the path's existence was received is
     /// returned.  If the remote node moved networks and no longer has this path, this could
@@ -1262,9 +1262,9 @@ impl From<RelayUrlInfo> for RelayUrl {
 /// Details about a remote iroh-net node which is known to this node.
 ///
 /// Having details of a node does not mean it can be connected to, nor that it has ever been
-/// connected to in the past. There are various reasons a node might be known: it could have been
-/// manually added via [`Endpoint::add_node_addr`], it could have been added by some discovery
-/// mechanism, or the node could have contacted this node.
+/// connected to in the past. There are various reasons a node might be known: it could have
+/// been manually added via [`Endpoint::add_node_addr`], it could have been added by some
+/// discovery mechanism, the node could have contacted this node, etc.
 ///
 /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -1311,7 +1311,7 @@ impl RemoteInfo {
 
     /// Whether there is a possible known network path to the remote node.
     ///
-    /// Note that this does not provide any guarantees of whether this network path is
+    /// Note that this does not provide any guarantees of whether any network path is
     /// usable.
     pub fn has_send_address(&self) -> bool {
         self.relay_url.is_some() || !self.addrs.is_empty()
