@@ -119,8 +119,10 @@ impl Builder {
     pub async fn bind(self, bind_port: u16) -> Result<Endpoint> {
         let relay_map = self.relay_mode.relay_map();
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
+        let mut transport_config = self.transport_config.unwrap_or_default();
+        transport_config.enable_segmentation_offload(false);
         let static_config = StaticConfig {
-            transport_config: Arc::new(self.transport_config.unwrap_or_default()),
+            transport_config: Arc::new(transport_config),
             keylog: self.keylog,
             secret_key: secret_key.clone(),
         };

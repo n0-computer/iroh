@@ -839,6 +839,7 @@ impl Stream for TopicCommandStream {
 
 #[cfg(test)]
 mod test {
+    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
     use std::time::Duration;
 
     use futures_concurrency::future::TryJoin;
@@ -872,9 +873,9 @@ mod test {
             tokio::select! {
                 biased;
                 _ = cancel.cancelled() => break,
-                conn = endpoint.accept() => match conn {
+                incoming = endpoint.accept() => match incoming {
                     None => break,
-                    Some(conn) => gossip.handle_connection(conn.await?).await?
+                    Some(incoming) => gossip.handle_connection(incoming.await?).await?
                 }
             }
         }
@@ -892,20 +893,39 @@ mod test {
         let sub_ep0 = create_endpoint(&mut rng, relay_map.clone()).await.unwrap();
         let sub_ep1 = create_endpoint(&mut rng, relay_map.clone()).await.unwrap();
 
-        let addr_info = AddrInfo {
+        let pub_addr = AddrInfo {
             relay_url: Some(relay_url.clone()),
-            direct_addresses: Default::default(),
+            direct_addresses: BTreeSet::from([SocketAddr::V4(SocketAddrV4::new(
+                Ipv4Addr::LOCALHOST,
+                pub_ep.bound_sockets().0.port(),
+            ))]),
+        };
+
+        let sub_addr0 = AddrInfo {
+            relay_url: Some(relay_url.clone()),
+            direct_addresses: BTreeSet::from([SocketAddr::V4(SocketAddrV4::new(
+                Ipv4Addr::LOCALHOST,
+                sub_ep0.bound_sockets().0.port(),
+            ))]),
+        };
+
+        let sub_addr1 = AddrInfo {
+            relay_url: Some(relay_url.clone()),
+            direct_addresses: BTreeSet::from([SocketAddr::V4(SocketAddrV4::new(
+                Ipv4Addr::LOCALHOST,
+                sub_ep1.bound_sockets().0.port(),
+            ))]),
         };
 
         let pub_id = pub_ep.node_id();
-        let pub_gossip = Gossip::from_endpoint(pub_ep.clone(), Default::default(), &addr_info);
-        debug!("pub peer {pub_id:?}");
+        let pub_gossip = Gossip::from_endpoint(pub_ep.clone(), Default::default(), &pub_addr);
+        debug!("pub peer {pub_id:?}, bound {:?}", pub_ep.bound_sockets());
         let sub_id0 = sub_ep0.node_id();
-        let sub_gossip0 = Gossip::from_endpoint(sub_ep0.clone(), Default::default(), &addr_info);
-        debug!("sub peer0 {sub_id0:?}");
+        let sub_gossip0 = Gossip::from_endpoint(sub_ep0.clone(), Default::default(), &sub_addr0);
+        debug!("sub peer0 {sub_id0:?}, bound {:?}", sub_ep0.bound_sockets());
         let sub_id1 = sub_ep1.node_id();
-        let sub_gossip1 = Gossip::from_endpoint(sub_ep1.clone(), Default::default(), &addr_info);
-        debug!("sub peer1 {sub_id1:?}");
+        let sub_gossip1 = Gossip::from_endpoint(sub_ep1.clone(), Default::default(), &sub_addr1);
+        debug!("sub peer1 {sub_id1:?}, bound {:?}", sub_ep1.bound_sockets());
 
         let cancel = CancellationToken::new();
         let pub_task = spawn(endpoint_loop(
@@ -923,9 +943,18 @@ mod test {
         let topic: TopicId = blake3::hash(b"foobar").into();
 
         let addrs = [
-            NodeAddr::new(pub_id).with_relay_url(relay_url.clone()),
-            NodeAddr::new(sub_id0).with_relay_url(relay_url.clone()),
-            NodeAddr::new(sub_id1).with_relay_url(relay_url.clone()),
+            NodeAddr {
+                node_id: pub_id,
+                info: pub_addr,
+            },
+            NodeAddr {
+                node_id: sub_id0,
+                info: sub_addr0,
+            },
+            NodeAddr {
+                node_id: sub_id1,
+                info: sub_addr1,
+            },
         ];
 
         // We all know each other. We're all friends!

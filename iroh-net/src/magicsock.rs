@@ -524,14 +524,23 @@ impl MagicSock {
                     transmit.destination = addr;
                     match self.try_send_udp(addr, &transmit) {
                         Ok(()) => {
-                            trace!(node = %node_id.fmt_short(), dst = %addr,
-                                   "sent transmit over UDP");
+                            trace!(
+                                node = %node_id.fmt_short(),
+                                dst = %addr,
+                                mapped = %dest,
+                                len = transmit.segment_size.unwrap_or(transmit.contents.len()),
+                                "sent transmit over UDP"
+                            );
                             udp_sent = true;
                             // TODO: record metrics?
                         }
                         Err(err) => {
-                            error!(node = %node_id.fmt_short(), dst = %addr,
-                                   "failed to send udp: {err:#}");
+                            error!(
+                                node = %node_id.fmt_short(),
+                                dst = %addr,
+                                mapped = %dest,
+                                "failed to send udp: {err:#}"
+                            );
                             udp_error = Some(err);
                         }
                     }
@@ -774,13 +783,20 @@ impl MagicSock {
                         meta.len = 0;
                     }
                     Some((node_id, quic_mapped_addr)) => {
-                        trace!(src = ?meta.addr, node = %node_id.fmt_short(), count = %quic_packets_count, len = meta.len, "UDP recv quic packets");
+                        trace!(
+                            src = ?meta.addr,
+                            mapped = %quic_mapped_addr,
+                            node = %node_id.fmt_short(),
+                            count = %quic_packets_count,
+                            len = meta.len,
+                            "UDP recv quic packets"
+                        );
                         quic_packets_total += quic_packets_count;
                         meta.addr = quic_mapped_addr.0;
                     }
                 }
             } else {
-                // if there is no non-stun,non-disco packet in the chunk, set len to zero to make
+                // if there is no non-stun, non-disco packet in the chunk, set len to zero to make
                 // quinn skip the buf completely.
                 meta.len = 0;
             }
@@ -1261,7 +1277,7 @@ impl MagicSock {
     /// Triggers an address discovery. The provided why string is for debug logging only.
     #[instrument(skip_all, fields(me = %self.me))]
     fn re_stun(&self, why: &'static str) {
-        debug!("re_stun: {}", why);
+        debug!("re_stun: {why}");
         inc!(MagicsockMetrics, re_stun_calls);
         self.direct_addr_update_state.schedule_run(why);
     }
@@ -2668,9 +2684,16 @@ impl QuicMappedAddr {
 
 impl std::fmt::Display for QuicMappedAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "QuicMappedAddr({})", self.0)
+        if let SocketAddr::V6(sock) = self.0 {
+            let addr = sock.ip();
+            let counter = u64::from_be_bytes(addr.octets()[8..16].try_into().unwrap());
+            write!(f, "QuicMappedAddr({})", counter)
+        } else {
+            write!(f, "QuicMappedAddr({})", self.0)
+        }
     }
 }
+
 fn disco_message_sent(msg: &disco::Message) {
     match msg {
         disco::Message::Ping(_) => {
