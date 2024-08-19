@@ -62,12 +62,13 @@ use crate::rpc_protocol::{
         ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,
         SetHashRequest,
     },
-    gossip, node,
-    node::{
+    gossip, net,
+    net::{
         AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest, RemoteInfoRequest,
-        RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse, ShutdownRequest,
-        StatsRequest, StatsResponse, StatusRequest, WatchResponse,
+        RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse, WatchResponse,
     },
+    node,
+    node::{ShutdownRequest, StatsRequest, StatsResponse, StatusRequest},
     tags,
     tags::{DeleteRequest as TagDeleteRequest, ListRequest as ListTagsRequest},
     Request, RpcService,
@@ -152,13 +153,24 @@ impl<D: BaoStore> Handler<D> {
         use node::Request::*;
         debug!("handling node request: {msg}");
         match msg {
-            Watch(msg) => chan.server_streaming(msg, self, Self::node_watch).await,
             Status(msg) => chan.rpc(msg, self, Self::node_status).await,
+            Shutdown(msg) => chan.rpc(msg, self, Self::node_shutdown).await,
+            Stats(msg) => chan.rpc(msg, self, Self::node_stats).await,
+        }
+    }
+
+    async fn handle_net_request(
+        self,
+        msg: net::Request,
+        chan: RpcChannel<RpcService, IrohServerEndpoint>,
+    ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
+        use net::Request::*;
+        debug!("handling node request: {msg}");
+        match msg {
+            Watch(msg) => chan.server_streaming(msg, self, Self::node_watch).await,
             Id(msg) => chan.rpc(msg, self, Self::node_id).await,
             Addr(msg) => chan.rpc(msg, self, Self::node_addr).await,
             Relay(msg) => chan.rpc(msg, self, Self::node_relay).await,
-            Shutdown(msg) => chan.rpc(msg, self, Self::node_shutdown).await,
-            Stats(msg) => chan.rpc(msg, self, Self::node_stats).await,
             RemoteInfosIter(msg) => {
                 chan.server_streaming(msg, self, Self::remote_infos_iter)
                     .await
@@ -444,6 +456,7 @@ impl<D: BaoStore> Handler<D> {
         use Request::*;
         debug!("handling rpc request: {msg}");
         match msg {
+            Net(msg) => self.handle_net_request(msg, chan).await,
             Node(msg) => self.handle_node_request(msg, chan).await,
             Blobs(msg) => self.handle_blobs_request(msg, chan).await,
             Tags(msg) => self.handle_tags_request(msg, chan).await,

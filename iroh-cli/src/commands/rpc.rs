@@ -74,6 +74,17 @@ pub enum RpcCommands {
 
     /// Get statistics and metrics from the running node.
     Stats,
+    /// Get status of the running node.
+    Status,
+    /// Shutdown the running node.
+    Shutdown {
+        /// Shutdown mode.
+        ///
+        /// Hard shutdown will immediately terminate the process, soft shutdown will wait
+        /// for all connections to close.
+        #[clap(long, default_value_t = false)]
+        force: bool,
+    },
 }
 
 impl RpcCommands {
@@ -92,6 +103,20 @@ impl RpcCommands {
                         "{:23} : {:>6}    ({})",
                         name, details.value, details.description
                     );
+                }
+                Ok(())
+            }
+            Self::Shutdown { force } => {
+                iroh.shutdown(force).await?;
+                Ok(())
+            }
+            Self::Status => {
+                let response = iroh.status().await?;
+                println!("Listening addresses: {:#?}", response.listen_addrs);
+                println!("Node ID: {}", response.addr.node_id);
+                println!("Version: {}", response.version);
+                if let Some(addr) = response.rpc_addr {
+                    println!("RPC Addr: {}", addr);
                 }
                 Ok(())
             }

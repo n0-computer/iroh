@@ -20,8 +20,6 @@ pub enum NetCommands {
     RemoteList,
     /// Get information about a particular remote node.
     Remote { node_id: NodeId },
-    /// Get status of the running node.
-    Status,
     /// Get the node addr of this node.
     NodeAddr,
     /// Add this node addr to the known nodes.
@@ -38,7 +36,7 @@ impl NetCommands {
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::RemoteList => {
-                let connections = iroh.remote_info_iter().await?;
+                let connections = iroh.net().remote_info_iter().await?;
                 let timestamp = time::OffsetDateTime::now_utc()
                     .format(&time::format_description::well_known::Rfc2822)
                     .unwrap_or_else(|_| String::from("failed to get current time"));
@@ -55,15 +53,6 @@ impl NetCommands {
                 match info {
                     Some(info) => println!("{}", fmt_info(info)),
                     None => println!("Not Found"),
-                }
-            }
-            Self::Status => {
-                let response = iroh.net().status().await?;
-                println!("Listening addresses: {:#?}", response.listen_addrs);
-                println!("Node ID: {}", response.addr.node_id);
-                println!("Version: {}", response.version);
-                if let Some(addr) = response.rpc_addr {
-                    println!("RPC Addr: {}", addr);
                 }
             }
             Self::NodeAddr => {

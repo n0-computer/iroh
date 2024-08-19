@@ -8,7 +8,7 @@ use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
 use ref_cast::RefCast;
 
-use crate::rpc_protocol::node::{CounterStats, ShutdownRequest, StatsRequest};
+use crate::rpc_protocol::node::{CounterStats, ShutdownRequest, StatsRequest, StatusRequest};
 #[doc(inline)]
 pub use crate::rpc_protocol::RpcService;
 
@@ -105,6 +105,12 @@ impl Iroh {
     pub async fn stats(&self) -> Result<BTreeMap<String, CounterStats>> {
         let res = self.rpc.rpc(StatsRequest {}).await??;
         Ok(res.stats)
+    }
+
+    /// Fetches status information about this node.
+    pub async fn status(&self) -> Result<NodeStatus> {
+        let response = self.rpc.rpc(StatusRequest).await??;
+        Ok(response)
     }
 }
 

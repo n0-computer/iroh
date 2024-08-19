@@ -18,9 +18,9 @@ use iroh_net::{endpoint::RemoteInfo, relay::RelayUrl, NodeAddr, NodeId};
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
-use crate::rpc_protocol::node::{
+use crate::rpc_protocol::net::{
     AddAddrRequest, AddrRequest, IdRequest, RelayRequest, RemoteInfoRequest, RemoteInfoResponse,
-    RemoteInfosIterRequest, StatusRequest,
+    RemoteInfosIterRequest,
 };
 
 use super::{flatten, RpcClient};
@@ -94,12 +94,6 @@ impl Client {
     pub async fn remote_info(&self, node_id: NodeId) -> Result<Option<RemoteInfo>> {
         let RemoteInfoResponse { info } = self.rpc.rpc(RemoteInfoRequest { node_id }).await??;
         Ok(info)
-    }
-
-    /// Fetches status information about this node.
-    pub async fn status(&self) -> Result<NodeStatus> {
-        let response = self.rpc.rpc(StatusRequest).await??;
-        Ok(response)
     }
 
     /// Fetches the node id of this node.

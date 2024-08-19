@@ -85,16 +85,6 @@ pub(crate) enum Commands {
     /// For general configuration options see <https://iroh.computer/docs/reference/config>.
     Console,
 
-    /// Shutdown the running node.
-    Shutdown {
-        /// Shutdown mode.
-        ///
-        /// Hard shutdown will immediately terminate the process, soft shutdown will wait
-        /// for all connections to close.
-        #[clap(long, default_value_t = false)]
-        force: bool,
-    },
-
     #[clap(flatten)]
     Rpc(#[clap(subcommand)] RpcCommands),
 
@@ -199,16 +189,6 @@ impl Cli {
                     },
                 )
                 .await
-            }
-            Commands::Shutdown { force } => {
-                crate::logging::init_terminal_logging()?;
-                let iroh = if let Some(addr) = self.rpc_addr {
-                    Iroh::connect_addr(addr).await.context("rpc connect")?
-                } else {
-                    Iroh::connect_path(data_dir).await.context("rpc connect")?
-                };
-
-                iroh.shutdown(force).await
             }
 
             Commands::Doctor { command } => {
