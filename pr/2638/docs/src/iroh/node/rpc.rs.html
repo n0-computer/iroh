@@ -1479,9 +1479,6 @@
 <a href="#1479" id="1479">1479</a>
 <a href="#1480" id="1480">1480</a>
 <a href="#1481" id="1481">1481</a>
-<a href="#1482" id="1482">1482</a>
-<a href="#1483" id="1483">1483</a>
-<a href="#1484" id="1484">1484</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::{Arc, Mutex};
@@ -1548,9 +1545,9 @@
     },
     gossip, node,
     node::{
-        AddAddrRequest, AddrRequest, ConnectionInfoRequest, ConnectionInfoResponse,
-        ConnectionsRequest, ConnectionsResponse, IdRequest, NodeWatchRequest, RelayRequest,
-        ShutdownRequest, StatsRequest, StatsResponse, StatusRequest, WatchResponse,
+        AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest, RemoteInfoRequest,
+        RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse, ShutdownRequest,
+        StatsRequest, StatsResponse, StatusRequest, WatchResponse,
     },
     tags,
     tags::{DeleteRequest <span class="kw">as </span>TagDeleteRequest, ListRequest <span class="kw">as </span>ListTagsRequest},
@@ -1643,11 +1640,11 @@
             Relay(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_relay).<span class="kw">await</span>,
             Shutdown(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_shutdown).<span class="kw">await</span>,
             Stats(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_stats).<span class="kw">await</span>,
-            Connections(msg) =&gt; {
-                chan.server_streaming(msg, <span class="self">self</span>, <span class="self">Self</span>::node_connections)
+            RemoteInfosIter(msg) =&gt; {
+                chan.server_streaming(msg, <span class="self">self</span>, <span class="self">Self</span>::remote_infos_iter)
                     .<span class="kw">await
             </span>}
-            ConnectionInfo(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_connection_info).<span class="kw">await</span>,
+            RemoteInfo(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::remote_info).<span class="kw">await</span>,
             AddAddr(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_add_addr).<span class="kw">await</span>,
         }
     }
@@ -2754,17 +2751,17 @@
         .into_stream()
     }
 
-    <span class="kw">fn </span>node_connections(
+    <span class="kw">fn </span>remote_infos_iter(
         <span class="self">self</span>,
-        <span class="kw">_</span>: ConnectionsRequest,
-    ) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;ConnectionsResponse&gt;&gt; + Send + <span class="lifetime">'static </span>{
+        <span class="kw">_</span>: RemoteInfosIterRequest,
+    ) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;RemoteInfosIterResponse&gt;&gt; + Send + <span class="lifetime">'static </span>{
         <span class="comment">// provide a little buffer so that we don't slow down the sender
         </span><span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">32</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>conn_infos = <span class="self">self</span>.inner.endpoint.connection_infos();
-        conn_infos.sort_by_key(|n| n.node_id.to_string());
+        <span class="kw">let </span><span class="kw-2">mut </span>infos: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.inner.endpoint.remote_infos_iter().collect();
+        infos.sort_by_key(|n| n.node_id.to_string());
         <span class="self">self</span>.local_pool_handle().spawn_detached(|| <span class="kw">async move </span>{
-            <span class="kw">for </span>conn_info <span class="kw">in </span>conn_infos {
-                tx.send(<span class="prelude-val">Ok</span>(ConnectionsResponse { conn_info })).<span class="kw">await</span>.ok();
+            <span class="kw">for </span>info <span class="kw">in </span>infos {
+                tx.send(<span class="prelude-val">Ok</span>(RemoteInfosIterResponse { info })).<span class="kw">await</span>.ok();
             }
         });
         rx
@@ -2772,13 +2769,10 @@
 
     <span class="comment">// This method is called as an RPC method, which have to be async
     </span><span class="attr">#[allow(clippy::unused_async)]
-    </span><span class="kw">async fn </span>node_connection_info(
-        <span class="self">self</span>,
-        req: ConnectionInfoRequest,
-    ) -&gt; RpcResult&lt;ConnectionInfoResponse&gt; {
-        <span class="kw">let </span>ConnectionInfoRequest { node_id } = req;
-        <span class="kw">let </span>conn_info = <span class="self">self</span>.inner.endpoint.connection_info(node_id);
-        <span class="prelude-val">Ok</span>(ConnectionInfoResponse { conn_info })
+    </span><span class="kw">async fn </span>remote_info(<span class="self">self</span>, req: RemoteInfoRequest) -&gt; RpcResult&lt;RemoteInfoResponse&gt; {
+        <span class="kw">let </span>RemoteInfoRequest { node_id } = req;
+        <span class="kw">let </span>info = <span class="self">self</span>.inner.endpoint.remote_info(node_id);
+        <span class="prelude-val">Ok</span>(RemoteInfoResponse { info })
     }
 
     <span class="comment">// This method is called as an RPC method, which have to be async

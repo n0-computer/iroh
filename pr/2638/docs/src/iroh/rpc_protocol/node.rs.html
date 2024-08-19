@@ -143,10 +143,11 @@
 <a href="#143" id="143">143</a>
 <a href="#144" id="144">144</a>
 <a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::BTreeMap;
 
 <span class="kw">use </span>iroh_base::rpc::RpcResult;
-<span class="kw">use </span>iroh_net::{endpoint::ConnectionInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
+<span class="kw">use </span>iroh_net::{endpoint::RemoteInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
 <span class="kw">use </span>nested_enum_utils::enum_conversions;
 <span class="kw">use </span>quic_rpc_derive::rpc_requests;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
@@ -174,10 +175,10 @@
     </span>Stats(StatsRequest),
     <span class="attr">#[rpc(response = ())]
     </span>Shutdown(ShutdownRequest),
-    <span class="attr">#[server_streaming(response = RpcResult&lt;ConnectionsResponse&gt;)]
-    </span>Connections(ConnectionsRequest),
-    <span class="attr">#[rpc(response = RpcResult&lt;ConnectionInfoResponse&gt;)]
-    </span>ConnectionInfo(ConnectionInfoRequest),
+    <span class="attr">#[server_streaming(response = RpcResult&lt;RemoteInfosIterResponse&gt;)]
+    </span>RemoteInfosIter(RemoteInfosIterRequest),
+    <span class="attr">#[rpc(response = RpcResult&lt;RemoteInfoResponse&gt;)]
+    </span>RemoteInfo(RemoteInfoRequest),
     <span class="attr">#[server_streaming(response = WatchResponse)]
     </span>Watch(NodeWatchRequest),
 }
@@ -191,38 +192,39 @@
     Addr(RpcResult&lt;NodeAddr&gt;),
     Relay(RpcResult&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;),
     Stats(RpcResult&lt;StatsResponse&gt;),
-    Connections(RpcResult&lt;ConnectionsResponse&gt;),
-    ConnectionInfo(RpcResult&lt;ConnectionInfoResponse&gt;),
+    RemoteInfosIter(RpcResult&lt;RemoteInfosIterResponse&gt;),
+    RemoteInfo(RpcResult&lt;RemoteInfoResponse&gt;),
     Shutdown(()),
     Watch(WatchResponse),
 }
 
-<span class="doccomment">/// List connection information about all the nodes we know about
+<span class="doccomment">/// List network path information about all the remote nodes known by this node.
 ///
-/// These can be nodes that we have explicitly connected to or nodes
-/// that have initiated connections to us.
+/// There may never have been connections to these nodes, and connections may not even be
+/// possible. Nodes can also become known due to discovery mechanisms
+/// or be added manually.
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>ConnectionsRequest;
+</span><span class="kw">pub struct </span>RemoteInfosIterRequest;
 
-<span class="doccomment">/// A response to a connections request
+<span class="doccomment">/// A response to a [`Request::RemoteInfosIter`].
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>ConnectionsResponse {
-    <span class="doccomment">/// Information about a connection
-    </span><span class="kw">pub </span>conn_info: ConnectionInfo,
+</span><span class="kw">pub struct </span>RemoteInfosIterResponse {
+    <span class="doccomment">/// Information about a node.
+    </span><span class="kw">pub </span>info: RemoteInfo,
 }
 
-<span class="doccomment">/// Get connection information about a specific node
+<span class="doccomment">/// Get information about a specific remote node.
 </span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>ConnectionInfoRequest {
+</span><span class="kw">pub struct </span>RemoteInfoRequest {
     <span class="doccomment">/// The node identifier
     </span><span class="kw">pub </span>node_id: PublicKey,
 }
 
-<span class="doccomment">/// A response to a connection request
+<span class="doccomment">/// A response to a [`Request::RemoteInfo`] request
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>ConnectionInfoResponse {
-    <span class="doccomment">/// Information about a connection to a node
-    </span><span class="kw">pub </span>conn_info: <span class="prelude-ty">Option</span>&lt;ConnectionInfo&gt;,
+</span><span class="kw">pub struct </span>RemoteInfoResponse {
+    <span class="doccomment">/// Information about a node
+    </span><span class="kw">pub </span>info: <span class="prelude-ty">Option</span>&lt;RemoteInfo&gt;,
 }
 
 <span class="doccomment">/// A request to shutdown the node
