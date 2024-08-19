@@ -1,6 +1,5 @@
 use futures_lite::StreamExt;
 use tokio::sync::broadcast;
-use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
     proto::{
@@ -16,7 +15,7 @@ use crate::{
         traits::Storage,
         Store,
     },
-    util::stream::Cancelable,
+    util::stream::CancelableReceiver,
 };
 
 use super::{
@@ -31,7 +30,7 @@ pub enum Input {
 
 #[derive(derive_more::Debug)]
 pub struct DataSender<S: Storage> {
-    inbox: Cancelable<ReceiverStream<Input>>,
+    inbox: CancelableReceiver<Input>,
     store: Store<S>,
     send: ChannelSenders,
     static_tokens: StaticTokens,
@@ -40,7 +39,7 @@ pub struct DataSender<S: Storage> {
 
 impl<S: Storage> DataSender<S> {
     pub fn new(
-        inbox: Cancelable<ReceiverStream<Input>>,
+        inbox: CancelableReceiver<Input>,
         store: Store<S>,
         send: ChannelSenders,
         static_tokens: StaticTokens,
