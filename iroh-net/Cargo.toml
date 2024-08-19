@@ -146,7 +146,7 @@ iroh-relay = [
 ]
 metrics = ["iroh-metrics/metrics"]
 test-utils = ["iroh-relay"]
-local-swarm-discovery = ["dep:swarm-discovery", "dep:tokio-stream"]
+discovery-local-network = ["dep:swarm-discovery", "dep:tokio-stream"]
 discovery-pkarr-dht = ["pkarr/dht", "dep:genawaiter"]
 
 [[bin]]
