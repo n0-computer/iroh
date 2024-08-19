@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use crate::defaults::timeouts::DEFAULT_PINGER_TIMEOUT;
 use anyhow::{Context, Result};
 use surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};
 use tracing::debug;
@@ -38,8 +39,6 @@ struct Inner {
     client_v6: Mutex<Option<Client>>,
     client_v4: Mutex<Option<Client>>,
 }
-
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Pinger {
     /// Create a new [Pinger].
@@ -90,7 +89,7 @@ impl Pinger {
         let ident = PingIdentifier(rand::random());
         debug!(%addr, %ident, "Creating pinger");
         let mut pinger = client.pinger(addr, ident).await;
-        pinger.timeout(DEFAULT_TIMEOUT); // todo: timeout too large for netcheck
+        pinger.timeout(DEFAULT_PINGER_TIMEOUT); // todo: timeout too large for netcheck
         match pinger.ping(PingSequence(0), data).await? {
             (IcmpPacket::V4(packet), dur) => {
                 debug!(
