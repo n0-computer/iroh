@@ -2,17 +2,20 @@
 //!
 //! See the documentation for [`Iroh`] for more information.
 
+use std::collections::BTreeMap;
+
+use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
 use ref_cast::RefCast;
-use std::ops::Deref;
 
+use crate::rpc_protocol::node::{CounterStats, ShutdownRequest, StatsRequest};
 #[doc(inline)]
 pub use crate::rpc_protocol::RpcService;
 
 mod quic;
 
 pub use self::docs::Doc;
-pub use self::node::NodeStatus;
+pub use self::net::NodeStatus;
 
 pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
 
@@ -20,7 +23,7 @@ pub mod authors;
 pub mod blobs;
 pub mod docs;
 pub mod gossip;
-pub mod node;
+pub mod net;
 pub mod tags;
 
 /// Iroh rpc connection - boxed so that we can have a concrete type.
@@ -46,14 +49,6 @@ pub type RpcClient =
 #[derive(Debug, Clone)]
 pub struct Iroh {
     rpc: RpcClient,
-}
-
-impl Deref for Iroh {
-    type Target = node::Client;
-
-    fn deref(&self) -> &Self::Target {
-        self.node()
-    }
 }
 
 impl Iroh {
@@ -92,15 +87,30 @@ impl Iroh {
         gossip::Client::ref_cast(&self.rpc)
     }
 
-    /// Returns the node client.
-    pub fn node(&self) -> &node::Client {
-        node::Client::ref_cast(&self.rpc)
+    /// Returns the net client.
+    pub fn net(&self) -> &net::Client {
+        net::Client::ref_cast(&self.rpc)
+    }
+
+    /// Shuts down the node.
+    ///
+    /// If `force` is true, the node will be shut down instantly without
+    /// waiting for things to stop gracefully.
+    pub async fn shutdown(&self, force: bool) -> Result<()> {
+        self.rpc.rpc(ShutdownRequest { force }).await?;
+        Ok(())
+    }
+
+    /// Fetches statistics of the running node.
+    pub async fn stats(&self) -> Result<BTreeMap<String, CounterStats>> {
+        let res = self.rpc.rpc(StatsRequest {}).await??;
+        Ok(res.stats)
     }
 }
 
 fn flatten<T, E1, E2>(
     s: impl Stream<Item = Result<Result<T, E1>, E2>>,
-) -> impl Stream<Item = anyhow::Result<T>>
+) -> impl Stream<Item = Result<T>>
 where
     E1: std::error::Error + Send + Sync + 'static,
     E2: std::error::Error + Send + Sync + 'static,

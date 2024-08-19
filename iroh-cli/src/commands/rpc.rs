@@ -6,7 +6,7 @@ use crate::config::ConsoleEnv;
 
 use super::{
     authors::AuthorCommands, blobs::BlobCommands, docs::DocCommands, gossip::GossipCommands,
-    node::NodeCommands, tags::TagCommands,
+    net::NetCommands, tags::TagCommands,
 };
 
 #[derive(Subcommand, Debug, Clone)]
@@ -42,10 +42,10 @@ pub enum RpcCommands {
         #[clap(subcommand)]
         command: BlobCommands,
     },
-    /// Manage a running iroh node
-    Node {
+    /// Manage the iroh network
+    Net {
         #[clap(subcommand)]
-        command: NodeCommands,
+        command: NetCommands,
     },
     /// Manage gossip
     ///
@@ -76,7 +76,7 @@ pub enum RpcCommands {
 impl RpcCommands {
     pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
-            Self::Node { command } => command.run(iroh).await,
+            Self::Net { command } => command.run(iroh).await,
             Self::Blobs { command } => command.run(iroh).await,
             Self::Docs { command } => command.run(iroh, env).await,
             Self::Authors { command } => command.run(iroh, env).await,

@@ -870,7 +870,7 @@ pub async fn add(
 
     print_add_response(hash, format, entries);
     if let TicketOption::Print = ticket {
-        let status = client.status().await?;
+        let status = client.net().status().await?;
         let ticket = BlobTicket::new(status.addr, hash, format)?;
         println!("All-in-one ticket: {ticket}");
     }

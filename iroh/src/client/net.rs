@@ -1,10 +1,8 @@
-//! API to manage the iroh node itself.
+//! API to manage the iroh networking stack.
 //!
 //! The main entry point is the [`Client`].
 //!
-//! You obtain a [`Client`] via [`Iroh::node()`](crate::client::Iroh::node),
-//! or just use [`Iroh`](crate::client::Iroh) directly,
-//! as it has a `Deref` implementation for this [`Client`].
+//! You obtain a [`Client`] via [`Iroh::net()`](crate::client::Iroh::net).
 //!
 //! The client can be used to get information about the node, such as the
 //! [status](Client::status), [node id](Client::node_id) or
@@ -12,9 +10,7 @@
 //!
 //! It can also be used to provide additional information to the node, e.g.
 //! using the [add_node_addr](Client::add_node_addr) method.
-//!
-//! It provides a way to [shutdown](Client::shutdown) the entire node.
-use std::{collections::BTreeMap, net::SocketAddr};
+use std::net::SocketAddr;
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
@@ -23,16 +19,16 @@ use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::node::{
-    AddAddrRequest, AddrRequest, CounterStats, IdRequest, RelayRequest, RemoteInfoRequest,
-    RemoteInfoResponse, RemoteInfosIterRequest, ShutdownRequest, StatsRequest, StatusRequest,
+    AddAddrRequest, AddrRequest, IdRequest, RelayRequest, RemoteInfoRequest, RemoteInfoResponse,
+    RemoteInfosIterRequest, StatusRequest,
 };
 
 use super::{flatten, RpcClient};
 
-/// Iroh node Client.
+/// Iroh netx Client.
 ///
-/// Cheaply clonable and threadsafe. Use the iroh `node::Client` to access the
-/// iroh node methods from a different thread, process, or remote machine.
+/// Cheaply clonable and threadsafe. Use the iroh `net::Client` to access the
+/// iroh net methods from a different thread, process, or remote machine.
 /// The [`Iroh`](crate::client::Iroh) client dereferences to a `node::Client`,
 /// so you have access to this api from the [`Iroh`](crate::client::Iroh) client itself.
 ///
@@ -40,9 +36,7 @@ use super::{flatten, RpcClient};
 /// its status, and connection status to other nodes. It also allows you to
 /// provide address information about *other* nodes to your node.
 ///
-/// Obtain an iroh `node::Client` via [`Iroh::node()`](crate::client::Iroh::node).
-///
-/// It also provides a way to [shutdown](Client::shutdown) the entire iroh node.
+/// Obtain an iroh `node::Client` via [`Iroh::net()`](crate::client::Iroh::net).
 ///
 /// # Examples
 /// ```
@@ -54,10 +48,10 @@ use super::{flatten, RpcClient};
 /// // Create an iroh node:
 /// let iroh = iroh::node::Node::memory().spawn().await?;
 /// // Create a node client, a client that gives you access to `node` subsystem
-/// let node_client = iroh.client().node();
+/// let net_client = iroh.client().net();
 /// // Get the node status, including its node id, addresses, the version of iroh
 /// // it is running, and more.
-/// let status = node_client.status().await?;
+/// let status = net_client.status().await?;
 /// println!("Node status: {status:?}");
 /// // Provide your node an address for another node
 /// let relay_url = RelayUrl::from(Url::parse("https://example.com").unwrap());
@@ -69,43 +63,10 @@ use super::{flatten, RpcClient};
 ///   // the direct addresses
 ///   vec!["120.0.0.1:0".parse().unwrap()],
 /// );
-/// node_client.add_node_addr(addr).await?;
+/// net_client.add_node_addr(addr).await?;
 /// // Shut down the node. Passing `true` will force the shutdown, passing in
 /// // `false` will allow the node to shut down gracefully.
-/// node_client.shutdown(false).await?;
-/// # Ok(())
-/// # }
-/// ```
-/// You can also use the `node::Client` methods from the `Iroh` client:
-///
-/// ```
-/// use std::str::FromStr;
-/// use iroh_base::{key::NodeId, node_addr::{RelayUrl, NodeAddr}};
-/// use url::Url;
-///
-/// # async fn run() -> anyhow::Result<()> {
-/// // Create an iroh node:
-/// let iroh = iroh::node::Node::memory().spawn().await?;
-/// // Create a client:
-/// let client = iroh.client();
-/// // Get the node status, including its node id, addresses, the version of iroh
-/// // it is running, and more.
-/// let status = client.status().await?;
-/// println!("Node status: {status:?}");
-/// // Provide your node an address for another node
-/// let relay_url = RelayUrl::from(Url::parse("https://example.com").unwrap());
-/// let addr = NodeAddr::from_parts(
-///   // the node_id
-///   NodeId::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6").unwrap(),
-///   // the home relay
-///   Some(relay_url),
-///   // the direct addresses
-///   vec!["120.0.0.1:0".parse().unwrap()],
-/// );
-/// client.add_node_addr(addr).await?;
-/// // Shut down the node. Passing `true` will force the shutdown, passing in
-/// // `false` will allow the node to shut down gracefully.
-/// client.shutdown(false).await?;
+/// iroh.client().shutdown(false).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -116,12 +77,6 @@ pub struct Client {
 }
 
 impl Client {
-    /// Fetches statistics of the running node.
-    pub async fn stats(&self) -> Result<BTreeMap<String, CounterStats>> {
-        let res = self.rpc.rpc(StatsRequest {}).await??;
-        Ok(res.stats)
-    }
-
     /// Fetches information about currently known remote nodes.
     ///
     /// This streams a *current snapshot*. It does not keep the stream open after finishing
@@ -177,15 +132,6 @@ impl Client {
     pub async fn home_relay(&self) -> Result<Option<RelayUrl>> {
         let relay = self.rpc.rpc(RelayRequest).await??;
         Ok(relay)
-    }
-
-    /// Shuts down the node.
-    ///
-    /// If `force` is true, the node will be shut down instantly without
-    /// waiting for things to stop gracefully.
-    pub async fn shutdown(&self, force: bool) -> Result<()> {
-        self.rpc.rpc(ShutdownRequest { force }).await?;
-        Ok(())
     }
 }
 

@@ -25,7 +25,7 @@ async fn spawn_node() -> (NodeAddr, Iroh) {
                 .node_discovery(iroh::node::DiscoveryConfig::None)
                 .spawn()
                 .await?;
-            let addr = node.node_addr().await?;
+            let addr = node.net().node_addr().await?;
             sender.send((addr, node.client().clone())).unwrap();
             node.cancel_token().cancelled().await;
             anyhow::Ok(())
@@ -68,8 +68,8 @@ async fn gossip_smoke() -> TestResult {
     let (addr2, node2) = spawn_node().await;
     let gossip1 = node1.gossip();
     let gossip2 = node2.gossip();
-    node1.add_node_addr(addr2.clone()).await?;
-    node2.add_node_addr(addr1.clone()).await?;
+    node1.net().add_node_addr(addr2.clone()).await?;
+    node2.net().add_node_addr(addr1.clone()).await?;
 
     let topic = TopicId::from([0u8; 32]);
     let (mut sink1, mut stream1) = gossip1.subscribe(topic, [addr2.node_id]).await?;
@@ -94,8 +94,8 @@ async fn gossip_drop_sink() -> TestResult {
     let (addr2, node2) = spawn_node().await;
     let gossip1 = node1.gossip();
     let gossip2 = node2.gossip();
-    node1.add_node_addr(addr2.clone()).await?;
-    node2.add_node_addr(addr1.clone()).await?;
+    node1.net().add_node_addr(addr2.clone()).await?;
+    node2.net().add_node_addr(addr1.clone()).await?;
 
     let topic = TopicId::from([0u8; 32]);
 

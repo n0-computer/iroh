@@ -15,7 +15,7 @@ use iroh::net::{NodeAddr, NodeId};
 
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
-pub enum NodeCommands {
+pub enum NetCommands {
     /// Get information about the different remote nodes.
     RemoteList,
     /// Get information about a particular remote node.
@@ -24,15 +24,6 @@ pub enum NodeCommands {
     Status,
     /// Get statistics and metrics from the running node.
     Stats,
-    /// Shutdown the running node.
-    Shutdown {
-        /// Shutdown mode.
-        ///
-        /// Hard shutdown will immediately terminate the process, soft shutdown will wait
-        /// for all connections to close.
-        #[clap(long, default_value_t = false)]
-        force: bool,
-    },
     /// Get the node addr of this node.
     NodeAddr,
     /// Add this node addr to the known nodes.
@@ -45,7 +36,7 @@ pub enum NodeCommands {
     HomeRelay,
 }
 
-impl NodeCommands {
+impl NetCommands {
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::RemoteList => {
@@ -62,14 +53,11 @@ impl NodeCommands {
                 );
             }
             Self::Remote { node_id } => {
-                let info = iroh.remote_info(node_id).await?;
+                let info = iroh.net().remote_info(node_id).await?;
                 match info {
                     Some(info) => println!("{}", fmt_info(info)),
                     None => println!("Not Found"),
                 }
-            }
-            Self::Shutdown { force } => {
-                iroh.shutdown(force).await?;
             }
             Self::Stats => {
                 let stats = iroh.stats().await?;
@@ -81,7 +69,7 @@ impl NodeCommands {
                 }
             }
             Self::Status => {
-                let response = iroh.status().await?;
+                let response = iroh.net().status().await?;
                 println!("Listening addresses: {:#?}", response.listen_addrs);
                 println!("Node ID: {}", response.addr.node_id);
                 println!("Version: {}", response.version);
@@ -90,7 +78,7 @@ impl NodeCommands {
                 }
             }
             Self::NodeAddr => {
-                let addr = iroh.node_addr().await?;
+                let addr = iroh.net().node_addr().await?;
                 println!("Node ID: {}", addr.node_id);
                 let relay = addr
                     .info
@@ -112,10 +100,10 @@ impl NodeCommands {
                 if let Some(relay) = relay {
                     addr = addr.with_relay_url(relay);
                 }
-                iroh.add_node_addr(addr).await?;
+                iroh.net().add_node_addr(addr).await?;
             }
             Self::HomeRelay => {
-                let relay = iroh.home_relay().await?;
+                let relay = iroh.net().home_relay().await?;
                 let relay = relay
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "Not Available".to_string());
