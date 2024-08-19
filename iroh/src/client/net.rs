@@ -49,10 +49,6 @@ use super::{flatten, RpcClient};
 /// let iroh = iroh::node::Node::memory().spawn().await?;
 /// // Create a node client, a client that gives you access to `node` subsystem
 /// let net_client = iroh.client().net();
-/// // Get the node status, including its node id, addresses, the version of iroh
-/// // it is running, and more.
-/// let status = net_client.status().await?;
-/// println!("Node status: {status:?}");
 /// // Provide your node an address for another node
 /// let relay_url = RelayUrl::from(Url::parse("https://example.com").unwrap());
 /// let addr = NodeAddr::from_parts(

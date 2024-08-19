@@ -447,10 +447,10 @@ jobs:
           platforms: linux/amd64
           file: docker/Dockerfile
 
-      - name: Run Docker image & net stats test
+      - name: Run Docker image & stats test
         run: |
           docker run -p 9090:9090 -p 4919:4919/udp -Pd n0computer/iroh-test:latest --rpc-addr 0.0.0.0:4919 start
-          cargo run --bin iroh -- --rpc-addr 127.0.0.1:4919 net stats
+          cargo run --bin iroh -- --rpc-addr 127.0.0.1:4919 stats
 
   codespell:
     runs-on: ubuntu-latest
