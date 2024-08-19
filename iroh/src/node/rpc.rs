@@ -1276,7 +1276,7 @@ impl<D: BaoStore> Handler<D> {
     ) -> impl Stream<Item = RpcResult<RemoteInfosIterResponse>> + Send + 'static {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = async_channel::bounded(32);
-        let mut infos: Vec<_> = self.inner.endpoint.remote_infos_iter().collect();
+        let mut infos: Vec<_> = self.inner.endpoint.remote_info_iter().collect();
         infos.sort_by_key(|n| n.node_id.to_string());
         self.local_pool_handle().spawn_detached(|| async move {
             for info in infos {
