@@ -3540,6 +3540,8 @@
 <a href="#3540" id="3540">3540</a>
 <a href="#3541" id="3541">3541</a>
 <a href="#3542" id="3542">3542</a>
+<a href="#3543" id="3543">3543</a>
+<a href="#3544" id="3544">3544</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3617,12 +3619,14 @@
 <span class="kw">mod </span>timer;
 <span class="kw">mod </span>udp_conn;
 
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>node_map::Source;
+
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">use </span><span class="self">self</span>::timer::Timer;
+
 <span class="kw">pub use </span><span class="self">self</span>::metrics::Metrics;
 <span class="kw">pub use </span><span class="self">self</span>::node_map::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo <span class="kw">as </span>ConnectionInfo,
+    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo,
 };
-<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">use </span><span class="self">self</span>::timer::Timer;
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>node_map::Source;
 
 <span class="doccomment">/// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
@@ -3828,19 +3832,19 @@
 
     <span class="doccomment">/// Returns `true` if we have at least one candidate address where we can send packets to.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>has_send_address(<span class="kw-2">&amp;</span><span class="self">self</span>, node_key: PublicKey) -&gt; bool {
-        <span class="self">self</span>.connection_info(node_key)
+        <span class="self">self</span>.remote_info(node_key)
             .map(|info| info.has_send_address())
             .unwrap_or(<span class="bool-val">false</span>)
     }
 
-    <span class="doccomment">/// Retrieve connection information about nodes in the network.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>connection_infos(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;ConnectionInfo&gt; {
-        <span class="self">self</span>.node_map.node_infos(Instant::now())
+    <span class="doccomment">/// Return the [`RemoteInfo`]s of all nodes in the node map.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>list_remote_infos(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;RemoteInfo&gt; {
+        <span class="self">self</span>.node_map.list_remote_infos(Instant::now())
     }
 
-    <span class="doccomment">/// Retrieve connection information about a node in the network.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>connection_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;ConnectionInfo&gt; {
-        <span class="self">self</span>.node_map.node_info(node_id)
+    <span class="doccomment">/// Return the [`RemoteInfo`] for a single node in the node map.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>remote_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;RemoteInfo&gt; {
+        <span class="self">self</span>.node_map.remote_info(node_id)
     }
 
     <span class="doccomment">/// Returns the direct addresses as a stream.
@@ -6324,7 +6328,7 @@
         <span class="kw">fn </span>tracked_endpoints(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;PublicKey&gt; {
             <span class="self">self</span>.endpoint
                 .magic_sock()
-                .connection_infos()
+                .list_remote_infos()
                 .into_iter()
                 .map(|ep| ep.node_id)
                 .collect()
