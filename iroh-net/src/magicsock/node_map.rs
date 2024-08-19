@@ -33,8 +33,9 @@ mod node_state;
 mod path_state;
 mod udp_paths;
 
-pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, NodeInfo};
 pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
+
+pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -224,9 +225,13 @@ impl NodeMap {
             .collect()
     }
 
-    /// Gets the [`NodeInfo`]s for each endpoint
-    pub(super) fn node_infos(&self, now: Instant) -> Vec<NodeInfo> {
-        self.inner.lock().node_infos(now)
+    /// Returns the [`RemoteInfo`]s for each node in the node map.
+    pub(super) fn list_remote_infos(&self, now: Instant) -> Vec<RemoteInfo> {
+        // NOTE: calls to this method will often call `into_iter` (or similar methods). Note that
+        // we can't avoid `collect` here since it would hold a lock for an indefinite time. Even if
+        // we were to find this acceptable, dealing with the lifetimes of the mutex's guard and the
+        // internal iterator will be a hassle, if possible at all.
+        self.inner.lock().remote_infos_iter(now).collect()
     }
 
     /// Returns a stream of [`ConnectionType`].
@@ -242,9 +247,9 @@ impl NodeMap {
         self.inner.lock().conn_type_stream(node_id)
     }
 
-    /// Get the [`NodeInfo`]s for each endpoint
-    pub(super) fn node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
-        self.inner.lock().node_info(node_id)
+    /// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
+    pub(super) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
+        self.inner.lock().remote_info(node_id)
     }
 
     /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
@@ -385,13 +390,13 @@ impl NodeMapInner {
         self.by_id.iter_mut()
     }
 
-    /// Get the [`NodeInfo`]s for each endpoint
-    fn node_infos(&self, now: Instant) -> Vec<NodeInfo> {
-        self.node_states().map(|(_, ep)| ep.info(now)).collect()
+    /// Get the [`RemoteInfo`]s for all nodes.
+    fn remote_infos_iter(&self, now: Instant) -> impl Iterator<Item = RemoteInfo> + '_ {
+        self.node_states().map(move |(_, ep)| ep.info(now))
     }
 
-    /// Get the [`NodeInfo`]s for each endpoint
-    fn node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
+    /// Get the [`RemoteInfo`]s for each node.
+    fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
         self.get(NodeStateKey::NodeId(node_id))
             .map(|ep| ep.info(Instant::now()))
     }
@@ -666,7 +671,7 @@ mod tests {
         node_map.add_test_addr(node_addr_d);
 
         let mut addrs: Vec<NodeAddr> = node_map
-            .node_infos(Instant::now())
+            .list_remote_infos(Instant::now())
             .into_iter()
             .filter_map(|info| {
                 let addr: NodeAddr = info.into();
@@ -679,7 +684,7 @@ mod tests {
         let loaded_node_map = NodeMap::load_from_vec(addrs.clone());
 
         let mut loaded: Vec<NodeAddr> = loaded_node_map
-            .node_infos(Instant::now())
+            .list_remote_infos(Instant::now())
             .into_iter()
             .filter_map(|info| {
                 let addr: NodeAddr = info.into();
