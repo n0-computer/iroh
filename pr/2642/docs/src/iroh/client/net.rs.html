@@ -136,17 +136,6 @@
 <a href="#136" id="136">136</a>
 <a href="#137" id="137">137</a>
 <a href="#138" id="138">138</a>
-<a href="#139" id="139">139</a>
-<a href="#140" id="140">140</a>
-<a href="#141" id="141">141</a>
-<a href="#142" id="142">142</a>
-<a href="#143" id="143">143</a>
-<a href="#144" id="144">144</a>
-<a href="#145" id="145">145</a>
-<a href="#146" id="146">146</a>
-<a href="#147" id="147">147</a>
-<a href="#148" id="148">148</a>
-<a href="#149" id="149">149</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API to manage the iroh networking stack.
 //!
 //! The main entry point is the [`Client`].
@@ -154,8 +143,7 @@
 //! You obtain a [`Client`] via [`Iroh::net()`](crate::client::Iroh::net).
 //!
 //! The client can be used to get information about the node, such as the
-//! [status](Client::status), [node id](Client::node_id) or
-//! [node address](Client::node_addr).
+//! [node id](Client::node_id) or [node address](Client::node_addr).
 //!
 //! It can also be used to provide additional information to the node, e.g.
 //! using the [add_node_addr](Client::add_node_addr) method.
@@ -167,9 +155,9 @@
 <span class="kw">use </span>ref_cast::RefCast;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::node::{
+<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::net::{
     AddAddrRequest, AddrRequest, IdRequest, RelayRequest, RemoteInfoRequest, RemoteInfoResponse,
-    RemoteInfosIterRequest, StatusRequest,
+    RemoteInfosIterRequest,
 };
 
 <span class="kw">use super</span>::{flatten, RpcClient};
@@ -198,10 +186,6 @@
 /// let iroh = iroh::node::Node::memory().spawn().await?;
 /// // Create a node client, a client that gives you access to `node` subsystem
 /// let net_client = iroh.client().net();
-/// // Get the node status, including its node id, addresses, the version of iroh
-/// // it is running, and more.
-/// let status = net_client.status().await?;
-/// println!("Node status: {status:?}");
 /// // Provide your node an address for another node
 /// let relay_url = RelayUrl::from(Url::parse("https://example.com").unwrap());
 /// let addr = NodeAddr::from_parts(
@@ -243,12 +227,6 @@
     </span><span class="kw">pub async fn </span>remote_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;RemoteInfo&gt;&gt; {
         <span class="kw">let </span>RemoteInfoResponse { info } = <span class="self">self</span>.rpc.rpc(RemoteInfoRequest { node_id }).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(info)
-    }
-
-    <span class="doccomment">/// Fetches status information about this node.
-    </span><span class="kw">pub async fn </span>status(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;NodeStatus&gt; {
-        <span class="kw">let </span>response = <span class="self">self</span>.rpc.rpc(StatusRequest).<span class="kw">await</span><span class="question-mark">??</span>;
-        <span class="prelude-val">Ok</span>(response)
     }
 
     <span class="doccomment">/// Fetches the node id of this node.

@@ -58,6 +58,9 @@
 <a href="#58" id="58">58</a>
 <a href="#59" id="59">59</a>
 <a href="#60" id="60">60</a>
+<a href="#61" id="61">61</a>
+<a href="#62" id="62">62</a>
+<a href="#63" id="63">63</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This defines the RPC protocol used for communication between a CLI and an iroh node.
 //!
 //! RPC is done using the [`quic-rpc`](https://docs.rs/quic-rpc) crate.
@@ -81,6 +84,7 @@
 <span class="kw">pub mod </span>blobs;
 <span class="kw">pub mod </span>docs;
 <span class="kw">pub mod </span>gossip;
+<span class="kw">pub mod </span>net;
 <span class="kw">pub mod </span>node;
 <span class="kw">pub mod </span>tags;
 
@@ -94,6 +98,7 @@
 #[nested_enum_utils::enum_conversions()]
 </span><span class="kw">pub enum </span>Request {
     Node(node::Request),
+    Net(net::Request),
     Blobs(blobs::Request),
     Docs(docs::Request),
     Tags(tags::Request),
@@ -107,6 +112,7 @@
 #[nested_enum_utils::enum_conversions()]
 </span><span class="kw">pub enum </span>Response {
     Node(node::Response),
+    Net(net::Response),
     Blobs(blobs::Response),
     Tags(tags::Response),
     Docs(docs::Response),

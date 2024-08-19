@@ -1479,6 +1479,19 @@
 <a href="#1479" id="1479">1479</a>
 <a href="#1480" id="1480">1480</a>
 <a href="#1481" id="1481">1481</a>
+<a href="#1482" id="1482">1482</a>
+<a href="#1483" id="1483">1483</a>
+<a href="#1484" id="1484">1484</a>
+<a href="#1485" id="1485">1485</a>
+<a href="#1486" id="1486">1486</a>
+<a href="#1487" id="1487">1487</a>
+<a href="#1488" id="1488">1488</a>
+<a href="#1489" id="1489">1489</a>
+<a href="#1490" id="1490">1490</a>
+<a href="#1491" id="1491">1491</a>
+<a href="#1492" id="1492">1492</a>
+<a href="#1493" id="1493">1493</a>
+<a href="#1494" id="1494">1494</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::{Arc, Mutex};
@@ -1543,12 +1556,13 @@
         ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,
         SetHashRequest,
     },
-    gossip, node,
-    node::{
+    gossip, net,
+    net::{
         AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest, RemoteInfoRequest,
-        RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse, ShutdownRequest,
-        StatsRequest, StatsResponse, StatusRequest, WatchResponse,
+        RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse, WatchResponse,
     },
+    node,
+    node::{ShutdownRequest, StatsRequest, StatsResponse, StatusRequest},
     tags,
     tags::{DeleteRequest <span class="kw">as </span>TagDeleteRequest, ListRequest <span class="kw">as </span>ListTagsRequest},
     Request, RpcService,
@@ -1633,13 +1647,24 @@
         <span class="kw">use </span>node::Request::<span class="kw-2">*</span>;
         <span class="macro">debug!</span>(<span class="string">"handling node request: {msg}"</span>);
         <span class="kw">match </span>msg {
-            Watch(msg) =&gt; chan.server_streaming(msg, <span class="self">self</span>, <span class="self">Self</span>::node_watch).<span class="kw">await</span>,
             Status(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_status).<span class="kw">await</span>,
+            Shutdown(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_shutdown).<span class="kw">await</span>,
+            Stats(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_stats).<span class="kw">await</span>,
+        }
+    }
+
+    <span class="kw">async fn </span>handle_net_request(
+        <span class="self">self</span>,
+        msg: net::Request,
+        chan: RpcChannel&lt;RpcService, IrohServerEndpoint&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), RpcServerError&lt;IrohServerEndpoint&gt;&gt; {
+        <span class="kw">use </span>net::Request::<span class="kw-2">*</span>;
+        <span class="macro">debug!</span>(<span class="string">"handling node request: {msg}"</span>);
+        <span class="kw">match </span>msg {
+            Watch(msg) =&gt; chan.server_streaming(msg, <span class="self">self</span>, <span class="self">Self</span>::node_watch).<span class="kw">await</span>,
             Id(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_id).<span class="kw">await</span>,
             Addr(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_addr).<span class="kw">await</span>,
             Relay(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_relay).<span class="kw">await</span>,
-            Shutdown(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_shutdown).<span class="kw">await</span>,
-            Stats(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_stats).<span class="kw">await</span>,
             RemoteInfosIter(msg) =&gt; {
                 chan.server_streaming(msg, <span class="self">self</span>, <span class="self">Self</span>::remote_infos_iter)
                     .<span class="kw">await
@@ -1925,6 +1950,7 @@
         <span class="kw">use </span>Request::<span class="kw-2">*</span>;
         <span class="macro">debug!</span>(<span class="string">"handling rpc request: {msg}"</span>);
         <span class="kw">match </span>msg {
+            Net(msg) =&gt; <span class="self">self</span>.handle_net_request(msg, chan).<span class="kw">await</span>,
             Node(msg) =&gt; <span class="self">self</span>.handle_node_request(msg, chan).<span class="kw">await</span>,
             Blobs(msg) =&gt; <span class="self">self</span>.handle_blobs_request(msg, chan).<span class="kw">await</span>,
             Tags(msg) =&gt; <span class="self">self</span>.handle_tags_request(msg, chan).<span class="kw">await</span>,
