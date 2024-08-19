@@ -97,7 +97,7 @@ jobs:
       with:
         distribution: 'temurin'
         java-version: '17'
-    
+
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
@@ -111,7 +111,7 @@ jobs:
     - name: Build
       env:
         ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-      run: | 
+      run: |
         cargo install --version 3.5.4 cargo-ndk
         cargo ndk --target ${{ matrix.target }} build
 
@@ -446,11 +446,11 @@ jobs:
           target: iroh
           platforms: linux/amd64
           file: docker/Dockerfile
-  
-      - name: Run Docker image & node stats test
+
+      - name: Run Docker image & stats test
         run: |
           docker run -p 9090:9090 -p 4919:4919/udp -Pd n0computer/iroh-test:latest --rpc-addr 0.0.0.0:4919 start
-          cargo run --bin iroh -- --rpc-addr 127.0.0.1:4919 node stats
+          cargo run --bin iroh -- --rpc-addr 127.0.0.1:4919 stats
 
   codespell:
     runs-on: ubuntu-latest
