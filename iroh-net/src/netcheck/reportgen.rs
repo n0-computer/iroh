@@ -46,31 +46,12 @@ mod probes;
 
 use probes::{Probe, ProbePlan, ProbeProto};
 
-/// The maximum amount of time netcheck will spend gathering a single report.
-const OVERALL_REPORT_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// The total time we wait for all the probes.
-///
-/// This includes the STUN, ICMP and HTTPS probes, which will all
-/// start at different times based on the [`ProbePlan`].
-const PROBES_TIMEOUT: Duration = Duration::from_secs(3);
-
-/// How long to await for a captive-portal result.
-///
-/// This delay is chosen so it starts after good-working STUN probes
-/// would have finished, but not too long so the delay is bearable if
-/// STUN is blocked.
-const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
-
-/// Timeout for captive portal checks
-///
-/// Must be lower than [`OVERALL_REPORT_TIMEOUT`] minus
-/// [`CAPTIVE_PORTAL_DELAY`].
-const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
+use crate::defaults::timeouts::{
+    CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, DNS_TIMEOUT, OVERALL_REPORT_TIMEOUT,
+    PROBES_TIMEOUT,
+};
 
 const ENOUGH_NODES: usize = 3;
-
-const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Delay used to perform staggered dns queries.
 const DNS_STAGGERING_MS: &[u64] = &[200, 300];

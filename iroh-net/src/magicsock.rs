@@ -51,6 +51,7 @@ use url::Url;
 use watchable::Watchable;
 
 use crate::{
+    defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
     disco::{self, SendAddr},
     discovery::Discovery,
     dns::DnsResolver,
@@ -89,9 +90,6 @@ pub use self::node_map::{
 const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-
-/// Maximum duration to wait for a netcheck report.
-const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
