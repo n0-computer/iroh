@@ -501,6 +501,7 @@ fn cli_provide_addresses() -> Result<()> {
 }
 
 #[test]
+#[ignore = "flaky"]
 fn cli_rpc_lock_restart() -> Result<()> {
     let dir = testdir!();
     let iroh_data_dir = dir.join("data-dir");

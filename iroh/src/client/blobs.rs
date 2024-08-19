@@ -1321,7 +1321,7 @@ mod tests {
         let import_outcome = node1.blobs().add_bytes(&b"hello world"[..]).await?;
 
         // Download in node2
-        let node1_addr = node1.node_addr().await?;
+        let node1_addr = node1.net().node_addr().await?;
         let res = node2
             .blobs()
             .download(import_outcome.hash, node1_addr)

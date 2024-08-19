@@ -21,6 +21,7 @@ pub mod authors;
 pub mod blobs;
 pub mod docs;
 pub mod gossip;
+pub mod net;
 pub mod node;
 pub mod tags;
 
@@ -34,6 +35,7 @@ pub struct RpcService;
 #[nested_enum_utils::enum_conversions()]
 pub enum Request {
     Node(node::Request),
+    Net(net::Request),
     Blobs(blobs::Request),
     Docs(docs::Request),
     Tags(tags::Request),
@@ -47,6 +49,7 @@ pub enum Request {
 #[nested_enum_utils::enum_conversions()]
 pub enum Response {
     Node(node::Response),
+    Net(net::Response),
     Blobs(blobs::Response),
     Tags(tags::Response),
     Docs(docs::Response),
