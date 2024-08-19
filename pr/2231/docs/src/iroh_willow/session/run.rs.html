@@ -489,9 +489,37 @@
 <a href="#489" id="489">489</a>
 <a href="#490" id="490">490</a>
 <a href="#491" id="491">491</a>
+<a href="#492" id="492">492</a>
+<a href="#493" id="493">493</a>
+<a href="#494" id="494">494</a>
+<a href="#495" id="495">495</a>
+<a href="#496" id="496">496</a>
+<a href="#497" id="497">497</a>
+<a href="#498" id="498">498</a>
+<a href="#499" id="499">499</a>
+<a href="#500" id="500">500</a>
+<a href="#501" id="501">501</a>
+<a href="#502" id="502">502</a>
+<a href="#503" id="503">503</a>
+<a href="#504" id="504">504</a>
+<a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a>
+<a href="#507" id="507">507</a>
+<a href="#508" id="508">508</a>
+<a href="#509" id="509">509</a>
+<a href="#510" id="510">510</a>
+<a href="#511" id="511">511</a>
+<a href="#512" id="512">512</a>
+<a href="#513" id="513">513</a>
+<a href="#514" id="514">514</a>
+<a href="#515" id="515">515</a>
+<a href="#516" id="516">516</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, sync::Arc};
 
-<span class="kw">use </span>futures_concurrency::{future::TryJoin, stream::StreamExt <span class="kw">as _</span>};
+<span class="kw">use </span>futures_concurrency::{
+    future::{Join <span class="kw">as _</span>, TryJoin <span class="kw">as _</span>},
+    stream::StreamExt <span class="kw">as _</span>,
+};
 <span class="kw">use </span>futures_lite::StreamExt <span class="kw">as _</span>;
 <span class="kw">use </span>strum::IntoEnumIterator;
 <span class="kw">use </span>tokio::sync::mpsc;
@@ -514,13 +542,15 @@
         Channels, Error, EventSender, Role, SessionEvent, SessionId, SessionUpdate,
     },
     store::{traits::Storage, Store},
-    util::{channel::Receiver, stream::Cancelable},
+    util::{
+        channel::Receiver,
+        stream::{Cancelable, CancelableReceiver},
+    },
 };
 
 <span class="kw">use super</span>::{
     channels::ChannelReceivers,
     data::{DataReceiver, DataSender},
-    error::ChannelReceiverDropped,
     reconciler::Reconciler,
     SessionMode,
 };
@@ -531,7 +561,7 @@
     store: Store&lt;S&gt;,
     conn: ConnHandle,
     initial_intents: Vec&lt;Intent&gt;,
-    cancel_token: CancellationToken,
+    close_session_token: CancellationToken,
     session_id: SessionId,
     event_sender: EventSender,
     update_receiver: ReceiverStream&lt;SessionUpdate&gt;,
@@ -571,15 +601,14 @@
 
     <span class="macro">debug!</span>(role = <span class="question-mark">?</span>our_role, <span class="question-mark">?</span>mode, <span class="string">"start session"</span>);
 
-    <span class="comment">// Make all our receivers close once the cancel_token is triggered.
-    </span><span class="kw">let </span>control_recv = Cancelable::new(control_recv, cancel_token.clone());
-    <span class="kw">let </span>reconciliation_recv = Cancelable::new(reconciliation_recv, cancel_token.clone());
-    <span class="kw">let </span>intersection_recv = Cancelable::new(intersection_recv, cancel_token.clone());
-    <span class="kw">let </span><span class="kw-2">mut </span>static_tokens_recv = Cancelable::new(static_tokens_recv, cancel_token.clone());
-    <span class="kw">let </span><span class="kw-2">mut </span>capability_recv = Cancelable::new(capability_recv, cancel_token.clone());
-    <span class="kw">let </span><span class="kw-2">mut </span>aoi_recv = Cancelable::new(aoi_recv, cancel_token.clone());
-    <span class="kw">let </span><span class="kw-2">mut </span>data_recv = Cancelable::new(data_recv, cancel_token.clone());
-    <span class="kw">let </span><span class="kw-2">mut </span>update_receiver = Cancelable::new(update_receiver, cancel_token.clone());
+    <span class="comment">// Make all our receivers close once the close session token is triggered.
+    </span><span class="kw">let </span>control_recv = Cancelable::new(control_recv, close_session_token.clone());
+    <span class="kw">let </span>reconciliation_recv = Cancelable::new(reconciliation_recv, close_session_token.clone());
+    <span class="kw">let </span>intersection_recv = Cancelable::new(intersection_recv, close_session_token.clone());
+    <span class="kw">let </span><span class="kw-2">mut </span>static_tokens_recv = Cancelable::new(static_tokens_recv, close_session_token.clone());
+    <span class="kw">let </span><span class="kw-2">mut </span>capability_recv = Cancelable::new(capability_recv, close_session_token.clone());
+    <span class="kw">let </span><span class="kw-2">mut </span>aoi_recv = Cancelable::new(aoi_recv, close_session_token.clone());
+    <span class="kw">let </span><span class="kw-2">mut </span>data_recv = Cancelable::new(data_recv, close_session_token.clone());
 
     <span class="kw">let </span>caps = Capabilities::new(
         initial_transmission.our_nonce,
@@ -588,40 +617,51 @@
     <span class="kw">let </span>tokens = StaticTokens::default();
 
     <span class="comment">// Setup channels for communication between the loops.
-    </span><span class="kw">let </span>(pai_inbox, pai_inbox_rx) = cancelable_channel::&lt;pai::Input&gt;(<span class="number">2</span>, cancel_token.clone());
+    // All channels but the intents channel are "cancelable", which means that once the cancel
+    // token is invoked, no new messages may be sent into the channel.
+    </span><span class="kw">let </span>close_inboxes_token = CancellationToken::new();
+    <span class="kw">let </span><span class="kw-2">mut </span>update_receiver = CancelableReceiver::new(update_receiver, close_inboxes_token.clone());
+    <span class="kw">let </span>(pai_inbox, pai_inbox_rx) =
+        cancelable_channel::&lt;pai::Input&gt;(<span class="number">2</span>, close_inboxes_token.clone());
     <span class="kw">let </span>(intersection_inbox, intersection_inbox_rx) =
-        cancelable_channel::&lt;aoi_finder::Input&gt;(<span class="number">2</span>, cancel_token.clone());
+        cancelable_channel::&lt;aoi_finder::Input&gt;(<span class="number">2</span>, close_inboxes_token.clone());
     <span class="kw">let </span>(reconciler_inbox, reconciler_inbox_rx) =
-        cancelable_channel::&lt;reconciler::Input&gt;(<span class="number">2</span>, cancel_token.clone());
-    <span class="kw">let </span>(intents_inbox, intents_inbox_rx) =
-        cancelable_channel::&lt;intents::Input&gt;(<span class="number">2</span>, cancel_token.clone());
+        cancelable_channel::&lt;reconciler::Input&gt;(<span class="number">2</span>, close_inboxes_token.clone());
+
+    <span class="comment">// The closing ceremony for the intents inbox is more involved: It is a regular channel,
+    // because the inbox should stay open after the cancel token is triggered, so that further
+    // events may still be emitted. To close the channel, we manually ensure that all senders are
+    // dropped once all other work is done.
+    </span><span class="kw">let </span>(intents_inbox, intents_inbox_rx) = channel::&lt;intents::Input&gt;(<span class="number">2</span>);
 
     <span class="comment">// Setup data channels only if in live mode.
     // TODO: Adapt to changing mode.
     </span><span class="kw">let </span>(data_inbox, data_inbox_rx) = <span class="kw">if </span>mode == SessionMode::Continuous {
         <span class="kw">let </span>(data_inbox, data_inbox_rx) =
-            cancelable_channel::&lt;data::Input&gt;(<span class="number">2</span>, cancel_token.clone());
+            cancelable_channel::&lt;data::Input&gt;(<span class="number">2</span>, close_inboxes_token.clone());
         (<span class="prelude-val">Some</span>(data_inbox), <span class="prelude-val">Some</span>(data_inbox_rx))
     } <span class="kw">else </span>{
         (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
     };
 
-    <span class="kw">let </span><span class="kw-2">mut </span>intents = intents::IntentDispatcher::new(store.auth().clone(), initial_intents);
+    <span class="kw">let </span><span class="kw-2">mut </span>intents =
+        intents::IntentDispatcher::new(store.auth().clone(), initial_intents, intents_inbox_rx);
     <span class="kw">let </span>intents_fut = with_span(<span class="macro">error_span!</span>(<span class="string">"intents"</span>), <span class="kw">async </span>{
         <span class="kw">use </span>intents::Output;
-        <span class="kw">let </span><span class="kw-2">mut </span>intents_gen = intents.run_gen(intents_inbox_rx);
+        <span class="kw">let </span><span class="kw-2">mut </span>intents_gen = intents.run_gen();
         <span class="kw">while let </span><span class="prelude-val">Some</span>(output) = intents_gen.try_next().<span class="kw">await</span><span class="question-mark">? </span>{
             <span class="macro">trace!</span>(<span class="question-mark">?</span>output, <span class="string">"yield"</span>);
             <span class="kw">match </span>output {
                 Output::SubmitInterests(interests) =&gt; {
                     intersection_inbox
                         .send(aoi_finder::Input::AddInterests(interests))
-                        .<span class="kw">await</span><span class="question-mark">?</span>;
+                        .<span class="kw">await
+                        </span>.ok();
                 }
                 <span class="comment">// TODO: Add Output::SetMode(SessionMode) to propagate mode changes.
                 </span>Output::AllIntentsDropped =&gt; {
                     <span class="macro">debug!</span>(<span class="string">"close session (all intents dropped)"</span>);
-                    cancel_token.cancel();
+                    close_session_token.cancel();
                 }
             }
         }
@@ -655,19 +695,22 @@
         }
     });
 
+    <span class="kw">let </span>intents_inbox_2 = intents_inbox.clone();
     <span class="kw">let </span>update_loop = with_span(<span class="macro">error_span!</span>(<span class="string">"update"</span>), <span class="kw">async </span>{
         <span class="kw">while let </span><span class="prelude-val">Some</span>(update) = update_receiver.next().<span class="kw">await </span>{
             <span class="kw">match </span>update {
                 SessionUpdate::SubmitIntent(data) =&gt; {
-                    intents_inbox
+                    intents_inbox_2
                         .send(intents::Input::SubmitIntent(data))
                         .<span class="kw">await</span><span class="question-mark">?</span>;
                 }
             }
         }
+        drop(intents_inbox_2);
         <span class="prelude-val">Ok</span>(())
     });
 
+    <span class="kw">let </span>intents_inbox_2 = intents_inbox.clone();
     <span class="kw">let </span>intersection_loop = with_span(<span class="macro">error_span!</span>(<span class="string">"intersection"</span>), <span class="kw">async </span>{
         <span class="kw">use </span>aoi_finder::Output;
         <span class="kw">let </span><span class="kw-2">mut </span>gen = IntersectionFinder::run_gen(caps.clone(), intersection_inbox_rx);
@@ -677,20 +720,25 @@
                 Output::SubmitAuthorisation(authorisation) =&gt; {
                     pai_inbox
                         .send(pai::Input::SubmitAuthorisation(authorisation))
-                        .<span class="kw">await</span><span class="question-mark">?</span>;
+                        .<span class="kw">await
+                        </span>.ok();
                 }
                 Output::AoiIntersection(intersection) =&gt; {
                     <span class="kw">let </span>area = intersection.intersection.clone();
                     <span class="kw">let </span>namespace = intersection.namespace;
                     reconciler_inbox
                         .send(reconciler::Input::AoiIntersection(intersection.clone()))
-                        .<span class="kw">await</span><span class="question-mark">?</span>;
+                        .<span class="kw">await
+                        </span>.ok();
                     <span class="kw">let </span>event = EventKind::InterestIntersection { namespace, area };
-                    intents_inbox.send(intents::Input::EmitEvent(event)).<span class="kw">await</span><span class="question-mark">?</span>;
+                    intents_inbox_2
+                        .send(intents::Input::EmitEvent(event))
+                        .<span class="kw">await</span><span class="question-mark">?</span>;
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(data_inbox) = <span class="kw-2">&amp;</span>data_inbox {
                         data_inbox
                             .send(data::Input::AoiIntersection(intersection.clone()))
-                            .<span class="kw">await</span><span class="question-mark">?</span>;
+                            .<span class="kw">await
+                            </span>.ok();
                     }
                 }
                 Output::SignAndSendCapability { handle, capability } =&gt; {
@@ -699,9 +747,11 @@
                 }
             }
         }
+        drop(intents_inbox_2);
         <span class="prelude-val">Ok</span>(())
     });
 
+    <span class="kw">let </span>intents_inbox_2 = intents_inbox.clone();
     <span class="kw">let </span>pai_loop = with_span(<span class="macro">error_span!</span>(<span class="string">"pai"</span>), <span class="kw">async </span>{
         <span class="kw">use </span>pai::Output;
         <span class="kw">let </span>inbox = pai_inbox_rx.merge(intersection_recv.map(pai::Input::ReceivedMessage));
@@ -714,12 +764,12 @@
                         namespace: intersection.authorisation.namespace(),
                         area: intersection.authorisation.read_cap().granted_area().clone(),
                     };
-                    (
+                    <span class="kw">let _ </span>= (
                         intersection_inbox.send(aoi_finder::Input::PaiIntersection(intersection)),
-                        intents_inbox.send(intents::Input::EmitEvent(event)),
+                        intents_inbox_2.send(intents::Input::EmitEvent(event)),
                     )
-                        .try_join()
-                        .<span class="kw">await</span><span class="question-mark">?</span>;
+                        .join()
+                        .<span class="kw">await</span>;
                 }
                 Output::SignAndSendSubspaceCap(handle, cap) =&gt; {
                     <span class="kw">let </span>message = caps.sign_subspace_capability(store.secrets(), cap, handle)<span class="question-mark">?</span>;
@@ -727,9 +777,11 @@
                 }
             }
         }
+        drop(intents_inbox_2);
         <span class="prelude-val">Ok</span>(())
     });
 
+    <span class="kw">let </span>intents_inbox_2 = intents_inbox.clone();
     <span class="kw">let </span>reconciler_loop = with_span(<span class="macro">error_span!</span>(<span class="string">"reconciler"</span>), <span class="kw">async </span>{
         <span class="kw">use </span>reconciler::Output;
         <span class="kw">let </span><span class="kw-2">mut </span>gen = Reconciler::run_gen(
@@ -745,7 +797,7 @@
         <span class="kw">while let </span><span class="prelude-val">Some</span>(output) = gen.try_next().<span class="kw">await</span><span class="question-mark">? </span>{
             <span class="kw">match </span>output {
                 Output::ReconciledArea { namespace, area } =&gt; {
-                    intents_inbox
+                    intents_inbox_2
                         .send(intents::Input::EmitEvent(EventKind::Reconciled {
                             namespace,
                             area,
@@ -756,12 +808,13 @@
                     <span class="comment">// Stop session if not in live mode;
                     </span><span class="kw">if </span>!mode.is_live() {
                         <span class="macro">debug!</span>(<span class="string">"close session (reconciliation finished and not in live mode)"</span>);
-                        cancel_token.cancel();
+                        close_session_token.cancel();
                         <span class="kw">break</span>;
                     }
                 }
             }
         }
+        drop(intents_inbox_2);
         <span class="prelude-val">Ok</span>(())
     });
 
@@ -778,12 +831,11 @@
             caps.validate_and_bind_theirs(message.capability.<span class="number">0</span>, message.signature)<span class="question-mark">?</span>;
             pai_inbox
                 .send(pai::Input::ReceivedReadCapForIntersection(handle))
-                .<span class="kw">await</span><span class="question-mark">?</span>;
+                .<span class="kw">await
+                </span>.ok();
         }
         <span class="prelude-val">Ok</span>(())
     });
-
-    <span class="kw">let </span><span class="kw-2">mut </span>we_cancelled = <span class="bool-val">false</span>;
 
     <span class="kw">let </span>control_loop = with_span(<span class="macro">error_span!</span>(<span class="string">"control"</span>), <span class="kw">async </span>{
         <span class="kw">let </span>res = control_loop(
@@ -795,12 +847,8 @@
             <span class="kw-2">&amp;</span>event_sender,
         )
         .<span class="kw">await</span>;
-        <span class="kw">if </span>!cancel_token.is_cancelled() {
-            <span class="macro">debug!</span>(<span class="string">"close session (closed by peer)"</span>);
-            cancel_token.cancel();
-        } <span class="kw">else </span>{
-            we_cancelled = <span class="bool-val">true</span>;
-        }
+        <span class="comment">// Once the control loop closed, close the inboxes.
+        </span>close_inboxes_token.cancel();
         res
     });
 
@@ -821,10 +869,13 @@
                     namespace,
                     aoi: area_of_interest,
                 })
-                .<span class="kw">await</span><span class="question-mark">?</span>;
+                .<span class="kw">await
+                </span>.ok();
         }
         <span class="prelude-val">Ok</span>(())
     });
+
+    drop(intents_inbox);
 
     <span class="kw">let </span>result = (
         intents_fut,
@@ -841,25 +892,35 @@
         .try_join()
         .<span class="kw">await</span>;
 
+    <span class="kw">let </span>result = result.map_err(Arc::new).map(|<span class="kw">_</span>| ());
+
     <span class="comment">// Unsubscribe from the store.
     </span>store.entries().unsubscribe(<span class="kw-2">&amp;</span>session_id);
 
-    <span class="kw">let </span>result = result.map_err(Arc::new).map(|<span class="kw">_</span>| ());
+    <span class="comment">// Track if we closed the session by triggering the cancel token, or if the remote peer closed
+    // the session by closing the control channel.
+    </span><span class="kw">let </span>we_cancelled = close_session_token.is_cancelled();
 
-    <span class="macro">debug!</span>(error=<span class="question-mark">?</span>result.as_ref().err(), <span class="question-mark">?</span>we_cancelled, <span class="string">"session complete"</span>);
-
-    <span class="kw">let </span>remaining_intents = <span class="kw">match </span>result.as_ref() {
+    <span class="kw">let </span><span class="kw-2">mut </span>remaining_intents = <span class="macro">vec!</span>[];
+    <span class="kw">match </span><span class="kw-2">&amp;</span>result {
         <span class="prelude-val">Ok</span>(()) =&gt; {
-            <span class="comment">// If the session closed without an error, return the remaining intents
-            // so that they can potentially be restarted.
-            </span>intents.drain_all()
+            <span class="comment">// If the session did not error, we drain our queued intents to retry them.
+            </span>remaining_intents.append(<span class="kw-2">&amp;mut </span>intents.drain_all().<span class="kw">await</span>);
         }
-        <span class="prelude-val">Err</span>(err) =&gt; {
-            <span class="comment">// If the session closed with error, abort the intents with that error.
-            </span>intents.abort_all(err.clone()).<span class="kw">await</span>;
-            <span class="macro">vec!</span>[]
+        <span class="prelude-val">Err</span>(error) =&gt; {
+            <span class="comment">// If the session errored, we abort our queued intents.
+            </span>intents.abort_all(error.clone()).<span class="kw">await</span>;
         }
-    };
+    }
+    <span class="comment">// Append intents that are still queued in the update receiver channel.
+    </span><span class="kw">let </span><span class="kw-2">mut </span>update_receiver = update_receiver.into_inner().into_inner();
+    update_receiver.close();
+    <span class="kw">while let </span><span class="prelude-val">Some</span>(update) = update_receiver.recv().<span class="kw">await </span>{
+        <span class="kw">match </span>update {
+            SessionUpdate::SubmitIntent(intent) =&gt; remaining_intents.push(intent),
+        }
+    }
+    <span class="macro">debug!</span>(error=<span class="question-mark">?</span>result.as_ref().err(), remaining_intents=remaining_intents.len(), <span class="question-mark">?</span>we_cancelled, <span class="string">"session complete"</span>);
 
     <span class="kw">if let </span><span class="prelude-val">Err</span>(_receiver_dropped) = event_sender
         .send(SessionEvent::Complete {
@@ -867,7 +928,6 @@
             we_cancelled,
             senders: channel_sender,
             remaining_intents,
-            update_receiver: update_receiver.into_inner().into_inner(),
         })
         .<span class="kw">await
     </span>{
@@ -882,7 +942,7 @@
     our_role: Role,
     caps: <span class="kw-2">&amp;</span>Capabilities,
     sender: <span class="kw-2">&amp;</span>ChannelSenders,
-    pai_inbox: <span class="kw-2">&amp;</span>Sender&lt;pai::Input&gt;,
+    pai_inbox: <span class="kw-2">&amp;</span>mpsc::Sender&lt;pai::Input&gt;,
     event_sender: <span class="kw-2">&amp;</span>EventSender,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
     <span class="comment">// Reveal our nonce.
@@ -938,30 +998,20 @@
     <span class="prelude-val">Ok</span>(())
 }
 
+<span class="kw">fn </span>channel&lt;T: Send + <span class="lifetime">'static</span>&gt;(cap: usize) -&gt; (mpsc::Sender&lt;T&gt;, mpsc::Receiver&lt;T&gt;) {
+    <span class="kw">let </span>(tx, rx) = mpsc::channel(cap);
+    (tx, rx)
+}
+
 <span class="kw">fn </span>cancelable_channel&lt;T: Send + <span class="lifetime">'static</span>&gt;(
     cap: usize,
     cancel_token: CancellationToken,
-) -&gt; (Sender&lt;T&gt;, Cancelable&lt;ReceiverStream&lt;T&gt;&gt;) {
+) -&gt; (mpsc::Sender&lt;T&gt;, CancelableReceiver&lt;T&gt;) {
     <span class="kw">let </span>(tx, rx) = mpsc::channel(cap);
     (
-        Sender(tx),
-        Cancelable::new(ReceiverStream::new(rx), cancel_token),
+        tx,
+        CancelableReceiver::new(ReceiverStream::new(rx), cancel_token),
     )
-}
-
-<span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>Sender&lt;T&gt;(mpsc::Sender&lt;T&gt;);
-
-<span class="kw">impl</span>&lt;T&gt; Clone <span class="kw">for </span>Sender&lt;T&gt; {
-    <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>(<span class="self">self</span>.<span class="number">0</span>.clone())
-    }
-}
-
-<span class="kw">impl</span>&lt;T: Send&gt; Sender&lt;T&gt; {
-    <span class="kw">async fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, item: T) -&gt; <span class="prelude-ty">Result</span>&lt;(), ChannelReceiverDropped&gt; {
-        <span class="self">self</span>.<span class="number">0</span>.send(item).<span class="kw">await</span>.map_err(|<span class="kw">_</span>| ChannelReceiverDropped)
-    }
 }
 
 <span class="kw">async fn </span>with_span&lt;T: std::fmt::Debug&gt;(

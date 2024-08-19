@@ -135,7 +135,17 @@
 <a href="#135" id="135">135</a>
 <a href="#136" id="136">136</a>
 <a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>ed25519_dalek::SignatureError;
+<span class="kw">use </span>tokio::sync::mpsc;
 
 <span class="kw">use crate</span>::{
     proto::{data_model::UnauthorisedWriteError, meadowcap::UserId, wgps::ResourceHandle},
@@ -208,10 +218,12 @@
     </span>Pai(<span class="attr">#[from] </span>PaiError),
     <span class="attr">#[error(<span class="string">"net failed: {0}"</span>)]
     </span>Net(anyhow::Error),
-    <span class="attr">#[error(<span class="string">"channel receiver dropped"</span>)]
-    </span>ChannelDropped,
+    <span class="attr">#[error(<span class="string">"channel closed unexpectedly"</span>)]
+    </span>ChannelClosed,
     <span class="attr">#[error(<span class="string">"our node is shutting down"</span>)]
     </span>ShuttingDown,
+    <span class="attr">#[error(<span class="string">"The operation was cancelled locally"</span>)]
+    </span>Cancelled,
 }
 
 <span class="attr">#[derive(Debug, thiserror::Error)]
@@ -219,7 +231,7 @@
 </span><span class="kw">pub struct </span>ChannelReceiverDropped;
 <span class="kw">impl </span>From&lt;ChannelReceiverDropped&gt; <span class="kw">for </span>Error {
     <span class="kw">fn </span>from(<span class="kw">_</span>: ChannelReceiverDropped) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::ChannelDropped
+        <span class="self">Self</span>::ChannelClosed
     }
 }
 
@@ -270,6 +282,12 @@
 </span><span class="kw">impl </span>From&lt;MissingResource&gt; <span class="kw">for </span>Error {
     <span class="kw">fn </span>from(value: MissingResource) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::MissingResource(value.<span class="number">0</span>)
+    }
+}
+
+<span class="kw">impl</span>&lt;T&gt; From&lt;mpsc::error::SendError&lt;T&gt;&gt; <span class="kw">for </span>Error {
+    <span class="kw">fn </span>from(_error: mpsc::error::SendError&lt;T&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::ChannelClosed
     }
 }
 </code></pre></div></section></main></body></html>

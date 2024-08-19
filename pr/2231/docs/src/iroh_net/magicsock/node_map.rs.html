@@ -796,6 +796,11 @@
 <a href="#796" id="796">796</a>
 <a href="#797" id="797">797</a>
 <a href="#798" id="798">798</a>
+<a href="#799" id="799">799</a>
+<a href="#800" id="800">800</a>
+<a href="#801" id="801">801</a>
+<a href="#802" id="802">802</a>
+<a href="#803" id="803">803</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, HashMap},
     hash::Hash,
@@ -831,8 +836,9 @@
 <span class="kw">mod </span>path_state;
 <span class="kw">mod </span>udp_paths;
 
-<span class="kw">pub use </span>node_state::{ConnectionType, ControlMsg, DirectAddrInfo, NodeInfo};
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">use </span>node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
+
+<span class="kw">pub use </span>node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
 
 <span class="doccomment">/// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -1022,9 +1028,13 @@
             .collect()
     }
 
-    <span class="doccomment">/// Gets the [`NodeInfo`]s for each endpoint
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>node_infos(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; Vec&lt;NodeInfo&gt; {
-        <span class="self">self</span>.inner.lock().node_infos(now)
+    <span class="doccomment">/// Returns the [`RemoteInfo`]s for each node in the node map.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>list_remote_infos(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; Vec&lt;RemoteInfo&gt; {
+        <span class="comment">// NOTE: calls to this method will often call `into_iter` (or similar methods). Note that
+        // we can't avoid `collect` here since it would hold a lock for an indefinite time. Even if
+        // we were to find this acceptable, dealing with the lifetimes of the mutex's guard and the
+        // internal iterator will be a hassle, if possible at all.
+        </span><span class="self">self</span>.inner.lock().remote_infos_iter(now).collect()
     }
 
     <span class="doccomment">/// Returns a stream of [`ConnectionType`].
@@ -1040,9 +1050,9 @@
         <span class="self">self</span>.inner.lock().conn_type_stream(node_id)
     }
 
-    <span class="doccomment">/// Get the [`NodeInfo`]s for each endpoint
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>node_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;NodeInfo&gt; {
-        <span class="self">self</span>.inner.lock().node_info(node_id)
+    <span class="doccomment">/// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>remote_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;RemoteInfo&gt; {
+        <span class="self">self</span>.inner.lock().remote_info(node_id)
     }
 
     <span class="doccomment">/// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
@@ -1183,13 +1193,13 @@
         <span class="self">self</span>.by_id.iter_mut()
     }
 
-    <span class="doccomment">/// Get the [`NodeInfo`]s for each endpoint
-    </span><span class="kw">fn </span>node_infos(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; Vec&lt;NodeInfo&gt; {
-        <span class="self">self</span>.node_states().map(|(<span class="kw">_</span>, ep)| ep.info(now)).collect()
+    <span class="doccomment">/// Get the [`RemoteInfo`]s for all nodes.
+    </span><span class="kw">fn </span>remote_infos_iter(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; <span class="kw">impl </span>Iterator&lt;Item = RemoteInfo&gt; + <span class="lifetime">'_ </span>{
+        <span class="self">self</span>.node_states().map(<span class="kw">move </span>|(<span class="kw">_</span>, ep)| ep.info(now))
     }
 
-    <span class="doccomment">/// Get the [`NodeInfo`]s for each endpoint
-    </span><span class="kw">fn </span>node_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;NodeInfo&gt; {
+    <span class="doccomment">/// Get the [`RemoteInfo`]s for each node.
+    </span><span class="kw">fn </span>remote_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;RemoteInfo&gt; {
         <span class="self">self</span>.get(NodeStateKey::NodeId(node_id))
             .map(|ep| ep.info(Instant::now()))
     }
@@ -1464,7 +1474,7 @@
         node_map.add_test_addr(node_addr_d);
 
         <span class="kw">let </span><span class="kw-2">mut </span>addrs: Vec&lt;NodeAddr&gt; = node_map
-            .node_infos(Instant::now())
+            .list_remote_infos(Instant::now())
             .into_iter()
             .filter_map(|info| {
                 <span class="kw">let </span>addr: NodeAddr = info.into();
@@ -1477,7 +1487,7 @@
         <span class="kw">let </span>loaded_node_map = NodeMap::load_from_vec(addrs.clone());
 
         <span class="kw">let </span><span class="kw-2">mut </span>loaded: Vec&lt;NodeAddr&gt; = loaded_node_map
-            .node_infos(Instant::now())
+            .list_remote_infos(Instant::now())
             .into_iter()
             .filter_map(|info| {
                 <span class="kw">let </span>addr: NodeAddr = info.into();

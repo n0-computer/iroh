@@ -924,6 +924,58 @@
 <a href="#924" id="924">924</a>
 <a href="#925" id="925">925</a>
 <a href="#926" id="926">926</a>
+<a href="#927" id="927">927</a>
+<a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a>
+<a href="#951" id="951">951</a>
+<a href="#952" id="952">952</a>
+<a href="#953" id="953">953</a>
+<a href="#954" id="954">954</a>
+<a href="#955" id="955">955</a>
+<a href="#956" id="956">956</a>
+<a href="#957" id="957">957</a>
+<a href="#958" id="958">958</a>
+<a href="#959" id="959">959</a>
+<a href="#960" id="960">960</a>
+<a href="#961" id="961">961</a>
+<a href="#962" id="962">962</a>
+<a href="#963" id="963">963</a>
+<a href="#964" id="964">964</a>
+<a href="#965" id="965">965</a>
+<a href="#966" id="966">966</a>
+<a href="#967" id="967">967</a>
+<a href="#968" id="968">968</a>
+<a href="#969" id="969">969</a>
+<a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a>
+<a href="#972" id="972">972</a>
+<a href="#973" id="973">973</a>
+<a href="#974" id="974">974</a>
+<a href="#975" id="975">975</a>
+<a href="#976" id="976">976</a>
+<a href="#977" id="977">977</a>
+<a href="#978" id="978">978</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node API
 //!
 //! An iroh node is a server that is identified by an Ed25519 keypair and is
@@ -961,7 +1013,8 @@
 //! well, without going through [`client`](crate::client::Iroh))
 //!
 //! To shut down the node, call [`Node::shutdown`].
-</span><span class="kw">use </span>std::path::{Path, PathBuf};
+</span><span class="kw">use </span>std::collections::BTreeMap;
+<span class="kw">use </span>std::path::{Path, PathBuf};
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr};
 <span class="kw">use </span>std::{fmt::Debug, time::Duration};
@@ -972,12 +1025,11 @@
 <span class="kw">use </span>iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store <span class="kw">as </span>BaoStore};
 <span class="kw">use </span>iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
 <span class="kw">use </span>iroh_blobs::{downloader::Downloader, protocol::Closed};
+<span class="kw">use </span>iroh_blobs::{HashAndFormat, TempTag};
 <span class="kw">use </span>iroh_gossip::net::Gossip;
+<span class="kw">use </span>iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
 <span class="kw">use </span>iroh_net::key::SecretKey;
-<span class="kw">use </span>iroh_net::{
-    endpoint::{ConnectionInfo, DirectAddrsStream},
-    util::SharedAbortingJoinHandle,
-};
+<span class="kw">use </span>iroh_net::util::SharedAbortingJoinHandle;
 <span class="kw">use </span>iroh_net::{AddrInfo, Endpoint, NodeAddr};
 <span class="kw">use </span>quic_rpc::transport::ServerEndpoint <span class="kw">as _</span>;
 <span class="kw">use </span>quic_rpc::RpcServer;
@@ -987,6 +1039,7 @@
 
 <span class="kw">use </span><span class="kw">crate</span>::node::nodes_storage::store_node_addrs;
 <span class="kw">use </span><span class="kw">crate</span>::node::{docs::DocsEngine, protocol::ProtocolMap};
+<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::blobs::BatchId;
 
 <span class="kw">mod </span>builder;
 <span class="kw">mod </span>docs;
@@ -1041,7 +1094,59 @@
     cancel_token: CancellationToken,
     client: <span class="kw">crate</span>::client::Iroh,
     downloader: Downloader,
+    blob_batches: tokio::sync::Mutex&lt;BlobBatches&gt;,
     local_pool_handle: LocalPoolHandle,
+}
+
+<span class="doccomment">/// Keeps track of all the currently active batch operations of the blobs api.
+</span><span class="attr">#[derive(Debug, Default)]
+</span><span class="kw">struct </span>BlobBatches {
+    <span class="doccomment">/// Currently active batches
+    </span>batches: BTreeMap&lt;BatchId, BlobBatch&gt;,
+    <span class="doccomment">/// Used to generate new batch ids.
+    </span>max: u64,
+}
+
+<span class="doccomment">/// A single batch of blob operations
+</span><span class="attr">#[derive(Debug, Default)]
+</span><span class="kw">struct </span>BlobBatch {
+    <span class="doccomment">/// The tags in this batch.
+    </span>tags: BTreeMap&lt;HashAndFormat, Vec&lt;TempTag&gt;&gt;,
+}
+
+<span class="kw">impl </span>BlobBatches {
+    <span class="doccomment">/// Create a new unique batch id.
+    </span><span class="kw">fn </span>create(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; BatchId {
+        <span class="kw">let </span>id = <span class="self">self</span>.max;
+        <span class="self">self</span>.max += <span class="number">1</span>;
+        BatchId(id)
+    }
+
+    <span class="doccomment">/// Store a temp tag in a batch identified by a batch id.
+    </span><span class="kw">fn </span>store(<span class="kw-2">&amp;mut </span><span class="self">self</span>, batch: BatchId, tt: TempTag) {
+        <span class="kw">let </span>entry = <span class="self">self</span>.batches.entry(batch).or_default();
+        entry.tags.entry(tt.hash_and_format()).or_default().push(tt);
+    }
+
+    <span class="doccomment">/// Remove a tag from a batch.
+    </span><span class="kw">fn </span>remove_one(<span class="kw-2">&amp;mut </span><span class="self">self</span>, batch: BatchId, content: <span class="kw-2">&amp;</span>HashAndFormat) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(batch) = <span class="self">self</span>.batches.get_mut(<span class="kw-2">&amp;</span>batch) {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(tags) = batch.tags.get_mut(content) {
+                tags.pop();
+                <span class="kw">if </span>tags.is_empty() {
+                    batch.tags.remove(content);
+                }
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+            }
+        }
+        <span class="comment">// this can happen if we try to upgrade a tag from an expired batch
+        </span><span class="macro">anyhow::bail!</span>(<span class="string">"tag not found in batch"</span>);
+    }
+
+    <span class="doccomment">/// Remove an entire batch.
+    </span><span class="kw">fn </span>remove(<span class="kw-2">&amp;mut </span><span class="self">self</span>, batch: BatchId) {
+        <span class="self">self</span>.batches.remove(<span class="kw-2">&amp;</span>batch);
+    }
 }
 
 <span class="doccomment">/// In memory node.
@@ -1491,8 +1596,7 @@
 }
 
 <span class="kw">fn </span>node_addresses_for_storage(ep: <span class="kw-2">&amp;</span>Endpoint) -&gt; Vec&lt;NodeAddr&gt; {
-    ep.connection_infos()
-        .into_iter()
+    ep.remote_infos_iter()
         .filter_map(node_address_for_storage)
         .collect()
 }
@@ -1502,7 +1606,7 @@
 /// If the endpoint was used, only the paths that were in use will be returned.
 ///
 /// Returns `None` if the resulting [`NodeAddr`] would be empty.
-</span><span class="kw">fn </span>node_address_for_storage(info: ConnectionInfo) -&gt; <span class="prelude-ty">Option</span>&lt;NodeAddr&gt; {
+</span><span class="kw">fn </span>node_address_for_storage(info: RemoteInfo) -&gt; <span class="prelude-ty">Option</span>&lt;NodeAddr&gt; {
     <span class="kw">let </span>direct_addresses = <span class="kw">if </span>info.last_used.is_none() {
         info.addrs
             .into_iter()

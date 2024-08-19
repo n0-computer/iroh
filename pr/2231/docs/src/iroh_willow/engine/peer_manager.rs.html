@@ -741,11 +741,6 @@
 <a href="#741" id="741">741</a>
 <a href="#742" id="742">742</a>
 <a href="#743" id="743">743</a>
-<a href="#744" id="744">744</a>
-<a href="#745" id="745">745</a>
-<a href="#746" id="746">746</a>
-<a href="#747" id="747">747</a>
-<a href="#748" id="748">748</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
@@ -1012,8 +1007,7 @@
                     <span class="kw-2">ref mut </span>intents, ..
                 }
                 | PeerState::Closing {
-                    new_intents: <span class="kw-2">ref mut </span>intents,
-                    ..
+                    <span class="kw-2">ref mut </span>intents, ..
                 } =&gt; std::mem::take(intents),
                 <span class="kw">_ </span>=&gt; <span class="macro">vec!</span>[],
             };
@@ -1090,14 +1084,21 @@
             } =&gt; {
                 intents.push(intent);
             }
-            PeerState::Active { <span class="kw-2">ref </span>update_tx, .. } =&gt; {
+            PeerState::Active {
+                <span class="kw-2">ref </span>update_tx,
+                <span class="kw-2">ref mut </span>intents_after_close,
+                ..
+            } =&gt; {
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = update_tx.send(SessionUpdate::SubmitIntent(intent)).<span class="kw">await </span>{
+                    <span class="macro">debug!</span>(<span class="string">"failed to submit intent into active session, queue in peer state"</span>);
                     <span class="kw">let </span>SessionUpdate::SubmitIntent(intent) = err.<span class="number">0</span>;
-                    intent.send_abort(Arc::new(Error::ActorFailed)).<span class="kw">await</span>;
+                    intents_after_close.push(intent);
+                } <span class="kw">else </span>{
+                    <span class="macro">trace!</span>(<span class="string">"intent sent to session"</span>);
                 }
             }
             PeerState::Closing {
-                <span class="kw-2">ref mut </span>new_intents,
+                intents: <span class="kw-2">ref mut </span>new_intents,
                 ..
             } =&gt; {
                 new_intents.push(intent);
@@ -1112,36 +1113,32 @@
             SessionEvent::Complete {
                 result,
                 senders,
-                remaining_intents,
-                <span class="kw-2">mut </span>update_receiver,
-                ..
+                <span class="kw-2">mut </span>remaining_intents,
+                we_cancelled: <span class="kw">_</span>,
             } =&gt; {
-                <span class="macro">trace!</span>(error=<span class="question-mark">?</span>result.err(), <span class="question-mark">?</span>remaining_intents, <span class="string">"session complete"</span>);
+                <span class="macro">debug!</span>(error=<span class="question-mark">?</span>result.err(), remaining_intents=remaining_intents.len(), <span class="string">"session complete"</span>);
 
                 <span class="comment">// Close the channel senders. This will cause our send loops to close,
                 // which in turn causes the receive loops of the other peer to close.
                 </span>senders.close_all();
 
                 <span class="kw">let </span><span class="prelude-val">Some</span>(peer_info) = <span class="self">self</span>.peers.get_mut(<span class="kw-2">&amp;</span>peer) <span class="kw">else </span>{
-                    <span class="macro">warn!</span>(<span class="string">"got session complete for unknown peer"</span>);
+                    <span class="macro">warn!</span>(<span class="string">"got session complete event for unknown peer"</span>);
                     <span class="kw">return</span>;
                 };
 
-                <span class="comment">// TODO(frando): How exactly to deal with the `remaining_intents` is tbd.
-                // Current impl: We store them in the Closing state, wait if the connection closed with error or not,
-                // and if it closed with error abort them with this error, otherwise they are dropped (which also closes their event streams).
-                // We could potentially restart them, as we do with the new intents that came in after session termination,
-                // but we'd have to think carefully about endless loops there.
+                <span class="kw">let </span>PeerState::Active {
+                    <span class="kw-2">ref mut </span>intents_after_close,
+                    ..
+                } = peer_info.state
+                <span class="kw">else </span>{
+                    <span class="macro">warn!</span>(<span class="string">"got session complete event for peer not in active state"</span>);
+                    <span class="kw">return</span>;
+                };
+                remaining_intents.append(intents_after_close);
 
-                // However, the intents that are still in the update channel are completely unprocessed, so they
-                // should get their chance via a reconnect.
-                </span><span class="kw">let </span><span class="kw-2">mut </span>new_intents = <span class="macro">vec!</span>[];
-                <span class="kw">while let </span><span class="prelude-val">Ok</span>(SessionUpdate::SubmitIntent(intent)) = update_receiver.try_recv() {
-                    new_intents.push(intent);
-                }
                 peer_info.state = PeerState::Closing {
-                    old_intents: remaining_intents,
-                    new_intents,
+                    intents: remaining_intents,
                 };
                 <span class="macro">trace!</span>(<span class="string">"entering closing state"</span>);
             }
@@ -1193,19 +1190,15 @@
                                 )
                                 .<span class="kw">await</span>;
                             }
-                            PeerState::Closing {
-                                old_intents,
-                                new_intents,
-                            } =&gt; {
+                            PeerState::Closing { intents } =&gt; {
                                 <span class="macro">debug!</span>(<span class="question-mark">?</span>err, <span class="string">"connection failed to close gracefully"</span>);
                                 <span class="comment">// If we were are in closing state, we still forward the connection error to the intents.
                                 // This would be the place where we'd implement retries: instead of aborting the intents, resubmit them.
                                 // Right now, we only resubmit intents that were submitted while terminating a session, and only if the session closed gracefully.
                                 </span><span class="kw">let </span>err = Arc::new(Error::Net(err));
                                 join_all(
-                                    old_intents
+                                    intents
                                         .into_iter()
-                                        .chain(new_intents.into_iter())
                                         .map(|intent| intent.send_abort(err.clone())),
                                 )
                                 .<span class="kw">await</span>;
@@ -1288,6 +1281,7 @@
                 peer_info.state = PeerState::Active {
                     update_tx,
                     cancel_token,
+                    intents_after_close: <span class="macro">vec!</span>[],
                 };
                 peer_info.abort_handle = <span class="prelude-val">Some</span>(abort_handle);
             }
@@ -1309,18 +1303,13 @@
             <span class="prelude-val">Ok</span>(ConnStep::Closed) =&gt; {
                 <span class="macro">debug!</span>(<span class="string">"connection closed gracefully"</span>);
                 <span class="kw">let </span>peer_info = <span class="self">self</span>.peers.remove(<span class="kw-2">&amp;</span>peer).expect(<span class="string">"just checked"</span>);
-                <span class="kw">if let </span>PeerState::Closing {
-                    new_intents,
-                    old_intents,
-                } = peer_info.state
-                {
-                    drop(old_intents);
-                    <span class="kw">if </span>!new_intents.is_empty() {
+                <span class="kw">if let </span>PeerState::Closing { intents } = peer_info.state {
+                    <span class="kw">if </span>!intents.is_empty() {
                         <span class="macro">debug!</span>(
                             <span class="string">"resubmitting {} intents that were not yet processed"</span>,
-                            new_intents.len()
+                            intents.len()
                         );
-                        <span class="kw">for </span>intent <span class="kw">in </span>new_intents {
+                        <span class="kw">for </span>intent <span class="kw">in </span>intents {
                             <span class="self">self</span>.submit_intent(peer, intent).<span class="kw">await</span>;
                         }
                     }
@@ -1398,10 +1387,11 @@
     Active {
         cancel_token: CancellationToken,
         update_tx: mpsc::Sender&lt;SessionUpdate&gt;,
+        <span class="doccomment">/// List of intents that we failed to submit into the session because it is closing.
+        </span>intents_after_close: Vec&lt;Intent&gt;,
     },
     Closing {
-        old_intents: Vec&lt;Intent&gt;,
-        new_intents: Vec&lt;Intent&gt;,
+        intents: Vec&lt;Intent&gt;,
     },
 }
 

@@ -228,6 +228,7 @@
 <a href="#228" id="228">228</a>
 <a href="#229" id="229">229</a>
 <a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     fmt::Debug,
     io,
@@ -381,6 +382,7 @@
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span>anyhow::Result;
+    <span class="kw">use </span>tokio::sync::mpsc;
 
     <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/test/1"</span>;
 
@@ -422,7 +424,7 @@
         <span class="kw">let </span>(m2, _m2_key) = wrap_socket(m2)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>m1_addr = SocketAddr::new(network.local_addr(), m1.local_addr()<span class="question-mark">?</span>.port());
-        <span class="kw">let </span>(m1_send, m1_recv) = async_channel::bounded(<span class="number">8</span>);
+        <span class="kw">let </span>(m1_send, <span class="kw-2">mut </span>m1_recv) = mpsc::channel(<span class="number">8</span>);
 
         <span class="kw">let </span>m1_task = tokio::task::spawn(<span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Some</span>(conn) = m1.accept().<span class="kw">await </span>{
@@ -450,7 +452,7 @@
         drop(send_bi);
 
         <span class="comment">// make sure the right values arrived
-        </span><span class="kw">let </span>val = m1_recv.recv().<span class="kw">await</span><span class="question-mark">?</span>;
+        </span><span class="kw">let </span>val = m1_recv.recv().<span class="kw">await</span>.unwrap();
         <span class="macro">assert_eq!</span>(val, <span class="string">b"hello"</span>);
 
         m1_task.<span class="kw">await</span><span class="question-mark">??</span>;

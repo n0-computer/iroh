@@ -1574,6 +1574,53 @@
 <a href="#1574" id="1574">1574</a>
 <a href="#1575" id="1575">1575</a>
 <a href="#1576" id="1576">1576</a>
+<a href="#1577" id="1577">1577</a>
+<a href="#1578" id="1578">1578</a>
+<a href="#1579" id="1579">1579</a>
+<a href="#1580" id="1580">1580</a>
+<a href="#1581" id="1581">1581</a>
+<a href="#1582" id="1582">1582</a>
+<a href="#1583" id="1583">1583</a>
+<a href="#1584" id="1584">1584</a>
+<a href="#1585" id="1585">1585</a>
+<a href="#1586" id="1586">1586</a>
+<a href="#1587" id="1587">1587</a>
+<a href="#1588" id="1588">1588</a>
+<a href="#1589" id="1589">1589</a>
+<a href="#1590" id="1590">1590</a>
+<a href="#1591" id="1591">1591</a>
+<a href="#1592" id="1592">1592</a>
+<a href="#1593" id="1593">1593</a>
+<a href="#1594" id="1594">1594</a>
+<a href="#1595" id="1595">1595</a>
+<a href="#1596" id="1596">1596</a>
+<a href="#1597" id="1597">1597</a>
+<a href="#1598" id="1598">1598</a>
+<a href="#1599" id="1599">1599</a>
+<a href="#1600" id="1600">1600</a>
+<a href="#1601" id="1601">1601</a>
+<a href="#1602" id="1602">1602</a>
+<a href="#1603" id="1603">1603</a>
+<a href="#1604" id="1604">1604</a>
+<a href="#1605" id="1605">1605</a>
+<a href="#1606" id="1606">1606</a>
+<a href="#1607" id="1607">1607</a>
+<a href="#1608" id="1608">1608</a>
+<a href="#1609" id="1609">1609</a>
+<a href="#1610" id="1610">1610</a>
+<a href="#1611" id="1611">1611</a>
+<a href="#1612" id="1612">1612</a>
+<a href="#1613" id="1613">1613</a>
+<a href="#1614" id="1614">1614</a>
+<a href="#1615" id="1615">1615</a>
+<a href="#1616" id="1616">1616</a>
+<a href="#1617" id="1617">1617</a>
+<a href="#1618" id="1618">1618</a>
+<a href="#1619" id="1619">1619</a>
+<a href="#1620" id="1620">1620</a>
+<a href="#1621" id="1621">1621</a>
+<a href="#1622" id="1622">1622</a>
+<a href="#1623" id="1623">1623</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{btree_map::Entry, BTreeSet, HashMap};
 <span class="kw">use </span>std::hash::Hash;
 <span class="kw">use </span>std::net::{IpAddr, SocketAddr};
@@ -1687,8 +1734,11 @@
     sent_pings: HashMap&lt;stun::TransactionId, SentPing&gt;,
     <span class="doccomment">/// Last time this node was used.
     ///
-    /// A node is marked as in use when an endpoint to contact them is requested or if UDP activity
-    /// is registered.
+    /// A node is marked as in use when sending datagrams to them, or when having received
+    /// datagrams from it. Regardless of whether the datagrams are payload or DISCO, and whether
+    /// they go via UDP or the relay.
+    ///
+    /// Note that sending datagrams to a node does not mean the node receives them.
     </span>last_used: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
     <span class="doccomment">/// Last time we sent a call-me-maybe.
     ///
@@ -1761,8 +1811,8 @@
         <span class="self">self</span>.conn_type.watch().into_stream()
     }
 
-    <span class="doccomment">/// Returns info about this endpoint
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>info(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; NodeInfo {
+    <span class="doccomment">/// Returns info about this node.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>info(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; RemoteInfo {
         <span class="kw">let </span>conn_type = <span class="self">self</span>.conn_type.get();
         <span class="kw">let </span>latency = <span class="kw">match </span>conn_type {
             ConnectionType::Direct(addr) =&gt; <span class="self">self
@@ -1790,6 +1840,7 @@
             }
             ConnectionType::None =&gt; <span class="prelude-val">None</span>,
         };
+
         <span class="kw">let </span>addrs = <span class="self">self
             </span>.udp_paths
             .paths
@@ -1808,8 +1859,7 @@
             })
             .collect();
 
-        NodeInfo {
-            id: <span class="self">self</span>.id,
+        RemoteInfo {
             node_id: <span class="self">self</span>.node_id,
             relay_url: <span class="self">self</span>.relay_url.clone().map(|r| r.into()),
             addrs,
@@ -2545,7 +2595,7 @@
         <span class="self">self</span>.send_pings(now)
     }
 
-    <span class="doccomment">/// Marks this endpoint as having received a UDP payload message.
+    <span class="doccomment">/// Marks this node as having received a UDP payload message.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_udp(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addr: IpPort, now: Instant) {
         <span class="kw">let </span><span class="prelude-val">Some</span>(state) = <span class="self">self</span>.udp_paths.paths.get_mut(<span class="kw-2">&amp;</span>addr) <span class="kw">else </span>{
             <span class="macro">debug_assert!</span>(<span class="bool-val">false</span>, <span class="string">"node map inconsistency by_ip_port &lt;-&gt; direct addr"</span>);
@@ -2685,8 +2735,8 @@
     }
 }
 
-<span class="kw">impl </span>From&lt;NodeInfo&gt; <span class="kw">for </span>NodeAddr {
-    <span class="kw">fn </span>from(info: NodeInfo) -&gt; <span class="self">Self </span>{
+<span class="kw">impl </span>From&lt;RemoteInfo&gt; <span class="kw">for </span>NodeAddr {
+    <span class="kw">fn </span>from(info: RemoteInfo) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>direct_addresses = info
             .addrs
             .into_iter()
@@ -2761,29 +2811,58 @@
     </span>CallMeMaybe,
 }
 
-<span class="doccomment">/// Information about a direct address.
+<span class="doccomment">/// Information about a *direct address*.
+///
+/// The *direct addresses* of an iroh-net node are those that could be used by other nodes to
+/// establish direct connectivity, depending on the network situation. Due to NAT configurations,
+/// for example, not all direct addresses of a node are usable by all peers.
 </span><span class="attr">#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 </span><span class="kw">pub struct </span>DirectAddrInfo {
-    <span class="doccomment">/// The address reported.
+    <span class="doccomment">/// The UDP address reported by the remote node.
     </span><span class="kw">pub </span>addr: SocketAddr,
-    <span class="doccomment">/// The latency to the address, if any.
+    <span class="doccomment">/// The latency to the remote node over this network path.
+    ///
+    /// If there has never been any connectivity via this address no latency will be known.
     </span><span class="kw">pub </span>latency: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
-    <span class="doccomment">/// Last control message received by this node.
+    <span class="doccomment">/// Last control message received by this node about this address.
+    ///
+    /// This contains the elapsed duration since the control message was received and the
+    /// kind of control message received at that time.  Only the most recent control message
+    /// is returned.
+    ///
+    /// Note that [`ControlMsg::CallMeMaybe`] is received via a relay path, while
+    /// [`ControlMsg::Ping`] and [`ControlMsg::Pong`] are received on the path to
+    /// [`DirectAddrInfo::addr`] itself and thus convey very different information.
     </span><span class="kw">pub </span>last_control: <span class="prelude-ty">Option</span>&lt;(Duration, ControlMsg)&gt;,
-    <span class="doccomment">/// How long ago was the last payload message for this node.
+    <span class="doccomment">/// Elapsed time since the last payload message was received on this network path.
+    ///
+    /// This indicates how long ago a QUIC datagram was received from the remote node sent
+    /// from this [`DirectAddrInfo::addr`].  It indicates the network path was in use to
+    /// transport payload data.
     </span><span class="kw">pub </span>last_payload: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
-    <span class="doccomment">/// When was this connection last alive, if ever.
+    <span class="doccomment">/// Elapsed time since this network path was known to exist.
+    ///
+    /// A network path be considered to exist only because the remote node advertised it.
+    /// It may not mean the path is usable.  However if there was any communication with the
+    /// remote node over this network path it also means the path exists.
+    ///
+    /// The elapsed time since *any* confirmation of the path's existence was received is
+    /// returned.  If the remote node moved networks and no longer has this path, this could
+    /// be a long duration.  If the path was added via [`Endpoint::add_node_addr`] or some
+    /// node discovery the path may never have been known to exist.
+    ///
+    /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
     </span><span class="kw">pub </span>last_alive: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
 }
 
-<span class="doccomment">/// Information about a relay URL.
+<span class="doccomment">/// Information about the network path to a remote node via a relay server.
 </span><span class="attr">#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 </span><span class="kw">pub struct </span>RelayUrlInfo {
-    <span class="doccomment">/// The relay url
+    <span class="doccomment">/// The relay URL.
     </span><span class="kw">pub </span>relay_url: RelayUrl,
-    <span class="doccomment">/// How long ago was the relay url last used.
+    <span class="doccomment">/// Elapsed time since this relay path last received payload or control data.
     </span><span class="kw">pub </span>last_alive: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
-    <span class="doccomment">/// Latency of the relay url.
+    <span class="doccomment">/// Latency to the remote node over this relayed network path.
     </span><span class="kw">pub </span>latency: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
 }
 
@@ -2803,27 +2882,38 @@
     }
 }
 
-<span class="doccomment">/// Details about an iroh node which is known to this node.
+<span class="doccomment">/// Details about a remote iroh-net node which is known to this node.
+///
+/// Having details of a node does not mean it can be connected to, nor that it has ever been
+/// connected to in the past. There are various reasons a node might be known: it could have been
+/// manually added via [`Endpoint::add_node_addr`], it could have been added by some discovery
+/// mechanism, or the node could have contacted this node.
+///
+/// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
 </span><span class="attr">#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>NodeInfo {
-    <span class="doccomment">/// The id in the node_map
-    </span><span class="kw">pub </span>id: usize,
-    <span class="doccomment">/// The public key of the endpoint.
+</span><span class="kw">pub struct </span>RemoteInfo {
+    <span class="doccomment">/// The globally unique identifier for this node.
     </span><span class="kw">pub </span>node_id: NodeId,
-    <span class="doccomment">/// relay server information, if available.
+    <span class="doccomment">/// Relay server information, if available.
     </span><span class="kw">pub </span>relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrlInfo&gt;,
-    <span class="doccomment">/// List of addresses at which this node might be reachable, plus any latency information we
-    /// have about that address and the last time the address was used.
+    <span class="doccomment">/// The addresses at which this node might be reachable.
+    ///
+    /// Some of these addresses might only be valid for networks we are not part of, but the remote
+    /// node might be a part of.
     </span><span class="kw">pub </span>addrs: Vec&lt;DirectAddrInfo&gt;,
     <span class="doccomment">/// The type of connection we have to the node, either direct or over relay.
     </span><span class="kw">pub </span>conn_type: ConnectionType,
-    <span class="doccomment">/// The latency of the `conn_type`.
+    <span class="doccomment">/// The latency of the current network path to the remote node.
     </span><span class="kw">pub </span>latency: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
-    <span class="doccomment">/// Duration since the last time this node was used.
+    <span class="doccomment">/// Time elapsed time since last we have sent to or received from the node.
+    ///
+    /// This is the duration since *any* data (payload or control messages) was sent or receive
+    /// from the remote node. Note that sending to the remote node does not imply
+    /// the remote node received anything.
     </span><span class="kw">pub </span>last_used: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
 }
 
-<span class="kw">impl </span>NodeInfo {
+<span class="kw">impl </span>RemoteInfo {
     <span class="doccomment">/// Get the duration since the last activity we received from this endpoint
     /// on any of its direct addresses.
     </span><span class="kw">pub fn </span>last_received(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Duration&gt; {
@@ -2833,13 +2923,19 @@
             .min()
     }
 
-    <span class="doccomment">/// Get the duration since the last activity we received from this endpoint
-    /// on the relay url.
+    <span class="doccomment">/// Returns the elapsed time since the relay path to the node last received data.
+    </span><span class="attr">#[deprecated(
+        since = <span class="string">"0.23.0"</span>,
+        note = <span class="string">"access relay_url.last_alive directly instead"
+    </span>)]
     </span><span class="kw">pub fn </span>last_alive_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Duration&gt; {
         <span class="self">self</span>.relay_url.as_ref().and_then(|r| r.last_alive)
     }
 
-    <span class="doccomment">/// Returns `true` if this info contains either a relay URL or at least one direct address.
+    <span class="doccomment">/// Whether there is a possible known network path to the remote node.
+    ///
+    /// Note that this does not provide any guarantees of whether this network path is
+    /// usable.
     </span><span class="kw">pub fn </span>has_send_address(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="self">self</span>.relay_url.is_some() || !<span class="self">self</span>.addrs.is_empty()
     }
@@ -3021,9 +3117,9 @@
                 socket_addr,
             )
         };
-        <span class="kw">let </span>expect = Vec::from([
-            NodeInfo {
-                id: a_endpoint.id,
+
+        <span class="kw">let </span><span class="kw-2">mut </span>expect = Vec::from([
+            RemoteInfo {
                 node_id: a_endpoint.node_id,
                 relay_url: <span class="prelude-val">None</span>,
                 addrs: Vec::from([DirectAddrInfo {
@@ -3037,8 +3133,7 @@
                 latency: <span class="prelude-val">Some</span>(latency),
                 last_used: <span class="prelude-val">Some</span>(elapsed),
             },
-            NodeInfo {
-                id: b_endpoint.id,
+            RemoteInfo {
                 node_id: b_endpoint.node_id,
                 relay_url: <span class="prelude-val">Some</span>(RelayUrlInfo {
                     relay_url: b_endpoint.relay_url.as_ref().unwrap().<span class="number">0</span>.clone(),
@@ -3050,8 +3145,7 @@
                 latency: <span class="prelude-val">Some</span>(latency),
                 last_used: <span class="prelude-val">Some</span>(elapsed),
             },
-            NodeInfo {
-                id: c_endpoint.id,
+            RemoteInfo {
                 node_id: c_endpoint.node_id,
                 relay_url: <span class="prelude-val">Some</span>(RelayUrlInfo {
                     relay_url: c_endpoint.relay_url.as_ref().unwrap().<span class="number">0</span>.clone(),
@@ -3063,8 +3157,7 @@
                 latency: <span class="prelude-val">None</span>,
                 last_used: <span class="prelude-val">Some</span>(elapsed),
             },
-            NodeInfo {
-                id: d_endpoint.id,
+            RemoteInfo {
                 node_id: d_endpoint.node_id,
                 relay_url: <span class="prelude-val">Some</span>(RelayUrlInfo {
                     relay_url: d_endpoint.relay_url.as_ref().unwrap().<span class="number">0</span>.clone(),
@@ -3109,13 +3202,14 @@
             ]),
             next_id: <span class="number">5</span>,
         });
-        <span class="kw">let </span><span class="kw-2">mut </span>got = node_map.node_infos(later);
-        got.sort_by_key(|p| p.id);
+        <span class="kw">let </span><span class="kw-2">mut </span>got = node_map.list_remote_infos(later);
+        got.sort_by_key(|p| p.node_id);
+        expect.sort_by_key(|p| p.node_id);
         remove_non_deterministic_fields(<span class="kw-2">&amp;mut </span>got);
         <span class="macro">assert_eq!</span>(expect, got);
     }
 
-    <span class="kw">fn </span>remove_non_deterministic_fields(infos: <span class="kw-2">&amp;mut </span>[NodeInfo]) {
+    <span class="kw">fn </span>remove_non_deterministic_fields(infos: <span class="kw-2">&amp;mut </span>[RemoteInfo]) {
         <span class="kw">for </span>info <span class="kw">in </span>infos.iter_mut() {
             <span class="kw">if </span>info.relay_url.is_some() {
                 info.relay_url.as_mut().unwrap().last_alive = <span class="prelude-val">None</span>;

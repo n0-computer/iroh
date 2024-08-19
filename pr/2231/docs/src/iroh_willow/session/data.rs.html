@@ -179,10 +179,8 @@
 <a href="#179" id="179">179</a>
 <a href="#180" id="180">180</a>
 <a href="#181" id="181">181</a>
-<a href="#182" id="182">182</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>futures_lite::StreamExt;
 <span class="kw">use </span>tokio::sync::broadcast;
-<span class="kw">use </span>tokio_stream::wrappers::ReceiverStream;
 
 <span class="kw">use crate</span>::{
     proto::{
@@ -198,7 +196,7 @@
         traits::Storage,
         Store,
     },
-    util::stream::Cancelable,
+    util::stream::CancelableReceiver,
 };
 
 <span class="kw">use super</span>::{
@@ -213,7 +211,7 @@
 
 <span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub struct </span>DataSender&lt;S: Storage&gt; {
-    inbox: Cancelable&lt;ReceiverStream&lt;Input&gt;&gt;,
+    inbox: CancelableReceiver&lt;Input&gt;,
     store: Store&lt;S&gt;,
     send: ChannelSenders,
     static_tokens: StaticTokens,
@@ -222,7 +220,7 @@
 
 <span class="kw">impl</span>&lt;S: Storage&gt; DataSender&lt;S&gt; {
     <span class="kw">pub fn </span>new(
-        inbox: Cancelable&lt;ReceiverStream&lt;Input&gt;&gt;,
+        inbox: CancelableReceiver&lt;Input&gt;,
         store: Store&lt;S&gt;,
         send: ChannelSenders,
         static_tokens: StaticTokens,

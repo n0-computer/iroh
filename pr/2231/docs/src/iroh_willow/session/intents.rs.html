@@ -618,6 +618,26 @@
 <a href="#618" id="618">618</a>
 <a href="#619" id="619">619</a>
 <a href="#620" id="620">620</a>
+<a href="#621" id="621">621</a>
+<a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
+<a href="#624" id="624">624</a>
+<a href="#625" id="625">625</a>
+<a href="#626" id="626">626</a>
+<a href="#627" id="627">627</a>
+<a href="#628" id="628">628</a>
+<a href="#629" id="629">629</a>
+<a href="#630" id="630">630</a>
+<a href="#631" id="631">631</a>
+<a href="#632" id="632">632</a>
+<a href="#633" id="633">633</a>
+<a href="#634" id="634">634</a>
+<a href="#635" id="635">635</a>
+<a href="#636" id="636">636</a>
+<a href="#637" id="637">637</a>
+<a href="#638" id="638">638</a>
+<a href="#639" id="639">639</a>
+<a href="#640" id="640">640</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Intents are handles onto a Willow synchronisation session.
 //!
 //! They are created with [`crate::Engine::sync_with_peer`].
@@ -890,6 +910,7 @@
 
 <span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>IntentDispatcher&lt;S: Storage&gt; {
+    inbox: mpsc::Receiver&lt;Input&gt;,
     pending_intents: VecDeque&lt;Intent&gt;,
     intents: HashMap&lt;IntentId, IntentInfo&gt;,
     auth: Auth&lt;S&gt;,
@@ -900,8 +921,13 @@
 }
 
 <span class="kw">impl</span>&lt;S: Storage&gt; IntentDispatcher&lt;S&gt; {
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(auth: Auth&lt;S&gt;, initial_intents: <span class="kw">impl </span>IntoIterator&lt;Item = Intent&gt;) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
+        auth: Auth&lt;S&gt;,
+        initial_intents: <span class="kw">impl </span>IntoIterator&lt;Item = Intent&gt;,
+        inbox: mpsc::Receiver&lt;Input&gt;,
+    ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
+            inbox,
             pending_intents: initial_intents.into_iter().collect(),
             intents: Default::default(),
             auth,
@@ -932,32 +958,39 @@
     }
 
     <span class="doccomment">/// Takes self and returns all pending intents.
-    </span><span class="comment">// TODO: What if one of the two channels closed?
-    // Should not do Option&lt;IntentChannels&gt; but an option for each direction instead likely on Intent.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>drain_all(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; Vec&lt;Intent&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>intents: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.pending_intents.into_iter().collect();
-        <span class="kw">for </span>(id, info) <span class="kw">in </span><span class="self">self</span>.intents.drain() {
-            <span class="kw">let </span>event_tx = info.event_tx;
-            <span class="kw">let </span>update_rx = <span class="self">self</span>.intent_update_rx.remove(<span class="kw-2">&amp;</span>id);
-            <span class="kw">let </span>update_rx = update_rx
-                .and_then(|stream| stream.into_inner())
-                .map(|stream| stream.into_inner());
-            <span class="kw">let </span>channels = <span class="kw">match </span>(event_tx, update_rx) {
-                (<span class="prelude-val">Some</span>(event_tx), <span class="prelude-val">Some</span>(update_rx)) =&gt; <span class="prelude-val">Some</span>(IntentChannels {
-                    event_tx,
-                    update_rx,
-                }),
-                <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-            };
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(channels) = channels {
-                <span class="kw">let </span>intent = Intent {
-                    init: info.original_init,
-                    channels: <span class="prelude-val">Some</span>(channels),
-                };
-                intents.push(intent);
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>drain_all(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; Vec&lt;Intent&gt; {
+        <span class="comment">// Drain inbox.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>pending_intents = <span class="macro">vec!</span>[];
+        <span class="self">self</span>.inbox.close();
+        <span class="kw">while let </span><span class="prelude-val">Ok</span>(item) = <span class="self">self</span>.inbox.try_recv() {
+            <span class="kw">match </span>item {
+                Input::EmitEvent(event) =&gt; {
+                    <span class="self">self</span>.emit_event_inner(event).<span class="kw">await</span>;
+                }
+                Input::SubmitIntent(intent) =&gt; pending_intents.push(intent),
             }
         }
-        intents
+
+        <span class="comment">// Drain pending intents.
+        </span>pending_intents.extend(<span class="self">self</span>.pending_intents.into_iter());
+
+        <span class="comment">// Abort active intents.
+        </span><span class="kw">let </span>error = Arc::new(Error::Cancelled);
+        <span class="kw">let </span>active_intents = <span class="self">self</span>.intents.drain().filter_map(|(_id, info)| {
+            <span class="kw">if </span>info.is_complete() {
+                <span class="prelude-val">None
+            </span>} <span class="kw">else </span>{
+                info.event_tx
+            }
+        });
+        <span class="kw">let _ </span>= futures_buffered::join_all(active_intents.map(|event_tx| {
+            <span class="kw">let </span>error = error.clone();
+            <span class="kw">async move </span>{ event_tx.send(EventKind::Abort { error }).<span class="kw">await </span>}
+        }))
+        .<span class="kw">await</span>;
+
+        <span class="comment">// Return pending (unprocessed) intents.
+        </span>pending_intents
     }
 
     <span class="doccomment">/// Run the [`IntentDispatcher`].
@@ -965,21 +998,18 @@
     /// The returned stream is a generator, so it must be polled repeatedly to progress.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>run_gen(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        inbox: <span class="kw">impl </span>Stream&lt;Item = Input&gt; + <span class="lifetime">'static</span>,
     ) -&gt; GenStream&lt;Output, Error, <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;(), Error&gt;&gt; + <span class="lifetime">'_</span>&gt; {
-        GenStream::new(|co| <span class="self">self</span>.run(co, inbox))
+        GenStream::new(|co| <span class="self">self</span>.run(co))
     }
 
-    <span class="kw">async fn </span>run(<span class="kw-2">&amp;mut </span><span class="self">self</span>, co: Co&lt;Output&gt;, inbox: <span class="kw">impl </span>Stream&lt;Item = Input&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
-        <span class="macro">tokio::pin!</span>(inbox);
-
+    <span class="kw">async fn </span>run(<span class="kw-2">&amp;mut </span><span class="self">self</span>, co: Co&lt;Output&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="kw">while let </span><span class="prelude-val">Some</span>(intent) = <span class="self">self</span>.pending_intents.pop_front() {
             <span class="self">self</span>.submit_intent(<span class="kw-2">&amp;</span>co, intent).<span class="kw">await</span><span class="question-mark">?</span>;
         }
         <span class="macro">trace!</span>(<span class="string">"submitted initial intents, start loop"</span>);
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
-                input = inbox.next() =&gt; {
+                input = <span class="self">self</span>.inbox.recv() =&gt; {
                     <span class="macro">trace!</span>(<span class="question-mark">?</span>input, <span class="string">"tick: inbox"</span>);
                     <span class="kw">let </span><span class="prelude-val">Some</span>(input) = input <span class="kw">else </span>{
                         <span class="kw">break</span>;
@@ -1015,6 +1045,7 @@
     }
 
     <span class="kw">async fn </span>submit_intent(<span class="kw-2">&amp;mut </span><span class="self">self</span>, co: <span class="kw-2">&amp;</span>Co&lt;Output&gt;, intent: Intent) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
+        <span class="macro">debug!</span>(<span class="string">"submit intent"</span>);
         <span class="kw">let </span>interests = <span class="self">self</span>.auth.resolve_interests(intent.init.interests.clone())<span class="question-mark">?</span>;
         <span class="kw">let </span>intent_id = {
             <span class="kw">let </span>intent_id = <span class="self">self</span>.next_intent_id;
@@ -1033,7 +1064,6 @@
             interests: flatten_interests(<span class="kw-2">&amp;</span>interests),
             mode: intent.init.mode,
             event_tx,
-            original_init: intent.init,
         };
         <span class="comment">// Send out reconciled events for already-complete areas.
         </span><span class="kw">for </span>(namespace, areas) <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.complete_areas {
@@ -1056,7 +1086,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>emit_event(<span class="kw-2">&amp;mut </span><span class="self">self</span>, co: <span class="kw-2">&amp;</span>Co&lt;Output&gt;, event: EventKind) {
+    <span class="kw">async fn </span>emit_event_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>, event: EventKind) {
         <span class="kw">if let </span>EventKind::Reconciled { namespace, area } = <span class="kw-2">&amp;</span>event {
             <span class="self">self</span>.complete_areas
                 .entry(<span class="kw-2">*</span>namespace)
@@ -1072,15 +1102,22 @@
             <span class="kw">match </span>res {
                 <span class="prelude-val">Err</span>(ChannelReceiverDropped) =&gt; {
                     <span class="kw">if </span>!<span class="self">self</span>.intent_update_rx.contains_key(<span class="kw-2">&amp;</span>id) {
-                        <span class="self">self</span>.cancel_intent(co, id).<span class="kw">await</span>;
+                        <span class="self">self</span>.cancel_intent_inner(id);
                     }
                 }
                 <span class="prelude-val">Ok</span>(is_complete) =&gt; {
                     <span class="kw">if </span>is_complete {
-                        <span class="self">self</span>.cancel_intent(co, id).<span class="kw">await</span>;
+                        <span class="self">self</span>.cancel_intent_inner(id);
                     }
                 }
             }
+        }
+    }
+
+    <span class="kw">async fn </span>emit_event(<span class="kw-2">&amp;mut </span><span class="self">self</span>, co: <span class="kw-2">&amp;</span>Co&lt;Output&gt;, event: EventKind) {
+        <span class="self">self</span>.emit_event_inner(event).<span class="kw">await</span>;
+        <span class="kw">if </span><span class="self">self</span>.intents.is_empty() {
+            co.yield_(Output::AllIntentsDropped).<span class="kw">await</span>;
         }
     }
 
@@ -1107,10 +1144,14 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>cancel_intent(<span class="kw-2">&amp;mut </span><span class="self">self</span>, co: <span class="kw-2">&amp;</span>Co&lt;Output&gt;, intent_id: u64) {
+    <span class="kw">fn </span>cancel_intent_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>, intent_id: u64) {
         <span class="macro">trace!</span>(<span class="question-mark">?</span>intent_id, <span class="string">"cancel intent"</span>);
         <span class="self">self</span>.intent_update_rx.remove(<span class="kw-2">&amp;</span>intent_id);
         <span class="self">self</span>.intents.remove(<span class="kw-2">&amp;</span>intent_id);
+    }
+
+    <span class="kw">async fn </span>cancel_intent(<span class="kw-2">&amp;mut </span><span class="self">self</span>, co: <span class="kw-2">&amp;</span>Co&lt;Output&gt;, intent_id: u64) {
+        <span class="self">self</span>.cancel_intent_inner(intent_id);
         <span class="kw">if </span><span class="self">self</span>.intents.is_empty() {
             co.yield_(Output::AllIntentsDropped).<span class="kw">await</span>;
         }
@@ -1119,7 +1160,6 @@
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>IntentInfo {
-    original_init: SessionInit,
     interests: NamespaceInterests,
     mode: SessionMode,
     event_tx: <span class="prelude-ty">Option</span>&lt;Sender&lt;EventKind&gt;&gt;,
