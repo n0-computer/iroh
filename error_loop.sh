@@ -14,9 +14,12 @@ while true; do
     echo "Running tests... Attempt #$counter"
     RUST_LOG=trace "./$executable_path" gossip_net_smoke > logs-2.txt
     if [ $? -ne 0 ]; then
-        grep "failed to auth" logs-2.txt
         tail logs-2.txt
-        echo "Error detected on attempt #$counter! Exiting loop."
-        exit 1
+        if grep "failed to auth" logs-2.txt; then
+            echo "Error detected on attempt #$counter! Exiting loop."
+            exit 1
+        else
+            echo "Apparently different error on attempt #$counter. Continuing."
+        fi
     fi
 done
