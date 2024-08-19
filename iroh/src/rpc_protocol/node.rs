@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use iroh_base::rpc::RpcResult;
-use iroh_net::{endpoint::ConnectionInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
+use iroh_net::{endpoint::RemoteInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
@@ -29,10 +29,10 @@ pub enum Request {
     Stats(StatsRequest),
     #[rpc(response = ())]
     Shutdown(ShutdownRequest),
-    #[server_streaming(response = RpcResult<ConnectionsResponse>)]
-    Connections(ConnectionsRequest),
-    #[rpc(response = RpcResult<ConnectionInfoResponse>)]
-    ConnectionInfo(ConnectionInfoRequest),
+    #[server_streaming(response = RpcResult<RemoteInfosIterResponse>)]
+    RemoteInfosIter(RemoteInfosIterRequest),
+    #[rpc(response = RpcResult<RemoteInfoResponse>)]
+    RemoteInfo(RemoteInfoRequest),
     #[server_streaming(response = WatchResponse)]
     Watch(NodeWatchRequest),
 }
@@ -46,38 +46,39 @@ pub enum Response {
     Addr(RpcResult<NodeAddr>),
     Relay(RpcResult<Option<RelayUrl>>),
     Stats(RpcResult<StatsResponse>),
-    Connections(RpcResult<ConnectionsResponse>),
-    ConnectionInfo(RpcResult<ConnectionInfoResponse>),
+    RemoteInfosIter(RpcResult<RemoteInfosIterResponse>),
+    RemoteInfo(RpcResult<RemoteInfoResponse>),
     Shutdown(()),
     Watch(WatchResponse),
 }
 
-/// List connection information about all the nodes we know about
+/// List network path information about all the remote nodes known by this node.
 ///
-/// These can be nodes that we have explicitly connected to or nodes
-/// that have initiated connections to us.
+/// There may never have been connections to these nodes, and connections may not even be
+/// possible. Nodes can also become known due to discovery mechanisms
+/// or be added manually.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConnectionsRequest;
+pub struct RemoteInfosIterRequest;
 
-/// A response to a connections request
+/// A response to a [`Request::RemoteInfosIter`].
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConnectionsResponse {
-    /// Information about a connection
-    pub conn_info: ConnectionInfo,
+pub struct RemoteInfosIterResponse {
+    /// Information about a node.
+    pub info: RemoteInfo,
 }
 
-/// Get connection information about a specific node
+/// Get information about a specific remote node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConnectionInfoRequest {
+pub struct RemoteInfoRequest {
     /// The node identifier
     pub node_id: PublicKey,
 }
 
-/// A response to a connection request
+/// A response to a [`Request::RemoteInfo`] request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConnectionInfoResponse {
-    /// Information about a connection to a node
-    pub conn_info: Option<ConnectionInfo>,
+pub struct RemoteInfoResponse {
+    /// Information about a node
+    pub info: Option<RemoteInfo>,
 }
 
 /// A request to shutdown the node

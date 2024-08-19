@@ -18,13 +18,13 @@ use std::{collections::BTreeMap, net::SocketAddr};
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use iroh_net::{endpoint::ConnectionInfo, relay::RelayUrl, NodeAddr, NodeId};
+use iroh_net::{endpoint::RemoteInfo, relay::RelayUrl, NodeAddr, NodeId};
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::node::{
-    AddAddrRequest, AddrRequest, ConnectionInfoRequest, ConnectionInfoResponse, ConnectionsRequest,
-    CounterStats, IdRequest, RelayRequest, ShutdownRequest, StatsRequest, StatusRequest,
+    AddAddrRequest, AddrRequest, CounterStats, IdRequest, RelayRequest, RemoteInfoRequest,
+    RemoteInfoResponse, RemoteInfosIterRequest, ShutdownRequest, StatsRequest, StatusRequest,
 };
 
 use super::{flatten, RpcClient};
@@ -122,24 +122,23 @@ impl Client {
         Ok(res.stats)
     }
 
-    /// Fetches information about currently known connections.
+    /// Fetches information about currently known remote nodes.
     ///
     /// This streams a *current snapshot*. It does not keep the stream open after finishing
     /// transferring the snapshot.
     ///
-    /// See also [`Endpoint::connection_infos`](crate::net::Endpoint::connection_infos).
-    pub async fn connections(&self) -> Result<impl Stream<Item = Result<ConnectionInfo>>> {
-        let stream = self.rpc.server_streaming(ConnectionsRequest {}).await?;
-        Ok(flatten(stream).map(|res| res.map(|res| res.conn_info)))
+    /// See also [`Endpoint::remote_infos_iter`](crate::net::Endpoint::remote_infos_iter).
+    pub async fn remote_infos_iter(&self) -> Result<impl Stream<Item = Result<RemoteInfo>>> {
+        let stream = self.rpc.server_streaming(RemoteInfosIterRequest {}).await?;
+        Ok(flatten(stream).map(|res| res.map(|res| res.info)))
     }
 
-    /// Fetches connection information about a connection to another node identified by its [`NodeId`].
+    /// Fetches node information about a remote iroh node identified by its [`NodeId`].
     ///
-    /// See also [`Endpoint::connection_info`](crate::net::Endpoint::connection_info).
-    pub async fn connection_info(&self, node_id: NodeId) -> Result<Option<ConnectionInfo>> {
-        let ConnectionInfoResponse { conn_info } =
-            self.rpc.rpc(ConnectionInfoRequest { node_id }).await??;
-        Ok(conn_info)
+    /// See also [`Endpoint::remote_info`](crate::net::Endpoint::remote_info).
+    pub async fn remote_info(&self, node_id: NodeId) -> Result<Option<RemoteInfo>> {
+        let RemoteInfoResponse { info } = self.rpc.rpc(RemoteInfoRequest { node_id }).await??;
+        Ok(info)
     }
 
     /// Fetches status information about this node.
