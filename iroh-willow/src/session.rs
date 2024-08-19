@@ -131,8 +131,6 @@ pub(crate) enum SessionEvent {
         #[debug("ChannelSenders")]
         senders: ChannelSenders,
         remaining_intents: Vec<Intent>,
-        #[debug("Receiver<SessionUpdate>")]
-        update_receiver: mpsc::Receiver<SessionUpdate>,
     },
 }
 

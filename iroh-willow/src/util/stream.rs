@@ -5,6 +5,7 @@ use std::{
 };
 
 use futures_lite::Stream;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 
 /// Wrapper around [`Stream`] that takes a cancel token to cancel the stream.
@@ -46,6 +47,52 @@ impl<S: Stream + Unpin> Stream for Cancelable<S> {
                         Poll::Ready(None)
                     }
                     Poll::Pending => Poll::Pending,
+                }
+            }
+        }
+    }
+}
+
+/// Wrapper around [`ReceiverStream`] that can be closed with a [`CancellationToken`].
+#[derive(Debug)]
+pub struct CancelableReceiver<T> {
+    receiver: ReceiverStream<T>,
+    cancelled: Pin<Box<WaitForCancellationFutureOwned>>,
+    is_cancelled: bool,
+}
+
+impl<T> CancelableReceiver<T> {
+    pub fn new(receiver: ReceiverStream<T>, cancel_token: CancellationToken) -> Self {
+        let is_cancelled = cancel_token.is_cancelled();
+        Self {
+            receiver,
+            cancelled: Box::pin(cancel_token.cancelled_owned()),
+            is_cancelled,
+        }
+    }
+
+    pub fn into_inner(self) -> ReceiverStream<T> {
+        self.receiver
+    }
+}
+
+impl<T: Send + 'static> Stream for CancelableReceiver<T> {
+    type Item = T;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match Pin::new(&mut self.receiver).poll_next(cx) {
+            Poll::Ready(r) => Poll::Ready(r),
+            Poll::Pending => {
+                if !self.is_cancelled {
+                    match Pin::new(&mut self.cancelled).poll(cx) {
+                        Poll::Ready(()) => {
+                            self.receiver.close();
+                            self.is_cancelled = true;
+                            Poll::Ready(None)
+                        }
+                        Poll::Pending => Poll::Pending,
+                    }
+                } else {
+                    Poll::Pending
                 }
             }
         }

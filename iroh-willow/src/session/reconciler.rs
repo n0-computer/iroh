@@ -7,7 +7,6 @@ use bytes::Bytes;
 use futures_lite::StreamExt;
 use genawaiter::rc::Co;
 use iroh_blobs::store::Store as PayloadStore;
-use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, trace};
 
 use crate::{
@@ -34,7 +33,10 @@ use crate::{
         traits::{EntryReader, EntryStorage, SplitAction, SplitOpts, Storage},
         Store,
     },
-    util::{gen_stream::GenStream, stream::Cancelable},
+    util::{
+        gen_stream::GenStream,
+        stream::{Cancelable, CancelableReceiver},
+    },
 };
 
 #[derive(Debug)]
@@ -67,7 +69,7 @@ impl<S: Storage> Reconciler<S> {
     /// The returned stream is a generator, so it must be polled repeatedly to progress.
     #[allow(clippy::too_many_arguments)]
     pub fn run_gen(
-        inbox: Cancelable<ReceiverStream<Input>>,
+        inbox: CancelableReceiver<Input>,
         store: Store<S>,
         recv: Cancelable<MessageReceiver<ReconciliationMessage>>,
         static_tokens: StaticTokens,
@@ -223,11 +225,11 @@ impl<S: Storage> Reconciler<S> {
 #[derive(Debug)]
 struct TargetMap<S: Storage> {
     map: HashMap<TargetId, Target<S>>,
-    inbox: Cancelable<ReceiverStream<Input>>,
+    inbox: CancelableReceiver<Input>,
 }
 
 impl<S: Storage> TargetMap<S> {
-    pub fn new(inbox: Cancelable<ReceiverStream<Input>>) -> Self {
+    pub fn new(inbox: CancelableReceiver<Input>) -> Self {
         Self {
             map: Default::default(),
             inbox,
