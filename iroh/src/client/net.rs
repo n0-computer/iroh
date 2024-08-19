@@ -5,8 +5,7 @@
 //! You obtain a [`Client`] via [`Iroh::net()`](crate::client::Iroh::net).
 //!
 //! The client can be used to get information about the node, such as the
-//! [status](Client::status), [node id](Client::node_id) or
-//! [node address](Client::node_addr).
+//! [node id](Client::node_id) or [node address](Client::node_addr).
 //!
 //! It can also be used to provide additional information to the node, e.g.
 //! using the [add_node_addr](Client::add_node_addr) method.
