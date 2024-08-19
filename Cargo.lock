@@ -2652,7 +2652,7 @@ dependencies = [
  "iroh-metrics",
  "nix 0.27.1",
  "parking_lot",
- "pkarr 1.1.5",
+ "pkarr",
  "portable-atomic",
  "postcard",
  "quic-rpc",
@@ -2705,7 +2705,7 @@ dependencies = [
  "lru",
  "mainline",
  "parking_lot",
- "pkarr 2.1.0",
+ "pkarr",
  "rcgen 0.12.1",
  "redb 2.1.1",
  "regex",
@@ -2882,7 +2882,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "pin-project",
- "pkarr 2.1.0",
+ "pkarr",
  "postcard",
  "pretty_assertions",
  "proptest",
@@ -3825,25 +3825,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pkarr"
-version = "1.1.5"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "242ae92dfb9d2ba3aaa9caf4723e72043bc50729ad05a763771771ba03196ffb"
-dependencies = [
- "bytes",
- "ed25519-dalek",
- "rand",
- "self_cell",
- "simple-dns",
- "thiserror",
- "url",
- "z32",
-]
-
-[[package]]
-name = "pkarr"
-version = "2.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4548c673cbf8c91b69f7a17d3a042710aa73cffe5e82351db5378f26c3be64d8"
+checksum = "a8ffdac8b4b7ea5240c46b28f88de799e0efaa2b93ccb08eaae6e50835dfe137"
 dependencies = [
  "bytes",
  "document-features",
