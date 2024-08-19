@@ -184,7 +184,7 @@ pub mod timeouts {
         /// Timeout for expecting a pong from the relay server
         pub(crate) const PING_TIMEOUT: Duration = Duration::from_secs(5);
         /// Timeout for the entire relay connection, which includes dns, dialing
-        /// the server, upgrading the conenction, and completing the handshake
+        /// the server, upgrading the connection, and completing the handshake
         pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
         /// Timeout for our async dns resolver
         pub(crate) const DNS_TIMEOUT: Duration = Duration::from_secs(1);
