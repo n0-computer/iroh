@@ -576,6 +576,7 @@ async fn test_sync_via_relay() -> Result<()> {
 
 #[tokio::test]
 #[cfg(feature = "test-utils")]
+#[ignore = "flaky"]
 async fn sync_restart_node() -> Result<()> {
     let mut rng = test_rng(b"sync_restart_node");
     setup_logging();

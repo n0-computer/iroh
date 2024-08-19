@@ -442,7 +442,7 @@ impl Batch {
 
     /// Upgrades a temp tag to a persistent tag with either a specific name or
     /// an automatically generated name.
-    pub async fn upgrade_with_opts(&self, tt: TempTag, opts: SetTagOption) -> Result<Tag> {
+    pub async fn persist_with_opts(&self, tt: TempTag, opts: SetTagOption) -> Result<Tag> {
         match opts {
             SetTagOption::Auto => self.persist(tt).await,
             SetTagOption::Named(tag) => {
