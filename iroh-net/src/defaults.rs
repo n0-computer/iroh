@@ -127,7 +127,7 @@ pub mod staging {
 }
 
 /// Contains all timeouts that we use in `iroh-net`.
-pub mod timeouts {
+pub(crate) mod timeouts {
     use std::time::Duration;
 
     // Timeouts for netcheck
@@ -175,7 +175,7 @@ pub mod timeouts {
     pub(crate) const NAT_PMP_RECV_TIMEOUT: Duration = Duration::from_millis(500);
 
     /// Timeouts specifically used in the iroh-relay
-    pub mod relay {
+    pub(crate) mod relay {
         use super::*;
 
         /// Timeout used by the relay client while connecting to the relay server,
