@@ -22,8 +22,6 @@ pub enum NetCommands {
     Remote { node_id: NodeId },
     /// Get status of the running node.
     Status,
-    /// Get statistics and metrics from the running node.
-    Stats,
     /// Get the node addr of this node.
     NodeAddr,
     /// Add this node addr to the known nodes.
@@ -57,15 +55,6 @@ impl NetCommands {
                 match info {
                     Some(info) => println!("{}", fmt_info(info)),
                     None => println!("Not Found"),
-                }
-            }
-            Self::Stats => {
-                let stats = iroh.stats().await?;
-                for (name, details) in stats.iter() {
-                    println!(
-                        "{:23} : {:>6}    ({})",
-                        name, details.value, details.description
-                    );
                 }
             }
             Self::Status => {

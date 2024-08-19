@@ -71,6 +71,9 @@ pub enum RpcCommands {
         #[clap(subcommand)]
         command: TagCommands,
     },
+
+    /// Get statistics and metrics from the running node.
+    Stats,
 }
 
 impl RpcCommands {
@@ -82,6 +85,16 @@ impl RpcCommands {
             Self::Authors { command } => command.run(iroh, env).await,
             Self::Tags { command } => command.run(iroh).await,
             Self::Gossip { command } => command.run(iroh).await,
+            Self::Stats => {
+                let stats = iroh.stats().await?;
+                for (name, details) in stats.iter() {
+                    println!(
+                        "{:23} : {:>6}    ({})",
+                        name, details.value, details.description
+                    );
+                }
+                Ok(())
+            }
         }
     }
 }
