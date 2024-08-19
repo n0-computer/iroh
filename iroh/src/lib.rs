@@ -43,8 +43,8 @@
 //! ## Subsystems
 //!
 //! The client provides access to various subsystems:
-//! - [node](crate::client::node):
-//!   information and control of the iroh node itself
+//! - [net](crate::client::net):
+//!   information and control of the iroh network
 //! - [blobs](crate::client::blobs):
 //!   manage and share content-addressed blobs of data
 //! - [tags](crate::client::tags):
