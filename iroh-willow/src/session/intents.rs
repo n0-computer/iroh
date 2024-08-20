@@ -617,10 +617,7 @@ impl IntentInfo {
         if matches {
             self.send(event.clone()).await?;
             if is_reconciled && self.interests.is_empty() {
-                debug!("SEND RECONCILED ALL");
                 self.send(EventKind::ReconciledAll).await?
-            } else {
-                debug!("DO NOT SEND RECONCILED ALL");
             }
         }
         Ok(self.is_complete())
