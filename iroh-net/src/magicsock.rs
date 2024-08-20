@@ -697,17 +697,11 @@ impl MagicSock {
         let mut quic_packets_total = 0;
 
         for (meta, buf) in metas.iter_mut().zip(bufs.iter_mut()).take(msgs) {
-            let mut start = 0;
             let mut is_quic = false;
             let mut quic_packets_count = 0;
 
             // find disco and stun packets and forward them to the actor
-            loop {
-                let end = std::cmp::min(start + meta.stride, meta.len);
-                if start >= end {
-                    break;
-                }
-                let packet = &buf[start..end];
+            for packet in buf[..meta.len].chunks_mut(meta.stride) {
                 let packet_is_quic = if stun::is(packet) {
                     trace!(src = %meta.addr, len = %meta.stride, "UDP recv: stun packet");
                     let packet2 = Bytes::copy_from_slice(packet);
@@ -725,9 +719,9 @@ impl MagicSock {
                 } else {
                     trace!(src = %meta.addr, len = %meta.stride, "UDP recv: quic packet");
                     if from_ipv4 {
-                        inc_by!(MagicsockMetrics, recv_data_ipv4, buf.len() as _);
+                        inc_by!(MagicsockMetrics, recv_data_ipv4, packet.len() as _);
                     } else {
-                        inc_by!(MagicsockMetrics, recv_data_ipv6, buf.len() as _);
+                        inc_by!(MagicsockMetrics, recv_data_ipv6, packet.len() as _);
                     }
                     true
                 };
@@ -740,9 +734,8 @@ impl MagicSock {
                     // this makes quinn reliably and quickly ignore the packet as long as
                     // [`quinn::EndpointConfig::grease_quic_bit`] is set to `false`
                     // (which we always do in Endpoint::bind).
-                    buf[start] = 0u8;
+                    packet[0] = 0u8;
                 }
-                start = end;
             }
 
             if is_quic {
