@@ -14,13 +14,14 @@ while true; do
     echo -n "Running tests... Attempt #$counter"
 
     start_time=$(date +%s%3N)
-    RUST_LOG=trace "./$executable_path" gossip_net_smoke > logs-2.txt
+    RUST_LOG=trace "./$executable_path" gossip_net_smoke --nocapture > logs-2.txt
+    err_code=$?
     end_time=$(date +%s%3N)
     duration=$((end_time - start_time))
 
     echo ", ${duration} ms"
 
-    if [ $? -ne 0 ]; then
+    if [ $err_code -ne 0 ]; then
         echo "$(wc -l logs-2.txt) log line(s), tail:"
         tail logs-2.txt
         if grep "failed to auth" logs-2.txt; then
