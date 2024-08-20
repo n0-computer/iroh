@@ -86,7 +86,6 @@ use smallvec::SmallVec;
 use tokio::io::AsyncWriteExt;
 use tracing::trace_span;
 
-mod import_flat_store;
 mod migrate_redb_v1_v2;
 mod tables;
 #[doc(hidden)]
