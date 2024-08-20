@@ -144,6 +144,10 @@
 <a href="#144" id="144">144</a>
 <a href="#145" id="145">145</a>
 <a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>ed25519_dalek::SignatureError;
 <span class="kw">use </span>tokio::sync::mpsc;
 
@@ -224,6 +228,10 @@
     </span>ShuttingDown,
     <span class="attr">#[error(<span class="string">"The operation was cancelled locally"</span>)]
     </span>Cancelled,
+    <span class="attr">#[error(<span class="string">"Connection was closed by peer"</span>)]
+    </span>ConnectionClosed(<span class="attr">#[source] </span>anyhow::Error),
+    <span class="attr">#[error(<span class="string">"Session was closed by peer"</span>)]
+    </span>SessionClosedByPeer,
 }
 
 <span class="attr">#[derive(Debug, thiserror::Error)]

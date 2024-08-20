@@ -141,7 +141,6 @@
 <a href="#141" id="141">141</a>
 <a href="#142" id="142">142</a>
 <a href="#143" id="143">143</a>
-<a href="#144" id="144">144</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, SocketAddrV4},
     num::NonZeroU16,
@@ -158,11 +157,10 @@
 
 <span class="kw">pub type </span>Gateway = aigd::Gateway&lt;aigd::tokio::Tokio&gt;;
 
+<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::UPNP_SEARCH_TIMEOUT <span class="kw">as </span>SEARCH_TIMEOUT;
+
 <span class="doccomment">/// Seconds we ask the router to maintain the port mapping. 0 means infinite.
 </span><span class="kw">const </span>PORT_MAPPING_LEASE_DURATION_SECONDS: u32 = <span class="number">0</span>;
-
-<span class="doccomment">/// Maximum duration a UPnP search can take before timing out.
-</span><span class="kw">const </span>SEARCH_TIMEOUT: Duration = Duration::from_secs(<span class="number">1</span>);
 
 <span class="doccomment">/// Tailscale uses the recommended port mapping lifetime for PMP, which is 2 hours. So we assume a
 /// half lifetime of 1h. See &lt;https://datatracker.ietf.org/doc/html/rfc6886#section-3.3&gt;

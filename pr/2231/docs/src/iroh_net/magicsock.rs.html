@@ -3540,8 +3540,6 @@
 <a href="#3540" id="3540">3540</a>
 <a href="#3541" id="3541">3541</a>
 <a href="#3542" id="3542">3542</a>
-<a href="#3543" id="3543">3543</a>
-<a href="#3544" id="3544">3544</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3595,6 +3593,7 @@
 <span class="kw">use </span>watchable::Watchable;
 
 <span class="kw">use crate</span>::{
+    defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
     disco::{<span class="self">self</span>, SendAddr},
     discovery::Discovery,
     dns::DnsResolver,
@@ -3633,9 +3632,6 @@
 </span><span class="kw">const </span>ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(<span class="number">27</span>);
 
 <span class="kw">const </span>HEARTBEAT_INTERVAL: Duration = Duration::from_secs(<span class="number">5</span>);
-
-<span class="doccomment">/// Maximum duration to wait for a netcheck report.
-</span><span class="kw">const </span>NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
 
 <span class="doccomment">/// Contains options for `MagicSock::listen`.
 </span><span class="attr">#[derive(derive_more::Debug)]

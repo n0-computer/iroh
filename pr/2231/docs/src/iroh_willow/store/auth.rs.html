@@ -298,7 +298,7 @@
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>ed25519_dalek::SignatureError;
 <span class="kw">use </span>meadowcap::{IsCommunal, NamespaceIsNotCommunalError, OwnedCapabilityCreationError};
-<span class="kw">use </span>tracing::debug;
+<span class="kw">use </span>tracing::{debug, trace};
 
 <span class="kw">use crate</span>::{
     interest::{
@@ -349,7 +349,7 @@
         caps: <span class="kw">impl </span>IntoIterator&lt;Item = CapabilityPack&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), AuthError&gt; {
         <span class="kw">for </span>cap <span class="kw">in </span>caps.into_iter() {
-            <span class="macro">tracing::debug!</span>(<span class="string">"import cap {cap:?}"</span>);
+            <span class="macro">debug!</span>(<span class="question-mark">?</span>cap, <span class="string">"import cap"</span>);
             cap.validate()<span class="question-mark">?</span>;
             <span class="comment">// Only allow importing caps we can use.
             // TODO: Is this what we want?
@@ -358,7 +358,7 @@
                 <span class="kw">return </span><span class="prelude-val">Err</span>(AuthError::MissingUserSecret(user_id));
             }
             <span class="self">self</span>.caps.insert(cap)<span class="question-mark">?</span>;
-            <span class="macro">tracing::debug!</span>(<span class="string">"imported"</span>);
+            <span class="macro">trace!</span>(<span class="string">"imported"</span>);
         }
         <span class="prelude-val">Ok</span>(())
     }

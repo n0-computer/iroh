@@ -900,7 +900,7 @@
                         Input::SubmitIntent { peer, intent } =&gt; <span class="self">self</span>.submit_intent(peer, intent).<span class="kw">await</span>,
                         Input::HandleConnection { conn } =&gt; <span class="self">self</span>.handle_connection(conn).<span class="kw">await</span>,
                         Input::Shutdown { reply } =&gt; {
-                            <span class="self">self</span>.init_shutdown();
+                            <span class="self">self</span>.init_shutdown().<span class="kw">await</span>;
                             <span class="kw">if </span><span class="self">self</span>.conn_tasks.is_empty() {
                                 reply.send(()).ok();
                                 <span class="kw">break</span>;
@@ -1091,8 +1091,9 @@
             } =&gt; {
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = update_tx.send(SessionUpdate::SubmitIntent(intent)).<span class="kw">await </span>{
                     <span class="macro">debug!</span>(<span class="string">"failed to submit intent into active session, queue in peer state"</span>);
-                    <span class="kw">let </span>SessionUpdate::SubmitIntent(intent) = err.<span class="number">0</span>;
-                    intents_after_close.push(intent);
+                    <span class="kw">if let </span>SessionUpdate::SubmitIntent(intent) = err.<span class="number">0 </span>{
+                        intents_after_close.push(intent);
+                    }
                 } <span class="kw">else </span>{
                     <span class="macro">trace!</span>(<span class="string">"intent sent to session"</span>);
                 }
@@ -1156,7 +1157,6 @@
             </span>.peers
             .get_mut(<span class="kw-2">&amp;</span>peer)
             .context(<span class="string">"got conn task output for unknown peer"</span>)<span class="question-mark">?</span>;
-        <span class="macro">trace!</span>(out=<span class="question-mark">?</span>out.as_ref().map(|o| <span class="macro">format!</span>(<span class="string">"{o}"</span>)), <span class="string">"conn task output"</span>);
         <span class="kw">match </span>out {
             <span class="prelude-val">Err</span>(err) =&gt; {
                 <span class="macro">trace!</span>(<span class="question-mark">?</span>our_role, current_state=%peer_info.state, <span class="string">"conn task failed: {err:#?}"</span>);
@@ -1203,16 +1203,12 @@
                                 )
                                 .<span class="kw">await</span>;
                             }
-                            PeerState::Active { .. } =&gt; {
-                                <span class="comment">// We do not care about intents here, they will be handled in the
-                                // session (which will error as well because all channels are now
-                                // closed).
-                                </span><span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"connection failed while active"</span>);
-                                <span class="comment">// TODO:(Frando): Not sure if this is good practice?
-                                // A `debug_assert` is far too much, because this can be triggered by other peers.
-                                // However in tests I want to make sure that *all* connections terminate gracefully.
-                                </span><span class="attr">#[cfg(test)]
-                                </span><span class="macro">panic!</span>(<span class="string">"connection failed: {err:?}"</span>);
+                            PeerState::Active { update_tx, .. } =&gt; {
+                                <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"connection failed while active"</span>);
+                                update_tx
+                                    .send(SessionUpdate::Abort(Error::ConnectionClosed(err)))
+                                    .<span class="kw">await
+                                    </span>.ok();
                             }
                             PeerState::None =&gt; {
                                 <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"connection failed while peer is in None state"</span>);
@@ -1230,6 +1226,10 @@
                     <span class="kw-2">ref mut </span>intents, ..
                 } = <span class="kw-2">&amp;mut </span>peer_info.state
                 <span class="kw">else </span>{
+                    <span class="macro">debug!</span>(
+                        <span class="question-mark">?</span>our_role,
+                        <span class="string">"got connection ready for peer in non-pending state"
+                    </span>);
                     conn.close(ERROR_CODE_FAIL, <span class="string">b"invalid-state"</span>);
                     drop(conn);
                     <span class="comment">// TODO: unreachable?
@@ -1271,7 +1271,6 @@
                 <span class="kw">let </span>abort_handle = spawn_conn_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn_tasks, peer_info, fut);
 
                 <span class="kw">let </span>SessionHandle {
-                    cancel_token,
                     update_tx,
                     event_rx,
                 } = session_handle;
@@ -1280,7 +1279,6 @@
 
                 peer_info.state = PeerState::Active {
                     update_tx,
-                    cancel_token,
                     intents_after_close: <span class="macro">vec!</span>[],
                 };
                 peer_info.abort_handle = <span class="prelude-val">Some</span>(abort_handle);
@@ -1321,7 +1319,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>init_shutdown(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+    <span class="kw">async fn </span>init_shutdown(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="self">self</span>.shutting_down = <span class="bool-val">true</span>;
         <span class="kw">for </span>peer <span class="kw">in </span><span class="self">self</span>.peers.values() {
             <span class="kw">match </span><span class="kw-2">&amp;</span>peer.state {
@@ -1334,9 +1332,12 @@
                     }
                 }
                 PeerState::Closing { .. } =&gt; {}
-                PeerState::Active { cancel_token, .. } =&gt; {
+                PeerState::Active { update_tx, .. } =&gt; {
                     <span class="comment">// We are in active state. We cancel our session, which leads to graceful connection termination.
-                    </span>cancel_token.cancel();
+                    </span>update_tx
+                        .send(SessionUpdate::Abort(Error::ShuttingDown))
+                        .<span class="kw">await
+                        </span>.ok();
                 }
             }
         }
@@ -1385,7 +1386,6 @@
         cancel_dial: <span class="prelude-ty">Option</span>&lt;CancellationToken&gt;,
     },
     Active {
-        cancel_token: CancellationToken,
         update_tx: mpsc::Sender&lt;SessionUpdate&gt;,
         <span class="doccomment">/// List of intents that we failed to submit into the session because it is closing.
         </span>intents_after_close: Vec&lt;Intent&gt;,

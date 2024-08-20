@@ -638,6 +638,13 @@
 <a href="#638" id="638">638</a>
 <a href="#639" id="639">639</a>
 <a href="#640" id="640">640</a>
+<a href="#641" id="641">641</a>
+<a href="#642" id="642">642</a>
+<a href="#643" id="643">643</a>
+<a href="#644" id="644">644</a>
+<a href="#645" id="645">645</a>
+<a href="#646" id="646">646</a>
+<a href="#647" id="647">647</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Intents are handles onto a Willow synchronisation session.
 //!
 //! They are created with [`crate::Engine::sync_with_peer`].
@@ -908,6 +915,39 @@
     AllIntentsDropped,
 }
 
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RemainingIntents {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) active_incomplete: Vec&lt;Sender&lt;EventKind&gt;&gt;,
+    <span class="kw">pub</span>(<span class="kw">crate</span>) queued: Vec&lt;Intent&gt;,
+}
+
+<span class="kw">impl </span>RemainingIntents {
+    <span class="doccomment">/// Abort both incomplete active and queued unprocessed intents.
+    </span><span class="kw">pub async fn </span>abort_all(<span class="self">self</span>, error: Arc&lt;Error&gt;) {
+        <span class="kw">let </span>futs = Iterator::chain(
+            <span class="self">self</span>.queued
+                .into_iter()
+                .flat_map(|intent| intent.channels.map(|ch| ch.event_tx)),
+            <span class="self">self</span>.active_incomplete,
+        )
+        .map(|event_tx| {
+            <span class="kw">let </span>error = error.clone();
+            <span class="kw">async move </span>{ event_tx.send(EventKind::Abort { error }).<span class="kw">await </span>}
+        });
+        <span class="kw">let _ </span>= futures_buffered::join_all(futs).<span class="kw">await</span>;
+    }
+
+    <span class="doccomment">/// Abort incomplete active intents, and return queued unprocessed intents.
+    </span><span class="kw">pub async fn </span>abort_active(<span class="self">self</span>, error: Arc&lt;Error&gt;) -&gt; Vec&lt;Intent&gt; {
+        <span class="kw">let </span>futs = <span class="self">self</span>.active_incomplete.into_iter().map(|event_tx| {
+            <span class="kw">let </span>error = error.clone();
+            <span class="kw">async move </span>{ event_tx.send(EventKind::Abort { error }).<span class="kw">await </span>}
+        });
+        <span class="kw">let _ </span>= futures_buffered::join_all(futs).<span class="kw">await</span>;
+        <span class="self">self</span>.queued
+    }
+}
+
 <span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>IntentDispatcher&lt;S: Storage&gt; {
     inbox: mpsc::Receiver&lt;Input&gt;,
@@ -937,60 +977,31 @@
         }
     }
 
-    <span class="doccomment">/// Aborts all registered intents.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>abort_all(<span class="kw-2">&amp;</span><span class="self">self</span>, error: Arc&lt;Error&gt;) {
-        <span class="kw">let _ </span>= futures_buffered::join_all(
-            Iterator::chain(
-                <span class="self">self</span>.pending_intents
-                    .iter()
-                    .flat_map(|intent| intent.channels.as_ref())
-                    .map(|ch| <span class="kw-2">&amp;</span>ch.event_tx),
-                <span class="self">self</span>.intents
-                    .values()
-                    .flat_map(|intent| intent.event_tx.as_ref()),
-            )
-            .map(|event_tx| {
-                <span class="kw">let </span>error = error.clone();
-                <span class="kw">async move </span>{ event_tx.send(EventKind::Abort { error }).<span class="kw">await </span>}
-            }),
-        )
-        .<span class="kw">await</span>;
-    }
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>drain_all(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; RemainingIntents {
+        <span class="kw">let </span><span class="kw-2">mut </span>queued = <span class="macro">vec!</span>[];
 
-    <span class="doccomment">/// Takes self and returns all pending intents.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>drain_all(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; Vec&lt;Intent&gt; {
         <span class="comment">// Drain inbox.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>pending_intents = <span class="macro">vec!</span>[];
-        <span class="self">self</span>.inbox.close();
-        <span class="kw">while let </span><span class="prelude-val">Ok</span>(item) = <span class="self">self</span>.inbox.try_recv() {
+        </span><span class="self">self</span>.inbox.close();
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(item) = <span class="self">self</span>.inbox.recv().<span class="kw">await </span>{
             <span class="kw">match </span>item {
-                Input::EmitEvent(event) =&gt; {
-                    <span class="self">self</span>.emit_event_inner(event).<span class="kw">await</span>;
-                }
-                Input::SubmitIntent(intent) =&gt; pending_intents.push(intent),
+                Input::EmitEvent(event) =&gt; <span class="self">self</span>.emit_event_inner(event).<span class="kw">await</span>,
+                Input::SubmitIntent(intent) =&gt; queued.push(intent),
             }
         }
 
         <span class="comment">// Drain pending intents.
-        </span>pending_intents.extend(<span class="self">self</span>.pending_intents.into_iter());
+        </span>queued.extend(<span class="self">self</span>.pending_intents.into_iter());
 
-        <span class="comment">// Abort active intents.
-        </span><span class="kw">let </span>error = Arc::new(Error::Cancelled);
-        <span class="kw">let </span>active_intents = <span class="self">self</span>.intents.drain().filter_map(|(_id, info)| {
-            <span class="kw">if </span>info.is_complete() {
-                <span class="prelude-val">None
-            </span>} <span class="kw">else </span>{
-                info.event_tx
-            }
-        });
-        <span class="kw">let _ </span>= futures_buffered::join_all(active_intents.map(|event_tx| {
-            <span class="kw">let </span>error = error.clone();
-            <span class="kw">async move </span>{ event_tx.send(EventKind::Abort { error }).<span class="kw">await </span>}
-        }))
-        .<span class="kw">await</span>;
+        <span class="comment">// Drain incomplete active intents
+        </span><span class="kw">let </span>active_incomplete = <span class="self">self
+            </span>.intents
+            .drain()
+            .filter_map(|(_id, info)| (!info.is_complete()).then_some(info.event_tx).flatten());
 
-        <span class="comment">// Return pending (unprocessed) intents.
-        </span>pending_intents
+        RemainingIntents {
+            queued,
+            active_incomplete: active_incomplete.collect(),
+        }
     }
 
     <span class="doccomment">/// Run the [`IntentDispatcher`].
@@ -1253,8 +1264,11 @@
         <span class="kw">if </span>matches {
             <span class="self">self</span>.send(event.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">if </span>is_reconciled &amp;&amp; <span class="self">self</span>.interests.is_empty() {
+                <span class="macro">debug!</span>(<span class="string">"SEND RECONCILED ALL"</span>);
                 <span class="self">self</span>.send(EventKind::ReconciledAll).<span class="kw">await</span><span class="question-mark">?
-            </span>}
+            </span>} <span class="kw">else </span>{
+                <span class="macro">debug!</span>(<span class="string">"DO NOT SEND RECONCILED ALL"</span>);
+            }
         }
         <span class="prelude-val">Ok</span>(<span class="self">self</span>.is_complete())
     }

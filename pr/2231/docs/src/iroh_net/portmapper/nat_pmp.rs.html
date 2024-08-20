@@ -179,22 +179,18 @@
 <a href="#179" id="179">179</a>
 <a href="#180" id="180">180</a>
 <a href="#181" id="181">181</a>
-<a href="#182" id="182">182</a>
-<a href="#183" id="183">183</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Definitions and utilities to interact with a NAT-PMP server.
 
 </span><span class="kw">use </span>std::{net::Ipv4Addr, num::NonZeroU16, time::Duration};
 
 <span class="kw">use </span>tracing::{debug, trace};
 
+<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::NAT_PMP_RECV_TIMEOUT <span class="kw">as </span>RECV_TIMEOUT;
 <span class="kw">use </span><span class="kw">crate</span>::net::UdpSocket;
 
 <span class="kw">use </span><span class="self">self</span>::protocol::{MapProtocol, Request, Response};
 
 <span class="kw">mod </span>protocol;
-
-<span class="doccomment">/// Timeout to receive a response from a NAT-PMP server.
-</span><span class="kw">const </span>RECV_TIMEOUT: Duration = Duration::from_millis(<span class="number">500</span>);
 
 <span class="doccomment">/// Recommended lifetime is 2 hours. See [RFC 6886 Requesting a
 /// Mapping](https://datatracker.ietf.org/doc/html/rfc6886#section-3.3).

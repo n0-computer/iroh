@@ -2,7 +2,7 @@
     reader: impl AsyncRead + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Unpin.html" title="trait core::marker::Unpin">Unpin</a>,
     buffer: &amp;mut BytesMut,
     max_message_size: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>
-) -&gt; <a class="type" href="https://docs.rs/anyhow/1.0.82/anyhow/type.Result.html" title="type anyhow::Result">Result</a>&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;Bytes&gt;&gt;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Reads a length prefixed message.</p>
+) -&gt; <a class="type" href="https://docs.rs/anyhow/1.0.85/anyhow/type.Result.html" title="type anyhow::Result">Result</a>&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;Bytes&gt;&gt;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Reads a length prefixed message.</p>
 <h2 id="returns"><a class="doc-anchor" href="#returns">§</a>Returns</h2>
 <p>The message as raw bytes.  If the end of the stream is reached and there is no partial
 message, returns <code>None</code>.</p>

@@ -175,26 +175,6 @@
 <a href="#175" id="175">175</a>
 <a href="#176" id="176">176</a>
 <a href="#177" id="177">177</a>
-<a href="#178" id="178">178</a>
-<a href="#179" id="179">179</a>
-<a href="#180" id="180">180</a>
-<a href="#181" id="181">181</a>
-<a href="#182" id="182">182</a>
-<a href="#183" id="183">183</a>
-<a href="#184" id="184">184</a>
-<a href="#185" id="185">185</a>
-<a href="#186" id="186">186</a>
-<a href="#187" id="187">187</a>
-<a href="#188" id="188">188</a>
-<a href="#189" id="189">189</a>
-<a href="#190" id="190">190</a>
-<a href="#191" id="191">191</a>
-<a href="#192" id="192">192</a>
-<a href="#193" id="193">193</a>
-<a href="#194" id="194">194</a>
-<a href="#195" id="195">195</a>
-<a href="#196" id="196">196</a>
-<a href="#197" id="197">197</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The `session` module contains an implementation of the Willow General Purpose Sync Protocol
 //! (WGPS).
 //!
@@ -208,7 +188,6 @@
 
 <span class="kw">use </span>channels::ChannelSenders;
 <span class="kw">use </span>tokio::sync::mpsc;
-<span class="kw">use </span>tokio_util::sync::CancellationToken;
 
 <span class="kw">use crate</span>::{
     interest::Interests,
@@ -335,6 +314,7 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>SessionUpdate {
     SubmitIntent(Intent),
+    Abort(Error),
 }
 
 <span class="doccomment">/// Handle to an active session.
@@ -342,7 +322,6 @@
 /// This is not made public, the only public interface are [`intents`] handles.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>SessionHandle {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) cancel_token: CancellationToken,
     <span class="kw">pub</span>(<span class="kw">crate</span>) update_tx: mpsc::Sender&lt;SessionUpdate&gt;,
     <span class="kw">pub</span>(<span class="kw">crate</span>) event_rx: mpsc::Receiver&lt;SessionEvent&gt;,
 }
@@ -371,25 +350,6 @@
             }
         }
         <span class="prelude-val">Err</span>(Arc::new(Error::ActorFailed))
-    }
-
-    <span class="comment">// /// Submit a new synchronisation intent.
-    // pub(crate) async fn submit_intent(&amp;self, intent: Intent) -&gt; anyhow::Result&lt;()&gt; {
-    //     self.update_tx
-    //         .send(SessionUpdate::SubmitIntent(intent))
-    //         .await?;
-    //     Ok(())
-    // }
-
-    </span><span class="doccomment">/// Finish the session gracefully.
-    ///
-    /// After calling this, no further protocol messages will be sent from this node.
-    /// Previously queued messages will still be sent out. The session will only be closed
-    /// once the other peer closes their senders as well.
-    </span><span class="attr">#[cfg(test)]
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="macro">tracing::debug!</span>(<span class="string">"close session (session handle close called)"</span>);
-        <span class="self">self</span>.cancel_token.cancel();
     }
 }
 </code></pre></div></section></main></body></html>

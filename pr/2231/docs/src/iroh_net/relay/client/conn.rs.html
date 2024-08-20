@@ -536,7 +536,6 @@
 <a href="#536" id="536">536</a>
 <a href="#537" id="537">537</a>
 <a href="#538" id="538">538</a>
-<a href="#539" id="539">539</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
@@ -559,6 +558,7 @@
 <span class="kw">use </span>tokio_util::codec::{FramedRead, FramedWrite};
 <span class="kw">use </span>tracing::{debug, info_span, trace, Instrument};
 
+<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::relay::CLIENT_RECV_TIMEOUT;
 <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
 <span class="kw">use </span><span class="kw">crate</span>::relay::client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter};
 <span class="kw">use </span><span class="kw">crate</span>::relay::codec::{
@@ -566,8 +566,6 @@
 };
 <span class="kw">use </span><span class="kw">crate</span>::relay::codec::{ClientInfo, PER_CLIENT_READ_QUEUE_DEPTH};
 <span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
-
-<span class="kw">const </span>CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(<span class="number">120</span>);
 
 <span class="kw">impl </span>PartialEq <span class="kw">for </span>Conn {
     <span class="kw">fn </span>eq(<span class="kw-2">&amp;</span><span class="self">self</span>, other: <span class="kw-2">&amp;</span><span class="self">Self</span>) -&gt; bool {

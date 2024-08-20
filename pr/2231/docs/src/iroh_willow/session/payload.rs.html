@@ -162,6 +162,8 @@
 <a href="#162" id="162">162</a>
 <a href="#163" id="163">163</a>
 <a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::{future::BoxedLocal, FutureExt};
 <span class="kw">use </span>iroh_blobs::{
@@ -294,12 +296,17 @@
 
     <span class="kw">pub async fn </span>finalize(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="kw">let </span>state = <span class="self">self</span>.<span class="number">0</span>.take().ok_or(Error::InvalidMessageInCurrentState)<span class="question-mark">?</span>;
-        <span class="kw">let </span>writer = state
-            .writer
-            .ok_or_else(|| Error::InvalidMessageInCurrentState)<span class="question-mark">?</span>;
-        drop(writer.sender);
-        <span class="kw">let </span>(tag, len) = writer.fut.<span class="kw">await</span>.map_err(Error::PayloadStore)<span class="question-mark">?</span>;
-        <span class="kw">if </span><span class="kw-2">*</span>tag.hash() != state.payload_digest.<span class="number">0 </span>{
+        <span class="kw">let </span>(hash, len) = <span class="kw">match </span>state.writer {
+            <span class="prelude-val">Some</span>(writer) =&gt; {
+                drop(writer.sender);
+                <span class="kw">let </span>(tag, len) = writer.fut.<span class="kw">await</span>.map_err(Error::PayloadStore)<span class="question-mark">?</span>;
+                (<span class="kw-2">*</span>tag.hash(), len)
+            }
+            <span class="comment">// The writer is only empty if we did not receive any chunks. In this case, the
+            // "received data" is that of the empty hash with size 0.
+            </span><span class="prelude-val">None </span>=&gt; (iroh_base::hash::Hash::EMPTY, <span class="number">0</span>),
+        };
+        <span class="kw">if </span>hash != state.payload_digest.<span class="number">0 </span>{
             <span class="kw">return </span><span class="prelude-val">Err</span>(Error::PayloadDigestMismatch);
         }
         <span class="kw">if </span>len != state.expected_length {
@@ -309,9 +316,6 @@
         // we could store a tag for each blob
         // however we really want reference counting here, not individual tags
         // can also fallback to the naive impl from iroh-docs to just protect all docs hashes on gc
-        // let hash_and_format = *tag.inner();
-        // let name = b"foo";
-        // store.set_tag(name, Some(hash_and_format));
         </span><span class="prelude-val">Ok</span>(())
     }
 

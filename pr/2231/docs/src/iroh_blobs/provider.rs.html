@@ -653,6 +653,12 @@
 <a href="#653" id="653">653</a>
 <a href="#654" id="654">654</a>
 <a href="#655" id="655">655</a>
+<a href="#656" id="656">656</a>
+<a href="#657" id="657">657</a>
+<a href="#658" id="658">658</a>
+<a href="#659" id="659">659</a>
+<a href="#660" id="660">660</a>
+<a href="#661" id="661">661</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server side API
 </span><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::sync::Arc;
@@ -852,19 +858,21 @@
     <span class="prelude-val">Ok</span>(request)
 }
 
-<span class="doccomment">/// Transfers the collection &amp; blob data.
+<span class="doccomment">/// Transfers a blob or hash sequence to the client.
 ///
-/// First, it transfers the collection data &amp; its associated outboard encoding data. Then it sequentially transfers each individual blob data &amp; its associated outboard
-/// encoding data.
+/// The difference to [`handle_get`] is that we already have a reader for the
+/// root blob and outboard.
 ///
-/// Will fail if there is an error writing to the getter or reading from
+/// First, it transfers the root blob. Then, if needed, it sequentially
+/// transfers each individual blob data.
+///
+/// The transfer fail if there is an error writing to the writer or reading from
 /// the database.
 ///
-/// If a blob from the collection cannot be found in the database, the transfer will gracefully
-/// close the writer, and return with `Ok(SentStatus::NotFound)`.
-///
-/// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-</span><span class="kw">pub async fn </span>transfer_collection&lt;D: Map&gt;(
+/// If a blob from the hash sequence cannot be found in the database, the
+/// transfer will return with [`SentStatus::NotFound`]. If the transfer completes
+/// successfully, it will return with [`SentStatus::Sent`].
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>transfer_hash_seq&lt;D: Map&gt;(
     request: GetRequest,
     <span class="comment">// Store from which to fetch blobs.
     </span>db: <span class="kw-2">&amp;</span>D,
@@ -1013,7 +1021,9 @@
     </span><span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, event: Event);
 }
 
-<span class="doccomment">/// A possibly disabled sender for events.
+<span class="doccomment">/// A sender for events related to blob transfers.
+///
+/// The sender is disabled by default.
 </span><span class="attr">#[derive(Debug, Clone, Default)]
 </span><span class="kw">pub struct </span>EventSender {
     inner: <span class="prelude-ty">Option</span>&lt;Arc&lt;<span class="kw">dyn </span>CustomEventSender&gt;&gt;,
@@ -1113,7 +1123,9 @@
     }
 }
 
-<span class="doccomment">/// Handle a single standard get request.
+<span class="doccomment">/// Handle a single get request.
+///
+/// Requires the request, a database, and a writer.
 </span><span class="kw">pub async fn </span>handle_get&lt;D: Map&gt;(
     db: D,
     request: GetRequest,
@@ -1137,7 +1149,7 @@
             <span class="kw">let </span><span class="kw-2">mut </span>stats = Box::&lt;TransferStats&gt;::default();
             <span class="kw">let </span>t0 = std::time::Instant::now();
             <span class="comment">// 5. Transfer data!
-            </span><span class="kw">let </span>res = transfer_collection(
+            </span><span class="kw">let </span>res = transfer_hash_seq(
                 request,
                 <span class="kw-2">&amp;</span>db,
                 <span class="kw-2">&amp;mut </span>writer,

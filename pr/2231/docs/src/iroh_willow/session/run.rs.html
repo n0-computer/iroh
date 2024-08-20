@@ -514,6 +514,35 @@
 <a href="#514" id="514">514</a>
 <a href="#515" id="515">515</a>
 <a href="#516" id="516">516</a>
+<a href="#517" id="517">517</a>
+<a href="#518" id="518">518</a>
+<a href="#519" id="519">519</a>
+<a href="#520" id="520">520</a>
+<a href="#521" id="521">521</a>
+<a href="#522" id="522">522</a>
+<a href="#523" id="523">523</a>
+<a href="#524" id="524">524</a>
+<a href="#525" id="525">525</a>
+<a href="#526" id="526">526</a>
+<a href="#527" id="527">527</a>
+<a href="#528" id="528">528</a>
+<a href="#529" id="529">529</a>
+<a href="#530" id="530">530</a>
+<a href="#531" id="531">531</a>
+<a href="#532" id="532">532</a>
+<a href="#533" id="533">533</a>
+<a href="#534" id="534">534</a>
+<a href="#535" id="535">535</a>
+<a href="#536" id="536">536</a>
+<a href="#537" id="537">537</a>
+<a href="#538" id="538">538</a>
+<a href="#539" id="539">539</a>
+<a href="#540" id="540">540</a>
+<a href="#541" id="541">541</a>
+<a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, sync::Arc};
 
 <span class="kw">use </span>futures_concurrency::{
@@ -525,7 +554,7 @@
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tokio_stream::wrappers::ReceiverStream;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
-<span class="kw">use </span>tracing::{debug, error_span, trace, warn, Instrument, Span};
+<span class="kw">use </span>tracing::{debug, error_span, trace, Instrument, Span};
 
 <span class="kw">use crate</span>::{
     net::ConnHandle,
@@ -561,7 +590,6 @@
     store: Store&lt;S&gt;,
     conn: ConnHandle,
     initial_intents: Vec&lt;Intent&gt;,
-    close_session_token: CancellationToken,
     session_id: SessionId,
     event_sender: EventSender,
     update_receiver: ReceiverStream&lt;SessionUpdate&gt;,
@@ -602,7 +630,8 @@
     <span class="macro">debug!</span>(role = <span class="question-mark">?</span>our_role, <span class="question-mark">?</span>mode, <span class="string">"start session"</span>);
 
     <span class="comment">// Make all our receivers close once the close session token is triggered.
-    </span><span class="kw">let </span>control_recv = Cancelable::new(control_recv, close_session_token.clone());
+    </span><span class="kw">let </span>close_session_token = CancellationToken::new();
+    <span class="kw">let </span>control_recv = Cancelable::new(control_recv, close_session_token.clone());
     <span class="kw">let </span>reconciliation_recv = Cancelable::new(reconciliation_recv, close_session_token.clone());
     <span class="kw">let </span>intersection_recv = Cancelable::new(intersection_recv, close_session_token.clone());
     <span class="kw">let </span><span class="kw-2">mut </span>static_tokens_recv = Cancelable::new(static_tokens_recv, close_session_token.clone());
@@ -695,6 +724,8 @@
         }
     });
 
+    <span class="kw">let </span><span class="kw-2">mut </span>abort_err = <span class="prelude-val">None</span>;
+
     <span class="kw">let </span>intents_inbox_2 = intents_inbox.clone();
     <span class="kw">let </span>update_loop = with_span(<span class="macro">error_span!</span>(<span class="string">"update"</span>), <span class="kw">async </span>{
         <span class="kw">while let </span><span class="prelude-val">Some</span>(update) = update_receiver.next().<span class="kw">await </span>{
@@ -703,6 +734,11 @@
                     intents_inbox_2
                         .send(intents::Input::SubmitIntent(data))
                         .<span class="kw">await</span><span class="question-mark">?</span>;
+                }
+                SessionUpdate::Abort(err) =&gt; {
+                    abort_err = <span class="prelude-val">Some</span>(err);
+                    close_session_token.cancel();
+                    <span class="kw">break</span>;
                 }
             }
         }
@@ -875,7 +911,10 @@
         <span class="prelude-val">Ok</span>(())
     });
 
-    drop(intents_inbox);
+    <span class="comment">// Drop the intents_inbox. We cloned this into the different loops, and the clones are dropped
+    // at the end of the loops - which means the intents loop will terminate once all other loops
+    // that potentially send into the intents inbox.
+    </span>drop(intents_inbox);
 
     <span class="kw">let </span>result = (
         intents_fut,
@@ -892,8 +931,6 @@
         .try_join()
         .<span class="kw">await</span>;
 
-    <span class="kw">let </span>result = result.map_err(Arc::new).map(|<span class="kw">_</span>| ());
-
     <span class="comment">// Unsubscribe from the store.
     </span>store.entries().unsubscribe(<span class="kw-2">&amp;</span>session_id);
 
@@ -901,25 +938,45 @@
     // the session by closing the control channel.
     </span><span class="kw">let </span>we_cancelled = close_session_token.is_cancelled();
 
-    <span class="kw">let </span><span class="kw-2">mut </span>remaining_intents = <span class="macro">vec!</span>[];
-    <span class="kw">match </span><span class="kw-2">&amp;</span>result {
-        <span class="prelude-val">Ok</span>(()) =&gt; {
-            <span class="comment">// If the session did not error, we drain our queued intents to retry them.
-            </span>remaining_intents.append(<span class="kw-2">&amp;mut </span>intents.drain_all().<span class="kw">await</span>);
-        }
-        <span class="prelude-val">Err</span>(error) =&gt; {
-            <span class="comment">// If the session errored, we abort our queued intents.
-            </span>intents.abort_all(error.clone()).<span class="kw">await</span>;
-        }
-    }
-    <span class="comment">// Append intents that are still queued in the update receiver channel.
+    <span class="comment">// Close the update receiver channel.
     </span><span class="kw">let </span><span class="kw-2">mut </span>update_receiver = update_receiver.into_inner().into_inner();
     update_receiver.close();
-    <span class="kw">while let </span><span class="prelude-val">Some</span>(update) = update_receiver.recv().<span class="kw">await </span>{
+
+    <span class="comment">// Drain incomplete intents that are still in the intent dispatcher.
+    </span><span class="kw">let </span><span class="kw-2">mut </span>remaining_intents = intents.drain_all().<span class="kw">await</span>;
+
+    <span class="comment">// Drain the update receiver channel.
+    </span><span class="kw">while let </span><span class="prelude-val">Some</span>(update) = update_receiver.recv().<span class="kw">await </span>{
         <span class="kw">match </span>update {
-            SessionUpdate::SubmitIntent(intent) =&gt; remaining_intents.push(intent),
+            SessionUpdate::SubmitIntent(intent) =&gt; remaining_intents.queued.push(intent),
+            SessionUpdate::Abort(err) =&gt; {
+                abort_err = <span class="prelude-val">Some</span>(err);
+            }
         }
     }
+
+    <span class="kw">let </span>result = <span class="kw">match </span>(result, abort_err) {
+        (<span class="kw">_</span>, <span class="prelude-val">Some</span>(err)) =&gt; <span class="prelude-val">Err</span>(Arc::new(err)),
+        (<span class="prelude-val">Err</span>(err), <span class="prelude-val">None</span>) =&gt; <span class="prelude-val">Err</span>(Arc::new(err)),
+        <span class="kw">_ </span>=&gt; <span class="prelude-val">Ok</span>(()),
+    };
+
+    <span class="kw">let </span>remaining_intents = <span class="kw">match </span>result.as_ref() {
+        <span class="prelude-val">Err</span>(err) =&gt; {
+            remaining_intents.abort_all(err.clone()).<span class="kw">await</span>;
+            <span class="macro">vec!</span>[]
+        }
+        <span class="prelude-val">Ok</span>(()) <span class="kw">if </span>we_cancelled =&gt; {
+            drop(remaining_intents.active_incomplete);
+            remaining_intents.queued
+        }
+        <span class="prelude-val">Ok</span>(()) =&gt; {
+            remaining_intents
+                .abort_active(Arc::new(Error::SessionClosedByPeer))
+                .<span class="kw">await
+        </span>}
+    };
+
     <span class="macro">debug!</span>(error=<span class="question-mark">?</span>result.as_ref().err(), remaining_intents=remaining_intents.len(), <span class="question-mark">?</span>we_cancelled, <span class="string">"session complete"</span>);
 
     <span class="kw">if let </span><span class="prelude-val">Err</span>(_receiver_dropped) = event_sender
@@ -931,7 +988,7 @@
         })
         .<span class="kw">await
     </span>{
-        <span class="macro">warn!</span>(<span class="string">"failed to send session complete event: receiver dropped"</span>);
+        <span class="macro">debug!</span>(<span class="string">"failed to send session complete event: receiver dropped"</span>);
     }
 
     result
@@ -994,6 +1051,7 @@
             <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(Error::UnsupportedMessage),
         }
     }
+    <span class="macro">trace!</span>(<span class="string">"control loop closing"</span>);
 
     <span class="prelude-val">Ok</span>(())
 }

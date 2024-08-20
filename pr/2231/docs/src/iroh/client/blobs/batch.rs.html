@@ -905,7 +905,7 @@
 
     <span class="doccomment">/// Upgrades a temp tag to a persistent tag with either a specific name or
     /// an automatically generated name.
-    </span><span class="kw">pub async fn </span>upgrade_with_opts(<span class="kw-2">&amp;</span><span class="self">self</span>, tt: TempTag, opts: SetTagOption) -&gt; <span class="prelude-ty">Result</span>&lt;Tag&gt; {
+    </span><span class="kw">pub async fn </span>persist_with_opts(<span class="kw-2">&amp;</span><span class="self">self</span>, tt: TempTag, opts: SetTagOption) -&gt; <span class="prelude-ty">Result</span>&lt;Tag&gt; {
         <span class="kw">match </span>opts {
             SetTagOption::Auto =&gt; <span class="self">self</span>.persist(tt).<span class="kw">await</span>,
             SetTagOption::Named(tag) =&gt; {
