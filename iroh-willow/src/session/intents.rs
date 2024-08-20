@@ -268,6 +268,39 @@ pub(super) enum Output {
     AllIntentsDropped,
 }
 
+#[derive(Debug)]
+pub(crate) struct RemainingIntents {
+    pub(crate) active_incomplete: Vec<Sender<EventKind>>,
+    pub(crate) queued: Vec<Intent>,
+}
+
+impl RemainingIntents {
+    /// Abort both incomplete active and queued unprocessed intents.
+    pub async fn abort_all(self, error: Arc<Error>) {
+        let futs = Iterator::chain(
+            self.queued
+                .into_iter()
+                .flat_map(|intent| intent.channels.map(|ch| ch.event_tx)),
+            self.active_incomplete,
+        )
+        .map(|event_tx| {
+            let error = error.clone();
+            async move { event_tx.send(EventKind::Abort { error }).await }
+        });
+        let _ = futures_buffered::join_all(futs).await;
+    }
+
+    /// Abort incomplete active intents, and return queued unprocessed intents.
+    pub async fn abort_active(self, error: Arc<Error>) -> Vec<Intent> {
+        let futs = self.active_incomplete.into_iter().map(|event_tx| {
+            let error = error.clone();
+            async move { event_tx.send(EventKind::Abort { error }).await }
+        });
+        let _ = futures_buffered::join_all(futs).await;
+        self.queued
+    }
+}
+
 #[derive(derive_more::Debug)]
 pub(super) struct IntentDispatcher<S: Storage> {
     inbox: mpsc::Receiver<Input>,
@@ -297,60 +330,31 @@ impl<S: Storage> IntentDispatcher<S> {
         }
     }
 
-    /// Aborts all registered intents.
-    pub(super) async fn abort_all(&self, error: Arc<Error>) {
-        let _ = futures_buffered::join_all(
-            Iterator::chain(
-                self.pending_intents
-                    .iter()
-                    .flat_map(|intent| intent.channels.as_ref())
-                    .map(|ch| &ch.event_tx),
-                self.intents
-                    .values()
-                    .flat_map(|intent| intent.event_tx.as_ref()),
-            )
-            .map(|event_tx| {
-                let error = error.clone();
-                async move { event_tx.send(EventKind::Abort { error }).await }
-            }),
-        )
-        .await;
-    }
+    pub(super) async fn drain_all(mut self) -> RemainingIntents {
+        let mut queued = vec![];
 
-    /// Takes self and returns all pending intents.
-    pub(super) async fn drain_all(mut self) -> Vec<Intent> {
         // Drain inbox.
-        let mut pending_intents = vec![];
         self.inbox.close();
-        while let Ok(item) = self.inbox.try_recv() {
+        while let Some(item) = self.inbox.recv().await {
             match item {
-                Input::EmitEvent(event) => {
-                    self.emit_event_inner(event).await;
-                }
-                Input::SubmitIntent(intent) => pending_intents.push(intent),
+                Input::EmitEvent(event) => self.emit_event_inner(event).await,
+                Input::SubmitIntent(intent) => queued.push(intent),
             }
         }
 
         // Drain pending intents.
-        pending_intents.extend(self.pending_intents.into_iter());
+        queued.extend(self.pending_intents.into_iter());
 
-        // Abort active intents.
-        let error = Arc::new(Error::Cancelled);
-        let active_intents = self.intents.drain().filter_map(|(_id, info)| {
-            if info.is_complete() {
-                None
-            } else {
-                info.event_tx
-            }
-        });
-        let _ = futures_buffered::join_all(active_intents.map(|event_tx| {
-            let error = error.clone();
-            async move { event_tx.send(EventKind::Abort { error }).await }
-        }))
-        .await;
+        // Drain incomplete active intents
+        let active_incomplete = self
+            .intents
+            .drain()
+            .filter_map(|(_id, info)| info.is_complete().then_some(info.event_tx).flatten());
 
-        // Return pending (unprocessed) intents.
-        pending_intents
+        RemainingIntents {
+            queued,
+            active_incomplete: active_incomplete.collect(),
+        }
     }
 
     /// Run the [`IntentDispatcher`].

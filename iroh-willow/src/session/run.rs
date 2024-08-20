@@ -9,7 +9,7 @@ use strum::IntoEnumIterator;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error_span, trace, warn, Instrument, Span};
+use tracing::{debug, error_span, trace, Instrument, Span};
 
 use crate::{
     net::ConnHandle,
@@ -45,7 +45,6 @@ pub(crate) async fn run_session<S: Storage>(
     store: Store<S>,
     conn: ConnHandle,
     initial_intents: Vec<Intent>,
-    close_session_token: CancellationToken,
     session_id: SessionId,
     event_sender: EventSender,
     update_receiver: ReceiverStream<SessionUpdate>,
@@ -86,6 +85,7 @@ pub(crate) async fn run_session<S: Storage>(
     debug!(role = ?our_role, ?mode, "start session");
 
     // Make all our receivers close once the close session token is triggered.
+    let close_session_token = CancellationToken::new();
     let control_recv = Cancelable::new(control_recv, close_session_token.clone());
     let reconciliation_recv = Cancelable::new(reconciliation_recv, close_session_token.clone());
     let intersection_recv = Cancelable::new(intersection_recv, close_session_token.clone());
@@ -179,6 +179,8 @@ pub(crate) async fn run_session<S: Storage>(
         }
     });
 
+    let mut abort_err = None;
+
     let intents_inbox_2 = intents_inbox.clone();
     let update_loop = with_span(error_span!("update"), async {
         while let Some(update) = update_receiver.next().await {
@@ -187,6 +189,11 @@ pub(crate) async fn run_session<S: Storage>(
                     intents_inbox_2
                         .send(intents::Input::SubmitIntent(data))
                         .await?;
+                }
+                SessionUpdate::Abort(err) => {
+                    abort_err = Some(err);
+                    close_session_token.cancel();
+                    break;
                 }
             }
         }
@@ -359,6 +366,9 @@ pub(crate) async fn run_session<S: Storage>(
         Ok(())
     });
 
+    // Drop the intents_inbox. We cloned this into the different loops, and the clones are dropped
+    // at the end of the loops - which means the intents loop will terminate once all other loops
+    // that potentially send into the intents inbox.
     drop(intents_inbox);
 
     let result = (
@@ -376,8 +386,6 @@ pub(crate) async fn run_session<S: Storage>(
         .try_join()
         .await;
 
-    let result = result.map_err(Arc::new).map(|_| ());
-
     // Unsubscribe from the store.
     store.entries().unsubscribe(&session_id);
 
@@ -385,25 +393,45 @@ pub(crate) async fn run_session<S: Storage>(
     // the session by closing the control channel.
     let we_cancelled = close_session_token.is_cancelled();
 
-    let mut remaining_intents = vec![];
-    match &result {
-        Ok(()) => {
-            // If the session did not error, we drain our queued intents to retry them.
-            remaining_intents.append(&mut intents.drain_all().await);
-        }
-        Err(error) => {
-            // If the session errored, we abort our queued intents.
-            intents.abort_all(error.clone()).await;
-        }
-    }
-    // Append intents that are still queued in the update receiver channel.
+    // Close the update receiver channel.
     let mut update_receiver = update_receiver.into_inner().into_inner();
     update_receiver.close();
+
+    // Drain incomplete intents that are still in the intent dispatcher.
+    let mut remaining_intents = intents.drain_all().await;
+
+    // Drain the update receiver channel.
     while let Some(update) = update_receiver.recv().await {
         match update {
-            SessionUpdate::SubmitIntent(intent) => remaining_intents.push(intent),
+            SessionUpdate::SubmitIntent(intent) => remaining_intents.queued.push(intent),
+            SessionUpdate::Abort(err) => {
+                abort_err = Some(err);
+            }
         }
     }
+
+    let result = match (result, abort_err) {
+        (_, Some(err)) => Err(Arc::new(err)),
+        (Err(err), None) => Err(Arc::new(err)),
+        _ => Ok(()),
+    };
+
+    let remaining_intents = match result.as_ref() {
+        Err(err) => {
+            remaining_intents.abort_all(err.clone()).await;
+            vec![]
+        }
+        Ok(()) if we_cancelled => {
+            drop(remaining_intents.active_incomplete);
+            remaining_intents.queued
+        }
+        Ok(()) => {
+            remaining_intents
+                .abort_active(Arc::new(Error::SessionClosedByPeer))
+                .await
+        }
+    };
+
     debug!(error=?result.as_ref().err(), remaining_intents=remaining_intents.len(), ?we_cancelled, "session complete");
 
     if let Err(_receiver_dropped) = event_sender
@@ -415,7 +443,7 @@ pub(crate) async fn run_session<S: Storage>(
         })
         .await
     {
-        warn!("failed to send session complete event: receiver dropped");
+        debug!("failed to send session complete event: receiver dropped");
     }
 
     result
@@ -478,6 +506,7 @@ async fn control_loop(
             _ => return Err(Error::UnsupportedMessage),
         }
     }
+    trace!("control loop closing");
 
     Ok(())
 }

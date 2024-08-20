@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use ed25519_dalek::SignatureError;
 use meadowcap::{IsCommunal, NamespaceIsNotCommunalError, OwnedCapabilityCreationError};
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{
     interest::{
@@ -58,7 +58,7 @@ impl<S: Storage> Auth<S> {
         caps: impl IntoIterator<Item = CapabilityPack>,
     ) -> Result<(), AuthError> {
         for cap in caps.into_iter() {
-            tracing::debug!("import cap {cap:?}");
+            debug!(?cap, "import cap");
             cap.validate()?;
             // Only allow importing caps we can use.
             // TODO: Is this what we want?
@@ -67,7 +67,7 @@ impl<S: Storage> Auth<S> {
                 return Err(AuthError::MissingUserSecret(user_id));
             }
             self.caps.insert(cap)?;
-            tracing::debug!("imported");
+            trace!("imported");
         }
         Ok(())
     }

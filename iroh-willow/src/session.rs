@@ -11,7 +11,6 @@ use std::sync::Arc;
 
 use channels::ChannelSenders;
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 
 use crate::{
     interest::Interests,
@@ -138,6 +137,7 @@ pub(crate) enum SessionEvent {
 #[derive(Debug)]
 pub(crate) enum SessionUpdate {
     SubmitIntent(Intent),
+    Abort(Error),
 }
 
 /// Handle to an active session.
@@ -145,7 +145,6 @@ pub(crate) enum SessionUpdate {
 /// This is not made public, the only public interface are [`intents`] handles.
 #[derive(Debug)]
 pub(crate) struct SessionHandle {
-    pub(crate) cancel_token: CancellationToken,
     pub(crate) update_tx: mpsc::Sender<SessionUpdate>,
     pub(crate) event_rx: mpsc::Receiver<SessionEvent>,
 }
@@ -174,24 +173,5 @@ impl SessionHandle {
             }
         }
         Err(Arc::new(Error::ActorFailed))
-    }
-
-    // /// Submit a new synchronisation intent.
-    // pub(crate) async fn submit_intent(&self, intent: Intent) -> anyhow::Result<()> {
-    //     self.update_tx
-    //         .send(SessionUpdate::SubmitIntent(intent))
-    //         .await?;
-    //     Ok(())
-    // }
-
-    /// Finish the session gracefully.
-    ///
-    /// After calling this, no further protocol messages will be sent from this node.
-    /// Previously queued messages will still be sent out. The session will only be closed
-    /// once the other peer closes their senders as well.
-    #[cfg(test)]
-    pub(crate) fn close(&self) {
-        tracing::debug!("close session (session handle close called)");
-        self.cancel_token.cancel();
     }
 }

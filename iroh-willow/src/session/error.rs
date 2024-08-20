@@ -78,6 +78,10 @@ pub enum Error {
     ShuttingDown,
     #[error("The operation was cancelled locally")]
     Cancelled,
+    #[error("Connection was closed by peer")]
+    ConnectionClosed(#[source] anyhow::Error),
+    #[error("Session was closed by peer")]
+    SessionClosedByPeer,
 }
 
 #[derive(Debug, thiserror::Error)]
