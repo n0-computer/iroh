@@ -1098,11 +1098,11 @@
     <span class="doccomment">/// Encodes data and outboard into a stream which can be imported with [`Store::import_verifiable_stream`].
     ///
     /// Returns immediately without error if `start` is equal or larger than the entry's size.
-    </span><span class="kw">fn </span>write_verifiable_stream(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
+    </span><span class="kw">fn </span>write_verifiable_stream&lt;<span class="lifetime">'a</span>&gt;(
+        <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
         start: u64,
-        writer: <span class="kw">impl </span>AsyncStreamWriter + <span class="lifetime">'static</span>,
-    ) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;()&gt;&gt; + <span class="lifetime">'_ </span>{
+        writer: <span class="kw">impl </span>AsyncStreamWriter + <span class="lifetime">'a</span>,
+    ) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;()&gt;&gt; + <span class="lifetime">'a </span>{
         <span class="kw">async move </span>{
             <span class="kw">let </span>size = <span class="self">self</span>.size().value();
             <span class="kw">if </span>start &gt;= size {
