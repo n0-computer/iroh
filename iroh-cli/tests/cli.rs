@@ -474,7 +474,7 @@ fn cli_provide_addresses() -> Result<()> {
     let _ticket = match_provide_output(&mut provider, 1, BlobOrCollection::Collection)?;
 
     // test output
-    let get_output = cmd(iroh_bin(), ["node", "status"])
+    let get_output = cmd(iroh_bin(), ["status"])
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", iroh_data_dir)
         // .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
