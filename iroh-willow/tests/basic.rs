@@ -186,7 +186,7 @@ async fn peer_manager_update_intent() -> Result<()> {
 
     intent.close().await;
 
-    assert!(intent.next().await.is_none(),);
+    assert!(intent.next().await.is_none());
 
     [alfie, betty].map(Peer::shutdown).try_join().await?;
     Ok(())

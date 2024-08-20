@@ -188,34 +188,41 @@ pub(crate) fn prepare_channels(
     let cap = find(Channel::Logical(LogicalChannel::Capability))?;
     let dat = find(Channel::Logical(LogicalChannel::Data))?;
 
-    let fut = (ctrl.2, pai.2, rec.2, stt.2, aoi.2, cap.2, dat.2)
-        .try_join()
-        .map_ok(|_| ());
+    let fut = async move {
+        let result = (ctrl.2, pai.2, rec.2, stt.2, aoi.2, cap.2, dat.2)
+            .try_join()
+            .map_ok(|_| ())
+            .await;
+        if let Err(err) = &result {
+            debug!("channels closed with error: {err:#}");
+        } else {
+            debug!("channels closed");
+        }
+        result
+    };
 
-    let logical_send = LogicalChannelSenders {
-        intersection_send: pai.0,
-        reconciliation_send: rec.0,
-        static_tokens_send: stt.0,
-        aoi_send: aoi.0,
-        capability_send: cap.0,
-        data_send: dat.0,
-    };
-    let logical_recv = LogicalChannelReceivers {
-        intersection_recv: pai.1.into(),
-        reconciliation_recv: rec.1.into(),
-        static_tokens_recv: stt.1.into(),
-        aoi_recv: aoi.1.into(),
-        capability_recv: cap.1.into(),
-        data_recv: dat.1.into(),
-    };
     let channels = Channels {
         send: ChannelSenders {
             control_send: ctrl.0,
-            logical_send,
+            logical_send: LogicalChannelSenders {
+                intersection_send: pai.0,
+                reconciliation_send: rec.0,
+                static_tokens_send: stt.0,
+                aoi_send: aoi.0,
+                capability_send: cap.0,
+                data_send: dat.0,
+            },
         },
         recv: ChannelReceivers {
             control_recv: ctrl.1,
-            logical_recv,
+            logical_recv: LogicalChannelReceivers {
+                intersection_recv: pai.1.into(),
+                reconciliation_recv: rec.1.into(),
+                static_tokens_recv: stt.1.into(),
+                aoi_recv: aoi.1.into(),
+                capability_recv: cap.1.into(),
+                data_recv: dat.1.into(),
+            },
         },
     };
     Ok((channels, fut))
@@ -238,10 +245,10 @@ fn prepare_channel(
     let (sender, outbound_reader) = outbound_channel(cap, guarantees);
     let (inbound_writer, receiver) = inbound_channel(cap);
 
-    let recv_fut = recv_loop(recv_stream, inbound_writer)
+    let recv_fut = recv_loop(ch, recv_stream, inbound_writer)
         .map_err(move |e| e.context(format!("receive loop for {ch:?} failed")));
 
-    let send_fut = send_loop(send_stream, outbound_reader)
+    let send_fut = send_loop(ch, send_stream, outbound_reader)
         .map_err(move |e| e.context(format!("send loop for {ch:?} failed")));
 
     let fut = (recv_fut, send_fut).try_join().map_ok(|_| ());
@@ -249,8 +256,12 @@ fn prepare_channel(
     (sender, receiver, fut)
 }
 
-async fn recv_loop(mut recv_stream: RecvStream, mut channel_writer: Writer) -> Result<()> {
-    trace!("recv: start");
+async fn recv_loop(
+    channel: Channel,
+    mut recv_stream: RecvStream,
+    mut channel_writer: Writer,
+) -> Result<()> {
+    trace!(?channel, "recv: start");
     let max_buffer_size = channel_writer.max_buffer_size();
     while let Some(buf) = recv_stream
         .read_chunk(max_buffer_size, true)
@@ -261,14 +272,17 @@ async fn recv_loop(mut recv_stream: RecvStream, mut channel_writer: Writer) -> R
         channel_writer.write_all(&buf.bytes[..]).await?;
         // trace!(len = buf.bytes.len(), "sent");
     }
-    trace!("recv: stream close");
+    trace!(?channel, "recv: stream close");
     channel_writer.close();
-    trace!("recv: done");
     Ok(())
 }
 
-async fn send_loop(mut send_stream: SendStream, channel_reader: Reader) -> Result<()> {
-    trace!("send: start");
+async fn send_loop(
+    channel: Channel,
+    mut send_stream: SendStream,
+    channel_reader: Reader,
+) -> Result<()> {
+    trace!(?channel, "send: start");
     while let Some(data) = channel_reader.read_bytes().await {
         // let len = data.len();
         // trace!(len, "send");
@@ -278,9 +292,9 @@ async fn send_loop(mut send_stream: SendStream, channel_reader: Reader) -> Resul
             .context("failed to write to quic stream")?;
         // trace!(len, "sent");
     }
-    trace!("send: close writer");
+    trace!(?channel, "send: close writer");
     send_stream.finish().await?;
-    trace!("send: done");
+    trace!(?channel, "send: done");
     Ok(())
 }
 
@@ -426,14 +440,14 @@ mod tests {
             .await?;
         let (channels, fut) = prepare_channels(channel_streams)?;
         let net_task = tokio::task::spawn(fut.instrument(span));
-        let willow_conn = ConnHandle {
+        let conn_handle = ConnHandle {
             initial_transmission,
             our_role,
             peer,
             channels,
         };
-        let handle = actor.init_session(willow_conn, intents).await?;
-        Ok((handle, net_task))
+        let session_handle = actor.init_session(conn_handle, intents).await?;
+        Ok((session_handle, net_task))
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -666,7 +680,7 @@ mod tests {
         let init_alfie = SessionInit::new(Interests::All, SessionMode::Continuous);
         let init_betty = SessionInit::new(Interests::All, SessionMode::Continuous);
 
-        let (intent_alfie, mut intent_handle_alfie) = Intent::new(init_alfie);
+        let (intent_alfie, intent_handle_alfie) = Intent::new(init_alfie);
         let (intent_betty, mut intent_handle_betty) = Intent::new(init_betty);
 
         let nonce_alfie = AccessChallenge::generate_with_rng(&mut rng);
@@ -698,7 +712,9 @@ mod tests {
         // TODO: replace with event
         tokio::time::sleep(Duration::from_secs(1)).await;
 
-        session_alfie.close();
+        // Drop the alfie intent, which closes the session.
+        drop(intent_handle_alfie);
+
         let (senders_alfie, _alfie_cancelled) = session_alfie
             .complete()
             .await
@@ -717,14 +733,9 @@ mod tests {
         r1.unwrap();
         r2.unwrap();
 
-        let (res_alfie, res_betty) = tokio::join!(
-            intent_handle_alfie.complete(),
-            intent_handle_betty.complete()
-        );
-        info!(time=?start.elapsed(), "reconciliation finished");
-        info!("alfie intent res {:?}", res_alfie);
+        let res_betty = intent_handle_betty.complete().await;
+        info!(time=?start.elapsed(), "finished");
         info!("betty intent res {:?}", res_betty);
-        assert!(res_alfie.is_ok());
         assert!(res_betty.is_ok());
 
         tokio::try_join!(
@@ -733,10 +744,6 @@ mod tests {
         )
         .expect("failed to close both connections gracefully");
 
-        info!("alfie session res {:?}", res_alfie);
-        info!("betty session res {:?}", res_betty);
-        assert!(res_alfie.is_ok());
-        assert!(res_betty.is_ok());
         let alfie_entries = get_entries(&handle_alfie, namespace_id).await?;
         let betty_entries = get_entries(&handle_betty, namespace_id).await?;
         info!("alfie has now {} entries", alfie_entries.len());

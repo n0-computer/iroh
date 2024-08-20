@@ -157,7 +157,7 @@ impl PeerManager {
                         Input::SubmitIntent { peer, intent } => self.submit_intent(peer, intent).await,
                         Input::HandleConnection { conn } => self.handle_connection(conn).await,
                         Input::Shutdown { reply } => {
-                            self.init_shutdown();
+                            self.init_shutdown().await;
                             if self.conn_tasks.is_empty() {
                                 reply.send(()).ok();
                                 break;
@@ -348,8 +348,9 @@ impl PeerManager {
             } => {
                 if let Err(err) = update_tx.send(SessionUpdate::SubmitIntent(intent)).await {
                     debug!("failed to submit intent into active session, queue in peer state");
-                    let SessionUpdate::SubmitIntent(intent) = err.0;
-                    intents_after_close.push(intent);
+                    if let SessionUpdate::SubmitIntent(intent) = err.0 {
+                        intents_after_close.push(intent);
+                    }
                 } else {
                     trace!("intent sent to session");
                 }
@@ -413,7 +414,6 @@ impl PeerManager {
             .peers
             .get_mut(&peer)
             .context("got conn task output for unknown peer")?;
-        trace!(out=?out.as_ref().map(|o| format!("{o}")), "conn task output");
         match out {
             Err(err) => {
                 trace!(?our_role, current_state=%peer_info.state, "conn task failed: {err:#?}");
@@ -460,16 +460,12 @@ impl PeerManager {
                                 )
                                 .await;
                             }
-                            PeerState::Active { .. } => {
-                                // We do not care about intents here, they will be handled in the
-                                // session (which will error as well because all channels are now
-                                // closed).
+                            PeerState::Active { update_tx, .. } => {
                                 warn!(?err, "connection failed while active");
-                                // TODO:(Frando): Not sure if this is good practice?
-                                // A `debug_assert` is far too much, because this can be triggered by other peers.
-                                // However in tests I want to make sure that *all* connections terminate gracefully.
-                                #[cfg(test)]
-                                panic!("connection failed: {err:?}");
+                                update_tx
+                                    .send(SessionUpdate::Abort(Error::ConnectionClosed(err)))
+                                    .await
+                                    .ok();
                             }
                             PeerState::None => {
                                 warn!(?err, "connection failed while peer is in None state");
@@ -487,6 +483,10 @@ impl PeerManager {
                     ref mut intents, ..
                 } = &mut peer_info.state
                 else {
+                    debug!(
+                        ?our_role,
+                        "got connection ready for peer in non-pending state"
+                    );
                     conn.close(ERROR_CODE_FAIL, b"invalid-state");
                     drop(conn);
                     // TODO: unreachable?
@@ -528,7 +528,6 @@ impl PeerManager {
                 let abort_handle = spawn_conn_task(&mut self.conn_tasks, peer_info, fut);
 
                 let SessionHandle {
-                    cancel_token,
                     update_tx,
                     event_rx,
                 } = session_handle;
@@ -537,7 +536,6 @@ impl PeerManager {
 
                 peer_info.state = PeerState::Active {
                     update_tx,
-                    cancel_token,
                     intents_after_close: vec![],
                 };
                 peer_info.abort_handle = Some(abort_handle);
@@ -578,7 +576,7 @@ impl PeerManager {
         Ok(())
     }
 
-    fn init_shutdown(&mut self) {
+    async fn init_shutdown(&mut self) {
         self.shutting_down = true;
         for peer in self.peers.values() {
             match &peer.state {
@@ -591,9 +589,12 @@ impl PeerManager {
                     }
                 }
                 PeerState::Closing { .. } => {}
-                PeerState::Active { cancel_token, .. } => {
+                PeerState::Active { update_tx, .. } => {
                     // We are in active state. We cancel our session, which leads to graceful connection termination.
-                    cancel_token.cancel();
+                    update_tx
+                        .send(SessionUpdate::Abort(Error::ShuttingDown))
+                        .await
+                        .ok();
                 }
             }
         }
@@ -642,7 +643,6 @@ enum PeerState {
         cancel_dial: Option<CancellationToken>,
     },
     Active {
-        cancel_token: CancellationToken,
         update_tx: mpsc::Sender<SessionUpdate>,
         /// List of intents that we failed to submit into the session because it is closing.
         intents_after_close: Vec<Intent>,
