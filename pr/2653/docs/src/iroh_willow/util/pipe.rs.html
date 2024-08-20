@@ -150,6 +150,8 @@
 <a href="#150" id="150">150</a>
 <a href="#151" id="151">151</a>
 <a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     cell::RefCell,
     future::poll_fn,
@@ -248,12 +250,14 @@
     }
 }
 
-<span class="attr">#[derive(Debug)]
+<span class="doccomment">/// The writer returned from [`chunked_pipe`].
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>PipeWriter {
     shared: Rc&lt;RefCell&lt;Shared&gt;&gt;,
 }
 
-<span class="attr">#[derive(Debug)]
+<span class="doccomment">/// The reader returned from [`chunked_pipe`].
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>PipeReader {
     shared: Rc&lt;RefCell&lt;Shared&gt;&gt;,
 }
