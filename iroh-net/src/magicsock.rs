@@ -703,8 +703,8 @@ impl MagicSock {
 
             // find disco and stun packets and forward them to the actor
             loop {
-                let end = start + meta.stride;
-                if end > meta.len {
+                let end = std::cmp::min(start + meta.stride, meta.len);
+                if start >= end {
                     break;
                 }
                 let packet = &buf[start..end];
