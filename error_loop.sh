@@ -11,12 +11,20 @@ counter=0
 
 while true; do
     counter=$((counter + 1))
-    echo "Running tests... Attempt #$counter"
+    echo -n "Running tests... Attempt #$counter"
+
+    start_time=$(date +%s%3N)
     RUST_LOG=trace "./$executable_path" gossip_net_smoke > logs-2.txt
+    end_time=$(date +%s%3N)
+    duration=$((end_time - start_time))
+
+    echo ", ${duration} ms"
+
     if [ $? -ne 0 ]; then
         echo "$(wc -l logs-2.txt) log line(s), tail:"
         tail logs-2.txt
         if grep "failed to auth" logs-2.txt; then
+            mv logs-2.txt logs-last-failure.log
             echo "Error detected on attempt #$counter! Exiting loop."
             exit 1
         else
