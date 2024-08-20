@@ -3026,6 +3026,7 @@ dependencies = [
  "hex",
  "iroh-base",
  "iroh-blobs",
+ "iroh-io",
  "iroh-metrics",
  "iroh-net",
  "iroh-quinn",

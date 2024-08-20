@@ -1,14 +1,17 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use bytes::Bytes;
 use futures_concurrency::future::TryJoin;
 use futures_lite::StreamExt;
 
+use iroh_blobs::store::{Map, MapEntry};
+use iroh_io::AsyncSliceReaderExt;
 use iroh_willow::{
     interest::{Interests, IntoAreaOfInterest},
     proto::{
         data_model::{Path, PathExt},
-        grouping::{Area, AreaExt},
+        grouping::{Area, AreaExt, Range3d},
     },
     session::{
         intents::{Completion, EventKind},
@@ -304,6 +307,7 @@ mod util {
 
     #[derive(Debug, Clone)]
     pub struct Peer {
+        pub blobs: iroh_blobs::store::mem::Store,
         endpoint: Endpoint,
         engine: Engine,
         accept_task: Arc<Mutex<Option<JoinHandle<Result<()>>>>>,
@@ -320,7 +324,8 @@ mod util {
                 .alpns(vec![ALPN.to_vec()])
                 .bind(0)
                 .await?;
-            let payloads = iroh_blobs::store::mem::Store::default();
+            let blobs = iroh_blobs::store::mem::Store::default();
+            let payloads = blobs.clone();
             let create_store = move || iroh_willow::store::memory::Store::new(payloads);
             let engine = Engine::spawn(endpoint.clone(), create_store, accept_opts);
             let accept_task = tokio::task::spawn({
@@ -343,6 +348,7 @@ mod util {
                 }
             });
             Ok(Self {
+                blobs,
                 endpoint,
                 engine,
                 accept_task: Arc::new(Mutex::new(Some(accept_task))),
@@ -475,6 +481,38 @@ async fn peer_manager_empty_payload() -> Result<()> {
     assert_eq!(intent.next().await.unwrap(), EventKind::ReconciledAll);
 
     assert!(intent.next().await.is_none());
+
+    [alfie, betty].map(Peer::shutdown).try_join().await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn peer_manager_big_payload() -> Result<()> {
+    iroh_test::logging::setup_multithreaded();
+    let mut rng = create_rng("peer_manager_empty_payload");
+
+    let [alfie, betty] = spawn_two(&mut rng).await?;
+    let (namespace, _alfie_user, betty_user) = setup_and_delegate(&alfie, &betty).await?;
+    let betty_node_id = betty.node_id();
+
+    let payload = Bytes::from(vec![2u8; 1024 * 128]);
+    insert(&betty, namespace, betty_user, &[b"foo"], payload.clone()).await?;
+
+    let init = SessionInit::new(Interests::all(), SessionMode::ReconcileOnce);
+    let mut intent = alfie.sync_with_peer(betty_node_id, init).await.unwrap();
+
+    intent.complete().await?;
+
+    let entries = alfie.get_entries(namespace, Range3d::new_full()).await?;
+    let entries: Vec<_> = entries.try_collect().await?;
+    assert_eq!(entries.len(), 1);
+    let entry = &entries[0];
+    let hash: iroh_blobs::Hash = (*entry.payload_digest()).into();
+    let blob = alfie.blobs.get(&hash).await?.expect("missing blob");
+    let actual = blob.data_reader().await?.read_to_end().await?;
+    assert_eq!(actual.len(), payload.len());
+    assert!(actual == payload);
 
     [alfie, betty].map(Peer::shutdown).try_join().await?;
 

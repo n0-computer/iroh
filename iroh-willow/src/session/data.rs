@@ -6,10 +6,7 @@ use crate::{
         data_model::AuthorisedEntry,
         wgps::{DataMessage, DataSendEntry, DataSendPayload, StaticToken},
     },
-    session::{
-        channels::ChannelSenders, payload::DEFAULT_CHUNK_SIZE, static_tokens::StaticTokens, Error,
-        SessionId,
-    },
+    session::{channels::ChannelSenders, static_tokens::StaticTokens, Error, SessionId},
     store::{
         entry::{EntryChannel, EntryOrigin},
         traits::Storage,
@@ -94,24 +91,21 @@ impl<S: Storage> DataSender<S> {
             .bind_and_send_ours(static_token, &self.send)
             .await?;
         let digest = *entry.payload_digest();
+        let offset = 0;
         let msg = DataSendEntry {
             entry: entry.into(),
             static_token_handle,
             dynamic_token,
-            offset: 0,
+            offset,
         };
         self.send.send(msg).await?;
 
         // TODO: only send payload if configured to do so and/or under size limit.
         let send_payloads = true;
         if send_payloads {
-            send_payload_chunked(
-                digest,
-                self.store.payloads(),
-                &self.send,
-                DEFAULT_CHUNK_SIZE,
-                |bytes| DataSendPayload { bytes }.into(),
-            )
+            send_payload_chunked(digest, self.store.payloads(), &self.send, offset, |bytes| {
+                DataSendPayload { bytes }.into()
+            })
             .await?;
         }
         Ok(())
@@ -164,8 +158,12 @@ impl<S: Storage> DataReceiver<S> {
         )?;
         let (entry, _token) = authorised_entry.into_parts();
         // TODO: handle offset
-        self.current_payload
-            .set(*entry.payload_digest(), entry.payload_length())?;
+        self.current_payload.set(
+            *entry.payload_digest(),
+            entry.payload_length(),
+            None,
+            Some(message.offset),
+        )?;
         Ok(())
     }
 

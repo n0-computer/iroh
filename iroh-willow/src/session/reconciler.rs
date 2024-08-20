@@ -24,7 +24,7 @@ use crate::{
     session::{
         aoi_finder::AoiIntersection,
         channels::{ChannelSenders, MessageReceiver},
-        payload::{send_payload_chunked, CurrentPayload, DEFAULT_CHUNK_SIZE},
+        payload::{send_payload_chunked, CurrentPayload},
         static_tokens::StaticTokens,
         Error, Role, SessionId,
     },
@@ -309,7 +309,7 @@ impl EntryState {
     pub fn received_send_entry(
         &mut self,
         payload_digest: PayloadDigest,
-        _total_payload_length: u64,
+        total_payload_length: u64,
         available_payload_length: u64,
     ) -> Result<(), Error> {
         let state = self.get_mut()?;
@@ -320,7 +320,9 @@ impl EntryState {
         };
         state.current_payload.set(
             payload_digest,
-            available_payload_length,
+            total_payload_length,
+            Some(available_payload_length),
+            None,
         )?;
         Ok(())
     }
@@ -587,13 +589,9 @@ impl<S: Storage> Target<S> {
 
             // TODO: only send payload if configured to do so and/or under size limit.
             if payload_len <= shared.max_eager_payload_size {
-                send_payload_chunked(
-                    digest,
-                    shared.store.payloads(),
-                    &shared.send,
-                    DEFAULT_CHUNK_SIZE,
-                    |bytes| ReconciliationSendPayload { bytes }.into(),
-                )
+                send_payload_chunked(digest, shared.store.payloads(), &shared.send, 0, |bytes| {
+                    ReconciliationSendPayload { bytes }.into()
+                })
                 .await?;
             }
             shared.send.send(ReconciliationTerminatePayload).await?;
