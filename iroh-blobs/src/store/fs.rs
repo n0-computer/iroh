@@ -586,11 +586,6 @@ pub(crate) enum ActorMessage {
         cmd: Export,
         tx: oneshot::Sender<ActorResult<()>>,
     },
-    /// Modification method: import an entire flat store into the redb store.
-    ImportFlatStore {
-        paths: FlatStorePaths,
-        tx: oneshot::Sender<bool>,
-    },
     /// Update inline options
     UpdateInlineOptions {
         /// The new inline options
@@ -680,8 +675,7 @@ impl ActorMessage {
             Self::UpdateInlineOptions { .. }
             | Self::Sync { .. }
             | Self::Shutdown { .. }
-            | Self::Fsck { .. }
-            | Self::ImportFlatStore { .. } => MessageCategory::TopLevel,
+            | Self::Fsck { .. } => MessageCategory::TopLevel,
             #[cfg(test)]
             Self::EntryState { .. } => MessageCategory::ReadOnly,
         }
@@ -755,15 +749,6 @@ impl Store {
     /// Dump the entire content of the database to stdout.
     pub async fn dump(&self) -> io::Result<()> {
         Ok(self.0.dump().await?)
-    }
-
-    /// Import from a v0 or v1 flat store, for backwards compatibility.
-    #[deprecated(
-        since = "0.23.0",
-        note = "Flat stores are deprecated and future versions will not be able to migrate."
-    )]
-    pub async fn import_flat_store(&self, paths: FlatStorePaths) -> io::Result<bool> {
-        Ok(self.0.import_flat_store(paths).await?)
     }
 }
 
@@ -999,14 +984,6 @@ impl StoreInner {
             })
             .await?;
         Ok(rx.await??)
-    }
-
-    async fn import_flat_store(&self, paths: FlatStorePaths) -> OuterResult<bool> {
-        let (tx, rx) = oneshot::channel();
-        self.tx
-            .send(ActorMessage::ImportFlatStore { paths, tx })
-            .await?;
-        Ok(rx.await?)
     }
 
     async fn update_inline_options(
@@ -2193,10 +2170,6 @@ impl ActorState {
 
     fn handle_toplevel(&mut self, db: &redb::Database, msg: ActorMessage) -> ActorResult<()> {
         match msg {
-            ActorMessage::ImportFlatStore { paths, tx } => {
-                let res = self.import_flat_store(db, paths);
-                tx.send(res?).ok();
-            }
             ActorMessage::UpdateInlineOptions {
                 inline_options,
                 reapply,
