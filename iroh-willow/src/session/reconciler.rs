@@ -58,7 +58,7 @@ pub struct Reconciler<S: Storage> {
     shared: Shared<S>,
     recv: Cancelable<MessageReceiver<ReconciliationMessage>>,
     targets: TargetMap<S>,
-    current_entry: CurrentEntry,
+    entry_state: EntryState,
 }
 
 type TargetId = (AreaOfInterestHandle, AreaOfInterestHandle);
@@ -92,7 +92,7 @@ impl<S: Storage> Reconciler<S> {
                 shared,
                 recv,
                 targets: TargetMap::new(inbox),
-                current_entry: Default::default(),
+                entry_state: Default::default(),
             }
             .run()
         })
@@ -130,13 +130,13 @@ impl<S: Storage> Reconciler<S> {
                 target
                     .received_send_fingerprint(&self.shared, message)
                     .await?;
-                if target.is_complete() && self.current_entry.is_none() {
+                if target.is_complete() && self.entry_state.is_empty() {
                     self.complete_target(target_id).await?;
                 }
             }
             ReconciliationMessage::AnnounceEntries(message) => {
                 let target_id = message.handles();
-                self.current_entry
+                self.entry_state
                     .received_announce_entries(target_id, message.count)?;
                 let target = self
                     .targets
@@ -145,7 +145,7 @@ impl<S: Storage> Reconciler<S> {
                 target
                     .received_announce_entries(&self.shared, message)
                     .await?;
-                if target.is_complete() && self.current_entry.is_none() {
+                if target.is_complete() && self.entry_state.is_empty() {
                     self.complete_target(target_id).await?;
                 }
             }
@@ -159,8 +159,9 @@ impl<S: Storage> Reconciler<S> {
                         message.dynamic_token,
                     )
                     .await?;
-                self.current_entry.received_entry(
+                self.entry_state.received_send_entry(
                     *authorised_entry.entry().payload_digest(),
+                    authorised_entry.entry().payload_length(),
                     message.entry.available,
                 )?;
                 self.shared.store.entries().ingest(
@@ -172,13 +173,13 @@ impl<S: Storage> Reconciler<S> {
                 )?;
             }
             ReconciliationMessage::SendPayload(message) => {
-                self.current_entry
+                self.entry_state
                     .received_send_payload(self.shared.store.payloads(), message.bytes)
                     .await?;
             }
             ReconciliationMessage::TerminatePayload(_message) => {
                 if let Some(completed_target) =
-                    self.current_entry.received_terminate_payload().await?
+                    self.entry_state.received_terminate_payload().await?
                 {
                     let target = self
                         .targets
@@ -284,45 +285,43 @@ impl<S: Storage> TargetMap<S> {
 }
 
 #[derive(Debug, Default)]
-struct CurrentEntry(Option<EntryState>);
+struct EntryState(Option<EntryStateInner>);
 
-impl CurrentEntry {
-    pub fn is_none(&self) -> bool {
+impl EntryState {
+    pub fn is_empty(&self) -> bool {
         self.0.is_none()
     }
 
-    pub fn received_announce_entries(
-        &mut self,
-        target: TargetId,
-        count: u64,
-    ) -> Result<Option<TargetId>, Error> {
+    pub fn received_announce_entries(&mut self, target: TargetId, count: u64) -> Result<(), Error> {
         if self.0.is_some() {
             return Err(Error::InvalidMessageInCurrentState);
         }
         if let Some(count) = NonZeroU64::new(count) {
-            self.0 = Some(EntryState {
+            self.0 = Some(EntryStateInner {
                 target,
-                remaining: Some(count),
-                payload: CurrentPayload::default(),
+                remaining_entries: Some(count),
+                current_payload: CurrentPayload::default(),
             });
-            Ok(None)
-        } else {
-            Ok(Some(target))
         }
+        Ok(())
     }
 
-    pub fn received_entry(
+    pub fn received_send_entry(
         &mut self,
         payload_digest: PayloadDigest,
-        expected_length: u64,
+        _total_payload_length: u64,
+        available_payload_length: u64,
     ) -> Result<(), Error> {
         let state = self.get_mut()?;
-        state.payload.ensure_none()?;
-        state.remaining = match state.remaining.take() {
+        state.current_payload.ensure_none()?;
+        state.remaining_entries = match state.remaining_entries.take() {
             None => return Err(Error::InvalidMessageInCurrentState),
             Some(c) => NonZeroU64::new(c.get().saturating_sub(1)),
         };
-        state.payload.set(payload_digest, expected_length)?;
+        state.current_payload.set(
+            payload_digest,
+            available_payload_length,
+        )?;
         Ok(())
     }
 
@@ -331,15 +330,18 @@ impl CurrentEntry {
         store: &P,
         bytes: Bytes,
     ) -> Result<(), Error> {
-        self.get_mut()?.payload.recv_chunk(store, bytes).await?;
+        self.get_mut()?
+            .current_payload
+            .recv_chunk(store, bytes)
+            .await?;
         Ok(())
     }
 
     pub async fn received_terminate_payload(&mut self) -> Result<Option<TargetId>, Error> {
-        let s = self.get_mut()?;
-        s.payload.finalize().await?;
-        if s.remaining.is_none() {
-            let target_id = s.target;
+        let state = self.get_mut()?;
+        state.current_payload.finalize().await?;
+        if state.remaining_entries.is_none() {
+            let target_id = state.target;
             self.0 = None;
             Ok(Some(target_id))
         } else {
@@ -347,7 +349,7 @@ impl CurrentEntry {
         }
     }
 
-    pub fn get_mut(&mut self) -> Result<&mut EntryState, Error> {
+    pub fn get_mut(&mut self) -> Result<&mut EntryStateInner, Error> {
         match self.0.as_mut() {
             Some(s) => Ok(s),
             None => Err(Error::InvalidMessageInCurrentState),
@@ -356,10 +358,10 @@ impl CurrentEntry {
 }
 
 #[derive(Debug)]
-struct EntryState {
+struct EntryStateInner {
     target: TargetId,
-    remaining: Option<NonZeroU64>,
-    payload: CurrentPayload,
+    remaining_entries: Option<NonZeroU64>,
+    current_payload: CurrentPayload,
 }
 
 #[derive(derive_more::Debug)]
