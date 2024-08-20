@@ -389,8 +389,7 @@ async fn wait_for_goodbye_or_graceful_close(conn: &Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::BTreeSet,
-        time::{Duration, Instant},
+        collections::BTreeSet, sync::Arc, time::{Duration, Instant}
     };
 
     use anyhow::Result;
@@ -736,7 +735,8 @@ mod tests {
         let res_betty = intent_handle_betty.complete().await;
         info!(time=?start.elapsed(), "finished");
         info!("betty intent res {:?}", res_betty);
-        assert!(res_betty.is_ok());
+        assert!(res_betty.is_err());
+        assert_eq!(res_betty, Err(Arc::new(crate::session::Error::SessionClosedByPeer)));
 
         tokio::try_join!(
             terminate_gracefully(&conn_alfie),

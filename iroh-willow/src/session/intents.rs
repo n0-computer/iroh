@@ -349,7 +349,7 @@ impl<S: Storage> IntentDispatcher<S> {
         let active_incomplete = self
             .intents
             .drain()
-            .filter_map(|(_id, info)| info.is_complete().then_some(info.event_tx).flatten());
+            .filter_map(|(_id, info)| (!info.is_complete()).then_some(info.event_tx).flatten());
 
         RemainingIntents {
             queued,
@@ -617,7 +617,10 @@ impl IntentInfo {
         if matches {
             self.send(event.clone()).await?;
             if is_reconciled && self.interests.is_empty() {
+                debug!("SEND RECONCILED ALL");
                 self.send(EventKind::ReconciledAll).await?
+            } else {
+                debug!("DO NOT SEND RECONCILED ALL");
             }
         }
         Ok(self.is_complete())

@@ -433,3 +433,50 @@ mod util {
         Ok(())
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn peer_manager_empty_payload() -> Result<()> {
+    iroh_test::logging::setup_multithreaded();
+    let mut rng = create_rng("peer_manager_empty_payload");
+
+    let [alfie, betty] = spawn_two(&mut rng).await?;
+    let (namespace, _alfie_user, betty_user) = setup_and_delegate(&alfie, &betty).await?;
+    let betty_node_id = betty.node_id();
+
+    insert(&betty, namespace, betty_user, &[b"foo"], "").await?;
+
+    let init = SessionInit::new(Interests::all(), SessionMode::ReconcileOnce);
+    let mut intent = alfie.sync_with_peer(betty_node_id, init).await.unwrap();
+
+    assert_eq!(
+        intent.next().await.unwrap(),
+        EventKind::CapabilityIntersection {
+            namespace,
+            area: Area::new_full(),
+        }
+    );
+
+    assert_eq!(
+        intent.next().await.unwrap(),
+        EventKind::InterestIntersection {
+            namespace,
+            area: Area::new_full().into_area_of_interest()
+        }
+    );
+
+    assert_eq!(
+        intent.next().await.unwrap(),
+        EventKind::Reconciled {
+            namespace,
+            area: Area::new_full().into_area_of_interest()
+        }
+    );
+
+    assert_eq!(intent.next().await.unwrap(), EventKind::ReconciledAll);
+
+    assert!(intent.next().await.is_none());
+
+    [alfie, betty].map(Peer::shutdown).try_join().await?;
+
+    Ok(())
+}
