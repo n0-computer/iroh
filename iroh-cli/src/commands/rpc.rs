@@ -6,7 +6,7 @@ use crate::config::ConsoleEnv;
 
 use super::{
     authors::AuthorCommands, blobs::BlobCommands, docs::DocCommands, gossip::GossipCommands,
-    node::NodeCommands, tags::TagCommands,
+    net::NetCommands, tags::TagCommands,
 };
 
 #[derive(Subcommand, Debug, Clone)]
@@ -42,10 +42,10 @@ pub enum RpcCommands {
         #[clap(subcommand)]
         command: BlobCommands,
     },
-    /// Manage a running iroh node
-    Node {
+    /// Manage the iroh network
+    Net {
         #[clap(subcommand)]
-        command: NodeCommands,
+        command: NetCommands,
     },
     /// Manage gossip
     ///
@@ -71,17 +71,55 @@ pub enum RpcCommands {
         #[clap(subcommand)]
         command: TagCommands,
     },
+
+    /// Get statistics and metrics from the running node.
+    Stats,
+    /// Get status of the running node.
+    Status,
+    /// Shutdown the running node.
+    Shutdown {
+        /// Shutdown mode.
+        ///
+        /// Hard shutdown will immediately terminate the process, soft shutdown will wait
+        /// for all connections to close.
+        #[clap(long, default_value_t = false)]
+        force: bool,
+    },
 }
 
 impl RpcCommands {
     pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
-            Self::Node { command } => command.run(iroh).await,
+            Self::Net { command } => command.run(iroh).await,
             Self::Blobs { command } => command.run(iroh).await,
             Self::Docs { command } => command.run(iroh, env).await,
             Self::Authors { command } => command.run(iroh, env).await,
             Self::Tags { command } => command.run(iroh).await,
             Self::Gossip { command } => command.run(iroh).await,
+            Self::Stats => {
+                let stats = iroh.stats().await?;
+                for (name, details) in stats.iter() {
+                    println!(
+                        "{:23} : {:>6}    ({})",
+                        name, details.value, details.description
+                    );
+                }
+                Ok(())
+            }
+            Self::Shutdown { force } => {
+                iroh.shutdown(force).await?;
+                Ok(())
+            }
+            Self::Status => {
+                let response = iroh.status().await?;
+                println!("Listening addresses: {:#?}", response.listen_addrs);
+                println!("Node ID: {}", response.addr.node_id);
+                println!("Version: {}", response.version);
+                if let Some(addr) = response.rpc_addr {
+                    println!("RPC Addr: {}", addr);
+                }
+                Ok(())
+            }
         }
     }
 }

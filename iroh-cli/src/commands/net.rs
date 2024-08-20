@@ -9,30 +9,17 @@ use comfy_table::{presets::NOTHING, Cell};
 use futures_lite::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
 use iroh::client::Iroh;
-use iroh::net::endpoint::{ConnectionInfo, DirectAddrInfo};
+use iroh::net::endpoint::{DirectAddrInfo, RemoteInfo};
 use iroh::net::relay::RelayUrl;
 use iroh::net::{NodeAddr, NodeId};
 
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
-pub enum NodeCommands {
-    /// Get information about the different connections we have made
-    Connections,
-    /// Get connection information about a particular node
-    ConnectionInfo { node_id: NodeId },
-    /// Get status of the running node.
-    Status,
-    /// Get statistics and metrics from the running node.
-    Stats,
-    /// Shutdown the running node.
-    Shutdown {
-        /// Shutdown mode.
-        ///
-        /// Hard shutdown will immediately terminate the process, soft shutdown will wait
-        /// for all connections to close.
-        #[clap(long, default_value_t = false)]
-        force: bool,
-    },
+pub enum NetCommands {
+    /// Get information about the different remote nodes.
+    RemoteList,
+    /// Get information about a particular remote node.
+    Remote { node_id: NodeId },
     /// Get the node addr of this node.
     NodeAddr,
     /// Add this node addr to the known nodes.
@@ -45,11 +32,11 @@ pub enum NodeCommands {
     HomeRelay,
 }
 
-impl NodeCommands {
+impl NetCommands {
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
-            Self::Connections => {
-                let connections = iroh.connections().await?;
+            Self::RemoteList => {
+                let connections = iroh.net().remote_info_iter().await?;
                 let timestamp = time::OffsetDateTime::now_utc()
                     .format(&time::format_description::well_known::Rfc2822)
                     .unwrap_or_else(|_| String::from("failed to get current time"));
@@ -58,39 +45,18 @@ impl NodeCommands {
                     " {}: {}\n\n{}",
                     "current time".bold(),
                     timestamp,
-                    fmt_connections(connections).await
+                    fmt_remote_infos(connections).await
                 );
             }
-            Self::ConnectionInfo { node_id } => {
-                let conn_info = iroh.connection_info(node_id).await?;
-                match conn_info {
-                    Some(info) => println!("{}", fmt_connection(info)),
+            Self::Remote { node_id } => {
+                let info = iroh.net().remote_info(node_id).await?;
+                match info {
+                    Some(info) => println!("{}", fmt_info(info)),
                     None => println!("Not Found"),
                 }
             }
-            Self::Shutdown { force } => {
-                iroh.shutdown(force).await?;
-            }
-            Self::Stats => {
-                let stats = iroh.stats().await?;
-                for (name, details) in stats.iter() {
-                    println!(
-                        "{:23} : {:>6}    ({})",
-                        name, details.value, details.description
-                    );
-                }
-            }
-            Self::Status => {
-                let response = iroh.status().await?;
-                println!("Listening addresses: {:#?}", response.listen_addrs);
-                println!("Node ID: {}", response.addr.node_id);
-                println!("Version: {}", response.version);
-                if let Some(addr) = response.rpc_addr {
-                    println!("RPC Addr: {}", addr);
-                }
-            }
             Self::NodeAddr => {
-                let addr = iroh.node_addr().await?;
+                let addr = iroh.net().node_addr().await?;
                 println!("Node ID: {}", addr.node_id);
                 let relay = addr
                     .info
@@ -112,10 +78,10 @@ impl NodeCommands {
                 if let Some(relay) = relay {
                     addr = addr.with_relay_url(relay);
                 }
-                iroh.add_node_addr(addr).await?;
+                iroh.net().add_node_addr(addr).await?;
             }
             Self::HomeRelay => {
-                let relay = iroh.home_relay().await?;
+                let relay = iroh.net().home_relay().await?;
                 let relay = relay
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "Not Available".to_string());
@@ -126,8 +92,8 @@ impl NodeCommands {
     }
 }
 
-async fn fmt_connections(
-    mut infos: impl Stream<Item = Result<ConnectionInfo, anyhow::Error>> + Unpin,
+async fn fmt_remote_infos(
+    mut infos: impl Stream<Item = Result<RemoteInfo, anyhow::Error>> + Unpin,
 ) -> String {
     let mut table = Table::new();
     table.load_preset(NOTHING).set_header(
@@ -135,19 +101,19 @@ async fn fmt_connections(
             .into_iter()
             .map(bold_cell),
     );
-    while let Some(Ok(conn_info)) = infos.next().await {
-        let node_id: Cell = conn_info.node_id.to_string().into();
-        let relay_url = conn_info
+    while let Some(Ok(info)) = infos.next().await {
+        let node_id: Cell = info.node_id.to_string().into();
+        let relay_url = info
             .relay_url
             .map_or(String::new(), |url_info| url_info.relay_url.to_string())
             .into();
-        let conn_type = conn_info.conn_type.to_string().into();
-        let latency = match conn_info.latency {
+        let conn_type = info.conn_type.to_string().into();
+        let latency = match info.latency {
             Some(latency) => latency.to_human_time_string(),
             None => String::from("unknown"),
         }
         .into();
-        let last_used = conn_info
+        let last_used = info
             .last_used
             .map(fmt_how_long_ago)
             .map(Cell::new)
@@ -157,9 +123,8 @@ async fn fmt_connections(
     table.to_string()
 }
 
-fn fmt_connection(info: ConnectionInfo) -> String {
-    let ConnectionInfo {
-        id: _,
+fn fmt_info(info: RemoteInfo) -> String {
+    let RemoteInfo {
         node_id,
         relay_url,
         addrs,

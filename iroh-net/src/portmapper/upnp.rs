@@ -14,11 +14,10 @@ use super::Metrics;
 
 pub type Gateway = aigd::Gateway<aigd::tokio::Tokio>;
 
+use crate::defaults::timeouts::UPNP_SEARCH_TIMEOUT as SEARCH_TIMEOUT;
+
 /// Seconds we ask the router to maintain the port mapping. 0 means infinite.
 const PORT_MAPPING_LEASE_DURATION_SECONDS: u32 = 0;
-
-/// Maximum duration a UPnP search can take before timing out.
-const SEARCH_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Tailscale uses the recommended port mapping lifetime for PMP, which is 2 hours. So we assume a
 /// half lifetime of 1h. See <https://datatracker.ietf.org/doc/html/rfc6886#section-3.3>

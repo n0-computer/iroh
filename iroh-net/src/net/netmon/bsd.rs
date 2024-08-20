@@ -1,5 +1,5 @@
 use anyhow::Result;
-use tokio::{io::AsyncReadExt, task::JoinHandle};
+use tokio::{io::AsyncReadExt, sync::mpsc, task::JoinHandle};
 use tracing::{trace, warn};
 
 #[cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
@@ -23,7 +23,7 @@ impl Drop for RouteMonitor {
 }
 
 impl RouteMonitor {
-    pub(super) fn new(sender: async_channel::Sender<NetworkMessage>) -> Result<Self> {
+    pub(super) fn new(sender: mpsc::Sender<NetworkMessage>) -> Result<Self> {
         let socket = socket2::Socket::new(libc::AF_ROUTE.into(), socket2::Type::RAW, None)?;
         socket.set_nonblocking(true)?;
         let socket_std: std::os::unix::net::UnixStream = socket.into();

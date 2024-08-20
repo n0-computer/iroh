@@ -44,7 +44,7 @@ iroh = { version = "0.22.0", path = "../iroh", features = ["metrics"] }
 iroh-gossip = { version = "0.22.0", path = "../iroh-gossip" }
 iroh-metrics = { version = "0.22.0", path = "../iroh-metrics" }
 parking_lot = "0.12.1"
-pkarr = { version = "1.1.5", default-features = false }
+pkarr = { version = "2.0.0", default-features = false }
 portable-atomic = "1"
 postcard = "1.0.8"
 quic-rpc = { version = "0.11", features = ["flume-transport", "quinn-transport"] }

@@ -10,6 +10,7 @@ use futures_lite::StreamExt;
 use iroh_base::key::SecretKey;
 use iroh_blobs::{
     downloader::Downloader,
+    provider::EventSender,
     store::{Map, Store as BaoStore},
     util::local_pool::{self, LocalPool, LocalPoolHandle, PanicMode},
 };
@@ -112,6 +113,7 @@ where
     /// Callback to register when a gc loop is done
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
+    blob_events: EventSender,
 }
 
 /// Configuration for storage.
@@ -237,6 +239,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
+            blob_events: Default::default(),
         }
     }
 }
@@ -270,6 +273,7 @@ impl<D: Map> Builder<D> {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
+            blob_events: Default::default(),
         }
     }
 }
@@ -278,6 +282,15 @@ impl<D> Builder<D>
 where
     D: BaoStore,
 {
+    /// Configure a blob events sender. This will replace the previous blob
+    /// event sender. By default, no events are sent.
+    ///
+    /// To define an event sender, implement the [`iroh_blobs::provider::CustomEventSender`] trait.
+    pub fn blobs_events(mut self, blob_events: impl Into<EventSender>) -> Self {
+        self.blob_events = blob_events.into();
+        self
+    }
+
     /// Persist all node data in the provided directory.
     pub async fn persist(
         self,
@@ -294,6 +307,7 @@ where
             })?;
         let docs_storage = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
 
+        #[allow(deprecated)]
         let v0 = blobs_store
             .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
                 complete: root.join("blobs.v0"),
@@ -301,6 +315,7 @@ where
                 meta: root.join("blobs-meta.v0"),
             })
             .await?;
+        #[allow(deprecated)]
         let v1 = blobs_store
             .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
                 complete: root.join("blobs.v1").join("complete"),
@@ -309,7 +324,7 @@ where
             })
             .await?;
         if v0 || v1 {
-            tracing::info!("flat data was imported - reapply inline options");
+            tracing::warn!("Imported deprecated flat data. Future versions will stop supporting migrations from flat stores");
             blobs_store
                 .update_inline_options(iroh_blobs::store::fs::InlineOptions::default(), true)
                 .await?;
@@ -334,6 +349,7 @@ where
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: self.gc_done_callback,
+            blob_events: self.blob_events,
         })
     }
 
@@ -614,6 +630,7 @@ where
             downloader,
             gossip,
             local_pool_handle: lp.handle().clone(),
+            blob_batches: Default::default(),
         });
 
         let protocol_builder = ProtocolBuilder {
@@ -627,7 +644,7 @@ where
             local_pool: lp,
         };
 
-        let protocol_builder = protocol_builder.register_iroh_protocols();
+        let protocol_builder = protocol_builder.register_iroh_protocols(self.blob_events);
 
         Ok(protocol_builder)
     }
@@ -750,10 +767,13 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     }
 
     /// Registers the core iroh protocols (blobs, gossip, docs).
-    fn register_iroh_protocols(mut self) -> Self {
+    fn register_iroh_protocols(mut self, blob_events: EventSender) -> Self {
         // Register blobs.
-        let blobs_proto =
-            BlobsProtocol::new(self.blobs_db().clone(), self.local_pool_handle().clone());
+        let blobs_proto = BlobsProtocol::new_with_events(
+            self.blobs_db().clone(),
+            self.local_pool_handle().clone(),
+            blob_events,
+        );
         self = self.accept(iroh_blobs::protocol::ALPN, Arc::new(blobs_proto));
 
         // Register gossip.

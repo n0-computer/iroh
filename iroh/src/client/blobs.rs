@@ -46,6 +46,19 @@
 //! - [`validate`](Client::validate) validates the locally stored data against
 //!   their BLAKE3 hashes.
 //! - [`delete_blob`](Client::delete_blob) deletes a blob from the local store.
+//!
+//! ### Batch operations
+//!
+//! For complex update operations, there is a [`batch`](Client::batch) API that
+//! allows you to add multiple blobs in a single logical batch.
+//!
+//! Operations in a batch return [temporary tags](crate::blobs::TempTag) that
+//! protect the added data from garbage collection as long as the batch is
+//! alive.
+//!
+//! To store the data permanently, a temp tag needs to be upgraded to a
+//! permanent tag using [`persist`](crate::client::blobs::Batch::persist) or
+//! [`persist_to`](crate::client::blobs::Batch::persist_to).
 use std::{
     future::Future,
     io,
@@ -55,7 +68,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use futures_util::SinkExt;
@@ -65,7 +78,7 @@ use iroh_blobs::{
     export::ExportProgress as BytesExportProgress,
     format::collection::{Collection, SimpleStore},
     get::db::DownloadProgress as BytesDownloadProgress,
-    store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
+    store::{BaoBlobSize, ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
     util::SetTagOption,
     BlobFormat, Hash, Tag,
 };
@@ -77,12 +90,14 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
+mod batch;
+pub use batch::{AddDirOpts, AddFileOpts, AddReaderOpts, Batch};
 
 use crate::rpc_protocol::blobs::{
-    AddPathRequest, AddStreamRequest, AddStreamUpdate, ConsistencyCheckRequest,
-    CreateCollectionRequest, CreateCollectionResponse, DeleteRequest, DownloadRequest,
-    ExportRequest, ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse,
-    ValidateRequest,
+    AddPathRequest, AddStreamRequest, AddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
+    BlobStatusRequest, ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse,
+    DeleteRequest, DownloadRequest, ExportRequest, ListIncompleteRequest, ListRequest,
+    ReadAtRequest, ReadAtResponse, ValidateRequest,
 };
 use crate::rpc_protocol::node::StatusRequest;
 
@@ -102,6 +117,38 @@ impl<'a> From<&'a Iroh> for &'a RpcClient {
 }
 
 impl Client {
+    /// Check if a blob is completely stored on the node.
+    ///
+    /// Note that this will return false for blobs that are partially stored on
+    /// the node.
+    pub async fn status(&self, hash: Hash) -> Result<BlobStatus> {
+        let status = self.rpc.rpc(BlobStatusRequest { hash }).await??;
+        Ok(status.0)
+    }
+
+    /// Check if a blob is completely stored on the node.
+    ///
+    /// This is just a convenience wrapper around `status` that returns a boolean.
+    pub async fn has(&self, hash: Hash) -> Result<bool> {
+        match self.status(hash).await {
+            Ok(BlobStatus::Complete { .. }) => Ok(true),
+            Ok(_) => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Create a new batch for adding data.
+    ///
+    /// A batch is a context in which temp tags are created and data is added to the node. Temp tags
+    /// are automatically deleted when the batch is dropped, leading to the data being garbage collected
+    /// unless a permanent tag is created for it.
+    pub async fn batch(&self) -> Result<Batch> {
+        let (updates, mut stream) = self.rpc.bidi(BatchCreateRequest).await?;
+        let BatchCreateResponse::Id(batch) = stream.next().await.context("expected scope id")??;
+        let rpc = self.rpc.clone();
+        Ok(Batch::new(batch, rpc, updates, 1024))
+    }
+
     /// Stream the contents of a a single blob.
     ///
     /// Returns a [`Reader`], which can report the size of the blob before reading it.
@@ -424,17 +471,6 @@ impl Client {
         Ok(ticket)
     }
 
-    /// Get the status of a blob.
-    pub async fn status(&self, hash: Hash) -> Result<BlobStatus> {
-        // TODO: this could be implemented more efficiently
-        let reader = self.read(hash).await?;
-        if reader.is_complete {
-            Ok(BlobStatus::Complete { size: reader.size })
-        } else {
-            Ok(BlobStatus::Partial { size: reader.size })
-        }
-    }
-
     fn tags_client(&self) -> tags::Client {
         tags::Client {
             rpc: self.rpc.clone(),
@@ -449,9 +485,10 @@ impl SimpleStore for Client {
 }
 
 /// Whether to wrap the added data in a collection.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub enum WrapOption {
     /// Do not wrap the file or directory.
+    #[default]
     NoWrap,
     /// Wrap the file or directory in a collection.
     Wrap {
@@ -461,12 +498,14 @@ pub enum WrapOption {
 }
 
 /// Status information about a blob.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BlobStatus {
+    /// The blob is not stored at all.
+    NotFound,
     /// The blob is only stored partially.
     Partial {
         /// The size of the currently stored partial blob.
-        size: u64,
+        size: BaoBlobSize,
     },
     /// The blob is stored completely.
     Complete {
@@ -943,12 +982,11 @@ pub enum DownloadMode {
 mod tests {
     use super::*;
 
-    use anyhow::Context as _;
     use iroh_blobs::hashseq::HashSeq;
     use iroh_net::NodeId;
     use rand::RngCore;
     use testresult::TestResult;
-    use tokio::io::AsyncWriteExt;
+    use tokio::{io::AsyncWriteExt, sync::mpsc};
 
     #[tokio::test]
     async fn test_blob_create_collection() -> Result<()> {
@@ -1252,6 +1290,95 @@ mod tests {
         Ok(())
     }
 
+    #[derive(Debug, Clone)]
+    struct BlobEvents {
+        sender: mpsc::Sender<iroh_blobs::provider::Event>,
+    }
+
+    impl BlobEvents {
+        fn new(cap: usize) -> (Self, mpsc::Receiver<iroh_blobs::provider::Event>) {
+            let (s, r) = mpsc::channel(cap);
+            (Self { sender: s }, r)
+        }
+    }
+
+    impl iroh_blobs::provider::CustomEventSender for BlobEvents {
+        fn send(&self, event: iroh_blobs::provider::Event) -> futures_lite::future::Boxed<()> {
+            let sender = self.sender.clone();
+            Box::pin(async move {
+                sender.send(event).await.ok();
+            })
+        }
+
+        fn try_send(&self, event: iroh_blobs::provider::Event) {
+            self.sender.try_send(event).ok();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_blob_provide_events() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let (node1_events, mut node1_events_r) = BlobEvents::new(16);
+        let node1 = crate::node::Node::memory()
+            .blobs_events(node1_events)
+            .spawn()
+            .await?;
+
+        let (node2_events, mut node2_events_r) = BlobEvents::new(16);
+        let node2 = crate::node::Node::memory()
+            .blobs_events(node2_events)
+            .spawn()
+            .await?;
+
+        let import_outcome = node1.blobs().add_bytes(&b"hello world"[..]).await?;
+
+        // Download in node2
+        let node1_addr = node1.net().node_addr().await?;
+        let res = node2
+            .blobs()
+            .download(import_outcome.hash, node1_addr)
+            .await?
+            .await?;
+        dbg!(&res);
+        assert_eq!(res.local_size, 0);
+        assert_eq!(res.downloaded_size, 11);
+
+        node1.shutdown().await?;
+        node2.shutdown().await?;
+
+        let mut ev1 = Vec::new();
+        while let Some(ev) = node1_events_r.recv().await {
+            ev1.push(ev);
+        }
+        // assert_eq!(ev1.len(), 3);
+        assert!(matches!(
+            ev1[0],
+            iroh_blobs::provider::Event::ClientConnected { .. }
+        ));
+        assert!(matches!(
+            ev1[1],
+            iroh_blobs::provider::Event::GetRequestReceived { .. }
+        ));
+        assert!(matches!(
+            ev1[2],
+            iroh_blobs::provider::Event::TransferProgress { .. }
+        ));
+        assert!(matches!(
+            ev1[3],
+            iroh_blobs::provider::Event::TransferCompleted { .. }
+        ));
+        dbg!(&ev1);
+
+        let mut ev2 = Vec::new();
+        while let Some(ev) = node2_events_r.recv().await {
+            ev2.push(ev);
+        }
+
+        // Node 2 did not provide anything
+        assert!(ev2.is_empty());
+        Ok(())
+    }
     /// Download a existing blob from oneself
     #[tokio::test]
     async fn test_blob_get_self_existing() -> TestResult<()> {

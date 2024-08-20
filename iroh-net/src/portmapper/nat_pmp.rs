@@ -4,14 +4,12 @@ use std::{net::Ipv4Addr, num::NonZeroU16, time::Duration};
 
 use tracing::{debug, trace};
 
+use crate::defaults::timeouts::NAT_PMP_RECV_TIMEOUT as RECV_TIMEOUT;
 use crate::net::UdpSocket;
 
 use self::protocol::{MapProtocol, Request, Response};
 
 mod protocol;
-
-/// Timeout to receive a response from a NAT-PMP server.
-const RECV_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Recommended lifetime is 2 hours. See [RFC 6886 Requesting a
 /// Mapping](https://datatracker.ietf.org/doc/html/rfc6886#section-3.3).

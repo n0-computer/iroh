@@ -111,8 +111,11 @@ pub(super) struct NodeState {
     sent_pings: HashMap<stun::TransactionId, SentPing>,
     /// Last time this node was used.
     ///
-    /// A node is marked as in use when an endpoint to contact them is requested or if UDP activity
-    /// is registered.
+    /// A node is marked as in use when sending datagrams to them, or when having received
+    /// datagrams from it. Regardless of whether the datagrams are payload or DISCO, and whether
+    /// they go via UDP or the relay.
+    ///
+    /// Note that sending datagrams to a node does not mean the node receives them.
     last_used: Option<Instant>,
     /// Last time we sent a call-me-maybe.
     ///
@@ -185,8 +188,8 @@ impl NodeState {
         self.conn_type.watch().into_stream()
     }
 
-    /// Returns info about this endpoint
-    pub(super) fn info(&self, now: Instant) -> NodeInfo {
+    /// Returns info about this node.
+    pub(super) fn info(&self, now: Instant) -> RemoteInfo {
         let conn_type = self.conn_type.get();
         let latency = match conn_type {
             ConnectionType::Direct(addr) => self
@@ -214,6 +217,7 @@ impl NodeState {
             }
             ConnectionType::None => None,
         };
+
         let addrs = self
             .udp_paths
             .paths
@@ -232,8 +236,7 @@ impl NodeState {
             })
             .collect();
 
-        NodeInfo {
-            id: self.id,
+        RemoteInfo {
             node_id: self.node_id,
             relay_url: self.relay_url.clone().map(|r| r.into()),
             addrs,
@@ -969,7 +972,7 @@ impl NodeState {
         self.send_pings(now)
     }
 
-    /// Marks this endpoint as having received a UDP payload message.
+    /// Marks this node as having received a UDP payload message.
     pub(super) fn receive_udp(&mut self, addr: IpPort, now: Instant) {
         let Some(state) = self.udp_paths.paths.get_mut(&addr) else {
             debug_assert!(false, "node map inconsistency by_ip_port <-> direct addr");
@@ -1109,8 +1112,8 @@ impl NodeState {
     }
 }
 
-impl From<NodeInfo> for NodeAddr {
-    fn from(info: NodeInfo) -> Self {
+impl From<RemoteInfo> for NodeAddr {
+    fn from(info: RemoteInfo) -> Self {
         let direct_addresses = info
             .addrs
             .into_iter()
@@ -1185,29 +1188,58 @@ pub enum ControlMsg {
     CallMeMaybe,
 }
 
-/// Information about a direct address.
+/// Information about a *direct address*.
+///
+/// The *direct addresses* of an iroh-net node are those that could be used by other nodes to
+/// establish direct connectivity, depending on the network situation. Due to NAT configurations,
+/// for example, not all direct addresses of a node are usable by all peers.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DirectAddrInfo {
-    /// The address reported.
+    /// The UDP address reported by the remote node.
     pub addr: SocketAddr,
-    /// The latency to the address, if any.
+    /// The latency to the remote node over this network path.
+    ///
+    /// If there has never been any connectivity via this address no latency will be known.
     pub latency: Option<Duration>,
-    /// Last control message received by this node.
+    /// Last control message received by this node about this address.
+    ///
+    /// This contains the elapsed duration since the control message was received and the
+    /// kind of control message received at that time.  Only the most recent control message
+    /// is returned.
+    ///
+    /// Note that [`ControlMsg::CallMeMaybe`] is received via a relay path, while
+    /// [`ControlMsg::Ping`] and [`ControlMsg::Pong`] are received on the path to
+    /// [`DirectAddrInfo::addr`] itself and thus convey very different information.
     pub last_control: Option<(Duration, ControlMsg)>,
-    /// How long ago was the last payload message for this node.
+    /// Elapsed time since the last payload message was received on this network path.
+    ///
+    /// This indicates how long ago a QUIC datagram was received from the remote node sent
+    /// from this [`DirectAddrInfo::addr`].  It indicates the network path was in use to
+    /// transport payload data.
     pub last_payload: Option<Duration>,
-    /// When was this connection last alive, if ever.
+    /// Elapsed time since this network path was known to exist.
+    ///
+    /// A network path is considered to exist only because the remote node advertised it.
+    /// It may not mean the path is usable.  However, if there was any communication with
+    /// the remote node over this network path it also means the path exists.
+    ///
+    /// The elapsed time since *any* confirmation of the path's existence was received is
+    /// returned.  If the remote node moved networks and no longer has this path, this could
+    /// be a long duration.  If the path was added via [`Endpoint::add_node_addr`] or some
+    /// node discovery the path may never have been known to exist.
+    ///
+    /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
     pub last_alive: Option<Duration>,
 }
 
-/// Information about a relay URL.
+/// Information about the network path to a remote node via a relay server.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RelayUrlInfo {
-    /// The relay url
+    /// The relay URL.
     pub relay_url: RelayUrl,
-    /// How long ago was the relay url last used.
+    /// Elapsed time since this relay path last received payload or control data.
     pub last_alive: Option<Duration>,
-    /// Latency of the relay url.
+    /// Latency to the remote node over this relayed network path.
     pub latency: Option<Duration>,
 }
 
@@ -1227,27 +1259,38 @@ impl From<RelayUrlInfo> for RelayUrl {
     }
 }
 
-/// Details about an iroh node which is known to this node.
+/// Details about a remote iroh-net node which is known to this node.
+///
+/// Having details of a node does not mean it can be connected to, nor that it has ever been
+/// connected to in the past. There are various reasons a node might be known: it could have
+/// been manually added via [`Endpoint::add_node_addr`], it could have been added by some
+/// discovery mechanism, the node could have contacted this node, etc.
+///
+/// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct NodeInfo {
-    /// The id in the node_map
-    pub id: usize,
-    /// The public key of the endpoint.
+pub struct RemoteInfo {
+    /// The globally unique identifier for this node.
     pub node_id: NodeId,
-    /// relay server information, if available.
+    /// Relay server information, if available.
     pub relay_url: Option<RelayUrlInfo>,
-    /// List of addresses at which this node might be reachable, plus any latency information we
-    /// have about that address and the last time the address was used.
+    /// The addresses at which this node might be reachable.
+    ///
+    /// Some of these addresses might only be valid for networks we are not part of, but the remote
+    /// node might be a part of.
     pub addrs: Vec<DirectAddrInfo>,
     /// The type of connection we have to the node, either direct or over relay.
     pub conn_type: ConnectionType,
-    /// The latency of the `conn_type`.
+    /// The latency of the current network path to the remote node.
     pub latency: Option<Duration>,
-    /// Duration since the last time this node was used.
+    /// Time elapsed time since last we have sent to or received from the node.
+    ///
+    /// This is the duration since *any* data (payload or control messages) was sent or receive
+    /// from the remote node. Note that sending to the remote node does not imply
+    /// the remote node received anything.
     pub last_used: Option<Duration>,
 }
 
-impl NodeInfo {
+impl RemoteInfo {
     /// Get the duration since the last activity we received from this endpoint
     /// on any of its direct addresses.
     pub fn last_received(&self) -> Option<Duration> {
@@ -1257,13 +1300,19 @@ impl NodeInfo {
             .min()
     }
 
-    /// Get the duration since the last activity we received from this endpoint
-    /// on the relay url.
+    /// Returns the elapsed time since the relay path to the node last received data.
+    #[deprecated(
+        since = "0.23.0",
+        note = "access relay_url.last_alive directly instead"
+    )]
     pub fn last_alive_relay(&self) -> Option<Duration> {
         self.relay_url.as_ref().and_then(|r| r.last_alive)
     }
 
-    /// Returns `true` if this info contains either a relay URL or at least one direct address.
+    /// Whether there is a possible known network path to the remote node.
+    ///
+    /// Note that this does not provide any guarantees of whether any network path is
+    /// usable.
     pub fn has_send_address(&self) -> bool {
         self.relay_url.is_some() || !self.addrs.is_empty()
     }
@@ -1445,9 +1494,9 @@ mod tests {
                 socket_addr,
             )
         };
-        let expect = Vec::from([
-            NodeInfo {
-                id: a_endpoint.id,
+
+        let mut expect = Vec::from([
+            RemoteInfo {
                 node_id: a_endpoint.node_id,
                 relay_url: None,
                 addrs: Vec::from([DirectAddrInfo {
@@ -1461,8 +1510,7 @@ mod tests {
                 latency: Some(latency),
                 last_used: Some(elapsed),
             },
-            NodeInfo {
-                id: b_endpoint.id,
+            RemoteInfo {
                 node_id: b_endpoint.node_id,
                 relay_url: Some(RelayUrlInfo {
                     relay_url: b_endpoint.relay_url.as_ref().unwrap().0.clone(),
@@ -1474,8 +1522,7 @@ mod tests {
                 latency: Some(latency),
                 last_used: Some(elapsed),
             },
-            NodeInfo {
-                id: c_endpoint.id,
+            RemoteInfo {
                 node_id: c_endpoint.node_id,
                 relay_url: Some(RelayUrlInfo {
                     relay_url: c_endpoint.relay_url.as_ref().unwrap().0.clone(),
@@ -1487,8 +1534,7 @@ mod tests {
                 latency: None,
                 last_used: Some(elapsed),
             },
-            NodeInfo {
-                id: d_endpoint.id,
+            RemoteInfo {
                 node_id: d_endpoint.node_id,
                 relay_url: Some(RelayUrlInfo {
                     relay_url: d_endpoint.relay_url.as_ref().unwrap().0.clone(),
@@ -1533,13 +1579,14 @@ mod tests {
             ]),
             next_id: 5,
         });
-        let mut got = node_map.node_infos(later);
-        got.sort_by_key(|p| p.id);
+        let mut got = node_map.list_remote_infos(later);
+        got.sort_by_key(|p| p.node_id);
+        expect.sort_by_key(|p| p.node_id);
         remove_non_deterministic_fields(&mut got);
         assert_eq!(expect, got);
     }
 
-    fn remove_non_deterministic_fields(infos: &mut [NodeInfo]) {
+    fn remove_non_deterministic_fields(infos: &mut [RemoteInfo]) {
         for info in infos.iter_mut() {
             if info.relay_url.is_some() {
                 info.relay_url.as_mut().unwrap().last_alive = None;

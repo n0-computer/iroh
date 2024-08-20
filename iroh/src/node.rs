@@ -35,6 +35,7 @@
 //! well, without going through [`client`](crate::client::Iroh))
 //!
 //! To shut down the node, call [`Node::shutdown`].
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{collections::BTreeSet, net::SocketAddr};
@@ -46,12 +47,11 @@ use iroh_base::key::PublicKey;
 use iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store as BaoStore};
 use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
 use iroh_blobs::{downloader::Downloader, protocol::Closed};
+use iroh_blobs::{HashAndFormat, TempTag};
 use iroh_gossip::net::Gossip;
+use iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
 use iroh_net::key::SecretKey;
-use iroh_net::{
-    endpoint::{ConnectionInfo, DirectAddrsStream},
-    util::SharedAbortingJoinHandle,
-};
+use iroh_net::util::SharedAbortingJoinHandle;
 use iroh_net::{AddrInfo, Endpoint, NodeAddr};
 use quic_rpc::transport::ServerEndpoint as _;
 use quic_rpc::RpcServer;
@@ -61,6 +61,7 @@ use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
 use crate::node::nodes_storage::store_node_addrs;
 use crate::node::{docs::DocsEngine, protocol::ProtocolMap};
+use crate::rpc_protocol::blobs::BatchId;
 
 mod builder;
 mod docs;
@@ -115,7 +116,59 @@ struct NodeInner<D> {
     cancel_token: CancellationToken,
     client: crate::client::Iroh,
     downloader: Downloader,
+    blob_batches: tokio::sync::Mutex<BlobBatches>,
     local_pool_handle: LocalPoolHandle,
+}
+
+/// Keeps track of all the currently active batch operations of the blobs api.
+#[derive(Debug, Default)]
+struct BlobBatches {
+    /// Currently active batches
+    batches: BTreeMap<BatchId, BlobBatch>,
+    /// Used to generate new batch ids.
+    max: u64,
+}
+
+/// A single batch of blob operations
+#[derive(Debug, Default)]
+struct BlobBatch {
+    /// The tags in this batch.
+    tags: BTreeMap<HashAndFormat, Vec<TempTag>>,
+}
+
+impl BlobBatches {
+    /// Create a new unique batch id.
+    fn create(&mut self) -> BatchId {
+        let id = self.max;
+        self.max += 1;
+        BatchId(id)
+    }
+
+    /// Store a temp tag in a batch identified by a batch id.
+    fn store(&mut self, batch: BatchId, tt: TempTag) {
+        let entry = self.batches.entry(batch).or_default();
+        entry.tags.entry(tt.hash_and_format()).or_default().push(tt);
+    }
+
+    /// Remove a tag from a batch.
+    fn remove_one(&mut self, batch: BatchId, content: &HashAndFormat) -> Result<()> {
+        if let Some(batch) = self.batches.get_mut(&batch) {
+            if let Some(tags) = batch.tags.get_mut(content) {
+                tags.pop();
+                if tags.is_empty() {
+                    batch.tags.remove(content);
+                }
+                return Ok(());
+            }
+        }
+        // this can happen if we try to upgrade a tag from an expired batch
+        anyhow::bail!("tag not found in batch");
+    }
+
+    /// Remove an entire batch.
+    fn remove(&mut self, batch: BatchId) {
+        self.batches.remove(&batch);
+    }
 }
 
 /// In memory node.
@@ -565,8 +618,7 @@ async fn handle_connection(
 }
 
 fn node_addresses_for_storage(ep: &Endpoint) -> Vec<NodeAddr> {
-    ep.connection_infos()
-        .into_iter()
+    ep.remote_info_iter()
         .filter_map(node_address_for_storage)
         .collect()
 }
@@ -576,7 +628,7 @@ fn node_addresses_for_storage(ep: &Endpoint) -> Vec<NodeAddr> {
 /// If the endpoint was used, only the paths that were in use will be returned.
 ///
 /// Returns `None` if the resulting [`NodeAddr`] would be empty.
-fn node_address_for_storage(info: ConnectionInfo) -> Option<NodeAddr> {
+fn node_address_for_storage(info: RemoteInfo) -> Option<NodeAddr> {
     let direct_addresses = if info.last_used.is_none() {
         info.addrs
             .into_iter()

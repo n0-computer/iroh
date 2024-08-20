@@ -65,7 +65,7 @@
 //! errors when communicating with the actor.
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::{self, BufReader, Read},
+    io,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
     time::{Duration, SystemTime},
@@ -73,7 +73,6 @@ use std::{
 
 use bao_tree::io::{
     fsm::Outboard,
-    outboard::PreOrderOutboard,
     sync::{ReadAt, Size},
 };
 use bytes::Bytes;
@@ -84,7 +83,7 @@ use iroh_io::AsyncSliceReader;
 use redb::{AccessGuard, DatabaseError, ReadableTable, StorageError};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use tokio::{io::AsyncWriteExt, sync::oneshot};
+use tokio::io::AsyncWriteExt;
 use tracing::trace_span;
 
 mod import_flat_store;
@@ -102,17 +101,18 @@ use crate::{
         bao_file::{BaoFileStorage, CompleteStorage},
         fs::{
             tables::BaoFilePart,
-            util::{overwrite_and_sync, read_and_remove, ProgressReader},
+            util::{overwrite_and_sync, read_and_remove},
         },
     },
     util::{
+        compute_outboard,
         progress::{
             BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSendError,
             ProgressSender,
         },
         raw_outboard_size, MemOrFile, TagCounter, TagDrop,
     },
-    Tag, TempTag, IROH_BLOCK_SIZE,
+    Tag, TempTag,
 };
 use tables::{ReadOnlyTables, ReadableTables, Tables};
 
@@ -534,25 +534,25 @@ pub(crate) enum ActorMessage {
     /// Query method: get the rough entry status for a hash. Just complete, partial or not found.
     EntryStatus {
         hash: Hash,
-        tx: flume::Sender<ActorResult<EntryStatus>>,
+        tx: oneshot::Sender<ActorResult<EntryStatus>>,
     },
     #[cfg(test)]
     /// Query method: get the full entry state for a hash, both in memory and in redb.
     /// This is everything we got about the entry, including the actual inline outboard and data.
     EntryState {
         hash: Hash,
-        tx: flume::Sender<ActorResult<test_support::EntryStateResponse>>,
+        tx: oneshot::Sender<ActorResult<test_support::EntryStateResponse>>,
     },
     /// Query method: get the full entry state for a hash.
     GetFullEntryState {
         hash: Hash,
-        tx: flume::Sender<ActorResult<Option<EntryData>>>,
+        tx: oneshot::Sender<ActorResult<Option<EntryData>>>,
     },
     /// Modification method: set the full entry state for a hash.
     SetFullEntryState {
         hash: Hash,
         entry: Option<EntryData>,
-        tx: flume::Sender<ActorResult<()>>,
+        tx: oneshot::Sender<ActorResult<()>>,
     },
     /// Modification method: get or create a file handle for a hash.
     ///
@@ -575,7 +575,7 @@ pub(crate) enum ActorMessage {
     /// At this point the size, hash and outboard must already be known.
     Import {
         cmd: Import,
-        tx: flume::Sender<ActorResult<(TempTag, u64)>>,
+        tx: oneshot::Sender<ActorResult<(TempTag, u64)>>,
     },
     /// Modification method: export data from a redb store
     ///
@@ -757,14 +757,11 @@ impl Store {
         Ok(self.0.dump().await?)
     }
 
-    /// Ensure that all operations before the sync are processed and persisted.
-    ///
-    /// This is done by closing any open write transaction.
-    pub async fn sync(&self) -> io::Result<()> {
-        Ok(self.0.sync().await?)
-    }
-
     /// Import from a v0 or v1 flat store, for backwards compatibility.
+    #[deprecated(
+        since = "0.23.0",
+        note = "Flat stores are deprecated and future versions will not be able to migrate."
+    )]
     pub async fn import_flat_store(&self, paths: FlatStorePaths) -> io::Result<bool> {
         Ok(self.0.import_flat_store(paths).await?)
     }
@@ -772,7 +769,7 @@ impl Store {
 
 #[derive(Debug)]
 struct StoreInner {
-    tx: flume::Sender<ActorMessage>,
+    tx: async_channel::Sender<ActorMessage>,
     temp: Arc<RwLock<TempCounterMap>>,
     handle: Option<std::thread::JoinHandle<()>>,
     path_options: Arc<PathOptions>,
@@ -808,13 +805,15 @@ impl StoreInner {
         );
         std::fs::create_dir_all(path.parent().unwrap())?;
         let temp: Arc<RwLock<TempCounterMap>> = Default::default();
-        let (actor, tx) = Actor::new(&path, options.clone(), temp.clone(), rt)?;
+        let (actor, tx) = Actor::new(&path, options.clone(), temp.clone(), rt.clone())?;
         let handle = std::thread::Builder::new()
             .name("redb-actor".to_string())
             .spawn(move || {
-                if let Err(cause) = actor.run_batched() {
-                    tracing::error!("redb actor failed: {}", cause);
-                }
+                rt.block_on(async move {
+                    if let Err(cause) = actor.run_batched().await {
+                        tracing::error!("redb actor failed: {}", cause);
+                    }
+                });
             })
             .expect("failed to spawn thread");
         Ok(Self {
@@ -827,15 +826,13 @@ impl StoreInner {
 
     pub async fn get(&self, hash: Hash) -> OuterResult<Option<BaoFileHandle>> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send_async(ActorMessage::Get { hash, tx }).await?;
+        self.tx.send(ActorMessage::Get { hash, tx }).await?;
         Ok(rx.await??)
     }
 
     async fn get_or_create(&self, hash: Hash) -> OuterResult<BaoFileHandle> {
         let (tx, rx) = oneshot::channel();
-        self.tx
-            .send_async(ActorMessage::GetOrCreate { hash, tx })
-            .await?;
+        self.tx.send(ActorMessage::GetOrCreate { hash, tx }).await?;
         Ok(rx.await??)
     }
 
@@ -849,9 +846,7 @@ impl StoreInner {
                 None
             }
         });
-        self.tx
-            .send_async(ActorMessage::Blobs { filter, tx })
-            .await?;
+        self.tx.send(ActorMessage::Blobs { filter, tx }).await?;
         let blobs = rx.await?;
         let res = blobs?
             .into_iter()
@@ -873,9 +868,7 @@ impl StoreInner {
                 None
             }
         });
-        self.tx
-            .send_async(ActorMessage::Blobs { filter, tx })
-            .await?;
+        self.tx.send(ActorMessage::Blobs { filter, tx }).await?;
         let blobs = rx.await?;
         let res = blobs?
             .into_iter()
@@ -891,9 +884,7 @@ impl StoreInner {
         let (tx, rx) = oneshot::channel();
         let filter: FilterPredicate<Tag, HashAndFormat> =
             Box::new(|_i, k, v| Some((k.value(), v.value())));
-        self.tx
-            .send_async(ActorMessage::Tags { filter, tx })
-            .await?;
+        self.tx.send(ActorMessage::Tags { filter, tx }).await?;
         let tags = rx.await?;
         // transform the internal error type into io::Error
         let tags = tags?
@@ -906,51 +897,47 @@ impl StoreInner {
     async fn set_tag(&self, tag: Tag, value: Option<HashAndFormat>) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::SetTag { tag, value, tx })
+            .send(ActorMessage::SetTag { tag, value, tx })
             .await?;
         Ok(rx.await??)
     }
 
     async fn create_tag(&self, hash: HashAndFormat) -> OuterResult<Tag> {
         let (tx, rx) = oneshot::channel();
-        self.tx
-            .send_async(ActorMessage::CreateTag { hash, tx })
-            .await?;
+        self.tx.send(ActorMessage::CreateTag { hash, tx }).await?;
         Ok(rx.await??)
     }
 
     async fn delete(&self, hashes: Vec<Hash>) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
-        self.tx
-            .send_async(ActorMessage::Delete { hashes, tx })
-            .await?;
+        self.tx.send(ActorMessage::Delete { hashes, tx }).await?;
         Ok(rx.await??)
     }
 
     async fn gc_start(&self) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send_async(ActorMessage::GcStart { tx }).await?;
+        self.tx.send(ActorMessage::GcStart { tx }).await?;
         Ok(rx.await?)
     }
 
     async fn entry_status(&self, hash: &Hash) -> OuterResult<EntryStatus> {
-        let (tx, rx) = flume::bounded(1);
+        let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::EntryStatus { hash: *hash, tx })
+            .send(ActorMessage::EntryStatus { hash: *hash, tx })
             .await?;
-        Ok(rx.into_recv_async().await??)
+        Ok(rx.await??)
     }
 
     fn entry_status_sync(&self, hash: &Hash) -> OuterResult<EntryStatus> {
-        let (tx, rx) = flume::bounded(1);
+        let (tx, rx) = oneshot::channel();
         self.tx
-            .send(ActorMessage::EntryStatus { hash: *hash, tx })?;
+            .send_blocking(ActorMessage::EntryStatus { hash: *hash, tx })?;
         Ok(rx.recv()??)
     }
 
     async fn complete(&self, entry: Entry) -> OuterResult<()> {
         self.tx
-            .send_async(ActorMessage::OnComplete { handle: entry })
+            .send(ActorMessage::OnComplete { handle: entry })
             .await?;
         Ok(())
     }
@@ -985,7 +972,7 @@ impl StoreInner {
         let temp_tag = self.temp.temp_tag(HashAndFormat::raw(hash));
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::Export {
+            .send(ActorMessage::Export {
                 cmd: Export {
                     temp_tag,
                     target,
@@ -1005,7 +992,7 @@ impl StoreInner {
     ) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::Fsck {
+            .send(ActorMessage::Fsck {
                 repair,
                 progress,
                 tx,
@@ -1017,7 +1004,7 @@ impl StoreInner {
     async fn import_flat_store(&self, paths: FlatStorePaths) -> OuterResult<bool> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::ImportFlatStore { paths, tx })
+            .send(ActorMessage::ImportFlatStore { paths, tx })
             .await?;
         Ok(rx.await?)
     }
@@ -1029,7 +1016,7 @@ impl StoreInner {
     ) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::UpdateInlineOptions {
+            .send(ActorMessage::UpdateInlineOptions {
                 inline_options,
                 reapply,
                 tx,
@@ -1039,13 +1026,13 @@ impl StoreInner {
     }
 
     async fn dump(&self) -> OuterResult<()> {
-        self.tx.send_async(ActorMessage::Dump).await?;
+        self.tx.send(ActorMessage::Dump).await?;
         Ok(())
     }
 
     async fn sync(&self) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send_async(ActorMessage::Sync { tx }).await?;
+        self.tx.send(ActorMessage::Sync { tx }).await?;
         Ok(rx.await?)
     }
 
@@ -1141,8 +1128,8 @@ impl StoreInner {
         let tag = self.temp.temp_tag(HashAndFormat { hash, format });
         let hash = *tag.hash();
         // blocking send for the import
-        let (tx, rx) = flume::bounded(1);
-        self.tx.send(ActorMessage::Import {
+        let (tx, rx) = oneshot::channel();
+        self.tx.send_blocking(ActorMessage::Import {
             cmd: Import {
                 content_id: HashAndFormat { hash, format },
                 source: file,
@@ -1161,7 +1148,7 @@ impl StoreInner {
     async fn shutdown(&self) {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::Shutdown { tx: Some(tx) })
+            .send(ActorMessage::Shutdown { tx: Some(tx) })
             .await
             .ok();
         rx.await.ok();
@@ -1171,7 +1158,9 @@ impl StoreInner {
 impl Drop for StoreInner {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
-            self.tx.send(ActorMessage::Shutdown { tx: None }).ok();
+            self.tx
+                .send_blocking(ActorMessage::Shutdown { tx: None })
+                .ok();
             handle.join().ok();
         }
     }
@@ -1181,7 +1170,7 @@ struct ActorState {
     handles: BTreeMap<Hash, BaoFileHandleWeak>,
     protected: BTreeSet<Hash>,
     temp: Arc<RwLock<TempCounterMap>>,
-    msgs: flume::Receiver<ActorMessage>,
+    msgs_rx: async_channel::Receiver<ActorMessage>,
     create_options: Arc<BaoFileConfig>,
     options: Options,
     rt: tokio::runtime::Handle,
@@ -1242,16 +1231,22 @@ pub(crate) type ActorResult<T> = std::result::Result<T, ActorError>;
 pub(crate) enum OuterError {
     #[error("inner error: {0}")]
     Inner(#[from] ActorError),
-    #[error("send error: {0}")]
-    Send(#[from] flume::SendError<ActorMessage>),
+    #[error("send error")]
+    Send,
     #[error("progress send error: {0}")]
     ProgressSend(#[from] ProgressSendError),
     #[error("recv error: {0}")]
-    Recv(#[from] oneshot::error::RecvError),
+    Recv(#[from] oneshot::RecvError),
     #[error("recv error: {0}")]
-    FlumeRecv(#[from] flume::RecvError),
+    AsyncChannelRecv(#[from] async_channel::RecvError),
     #[error("join error: {0}")]
     JoinTask(#[from] tokio::task::JoinError),
+}
+
+impl From<async_channel::SendError<ActorMessage>> for OuterError {
+    fn from(_e: async_channel::SendError<ActorMessage>) -> Self {
+        OuterError::Send
+    }
 }
 
 /// Result type for calling the redb actor from the store.
@@ -1423,6 +1418,10 @@ impl super::Store for Store {
         self.0.temp.temp_tag(value)
     }
 
+    async fn sync(&self) -> io::Result<()> {
+        Ok(self.0.sync().await?)
+    }
+
     async fn shutdown(&self) {
         self.0.shutdown().await;
     }
@@ -1434,7 +1433,7 @@ impl Actor {
         options: Options,
         temp: Arc<RwLock<TempCounterMap>>,
         rt: tokio::runtime::Handle,
-    ) -> ActorResult<(Self, flume::Sender<ActorMessage>)> {
+    ) -> ActorResult<(Self, async_channel::Sender<ActorMessage>)> {
         let db = match redb::Database::create(path) {
             Ok(db) => db,
             Err(DatabaseError::UpgradeRequired(1)) => {
@@ -1451,11 +1450,11 @@ impl Actor {
         txn.commit()?;
         // make the channel relatively large. there are some messages that don't
         // require a response, it's fine if they pile up a bit.
-        let (tx, rx) = flume::bounded(1024);
+        let (tx, rx) = async_channel::bounded(1024);
         let tx2 = tx.clone();
         let on_file_create: CreateCb = Arc::new(move |hash| {
             // todo: make the callback allow async
-            tx2.send(ActorMessage::OnMemSizeExceeded { hash: *hash })
+            tx2.send_blocking(ActorMessage::OnMemSizeExceeded { hash: *hash })
                 .ok();
             Ok(())
         });
@@ -1471,7 +1470,7 @@ impl Actor {
                     temp,
                     handles: BTreeMap::new(),
                     protected: BTreeSet::new(),
-                    msgs: rx,
+                    msgs_rx: rx,
                     options,
                     create_options: Arc::new(create_options),
                     rt,
@@ -1481,9 +1480,9 @@ impl Actor {
         ))
     }
 
-    fn run_batched(mut self) -> ActorResult<()> {
-        let mut msgs = PeekableFlumeReceiver::new(self.state.msgs.clone());
-        while let Some(msg) = msgs.recv() {
+    async fn run_batched(mut self) -> ActorResult<()> {
+        let mut msgs = PeekableFlumeReceiver::new(self.state.msgs_rx.clone());
+        while let Some(msg) = msgs.recv().await {
             if let ActorMessage::Shutdown { tx } = msg {
                 // Make sure the database is dropped before we send the reply.
                 drop(self);
@@ -1502,11 +1501,24 @@ impl Actor {
                     let txn = self.db.begin_read()?;
                     let tables = ReadOnlyTables::new(&txn)?;
                     let count = self.state.options.batch.max_read_batch;
-                    let timeout = self.state.options.batch.max_read_duration;
-                    for msg in msgs.batch_iter(count, timeout) {
-                        if let Err(msg) = self.state.handle_readonly(&tables, msg)? {
-                            msgs.push_back(msg).expect("just recv'd");
-                            break;
+                    let timeout = tokio::time::sleep(self.state.options.batch.max_read_duration);
+                    tokio::pin!(timeout);
+                    for _ in 0..count {
+                        tokio::select! {
+                            msg = msgs.recv() => {
+                                if let Some(msg) = msg {
+                                    if let Err(msg) = self.state.handle_readonly(&tables, msg)? {
+                                        msgs.push_back(msg).expect("just recv'd");
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            _ = &mut timeout => {
+                                tracing::debug!("read transaction timed out");
+                                break;
+                            }
                         }
                     }
                     tracing::debug!("done with read transaction");
@@ -1518,11 +1530,24 @@ impl Actor {
                     let mut delete_after_commit = Default::default();
                     let mut tables = Tables::new(&txn, &mut delete_after_commit)?;
                     let count = self.state.options.batch.max_write_batch;
-                    let timeout = self.state.options.batch.max_write_duration;
-                    for msg in msgs.batch_iter(count, timeout) {
-                        if let Err(msg) = self.state.handle_readwrite(&mut tables, msg)? {
-                            msgs.push_back(msg).expect("just recv'd");
-                            break;
+                    let timeout = tokio::time::sleep(self.state.options.batch.max_read_duration);
+                    tokio::pin!(timeout);
+                    for _ in 0..count {
+                        tokio::select! {
+                            msg = msgs.recv() => {
+                                if let Some(msg) = msg {
+                                    if let Err(msg) = self.state.handle_readwrite(&mut tables, msg)? {
+                                        msgs.push_back(msg).expect("just recv'd");
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            _ = &mut timeout => {
+                                tracing::debug!("write transaction timed out");
+                                break;
+                            }
                         }
                     }
                     drop(tables);
@@ -2314,39 +2339,6 @@ fn export_file_copy(
     progress(size)?;
     drop(temp_tag);
     Ok(())
-}
-
-/// Synchronously compute the outboard of a file, and return hash and outboard.
-///
-/// It is assumed that the file is not modified while this is running.
-///
-/// If it is modified while or after this is running, the outboard will be
-/// invalid, so any attempt to compute a slice from it will fail.
-///
-/// If the size of the file is changed while this is running, an error will be
-/// returned.
-///
-/// The computed outboard is without length prefix.
-fn compute_outboard(
-    read: impl Read,
-    size: u64,
-    progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-) -> io::Result<(Hash, Option<Vec<u8>>)> {
-    use bao_tree::io::sync::CreateOutboard;
-
-    // wrap the reader in a progress reader, so we can report progress.
-    let reader = ProgressReader::new(read, progress);
-    // wrap the reader in a buffered reader, so we read in large chunks
-    // this reduces the number of io ops and also the number of progress reports
-    let buf_size = usize::try_from(size).unwrap_or(usize::MAX).min(1024 * 1024);
-    let reader = BufReader::with_capacity(buf_size, reader);
-
-    let ob = PreOrderOutboard::<Vec<u8>>::create_sized(reader, size, IROH_BLOCK_SIZE)?;
-    let root = ob.root.into();
-    let data = ob.data;
-    tracing::trace!(%root, "done");
-    let data = if !data.is_empty() { Some(data) } else { None };
-    Ok((root, data))
 }
 
 fn dump(tables: &impl ReadableTables) -> ActorResult<()> {

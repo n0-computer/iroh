@@ -17,7 +17,6 @@ workspace = true
 
 [dependencies]
 anyhow = { version = "1" }
-async-channel = "2.3.1"
 base64 = "0.22.1"
 backoff = "0.4.0"
 bytes = "1"
@@ -58,7 +57,6 @@ ring = "0.17"
 rustls = { version = "0.21.11", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive", "rc"] }
 smallvec = "1.11.1"
-swarm-discovery = { version = "0.2.1", optional = true }
 socket2 = "0.5.3"
 stun-rs = "0.1.5"
 surge-ping = "0.8.0"
@@ -92,6 +90,13 @@ tokio-rustls-acme = { version = "0.3", optional = true }
 iroh-metrics = { version = "0.22.0", path = "../iroh-metrics", default-features = false }
 strum = { version = "0.26.2", features = ["derive"] }
 
+# local-swarm-discovery
+swarm-discovery = { version = "0.2.1", optional = true }
+tokio-stream = { version = "0.1.15", optional = true }
+
+# dht_discovery
+genawaiter = { version = "0.99.1", features = ["futures03"], optional = true }
+
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
 netlink-packet-route = "0.17.0"
@@ -118,6 +123,7 @@ iroh-test = { path = "../iroh-test" }
 iroh-net = { path = ".", features = ["iroh-relay"] }
 serde_json = "1.0.107"
 testresult = "0.4.0"
+mainline = "2.0.1"
 
 [[bench]]
 name = "key"
@@ -127,7 +133,7 @@ harness = false
 duct = "0.13.6"
 
 [features]
-default = ["metrics"]
+default = ["metrics", "discovery-pkarr-dht"]
 iroh-relay = [
     "dep:tokio-rustls-acme",
     "dep:axum",
@@ -140,7 +146,8 @@ iroh-relay = [
 ]
 metrics = ["iroh-metrics/metrics"]
 test-utils = ["iroh-relay"]
-local_swarm_discovery = ["dep:swarm-discovery"]
+discovery-local-network = ["dep:swarm-discovery", "dep:tokio-stream"]
+discovery-pkarr-dht = ["pkarr/dht", "dep:genawaiter"]
 
 [[bin]]
 name = "iroh-relay"
@@ -160,3 +167,7 @@ name = "listen-unreliable"
 
 [[example]]
 name = "connect-unreliable"
+
+[[example]]
+name = "dht_discovery"
+required-features = ["discovery-pkarr-dht"]

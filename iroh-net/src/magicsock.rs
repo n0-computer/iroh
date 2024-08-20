@@ -51,6 +51,7 @@ use url::Url;
 use watchable::Watchable;
 
 use crate::{
+    defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
     disco::{self, SendAddr},
     discovery::Discovery,
     dns::DnsResolver,
@@ -75,21 +76,20 @@ mod relay_actor;
 mod timer;
 mod udp_conn;
 
+pub(crate) use node_map::Source;
+
+pub(super) use self::timer::Timer;
+
 pub use self::metrics::Metrics;
 pub use self::node_map::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo as ConnectionInfo,
+    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo,
 };
-pub(super) use self::timer::Timer;
-pub(crate) use node_map::Source;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
 const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-
-/// Maximum duration to wait for a netcheck report.
-const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
@@ -177,7 +177,7 @@ pub(crate) struct MagicSock {
     proxy_url: Option<Url>,
 
     /// Used for receiving relay messages.
-    relay_recv_receiver: async_channel::Receiver<RelayRecvResult>,
+    relay_recv_receiver: parking_lot::Mutex<mpsc::Receiver<RelayRecvResult>>,
     /// Stores wakers, to be called when relay_recv_ch receives new data.
     network_recv_wakers: parking_lot::Mutex<Option<Waker>>,
     network_send_wakers: parking_lot::Mutex<Option<Waker>>,
@@ -286,19 +286,19 @@ impl MagicSock {
 
     /// Returns `true` if we have at least one candidate address where we can send packets to.
     pub(crate) fn has_send_address(&self, node_key: PublicKey) -> bool {
-        self.connection_info(node_key)
+        self.remote_info(node_key)
             .map(|info| info.has_send_address())
             .unwrap_or(false)
     }
 
-    /// Retrieve connection information about nodes in the network.
-    pub(crate) fn connection_infos(&self) -> Vec<ConnectionInfo> {
-        self.node_map.node_infos(Instant::now())
+    /// Return the [`RemoteInfo`]s of all nodes in the node map.
+    pub(crate) fn list_remote_infos(&self) -> Vec<RemoteInfo> {
+        self.node_map.list_remote_infos(Instant::now())
     }
 
-    /// Retrieve connection information about a node in the network.
-    pub(crate) fn connection_info(&self, node_id: NodeId) -> Option<ConnectionInfo> {
-        self.node_map.node_info(node_id)
+    /// Return the [`RemoteInfo`] for a single node in the node map.
+    pub(crate) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
+        self.node_map.remote_info(node_id)
     }
 
     /// Returns the direct addresses as a stream.
@@ -788,12 +788,13 @@ impl MagicSock {
             if self.is_closed() {
                 break;
             }
-            match self.relay_recv_receiver.try_recv() {
-                Err(async_channel::TryRecvError::Empty) => {
+            let mut relay_recv_receiver = self.relay_recv_receiver.lock();
+            match relay_recv_receiver.try_recv() {
+                Err(mpsc::error::TryRecvError::Empty) => {
                     self.network_recv_wakers.lock().replace(cx.waker().clone());
                     break;
                 }
-                Err(async_channel::TryRecvError::Closed) => {
+                Err(mpsc::error::TryRecvError::Disconnected) => {
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::NotConnected,
                         "connection closed",
@@ -1378,7 +1379,7 @@ impl Handle {
             insecure_skip_relay_cert_verify,
         } = opts;
 
-        let (relay_recv_sender, relay_recv_receiver) = async_channel::bounded(128);
+        let (relay_recv_sender, relay_recv_receiver) = mpsc::channel(128);
 
         let (pconn4, pconn6) = bind(port)?;
         let port = pconn4.port();
@@ -1412,7 +1413,7 @@ impl Handle {
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            relay_recv_receiver,
+            relay_recv_receiver: parking_lot::Mutex::new(relay_recv_receiver),
             network_recv_wakers: parking_lot::Mutex::new(None),
             network_send_wakers: parking_lot::Mutex::new(None),
             actor_sender: actor_sender.clone(),
@@ -1704,7 +1705,7 @@ struct Actor {
     relay_actor_sender: mpsc::Sender<RelayActorMessage>,
     relay_actor_cancel_token: CancellationToken,
     /// Channel to send received relay messages on, for processing.
-    relay_recv_sender: async_channel::Sender<RelayRecvResult>,
+    relay_recv_sender: mpsc::Sender<RelayRecvResult>,
     /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
@@ -2781,7 +2782,7 @@ mod tests {
         fn tracked_endpoints(&self) -> Vec<PublicKey> {
             self.endpoint
                 .magic_sock()
-                .connection_infos()
+                .list_remote_infos()
                 .into_iter()
                 .map(|ep| ep.node_id)
                 .collect()

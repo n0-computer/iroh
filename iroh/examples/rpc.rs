@@ -4,8 +4,8 @@
 //!   $ cargo run --features=examples --example rpc
 //! Then in another terminal, run any of the normal iroh CLI commands, which you can run from
 //! cargo as well:
-//!   $ cargo run node stats
-//! The `node stats` command will reach out over RPC to the node constructed in the example
+//!   $ cargo run net stats
+//! The `net stats` command will reach out over RPC to the node constructed in the example
 
 use clap::Parser;
 use iroh_blobs::store::Store;

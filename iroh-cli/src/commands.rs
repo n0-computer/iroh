@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
 use clap::Parser;
-use derive_more::FromStr;
 use iroh::client::Iroh;
 
 use crate::config::{ConsoleEnv, NodeConfig};
@@ -18,7 +17,7 @@ pub(crate) mod console;
 pub(crate) mod docs;
 pub(crate) mod doctor;
 pub(crate) mod gossip;
-pub(crate) mod node;
+pub(crate) mod net;
 pub(crate) mod rpc;
 pub(crate) mod start;
 pub(crate) mod tags;
@@ -39,9 +38,9 @@ pub(crate) struct Cli {
     #[clap(long, global = true)]
     start: bool,
 
-    /// Port to serve metrics on. Disabled by default.
+    /// Address to serve metrics on. Disabled by default.
     #[clap(long)]
-    pub(crate) metrics_port: Option<MetricsPort>,
+    pub(crate) metrics_addr: Option<SocketAddr>,
 
     /// Address to serve RPC on.
     #[clap(long)]
@@ -50,25 +49,6 @@ pub(crate) struct Cli {
     /// Write metrics in CSV format at 100ms intervals. Disabled by default.
     #[clap(long)]
     pub(crate) metrics_dump_path: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum MetricsPort {
-    Disabled,
-    Port(u16),
-}
-
-impl FromStr for MetricsPort {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.to_ascii_lowercase() == "disabled" {
-            Ok(MetricsPort::Disabled)
-        } else {
-            let port = s.parse()?;
-            Ok(MetricsPort::Port(port))
-        }
-    }
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -131,7 +111,7 @@ impl Cli {
             Commands::Console => {
                 let data_dir_owned = data_dir.to_owned();
                 if self.start {
-                    let config = Self::load_config(self.config, self.metrics_port).await?;
+                    let config = Self::load_config(self.config, self.metrics_addr).await?;
                     start::run_with_command(
                         &config,
                         data_dir,
@@ -157,7 +137,7 @@ impl Cli {
             Commands::Rpc(command) => {
                 let data_dir_owned = data_dir.to_owned();
                 if self.start {
-                    let config = Self::load_config(self.config, self.metrics_port).await?;
+                    let config = Self::load_config(self.config, self.metrics_addr).await?;
                     start::run_with_command(
                         &config,
                         data_dir,
@@ -189,7 +169,7 @@ impl Cli {
                         path.display()
                     );
                 }
-                let config = Self::load_config(self.config, self.metrics_port).await?;
+                let config = Self::load_config(self.config, self.metrics_addr).await?;
 
                 let add_command = add.map(|source| blobs::BlobCommands::Add {
                     source,
@@ -210,8 +190,9 @@ impl Cli {
                 )
                 .await
             }
+
             Commands::Doctor { command } => {
-                let config = Self::load_config(self.config, self.metrics_port).await?;
+                let config = Self::load_config(self.config, self.metrics_addr).await?;
                 self::doctor::run(command, &config).await
             }
         }
@@ -219,15 +200,10 @@ impl Cli {
 
     async fn load_config(
         config: Option<PathBuf>,
-        metrics_port: Option<MetricsPort>,
+        metrics_addr: Option<SocketAddr>,
     ) -> Result<NodeConfig> {
         let mut config = NodeConfig::load(config.as_deref()).await?;
-        if let Some(metrics_port) = metrics_port {
-            config.metrics_addr = match metrics_port {
-                MetricsPort::Disabled => None,
-                MetricsPort::Port(port) => Some(([127, 0, 0, 1], port).into()),
-            };
-        }
+        config.metrics_addr = metrics_addr;
         Ok(config)
     }
 }

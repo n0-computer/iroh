@@ -11,8 +11,8 @@ use crate::disco::SendAddr;
 use crate::magicsock::HEARTBEAT_INTERVAL;
 use crate::stun;
 
-use super::node_state::{PongReply, SESSION_ACTIVE_TIMEOUT};
-use super::{ControlMsg, IpPort, PingRole};
+use super::node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT};
+use super::{IpPort, PingRole};
 
 /// The minimum time between pings to an endpoint.
 ///
@@ -39,12 +39,14 @@ pub(super) struct PathState {
     // NOTE: tx_id Originally added in tailscale due to <https://github.com/tailscale/tailscale/issues/7078>.
     last_got_ping: Option<(Instant, stun::TransactionId)>,
 
-    /// If non-zero, is the time this endpoint was advertised last via a call-me-maybe disco message.
+    /// The time this endpoint was last advertised via a call-me-maybe DISCO message.
     pub(super) call_me_maybe_time: Option<Instant>,
 
     /// Last [`PongReply`] received.
     pub(super) recent_pong: Option<PongReply>,
-    /// When was this endpoint last used to transmit payload data (removing ping, pong, etc).
+    /// When the last payload data was **received** via this path.
+    ///
+    /// This excludes DISCO messages.
     pub(super) last_payload_msg: Option<Instant>,
 }
 
@@ -160,6 +162,14 @@ impl PathState {
             .copied()
     }
 
+    /// The last control or DISCO message **about** this path.
+    ///
+    /// This is the most recent instant among:
+    /// - when last pong was received.
+    /// - when this path was last advertised in a received CallMeMaybe message.
+    /// - when the last ping from them was received.
+    ///
+    /// Returns the time elapsed since the last control message, and the type of control message.
     pub(super) fn last_control_msg(&self, now: Instant) -> Option<(Duration, ControlMsg)> {
         // get every control message and assign it its kind
         let last_pong = self

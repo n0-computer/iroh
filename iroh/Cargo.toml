@@ -21,7 +21,6 @@ async-channel = "2.3.1"
 bao-tree = { version = "0.13", features = ["tokio_fsm"], default-features = false }
 bytes = "1"
 derive_more = { version = "=1.0.0-beta.7", features = ["debug", "display", "from", "try_into", "from_str"] }
-flume = "0.11"
 futures-buffered = "0.2.4"
 futures-lite = "2.3"
 futures-util = "0.3"
@@ -31,7 +30,7 @@ iroh-blobs = { version = "0.22.0", path = "../iroh-blobs", features = ["download
 iroh-base = { version = "0.22.0", path = "../iroh-base", features = ["key"] }
 iroh-io = { version = "0.6.0", features = ["stats"] }
 iroh-metrics = { version = "0.22.0", path = "../iroh-metrics", optional = true }
-iroh-net = { version = "0.22.0", path = "../iroh-net", features = ["local_swarm_discovery"] }
+iroh-net = { version = "0.22.0", path = "../iroh-net", features = ["discovery-local-network"] }
 nested_enum_utils = "0.1.0"
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
@@ -68,7 +67,8 @@ metrics = ["iroh-metrics", "iroh-blobs/metrics"]
 fs-store = ["iroh-blobs/fs-store"]
 test = []
 examples = ["dep:clap", "dep:indicatif"]
-local_swarm_discovery = ["iroh-net/local_swarm_discovery", "examples", "dep:console"]
+discovery-local-network = ["iroh-net/discovery-local-network", "examples", "dep:console"]
+discovery-pkarr-dht = ["iroh-net/discovery-pkarr-dht"]
 test-utils = ["iroh-net/test-utils"]
 
 [dev-dependencies]
@@ -118,4 +118,4 @@ required-features = ["examples"]
 
 [[example]]
 name = "local_swarm_discovery"
-required-features = ["local_swarm_discovery"]
+required-features = ["discovery-local-network"]

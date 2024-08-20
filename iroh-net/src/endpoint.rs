@@ -45,8 +45,8 @@ pub use quinn::{
 };
 
 pub use super::magicsock::{
-    ConnectionInfo, ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo,
-    DirectAddrType, DirectAddrsStream,
+    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
+    DirectAddrsStream, RemoteInfo,
 };
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
@@ -708,26 +708,33 @@ impl Endpoint {
 
     // # Getter methods for information about other nodes.
 
-    /// Returns connection information about a specific node.
+    /// Returns information about the remote node identified by a [`NodeId`].
     ///
-    /// Then [`Endpoint`] stores some information about all the other iroh-net nodes it has
-    /// information about.  This includes information about the relay server in use, any
-    /// known direct addresses, when there was last any contact with this node and what kind
-    /// of connection this was.
-    pub fn connection_info(&self, node_id: NodeId) -> Option<ConnectionInfo> {
-        self.msock.connection_info(node_id)
+    /// The [`Endpoint`] keeps some information about remote iroh-net nodes, which it uses to find
+    /// the best path to a node. Having information on a remote node, however, does not mean we have
+    /// ever connected to it to or even whether a connection is even possible. The information about a
+    /// remote node will change over time, as the [`Endpoint`] learns more about the node. Future
+    /// calls may return different information. Furthermore, node information may even be
+    /// completely evicted as it becomes stale.
+    ///
+    /// See also [`Endpoint::remote_info_iter`] which returns information on all nodes known
+    /// by this [`Endpoint`].
+    pub fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
+        self.msock.remote_info(node_id)
     }
 
-    /// Returns information on all the nodes we have connection information about.
+    /// Returns information about all the remote nodes this [`Endpoint`] knows about.
     ///
-    /// This returns the same information as [`Endpoint::connection_info`] for each node
-    /// known to this [`Endpoint`].
+    /// This returns the same information as [`Endpoint::remote_info`] for each node known to this
+    /// [`Endpoint`].
     ///
-    /// Connections are currently only pruned on user action when using
-    /// [`Endpoint::add_node_addr`] so these connections are not necessarily active
-    /// connections.
-    pub fn connection_infos(&self) -> Vec<ConnectionInfo> {
-        self.msock.connection_infos()
+    /// The [`Endpoint`] keeps some information about remote iroh-net nodes, which it uses to find
+    /// the best path to a node. This returns all the nodes it knows about, regardless of whether a
+    /// connection was ever made or is even possible.
+    ///
+    /// See also [`Endpoint::remote_info`] to only retrieve information about a single node.
+    pub fn remote_info_iter(&self) -> impl Iterator<Item = RemoteInfo> {
+        self.msock.list_remote_infos().into_iter()
     }
 
     // # Methods for less common getters.
@@ -1279,15 +1286,11 @@ mod tests {
         // first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), None).await;
-        assert!(endpoint.connection_infos().is_empty());
+        assert_eq!(endpoint.remote_info_iter().count(), 0);
         endpoint.add_node_addr(node_addr.clone()).unwrap();
 
         // Grab the current addrs
-        let node_addrs: Vec<NodeAddr> = endpoint
-            .connection_infos()
-            .into_iter()
-            .map(Into::into)
-            .collect();
+        let node_addrs: Vec<NodeAddr> = endpoint.remote_info_iter().map(Into::into).collect();
         assert_eq!(node_addrs.len(), 1);
         assert_eq!(node_addrs[0], node_addr);
 
@@ -1298,7 +1301,7 @@ mod tests {
         info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
         let endpoint = new_endpoint(secret_key, Some(node_addrs)).await;
-        let ConnectionInfo { mut addrs, .. } = endpoint.connection_info(peer_id).unwrap();
+        let RemoteInfo { mut addrs, .. } = endpoint.remote_info(peer_id).unwrap();
         let conn_addr = addrs.pop().unwrap().addr;
         assert_eq!(conn_addr, direct_addr);
     }
