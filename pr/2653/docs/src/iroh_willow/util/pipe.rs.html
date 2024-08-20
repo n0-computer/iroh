@@ -179,7 +179,7 @@
 </span><span class="kw">pub fn </span>chunked_pipe(chunk_size: usize) -&gt; (PipeWriter, PipeReader) {
     <span class="kw">let </span>shared = Shared {
         buf: BytesMut::new(),
-        cap: chunk_size,
+        chunk_size,
         read_waker: <span class="prelude-val">None</span>,
         write_waker: <span class="prelude-val">None</span>,
         closed: <span class="bool-val">false</span>,
@@ -195,7 +195,7 @@
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>Shared {
     buf: BytesMut,
-    cap: usize,
+    chunk_size: usize,
     read_waker: <span class="prelude-ty">Option</span>&lt;Waker&gt;,
     write_waker: <span class="prelude-ty">Option</span>&lt;Waker&gt;,
     closed: bool,
@@ -209,7 +209,7 @@
                 <span class="string">"write after close"</span>,
             )));
         }
-        <span class="kw">let </span>remaining = <span class="self">self</span>.cap - <span class="self">self</span>.buf.len();
+        <span class="kw">let </span>remaining = <span class="self">self</span>.chunk_size - <span class="self">self</span>.buf.len();
         <span class="kw">let </span>amount = data.len().min(remaining);
         <span class="kw">if </span>amount &gt; <span class="number">0 </span>{
             <span class="self">self</span>.buf.extend_from_slice(<span class="kw-2">&amp;</span>data[..amount]);
@@ -223,18 +223,8 @@
         }
     }
 
-    <span class="kw">fn </span>close(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="self">self</span>.closed = <span class="bool-val">true</span>;
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(waker) = <span class="self">self</span>.read_waker.take() {
-            waker.wake();
-        }
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(waker) = <span class="self">self</span>.write_waker.take() {
-            waker.wake();
-        }
-    }
-
     <span class="kw">fn </span>poll_next(<span class="kw-2">&amp;mut </span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;io::Result&lt;Bytes&gt;&gt;&gt; {
-        <span class="kw">if </span><span class="self">self</span>.buf.len() == <span class="self">self</span>.cap {
+        <span class="kw">if </span><span class="self">self</span>.buf.len() == <span class="self">self</span>.chunk_size {
             <span class="kw">if let </span><span class="prelude-val">Some</span>(write_waker) = <span class="self">self</span>.write_waker.take() {
                 write_waker.wake();
             }
@@ -246,6 +236,16 @@
         } <span class="kw">else </span>{
             <span class="self">self</span>.read_waker = <span class="prelude-val">Some</span>(cx.waker().to_owned());
             Poll::Pending
+        }
+    }
+
+    <span class="kw">fn </span>close(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="self">self</span>.closed = <span class="bool-val">true</span>;
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(waker) = <span class="self">self</span>.read_waker.take() {
+            waker.wake();
+        }
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(waker) = <span class="self">self</span>.write_waker.take() {
+            waker.wake();
         }
     }
 }
