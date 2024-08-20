@@ -388,9 +388,10 @@ pub struct ReconciliationSendEntry {
 }
 
 /// Transmit some transformed Payload bytes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(derive_more::Debug, Clone, Serialize, Deserialize)]
 pub struct ReconciliationSendPayload {
     // A substring of the bytes obtained by applying transform_payload to the Payload to be transmitted.
+    #[debug("Bytes({})", self.bytes.len())]
     pub bytes: bytes::Bytes,
 }
 
