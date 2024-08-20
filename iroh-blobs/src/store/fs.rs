@@ -692,17 +692,6 @@ enum MessageCategory {
 pub(crate) type FilterPredicate<K, V> =
     Box<dyn Fn(u64, AccessGuard<K>, AccessGuard<V>) -> Option<(K, V)> + Send + Sync>;
 
-/// Parameters for importing from a flat store
-#[derive(Debug)]
-pub struct FlatStorePaths {
-    /// Complete data files
-    pub complete: PathBuf,
-    /// Partial data files
-    pub partial: PathBuf,
-    /// Metadata files such as the tags table
-    pub meta: PathBuf,
-}
-
 /// Storage that is using a redb database for small files and files for
 /// large files.
 #[derive(Debug, Clone)]

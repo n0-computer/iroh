@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 /// A file name that indicates the purpose of the file.
 #[derive(Clone, PartialEq, Eq)]
-pub enum FileName {
+enum FileName {
     /// Incomplete data for the hash, with an unique id
     PartialData(Hash, [u8; 16]),
     /// File is storing data for the hash
