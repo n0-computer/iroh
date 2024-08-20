@@ -2,7 +2,62 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.22.0](https://github.com/n0-computer/iroh/compare/v0.21.0..0.22.0) - 2024-08-05
+## [0.23.0](https://github.com/n0-computer/iroh/compare/v0.22.0..0.23.0) - 2024-08-20
+
+### ⛰️  Features
+
+- *(ci)* Notify discord of successfull flaky runs ([#2623](https://github.com/n0-computer/iroh/issues/2623)) - ([94cee34](https://github.com/n0-computer/iroh/commit/94cee34cefa0dc44d77d302c4d8963df1294b5c4))
+- *(iroh)* [**breaking**] Blob batch PR, attempt 3 ([#2545](https://github.com/n0-computer/iroh/issues/2545)) - ([9a55122](https://github.com/n0-computer/iroh/commit/9a55122c9772aadd16c7bda22d83177b4bc74b1d))
+- *(iroh-blobs)* Add outboard creation progress to the mem store ([#2625](https://github.com/n0-computer/iroh/issues/2625)) - ([47c8528](https://github.com/n0-computer/iroh/commit/47c8528b9e14c5121ba7eb69289d03ef0b8a168a))
+- *(iroh-net)* Upgrade to new `swarm-discovery` api ([#2605](https://github.com/n0-computer/iroh/issues/2605)) - ([a9c96a9](https://github.com/n0-computer/iroh/commit/a9c96a92fe7d2bb0f92f574b9c5b78e6f27316cf))
+- *(iroh-net)* Add PkarrNodeDiscovery to iroh-net ([#2628](https://github.com/n0-computer/iroh/issues/2628)) - ([9facd5a](https://github.com/n0-computer/iroh/commit/9facd5a333b545c7b036e6f7ce13a150e6aca492))
+- *(iroh-net)* Allow customizing republish delay for the pkarr publisher ([#2637](https://github.com/n0-computer/iroh/issues/2637)) - ([134dbee](https://github.com/n0-computer/iroh/commit/134dbeedc7242a8de57707c920bcedf7b12a6130))
+- Allow custom blob providing event handling ([#2583](https://github.com/n0-computer/iroh/issues/2583)) - ([bcc87a2](https://github.com/n0-computer/iroh/commit/bcc87a24c722362358c68251749b52eeaca31b53))
+
+### 🐛 Bug Fixes
+
+- *(ci)* Report flaky outupt only on success and failure ([#2627](https://github.com/n0-computer/iroh/issues/2627)) - ([8b6245e](https://github.com/n0-computer/iroh/commit/8b6245e3356df2e525a37512a44228ab52c864a9))
+- *(iroh-blobs)* Do not skip empty partial blobs in migration ([#2604](https://github.com/n0-computer/iroh/issues/2604)) - ([1c86dac](https://github.com/n0-computer/iroh/commit/1c86dace54e243f9d1a65634bf1bfc385d573236))
+- *(iroh-cli)* `cli_provide_addresses` to use the correct `iroh status` command ([#2649](https://github.com/n0-computer/iroh/issues/2649)) - ([717b3cd](https://github.com/n0-computer/iroh/commit/717b3cdd52be5cb0e71217e2097e8c5ec8162daf))
+- *(iroh-gossip)* Clarify docs and semantics of gossip joined event ([#2597](https://github.com/n0-computer/iroh/issues/2597)) - ([5d98a5c](https://github.com/n0-computer/iroh/commit/5d98a5cb8194be58aff995a6aa463c36571d5399))
+- *(tests)* For DNS discovery only use a local DNS server ([#2598](https://github.com/n0-computer/iroh/issues/2598)) - ([5eee643](https://github.com/n0-computer/iroh/commit/5eee643e8b52b40c7a48e41de2f9867403b30d79))
+
+### 🚜 Refactor
+
+- *(iroh)* [**breaking**] Convert node to net module ([#2642](https://github.com/n0-computer/iroh/issues/2642)) - ([6354e04](https://github.com/n0-computer/iroh/commit/6354e04f348dc4e0cc57411c0193880225d56141))
+- *(iroh,iroh-net)* [**breaking**] Prefer `remote` to `connection` in api ([#2610](https://github.com/n0-computer/iroh/issues/2610)) - ([9d06888](https://github.com/n0-computer/iroh/commit/9d068886f1c16d6a47ac3ce1c454369b00cd6de7))
+- *(iroh-blobs)* Use oneshot channel from oneshot crate ([#2624](https://github.com/n0-computer/iroh/issues/2624)) - ([2e01d47](https://github.com/n0-computer/iroh/commit/2e01d47e7b2d34341a9a23614bada43d54ab155f))
+- *(iroh-blobs)* [**breaking**] Expand docs ([#2638](https://github.com/n0-computer/iroh/issues/2638)) - ([217ac06](https://github.com/n0-computer/iroh/commit/217ac06b2128af9721ed6780a6bb2f0092a46ace))
+- *(iroh-blobs, iroh)* [**breaking**] Deprecate flat stores ([#2629](https://github.com/n0-computer/iroh/issues/2629)) - ([168fa5b](https://github.com/n0-computer/iroh/commit/168fa5b1e745576dc98f3f8c77fbc685126098ae))
+- *(iroh-bytes)* [**breaking**] Remove flume dependency ([#2622](https://github.com/n0-computer/iroh/issues/2622)) - ([e9c5088](https://github.com/n0-computer/iroh/commit/e9c5088c60862368113fe117d4a1d47d20b7c4ba))
+- *(iroh-cli)* [**breaking**] Metrics-addr cli arg, metrics off by default ([#2631](https://github.com/n0-computer/iroh/issues/2631)) - ([4df1c91](https://github.com/n0-computer/iroh/commit/4df1c91f4ddd66f680145b5656e3fb61b3faa4a7))
+- *(iroh-net)* [**breaking**] Remove async channel ([#2620](https://github.com/n0-computer/iroh/issues/2620)) - ([74a527b](https://github.com/n0-computer/iroh/commit/74a527b9699e5da06c0b85bcb32a873397906472))
+- *(iroh-net)* [**breaking**] Rename the local-swarm-discovery feature to discovery-local-network ([#2634](https://github.com/n0-computer/iroh/issues/2634)) - ([d1578ee](https://github.com/n0-computer/iroh/commit/d1578ee832da8f39efac1e916914557b9d219cde))
+- *(iroh-net)* Move all timeouts into one file ([#2641](https://github.com/n0-computer/iroh/issues/2641)) - ([bb808b4](https://github.com/n0-computer/iroh/commit/bb808b45b9c3041454c0f8497f3ed566154e1edf))
+- *(iroh-net,iroh)* Rename to remote_info_iter, fixup some docs ([#2645](https://github.com/n0-computer/iroh/issues/2645)) - ([b17bf1d](https://github.com/n0-computer/iroh/commit/b17bf1d55185cc9469719f02e6df7e174235a901))
+- Normalize feature names ([#2633](https://github.com/n0-computer/iroh/issues/2633)) - ([d02c21f](https://github.com/n0-computer/iroh/commit/d02c21f50f90e42a872ccf3f1b445723e22a5c1a))
+
+### 📚 Documentation
+
+- *(iroh-cli)* Fix help text for incomplete blobs ([#2615](https://github.com/n0-computer/iroh/issues/2615)) - ([ceb94da](https://github.com/n0-computer/iroh/commit/ceb94dab985400958da8f9902c6bde4ef5ccdc7c))
+- Also list `iroh-gossip` as a re-export ([#2606](https://github.com/n0-computer/iroh/issues/2606)) - ([3b7881c](https://github.com/n0-computer/iroh/commit/3b7881cccbd0b8fe09317695bd4c4808608cb149))
+
+### 🧪 Testing
+
+- *(iroh)* Reduce entry amount in `sync_gossip_bulk` ([#2608](https://github.com/n0-computer/iroh/issues/2608)) - ([a2d2ec6](https://github.com/n0-computer/iroh/commit/a2d2ec69e327da09b32e0e90a148d371e37d4f3a))
+- *(iroh)* Re-enable some flaky tests to see if they are still flaky ([#2458](https://github.com/n0-computer/iroh/issues/2458)) - ([b8f2b3f](https://github.com/n0-computer/iroh/commit/b8f2b3f4eb16d7f47020ef17f0fc7917ca1f7ee1))
+- *(iroh-cli)* Replace `cli_provide_one_file_large` with a faster test ([#2607](https://github.com/n0-computer/iroh/issues/2607)) - ([7494566](https://github.com/n0-computer/iroh/commit/7494566ef2da183f49b8d8e8418a33bebfb03bb0))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(ci)* Use nextests groups to isolate some tests ([#2617](https://github.com/n0-computer/iroh/issues/2617)) - ([a5072c3](https://github.com/n0-computer/iroh/commit/a5072c3a0a11d931b3fc4e95ac48c32f12959a5b))
+- Fix deps issues ([#2643](https://github.com/n0-computer/iroh/issues/2643)) - ([83f6fcc](https://github.com/n0-computer/iroh/commit/83f6fccc2c0de6db47daded6af206ea59711ec99))
+
+### Ref
+
+- *(iroh-net)* Move PathState to its own module ([#2587](https://github.com/n0-computer/iroh/issues/2587)) - ([2e937a8](https://github.com/n0-computer/iroh/commit/2e937a834d25c6ea003f6666099d73f72f3e09f3))
+
+## [0.22.0](https://github.com/n0-computer/iroh/compare/v0.21.0..v0.22.0) - 2024-08-05
 
 ### ⛰️  Features
 
@@ -54,6 +109,7 @@ All notable changes to iroh will be documented in this file.
 - *(iroh-net)* Remove need for relay info in best_addr ([#2579](https://github.com/n0-computer/iroh/issues/2579)) - ([d662bfc](https://github.com/n0-computer/iroh/commit/d662bfc663ad956bbb38716bd5b8022a699bfce4))
 - Fix clippy warnings ([#2550](https://github.com/n0-computer/iroh/issues/2550)) - ([73de21b](https://github.com/n0-computer/iroh/commit/73de21b35d6b83def03f51caca06c1931ea8ee77))
 - Generate docs for each PR ([#2547](https://github.com/n0-computer/iroh/issues/2547)) - ([0812333](https://github.com/n0-computer/iroh/commit/081233357d4dbe0cabe890009d674839d9de18be))
+- Release - ([d54a5de](https://github.com/n0-computer/iroh/commit/d54a5deb099754eaccd28fdb3cc8da93122f1376))
 
 ### Ref
 

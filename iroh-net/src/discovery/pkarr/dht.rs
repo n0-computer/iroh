@@ -73,6 +73,10 @@ struct Inner {
     ttl: u32,
     /// True to include the direct addresses in the DNS packet.
     include_direct_addresses: bool,
+    /// Initial delay before the first publish.
+    initial_publish_delay: Duration,
+    /// Republish delay for the DHT.
+    republish_delay: Duration,
 }
 
 /// Builder for PkarrNodeDiscovery.
@@ -86,6 +90,8 @@ pub struct Builder {
     pkarr_relay: Option<Url>,
     dht: bool,
     include_direct_addresses: bool,
+    initial_publish_delay: Duration,
+    republish_delay: Duration,
 }
 
 impl Default for Builder {
@@ -97,6 +103,8 @@ impl Default for Builder {
             pkarr_relay: None,
             dht: true,
             include_direct_addresses: false,
+            initial_publish_delay: INITIAL_PUBLISH_DELAY,
+            republish_delay: REPUBLISH_DELAY,
         }
     }
 }
@@ -146,6 +154,18 @@ impl Builder {
         self
     }
 
+    /// Set the initial delay before the first publish.
+    pub fn initial_publish_delay(mut self, initial_publish_delay: Duration) -> Self {
+        self.initial_publish_delay = initial_publish_delay;
+        self
+    }
+
+    /// Set the republish delay for the DHT.
+    pub fn republish_delay(mut self, republish_delay: Duration) -> Self {
+        self.republish_delay = republish_delay;
+        self
+    }
+
     /// Build the discovery mechanism.
     pub fn build(self) -> anyhow::Result<DhtDiscovery> {
         let pkarr = self
@@ -175,11 +195,13 @@ impl Builder {
         Ok(DhtDiscovery(Arc::new(Inner {
             pkarr,
             pkarr_relay,
-            secret_key: self.secret_key,
             ttl,
             relay_url,
             dht,
             include_direct_addresses,
+            secret_key: self.secret_key,
+            initial_publish_delay: self.initial_publish_delay,
+            republish_delay: self.republish_delay,
             task: Default::default(),
         })))
     }
@@ -199,7 +221,7 @@ impl DhtDiscovery {
             .to_z32();
         // initial delay. If the task gets aborted before this delay is over,
         // we have not published anything to the DHT yet.
-        tokio::time::sleep(INITIAL_PUBLISH_DELAY).await;
+        tokio::time::sleep(this.0.initial_publish_delay).await;
         loop {
             // publish to the DHT if enabled
             let dht_publish = async {
@@ -240,7 +262,7 @@ impl DhtDiscovery {
             };
             // do both at the same time
             tokio::join!(relay_publish, dht_publish);
-            tokio::time::sleep(REPUBLISH_DELAY).await;
+            tokio::time::sleep(this.0.republish_delay).await;
         }
     }
 
@@ -378,7 +400,7 @@ mod tests {
         let _ = tracing_subscriber::fmt::try_init();
         let ep = crate::Endpoint::builder().bind(0).await?;
         let secret = ep.secret_key().clone();
-        let testnet = mainline::dht::Testnet::new(5);
+        let testnet = mainline::dht::Testnet::new(2);
         let settings = pkarr::Settings {
             dht: DhtSettings {
                 bootstrap: Some(testnet.bootstrap.clone()),
@@ -389,6 +411,7 @@ mod tests {
         let client = PkarrClient::new(settings)?;
         let discovery = DhtDiscovery::builder()
             .secret_key(secret.clone())
+            .initial_publish_delay(Duration::ZERO)
             .client(client)
             .build()?;
         let relay_url: RelayUrl = Url::parse("https://example.com")?.into();

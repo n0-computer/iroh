@@ -5,12 +5,10 @@ use std::{net::Ipv4Addr, num::NonZeroU16, time::Duration};
 use rand::RngCore;
 use tracing::{debug, trace};
 
+use crate::defaults::timeouts::PCP_RECV_TIMEOUT as RECV_TIMEOUT;
 use crate::net::UdpSocket;
 
 mod protocol;
-
-/// Timeout to receive a response from a PCP server.
-const RECV_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Use the recommended port mapping lifetime for PMP, which is 2 hours. See
 /// <https://datatracker.ietf.org/doc/html/rfc6886#section-3.3>

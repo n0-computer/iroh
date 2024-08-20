@@ -125,3 +125,77 @@ pub mod staging {
         }
     }
 }
+
+/// Contains all timeouts that we use in `iroh-net`.
+pub(crate) mod timeouts {
+    use std::time::Duration;
+
+    // Timeouts for netcheck
+
+    /// Maximum duration to wait for a netcheck report.
+    pub(crate) const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// The maximum amount of time netcheck will spend gathering a single report.
+    pub(crate) const OVERALL_REPORT_TIMEOUT: Duration = Duration::from_secs(5);
+
+    /// The total time we wait for all the probes.
+    ///
+    /// This includes the STUN, ICMP and HTTPS probes, which will all
+    /// start at different times based on the ProbePlan.
+    pub(crate) const PROBES_TIMEOUT: Duration = Duration::from_secs(3);
+
+    /// How long to await for a captive-portal result.
+    ///
+    /// This delay is chosen so it starts after good-working STUN probes
+    /// would have finished, but not too long so the delay is bearable if
+    /// STUN is blocked.
+    pub(crate) const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
+
+    /// Timeout for captive portal checks
+    ///
+    /// Must be lower than [`OVERALL_REPORT_TIMEOUT`] minus
+    /// [`CAPTIVE_PORTAL_DELAY`].
+    pub(crate) const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
+
+    pub(crate) const DNS_TIMEOUT: Duration = Duration::from_secs(3);
+
+    /// The amount of time we wait for a hairpinned packet to come back.
+    pub(crate) const HAIRPIN_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
+
+    /// Maximum duration a UPnP search can take before timing out.
+    pub(crate) const UPNP_SEARCH_TIMEOUT: Duration = Duration::from_secs(1);
+
+    /// Timeout to receive a response from a PCP server.
+    pub(crate) const PCP_RECV_TIMEOUT: Duration = Duration::from_millis(500);
+
+    /// Default Pinger timeout
+    pub(crate) const DEFAULT_PINGER_TIMEOUT: Duration = Duration::from_secs(5);
+
+    /// Timeout to receive a response from a NAT-PMP server.
+    pub(crate) const NAT_PMP_RECV_TIMEOUT: Duration = Duration::from_millis(500);
+
+    /// Timeouts specifically used in the iroh-relay
+    pub(crate) mod relay {
+        use super::*;
+
+        /// Timeout used by the relay client while connecting to the relay server,
+        /// using `TcpStream::connect`
+        pub(crate) const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
+        /// Timeout for expecting a pong from the relay server
+        pub(crate) const PING_TIMEOUT: Duration = Duration::from_secs(5);
+        /// Timeout for the entire relay connection, which includes dns, dialing
+        /// the server, upgrading the connection, and completing the handshake
+        pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+        /// Timeout for our async dns resolver
+        pub(crate) const DNS_TIMEOUT: Duration = Duration::from_secs(1);
+
+        /// Maximum time the client will wait to receive on the connection, since
+        /// the last message. Longer than this time and the client will consider
+        /// the connection dead.
+        pub(crate) const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
+
+        /// Maximum time the server will attempt to get a successful write to the connection.
+        #[cfg(feature = "iroh-relay")]
+        pub(crate) const SERVER_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+    }
+}

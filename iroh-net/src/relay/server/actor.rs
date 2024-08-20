@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info_span, trace, Instrument};
 use tungstenite::protocol::Role;
 
+use crate::defaults::timeouts::relay::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT;
 use crate::key::{PublicKey, SecretKey};
 use crate::relay::http::Protocol;
 use crate::relay::server::streams::{MaybeTlsStream, RelayIo};
@@ -40,8 +41,6 @@ static CONN_NUM: AtomicUsize = AtomicUsize::new(1);
 fn new_conn_num() -> usize {
     CONN_NUM.fetch_add(1, Ordering::Relaxed)
 }
-
-pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The task for a running server actor.
 ///

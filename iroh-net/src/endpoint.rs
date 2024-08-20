@@ -717,7 +717,7 @@ impl Endpoint {
     /// calls may return different information. Furthermore, node information may even be
     /// completely evicted as it becomes stale.
     ///
-    /// See also [`Endpoint::remote_infos_iter`] which returns information on all nodes known
+    /// See also [`Endpoint::remote_info_iter`] which returns information on all nodes known
     /// by this [`Endpoint`].
     pub fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
         self.msock.remote_info(node_id)
@@ -733,7 +733,7 @@ impl Endpoint {
     /// connection was ever made or is even possible.
     ///
     /// See also [`Endpoint::remote_info`] to only retrieve information about a single node.
-    pub fn remote_infos_iter(&self) -> impl Iterator<Item = RemoteInfo> {
+    pub fn remote_info_iter(&self) -> impl Iterator<Item = RemoteInfo> {
         self.msock.list_remote_infos().into_iter()
     }
 
@@ -1286,11 +1286,11 @@ mod tests {
         // first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), None).await;
-        assert_eq!(endpoint.remote_infos_iter().count(), 0);
+        assert_eq!(endpoint.remote_info_iter().count(), 0);
         endpoint.add_node_addr(node_addr.clone()).unwrap();
 
         // Grab the current addrs
-        let node_addrs: Vec<NodeAddr> = endpoint.remote_infos_iter().map(Into::into).collect();
+        let node_addrs: Vec<NodeAddr> = endpoint.remote_info_iter().map(Into::into).collect();
         assert_eq!(node_addrs.len(), 1);
         assert_eq!(node_addrs[0], node_addr);
 

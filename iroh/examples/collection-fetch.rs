@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
     println!("fetching hash:  {}", ticket.hash());
     println!("node id:        {}", node.node_id());
     println!("node listening addresses:");
-    let addrs = node.node_addr().await?;
+    let addrs = node.net().node_addr().await?;
     for addr in addrs.direct_addresses() {
         println!("\t{:?}", addr);
     }

@@ -18,7 +18,7 @@ pub(crate) mod docs;
 pub(crate) mod doctor;
 pub(crate) mod gen_api;
 pub(crate) mod gossip;
-pub(crate) mod node;
+pub(crate) mod net;
 pub(crate) mod rpc;
 pub(crate) mod start;
 pub(crate) mod tags;
@@ -194,6 +194,7 @@ impl Cli {
                 )
                 .await
             }
+
             Commands::Doctor { command } => {
                 let config = Self::load_config(self.config, self.metrics_addr).await?;
                 self::doctor::run(command, &config).await
