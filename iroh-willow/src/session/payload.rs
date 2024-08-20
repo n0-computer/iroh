@@ -130,12 +130,17 @@ impl CurrentPayload {
 
     pub async fn finalize(&mut self) -> Result<(), Error> {
         let state = self.0.take().ok_or(Error::InvalidMessageInCurrentState)?;
-        let writer = state
-            .writer
-            .ok_or_else(|| Error::InvalidMessageInCurrentState)?;
-        drop(writer.sender);
-        let (tag, len) = writer.fut.await.map_err(Error::PayloadStore)?;
-        if *tag.hash() != state.payload_digest.0 {
+        let (hash, len) = match state.writer {
+            Some(writer) => {
+                drop(writer.sender);
+                let (tag, len) = writer.fut.await.map_err(Error::PayloadStore)?;
+                (*tag.hash(), len)
+            }
+            // The writer is only empty if we did not receive any chunks. In this case, the
+            // "received data" is that of the empty hash with size 0.
+            None => (iroh_base::hash::Hash::EMPTY, 0),
+        };
+        if hash != state.payload_digest.0 {
             return Err(Error::PayloadDigestMismatch);
         }
         if len != state.expected_length {
@@ -145,9 +150,6 @@ impl CurrentPayload {
         // we could store a tag for each blob
         // however we really want reference counting here, not individual tags
         // can also fallback to the naive impl from iroh-docs to just protect all docs hashes on gc
-        // let hash_and_format = *tag.inner();
-        // let name = b"foo";
-        // store.set_tag(name, Some(hash_and_format));
         Ok(())
     }
 
