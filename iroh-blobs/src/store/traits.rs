@@ -2,14 +2,19 @@
 use std::{collections::BTreeSet, future::Future, io, path::PathBuf};
 
 use bao_tree::{
-    io::fsm::{BaoContentItem, Outboard},
+    io::{
+        fsm::{
+            encode_ranges_validated, BaoContentItem, Outboard, ResponseDecoder, ResponseDecoderNext,
+        },
+        DecodeError,
+    },
     BaoTree, ChunkRanges,
 };
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
-use iroh_io::AsyncSliceReader;
+use iroh_io::{AsyncSliceReader, AsyncStreamReader, AsyncStreamWriter};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
 
@@ -92,6 +97,26 @@ pub trait MapEntry: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn outboard(&self) -> impl Future<Output = io::Result<impl Outboard>> + Send;
     /// A future that resolves to a reader that can be used to read the data
     fn data_reader(&self) -> impl Future<Output = io::Result<impl AsyncSliceReader>> + Send;
+
+    /// Encodes data and outboard into a stream which can be imported with [`Store::import_verifiable_stream`].
+    ///
+    /// Returns immediately without error if `start` is equal or larger than the entry's size.
+    fn write_verifiable_stream<'a>(
+        &'a self,
+        start: u64,
+        writer: impl AsyncStreamWriter + 'a,
+    ) -> impl Future<Output = io::Result<()>> + 'a {
+        async move {
+            let size = self.size().value();
+            if start >= size {
+                return Ok(());
+            }
+            let ranges = range_from_offset_and_length(start, size - start);
+            let (outboard, data) = tokio::try_join!(self.outboard(), self.data_reader())?;
+            encode_ranges_validated(data, outboard, &ranges, writer).await?;
+            Ok(())
+        }
+    }
 }
 
 /// A generic map from hashes to bao blobs (blobs with bao outboards).
@@ -343,6 +368,70 @@ pub trait Store: ReadableStore + MapMut + std::fmt::Debug {
         self.import_stream(stream, format, progress)
     }
 
+    /// Import a blob from a verified stream, as emitted by [`MapEntry::write_verifiable_stream`];
+    fn import_verifiable_stream<'a>(
+        &'a self,
+        hash: Hash,
+        total_size: u64,
+        stream_offset: u64,
+        reader: impl AsyncStreamReader + 'a,
+    ) -> impl Future<Output = io::Result<()>> + 'a {
+        async move {
+            if stream_offset >= total_size {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "offset must not be greater than total_size",
+                ));
+            }
+            let entry = self.get_or_create(hash, total_size).await?;
+            let mut bw = entry.batch_writer().await?;
+
+            let ranges = range_from_offset_and_length(stream_offset, total_size - stream_offset);
+            let mut decoder = ResponseDecoder::new(
+                hash.into(),
+                ranges,
+                BaoTree::new(total_size, IROH_BLOCK_SIZE),
+                reader,
+            );
+            let size = decoder.tree().size();
+            let mut buf = Vec::new();
+            let is_complete = loop {
+                decoder = match decoder.next().await {
+                    ResponseDecoderNext::More((decoder, item)) => {
+                        let item = match item {
+                            Err(DecodeError::LeafNotFound(_) | DecodeError::ParentNotFound(_)) => {
+                                break false
+                            }
+                            Err(err) => return Err(err.into()),
+                            Ok(item) => item,
+                        };
+                        match &item {
+                            BaoContentItem::Parent(_) => {
+                                buf.push(item);
+                            }
+                            BaoContentItem::Leaf(_) => {
+                                buf.push(item);
+                                let batch = std::mem::take(&mut buf);
+                                bw.write_batch(size, batch).await?;
+                            }
+                        }
+                        decoder
+                    }
+                    ResponseDecoderNext::Done(_reader) => {
+                        debug_assert!(buf.is_empty(), "last node of bao tree must be leaf node");
+                        break true;
+                    }
+                };
+            };
+            bw.sync().await?;
+            drop(bw);
+            if is_complete {
+                self.insert_complete(entry).await?;
+            }
+            Ok(())
+        }
+    }
+
     /// Set a tag
     fn set_tag(
         &self,
@@ -416,6 +505,11 @@ pub trait Store: ReadableStore + MapMut + std::fmt::Debug {
     ) -> impl Future<Output = io::Result<()>> + Send {
         validate_impl(self, repair, tx)
     }
+}
+
+fn range_from_offset_and_length(offset: u64, length: u64) -> bao_tree::ChunkRanges {
+    let ranges = bao_tree::ByteRanges::from(offset..(offset + length));
+    bao_tree::io::round_up_to_chunks(&ranges)
 }
 
 async fn validate_impl(

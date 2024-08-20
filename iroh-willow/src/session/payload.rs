@@ -1,19 +1,26 @@
+use std::io;
+
 use bytes::Bytes;
-use futures_lite::{future::BoxedLocal, FutureExt};
+use futures_concurrency::future::TryJoin;
+use futures_lite::StreamExt;
+use futures_util::TryFutureExt;
 use iroh_blobs::{
-    store::{bao_tree::io::fsm::AsyncSliceReader, MapEntry, Store as PayloadStore},
-    util::progress::IgnoreProgressSender,
-    TempTag,
+    store::{MapEntry, Store as PayloadStore},
+    Hash, HashAndFormat, TempTag,
 };
+use iroh_io::TokioStreamReader;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
     proto::{data_model::PayloadDigest, wgps::Message},
     session::channels::ChannelSenders,
+    util::pipe::chunked_pipe,
 };
 
 use super::Error;
 
-pub const DEFAULT_CHUNK_SIZE: usize = 1024 * 64;
+const CHUNK_SIZE: usize = 1024 * 32;
 
 /// Send a payload in chunks.
 ///
@@ -25,30 +32,31 @@ pub async fn send_payload_chunked<P: PayloadStore>(
     digest: PayloadDigest,
     payload_store: &P,
     senders: &ChannelSenders,
-    chunk_size: usize,
+    offset: u64,
     map: impl Fn(Bytes) -> Message,
 ) -> Result<bool, Error> {
-    let payload_entry = payload_store
-        .get(&digest.0)
+    let hash: Hash = digest.into();
+    let entry = payload_store
+        .get(&hash)
         .await
         .map_err(Error::PayloadStore)?;
-    if let Some(entry) = payload_entry {
-        let mut reader = entry.data_reader().await.map_err(Error::PayloadStore)?;
-        let len: u64 = entry.size().value();
-        let mut pos = 0;
-        while pos < len {
-            let bytes = reader
-                .read_at(pos, chunk_size)
-                .await
-                .map_err(Error::PayloadStore)?;
-            pos += bytes.len() as u64;
+    let Some(entry) = entry else {
+        return Ok(false);
+    };
+
+    let (writer, mut reader) = chunked_pipe(CHUNK_SIZE);
+    let write_stream_fut = entry
+        .write_verifiable_stream(offset, writer)
+        .map_err(Error::PayloadStore);
+    let send_fut = async {
+        while let Some(bytes) = reader.try_next().await.map_err(Error::PayloadStore)? {
             let msg = map(bytes);
             senders.send(msg).await?;
         }
-        Ok(true)
-    } else {
-        Ok(false)
-    }
+        Ok(())
+    };
+    (write_stream_fut, send_fut).try_join().await?;
+    Ok(true)
 }
 
 #[derive(Debug, Default)]
@@ -59,33 +67,39 @@ struct CurrentPayloadInner {
     payload_digest: PayloadDigest,
     expected_length: u64,
     received_length: u64,
+    total_length: u64,
+    offset: u64,
     writer: Option<PayloadWriter>,
 }
 
 #[derive(derive_more::Debug)]
 struct PayloadWriter {
-    #[debug(skip)]
-    fut: BoxedLocal<std::io::Result<(TempTag, u64)>>,
-    sender: flume::Sender<std::io::Result<Bytes>>,
+    tag: TempTag,
+    task: tokio::task::JoinHandle<io::Result<()>>,
+    sender: mpsc::Sender<io::Result<Bytes>>,
 }
 
 impl CurrentPayload {
-    // pub fn new() -> Self {
-    //     Self::default()
-    // }
-
+    /// Set the payload to be received.
     pub fn set(
         &mut self,
         payload_digest: PayloadDigest,
-        expected_length: u64,
+        total_length: u64,
+        available_length: Option<u64>,
+        offset: Option<u64>,
     ) -> Result<(), Error> {
         if self.0.is_some() {
             return Err(Error::InvalidMessageInCurrentState);
         }
+        let offset = offset.unwrap_or(0);
+        let available_length = available_length.unwrap_or(total_length);
+        let expected_length = available_length - offset;
         self.0 = Some(CurrentPayloadInner {
             payload_digest,
             writer: None,
             expected_length,
+            total_length,
+            offset,
             received_length: 0,
         });
         Ok(())
@@ -99,24 +113,29 @@ impl CurrentPayload {
         let state = self.0.as_mut().ok_or(Error::InvalidMessageInCurrentState)?;
         let len = chunk.len();
         let store = store.clone();
-        let writer = state.writer.get_or_insert_with(move || {
-            let (tx, rx) = flume::bounded(1);
+        let writer = state.writer.get_or_insert_with(|| {
+            let (tx, rx) = tokio::sync::mpsc::channel(2);
             let store = store.clone();
+            let hash: Hash = state.payload_digest.into();
+            let total_length = state.total_length;
+            let offset = state.offset;
+            let tag = store.temp_tag(HashAndFormat::raw(hash));
+            let mut reader =
+                TokioStreamReader(tokio_util::io::StreamReader::new(ReceiverStream::new(rx)));
             let fut = async move {
                 store
-                    .import_stream(
-                        rx.into_stream(),
-                        iroh_blobs::BlobFormat::Raw,
-                        IgnoreProgressSender::default(),
-                    )
-                    .await
+                    .import_verifiable_stream(hash, total_length, offset, &mut reader)
+                    .await?;
+                Ok(())
             };
+            let task = tokio::task::spawn_local(fut);
             PayloadWriter {
-                fut: fut.boxed_local(),
+                tag,
+                task,
                 sender: tx,
             }
         });
-        writer.sender.send_async(Ok(chunk)).await?;
+        writer.sender.send(Ok(chunk)).await?;
         state.received_length += len as u64;
         Ok(())
     }
@@ -130,32 +149,24 @@ impl CurrentPayload {
 
     pub async fn finalize(&mut self) -> Result<(), Error> {
         let state = self.0.take().ok_or(Error::InvalidMessageInCurrentState)?;
-        let (hash, len) = match state.writer {
-            Some(writer) => {
-                drop(writer.sender);
-                let (tag, len) = writer.fut.await.map_err(Error::PayloadStore)?;
-                (*tag.hash(), len)
-            }
-            // The writer is only empty if we did not receive any chunks. In this case, the
-            // "received data" is that of the empty hash with size 0.
-            None => (iroh_base::hash::Hash::EMPTY, 0),
-        };
-        if hash != state.payload_digest.0 {
-            return Err(Error::PayloadDigestMismatch);
+        // The writer is only set if we received at least one payload chunk.
+        if let Some(writer) = state.writer {
+            drop(writer.sender);
+            writer
+                .task
+                .await
+                .expect("payload writer panicked")
+                .map_err(Error::PayloadStore)?;
+            // TODO: Make sure blobs referenced from entries are protected from GC by now.
+            drop(writer.tag);
         }
-        if len != state.expected_length {
-            return Err(Error::PayloadDigestMismatch);
-        }
-        // TODO: protect from gc
-        // we could store a tag for each blob
-        // however we really want reference counting here, not individual tags
-        // can also fallback to the naive impl from iroh-docs to just protect all docs hashes on gc
         Ok(())
     }
 
     pub fn is_active(&self) -> bool {
         self.0.as_ref().map(|s| s.writer.is_some()).unwrap_or(false)
     }
+
     pub fn ensure_none(&self) -> Result<(), Error> {
         if self.is_active() {
             Err(Error::InvalidMessageInCurrentState)
