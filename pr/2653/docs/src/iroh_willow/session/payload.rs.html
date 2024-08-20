@@ -297,11 +297,11 @@
             <span class="kw">let </span>total_length = state.total_length;
             <span class="kw">let </span>offset = state.offset;
             <span class="kw">let </span>tag = store.temp_tag(HashAndFormat::raw(hash));
-            <span class="kw">let </span>reader =
+            <span class="kw">let </span><span class="kw-2">mut </span>reader =
                 TokioStreamReader(tokio_util::io::StreamReader::new(ReceiverStream::new(rx)));
             <span class="kw">let </span>fut = <span class="kw">async move </span>{
                 store
-                    .import_verifiable_stream(hash, total_length, offset, reader)
+                    .import_verifiable_stream(hash, total_length, offset, <span class="kw-2">&amp;mut </span>reader)
                     .<span class="kw">await</span><span class="question-mark">?</span>;
                 <span class="prelude-val">Ok</span>(())
             };

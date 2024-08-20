@@ -989,12 +989,21 @@
 <a href="#989" id="989">989</a>
 <a href="#990" id="990">990</a>
 <a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
+<a href="#997" id="997">997</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 </span><span class="kw">use </span>std::{collections::BTreeSet, future::Future, io, path::PathBuf};
 
 <span class="kw">use </span>bao_tree::{
-    io::fsm::{
-        encode_ranges_validated, BaoContentItem, Outboard, ResponseDecoder, ResponseDecoderNext,
+    io::{
+        fsm::{
+            encode_ranges_validated, BaoContentItem, Outboard, ResponseDecoder, ResponseDecoderNext,
+        },
+        DecodeError,
     },
     BaoTree, ChunkRanges,
 };
@@ -1357,15 +1366,15 @@
     }
 
     <span class="doccomment">/// Import a blob from a verified stream, as emitted by [`MapEntry::write_verifiable_stream`];
-    </span><span class="kw">fn </span>import_verifiable_stream(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
+    </span><span class="kw">fn </span>import_verifiable_stream&lt;<span class="lifetime">'a</span>&gt;(
+        <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
         hash: Hash,
         total_size: u64,
-        offset: u64,
-        reader: <span class="kw">impl </span>AsyncStreamReader + <span class="lifetime">'static</span>,
-    ) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;()&gt;&gt; + <span class="lifetime">'_ </span>{
+        stream_offset: u64,
+        reader: <span class="kw">impl </span>AsyncStreamReader + <span class="lifetime">'a</span>,
+    ) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;()&gt;&gt; + <span class="lifetime">'a </span>{
         <span class="kw">async move </span>{
-            <span class="kw">if </span>offset &gt;= total_size {
+            <span class="kw">if </span>stream_offset &gt;= total_size {
                 <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     <span class="string">"offset must not be greater than total_size"</span>,
@@ -1374,7 +1383,7 @@
             <span class="kw">let </span>entry = <span class="self">self</span>.get_or_create(hash, total_size).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>bw = entry.batch_writer().<span class="kw">await</span><span class="question-mark">?</span>;
 
-            <span class="kw">let </span>ranges = range_from_offset_and_length(offset, total_size - offset);
+            <span class="kw">let </span>ranges = range_from_offset_and_length(stream_offset, total_size - stream_offset);
             <span class="kw">let </span><span class="kw-2">mut </span>decoder = ResponseDecoder::new(
                 hash.into(),
                 ranges,
@@ -1383,10 +1392,16 @@
             );
             <span class="kw">let </span>size = decoder.tree().size();
             <span class="kw">let </span><span class="kw-2">mut </span>buf = Vec::new();
-            <span class="kw">loop </span>{
+            <span class="kw">let </span>is_complete = <span class="kw">loop </span>{
                 decoder = <span class="kw">match </span>decoder.next().<span class="kw">await </span>{
                     ResponseDecoderNext::More((decoder, item)) =&gt; {
-                        <span class="kw">let </span>item = item<span class="question-mark">?</span>;
+                        <span class="kw">let </span>item = <span class="kw">match </span>item {
+                            <span class="prelude-val">Err</span>(DecodeError::LeafNotFound(<span class="kw">_</span>) | DecodeError::ParentNotFound(<span class="kw">_</span>)) =&gt; {
+                                <span class="kw">break </span><span class="bool-val">false
+                            </span>}
+                            <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(err.into()),
+                            <span class="prelude-val">Ok</span>(item) =&gt; item,
+                        };
                         <span class="kw">match </span><span class="kw-2">&amp;</span>item {
                             BaoContentItem::Parent(<span class="kw">_</span>) =&gt; {
                                 buf.push(item);
@@ -1400,19 +1415,16 @@
                         decoder
                     }
                     ResponseDecoderNext::Done(_reader) =&gt; {
-                        <span class="kw">if </span>!buf.is_empty() {
-                            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                <span class="string">"received invalid last item"</span>,
-                            ));
-                        }
-                        <span class="kw">break</span>;
+                        <span class="macro">debug_assert!</span>(buf.is_empty(), <span class="string">"last node of bao tree must be leaf node"</span>);
+                        <span class="kw">break </span><span class="bool-val">true</span>;
                     }
                 };
-            }
+            };
             bw.sync().<span class="kw">await</span><span class="question-mark">?</span>;
             drop(bw);
-            <span class="self">self</span>.insert_complete(entry).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">if </span>is_complete {
+                <span class="self">self</span>.insert_complete(entry).<span class="kw">await</span><span class="question-mark">?</span>;
+            }
             <span class="prelude-val">Ok</span>(())
         }
     }
