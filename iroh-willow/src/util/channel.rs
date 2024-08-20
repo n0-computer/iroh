@@ -1,10 +1,13 @@
 use std::{
-    cmp,
+    cmp::{self},
     future::poll_fn,
     io,
     marker::PhantomData,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
     task::{self, Poll, Waker},
 };
 
@@ -115,6 +118,13 @@ impl Guarantees {
 /// Roughly modeled after https://docs.rs/tokio/latest/src/tokio/io/util/mem.rs.html#58
 #[derive(Debug)]
 struct Shared {
+    inner: Mutex<Inner>,
+    sender_count: AtomicUsize,
+    receiver_count: AtomicUsize,
+}
+
+#[derive(Debug)]
+struct Inner {
     buf: BytesMut,
     max_buffer_size: usize,
     write_wakers: Vec<Waker>,
@@ -124,8 +134,8 @@ struct Shared {
 }
 
 impl Shared {
-    fn new(max_buffer_size: usize, guarantees: Guarantees) -> Arc<Mutex<Self>> {
-        let shared = Self {
+    fn new(max_buffer_size: usize, guarantees: Guarantees) -> Arc<Self> {
+        let inner = Inner {
             buf: BytesMut::new(),
             max_buffer_size,
             write_wakers: Default::default(),
@@ -133,9 +143,20 @@ impl Shared {
             is_closed: false,
             guarantees,
         };
-        Arc::new(Mutex::new(shared))
+        let shared = Self {
+            inner: Mutex::new(inner),
+            sender_count: AtomicUsize::new(1),
+            receiver_count: AtomicUsize::new(1),
+        };
+        Arc::new(shared)
     }
 
+    fn lock(&self) -> std::sync::LockResult<MutexGuard<'_, Inner>> {
+        self.inner.lock()
+    }
+}
+
+impl Inner {
     // fn set_max_buffer_size(&mut self, max_buffer_size: usize) -> bool {
     //     if max_buffer_size >= self.buf.len() {
     //         self.max_buffer_size = max_buffer_size;
@@ -300,7 +321,7 @@ impl Shared {
 /// Asynchronous reader to read bytes from a channel.
 #[derive(Debug)]
 pub struct Reader {
-    shared: Arc<Mutex<Shared>>,
+    shared: Arc<Shared>,
 }
 
 impl Reader {
@@ -324,7 +345,7 @@ impl Reader {
 /// The writer implements [`AsyncWrite`].
 #[derive(Debug)]
 pub struct Writer {
-    shared: Arc<Mutex<Shared>>,
+    shared: Arc<Shared>,
 }
 
 impl Writer {
@@ -368,7 +389,7 @@ impl AsyncWrite for Writer {
 
 #[derive(Debug)]
 pub struct Sender<T> {
-    shared: Arc<Mutex<Shared>>,
+    shared: Arc<Shared>,
     _ty: PhantomData<T>,
 }
 
@@ -400,7 +421,7 @@ impl<T: Encoder> Sender<T> {
 
 #[derive(Debug)]
 pub struct Receiver<T> {
-    shared: Arc<Mutex<Shared>>,
+    shared: Arc<Shared>,
     _ty: PhantomData<T>,
 }
 
@@ -434,8 +455,9 @@ impl<T: Decoder> Stream for Receiver<T> {
     }
 }
 
-impl<T> Clone for Receiver<T> {
+impl<T> Clone for Sender<T> {
     fn clone(&self) -> Self {
+        self.shared.sender_count.fetch_add(1, Ordering::Relaxed);
         Self {
             shared: Arc::clone(&self.shared),
             _ty: PhantomData,
@@ -443,11 +465,34 @@ impl<T> Clone for Receiver<T> {
     }
 }
 
-impl<T> Clone for Sender<T> {
-    fn clone(&self) -> Self {
-        Self {
-            shared: Arc::clone(&self.shared),
-            _ty: PhantomData,
+impl<T> Drop for Sender<T> {
+    fn drop(&mut self) {
+        if self.shared.sender_count.fetch_sub(1, Ordering::Relaxed) == 1 {
+            self.shared.lock().unwrap().close();
+        }
+    }
+}
+
+impl Drop for Writer {
+    fn drop(&mut self) {
+        if self.shared.sender_count.fetch_sub(1, Ordering::Relaxed) == 1 {
+            self.shared.lock().unwrap().close();
+        }
+    }
+}
+
+impl Drop for Reader {
+    fn drop(&mut self) {
+        if self.shared.receiver_count.fetch_sub(1, Ordering::Relaxed) == 1 {
+            self.shared.lock().unwrap().close();
+        }
+    }
+}
+
+impl<T> Drop for Receiver<T> {
+    fn drop(&mut self) {
+        if self.shared.receiver_count.fetch_sub(1, Ordering::Relaxed) == 1 {
+            self.shared.lock().unwrap().close();
         }
     }
 }
