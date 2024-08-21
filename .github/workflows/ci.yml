@@ -428,6 +428,16 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.5
 
+      - name: Build iroh
+        run: cargo build --release --workspace --all-features
+
+      - name: Prep bins
+        run: |
+          mkdir -p bins/linux/amd64
+          cp target/release/iroh bins/linux/amd64/iroh
+          cp target/release/iroh-relay bins/linux/amd64/iroh-relay
+          cp target/release/iroh-dns-server bins/linux/amd64/iroh-dns-server
+
       - name: Cleanup Docker
         continue-on-error: true
         run: |
@@ -441,11 +451,10 @@ jobs:
         with:
           context: .
           push: false
-          load: true
           tags: n0computer/iroh-test:latest
           target: iroh
           platforms: linux/amd64
-          file: docker/Dockerfile
+          file: docker/Dockerfile.ci
 
       - name: Run Docker image & stats test
         run: |
