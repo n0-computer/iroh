@@ -813,7 +813,8 @@ impl MagicSock {
                         while start < meta.len {
                             let end = (start + meta.stride).min(meta.len);
                             let first = &buf[start];
-                            if *first & 0x40 == 1 {
+                            let bit_set = (first & 0x40) != 0;
+                            if bit_set {
                                 tracing::error!(
                                     me = %self.me,
                                     peer = %node_id.fmt_short(),
