@@ -19,7 +19,7 @@ debug = true
 
 [profile.dev-ci]
 inherits = 'dev'
-opt-level = 1 
+opt-level = 2 
 
 [profile.optimized-release]
 inherits = 'release'
