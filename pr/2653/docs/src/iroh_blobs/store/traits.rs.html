@@ -995,6 +995,15 @@
 <a href="#995" id="995">995</a>
 <a href="#996" id="996">996</a>
 <a href="#997" id="997">997</a>
+<a href="#998" id="998">998</a>
+<a href="#999" id="999">999</a>
+<a href="#1000" id="1000">1000</a>
+<a href="#1001" id="1001">1001</a>
+<a href="#1002" id="1002">1002</a>
+<a href="#1003" id="1003">1003</a>
+<a href="#1004" id="1004">1004</a>
+<a href="#1005" id="1005">1005</a>
+<a href="#1006" id="1006">1006</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 </span><span class="kw">use </span>std::{collections::BTreeSet, future::Future, io, path::PathBuf};
 
@@ -1095,20 +1104,25 @@
     <span class="doccomment">/// A future that resolves to a reader that can be used to read the data
     </span><span class="kw">fn </span>data_reader(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;<span class="kw">impl </span>AsyncSliceReader&gt;&gt; + Send;
 
-    <span class="doccomment">/// Encodes data and outboard into a stream which can be imported with [`Store::import_verifiable_stream`].
+    <span class="doccomment">/// Encodes data and outboard into a [`AsyncStreamWriter`].
+    ///
+    /// Data and outboard parts will be interleaved.
+    ///
+    /// `offset` is the byte offset in the blob to start the stream from. It will be rounded down to
+    /// the next chunk group.
     ///
     /// Returns immediately without error if `start` is equal or larger than the entry's size.
     </span><span class="kw">fn </span>write_verifiable_stream&lt;<span class="lifetime">'a</span>&gt;(
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
-        start: u64,
+        offset: u64,
         writer: <span class="kw">impl </span>AsyncStreamWriter + <span class="lifetime">'a</span>,
     ) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;()&gt;&gt; + <span class="lifetime">'a </span>{
         <span class="kw">async move </span>{
             <span class="kw">let </span>size = <span class="self">self</span>.size().value();
-            <span class="kw">if </span>start &gt;= size {
+            <span class="kw">if </span>offset &gt;= size {
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(());
             }
-            <span class="kw">let </span>ranges = range_from_offset_and_length(start, size - start);
+            <span class="kw">let </span>ranges = range_from_offset_and_length(offset, size - offset);
             <span class="kw">let </span>(outboard, data) = <span class="macro">tokio::try_join!</span>(<span class="self">self</span>.outboard(), <span class="self">self</span>.data_reader())<span class="question-mark">?</span>;
             encode_ranges_validated(data, outboard, <span class="kw-2">&amp;</span>ranges, writer).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="prelude-val">Ok</span>(())
@@ -1366,15 +1380,19 @@
     }
 
     <span class="doccomment">/// Import a blob from a verified stream, as emitted by [`MapEntry::write_verifiable_stream`];
+    ///
+    /// `total_size` is the total size of the blob as reported by the remote.
+    /// `offset` is the byte offset in the blob where the stream starts. It will be rounded
+    /// to the next chunk group.
     </span><span class="kw">fn </span>import_verifiable_stream&lt;<span class="lifetime">'a</span>&gt;(
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
         hash: Hash,
         total_size: u64,
-        stream_offset: u64,
+        offset: u64,
         reader: <span class="kw">impl </span>AsyncStreamReader + <span class="lifetime">'a</span>,
     ) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;()&gt;&gt; + <span class="lifetime">'a </span>{
         <span class="kw">async move </span>{
-            <span class="kw">if </span>stream_offset &gt;= total_size {
+            <span class="kw">if </span>offset &gt;= total_size {
                 <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     <span class="string">"offset must not be greater than total_size"</span>,
@@ -1383,7 +1401,7 @@
             <span class="kw">let </span>entry = <span class="self">self</span>.get_or_create(hash, total_size).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>bw = entry.batch_writer().<span class="kw">await</span><span class="question-mark">?</span>;
 
-            <span class="kw">let </span>ranges = range_from_offset_and_length(stream_offset, total_size - stream_offset);
+            <span class="kw">let </span>ranges = range_from_offset_and_length(offset, total_size - offset);
             <span class="kw">let </span><span class="kw-2">mut </span>decoder = ResponseDecoder::new(
                 hash.into(),
                 ranges,

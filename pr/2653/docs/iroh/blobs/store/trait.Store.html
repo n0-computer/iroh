@@ -47,7 +47,7 @@
         &amp;'a self,
         hash: <a class="struct" href="../struct.Hash.html" title="struct iroh::blobs::Hash">Hash</a>,
         total_size: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>,
-        stream_offset: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>,
+        offset: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>,
         reader: impl AsyncStreamReader + 'a
     ) -&gt; impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/future/future/trait.Future.html" title="trait core::future::future::Future">Future</a>&lt;Output = <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, <a class="struct" href="https://doc.rust-lang.org/nightly/std/io/error/struct.Error.html" title="struct std::io::error::Error">Error</a>&gt;&gt; + 'a { ... }
 <span class="item-spacer"></span>    fn <a href="#method.gc_mark" class="fn">gc_mark</a>(
@@ -120,9 +120,12 @@ bad state. The gc task will shut itself down if this fails.</p>
     &amp;'a self,
     hash: <a class="struct" href="../struct.Hash.html" title="struct iroh::blobs::Hash">Hash</a>,
     total_size: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>,
-    stream_offset: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>,
+    offset: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>,
     reader: impl AsyncStreamReader + 'a
 ) -&gt; impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/future/future/trait.Future.html" title="trait core::future::future::Future">Future</a>&lt;Output = <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, <a class="struct" href="https://doc.rust-lang.org/nightly/std/io/error/struct.Error.html" title="struct std::io::error::Error">Error</a>&gt;&gt; + 'a</h4></section></summary><div class="docblock"><p>Import a blob from a verified stream, as emitted by <a href="trait.MapEntry.html#method.write_verifiable_stream" title="method iroh::blobs::store::MapEntry::write_verifiable_stream"><code>MapEntry::write_verifiable_stream</code></a>;</p>
+<p><code>total_size</code> is the total size of the blob as reported by the remote.
+<code>offset</code> is the byte offset in the blob where the stream starts. It will be rounded
+to the next chunk group.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.gc_mark" class="method"><h4 class="code-header">fn <a href="#method.gc_mark" class="fn">gc_mark</a>(
     &amp;self,
     live: &amp;mut <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/collections/btree/set/struct.BTreeSet.html" title="struct alloc::collections::btree::set::BTreeSet">BTreeSet</a>&lt;<a class="struct" href="../struct.Hash.html" title="struct iroh::blobs::Hash">Hash</a>&gt;
