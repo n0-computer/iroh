@@ -492,6 +492,20 @@ impl MagicSock {
             .get_send_addrs(dest, self.ipv6_reported.load(Ordering::Relaxed))
         {
             Some((node_id, udp_addr, relay_url, msgs)) => {
+                let path = match (udp_addr.is_some(), relay_url.is_some()) {
+                    (true, true) => "all",
+                    (false, true) => "rel",
+                    (true, false) => "udp",
+                    (false, false) => "non",
+                };
+                tracing::error!(
+                    me = %self.me,
+                    peer = %node_id.fmt_short(),
+                    %path,
+                    hash = hash(transmit.contents),
+                    len = transmit.contents.len(),
+                    "SEND"
+                );
                 let mut pings_sent = false;
                 // If we have pings to send, we *have* to send them out first.
                 if !msgs.is_empty() {
@@ -746,11 +760,8 @@ impl MagicSock {
             let mut quic_packets_count = 0;
 
             // find disco and stun packets and forward them to the actor
-            loop {
-                let end = start + meta.stride;
-                if end > meta.len {
-                    break;
-                }
+            while start < meta.len {
+                let end = (start + meta.stride).min(meta.len);
                 let packet = &buf[start..end];
                 let packet_is_quic = if stun::is(packet) {
                     trace!(src = %meta.addr, len = %meta.stride, "UDP recv: stun packet");
@@ -798,6 +809,19 @@ impl MagicSock {
                         meta.len = 0;
                     }
                     Some((node_id, quic_mapped_addr)) => {
+                        let mut start = 0;
+                        while start < meta.len {
+                            let end = (start + meta.stride).min(meta.len);
+                            tracing::error!(
+                                me = %self.me,
+                                peer = %node_id.fmt_short(),
+                                path = %"udp",
+                                hash = hash(&buf[start..end]),
+                                len = end - start,
+                                "RECV"
+                            );
+                            start = end;
+                        }
                         trace!(
                             src = ?meta.addr,
                             mapped = %quic_mapped_addr,
@@ -865,6 +889,19 @@ impl MagicSock {
                         hash = hash(bytes.as_ref()),
                         "recv quic packets from relay"
                     );
+                    let mut start = 0;
+                    while start < meta.len {
+                        let end = (start + meta.stride).min(meta.len);
+                        tracing::error!(
+                            me = %self.me,
+                            peer = %node_id.fmt_short(),
+                            path = %"rel",
+                            hash = hash(bytes.as_ref()),
+                            len = end - start,
+                            "RECV"
+                        );
+                        start = end;
+                    }
                     buf_out[..bytes.len()].copy_from_slice(&bytes);
                     *meta_out = meta;
                     num_msgs += 1;
@@ -1230,6 +1267,7 @@ impl MagicSock {
         Ok(())
     }
 
+    // TODO(Frando): This is never called, it seems?
     fn poll_send_relay(
         &self,
         url: &RelayUrl,
