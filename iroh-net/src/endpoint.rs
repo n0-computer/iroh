@@ -259,7 +259,7 @@ impl Builder {
     /// This key should normally remain secret but can be useful to debug networking issues
     /// by decrypting captured traffic.
     ///
-    /// If *keylog* is `true` then setting the `KEYLOGFILE` environment variable to a
+    /// If *keylog* is `true` then setting the `SSLKEYLOGFILE` environment variable to a
     /// filename will result in this file being used to log the TLS pre-master keys.
     pub fn keylog(mut self, keylog: bool) -> Self {
         self.keylog = keylog;
