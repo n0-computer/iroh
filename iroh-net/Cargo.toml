@@ -120,7 +120,7 @@ testdir = "0.9.1"
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 iroh-test = { path = "../iroh-test" }
-iroh-net = { path = ".", features = ["iroh-relay"] }
+iroh-net = { path = ".", features = ["iroh-relay", "test-utils"] }
 serde_json = "1.0.107"
 testresult = "0.4.0"
 mainline = "2.0.1"
