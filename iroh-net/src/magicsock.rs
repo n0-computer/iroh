@@ -525,10 +525,12 @@ impl MagicSock {
                     match self.try_send_udp(addr, &transmit) {
                         Ok(()) => {
                             trace!(
-                                node = %node_id.fmt_short(),
+                                from = %self.me,
+                                to = %node_id.fmt_short(),
                                 dst = %addr,
                                 mapped = %dest,
                                 len = transmit.segment_size.unwrap_or(transmit.contents.len()),
+                                hash = hash(transmit.contents),
                                 "sent transmit over UDP"
                             );
                             udp_sent = true;
@@ -627,13 +629,26 @@ impl MagicSock {
         node: NodeId,
         contents: RelayContents,
     ) -> io::Result<()> {
-        trace!(
-            node = %node.fmt_short(),
-            relay_url = %url,
-            count = contents.len(),
-            len = contents.iter().map(|c| c.len()).sum::<usize>(),
-            "send relay",
-        );
+        if contents.len() == 1 {
+            trace!(
+                from = %self.me,
+                to = %node.fmt_short(),
+                relay_url = %url,
+                count = contents.len(),
+                len = contents.iter().map(|c| c.len()).sum::<usize>(),
+                hash = hash(&contents[0]),
+                "send relay",
+            );
+        } else {
+            trace!(
+                from = %self.me,
+                to = %node.fmt_short(),
+                relay_url = %url,
+                count = contents.len(),
+                len = contents.iter().map(|c| c.len()).sum::<usize>(),
+                "send relay",
+            );
+        }
         let msg = RelayActorMessage::Send {
             url: url.clone(),
             contents,
@@ -786,9 +801,11 @@ impl MagicSock {
                         trace!(
                             src = ?meta.addr,
                             mapped = %quic_mapped_addr,
-                            node = %node_id.fmt_short(),
+                            from = %node_id.fmt_short(),
+                            to = %self.me,
                             count = %quic_packets_count,
                             len = meta.len,
+                            hash = hash(&buf[..meta.len]),
                             "UDP recv quic packets"
                         );
                         quic_packets_total += quic_packets_count;
@@ -839,7 +856,15 @@ impl MagicSock {
                 Ok(Err(err)) => return Poll::Ready(Err(err)),
                 Ok(Ok((node_id, meta, bytes))) => {
                     inc_by!(MagicsockMetrics, recv_data_relay, bytes.len() as _);
-                    trace!(src = %meta.addr, node = %node_id.fmt_short(), count = meta.len / meta.stride, len = meta.len, "recv quic packets from relay");
+                    trace!(
+                        src = %meta.addr,
+                        from = %node_id.fmt_short(),
+                        to = %self.me,
+                        count = meta.len / meta.stride,
+                        len = meta.len,
+                        hash = hash(bytes.as_ref()),
+                        "recv quic packets from relay"
+                    );
                     buf_out[..bytes.len()].copy_from_slice(&bytes);
                     *meta_out = meta;
                     num_msgs += 1;
@@ -2831,6 +2856,13 @@ impl NetInfo {
             && self.portmap_probe == other.portmap_probe
             && self.preferred_relay == other.preferred_relay
     }
+}
+
+fn hash(bytes: &[u8]) -> u64 {
+    use std::hash::Hasher;
+    let mut h = std::hash::DefaultHasher::new();
+    h.write(bytes);
+    h.finish()
 }
 
 #[cfg(test)]
