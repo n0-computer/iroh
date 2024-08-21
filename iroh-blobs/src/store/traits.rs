@@ -98,20 +98,25 @@ pub trait MapEntry: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// A future that resolves to a reader that can be used to read the data
     fn data_reader(&self) -> impl Future<Output = io::Result<impl AsyncSliceReader>> + Send;
 
-    /// Encodes data and outboard into a stream which can be imported with [`Store::import_verifiable_stream`].
+    /// Encodes data and outboard into a [`AsyncStreamWriter`].
+    ///
+    /// Data and outboard parts will be interleaved.
+    ///
+    /// `offset` is the byte offset in the blob to start the stream from. It will be rounded down to
+    /// the next chunk group.
     ///
     /// Returns immediately without error if `start` is equal or larger than the entry's size.
     fn write_verifiable_stream<'a>(
         &'a self,
-        start: u64,
+        offset: u64,
         writer: impl AsyncStreamWriter + 'a,
     ) -> impl Future<Output = io::Result<()>> + 'a {
         async move {
             let size = self.size().value();
-            if start >= size {
+            if offset >= size {
                 return Ok(());
             }
-            let ranges = range_from_offset_and_length(start, size - start);
+            let ranges = range_from_offset_and_length(offset, size - offset);
             let (outboard, data) = tokio::try_join!(self.outboard(), self.data_reader())?;
             encode_ranges_validated(data, outboard, &ranges, writer).await?;
             Ok(())
@@ -369,15 +374,19 @@ pub trait Store: ReadableStore + MapMut + std::fmt::Debug {
     }
 
     /// Import a blob from a verified stream, as emitted by [`MapEntry::write_verifiable_stream`];
+    ///
+    /// `total_size` is the total size of the blob as reported by the remote.
+    /// `offset` is the byte offset in the blob where the stream starts. It will be rounded
+    /// to the next chunk group.
     fn import_verifiable_stream<'a>(
         &'a self,
         hash: Hash,
         total_size: u64,
-        stream_offset: u64,
+        offset: u64,
         reader: impl AsyncStreamReader + 'a,
     ) -> impl Future<Output = io::Result<()>> + 'a {
         async move {
-            if stream_offset >= total_size {
+            if offset >= total_size {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "offset must not be greater than total_size",
@@ -386,7 +395,7 @@ pub trait Store: ReadableStore + MapMut + std::fmt::Debug {
             let entry = self.get_or_create(hash, total_size).await?;
             let mut bw = entry.batch_writer().await?;
 
-            let ranges = range_from_offset_and_length(stream_offset, total_size - stream_offset);
+            let ranges = range_from_offset_and_length(offset, total_size - offset);
             let mut decoder = ResponseDecoder::new(
                 hash.into(),
                 ranges,
