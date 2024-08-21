@@ -812,14 +812,17 @@ impl MagicSock {
                         let mut start = 0;
                         while start < meta.len {
                             let end = (start + meta.stride).min(meta.len);
-                            tracing::error!(
-                                me = %self.me,
-                                peer = %node_id.fmt_short(),
-                                path = %"udp",
-                                hash = hash(&buf[start..end]),
-                                len = end - start,
-                                "RECV"
-                            );
+                            let first = &buf[start];
+                            if *first & 0x40 == 1 {
+                                tracing::error!(
+                                    me = %self.me,
+                                    peer = %node_id.fmt_short(),
+                                    path = %"udp",
+                                    hash = hash(&buf[start..end]),
+                                    len = end - start,
+                                    "RECV"
+                                );
+                            }
                             start = end;
                         }
                         trace!(
