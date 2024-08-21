@@ -25,7 +25,6 @@ for ((counter=1; counter<=total_runs; counter++)); do
     duration=$((end_time - start_time))
 
     echo ", ${duration} ms"
-    echo "\n\nTIME: ${duration}" >> $LOGFILE
 
     if [ $err_code -ne 0 ]; then
         failure_count=$((failure_count + 1))

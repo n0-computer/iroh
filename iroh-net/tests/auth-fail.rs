@@ -35,9 +35,20 @@ async fn auth_fail() -> anyhow::Result<()> {
 
     info!("starting run with {endpoint_count} endpoints and {connects_count} conns/endpoint");
 
-    let endpoints = try_join_all(
-        (0..endpoint_count).map(|i| create_endpoint(i as u8, relay_map.clone(), relay_url.clone())),
-    )
+    let endpoints = try_join_all((0..endpoint_count).map(|i| {
+        let relay_map = relay_map.clone();
+        let relay_url = relay_url.clone();
+        tokio::task::spawn({
+            async move {
+                let ep = create_endpoint(i as u8, relay_map, relay_url)
+                    .await
+                    .expect("failed to bind endpoint");
+                let ipv4 = ep.0.bound_sockets().0;
+                info!(?i, node_id=%ep.1.fmt_short(), ?ipv4, "bound endpoint");
+                ep
+            }
+        })
+    }))
     .await?;
     info!("endpoints bound");
 
@@ -81,7 +92,7 @@ async fn auth_fail() -> anyhow::Result<()> {
         if res.is_err() {
             error!(?res, "FAILED task");
         }
-            res.expect("failed");
+        res.expect("failed");
     }
 
     info!(time=?start.elapsed(), "all tasks finished, shutdown endpoints");
