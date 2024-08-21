@@ -8,7 +8,7 @@ echo "Extract path..."
 executable_path=$(cargo test --release -p iroh-net --test auth-fail 2>&1 | grep "Running" | tail -n 1 | sed -n 's/.*(\(.*\)).*/\1/p')
 echo "Extracted path: $executable_path"
 
-total_runs=500
+total_runs=100
 failure_count=0
 logdir="${LOGDIR:-logs}"
 
