@@ -81,6 +81,7 @@ async fn auth_fail() -> anyhow::Result<()> {
         if res.is_err() {
             error!(?res, "FAILED task");
         }
+            res.expect("failed");
     }
 
     info!(time=?start.elapsed(), "all tasks finished, shutdown endpoints");

@@ -8,16 +8,17 @@ echo "Extract path..."
 executable_path=$(cargo test --release -p iroh-net --test auth-fail 2>&1 | grep "Running" | tail -n 1 | sed -n 's/.*(\(.*\)).*/\1/p')
 echo "Extracted path: $executable_path"
 
-total_runs=100
+total_runs=500
 failure_count=0
+logdir="${LOGDIR:-logs}"
 
-mkdir -p ./logs
+mkdir -p ./${logdir}
 
 for ((counter=1; counter<=total_runs; counter++)); do
     echo -n "Running tests... Attempt #$counter"
 
     start_time=$(date +%s%3N)
-    LOGFILE="logs/attempt-$counter.log"
+    LOGFILE="$logdir/attempt-$counter.log"
     RUST_LOG=trace "$executable_path" --nocapture >& $LOGFILE
     err_code=$?
     end_time=$(date +%s%3N)
