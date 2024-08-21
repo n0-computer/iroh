@@ -429,7 +429,7 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.5
 
       - name: Build iroh
-        run: cargo build --release --workspace --all-features
+        run: cargo build --release --all-features
 
       - name: Prep bins
         run: |
@@ -459,7 +459,7 @@ jobs:
       - name: Run Docker image & stats test
         run: |
           docker run -p 9090:9090 -p 4919:4919/udp -Pd n0computer/iroh-test:latest --rpc-addr 0.0.0.0:4919 start
-          cargo run --bin iroh -- --rpc-addr 127.0.0.1:4919 stats
+          target/release/iroh --rpc-addr 127.0.0.1:4919 stats
 
   codespell:
     runs-on: ubuntu-latest
