@@ -267,6 +267,7 @@ jobs:
     docker:
       needs: build_release
       uses: './.github/workflows/docker.yaml'
+      secrets: inherit
       with:
         release_version: ${{ needs.build_release.outputs.release_version }}
         base_hash: ${{ needs.build_release.outputs.base_hash }}
