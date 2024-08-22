@@ -445,7 +445,13 @@ impl Endpoint {
         // address information for this node.
         let (addr, discovery) = self
             .get_mapping_addr_and_maybe_start_discovery(node_addr)
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "No addressing information for NodeId({}), unable to connect",
+                    node_id.fmt_short()
+                )
+            })?;
 
         debug!(
             "connecting to {}: (via {} - {:?})",
@@ -866,13 +872,16 @@ impl Endpoint {
                 // So, we start a discovery task and wait for the first result to arrive, and
                 // only then continue, because otherwise we wouldn't have any
                 // path to the remote endpoint.
-                let mut discovery = DiscoveryTask::start(self.clone(), node_id)?;
-                discovery.first_arrived().await?;
-                if self.msock.has_send_address(node_id) {
-                    let addr = self.msock.get_mapping_addr(node_id).expect("checked");
+                let mut discovery = DiscoveryTask::start(self.clone(), node_id)
+                    .context("Discovery service required due to missing addressing information")?;
+                discovery
+                    .first_arrived()
+                    .await
+                    .context("Discovery service failed")?;
+                if let Some(addr) = self.msock.get_mapping_addr(node_id) {
                     Ok((addr, Some(discovery)))
                 } else {
-                    bail!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}");
+                    bail!("Discovery did not find addressing information");
                 }
             }
         }
