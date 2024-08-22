@@ -253,7 +253,8 @@ mod tests {
 
         let m1_task = tokio::task::spawn(
             async move {
-                if let Some(conn) = m1.accept().await {
+                // we skip accept() errors, they can be caused by retransmits
+                if let Some(conn) = m1.accept().await.and_then(|inc| inc.accept().ok()) {
                     let conn = conn.await?;
                     let (mut send_bi, mut recv_bi) = conn.accept_bi().await?;
 

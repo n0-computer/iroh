@@ -16,6 +16,7 @@ use iroh_net::{
     Endpoint, NodeAddr,
 };
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 /// Chat over iroh-gossip
 ///
@@ -193,7 +194,9 @@ async fn endpoint_loop(endpoint: Endpoint, gossip: Gossip) {
         let conn = match incoming.accept() {
             Ok(conn) => conn,
             Err(err) => {
-                println!("incoming connection failed: {err:#}");
+                warn!("incoming connection failed: {err:#}");
+                // we can carry on in these cases:
+                // this can be caused by retransmitted datagrams
                 continue;
             }
         };

@@ -757,7 +757,16 @@ async fn accept(
         );
     }
     let connections = Arc::new(AtomicU64::default());
-    while let Some(connecting) = endpoint.accept().await {
+    while let Some(incoming) = endpoint.accept().await {
+        let connecting = match incoming.accept() {
+            Ok(connecting) => connecting,
+            Err(err) => {
+                warn!("incoming connection failed: {err:#}");
+                // we can carry on in these cases:
+                // this can be caused by retransmitted datagrams
+                continue;
+            }
+        };
         let connections = connections.clone();
         let endpoint = endpoint.clone();
         tokio::task::spawn(async move {

@@ -90,8 +90,10 @@ async fn main() -> Result<()> {
             let conn = match incoming.accept() {
                 Ok(conn) => conn,
                 Err(err) => {
-                    println!("incoming connection failed: {err:#}");
-                    return;
+                    warn!("incoming connection failed: {err:#}");
+                    // we can carry on in these cases:
+                    // this can be caused by retransmitted datagrams
+                    continue;
                 }
             };
             let db = db.clone();

@@ -249,8 +249,17 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
 
     // Handle only the expected amount of clients
     for _ in 0..opt.clients {
-        let handshake = endpoint.accept().await.unwrap();
-        let connection = handshake.await.context("handshake failed")?;
+        let incoming = endpoint.accept().await.unwrap();
+        let connecting = match incoming.accept() {
+            Ok(connecting) => connecting,
+            Err(err) => {
+                warn!("incoming connection failed: {err:#}");
+                // we can carry on in these cases:
+                // this can be caused by retransmitted datagrams
+                continue;
+            }
+        };
+        let connection = connecting.await.context("handshake failed")?;
 
         server_tasks.push(tokio::spawn(async move {
             loop {

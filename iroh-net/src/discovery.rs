@@ -601,8 +601,9 @@ mod tests {
         let handle = tokio::spawn({
             let ep = ep.clone();
             async move {
-                while let Some(incoming) = ep.accept().await {
-                    let _conn = incoming.accept()?.await?;
+                // we skip accept() errors, they can be caused by retransmits
+                while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
+                    let _conn = connecting.await?;
                     // Just accept incoming connections, but don't do anything with them.
                 }
 
@@ -767,8 +768,9 @@ mod test_dns_pkarr {
         let handle = tokio::spawn({
             let ep = ep.clone();
             async move {
-                while let Some(incoming) = ep.accept().await {
-                    let _conn = incoming.accept()?.await?;
+                // we skip accept() errors, they can be caused by retransmits
+                while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
+                    let _conn = connecting.await?;
                     // Just accept incoming connections, but don't do anything with them.
                 }
 
