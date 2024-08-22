@@ -1684,9 +1684,6 @@
 <a href="#1684" id="1684">1684</a>
 <a href="#1685" id="1685">1685</a>
 <a href="#1686" id="1686">1686</a>
-<a href="#1687" id="1687">1687</a>
-<a href="#1688" id="1688">1688</a>
-<a href="#1689" id="1689">1689</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1713,7 +1710,7 @@
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
-<span class="kw">use </span>tracing::{debug, info_span, trace, warn};
+<span class="kw">use </span>tracing::{debug, instrument, trace, warn};
 <span class="kw">use </span>url::Url;
 
 <span class="kw">use crate</span>::{
@@ -2045,13 +2042,12 @@
     ///
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
+    </span><span class="attr">#[instrument(skip_all, fields(me = %static_config.secret_key.public().fmt_short()))]
     </span><span class="kw">async fn </span>bind(
         static_config: StaticConfig,
         msock_opts: magicsock::Options,
         initial_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"magic_ep"</span>, me = %static_config.secret_key.public().fmt_short());
-        <span class="kw">let </span>_guard = span.enter();
         <span class="kw">let </span>msock = magicsock::MagicSock::spawn(msock_opts).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">trace!</span>(<span class="string">"created magicsock"</span>);
 
@@ -2114,10 +2110,8 @@
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
+    </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.node_id().fmt_short(), node_id = %node_addr.node_id.fmt_short(), alpn = <span class="question-mark">?</span>String::from_utf8_lossy(alpn)))]
     </span><span class="kw">pub async fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
-        <span class="kw">let </span>ep_span = <span class="macro">info_span!</span>(<span class="string">"magic_ep"</span>, me = %<span class="self">self</span>.node_id().fmt_short());
-        <span class="kw">let </span>span = <span class="macro">info_span!</span>(parent: <span class="kw-2">&amp;</span>ep_span, <span class="string">"connect"</span>);
-        <span class="kw">let </span>_guard = span.enter();
         <span class="comment">// Connecting to ourselves is not supported.
         </span><span class="kw">if </span>node_addr.node_id == <span class="self">self</span>.node_id() {
             <span class="macro">bail!</span>(
