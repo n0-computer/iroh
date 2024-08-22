@@ -1710,9 +1710,8 @@ impl AsyncUdpSocket for Handle {
     }
 
     fn max_transmit_segments(&self) -> usize {
-        // TODO(matheus23): Do we need to account for the relay somehow?
         if let Some(pconn6) = self.pconn6.as_ref() {
-            std::cmp::min(
+            std::cmp::max(
                 pconn6.max_transmit_segments(),
                 self.pconn4.max_transmit_segments(),
             )
@@ -1722,8 +1721,8 @@ impl AsyncUdpSocket for Handle {
     }
 
     fn max_receive_segments(&self) -> usize {
-        // TODO(matheus23): Do we need to account for the relay somehow?
         if let Some(pconn6) = self.pconn6.as_ref() {
+            // TODO(matheus23): This is somewhat incorrect. Needs updates to `MagicSock::poll_recv` to fix this though.
             std::cmp::min(
                 pconn6.max_receive_segments(),
                 self.pconn4.max_receive_segments(),
@@ -1734,7 +1733,6 @@ impl AsyncUdpSocket for Handle {
     }
 
     fn may_fragment(&self) -> bool {
-        // TODO(matheus23): Do we need to account for the relay somehow?
         if let Some(pconn6) = self.pconn6.as_ref() {
             pconn6.may_fragment() || self.pconn4.may_fragment()
         } else {
