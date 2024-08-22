@@ -27,14 +27,12 @@ use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
-use crate::{
-    discovery::{Discovery, DiscoveryTask},
-    dns::{default_resolver, DnsResolver},
-    key::{PublicKey, SecretKey},
-    magicsock::{self, Handle},
-    relay::{RelayMode, RelayUrl},
-    tls, NodeId,
-};
+use crate::discovery::{Discovery, DiscoveryTask};
+use crate::dns::{default_resolver, DnsResolver};
+use crate::key::{PublicKey, SecretKey};
+use crate::magicsock::{self, Handle, QuicMappedAddr};
+use crate::relay::{RelayMode, RelayUrl};
+use crate::{tls, NodeId};
 
 mod rtt_actor;
 
@@ -489,7 +487,7 @@ impl Endpoint {
         &self,
         node_id: NodeId,
         alpn: &[u8],
-        addr: SocketAddr,
+        addr: QuicMappedAddr,
     ) -> Result<quinn::Connection> {
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
@@ -509,7 +507,7 @@ impl Endpoint {
         // TODO: We'd eventually want to replace "localhost" with something that makes more sense.
         let connect = self
             .endpoint
-            .connect_with(client_config, addr, "localhost")?;
+            .connect_with(client_config, addr.0, "localhost")?;
 
         let connection = connect
             .await
@@ -841,7 +839,7 @@ impl Endpoint {
     async fn get_mapping_addr_and_maybe_start_discovery(
         &self,
         node_addr: NodeAddr,
-    ) -> Result<(SocketAddr, Option<DiscoveryTask>)> {
+    ) -> Result<(QuicMappedAddr, Option<DiscoveryTask>)> {
         let node_id = node_addr.node_id;
 
         // Only return a mapped addr if we have some way of dialing this node, in other

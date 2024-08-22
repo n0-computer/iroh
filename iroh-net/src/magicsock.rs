@@ -350,14 +350,9 @@ impl MagicSock {
         self.node_map.conn_type_stream(node_id)
     }
 
-    /// Returns the [`SocketAddr`] which can be used by the QUIC layer to dial this node.
-    ///
-    /// Note this is a user-facing API and does not wrap the [`SocketAddr`] in a
-    /// [`QuicMappedAddr`] as we do internally.
-    pub(crate) fn get_mapping_addr(&self, node_id: NodeId) -> Option<SocketAddr> {
-        self.node_map
-            .get_quic_mapped_addr_for_node_key(node_id)
-            .map(|a| a.0)
+    /// Returns the socket address which can be used by the QUIC layer to dial this node.
+    pub(crate) fn get_mapping_addr(&self, node_id: NodeId) -> Option<QuicMappedAddr> {
+        self.node_map.get_quic_mapped_addr_for_node_key(node_id)
     }
 
     /// Add addresses for a node to the magic socket's addresbook.
@@ -503,15 +498,6 @@ impl MagicSock {
                     }
                     pings_sent = true;
                 }
-
-                // if udp_addr.is_none() && relay_url.is_none() {
-                //     // Handle no addresses being available
-                //     warn!(node = %node_id.fmt_short(), "failed to send: no UDP or relay addr");
-                //     return Err(io::Error::new(
-                //         io::ErrorKind::NotConnected,
-                //         "no UDP or relay address available for node",
-                //     ));
-                // }
 
                 let mut udp_sent = false;
                 let mut udp_error = None;
@@ -2634,7 +2620,7 @@ impl Iterator for PacketSplitIter {
 /// comes in as the inner [`SocketAddr`], in those interfaces we have to be careful to do
 /// the conversion to this type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct QuicMappedAddr(SocketAddr);
+pub(crate) struct QuicMappedAddr(pub(crate) SocketAddr);
 
 /// Counter to always generate unique addresses for [`QuicMappedAddr`].
 static ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
