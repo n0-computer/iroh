@@ -895,29 +895,6 @@
 <a href="#895" id="895">895</a>
 <a href="#896" id="896">896</a>
 <a href="#897" id="897">897</a>
-<a href="#898" id="898">898</a>
-<a href="#899" id="899">899</a>
-<a href="#900" id="900">900</a>
-<a href="#901" id="901">901</a>
-<a href="#902" id="902">902</a>
-<a href="#903" id="903">903</a>
-<a href="#904" id="904">904</a>
-<a href="#905" id="905">905</a>
-<a href="#906" id="906">906</a>
-<a href="#907" id="907">907</a>
-<a href="#908" id="908">908</a>
-<a href="#909" id="909">909</a>
-<a href="#910" id="910">910</a>
-<a href="#911" id="911">911</a>
-<a href="#912" id="912">912</a>
-<a href="#913" id="913">913</a>
-<a href="#914" id="914">914</a>
-<a href="#915" id="915">915</a>
-<a href="#916" id="916">916</a>
-<a href="#917" id="917">917</a>
-<a href="#918" id="918">918</a>
-<a href="#919" id="919">919</a>
-<a href="#920" id="920">920</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
@@ -1224,29 +1201,6 @@
                 <span class="macro">format!</span>(<span class="string">"Failed to load blobs database from {}"</span>, blob_dir.display())
             })<span class="question-mark">?</span>;
         <span class="kw">let </span>docs_storage = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
-
-        <span class="attr">#[allow(deprecated)]
-        </span><span class="kw">let </span>v0 = blobs_store
-            .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
-                complete: root.join(<span class="string">"blobs.v0"</span>),
-                partial: root.join(<span class="string">"blobs-partial.v0"</span>),
-                meta: root.join(<span class="string">"blobs-meta.v0"</span>),
-            })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="attr">#[allow(deprecated)]
-        </span><span class="kw">let </span>v1 = blobs_store
-            .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
-                complete: root.join(<span class="string">"blobs.v1"</span>).join(<span class="string">"complete"</span>),
-                partial: root.join(<span class="string">"blobs.v1"</span>).join(<span class="string">"partial"</span>),
-                meta: root.join(<span class="string">"blobs.v1"</span>).join(<span class="string">"meta"</span>),
-            })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">if </span>v0 || v1 {
-            <span class="macro">tracing::warn!</span>(<span class="string">"Imported deprecated flat data. Future versions will stop supporting migrations from flat stores"</span>);
-            blobs_store
-                .update_inline_options(iroh_blobs::store::fs::InlineOptions::default(), <span class="bool-val">true</span>)
-                .<span class="kw">await</span><span class="question-mark">?</span>;
-        }
 
         <span class="kw">let </span>secret_key_path = IrohPaths::SecretKey.with_root(root);
         <span class="kw">let </span>secret_key = load_secret_key(secret_key_path).<span class="kw">await</span><span class="question-mark">?</span>;

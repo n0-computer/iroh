@@ -758,7 +758,6 @@
 <a href="#758" id="758">758</a>
 <a href="#759" id="759">759</a>
 <a href="#760" id="760">760</a>
-<a href="#761" id="761">761</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
 //!
 //! based on tailscale/derp/derp_server.go
@@ -780,6 +779,7 @@
 <span class="kw">use </span>tracing::{info_span, trace, Instrument};
 <span class="kw">use </span>tungstenite::protocol::Role;
 
+<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::relay::SERVER_WRITE_TIMEOUT <span class="kw">as </span>WRITE_TIMEOUT;
 <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
 <span class="kw">use </span><span class="kw">crate</span>::relay::http::Protocol;
 <span class="kw">use </span><span class="kw">crate</span>::relay::server::streams::{MaybeTlsStream, RelayIo};
@@ -801,8 +801,6 @@
 <span class="kw">fn </span>new_conn_num() -&gt; usize {
     CONN_NUM.fetch_add(<span class="number">1</span>, Ordering::Relaxed)
 }
-
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>WRITE_TIMEOUT: Duration = Duration::from_secs(<span class="number">2</span>);
 
 <span class="doccomment">/// The task for a running server actor.
 ///

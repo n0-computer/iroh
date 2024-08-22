@@ -92,6 +92,9 @@
 <a href="#92" id="92">92</a>
 <a href="#93" id="93">93</a>
 <a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! TLS configuration based on libp2p TLS specs.
 //!
 //! See &lt;https://github.com/libp2p/specs/blob/master/tls/tls.md&gt;.
@@ -100,6 +103,7 @@
 </span><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>quinn::crypto::rustls::{NoInitialCipherSuite, QuicClientConfig, QuicServerConfig};
+<span class="kw">use </span>tracing::warn;
 
 <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
 
@@ -149,6 +153,7 @@
     .with_client_cert_resolver(cert_resolver);
     crypto.alpn_protocols = alpn_protocols;
     <span class="kw">if </span>keylog {
+        <span class="macro">warn!</span>(<span class="string">"enabling SSLKEYLOGFILE for TLS pre-master keys"</span>);
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
     <span class="kw">let </span>config = crypto.try_into()<span class="question-mark">?</span>;
@@ -181,6 +186,7 @@
     .with_cert_resolver(cert_resolver);
     crypto.alpn_protocols = alpn_protocols;
     <span class="kw">if </span>keylog {
+        <span class="macro">warn!</span>(<span class="string">"enabling SSLKEYLOGFILE for TLS pre-master keys"</span>);
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
     <span class="kw">let </span>config = crypto.try_into()<span class="question-mark">?</span>;

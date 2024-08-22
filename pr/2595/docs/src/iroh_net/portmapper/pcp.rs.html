@@ -199,8 +199,6 @@
 <a href="#199" id="199">199</a>
 <a href="#200" id="200">200</a>
 <a href="#201" id="201">201</a>
-<a href="#202" id="202">202</a>
-<a href="#203" id="203">203</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Definitions and utilities to interact with a PCP server.
 
 </span><span class="kw">use </span>std::{net::Ipv4Addr, num::NonZeroU16, time::Duration};
@@ -208,12 +206,10 @@
 <span class="kw">use </span>rand::RngCore;
 <span class="kw">use </span>tracing::{debug, trace};
 
+<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::PCP_RECV_TIMEOUT <span class="kw">as </span>RECV_TIMEOUT;
 <span class="kw">use </span><span class="kw">crate</span>::net::UdpSocket;
 
 <span class="kw">mod </span>protocol;
-
-<span class="doccomment">/// Timeout to receive a response from a PCP server.
-</span><span class="kw">const </span>RECV_TIMEOUT: Duration = Duration::from_millis(<span class="number">500</span>);
 
 <span class="doccomment">/// Use the recommended port mapping lifetime for PMP, which is 2 hours. See
 /// &lt;https://datatracker.ietf.org/doc/html/rfc6886#section-3.3&gt;

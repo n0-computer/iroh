@@ -190,7 +190,6 @@
 <a href="#190" id="190">190</a>
 <a href="#191" id="191">191</a>
 <a href="#192" id="192">192</a>
-<a href="#193" id="193">193</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Allows sending ICMP echo requests to a host in order to determine network latency.
 
 </span><span class="kw">use </span>std::{
@@ -200,6 +199,7 @@
     time::Duration,
 };
 
+<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::DEFAULT_PINGER_TIMEOUT <span class="kw">as </span>DEFAULT_TIMEOUT;
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};
 <span class="kw">use </span>tracing::debug;
@@ -231,8 +231,6 @@
     client_v6: Mutex&lt;<span class="prelude-ty">Option</span>&lt;Client&gt;&gt;,
     client_v4: Mutex&lt;<span class="prelude-ty">Option</span>&lt;Client&gt;&gt;,
 }
-
-<span class="kw">const </span>DEFAULT_TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
 
 <span class="kw">impl </span>Pinger {
     <span class="doccomment">/// Create a new [Pinger].

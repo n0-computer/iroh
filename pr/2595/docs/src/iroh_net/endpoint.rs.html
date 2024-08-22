@@ -1684,6 +1684,9 @@
 <a href="#1684" id="1684">1684</a>
 <a href="#1685" id="1685">1685</a>
 <a href="#1686" id="1686">1686</a>
+<a href="#1687" id="1687">1687</a>
+<a href="#1688" id="1688">1688</a>
+<a href="#1689" id="1689">1689</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1732,8 +1735,8 @@
 };
 
 <span class="kw">pub use </span><span class="kw">super</span>::magicsock::{
-    ConnectionInfo, ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo,
-    DirectAddrType, DirectAddrsStream,
+    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
+    DirectAddrsStream, RemoteInfo,
 };
 
 <span class="kw">pub use </span>iroh_base::node_addr::{AddrInfo, NodeAddr};
@@ -1943,7 +1946,7 @@
     /// This key should normally remain secret but can be useful to debug networking issues
     /// by decrypting captured traffic.
     ///
-    /// If *keylog* is `true` then setting the `KEYLOGFILE` environment variable to a
+    /// If *keylog* is `true` then setting the `SSLKEYLOGFILE` environment variable to a
     /// filename will result in this file being used to log the TLS pre-master keys.
     </span><span class="kw">pub fn </span>keylog(<span class="kw-2">mut </span><span class="self">self</span>, keylog: bool) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.keylog = keylog;
@@ -2385,26 +2388,33 @@
 
     <span class="comment">// # Getter methods for information about other nodes.
 
-    </span><span class="doccomment">/// Returns connection information about a specific node.
+    </span><span class="doccomment">/// Returns information about the remote node identified by a [`NodeId`].
     ///
-    /// Then [`Endpoint`] stores some information about all the other iroh-net nodes it has
-    /// information about.  This includes information about the relay server in use, any
-    /// known direct addresses, when there was last any contact with this node and what kind
-    /// of connection this was.
-    </span><span class="kw">pub fn </span>connection_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;ConnectionInfo&gt; {
-        <span class="self">self</span>.msock.connection_info(node_id)
+    /// The [`Endpoint`] keeps some information about remote iroh-net nodes, which it uses to find
+    /// the best path to a node. Having information on a remote node, however, does not mean we have
+    /// ever connected to it to or even whether a connection is even possible. The information about a
+    /// remote node will change over time, as the [`Endpoint`] learns more about the node. Future
+    /// calls may return different information. Furthermore, node information may even be
+    /// completely evicted as it becomes stale.
+    ///
+    /// See also [`Endpoint::remote_info_iter`] which returns information on all nodes known
+    /// by this [`Endpoint`].
+    </span><span class="kw">pub fn </span>remote_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;RemoteInfo&gt; {
+        <span class="self">self</span>.msock.remote_info(node_id)
     }
 
-    <span class="doccomment">/// Returns information on all the nodes we have connection information about.
+    <span class="doccomment">/// Returns information about all the remote nodes this [`Endpoint`] knows about.
     ///
-    /// This returns the same information as [`Endpoint::connection_info`] for each node
-    /// known to this [`Endpoint`].
+    /// This returns the same information as [`Endpoint::remote_info`] for each node known to this
+    /// [`Endpoint`].
     ///
-    /// Connections are currently only pruned on user action when using
-    /// [`Endpoint::add_node_addr`] so these connections are not necessarily active
-    /// connections.
-    </span><span class="kw">pub fn </span>connection_infos(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;ConnectionInfo&gt; {
-        <span class="self">self</span>.msock.connection_infos()
+    /// The [`Endpoint`] keeps some information about remote iroh-net nodes, which it uses to find
+    /// the best path to a node. This returns all the nodes it knows about, regardless of whether a
+    /// connection was ever made or is even possible.
+    ///
+    /// See also [`Endpoint::remote_info`] to only retrieve information about a single node.
+    </span><span class="kw">pub fn </span>remote_info_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = RemoteInfo&gt; {
+        <span class="self">self</span>.msock.list_remote_infos().into_iter()
     }
 
     <span class="comment">// # Methods for less common getters.
@@ -3065,15 +3075,11 @@
         <span class="comment">// first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
         </span><span class="kw">let </span>endpoint = new_endpoint(secret_key.clone(), <span class="prelude-val">None</span>).<span class="kw">await</span>;
-        <span class="macro">assert!</span>(endpoint.connection_infos().is_empty());
+        <span class="macro">assert_eq!</span>(endpoint.remote_info_iter().count(), <span class="number">0</span>);
         endpoint.add_node_addr(node_addr.clone()).unwrap();
 
         <span class="comment">// Grab the current addrs
-        </span><span class="kw">let </span>node_addrs: Vec&lt;NodeAddr&gt; = endpoint
-            .connection_infos()
-            .into_iter()
-            .map(Into::into)
-            .collect();
+        </span><span class="kw">let </span>node_addrs: Vec&lt;NodeAddr&gt; = endpoint.remote_info_iter().map(Into::into).collect();
         <span class="macro">assert_eq!</span>(node_addrs.len(), <span class="number">1</span>);
         <span class="macro">assert_eq!</span>(node_addrs[<span class="number">0</span>], node_addr);
 
@@ -3084,7 +3090,7 @@
         <span class="macro">info!</span>(<span class="string">"restarting endpoint"</span>);
         <span class="comment">// now restart it and check the addressing info of the peer
         </span><span class="kw">let </span>endpoint = new_endpoint(secret_key, <span class="prelude-val">Some</span>(node_addrs)).<span class="kw">await</span>;
-        <span class="kw">let </span>ConnectionInfo { <span class="kw-2">mut </span>addrs, .. } = endpoint.connection_info(peer_id).unwrap();
+        <span class="kw">let </span>RemoteInfo { <span class="kw-2">mut </span>addrs, .. } = endpoint.remote_info(peer_id).unwrap();
         <span class="kw">let </span>conn_addr = addrs.pop().unwrap().addr;
         <span class="macro">assert_eq!</span>(conn_addr, direct_addr);
     }

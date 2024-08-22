@@ -1128,10 +1128,6 @@
 <a href="#1128" id="1128">1128</a>
 <a href="#1129" id="1129">1129</a>
 <a href="#1130" id="1130">1130</a>
-<a href="#1131" id="1131">1131</a>
-<a href="#1132" id="1132">1132</a>
-<a href="#1133" id="1133">1133</a>
-<a href="#1134" id="1134">1134</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Based on tailscale/derp/derphttp/derphttp_client.go
 
 </span><span class="kw">use </span>std::collections::HashMap;
@@ -1166,6 +1162,7 @@
 };
 <span class="kw">use </span>streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
 
+<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::relay::<span class="kw-2">*</span>;
 <span class="kw">use </span><span class="kw">crate</span>::dns::{DnsResolver, ResolverExt};
 <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
 <span class="kw">use </span><span class="kw">crate</span>::relay::codec::DerpCodec;
@@ -1176,11 +1173,6 @@
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>conn;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>streams;
-
-<span class="kw">const </span>DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(<span class="number">1500</span>);
-<span class="kw">const </span>PING_TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
-<span class="kw">const </span>CONNECT_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
-<span class="kw">const </span>DNS_TIMEOUT: Duration = Duration::from_secs(<span class="number">1</span>);
 
 <span class="doccomment">/// Possible connection errors on the [`Client`]
 </span><span class="attr">#[derive(Debug, thiserror::Error)]

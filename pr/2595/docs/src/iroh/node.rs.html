@@ -980,9 +980,6 @@
 <a href="#980" id="980">980</a>
 <a href="#981" id="981">981</a>
 <a href="#982" id="982">982</a>
-<a href="#983" id="983">983</a>
-<a href="#984" id="984">984</a>
-<a href="#985" id="985">985</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node API
 //!
 //! An iroh node is a server that is identified by an Ed25519 keypair and is
@@ -1034,11 +1031,9 @@
 <span class="kw">use </span>iroh_blobs::{downloader::Downloader, protocol::Closed};
 <span class="kw">use </span>iroh_blobs::{HashAndFormat, TempTag};
 <span class="kw">use </span>iroh_gossip::net::Gossip;
+<span class="kw">use </span>iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
 <span class="kw">use </span>iroh_net::key::SecretKey;
-<span class="kw">use </span>iroh_net::{
-    endpoint::{ConnectionInfo, DirectAddrsStream},
-    util::SharedAbortingJoinHandle,
-};
+<span class="kw">use </span>iroh_net::util::SharedAbortingJoinHandle;
 <span class="kw">use </span>iroh_net::{AddrInfo, Endpoint, NodeAddr};
 <span class="kw">use </span>quic_rpc::transport::ServerEndpoint <span class="kw">as _</span>;
 <span class="kw">use </span>quic_rpc::RpcServer;
@@ -1609,8 +1604,7 @@
 }
 
 <span class="kw">fn </span>node_addresses_for_storage(ep: <span class="kw-2">&amp;</span>Endpoint) -&gt; Vec&lt;NodeAddr&gt; {
-    ep.connection_infos()
-        .into_iter()
+    ep.remote_info_iter()
         .filter_map(node_address_for_storage)
         .collect()
 }
@@ -1620,7 +1614,7 @@
 /// If the endpoint was used, only the paths that were in use will be returned.
 ///
 /// Returns `None` if the resulting [`NodeAddr`] would be empty.
-</span><span class="kw">fn </span>node_address_for_storage(info: ConnectionInfo) -&gt; <span class="prelude-ty">Option</span>&lt;NodeAddr&gt; {
+</span><span class="kw">fn </span>node_address_for_storage(info: RemoteInfo) -&gt; <span class="prelude-ty">Option</span>&lt;NodeAddr&gt; {
     <span class="kw">let </span>direct_addresses = <span class="kw">if </span>info.last_used.is_none() {
         info.addrs
             .into_iter()

@@ -776,6 +776,9 @@
 <a href="#776" id="776">776</a>
 <a href="#777" id="777">777</a>
 <a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
+<a href="#781" id="781">781</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh-net node a [`NodeAddr`] is needed, which needs to contain either a
@@ -829,7 +832,7 @@
 
 <span class="kw">pub mod </span>dns;
 
-<span class="attr">#[cfg(feature = <span class="string">"local-swarm-discovery"</span>)]
+<span class="attr">#[cfg(feature = <span class="string">"discovery-local-network"</span>)]
 </span><span class="kw">pub mod </span>local_swarm_discovery;
 <span class="kw">pub mod </span>pkarr;
 
@@ -1038,11 +1041,14 @@
     <span class="doccomment">/// We need discovery if we have no paths to the node, or if the paths we do have
     /// have timed out.
     </span><span class="kw">fn </span>needs_discovery(ep: <span class="kw-2">&amp;</span>Endpoint, node_id: NodeId) -&gt; bool {
-        <span class="kw">match </span>ep.connection_info(node_id) {
-            <span class="comment">// No connection info means no path to node -&gt; start discovery.
+        <span class="kw">match </span>ep.remote_info(node_id) {
+            <span class="comment">// No info means no path to node -&gt; start discovery.
             </span><span class="prelude-val">None </span>=&gt; <span class="bool-val">true</span>,
             <span class="prelude-val">Some</span>(info) =&gt; {
-                <span class="kw">match </span>(info.last_received(), info.last_alive_relay()) {
+                <span class="kw">match </span>(
+                    info.last_received(),
+                    info.relay_url.as_ref().and_then(|r| r.last_alive),
+                ) {
                     <span class="comment">// No path to node -&gt; start discovery.
                     </span>(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>) =&gt; <span class="bool-val">true</span>,
                     <span class="comment">// If we haven't received on direct addresses or the relay for MAX_AGE,

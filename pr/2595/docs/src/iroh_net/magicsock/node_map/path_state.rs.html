@@ -282,6 +282,16 @@
 <a href="#282" id="282">282</a>
 <a href="#283" id="283">283</a>
 <a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The state kept for each network path to a remote node.
 
 </span><span class="kw">use </span>std::collections::BTreeMap;
@@ -295,8 +305,8 @@
 <span class="kw">use </span><span class="kw">crate</span>::magicsock::HEARTBEAT_INTERVAL;
 <span class="kw">use </span><span class="kw">crate</span>::stun;
 
-<span class="kw">use </span><span class="kw">super</span>::node_state::{PongReply, SESSION_ACTIVE_TIMEOUT};
-<span class="kw">use super</span>::{ControlMsg, IpPort, PingRole};
+<span class="kw">use </span><span class="kw">super</span>::node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT};
+<span class="kw">use super</span>::{IpPort, PingRole};
 
 <span class="doccomment">/// The minimum time between pings to an endpoint.
 ///
@@ -323,12 +333,14 @@
     </span><span class="comment">// NOTE: tx_id Originally added in tailscale due to &lt;https://github.com/tailscale/tailscale/issues/7078&gt;.
     </span>last_got_ping: <span class="prelude-ty">Option</span>&lt;(Instant, stun::TransactionId)&gt;,
 
-    <span class="doccomment">/// If non-zero, is the time this endpoint was advertised last via a call-me-maybe disco message.
+    <span class="doccomment">/// The time this endpoint was last advertised via a call-me-maybe DISCO message.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) call_me_maybe_time: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
 
     <span class="doccomment">/// Last [`PongReply`] received.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) recent_pong: <span class="prelude-ty">Option</span>&lt;PongReply&gt;,
-    <span class="doccomment">/// When was this endpoint last used to transmit payload data (removing ping, pong, etc).
+    <span class="doccomment">/// When the last payload data was **received** via this path.
+    ///
+    /// This excludes DISCO messages.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) last_payload_msg: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
 }
 
@@ -444,7 +456,15 @@
             .copied()
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>last_control_msg(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; <span class="prelude-ty">Option</span>&lt;(Duration, ControlMsg)&gt; {
+    <span class="doccomment">/// The last control or DISCO message **about** this path.
+    ///
+    /// This is the most recent instant among:
+    /// - when last pong was received.
+    /// - when this path was last advertised in a received CallMeMaybe message.
+    /// - when the last ping from them was received.
+    ///
+    /// Returns the time elapsed since the last control message, and the type of control message.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>last_control_msg(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; <span class="prelude-ty">Option</span>&lt;(Duration, ControlMsg)&gt; {
         <span class="comment">// get every control message and assign it its kind
         </span><span class="kw">let </span>last_pong = <span class="self">self
             </span>.recent_pong()
