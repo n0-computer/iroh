@@ -3619,7 +3619,6 @@
 <a href="#3619" id="3619">3619</a>
 <a href="#3620" id="3620">3620</a>
 <a href="#3621" id="3621">3621</a>
-<a href="#3622" id="3622">3622</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4752,8 +4751,7 @@
                 <span class="string">"connection closed"</span>,
             ));
         }
-        <span class="comment">// TODO: possibly change this to return bytes directly.
-        </span><span class="kw">let </span>pkt = <span class="self">self</span>.encode_disco_message(dst_node, msg);
+        <span class="kw">let </span>pkt = <span class="self">self</span>.encode_disco_message(dst_node, msg);
         <span class="comment">// TODO: These metrics will be wrong with the poll impl
         // Also - do we need it? I'd say the `sent_disco_udp` below is enough.
         </span><span class="macro">inc!</span>(MagicsockMetrics, send_disco_udp);
