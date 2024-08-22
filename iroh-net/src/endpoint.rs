@@ -24,7 +24,7 @@ use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
 use pin_project::pin_project;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
-use tracing::{debug, info_span, trace, warn};
+use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
 use crate::{
@@ -356,13 +356,12 @@ impl Endpoint {
     ///
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
+    #[instrument(skip_all, fields(me = %static_config.secret_key.public().fmt_short()))]
     async fn bind(
         static_config: StaticConfig,
         msock_opts: magicsock::Options,
         initial_alpns: Vec<Vec<u8>>,
     ) -> Result<Self> {
-        let span = info_span!("magic_ep", me = %static_config.secret_key.public().fmt_short());
-        let _guard = span.enter();
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
 
@@ -425,10 +424,8 @@ impl Endpoint {
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
+    #[instrument(skip_all, fields(me = %self.node_id().fmt_short(), node_id = %node_addr.node_id.fmt_short(), alpn = ?String::from_utf8_lossy(alpn)))]
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
-        let ep_span = info_span!("magic_ep", me = %self.node_id().fmt_short());
-        let span = info_span!(parent: &ep_span, "connect");
-        let _guard = span.enter();
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
             bail!(
