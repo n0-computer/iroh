@@ -1684,6 +1684,15 @@
 <a href="#1684" id="1684">1684</a>
 <a href="#1685" id="1685">1685</a>
 <a href="#1686" id="1686">1686</a>
+<a href="#1687" id="1687">1687</a>
+<a href="#1688" id="1688">1688</a>
+<a href="#1689" id="1689">1689</a>
+<a href="#1690" id="1690">1690</a>
+<a href="#1691" id="1691">1691</a>
+<a href="#1692" id="1692">1692</a>
+<a href="#1693" id="1693">1693</a>
+<a href="#1694" id="1694">1694</a>
+<a href="#1695" id="1695">1695</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -2131,7 +2140,13 @@
         // address information for this node.
         </span><span class="kw">let </span>(addr, discovery) = <span class="self">self
             </span>.get_mapping_addr_and_maybe_start_discovery(node_addr)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+            .<span class="kw">await
+            </span>.with_context(|| {
+                <span class="macro">format!</span>(
+                    <span class="string">"No addressing information for NodeId({}), unable to connect"</span>,
+                    node_id.fmt_short()
+                )
+            })<span class="question-mark">?</span>;
 
         <span class="macro">debug!</span>(
             <span class="string">"connecting to {}: (via {} - {:?})"</span>,
@@ -2552,13 +2567,16 @@
                 // So, we start a discovery task and wait for the first result to arrive, and
                 // only then continue, because otherwise we wouldn't have any
                 // path to the remote endpoint.
-                </span><span class="kw">let </span><span class="kw-2">mut </span>discovery = DiscoveryTask::start(<span class="self">self</span>.clone(), node_id)<span class="question-mark">?</span>;
-                discovery.first_arrived().<span class="kw">await</span><span class="question-mark">?</span>;
-                <span class="kw">if </span><span class="self">self</span>.msock.has_send_address(node_id) {
-                    <span class="kw">let </span>addr = <span class="self">self</span>.msock.get_mapping_addr(node_id).expect(<span class="string">"checked"</span>);
+                </span><span class="kw">let </span><span class="kw-2">mut </span>discovery = DiscoveryTask::start(<span class="self">self</span>.clone(), node_id)
+                    .context(<span class="string">"Discovery service required due to missing addressing information"</span>)<span class="question-mark">?</span>;
+                discovery
+                    .first_arrived()
+                    .<span class="kw">await
+                    </span>.context(<span class="string">"Discovery service failed"</span>)<span class="question-mark">?</span>;
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = <span class="self">self</span>.msock.get_mapping_addr(node_id) {
                     <span class="prelude-val">Ok</span>((addr, <span class="prelude-val">Some</span>(discovery)))
                 } <span class="kw">else </span>{
-                    <span class="macro">bail!</span>(<span class="string">"Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}"</span>);
+                    <span class="macro">bail!</span>(<span class="string">"Discovery did not find addressing information"</span>);
                 }
             }
         }
