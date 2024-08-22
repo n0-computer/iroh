@@ -1130,7 +1130,6 @@ impl MagicSock {
                 "connection closed",
             ));
         }
-        // TODO: possibly change this to return bytes directly.
         let pkt = self.encode_disco_message(dst_node, msg);
         // TODO: These metrics will be wrong with the poll impl
         // Also - do we need it? I'd say the `sent_disco_udp` below is enough.

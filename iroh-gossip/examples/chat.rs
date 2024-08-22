@@ -209,7 +209,6 @@ async fn endpoint_loop(endpoint: Endpoint, gossip: Gossip) {
     }
 }
 
-// TODO: needs to be Incoming now
 async fn handle_connection(
     mut conn: iroh_net::endpoint::Connecting,
     gossip: Gossip,
