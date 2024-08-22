@@ -2482,7 +2482,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2537,7 +2537,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2581,7 +2581,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-blobs"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2604,6 +2604,7 @@ dependencies = [
  "iroh-quinn",
  "iroh-test",
  "num_cpus",
+ "oneshot",
  "parking_lot",
  "pin-project",
  "postcard",
@@ -2632,7 +2633,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-cli"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2688,7 +2689,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2737,7 +2738,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-docs"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2778,7 +2779,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-gossip"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2823,7 +2824,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "erased_set",
@@ -2842,7 +2843,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2939,7 +2940,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-bench"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3006,7 +3007,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-test"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "tokio",
@@ -3611,6 +3612,12 @@ name = "once_cell"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
+
+[[package]]
+name = "oneshot"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e296cf87e61c9cfc1a61c3c63a0f7f286ed4554e0e22be84e8a38e1d264a2a29"
 
 [[package]]
 name = "oorandom"

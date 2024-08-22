@@ -1,6 +1,6 @@
 [package]
 name = "iroh-docs"
-version = "0.22.0"
+version = "0.23.0"
 edition = "2021"
 readme = "README.md"
 description = "Iroh sync"
@@ -25,11 +25,11 @@ futures-buffered = "0.2.4"
 futures-lite = "2.3.0"
 futures-util = { version = "0.3.25" }
 hex = "0.4"
-iroh-base = { version = "0.22.0", path = "../iroh-base" }
-iroh-blobs = { version = "0.22.0", path = "../iroh-blobs", optional = true, features = ["downloader"] }
-iroh-gossip = { version = "0.22.0", path = "../iroh-gossip", optional = true }
-iroh-metrics = { version = "0.22.0", path = "../iroh-metrics", default-features = false }
-iroh-net = { version = "0.22.0", optional = true, path = "../iroh-net" }
+iroh-base = { version = "0.23.0", path = "../iroh-base" }
+iroh-blobs = { version = "0.23.0", path = "../iroh-blobs", optional = true, features = ["downloader"] }
+iroh-gossip = { version = "0.23.0", path = "../iroh-gossip", optional = true }
+iroh-metrics = { version = "0.23.0", path = "../iroh-metrics", default-features = false }
+iroh-net = { version = "0.23.0", optional = true, path = "../iroh-net" }
 lru = "0.12"
 num_enum = "0.7"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }

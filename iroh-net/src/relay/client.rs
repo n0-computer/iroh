@@ -32,6 +32,7 @@ use conn::{
 };
 use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
 
+use crate::defaults::timeouts::relay::*;
 use crate::dns::{DnsResolver, ResolverExt};
 use crate::key::{PublicKey, SecretKey};
 use crate::relay::codec::DerpCodec;
@@ -42,11 +43,6 @@ use crate::util::AbortingJoinHandle;
 
 pub(crate) mod conn;
 pub(crate) mod streams;
-
-const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
-const PING_TIMEOUT: Duration = Duration::from_secs(5);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const DNS_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Possible connection errors on the [`Client`]
 #[derive(Debug, thiserror::Error)]

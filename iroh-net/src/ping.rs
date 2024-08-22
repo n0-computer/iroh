@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use crate::defaults::timeouts::DEFAULT_PINGER_TIMEOUT as DEFAULT_TIMEOUT;
 use anyhow::{Context, Result};
 use surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};
 use tracing::debug;
@@ -38,8 +39,6 @@ struct Inner {
     client_v6: Mutex<Option<Client>>,
     client_v4: Mutex<Option<Client>>,
 }
-
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Pinger {
     /// Create a new [Pinger].

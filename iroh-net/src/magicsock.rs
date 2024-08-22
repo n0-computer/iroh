@@ -51,6 +51,7 @@ use url::Url;
 use watchable::Watchable;
 
 use crate::{
+    defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
     disco::{self, SendAddr},
     discovery::Discovery,
     dns::DnsResolver,
@@ -75,21 +76,20 @@ mod relay_actor;
 mod timer;
 mod udp_conn;
 
+pub(crate) use node_map::Source;
+
+pub(super) use self::timer::Timer;
+
 pub use self::metrics::Metrics;
 pub use self::node_map::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo as ConnectionInfo,
+    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo,
 };
-pub(super) use self::timer::Timer;
-pub(crate) use node_map::Source;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
 const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-
-/// Maximum duration to wait for a netcheck report.
-const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
@@ -283,19 +283,19 @@ impl MagicSock {
 
     /// Returns `true` if we have at least one candidate address where we can send packets to.
     pub(crate) fn has_send_address(&self, node_key: PublicKey) -> bool {
-        self.connection_info(node_key)
+        self.remote_info(node_key)
             .map(|info| info.has_send_address())
             .unwrap_or(false)
     }
 
-    /// Retrieve connection information about nodes in the network.
-    pub(crate) fn connection_infos(&self) -> Vec<ConnectionInfo> {
-        self.node_map.node_infos(Instant::now())
+    /// Return the [`RemoteInfo`]s of all nodes in the node map.
+    pub(crate) fn list_remote_infos(&self) -> Vec<RemoteInfo> {
+        self.node_map.list_remote_infos(Instant::now())
     }
 
-    /// Retrieve connection information about a node in the network.
-    pub(crate) fn connection_info(&self, node_id: NodeId) -> Option<ConnectionInfo> {
-        self.node_map.node_info(node_id)
+    /// Return the [`RemoteInfo`] for a single node in the node map.
+    pub(crate) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
+        self.node_map.remote_info(node_id)
     }
 
     /// Returns the direct addresses as a stream.
@@ -2861,7 +2861,7 @@ mod tests {
         fn tracked_endpoints(&self) -> Vec<PublicKey> {
             self.endpoint
                 .magic_sock()
-                .connection_infos()
+                .list_remote_infos()
                 .into_iter()
                 .map(|ep| ep.node_id)
                 .collect()

@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use quinn::crypto::rustls::{NoInitialCipherSuite, QuicClientConfig, QuicServerConfig};
+use tracing::warn;
 
 use crate::key::{PublicKey, SecretKey};
 
@@ -55,6 +56,7 @@ pub fn make_client_config(
     .with_client_cert_resolver(cert_resolver);
     crypto.alpn_protocols = alpn_protocols;
     if keylog {
+        warn!("enabling SSLKEYLOGFILE for TLS pre-master keys");
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
     let config = crypto.try_into()?;
@@ -87,6 +89,7 @@ pub fn make_server_config(
     .with_cert_resolver(cert_resolver);
     crypto.alpn_protocols = alpn_protocols;
     if keylog {
+        warn!("enabling SSLKEYLOGFILE for TLS pre-master keys");
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
     let config = crypto.try_into()?;

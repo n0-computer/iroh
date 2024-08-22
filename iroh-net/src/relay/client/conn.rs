@@ -20,6 +20,7 @@ use tokio_tungstenite_wasm::WebSocketStream;
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, info_span, trace, Instrument};
 
+use crate::defaults::timeouts::relay::CLIENT_RECV_TIMEOUT;
 use crate::key::{PublicKey, SecretKey};
 use crate::relay::client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter};
 use crate::relay::codec::{
@@ -27,8 +28,6 @@ use crate::relay::codec::{
 };
 use crate::relay::codec::{ClientInfo, PER_CLIENT_READ_QUEUE_DEPTH};
 use crate::util::AbortingJoinHandle;
-
-const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
 
 impl PartialEq for Conn {
     fn eq(&self, other: &Self) -> bool {

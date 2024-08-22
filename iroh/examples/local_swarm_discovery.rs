@@ -1,9 +1,9 @@
 //! Example that runs and iroh node with local node discovery and no relay server
 //!
 //! Run the follow command to run the "accept" side, that hosts the content:
-//!  $ cargo run --example local_swarm_discovery --features="local-swarm-discovery" -- accept [FILE_PATH]
+//!  $ cargo run --example local_swarm_discovery --features="discovery-local-network" -- accept [FILE_PATH]
 //! Wait for output that looks like the following:
-//!  $ cargo run --example local_swarm_discovery --features="local-swarm-discovery" -- connect [NODE_ID] [HASH] -o [FILE_PATH]
+//!  $ cargo run --example local_swarm_discovery --features="discovery-local-network" -- connect [NODE_ID] [HASH] -o [FILE_PATH]
 //! Run that command on another machine in the same local network, replacing [FILE_PATH] to the path on which you want to save the transferred content.
 use std::path::PathBuf;
 

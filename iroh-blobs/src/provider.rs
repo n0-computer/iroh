@@ -197,19 +197,21 @@ pub async fn read_request(mut reader: RecvStream) -> Result<Request> {
     Ok(request)
 }
 
-/// Transfers the collection & blob data.
+/// Transfers a blob or hash sequence to the client.
 ///
-/// First, it transfers the collection data & its associated outboard encoding data. Then it sequentially transfers each individual blob data & its associated outboard
-/// encoding data.
+/// The difference to [`handle_get`] is that we already have a reader for the
+/// root blob and outboard.
 ///
-/// Will fail if there is an error writing to the getter or reading from
+/// First, it transfers the root blob. Then, if needed, it sequentially
+/// transfers each individual blob data.
+///
+/// The transfer fail if there is an error writing to the writer or reading from
 /// the database.
 ///
-/// If a blob from the collection cannot be found in the database, the transfer will gracefully
-/// close the writer, and return with `Ok(SentStatus::NotFound)`.
-///
-/// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-pub async fn transfer_collection<D: Map>(
+/// If a blob from the hash sequence cannot be found in the database, the
+/// transfer will return with [`SentStatus::NotFound`]. If the transfer completes
+/// successfully, it will return with [`SentStatus::Sent`].
+pub(crate) async fn transfer_hash_seq<D: Map>(
     request: GetRequest,
     // Store from which to fetch blobs.
     db: &D,
@@ -358,7 +360,9 @@ pub trait CustomEventSender: std::fmt::Debug + Sync + Send + 'static {
     fn try_send(&self, event: Event);
 }
 
-/// A possibly disabled sender for events.
+/// A sender for events related to blob transfers.
+///
+/// The sender is disabled by default.
 #[derive(Debug, Clone, Default)]
 pub struct EventSender {
     inner: Option<Arc<dyn CustomEventSender>>,
@@ -458,7 +462,9 @@ async fn handle_stream<D: Map>(db: D, reader: RecvStream, writer: ResponseWriter
     }
 }
 
-/// Handle a single standard get request.
+/// Handle a single get request.
+///
+/// Requires the request, a database, and a writer.
 pub async fn handle_get<D: Map>(
     db: D,
     request: GetRequest,
@@ -482,7 +488,7 @@ pub async fn handle_get<D: Map>(
             let mut stats = Box::<TransferStats>::default();
             let t0 = std::time::Instant::now();
             // 5. Transfer data!
-            let res = transfer_collection(
+            let res = transfer_hash_seq(
                 request,
                 &db,
                 &mut writer,

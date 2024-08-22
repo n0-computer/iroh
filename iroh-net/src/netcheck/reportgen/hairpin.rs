@@ -13,7 +13,6 @@
 //! requests to it will fail which is intentional.
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use tokio::sync::oneshot;
@@ -25,8 +24,7 @@ use crate::netcheck::{self, reportgen, Inflight};
 use crate::stun;
 use crate::util::CancelOnDrop;
 
-/// The amount of time we wait for a hairpinned packet to come back.
-const HAIRPIN_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
+use crate::defaults::timeouts::HAIRPIN_CHECK_TIMEOUT;
 
 /// Handle to the hairpin actor.
 ///
@@ -179,6 +177,7 @@ impl Actor {
 #[cfg(test)]
 mod tests {
     use bytes::BytesMut;
+    use std::time::Duration;
     use tokio::sync::mpsc;
     use tracing::info;
 
