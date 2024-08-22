@@ -287,6 +287,15 @@
 <a href="#287" id="287">287</a>
 <a href="#288" id="288">288</a>
 <a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::SocketAddr,
     sync::Arc,
@@ -538,8 +547,17 @@
 
     <span class="comment">// Handle only the expected amount of clients
     </span><span class="kw">for _ in </span><span class="number">0</span>..opt.clients {
-        <span class="kw">let </span>handshake = endpoint.accept().<span class="kw">await</span>.unwrap();
-        <span class="kw">let </span>connection = handshake.<span class="kw">await</span>.context(<span class="string">"handshake failed"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>incoming = endpoint.accept().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>connecting = <span class="kw">match </span>incoming.accept() {
+            <span class="prelude-val">Ok</span>(connecting) =&gt; connecting,
+            <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="macro">warn!</span>(<span class="string">"incoming connection failed: {err:#}"</span>);
+                <span class="comment">// we can carry on in these cases:
+                // this can be caused by retransmitted datagrams
+                </span><span class="kw">continue</span>;
+            }
+        };
+        <span class="kw">let </span>connection = connecting.<span class="kw">await</span>.context(<span class="string">"handshake failed"</span>)<span class="question-mark">?</span>;
 
         server_tasks.push(tokio::spawn(<span class="kw">async move </span>{
             <span class="kw">loop </span>{

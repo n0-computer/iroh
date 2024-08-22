@@ -779,6 +779,8 @@
 <a href="#779" id="779">779</a>
 <a href="#780" id="780">780</a>
 <a href="#781" id="781">781</a>
+<a href="#782" id="782">782</a>
+<a href="#783" id="783">783</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh-net node a [`NodeAddr`] is needed, which needs to contain either a
@@ -1382,8 +1384,9 @@
         <span class="kw">let </span>handle = tokio::spawn({
             <span class="kw">let </span>ep = ep.clone();
             <span class="kw">async move </span>{
-                <span class="kw">while let </span><span class="prelude-val">Some</span>(incoming) = ep.accept().<span class="kw">await </span>{
-                    <span class="kw">let </span>_conn = incoming.accept()<span class="question-mark">?</span>.<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="comment">// we skip accept() errors, they can be caused by retransmits
+                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
+                    <span class="kw">let </span>_conn = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
                     <span class="comment">// Just accept incoming connections, but don't do anything with them.
                 </span>}
 
@@ -1548,8 +1551,9 @@
         <span class="kw">let </span>handle = tokio::spawn({
             <span class="kw">let </span>ep = ep.clone();
             <span class="kw">async move </span>{
-                <span class="kw">while let </span><span class="prelude-val">Some</span>(incoming) = ep.accept().<span class="kw">await </span>{
-                    <span class="kw">let </span>_conn = incoming.accept()<span class="question-mark">?</span>.<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="comment">// we skip accept() errors, they can be caused by retransmits
+                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
+                    <span class="kw">let </span>_conn = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
                     <span class="comment">// Just accept incoming connections, but don't do anything with them.
                 </span>}
 
