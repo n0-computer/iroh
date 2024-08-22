@@ -3,6 +3,11 @@
 <p>Awaiting a cancelled task might complete as usual if the task was
 already completed at the time it was cancelled, but most likely it
 will fail with a <a href="method@super::error::JoinError::is_cancelled">cancelled</a> <code>JoinError</code>.</p>
+<p>Be aware that tasks spawned using <a href="crate::task::spawn_blocking"><code>spawn_blocking</code></a> cannot be aborted
+because they are not async. If you call <code>abort</code> on a <code>spawn_blocking</code>
+task, then this <em>will not have any effect</em>, and the task will continue
+running normally. The exception is if the task has not started running
+yet; in that case, calling <code>abort</code> may prevent the task from starting.</p>
 <p>See also <a href="crate::task#cancellation">the module level docs</a> for more information on cancellation.</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>tokio::time;
