@@ -3620,8 +3620,6 @@
 <a href="#3620" id="3620">3620</a>
 <a href="#3621" id="3621">3621</a>
 <a href="#3622" id="3622">3622</a>
-<a href="#3623" id="3623">3623</a>
-<a href="#3624" id="3624">3624</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -5334,9 +5332,8 @@
     }
 
     <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="comment">// TODO(matheus23): Do we need to account for the relay somehow?
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(pconn6) = <span class="self">self</span>.pconn6.as_ref() {
-            std::cmp::min(
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(pconn6) = <span class="self">self</span>.pconn6.as_ref() {
+            std::cmp::max(
                 pconn6.max_transmit_segments(),
                 <span class="self">self</span>.pconn4.max_transmit_segments(),
             )
@@ -5346,9 +5343,9 @@
     }
 
     <span class="kw">fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="comment">// TODO(matheus23): Do we need to account for the relay somehow?
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(pconn6) = <span class="self">self</span>.pconn6.as_ref() {
-            std::cmp::min(
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(pconn6) = <span class="self">self</span>.pconn6.as_ref() {
+            <span class="comment">// TODO(matheus23): This is somewhat incorrect. Needs updates to `MagicSock::poll_recv` to fix this though.
+            </span>std::cmp::min(
                 pconn6.max_receive_segments(),
                 <span class="self">self</span>.pconn4.max_receive_segments(),
             )
@@ -5358,8 +5355,7 @@
     }
 
     <span class="kw">fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="comment">// TODO(matheus23): Do we need to account for the relay somehow?
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(pconn6) = <span class="self">self</span>.pconn6.as_ref() {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(pconn6) = <span class="self">self</span>.pconn6.as_ref() {
             pconn6.may_fragment() || <span class="self">self</span>.pconn4.may_fragment()
         } <span class="kw">else </span>{
             <span class="self">self</span>.pconn4.may_fragment()
