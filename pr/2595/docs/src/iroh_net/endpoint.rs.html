@@ -1691,8 +1691,6 @@
 <a href="#1691" id="1691">1691</a>
 <a href="#1692" id="1692">1692</a>
 <a href="#1693" id="1693">1693</a>
-<a href="#1694" id="1694">1694</a>
-<a href="#1695" id="1695">1695</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1722,14 +1720,12 @@
 <span class="kw">use </span>tracing::{debug, instrument, trace, warn};
 <span class="kw">use </span>url::Url;
 
-<span class="kw">use crate</span>::{
-    discovery::{Discovery, DiscoveryTask},
-    dns::{default_resolver, DnsResolver},
-    key::{PublicKey, SecretKey},
-    magicsock::{<span class="self">self</span>, Handle},
-    relay::{RelayMode, RelayUrl},
-    tls, NodeId,
-};
+<span class="kw">use </span><span class="kw">crate</span>::discovery::{Discovery, DiscoveryTask};
+<span class="kw">use </span><span class="kw">crate</span>::dns::{default_resolver, DnsResolver};
+<span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
+<span class="kw">use </span><span class="kw">crate</span>::magicsock::{<span class="self">self</span>, Handle, QuicMappedAddr};
+<span class="kw">use </span><span class="kw">crate</span>::relay::{RelayMode, RelayUrl};
+<span class="kw">use crate</span>::{tls, NodeId};
 
 <span class="kw">mod </span>rtt_actor;
 
@@ -2184,7 +2180,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_id: NodeId,
         alpn: <span class="kw-2">&amp;</span>[u8],
-        addr: SocketAddr,
+        addr: QuicMappedAddr,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
         <span class="kw">let </span>client_config = {
             <span class="kw">let </span>alpn_protocols = <span class="macro">vec!</span>[alpn.to_vec()];
@@ -2204,7 +2200,7 @@
         <span class="comment">// TODO: We'd eventually want to replace "localhost" with something that makes more sense.
         </span><span class="kw">let </span>connect = <span class="self">self
             </span>.endpoint
-            .connect_with(client_config, addr, <span class="string">"localhost"</span>)<span class="question-mark">?</span>;
+            .connect_with(client_config, addr.<span class="number">0</span>, <span class="string">"localhost"</span>)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>connection = connect
             .<span class="kw">await
@@ -2536,7 +2532,7 @@
     </span><span class="kw">async fn </span>get_mapping_addr_and_maybe_start_discovery(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_addr: NodeAddr,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(SocketAddr, <span class="prelude-ty">Option</span>&lt;DiscoveryTask&gt;)&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(QuicMappedAddr, <span class="prelude-ty">Option</span>&lt;DiscoveryTask&gt;)&gt; {
         <span class="kw">let </span>node_id = node_addr.node_id;
 
         <span class="comment">// Only return a mapped addr if we have some way of dialing this node, in other

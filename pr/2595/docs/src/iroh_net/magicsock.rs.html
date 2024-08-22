@@ -3605,20 +3605,6 @@
 <a href="#3605" id="3605">3605</a>
 <a href="#3606" id="3606">3606</a>
 <a href="#3607" id="3607">3607</a>
-<a href="#3608" id="3608">3608</a>
-<a href="#3609" id="3609">3609</a>
-<a href="#3610" id="3610">3610</a>
-<a href="#3611" id="3611">3611</a>
-<a href="#3612" id="3612">3612</a>
-<a href="#3613" id="3613">3613</a>
-<a href="#3614" id="3614">3614</a>
-<a href="#3615" id="3615">3615</a>
-<a href="#3616" id="3616">3616</a>
-<a href="#3617" id="3617">3617</a>
-<a href="#3618" id="3618">3618</a>
-<a href="#3619" id="3619">3619</a>
-<a href="#3620" id="3620">3620</a>
-<a href="#3621" id="3621">3621</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3971,14 +3957,9 @@
         <span class="self">self</span>.node_map.conn_type_stream(node_id)
     }
 
-    <span class="doccomment">/// Returns the [`SocketAddr`] which can be used by the QUIC layer to dial this node.
-    ///
-    /// Note this is a user-facing API and does not wrap the [`SocketAddr`] in a
-    /// [`QuicMappedAddr`] as we do internally.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_mapping_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
-        <span class="self">self</span>.node_map
-            .get_quic_mapped_addr_for_node_key(node_id)
-            .map(|a| a.<span class="number">0</span>)
+    <span class="doccomment">/// Returns the socket address which can be used by the QUIC layer to dial this node.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_mapping_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;QuicMappedAddr&gt; {
+        <span class="self">self</span>.node_map.get_quic_mapped_addr_for_node_key(node_id)
     }
 
     <span class="doccomment">/// Add addresses for a node to the magic socket's addresbook.
@@ -4125,16 +4106,7 @@
                     pings_sent = <span class="bool-val">true</span>;
                 }
 
-                <span class="comment">// if udp_addr.is_none() &amp;&amp; relay_url.is_none() {
-                //     // Handle no addresses being available
-                //     warn!(node = %node_id.fmt_short(), "failed to send: no UDP or relay addr");
-                //     return Err(io::Error::new(
-                //         io::ErrorKind::NotConnected,
-                //         "no UDP or relay address available for node",
-                //     ));
-                // }
-
-                </span><span class="kw">let </span><span class="kw-2">mut </span>udp_sent = <span class="bool-val">false</span>;
+                <span class="kw">let </span><span class="kw-2">mut </span>udp_sent = <span class="bool-val">false</span>;
                 <span class="kw">let </span><span class="kw-2">mut </span>udp_error = <span class="prelude-val">None</span>;
                 <span class="kw">let </span><span class="kw-2">mut </span>relay_sent = <span class="bool-val">false</span>;
                 <span class="kw">let </span><span class="kw-2">mut </span>relay_error = <span class="prelude-val">None</span>;
@@ -6255,7 +6227,7 @@
 /// comes in as the inner [`SocketAddr`], in those interfaces we have to be careful to do
 /// the conversion to this type.
 </span><span class="attr">#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>QuicMappedAddr(SocketAddr);
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>QuicMappedAddr(<span class="kw">pub</span>(<span class="kw">crate</span>) SocketAddr);
 
 <span class="doccomment">/// Counter to always generate unique addresses for [`QuicMappedAddr`].
 </span><span class="kw">static </span>ADDR_COUNTER: AtomicU64 = AtomicU64::new(<span class="number">1</span>);
