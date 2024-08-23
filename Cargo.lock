@@ -3017,6 +3017,7 @@ dependencies = [
  "curve25519-dalek",
  "derive_more",
  "ed25519-dalek",
+ "either",
  "flume",
  "futures-buffered",
  "futures-concurrency",
@@ -3038,6 +3039,7 @@ dependencies = [
  "rand_chacha",
  "rand_core",
  "redb 2.1.1",
+ "reusable-box-future",
  "serde",
  "sha2",
  "strum 0.26.3",
@@ -3254,7 +3256,7 @@ checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 [[package]]
 name = "meadowcap"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/willow-rs.git?branch=iroh-dev#9553d8f9aa73092b0deaae2e832964876f2c7caa"
+source = "git+https://github.com/n0-computer/willow-rs.git?branch=main#11e09fa132b602e1f33d0e7c3a6a92357ad33a69"
 dependencies = [
  "either",
  "signature",
@@ -4750,6 +4752,12 @@ dependencies = [
  "hostname",
  "quick-error",
 ]
+
+[[package]]
+name = "reusable-box-future"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e0e61cd21fbddd85fbd9367b775660a01d388c08a61c6d2824af480b0309bb9"
 
 [[package]]
 name = "rfc6979"
@@ -6637,7 +6645,7 @@ checksum = "7219d36b6eac893fa81e84ebe06485e7dcbb616177469b142df14f1f4deb1311"
 [[package]]
 name = "willow-data-model"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/willow-rs.git?branch=iroh-dev#9553d8f9aa73092b0deaae2e832964876f2c7caa"
+source = "git+https://github.com/n0-computer/willow-rs.git?branch=main#11e09fa132b602e1f33d0e7c3a6a92357ad33a69"
 dependencies = [
  "bytes",
  "either",
@@ -6649,7 +6657,7 @@ dependencies = [
 [[package]]
 name = "willow-encoding"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/willow-rs.git?branch=iroh-dev#9553d8f9aa73092b0deaae2e832964876f2c7caa"
+source = "git+https://github.com/n0-computer/willow-rs.git?branch=main#11e09fa132b602e1f33d0e7c3a6a92357ad33a69"
 dependencies = [
  "either",
  "syncify",

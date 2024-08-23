@@ -8,6 +8,7 @@ pub mod pipe;
 pub mod queue;
 pub mod stream;
 pub mod time;
+pub mod ufo;
 
 /// Increment a fixed-length byte string by one, by incrementing the last byte that is not 255 by one.
 ///
