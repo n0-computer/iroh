@@ -43,7 +43,7 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
 
     let (server_addr, endpoint) = {
         let _guard = server_span.enter();
-        iroh::server_endpoint(&runtime, relay_url.clone(), &opt)
+        iroh::server_endpoint(&runtime, &relay_url, &opt)
     };
 
     let server_thread = std::thread::spawn(move || {

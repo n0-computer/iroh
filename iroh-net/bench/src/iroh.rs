@@ -22,7 +22,7 @@ pub const ALPN: &[u8] = b"n0/iroh-net-bench/0";
 /// Creates a server endpoint which runs on the given runtime
 pub fn server_endpoint(
     rt: &tokio::runtime::Runtime,
-    relay_url: Option<RelayUrl>,
+    relay_url: &Option<RelayUrl>,
     opt: &Opt,
 ) -> (NodeAddr, Endpoint) {
     let _guard = rt.enter();
@@ -47,7 +47,7 @@ pub fn server_endpoint(
         let addr = SocketAddr::new("127.0.0.1".parse().unwrap(), addr.0.port());
         let mut addr = NodeAddr::new(ep.node_id()).with_direct_addresses([addr]);
         if let Some(relay_url) = relay_url {
-            addr = addr.with_relay_url(relay_url);
+            addr = addr.with_relay_url(relay_url.clone());
         }
         (addr, ep)
     })
