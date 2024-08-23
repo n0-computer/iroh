@@ -294,6 +294,7 @@ impl StaticConfig {
 }
 
 /// Creates a [`quinn::ServerConfig`] with the given secret key and limits.
+// TODO: this return type can not longer be used anywhere in our public API.  Remove this.
 pub fn make_server_config(
     secret_key: &SecretKey,
     alpn_protocols: Vec<Vec<u8>>,
@@ -483,7 +484,8 @@ impl Endpoint {
         self.connect(addr, alpn).await
     }
 
-    async fn connect_quinn(
+    // This is pub(crate) to make it easier to test MagicSocket
+    pub(crate) async fn connect_quinn(
         &self,
         node_id: NodeId,
         alpn: &[u8],

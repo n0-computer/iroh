@@ -588,12 +588,12 @@ impl MagicSock {
                 Ok(())
             }
             None => {
-                // TODO: maybe this should report OK?
-                error!(%dest, "no endpoint for mapped address");
-                Err(io::Error::new(
-                    io::ErrorKind::WouldBlock,
-                    "trying to send to unknown endpoint",
-                ))
+                error!(%dest, "no NodeState for mapped address");
+                Ok(())
+                // Err(io::Error::new(
+                //     io::ErrorKind::Other,
+                //     "trying to send to unknown NodeId",
+                // ))
             }
         }
     }
@@ -2799,9 +2799,14 @@ mod tests {
     use iroh_test::CallOnDrop;
     use rand::RngCore;
 
-    use crate::{defaults::staging::EU_RELAY_HOSTNAME, relay::RelayMode, tls, Endpoint};
+    use crate::defaults::staging::EU_RELAY_HOSTNAME;
+    use crate::relay::RelayMode;
+    use crate::tls;
+    use crate::Endpoint;
 
     use super::*;
+
+    const ALPN: &[u8] = b"n0/test/1";
 
     impl MagicSock {
         #[track_caller]
@@ -2817,8 +2822,6 @@ mod tests {
         secret_key: SecretKey,
         endpoint: Endpoint,
     }
-
-    const ALPN: &[u8] = b"n0/test/1";
 
     impl MagicStack {
         async fn new(relay_mode: RelayMode) -> Result<Self> {
@@ -3603,5 +3606,174 @@ mod tests {
             futures_lite::future::poll_once(relay_stream.next()).await,
             Some(Some(url))
         );
+    }
+
+    /// Creates a new [`quinn::Endpoint`] hooked up to a [`MagicSock`].
+    ///
+    /// This is without involving [`crate::endpoint::Endpoint`].  The socket will accept
+    /// connections using [`ALPN`].
+    ///
+    /// Use [`magicsock_connect`] to establish connections.
+    async fn magicsock_ep(secret_key: SecretKey) -> anyhow::Result<(quinn::Endpoint, Handle)> {
+        let opts = Options {
+            port: 0,
+            secret_key: secret_key.clone(),
+            relay_map: RelayMap::empty(),
+            node_map: None,
+            discovery: None,
+            dns_resolver: crate::dns::default_resolver().clone(),
+            proxy_url: None,
+            insecure_skip_relay_cert_verify: true,
+        };
+        let msock = MagicSock::spawn(opts).await?;
+        let server_config = crate::endpoint::make_server_config(
+            &secret_key,
+            vec![ALPN.to_vec()],
+            Arc::new(quinn::TransportConfig::default()),
+            true,
+        )?;
+        let mut endpoint_config = quinn::EndpointConfig::default();
+        endpoint_config.grease_quic_bit(false);
+        let endpoint = quinn::Endpoint::new_with_abstract_socket(
+            endpoint_config,
+            Some(server_config),
+            Arc::new(msock.clone()),
+            Arc::new(quinn::TokioRuntime),
+        )?;
+        Ok((endpoint, msock))
+    }
+
+    /// Connects from `ep` returned from [`magicsock_ep`] to the `node_id`.
+    ///
+    /// Uses [`ALPN`].
+    async fn magicsock_connect(
+        ep: &quinn::Endpoint,
+        secret_key: SecretKey,
+        addr: QuicMappedAddr,
+        node_id: NodeId,
+    ) -> Result<quinn::Connection> {
+        let alpns = vec![ALPN.to_vec()];
+        let quic_client_config = tls::make_client_config(&secret_key, Some(node_id), alpns, true)?;
+        let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
+        let mut transport_config = quinn::TransportConfig::default();
+        transport_config.max_idle_timeout(Some(Duration::from_secs(1).try_into().unwrap()));
+        client_config.transport_config(Arc::new(transport_config));
+        let connect = ep.connect_with(client_config, addr.0, "localhost")?;
+        let connection = connect.await?;
+        Ok(connection)
+    }
+
+    #[tokio::test]
+    async fn test_try_send_no_send_addr() {
+        // Regression test: if there is no send_addr we should keep being able to use the
+        // Endpoint.
+        let _guard = iroh_test::logging::setup();
+
+        let secret_key_1 = SecretKey::from_bytes(&[1u8; 32]);
+        let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
+        let node_id_2 = secret_key_2.public();
+        let secret_key_missing_node = SecretKey::from_bytes(&[255u8; 32]);
+        let node_id_missing_node = secret_key_missing_node.public();
+
+        let (ep_1, msock_1) = magicsock_ep(secret_key_1.clone()).await.unwrap();
+
+        // Generate an address not present in the NodeMap.
+        let bad_addr = QuicMappedAddr::generate();
+
+        let res = tokio::time::timeout(
+            Duration::from_secs(10),
+            magicsock_connect(&ep_1, secret_key_1.clone(), bad_addr, node_id_missing_node),
+        )
+        .await
+        .expect("timeout while connecting to bad node");
+
+        assert!(res.is_err());
+
+        // Now check we can still create another connection with this endpoint.
+        let (ep_2, msock_2) = magicsock_ep(secret_key_2.clone()).await.unwrap();
+        let node_addr_2 = NodeAddr {
+            node_id: node_id_2,
+            info: AddrInfo {
+                relay_url: None,
+                direct_addresses: msock_2
+                    .direct_addresses()
+                    .next()
+                    .await
+                    .expect("no direct addrs")
+                    .into_iter()
+                    .map(|x| x.addr)
+                    .collect(),
+            },
+        };
+        msock_1
+            .add_node_addr(node_addr_2, Source::NamedApp { name: "test" })
+            .unwrap();
+        let addr = msock_2.get_mapping_addr(node_id_2).unwrap();
+        let res = tokio::time::timeout(
+            Duration::from_secs(10),
+            magicsock_connect(&ep_2, secret_key_2.clone(), addr, node_id_2),
+        )
+        .await
+        .expect("timeout while connecting to good node");
+
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_no_udp_addr_or_relay_url() {
+        // This specifically tests the `if udp_addr.is_none() && relay_url.is_none()`
+        // behaviour of MagicSock::try_send.
+        let _logging_guard = iroh_test::logging::setup();
+
+        let secret_key_1 = SecretKey::from_bytes(&[1u8; 32]);
+        let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
+        let secret_key_missing_node = SecretKey::from_bytes(&[255u8; 32]);
+
+        let (ep_1, msock_1) = magicsock_ep(secret_key_1.clone()).await.unwrap();
+
+        // Add an empty entry in the NodeMap
+        msock_1.node_map.add_node_addr(
+            NodeAddr {
+                node_id: secret_key_missing_node.public(),
+                info: AddrInfo::default(),
+            },
+            Source::NamedApp { name: "test" },
+        );
+        let addr_missing_node = msock_1
+            .get_mapping_addr(secret_key_missing_node.public())
+            .unwrap();
+        let conn = magicsock_connect(
+            &ep_1,
+            secret_key_1.clone(),
+            addr_missing_node,
+            secret_key_missing_node.public(),
+        )
+        .await
+        .unwrap();
+        // let ep1 = Endpoint::builder()
+        //     .secret_key(SecretKey::from_bytes(&[0u8; 32]))
+        //     .alpns(vec![ALPN.to_vec()])
+        //     .relay_mode(RelayMode::Disabled)
+        //     .bind(0)
+        //     .await
+        //     .unwrap();
+        // let secret_key_2 = SecretKey::from_bytes(&[1u8; 32]);
+        // let node_id_2 = secret_key_2.public();
+        // let ep2 = Endpoint::builder()
+        //     .alpns(vec![TEST_ALPN.to_vec()])
+        //     .relay_mode(RelayMode::Disabled)
+        //     .bind(0)
+        //     .await
+        //     .unwrap();
+        // let ep1_nodeaddr = ep1.node_addr().await.unwrap();
+        // let ep2_nodeaddr = ep2.node_addr().await.unwrap();
+        // ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
+        // ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
+        // let ep1_nodeid = ep1.node_id();
+        // let ep2_nodeid = ep2.node_id();
+        // eprintln!("node id 1 {ep1_nodeid}");
+        // eprintln!("node id 2 {ep2_nodeid}");
+        // ep1.connect(node_id_2, TEST_ALPN).await.unwrap();
+        panic!("boom");
     }
 }
