@@ -1692,7 +1692,6 @@
 <a href="#1692" id="1692">1692</a>
 <a href="#1693" id="1693">1693</a>
 <a href="#1694" id="1694">1694</a>
-<a href="#1695" id="1695">1695</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -2179,8 +2178,7 @@
         <span class="self">self</span>.connect(addr, alpn).<span class="kw">await
     </span>}
 
-    <span class="comment">// This is pub(crate) to make it easier to test MagicSocket
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>connect_quinn(
+    <span class="kw">async fn </span>connect_quinn(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_id: NodeId,
         alpn: <span class="kw-2">&amp;</span>[u8],
