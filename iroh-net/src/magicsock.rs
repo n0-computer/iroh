@@ -566,17 +566,20 @@ impl MagicSock {
                 }
 
                 if !relay_sent && !udp_sent && !pings_sent {
-                    // Returning an error here would kill the Quinn EndpointDriver and lock
-                    // up the entire Endpoint.  Instead, log an error and return
-                    // `Err(WouldBlock)`, the connection will timeout.
+                    // Returning Ok here means we let QUIC timeout, same with returning any
+                    // errors.  The philosophy of quinn-udp is that a UDP connection could
+                    // come back at any time so these errors should be treated as transient
+                    // and are just timeouts.  Hence we opt for returning Ok.  See
+                    // test_try_send_no_udp_addr_or_relay_url to explore this further.
+                    error!("no UDP or relay paths available for node");
                     let err = udp_error.unwrap_or_else(|| {
                         io::Error::new(
-                            io::ErrorKind::WouldBlock,
+                            io::ErrorKind::Other,
                             "no UDP or relay address available for node",
                         )
                     });
-                    error!(node = %node_id.fmt_short(), "{err:?}");
                     return Err(err);
+                    // return Ok(());
                 }
 
                 trace!(
@@ -589,11 +592,13 @@ impl MagicSock {
             }
             None => {
                 error!(%dest, "no NodeState for mapped address");
+                // Returning Ok here means we let QUIC timeout.  Returning WouldBlock
+                // triggers a hot loop.  Returning an error would immediately fail a
+                // connection.  The philosophy of quinn-udp is that a UDP connection could
+                // come back at any time or missing should be transient so chooses to let
+                // these kind of errors time out.  See test_try_send_no_send_addr to try
+                // this out.
                 Ok(())
-                // Err(io::Error::new(
-                //     io::ErrorKind::Other,
-                //     "trying to send to unknown NodeId",
-                // ))
             }
         }
     }
@@ -2802,6 +2807,7 @@ mod tests {
     use crate::defaults::staging::EU_RELAY_HOSTNAME;
     use crate::relay::RelayMode;
     use crate::tls;
+    use crate::util::AbortingJoinHandle;
     use crate::Endpoint;
 
     use super::*;
@@ -3614,6 +3620,7 @@ mod tests {
     /// connections using [`ALPN`].
     ///
     /// Use [`magicsock_connect`] to establish connections.
+    #[instrument(name = "ep", skip_all, fields(me = secret_key.public().fmt_short()))]
     async fn magicsock_ep(secret_key: SecretKey) -> anyhow::Result<(quinn::Endpoint, Handle)> {
         let opts = Options {
             port: 0,
@@ -3643,23 +3650,35 @@ mod tests {
         Ok((endpoint, msock))
     }
 
-    /// Connects from `ep` returned from [`magicsock_ep`] to the `node_id`.
+    /// Connects from `ep` returned by [`magicsock_ep`] to the `node_id`.
     ///
-    /// Uses [`ALPN`].
+    /// Uses [`ALPN`], `node_id`, must match `addr`.
+    #[instrument(name = "connect", skip_all, fields(me = ep_secret_key.public().fmt_short()))]
     async fn magicsock_connect(
         ep: &quinn::Endpoint,
-        secret_key: SecretKey,
+        ep_secret_key: SecretKey,
         addr: QuicMappedAddr,
         node_id: NodeId,
     ) -> Result<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
-        let quic_client_config = tls::make_client_config(&secret_key, Some(node_id), alpns, true)?;
-        let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
-        let mut transport_config = quinn::TransportConfig::default();
-        transport_config.max_idle_timeout(Some(Duration::from_secs(1).try_into().unwrap()));
-        client_config.transport_config(Arc::new(transport_config));
+        let quic_client_config =
+            tls::make_client_config(&ep_secret_key, Some(node_id), alpns, true)?;
+        let client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
+        // let mut transport_config = quinn::TransportConfig::default();
+        // transport_config.max_idle_timeout(Some(Duration::from_secs(1).try_into().unwrap()));
+        // client_config.transport_config(Arc::new(transport_config));
+        info!("connect");
         let connect = ep.connect_with(client_config, addr.0, "localhost")?;
-        let connection = connect.await?;
+        info!("connecting");
+        // let connection = connect.await?;
+        let connection = match connect.await {
+            Ok(conn) => conn,
+            Err(err) => {
+                error!("connection error: {err:#}");
+                panic!("oops");
+            }
+        };
+        info!("connected");
         Ok(connection)
     }
 
@@ -3680,17 +3699,34 @@ mod tests {
         // Generate an address not present in the NodeMap.
         let bad_addr = QuicMappedAddr::generate();
 
+        // 500ms is rather fast here.  Running this locally it should always be the correct
+        // timeout.  If this is too slow however the test will not become flaky as we are
+        // expecting the timeout, we might just get the timeout for the wrong reason.  But
+        // this speeds up the test.
         let res = tokio::time::timeout(
-            Duration::from_secs(10),
+            Duration::from_millis(500),
             magicsock_connect(&ep_1, secret_key_1.clone(), bad_addr, node_id_missing_node),
         )
-        .await
-        .expect("timeout while connecting to bad node");
-
-        assert!(res.is_err());
+        .await;
+        assert!(res.is_err(), "expecting timeout");
 
         // Now check we can still create another connection with this endpoint.
         let (ep_2, msock_2) = magicsock_ep(secret_key_2.clone()).await.unwrap();
+
+        // We need a task to accept the connection.
+        let accept_task = tokio::spawn({
+            let ep_2 = ep_2.clone();
+            async move {
+                if let Some(incoming) = ep_2.accept().await {
+                    let _conn = incoming.accept().unwrap().await.unwrap();
+
+                    // Stay alive for a while to not close this connection immediately.
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                }
+            }
+            .instrument(info_span!("ep2.accept", me = node_id_2.fmt_short()))
+        });
+        let _accept_task = AbortingJoinHandle::from(accept_task);
         let node_addr_2 = NodeAddr {
             node_id: node_id_2,
             info: AddrInfo {
@@ -3708,72 +3744,120 @@ mod tests {
         msock_1
             .add_node_addr(node_addr_2, Source::NamedApp { name: "test" })
             .unwrap();
-        let addr = msock_2.get_mapping_addr(node_id_2).unwrap();
+        let addr = msock_1.get_mapping_addr(node_id_2).unwrap();
         let res = tokio::time::timeout(
             Duration::from_secs(10),
-            magicsock_connect(&ep_2, secret_key_2.clone(), addr, node_id_2),
+            magicsock_connect(&ep_1, secret_key_1.clone(), addr, node_id_2),
         )
         .await
-        .expect("timeout while connecting to good node");
+        .expect("timeout while connecting");
 
-        assert!(res.is_ok());
+        // aka assert!(res.is_ok()) but with nicer error reporting.
+        res.unwrap();
+
+        // Now check if we can connect to a repaired ep_3
     }
 
     #[tokio::test]
-    async fn test_no_udp_addr_or_relay_url() {
+    async fn test_try_send_no_udp_addr_or_relay_url() {
         // This specifically tests the `if udp_addr.is_none() && relay_url.is_none()`
         // behaviour of MagicSock::try_send.
         let _logging_guard = iroh_test::logging::setup();
 
         let secret_key_1 = SecretKey::from_bytes(&[1u8; 32]);
         let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
-        let secret_key_missing_node = SecretKey::from_bytes(&[255u8; 32]);
+        let node_id_2 = secret_key_2.public();
 
         let (ep_1, msock_1) = magicsock_ep(secret_key_1.clone()).await.unwrap();
+        let (ep_2, msock_2) = magicsock_ep(secret_key_2.clone()).await.unwrap();
 
-        // Add an empty entry in the NodeMap
+        // We need a task to accept the connection.
+        let accept_task = tokio::spawn({
+            let ep_2 = ep_2.clone();
+            async move {
+                if let Some(incoming) = ep_2.accept().await {
+                    info!("incoming connection");
+                    let conn = incoming.accept().unwrap().await.unwrap();
+                    info!("accepted connection");
+                    let mut stream = conn.accept_uni().await.unwrap();
+                    info!("accepted stream");
+                    stream.read_to_end(1 << 16).await.unwrap();
+                    info!("stream finished");
+
+                    // // Stay alive for a while to not close this connection immediately.
+                    // tokio::time::sleep(Duration::from_secs(10)).await;
+                }
+                warn!("XXXXXXXXXXXXX accepting task closed");
+            }
+            .instrument(info_span!("ep2.accept", me = node_id_2.fmt_short()))
+        });
+        let accept_task = AbortingJoinHandle::from(accept_task);
+
+        // Add an empty entry in the NodeMap of ep_1
         msock_1.node_map.add_node_addr(
             NodeAddr {
-                node_id: secret_key_missing_node.public(),
+                node_id: node_id_2,
                 info: AddrInfo::default(),
             },
             Source::NamedApp { name: "test" },
         );
-        let addr_missing_node = msock_1
-            .get_mapping_addr(secret_key_missing_node.public())
-            .unwrap();
-        let conn = magicsock_connect(
-            &ep_1,
-            secret_key_1.clone(),
-            addr_missing_node,
-            secret_key_missing_node.public(),
+        let addr_2 = msock_1.get_mapping_addr(node_id_2).unwrap();
+
+        // 500ms is rather fast here.  Running this locally it should always be the correct
+        // timeout.  If this is too slow however the test will not become flaky as we are
+        // expecting the timeout, we might just get the timeout for the wrong reason.  But
+        // this speeds up the test.
+        let res = tokio::time::timeout(
+            Duration::from_millis(500),
+            magicsock_connect(&ep_1, secret_key_1.clone(), addr_2, node_id_2),
         )
-        .await
-        .unwrap();
-        // let ep1 = Endpoint::builder()
-        //     .secret_key(SecretKey::from_bytes(&[0u8; 32]))
-        //     .alpns(vec![ALPN.to_vec()])
-        //     .relay_mode(RelayMode::Disabled)
-        //     .bind(0)
-        //     .await
-        //     .unwrap();
-        // let secret_key_2 = SecretKey::from_bytes(&[1u8; 32]);
-        // let node_id_2 = secret_key_2.public();
-        // let ep2 = Endpoint::builder()
-        //     .alpns(vec![TEST_ALPN.to_vec()])
-        //     .relay_mode(RelayMode::Disabled)
-        //     .bind(0)
-        //     .await
-        //     .unwrap();
-        // let ep1_nodeaddr = ep1.node_addr().await.unwrap();
-        // let ep2_nodeaddr = ep2.node_addr().await.unwrap();
-        // ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
-        // ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
-        // let ep1_nodeid = ep1.node_id();
-        // let ep2_nodeid = ep2.node_id();
-        // eprintln!("node id 1 {ep1_nodeid}");
-        // eprintln!("node id 2 {ep2_nodeid}");
-        // ep1.connect(node_id_2, TEST_ALPN).await.unwrap();
-        panic!("boom");
+        .await;
+        assert!(res.is_err(), "expected timeout");
+
+        // Provide correct addressing information
+        msock_1.node_map.add_node_addr(
+            NodeAddr {
+                node_id: node_id_2,
+                info: AddrInfo {
+                    relay_url: None,
+                    direct_addresses: msock_2
+                        .direct_addresses()
+                        .next()
+                        .await
+                        .expect("no direct addrs")
+                        .into_iter()
+                        .map(|x| x.addr)
+                        .collect(),
+                },
+            },
+            Source::NamedApp { name: "test" },
+        );
+
+        // We can now connect
+        let connect_fut = tokio::time::timeout(Duration::from_secs(10), async move {
+            info!("establishing new connection");
+            let conn = magicsock_connect(&ep_1, secret_key_1.clone(), addr_2, node_id_2)
+                .await
+                .unwrap();
+            info!("have connection");
+            let mut stream = conn.open_uni().await.unwrap();
+            stream.write_all(b"hello").await.unwrap();
+            stream.finish().unwrap();
+            stream.stopped().await.unwrap();
+            info!("finished stream");
+        });
+
+        tokio::select! {
+            biased;
+            res = connect_fut => res.expect("connection timed out"),
+            res = accept_task => {
+                if let Err(join_error) = res {
+                    join_error.try_into_panic().ok();
+                }
+            }
+        }
+
+        // TODO: could remove the addresses again, send, add it back and see it recover.
+        // But we don't have that much private access to the NodeMap.
     }
 }

@@ -287,13 +287,11 @@ impl NodeMapInner {
             active: false,
             source,
         });
-        tracing::warn!(qaddr = ?node_state.quic_mapped_addr(), "TODO: remove; NodeState QuicMappedAddr");
         node_state.update_from_node_addr(&info);
         let id = node_state.id();
         for addr in &info.direct_addresses {
             self.set_node_state_for_ip_port(*addr, id);
         }
-        tracing::warn!(node_map = ?self.by_id, "TODO: remove; post update");
     }
 
     /// Prunes direct addresses from nodes that claim to share an address we know points to us.
@@ -338,8 +336,6 @@ impl NodeMapInner {
     }
 
     fn get(&self, id: NodeStateKey) -> Option<&NodeState> {
-        tracing::warn!(?id, state = ?self.by_id, "TODO: remove; node map");
-        tracing::warn!(state = ?self.by_node_key, "TODO: remove; by_node_key");
         self.get_id(id).and_then(|id| self.by_id.get(&id))
     }
 

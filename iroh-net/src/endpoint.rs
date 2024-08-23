@@ -484,8 +484,7 @@ impl Endpoint {
         self.connect(addr, alpn).await
     }
 
-    // This is pub(crate) to make it easier to test MagicSocket
-    pub(crate) async fn connect_quinn(
+    async fn connect_quinn(
         &self,
         node_id: NodeId,
         alpn: &[u8],
