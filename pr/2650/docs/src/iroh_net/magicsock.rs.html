@@ -4247,8 +4247,8 @@
             <span class="kw">let </span><span class="kw-2">mut </span>is_quic = <span class="bool-val">false</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>quic_packets_count = <span class="number">0</span>;
             <span class="kw">if </span>meta.len &gt; meta.stride {
-                <span class="macro">trace!</span>(%meta.len, %meta.stride, <span class="string">"GRO packet received"</span>);
-                <span class="macro">inc!</span>(MagicsockMetrics, recv_gro_packets);
+                <span class="macro">trace!</span>(%meta.len, %meta.stride, <span class="string">"GRO datagram received"</span>);
+                <span class="macro">inc!</span>(MagicsockMetrics, recv_gro_datagrams);
             }
 
             <span class="comment">// find disco and stun packets and forward them to the actor

@@ -168,7 +168,7 @@
     <span class="doccomment">/// Number of QUIC datagrams received.
     </span><span class="kw">pub </span>recv_datagrams: Counter,
     <span class="doccomment">/// Number of datagrams received using GRO
-    </span><span class="kw">pub </span>recv_gro_packets: Counter,
+    </span><span class="kw">pub </span>recv_gro_datagrams: Counter,
 
     <span class="comment">// Disco packets
     </span><span class="kw">pub </span>send_disco_udp: Counter,
@@ -235,7 +235,7 @@
             recv_data_ipv4: Counter::new(<span class="string">"recv_data_ipv4"</span>),
             recv_data_ipv6: Counter::new(<span class="string">"recv_data_ipv6"</span>),
             recv_datagrams: Counter::new(<span class="string">"recv_datagrams"</span>),
-            recv_gro_packets: Counter::new(<span class="string">"recv_gro_packets"</span>),
+            recv_gro_datagrams: Counter::new(<span class="string">"recv_gro_packets"</span>),
 
             <span class="comment">// Disco packets
             </span>send_disco_udp: Counter::new(<span class="string">"disco_send_udp"</span>),
