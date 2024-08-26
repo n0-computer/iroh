@@ -699,6 +699,10 @@ impl MagicSock {
         for (meta, buf) in metas.iter_mut().zip(bufs.iter_mut()).take(msgs) {
             let mut is_quic = false;
             let mut quic_packets_count = 0;
+            if meta.len > meta.stride {
+                trace!(%meta.len, %meta.stride, "GRO packet received");
+                // TODO: Add a metric for this
+            }
 
             // find disco and stun packets and forward them to the actor
             for packet in buf[..meta.len].chunks_mut(meta.stride) {
