@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use anyhow::Result;
 use clap::Parser;
 
@@ -30,6 +32,19 @@ fn main() {
 }
 
 pub fn run_iroh(opt: Opt) -> Result<()> {
+    if opt.metrics {
+        // enable recording metrics
+        iroh_metrics::core::Core::try_init(|reg, metrics| {
+            use iroh_metrics::core::Metric;
+            metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
+            metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
+            metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
+            if opt.with_relay {
+                metrics.insert(iroh_net::metrics::RelayMetrics::new(reg));
+            }
+        })?;
+    }
+
     let server_span = tracing::error_span!("server");
     let runtime = rt();
 
@@ -76,6 +91,30 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
         if let Ok(stats) = handle.join().expect("client thread") {
             stats.print(id);
         }
+    }
+
+    if opt.metrics {
+        // print metrics
+        let core =
+            iroh_metrics::core::Core::get().ok_or_else(|| anyhow::anyhow!("Missing metrics"))?;
+        println!("\nMetrics:");
+        collect_and_print(
+            "MagicsockMetrics",
+            core.get_collector::<iroh_net::metrics::MagicsockMetrics>(),
+        );
+        collect_and_print(
+            "NetcheckMetrics",
+            core.get_collector::<iroh_net::metrics::NetcheckMetrics>(),
+        );
+        collect_and_print(
+            "PortmapMetrics",
+            core.get_collector::<iroh_net::metrics::PortmapMetrics>(),
+        );
+        // if None, (this is the case if opt.with_relay is false), then this is skipped internally:
+        collect_and_print(
+            "RelayMetrics",
+            core.get_collector::<iroh_net::metrics::RelayMetrics>(),
+        );
     }
 
     server_thread.join().expect("server thread");
@@ -129,4 +168,20 @@ pub fn run_quinn(opt: Opt) -> Result<()> {
 
 pub fn run_s2n(_opt: s2n::Opt) -> Result<()> {
     unimplemented!()
+}
+
+fn collect_and_print(
+    category: &'static str,
+    metrics: Option<&impl iroh_metrics::struct_iterable::Iterable>,
+) {
+    let Some(metrics) = metrics else {
+        return;
+    };
+    let mut map = BTreeMap::new();
+    for (name, counter) in metrics.iter() {
+        if let Some(counter) = counter.downcast_ref::<iroh_metrics::core::Counter>() {
+            map.insert(name.to_string(), counter.get());
+        }
+    }
+    println!("{category}: {map:#?}");
 }
