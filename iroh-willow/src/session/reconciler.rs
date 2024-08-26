@@ -21,13 +21,6 @@ use crate::{
             ReconciliationTerminatePayload,
         },
     },
-    session::{
-        aoi_finder::AoiIntersection,
-        channels::{ChannelSenders, MessageReceiver},
-        payload::{send_payload_chunked, CurrentPayload},
-        static_tokens::StaticTokens,
-        Error, Role, SessionId,
-    },
     store::{
         entry::{EntryChannel, EntryOrigin},
         traits::{EntryReader, EntryStorage, SplitAction, SplitOpts, Storage},
@@ -37,6 +30,15 @@ use crate::{
         gen_stream::GenStream,
         stream::{Cancelable, CancelableReceiver},
     },
+};
+
+use super::{
+    aoi_finder::AoiIntersection,
+    channels::{MessageReceiver, MessageSender},
+    payload::transformed_payload_stream,
+    payload::CurrentPayload,
+    static_tokens::{StaticTokenReceiver, StaticTokenSender},
+    Error, Role, SessionId,
 };
 
 #[derive(Debug)]
@@ -72,9 +74,10 @@ impl<S: Storage> Reconciler<S> {
         inbox: CancelableReceiver<Input>,
         store: Store<S>,
         recv: Cancelable<MessageReceiver<ReconciliationMessage>>,
-        static_tokens: StaticTokens,
+        tokens_inbound: StaticTokenReceiver,
+        tokens_outbound: StaticTokenSender,
         session_id: SessionId,
-        send: ChannelSenders,
+        send: MessageSender<ReconciliationMessage>,
         our_role: Role,
         max_eager_payload_size: u64,
     ) -> impl futures_lite::Stream<Item = Result<Output, Error>> {
@@ -84,7 +87,8 @@ impl<S: Storage> Reconciler<S> {
                 store,
                 our_role,
                 send,
-                static_tokens,
+                tokens_inbound,
+                tokens_outbound,
                 session_id,
                 max_eager_payload_size,
             };
@@ -109,7 +113,7 @@ impl<S: Storage> Reconciler<S> {
                     tracing::trace!(?input, "tick: input");
                     match input {
                         Input::AoiIntersection(intersection) => {
-                            self.targets.init_target(&self.shared, intersection).await?;
+                            self.targets.init_target(&mut self.shared, intersection).await?;
                         }
                     }
                 }
@@ -125,10 +129,10 @@ impl<S: Storage> Reconciler<S> {
                 let target_id = message.handles();
                 let target = self
                     .targets
-                    .get_eventually(&self.shared, &target_id)
+                    .get_eventually(&mut self.shared, &target_id)
                     .await?;
                 target
-                    .received_send_fingerprint(&self.shared, message)
+                    .received_send_fingerprint(&mut self.shared, message)
                     .await?;
                 if target.is_complete() && self.entry_state.is_empty() {
                     self.complete_target(target_id).await?;
@@ -140,10 +144,10 @@ impl<S: Storage> Reconciler<S> {
                     .received_announce_entries(target_id, message.count)?;
                 let target = self
                     .targets
-                    .get_eventually(&self.shared, &target_id)
+                    .get_eventually(&mut self.shared, &target_id)
                     .await?;
                 target
-                    .received_announce_entries(&self.shared, message)
+                    .received_announce_entries(&mut self.shared, message)
                     .await?;
                 if target.is_complete() && self.entry_state.is_empty() {
                     self.complete_target(target_id).await?;
@@ -152,7 +156,7 @@ impl<S: Storage> Reconciler<S> {
             ReconciliationMessage::SendEntry(message) => {
                 let authorised_entry = self
                     .shared
-                    .static_tokens
+                    .tokens_inbound
                     .authorise_entry_eventually(
                         message.entry.entry.into(),
                         message.static_token_handle,
@@ -238,7 +242,7 @@ impl<S: Storage> TargetMap<S> {
     }
     pub async fn get_eventually(
         &mut self,
-        shared: &Shared<S>,
+        shared: &mut Shared<S>,
         requested_id: &TargetId,
     ) -> Result<&mut Target<S>, Error> {
         if !self.map.contains_key(requested_id) {
@@ -249,7 +253,7 @@ impl<S: Storage> TargetMap<S> {
 
     async fn wait_for_target(
         &mut self,
-        shared: &Shared<S>,
+        shared: &mut Shared<S>,
         requested_id: &TargetId,
     ) -> Result<(), Error> {
         while let Some(input) = self.inbox.next().await {
@@ -268,7 +272,7 @@ impl<S: Storage> TargetMap<S> {
 
     async fn init_target(
         &mut self,
-        shared: &Shared<S>,
+        shared: &mut Shared<S>,
         intersection: AoiIntersection,
     ) -> Result<TargetId, Error> {
         let snapshot = shared.store.entries().snapshot()?;
@@ -372,8 +376,9 @@ struct Shared<S: Storage> {
     co: Co<Output>,
     store: Store<S>,
     our_role: Role,
-    send: ChannelSenders,
-    static_tokens: StaticTokens,
+    send: MessageSender<ReconciliationMessage>,
+    tokens_inbound: StaticTokenReceiver,
+    tokens_outbound: StaticTokenSender,
     session_id: SessionId,
     max_eager_payload_size: u64,
 }
@@ -397,7 +402,7 @@ impl<S: Storage> Target<S> {
     }
     async fn init(
         snapshot: <S::Entries as EntryStorage>::Snapshot,
-        shared: &Shared<S>,
+        shared: &mut Shared<S>,
         intersection: AoiIntersection,
     ) -> Result<Self, Error> {
         let mut this = Target {
@@ -418,7 +423,7 @@ impl<S: Storage> Target<S> {
         self.intersection.namespace
     }
 
-    async fn initiate(&mut self, shared: &Shared<S>) -> Result<(), Error> {
+    async fn initiate(&mut self, shared: &mut Shared<S>) -> Result<(), Error> {
         let range = self.intersection.area().to_range();
         let fingerprint = self.snapshot.fingerprint(self.namespace(), &range)?;
         self.send_fingerprint(shared, range, fingerprint, None)
@@ -432,7 +437,7 @@ impl<S: Storage> Target<S> {
 
     async fn received_send_fingerprint(
         &mut self,
-        shared: &Shared<S>,
+        shared: &mut Shared<S>,
         message: ReconciliationSendFingerprint,
     ) -> Result<(), Error> {
         self.started = true;
@@ -456,7 +461,7 @@ impl<S: Storage> Target<S> {
                 receiver_handle: message.sender_handle,
                 covers: Some(range_count),
             };
-            shared.send.send(reply).await?;
+            shared.send.send(reply.into()).await?;
         }
         // case 2: fingerprint is empty
         else if message.fingerprint.is_empty() {
@@ -500,7 +505,7 @@ impl<S: Storage> Target<S> {
 
     async fn received_announce_entries(
         &mut self,
-        shared: &Shared<S>,
+        shared: &mut Shared<S>,
         message: ReconciliationAnnounceEntries,
     ) -> Result<(), Error> {
         trace!(?message, "received_announce_entries start");
@@ -520,7 +525,7 @@ impl<S: Storage> Target<S> {
 
     async fn send_fingerprint(
         &mut self,
-        shared: &Shared<S>,
+        shared: &mut Shared<S>,
         range: Range3d,
         fingerprint: Fingerprint,
         covers: Option<u64>,
@@ -533,13 +538,13 @@ impl<S: Storage> Target<S> {
             receiver_handle: self.intersection.their_handle,
             covers,
         };
-        shared.send.send(msg).await?;
+        shared.send.send(msg.into()).await?;
         Ok(())
     }
 
     async fn announce_and_send_entries(
         &mut self,
-        shared: &Shared<S>,
+        shared: &mut Shared<S>,
         range: &Range3d,
         want_response: bool,
         covers: Option<u64>,
@@ -561,7 +566,7 @@ impl<S: Storage> Target<S> {
         if want_response {
             self.mark_our_next_range_pending();
         }
-        shared.send.send(msg).await?;
+        shared.send.send(msg.into()).await?;
 
         for authorised_entry in self
             .snapshot
@@ -576,8 +581,8 @@ impl<S: Storage> Target<S> {
             let payload_len = entry.payload_length();
             let available = payload_len;
             let static_token_handle = shared
-                .static_tokens
-                .bind_and_send_ours(static_token, &shared.send)
+                .tokens_outbound
+                .bind_ours_if_new(static_token)
                 .await?;
             let digest = *entry.payload_digest();
             let msg = ReconciliationSendEntry {
@@ -585,16 +590,24 @@ impl<S: Storage> Target<S> {
                 static_token_handle,
                 dynamic_token,
             };
-            shared.send.send(msg).await?;
+            shared.send.send(msg.into()).await?;
 
-            // TODO: only send payload if configured to do so and/or under size limit.
             if payload_len <= shared.max_eager_payload_size {
-                send_payload_chunked(digest, shared.store.payloads(), &shared.send, 0, |bytes| {
-                    ReconciliationSendPayload { bytes }.into()
-                })
-                .await?;
+                let stream = transformed_payload_stream(shared.store.payloads(), digest, 0).await?;
+                if let Some(stream) = stream {
+                    tokio::pin!(stream);
+                    while let Some(bytes) = stream.try_next().await? {
+                        shared
+                            .send
+                            .send(ReconciliationSendPayload { bytes }.into())
+                            .await?;
+                    }
+                }
             }
-            shared.send.send(ReconciliationTerminatePayload).await?;
+            shared
+                .send
+                .send(ReconciliationTerminatePayload.into())
+                .await?;
         }
         Ok(())
     }

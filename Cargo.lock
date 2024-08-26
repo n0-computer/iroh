@@ -3033,6 +3033,7 @@ dependencies = [
  "iroh-quinn",
  "iroh-test",
  "meadowcap",
+ "pin-project-lite",
  "postcard",
  "proptest",
  "rand",
@@ -3256,7 +3257,7 @@ checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 [[package]]
 name = "meadowcap"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/willow-rs.git?branch=main#11e09fa132b602e1f33d0e7c3a6a92357ad33a69"
+source = "git+https://github.com/n0-computer/willow-rs.git?branch=main#1e9943e39d08f9ec8b79fc6a5805be449a19f5d0"
 dependencies = [
  "either",
  "signature",
@@ -6333,8 +6334,7 @@ checksum = "ed646292ffc8188ef8ea4d1e0e0150fb15a5c2e12ad9b8fc191ae7a8a7f3c4b9"
 [[package]]
 name = "ufotofu"
 version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c773ca845a07603d8ebe7292a3cefa20bf41305ce91246332c7fc1e3029eecaa"
+source = "git+https://github.com/n0-computer/ufotofu.git?branch=fix-bulk-overwrite-full#9111a4cbb2bece4299c099e2b98a4635135d0658"
 dependencies = [
  "either",
  "ufotofu_queues",
@@ -6344,8 +6344,7 @@ dependencies = [
 [[package]]
 name = "ufotofu_queues"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d903d5bc0e14d24559dac3b9690d004ad3fb08d66f93d87d28f5cb3466b5b55b"
+source = "git+https://github.com/n0-computer/ufotofu.git?branch=fix-bulk-overwrite-full#9111a4cbb2bece4299c099e2b98a4635135d0658"
 
 [[package]]
 name = "unarray"
@@ -6645,7 +6644,7 @@ checksum = "7219d36b6eac893fa81e84ebe06485e7dcbb616177469b142df14f1f4deb1311"
 [[package]]
 name = "willow-data-model"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/willow-rs.git?branch=main#11e09fa132b602e1f33d0e7c3a6a92357ad33a69"
+source = "git+https://github.com/n0-computer/willow-rs.git?branch=main#1e9943e39d08f9ec8b79fc6a5805be449a19f5d0"
 dependencies = [
  "bytes",
  "either",
@@ -6657,7 +6656,7 @@ dependencies = [
 [[package]]
 name = "willow-encoding"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/willow-rs.git?branch=main#11e09fa132b602e1f33d0e7c3a6a92357ad33a69"
+source = "git+https://github.com/n0-computer/willow-rs.git?branch=main#1e9943e39d08f9ec8b79fc6a5805be449a19f5d0"
 dependencies = [
  "either",
  "syncify",

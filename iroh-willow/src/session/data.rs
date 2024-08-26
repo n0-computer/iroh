@@ -6,7 +6,6 @@ use crate::{
         data_model::AuthorisedEntry,
         wgps::{DataMessage, DataSendEntry, DataSendPayload, StaticToken},
     },
-    session::{channels::ChannelSenders, static_tokens::StaticTokens, Error, SessionId},
     store::{
         entry::{EntryChannel, EntryOrigin},
         traits::Storage,
@@ -17,7 +16,10 @@ use crate::{
 
 use super::{
     aoi_finder::AoiIntersection,
-    payload::{send_payload_chunked, CurrentPayload},
+    channels::MessageSender,
+    payload::{transformed_payload_stream, CurrentPayload},
+    static_tokens::{StaticTokenReceiver, StaticTokenSender},
+    Error, SessionId,
 };
 
 #[derive(Debug)]
@@ -29,8 +31,8 @@ pub enum Input {
 pub struct DataSender<S: Storage> {
     inbox: CancelableReceiver<Input>,
     store: Store<S>,
-    send: ChannelSenders,
-    static_tokens: StaticTokens,
+    sender: MessageSender<DataMessage>,
+    static_tokens: StaticTokenSender,
     session_id: SessionId,
 }
 
@@ -38,14 +40,14 @@ impl<S: Storage> DataSender<S> {
     pub fn new(
         inbox: CancelableReceiver<Input>,
         store: Store<S>,
-        send: ChannelSenders,
-        static_tokens: StaticTokens,
+        sender: MessageSender<DataMessage>,
+        static_tokens: StaticTokenSender,
         session_id: SessionId,
     ) -> Self {
         Self {
             inbox,
             store,
-            send,
+            sender,
             static_tokens,
             session_id,
         }
@@ -86,10 +88,7 @@ impl<S: Storage> DataSender<S> {
         let dynamic_token = token.signature;
         // TODO: partial payloads
         // let available = entry.payload_length;
-        let static_token_handle = self
-            .static_tokens
-            .bind_and_send_ours(static_token, &self.send)
-            .await?;
+        let static_token_handle = self.static_tokens.bind_ours_if_new(static_token).await?;
         let digest = *entry.payload_digest();
         let offset = 0;
         let msg = DataSendEntry {
@@ -98,15 +97,18 @@ impl<S: Storage> DataSender<S> {
             dynamic_token,
             offset,
         };
-        self.send.send(msg).await?;
+        self.sender.send(msg.into()).await?;
 
         // TODO: only send payload if configured to do so and/or under size limit.
         let send_payloads = true;
         if send_payloads {
-            send_payload_chunked(digest, self.store.payloads(), &self.send, offset, |bytes| {
-                DataSendPayload { bytes }.into()
-            })
-            .await?;
+            let stream = transformed_payload_stream(self.store.payloads(), digest, offset).await?;
+            if let Some(stream) = stream {
+                tokio::pin!(stream);
+                while let Some(bytes) = stream.try_next().await? {
+                    self.sender.send(DataSendPayload { bytes }.into()).await?;
+                }
+            }
         }
         Ok(())
     }
@@ -116,12 +118,12 @@ impl<S: Storage> DataSender<S> {
 pub struct DataReceiver<S: Storage> {
     store: Store<S>,
     current_payload: CurrentPayload,
-    static_tokens: StaticTokens,
+    static_tokens: StaticTokenReceiver,
     session_id: SessionId,
 }
 
 impl<S: Storage> DataReceiver<S> {
-    pub fn new(store: Store<S>, static_tokens: StaticTokens, session_id: SessionId) -> Self {
+    pub fn new(store: Store<S>, static_tokens: StaticTokenReceiver, session_id: SessionId) -> Self {
         Self {
             store,
             static_tokens,

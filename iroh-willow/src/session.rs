@@ -9,7 +9,6 @@
 
 use std::sync::Arc;
 
-use channels::ChannelSenders;
 use tokio::sync::mpsc;
 
 use crate::{
@@ -32,7 +31,6 @@ mod run;
 mod static_tokens;
 
 pub(crate) use self::challenge::InitialTransmission;
-pub(crate) use self::channels::Channels;
 pub(crate) use self::error::Error;
 pub(crate) use self::run::run_session;
 
@@ -81,7 +79,7 @@ impl SessionMode {
 }
 
 /// Options to initialize a session.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SessionInit {
     /// Selects the areas we wish to synchronize.
     pub interests: Interests,
@@ -127,8 +125,6 @@ pub(crate) enum SessionEvent {
         // TODO(Frando): Not sure if we should make use of this somewhere, maybe just remove.
         #[allow(unused)]
         we_cancelled: bool,
-        #[debug("ChannelSenders")]
-        senders: ChannelSenders,
         remaining_intents: Vec<Intent>,
     },
 }
@@ -160,16 +156,15 @@ impl SessionHandle {
     /// Returns the channel senders and a boolean indicating if we cancelled the session.
     /// Returns an error if the session failed to complete.
     #[cfg(test)]
-    pub(crate) async fn complete(&mut self) -> Result<(ChannelSenders, bool), Arc<Error>> {
+    pub(crate) async fn complete(&mut self) -> Result<bool, Arc<Error>> {
         while let Some(event) = self.event_rx.recv().await {
             if let SessionEvent::Complete {
                 result,
-                senders,
                 we_cancelled,
                 ..
             } = event
             {
-                return result.map(|()| (senders, we_cancelled));
+                return result.map(|()| we_cancelled);
             }
         }
         Err(Arc::new(Error::ActorFailed))

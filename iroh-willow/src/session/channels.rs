@@ -9,10 +9,10 @@ use tracing::trace;
 
 use crate::{
     proto::wgps::{
-        Channel, DataMessage, IntersectionMessage, LogicalChannel, Message, ReconciliationMessage,
+        DataMessage, IntersectionMessage, LogicalChannel, Message, ReconciliationMessage,
         SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken,
     },
-    util::channel::{Receiver, Sender, WriteError},
+    util::channel::{GuaranteesHandle, Receiver, Sender, WriteError},
 };
 
 use super::Error;
@@ -67,57 +67,38 @@ impl<T: TryFrom<Message>> From<Receiver<Message>> for MessageReceiver<T> {
 pub struct LogicalChannelReceivers {
     pub intersection_recv: MessageReceiver<IntersectionMessage>,
     pub reconciliation_recv: MessageReceiver<ReconciliationMessage>,
-    pub static_tokens_recv: MessageReceiver<SetupBindStaticToken>,
+    pub static_token_recv: MessageReceiver<SetupBindStaticToken>,
     pub capability_recv: MessageReceiver<SetupBindReadCapability>,
     pub aoi_recv: MessageReceiver<SetupBindAreaOfInterest>,
     pub data_recv: MessageReceiver<DataMessage>,
 }
 
-impl LogicalChannelReceivers {
-    // pub fn close(&self) {
-    //     self.intersection_recv.close();
-    //     self.reconciliation_recv.close();
-    //     self.static_tokens_recv.close();
-    //     self.capability_recv.close();
-    //     self.aoi_recv.close();
-    //     self.data_recv.close();
-    // }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LogicalChannelSenders {
-    pub intersection_send: Sender<Message>,
-    pub reconciliation_send: Sender<Message>,
-    pub static_tokens_send: Sender<Message>,
-    pub aoi_send: Sender<Message>,
-    pub capability_send: Sender<Message>,
-    pub data_send: Sender<Message>,
+    pub intersection_send: MessageSender<IntersectionMessage>,
+    pub reconciliation_send: MessageSender<ReconciliationMessage>,
+    pub static_token_send: MessageSender<SetupBindStaticToken>,
+    pub capability_send: MessageSender<SetupBindReadCapability>,
+    pub aoi_send: MessageSender<SetupBindAreaOfInterest>,
+    pub data_send: MessageSender<DataMessage>,
 }
-impl LogicalChannelSenders {
-    pub fn close(&self) {
-        self.intersection_send.close();
-        self.reconciliation_send.close();
-        self.static_tokens_send.close();
-        self.aoi_send.close();
-        self.capability_send.close();
-        self.data_send.close();
-    }
 
-    pub fn get(&self, channel: LogicalChannel) -> &Sender<Message> {
-        match channel {
-            LogicalChannel::Intersection => &self.intersection_send,
-            LogicalChannel::Reconciliation => &self.reconciliation_send,
-            LogicalChannel::StaticToken => &self.static_tokens_send,
-            LogicalChannel::Capability => &self.capability_send,
-            LogicalChannel::AreaOfInterest => &self.aoi_send,
-            LogicalChannel::Data => &self.data_send,
+impl LogicalChannelSenders {
+    pub fn guarantees_handle(&self) -> SendersGuarantees {
+        SendersGuarantees {
+            intersection: self.intersection_send.guarantees_handle(),
+            reconciliation: self.reconciliation_send.guarantees_handle(),
+            static_token: self.static_token_send.guarantees_handle(),
+            capability: self.capability_send.guarantees_handle(),
+            aoi: self.aoi_send.guarantees_handle(),
+            data: self.data_send.guarantees_handle(),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ChannelSenders {
-    pub control_send: Sender<Message>,
+    pub control_send: Sender,
     pub logical_send: LogicalChannelSenders,
 }
 
@@ -133,27 +114,46 @@ pub struct Channels {
     pub recv: ChannelReceivers,
 }
 
-impl ChannelSenders {
-    pub fn close_all(&self) {
-        self.control_send.close();
-        self.logical_send.close();
-    }
-    pub fn get(&self, channel: Channel) -> &Sender<Message> {
-        match channel {
-            Channel::Control => &self.control_send,
-            Channel::Logical(channel) => self.get_logical(channel),
-        }
-    }
+#[derive(Debug, derive_more::From, derive_more::Into)]
+pub struct MessageSender<T = Message>(Sender, PhantomData<T>);
 
-    pub fn get_logical(&self, channel: LogicalChannel) -> &Sender<Message> {
-        self.logical_send.get(channel)
+impl<T> From<Sender> for MessageSender<T> {
+    fn from(sender: Sender) -> Self {
+        Self(sender, PhantomData)
     }
+}
 
-    pub async fn send(&self, message: impl Into<Message>) -> Result<(), WriteError> {
+impl<T: Into<Message>> MessageSender<T> {
+    pub async fn send(&mut self, message: T) -> Result<(), WriteError> {
         let message: Message = message.into();
-        let channel = message.channel();
-        self.get(channel).send_message(&message).await?;
-        trace!(%message, ch=%channel.fmt_short(), "sent");
-        Ok(())
+        self.0.send(&message).await
+    }
+
+    pub fn guarantees_handle(&self) -> GuaranteesHandle {
+        self.0.guarantees_handle()
+    }
+}
+
+#[derive(Debug)]
+pub struct SendersGuarantees {
+    pub intersection: GuaranteesHandle,
+    pub reconciliation: GuaranteesHandle,
+    pub static_token: GuaranteesHandle,
+    pub capability: GuaranteesHandle,
+    pub aoi: GuaranteesHandle,
+    pub data: GuaranteesHandle,
+}
+
+impl SendersGuarantees {
+    pub fn add_guarantees(&self, channel: LogicalChannel, amount: u64) {
+        let ch = match channel {
+            LogicalChannel::Intersection => &self.intersection,
+            LogicalChannel::Capability => &self.capability,
+            LogicalChannel::AreaOfInterest => &self.aoi,
+            LogicalChannel::StaticToken => &self.static_token,
+            LogicalChannel::Reconciliation => &self.reconciliation,
+            LogicalChannel::Data => &self.data,
+        };
+        ch.add_guarantees(amount);
     }
 }

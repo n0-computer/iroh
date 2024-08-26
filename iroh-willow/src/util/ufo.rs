@@ -18,59 +18,67 @@ use ufotofu::local_nb::{
 };
 use willow_encoding::{Decodable, DecodeError, Encodable};
 
+/// Wrapper for [`SendStream`] that implements [`BulkConsumer`].
 #[derive(Debug)]
 pub struct Sender {
     stream: SendStream,
     buf: BytesMut,
     max_buffer_size: usize,
-    state: ExposedSlots,
+    slot_state: SlotState,
+    // guarantees: Option<Guarantees>
 }
 
 #[derive(Debug)]
-enum ExposedSlots {
+enum SlotState {
     None,
     Exposed { start: usize },
 }
 
 impl Sender {
+    /// Creates a new sender.
     pub fn new(stream: SendStream, max_buffer_size: usize) -> Self {
         Self {
             stream,
             buf: BytesMut::new(),
             max_buffer_size,
-            state: ExposedSlots::None,
+            slot_state: SlotState::None,
         }
     }
+
+    /// Returns the remaining buffer capacity.
     pub fn remaining(&self) -> usize {
         self.max_buffer_size - self.buf.len()
     }
 
+    /// Returns `true` if the buffer is full.
     pub fn is_full(&self) -> bool {
         self.buf.len() == self.max_buffer_size
     }
+
+    /// Returns `true` if the buffer is empty.
     pub fn is_empty(&self) -> bool {
         self.buf.is_empty()
     }
 
+    /// Encode and flush an encodable item.
     pub async fn send<T: Encodable>(&mut self, item: &T) -> io::Result<()> {
         item.encode(self).await?;
         self.flush().await?;
         Ok(())
     }
+
+    fn exposed(&self) -> bool {
+        matches!(self.slot_state, SlotState::Exposed { .. })
+    }
 }
 
 impl Consumer for Sender {
     type Item = u8;
-
     type Final = ();
-
     type Error = std::io::Error;
 
     async fn consume(&mut self, item: Self::Item) -> Result<(), Self::Error> {
-        assert!(
-            !matches!(self.state, ExposedSlots::None),
-            "may not consume while slots are exposed"
-        );
+        assert!(!self.exposed(), "may not consume while slots are exposed");
         if self.is_full() {
             self.flush().await?;
         }
@@ -87,7 +95,7 @@ impl Consumer for Sender {
 
 impl BufferedConsumer for Sender {
     async fn flush(&mut self) -> Result<(), Self::Error> {
-        if self.buf.is_empty() {
+        if self.is_empty() {
             return Ok(());
         }
         let buf = self.buf.split().freeze();
@@ -102,45 +110,38 @@ impl BulkConsumer for Sender {
     where
         Self::Item: 'a,
     {
-        assert!(
-            matches!(self.state, ExposedSlots::None),
-            "may not expose slots while slots are exposed"
-        );
+        assert!(!self.exposed(), "may not expose slots more than once");
 
         if self.is_full() {
             self.flush().await?;
         }
+
         let start = self.buf.len();
-        self.state = ExposedSlots::Exposed { start };
+        self.slot_state = SlotState::Exposed { start };
+        // TODO: Do we always want to increase to max buffer size?
         self.buf.resize(self.max_buffer_size, 0u8);
-        trace!(
-            start = start,
-            end = self.buf.len(),
-            len = self.buf.len() - start,
-            "expose_slots"
-        );
         Ok(&mut self.buf[start..])
     }
 
     async fn consume_slots(&mut self, amount: usize) -> Result<(), Self::Error> {
-        trace!(amount, "consume slots");
-        match self.state {
-            ExposedSlots::None => {
+        match self.slot_state {
+            SlotState::None => {
                 panic!("may not consume slots without having slots exposed");
             }
-            ExposedSlots::Exposed { start } => {
+            SlotState::Exposed { start } => {
                 let end = start + amount;
                 if end > self.max_buffer_size {
-                    panic!("amount cannot be larger than number of exposed slots");
+                    panic!("amount may not be larger than amount of exposed slots");
                 }
                 self.buf.truncate(end);
-                self.state = ExposedSlots::None;
+                self.slot_state = SlotState::None;
                 Ok(())
             }
         }
     }
 }
 
+/// Wrapper for [`RecvStream`] that implements [`BulkProducer`].
 #[derive(Debug)]
 pub struct Receiver {
     stream: RecvStream,
@@ -152,7 +153,7 @@ pub struct Receiver {
 }
 
 impl Receiver {
-    /// Create a new receiver.
+    /// Creates a new receiver.
     pub fn new(stream: RecvStream, max_buffer_size: usize) -> Self {
         Self {
             stream,
@@ -164,7 +165,7 @@ impl Receiver {
         }
     }
 
-    /// Returns true if the receiver stream is closed.
+    /// Returns `true` if the receiver stream is closed.
     pub fn is_closed(&self) -> bool {
         self.closed
     }
@@ -172,75 +173,6 @@ impl Receiver {
     /// Returns the number of bytes produced (emitted) by this receiver.
     pub fn produced(&self) -> usize {
         self.produced
-    }
-
-    fn remaining(&self) -> usize {
-        self.max_buffer_size - self.len()
-    }
-
-    fn is_full(&self) -> bool {
-        self.len() == self.max_buffer_size
-    }
-
-    fn is_empty(&self) -> bool {
-        self.chunks.is_empty()
-    }
-
-    /// # Panics
-    ///
-    /// Panics if the buffer is empty.
-    fn peek(&mut self) -> &[u8] {
-        if !self.is_empty() {
-            &self.chunks[0][..]
-        } else {
-            &[]
-        }
-    }
-
-    /// # Panics
-    ///
-    /// Panics if the buffer is empty or `amount` is larger than the lenght of the slice returned
-    /// by `peek`.
-    fn consumed(&mut self, amount: usize) {
-        let _ = self.chunks[0].split_to(amount);
-        if self.chunks[0].is_empty() {
-            let _ = self.chunks.pop_front();
-        }
-        self.produced += amount;
-    }
-
-    fn len(&self) -> usize {
-        self.chunks.iter().map(|c| c.len()).sum()
-    }
-    /// # Panics
-    ///
-    /// Panics is our buffer is full.
-    async fn progress(&mut self) -> Result<bool, ReadError> {
-        assert!(!self.is_full());
-        if self.closed {
-            return Ok(false);
-        }
-        let chunk = self.stream.read_chunk(self.remaining(), true).await?;
-        match chunk {
-            None => {
-                self.closed = true;
-                Ok(false)
-            }
-            Some(buf) => {
-                self.chunks.push_back(buf.bytes);
-                Ok(true)
-            }
-        }
-    }
-
-    async fn progress_until(&mut self, min_len: usize) -> Result<bool, ReadError> {
-        assert!(min_len <= self.max_buffer_size);
-        while self.len() < min_len {
-            if !self.progress().await? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
     }
 
     /// Receives a decodable item from the stream.
@@ -261,32 +193,107 @@ impl Receiver {
             Err(err) => Some(Err(RecvError(err))),
         }
     }
+
+    fn len(&self) -> usize {
+        self.chunks.iter().map(|c| c.len()).sum()
+    }
+
+    fn remaining(&self) -> usize {
+        self.max_buffer_size - self.len()
+    }
+
+    fn is_full(&self) -> bool {
+        self.len() == self.max_buffer_size
+    }
+
+    fn is_empty(&self) -> bool {
+        self.chunks.is_empty()
+    }
+
+    /// # Panics
+    ///
+    /// Panics if the buffer is empty.
+    fn peek_front(&mut self) -> &[u8] {
+        if !self.is_empty() {
+            &self.chunks[0][..]
+        } else {
+            &[]
+        }
+    }
+
+    /// # Panics
+    ///
+    /// Panics if the buffer is empty or `amount` is larger than the length of the slice returned
+    /// by `peek`.
+    fn consume(&mut self, amount: usize) {
+        let _ = self.chunks[0].split_to(amount);
+        if self.chunks[0].is_empty() {
+            let _ = self.chunks.pop_front();
+        }
+        self.produced += amount;
+    }
+
+    /// Read data into the internal buffer until it is at least `min_len` bytes long.
+    ///
+    /// Returns `false` if the stream closed before reaching `min_len` buffered bytes.
+    pub async fn fill_buf_to(&mut self, min_len: usize) -> Result<bool, ReadError> {
+        assert!(
+            min_len <= self.max_buffer_size,
+            "length must not be larger than maximum buffer size"
+        );
+        while self.len() < min_len {
+            if !self.fill_buf().await? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Read data from the stream into the internal buffer.
+    ///
+    /// Returns `false` if the stream closed and the buffer is empty.
+    pub async fn fill_buf(&mut self) -> Result<bool, ReadError> {
+        if self.is_full() {
+            Ok(true)
+        } else if self.is_closed() {
+            Ok(!self.is_empty())
+        } else {
+            match self.stream.read_chunk(self.remaining(), true).await? {
+                None => {
+                    self.closed = true;
+                    Ok(!self.is_empty())
+                }
+                Some(buf) => {
+                    self.chunks.push_back(buf.bytes);
+                    Ok(true)
+                }
+            }
+        }
+    }
 }
 
 impl Producer for Receiver {
     type Item = u8;
     type Final = ();
-    type Error = io::Error;
+    type Error = ReadError;
 
     async fn produce(&mut self) -> Result<Either<Self::Item, Self::Final>, Self::Error> {
         assert!(
             !self.exposed,
             "may not call produce while items are exposed"
         );
-        if !self.progress_until(1).await? {
+        if !self.fill_buf_to(1).await? {
             return Ok(Either::Right(()));
         }
-        let byte = self.peek()[0];
-        self.consumed(1);
+        let byte = self.peek_front()[0];
+        self.consume(1);
         Ok(Either::Left(byte))
     }
 }
 
 impl BufferedProducer for Receiver {
     async fn slurp(&mut self) -> Result<(), Self::Error> {
-        if !self.is_full() {
-            self.progress().await?;
-        }
+        self.fill_buf().await?;
         Ok(())
     }
 }
@@ -298,16 +305,16 @@ impl BulkProducer for Receiver {
     where
         Self::Item: 'a,
     {
-        if self.is_empty() && !self.progress().await? {
+        if self.is_empty() && !self.fill_buf().await? {
             Ok(Either::Right(()))
         } else {
             self.exposed = true;
-            Ok(Either::Left(self.peek()))
+            Ok(Either::Left(self.peek_front()))
         }
     }
 
     async fn consider_produced(&mut self, amount: usize) -> Result<(), Self::Error> {
-        self.consumed(amount);
+        self.consume(amount);
         self.exposed = false;
         Ok(())
     }
@@ -315,22 +322,23 @@ impl BulkProducer for Receiver {
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
-pub struct RecvError(DecodeError<io::Error>);
+pub struct RecvError(
+    #[from]
+    #[source]
+    DecodeError<ReadError>,
+);
 
 /// Wrap a [`Receiver`] in a stream of decodable items.
 #[derive(Debug)]
 pub struct MessageReceiver<T> {
     #[allow(clippy::type_complexity)]
-    next: Option<ReusableBoxFuture<(Receiver, Option<Result<T, RecvError>>)>>,
+    next: Option<ReusableBoxFuture<(Option<Result<T, RecvError>>, Receiver)>>,
 }
 
 impl<T: Decodable> MessageReceiver<T> {
     /// Create a new [`MessageReceiver`]
     pub fn new(mut receiver: Receiver) -> Self {
-        let fut = async move {
-            let res = receiver.recv().await;
-            (receiver, res)
-        };
+        let fut = async move { (receiver.recv().await, receiver) };
         let fut = ReusableBoxFuture::new(fut);
         Self { next: Some(fut) }
     }
@@ -342,15 +350,11 @@ impl<T: Decodable> Stream for MessageReceiver<T> {
         match self.next.as_mut() {
             None => Poll::Ready(None),
             Some(fut) => match fut.poll(cx) {
-                Poll::Ready((mut receiver, res)) => {
+                Poll::Ready((res, mut receiver)) => {
                     if res.is_none() {
                         self.next = None;
                     } else {
-                        let next_fut = async move {
-                            let res = receiver.recv().await;
-                            (receiver, res)
-                        };
-                        fut.set(next_fut);
+                        fut.set(async move { (receiver.recv().await, receiver) });
                     }
                     Poll::Ready(res)
                 }
@@ -419,8 +423,10 @@ mod tests {
         let start = Instant::now();
         let send_count = 2000;
         let local = tokio::task::LocalSet::new();
+
+        let conn = conn1;
         let task_send = local.spawn_local(async move {
-            let send_stream = conn1.open_uni().await?;
+            let send_stream = conn.open_uni().await?;
             info!("send stream ready");
             let mut sender = Sender::new(send_stream, send_buf_size);
             info!("send start");
@@ -433,12 +439,16 @@ mod tests {
             }
             info!("send finished");
             sender.close(()).await?;
-            info!("send closed");
+            info!("send stream closed");
+            let reason = conn.closed().await;
+            assert!(matches!(reason, quinn::ConnectionError::ApplicationClosed(reason) if reason.error_code == 42u32.into()));
+            info!("send conn closed");
             Result::<_, anyhow::Error>::Ok(())
         });
 
+        let conn = conn2;
         let task_recv = local.spawn_local(async move {
-            let recv_stream = conn2.accept_uni().await?;
+            let recv_stream = conn.accept_uni().await?;
             info!("recv stream ready");
             let receiver = Receiver::new(recv_stream, recv_buf_size);
             let mut receiver = MessageReceiver::<Entry>::new(receiver);
@@ -449,14 +459,19 @@ mod tests {
                 }
                 i += 1;
             }
-            info!("recv closed after {i}");
+            info!("recv stream closed after {i}");
+            conn.close(42u32.into(), b"bye");
+            info!("recv conn closed");
             Result::<_, anyhow::Error>::Ok(i)
         });
 
         let i = local
             .run_until(async move {
-                task_send.await??;
-                let i = task_recv.await??;
+                let (res_send, res_recv) = tokio::join!(task_send, task_recv);
+                info!("res send {res_send:?}");
+                info!("res recv {res_recv:?}");
+                res_send??;
+                let i = res_recv??;
                 Result::<_, anyhow::Error>::Ok(i)
             })
             .await?;

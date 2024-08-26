@@ -370,15 +370,10 @@ impl PeerManager {
             SessionEvent::Established => {}
             SessionEvent::Complete {
                 result,
-                senders,
                 mut remaining_intents,
                 we_cancelled: _,
             } => {
                 debug!(error=?result.err(), remaining_intents=remaining_intents.len(), "session complete");
-
-                // Close the channel senders. This will cause our send loops to close,
-                // which in turn causes the receive loops of the other peer to close.
-                senders.close_all();
 
                 let Some(peer_info) = self.peers.get_mut(&peer) else {
                     warn!("got session complete event for unknown peer");

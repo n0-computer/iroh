@@ -13,18 +13,11 @@ use tracing::{debug, error_span, trace, Instrument, Span};
 
 use crate::{
     net::ConnHandle,
-    proto::wgps::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
-    session::{
-        aoi_finder::{self, IntersectionFinder},
-        capabilities::Capabilities,
-        channels::{ChannelSenders, LogicalChannelReceivers},
-        data,
-        intents::{self, EventKind, Intent},
-        pai_finder::{self as pai, PaiFinder},
-        reconciler,
-        static_tokens::StaticTokens,
-        Channels, Error, EventSender, Role, SessionEvent, SessionId, SessionUpdate,
+    proto::wgps::{
+        ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest,
+        SetupBindStaticToken,
     },
+    session::static_tokens::{StaticTokenReceiver, StaticTokenSender},
     store::{traits::Storage, Store},
     util::{
         channel::Receiver,
@@ -33,10 +26,17 @@ use crate::{
 };
 
 use super::{
-    channels::ChannelReceivers,
-    data::{DataReceiver, DataSender},
-    reconciler::Reconciler,
-    SessionMode,
+    aoi_finder::{self, IntersectionFinder},
+    capabilities::Capabilities,
+    channels::{
+        ChannelReceivers, ChannelSenders, Channels, LogicalChannelReceivers, LogicalChannelSenders,
+        SendersGuarantees,
+    },
+    data::{self, DataReceiver, DataSender},
+    intents::{self, EventKind, Intent},
+    pai_finder::{self as pai, PaiFinder},
+    reconciler::{self, Reconciler},
+    Error, EventSender, Role, SessionEvent, SessionId, SessionMode, SessionUpdate,
 };
 
 const INITIAL_GUARANTEES: u64 = u64::MAX;
@@ -55,22 +55,34 @@ pub(crate) async fn run_session<S: Storage>(
         our_role,
         channels,
     } = conn;
-    let Channels {
-        send: channel_sender,
-        recv,
-    } = channels;
+    let Channels { send, recv } = channels;
     let ChannelReceivers {
         control_recv,
         logical_recv:
             LogicalChannelReceivers {
                 reconciliation_recv,
-                static_tokens_recv,
+                static_token_recv,
                 capability_recv,
                 aoi_recv,
                 data_recv,
                 intersection_recv,
             },
     } = recv;
+
+    let ChannelSenders {
+        control_send,
+        logical_send,
+    } = send;
+
+    let sender_channel_guarantees = logical_send.guarantees_handle();
+    let LogicalChannelSenders {
+        mut intersection_send,
+        reconciliation_send,
+        mut static_token_send,
+        mut aoi_send,
+        mut capability_send,
+        data_send,
+    } = logical_send;
 
     // TODO: make mode change on intent changes
     let mode = initial_intents
@@ -89,16 +101,10 @@ pub(crate) async fn run_session<S: Storage>(
     let control_recv = Cancelable::new(control_recv, close_session_token.clone());
     let reconciliation_recv = Cancelable::new(reconciliation_recv, close_session_token.clone());
     let intersection_recv = Cancelable::new(intersection_recv, close_session_token.clone());
-    let mut static_tokens_recv = Cancelable::new(static_tokens_recv, close_session_token.clone());
+    let mut static_tokens_recv = Cancelable::new(static_token_recv, close_session_token.clone());
     let mut capability_recv = Cancelable::new(capability_recv, close_session_token.clone());
     let mut aoi_recv = Cancelable::new(aoi_recv, close_session_token.clone());
     let mut data_recv = Cancelable::new(data_recv, close_session_token.clone());
-
-    let caps = Capabilities::new(
-        initial_transmission.our_nonce,
-        initial_transmission.received_commitment,
-    );
-    let tokens = StaticTokens::default();
 
     // Setup channels for communication between the loops.
     // All channels but the intents channel are "cancelable", which means that once the cancel
@@ -111,6 +117,17 @@ pub(crate) async fn run_session<S: Storage>(
         cancelable_channel::<aoi_finder::Input>(2, close_inboxes_token.clone());
     let (reconciler_inbox, reconciler_inbox_rx) =
         cancelable_channel::<reconciler::Input>(2, close_inboxes_token.clone());
+
+    let (control_send_tx, mut control_send_rx) = channel::<Message>(2);
+    let (static_token_send_tx, mut static_token_send_rx) = channel::<SetupBindStaticToken>(2);
+
+    let caps = Capabilities::new(
+        initial_transmission.our_nonce,
+        initial_transmission.received_commitment,
+    );
+
+    let tokens_inbound = StaticTokenReceiver::default();
+    let tokens_outbound = StaticTokenSender::new(static_token_send_tx);
 
     // The closing ceremony for the intents inbox is more involved: It is a regular channel,
     // because the inbox should stay open after the cancel token is triggered, so that further
@@ -152,20 +169,21 @@ pub(crate) async fn run_session<S: Storage>(
         Ok(())
     });
 
+    let tokens_outbound_2 = tokens_outbound.clone();
     let data_loop = with_span(error_span!("data"), async {
         // Start data loop only if in live mode.
         if let Some(inbox) = data_inbox_rx {
             let send_fut = DataSender::new(
                 inbox,
                 store.clone(),
-                channel_sender.clone(),
-                tokens.clone(),
+                data_send,
+                tokens_outbound_2,
                 session_id,
             )
             .run();
             let recv_fut = async {
                 let mut data_receiver =
-                    DataReceiver::new(store.clone(), tokens.clone(), session_id);
+                    DataReceiver::new(store.clone(), tokens_inbound.clone(), session_id);
                 while let Some(message) = data_recv.try_next().await? {
                     data_receiver.on_message(message).await?;
                 }
@@ -207,7 +225,9 @@ pub(crate) async fn run_session<S: Storage>(
         let mut gen = IntersectionFinder::run_gen(caps.clone(), intersection_inbox_rx);
         while let Some(output) = gen.try_next().await? {
             match output {
-                Output::SendMessage(message) => channel_sender.send(message).await?,
+                Output::SendMessage(message) => {
+                    aoi_send.send(message).await?;
+                }
                 Output::SubmitAuthorisation(authorisation) => {
                     pai_inbox
                         .send(pai::Input::SubmitAuthorisation(authorisation))
@@ -234,7 +254,7 @@ pub(crate) async fn run_session<S: Storage>(
                 }
                 Output::SignAndSendCapability { handle, capability } => {
                     let message = caps.sign_capability(store.secrets(), handle, capability)?;
-                    channel_sender.send(message).await?;
+                    capability_send.send(message).await?;
                 }
             }
         }
@@ -243,13 +263,14 @@ pub(crate) async fn run_session<S: Storage>(
     });
 
     let intents_inbox_2 = intents_inbox.clone();
+    let control_send_tx_2 = control_send_tx.clone();
     let pai_loop = with_span(error_span!("pai"), async {
         use pai::Output;
         let inbox = pai_inbox_rx.merge(intersection_recv.map(pai::Input::ReceivedMessage));
         let mut gen = PaiFinder::run_gen(inbox);
         while let Some(output) = gen.try_next().await? {
             match output {
-                Output::SendMessage(message) => channel_sender.send(message).await?,
+                Output::SendMessage(message) => intersection_send.send(message).await?,
                 Output::NewIntersection(intersection) => {
                     let event = EventKind::CapabilityIntersection {
                         namespace: intersection.authorisation.namespace(),
@@ -264,24 +285,32 @@ pub(crate) async fn run_session<S: Storage>(
                 }
                 Output::SignAndSendSubspaceCap(handle, cap) => {
                     let message = caps.sign_subspace_capability(store.secrets(), cap, handle)?;
-                    channel_sender.send(Box::new(message)).await?;
+                    control_send_tx_2
+                        .send(Message::from(Box::new(message)))
+                        .await?;
+                }
+                Output::RequestSubspaceCap(message) => {
+                    control_send_tx_2.send(message.into()).await?;
                 }
             }
         }
+        drop(control_send_tx_2);
         drop(intents_inbox_2);
         Ok(())
     });
 
     let intents_inbox_2 = intents_inbox.clone();
+    let tokens_outbound_2 = tokens_outbound.clone();
     let reconciler_loop = with_span(error_span!("reconciler"), async {
         use reconciler::Output;
         let mut gen = Reconciler::run_gen(
             reconciler_inbox_rx,
             store.clone(),
             reconciliation_recv,
-            tokens.clone(),
+            tokens_inbound.clone(),
+            tokens_outbound_2,
             session_id,
-            channel_sender.clone(),
+            reconciliation_send,
             our_role,
             initial_transmission.their_max_payload_size,
         );
@@ -311,7 +340,7 @@ pub(crate) async fn run_session<S: Storage>(
 
     let token_recv_loop = with_span(error_span!("token_recv"), async {
         while let Some(message) = static_tokens_recv.try_next().await? {
-            tokens.bind_theirs(message.static_token);
+            tokens_inbound.bind_theirs(message.static_token);
         }
         Ok(())
     });
@@ -333,12 +362,13 @@ pub(crate) async fn run_session<S: Storage>(
             control_recv,
             our_role,
             &caps,
-            &channel_sender,
+            control_send_tx,
             &pai_inbox,
             &event_sender,
+            sender_channel_guarantees,
         )
         .await;
-        // Once the control loop closed, close the inboxes.
+        // Once the control loop closed, close the loop inboxes.
         close_inboxes_token.cancel();
         res
     });
@@ -366,10 +396,28 @@ pub(crate) async fn run_session<S: Storage>(
         Ok(())
     });
 
-    // Drop the intents_inbox. We cloned this into the different loops, and the clones are dropped
-    // at the end of the loops - which means the intents loop will terminate once all other loops
-    // that potentially send into the intents inbox.
+    let static_token_send_loop = with_span(error_span!("static_token_send"), async {
+        while let Some(message) = static_token_send_rx.recv().await {
+            static_token_send.send(message).await?;
+        }
+        Ok(())
+    });
+
+    let control_send_loop = with_span(error_span!("control_send"), async {
+        while let Some(message) = control_send_rx.recv().await {
+            control_send.send(&message).await?;
+        }
+        Ok(())
+    });
+
+    // Drop resources that contain channel senders.
+    // We cloned this into the different loops, and the clones are dropped at the end of the loops.
+    // We need to drop all senders so that the receiving loops close gracefully.
+    // Having to do this manually like this is a bit annoying; it comes from the fact that we are
+    // using `async` blocks and not `async move` blocks (so to move something we have to explictly
+    // take ownership, which we do by dropping the clones).
     drop(intents_inbox);
+    drop(tokens_outbound);
 
     let result = (
         intents_fut,
@@ -382,6 +430,8 @@ pub(crate) async fn run_session<S: Storage>(
         token_recv_loop,
         caps_recv_loop,
         aoi_recv_loop,
+        static_token_send_loop,
+        control_send_loop,
     )
         .try_join()
         .await;
@@ -438,7 +488,6 @@ pub(crate) async fn run_session<S: Storage>(
         .send(SessionEvent::Complete {
             result: result.clone(),
             we_cancelled,
-            senders: channel_sender,
             remaining_intents,
         })
         .await
@@ -453,13 +502,14 @@ async fn control_loop(
     mut control_recv: Cancelable<Receiver<Message>>,
     our_role: Role,
     caps: &Capabilities,
-    sender: &ChannelSenders,
+    control_send_tx: mpsc::Sender<Message>,
     pai_inbox: &mpsc::Sender<pai::Input>,
     event_sender: &EventSender,
+    guarantees_handle: SendersGuarantees,
 ) -> Result<(), Error> {
     // Reveal our nonce.
     let reveal_message = caps.reveal_commitment()?;
-    sender.send(reveal_message).await?;
+    control_send_tx.send(reveal_message.into()).await?;
 
     // Issue guarantees for all logical channels.
     for channel in LogicalChannel::iter() {
@@ -467,7 +517,7 @@ async fn control_loop(
             amount: INITIAL_GUARANTEES,
             channel,
         };
-        sender.send(msg).await?;
+        control_send_tx.send(msg.into()).await?;
     }
 
     // Handle incoming messages on the control channel.
@@ -480,8 +530,8 @@ async fn control_loop(
             }
             Message::ControlIssueGuarantee(msg) => {
                 let ControlIssueGuarantee { amount, channel } = msg;
-                // trace!(?channel, %amount, "add guarantees");
-                sender.get_logical(channel).add_guarantees(amount);
+                trace!(?channel, %amount, "add guarantees");
+                guarantees_handle.add_guarantees(channel, amount);
             }
             Message::PaiRequestSubspaceCapability(msg) => {
                 if !caps.is_revealed() {
@@ -527,11 +577,11 @@ fn cancelable_channel<T: Send + 'static>(
     )
 }
 
-async fn with_span<T: std::fmt::Debug>(
+fn with_span<'a, T: std::fmt::Debug + 'static>(
     span: Span,
-    fut: impl Future<Output = Result<T, Error>>,
-) -> Result<T, Error> {
-    async {
+    fut: impl Future<Output = Result<T, Error>> + 'a,
+) -> impl Future<Output = Result<T, Error>> + 'a {
+    let fut = async {
         trace!("start");
         let res = fut.await;
         match &res {
@@ -540,6 +590,8 @@ async fn with_span<T: std::fmt::Debug>(
         }
         res
     }
-    .instrument(span)
-    .await
+    .instrument(span);
+    // We box the future because otherwise our stack grows really large.
+    // TODO: Find out if this is really needed.
+    Box::pin(fut)
 }

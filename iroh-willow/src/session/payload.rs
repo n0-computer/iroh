@@ -1,9 +1,8 @@
 use std::io;
 
 use bytes::Bytes;
-use futures_concurrency::future::TryJoin;
-use futures_lite::StreamExt;
-use futures_util::TryFutureExt;
+use futures_lite::Stream;
+use futures_util::TryStreamExt;
 use iroh_blobs::{
     store::{MapEntry, Store as PayloadStore},
     Hash, HashAndFormat, TempTag,
@@ -13,50 +12,32 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
-    proto::{data_model::PayloadDigest, wgps::Message},
-    session::channels::ChannelSenders,
-    util::pipe::chunked_pipe,
+    proto::data_model::PayloadDigest,
+    util::pipe::{chunked_pipe, ProgressingStream},
 };
 
 use super::Error;
 
 const CHUNK_SIZE: usize = 1024 * 32;
 
-/// Send a payload in chunks.
+/// Returns a stream of a bao transformed payload.
 ///
-/// Returns `true` if the payload was sent.
-/// Returns `false` if blob is not found in `payload_store`.
-/// Returns an error if the store or sending on the `senders` return an error.
-// TODO: Include outboards.
-pub async fn send_payload_chunked<P: PayloadStore>(
+/// Returns `None` if the blob is not found in `store`.
+pub async fn transformed_payload_stream(
+    store: &impl PayloadStore,
     digest: PayloadDigest,
-    payload_store: &P,
-    senders: &ChannelSenders,
     offset: u64,
-    map: impl Fn(Bytes) -> Message,
-) -> Result<bool, Error> {
+) -> Result<Option<impl Stream<Item = Result<Bytes, Error>>>, Error> {
     let hash: Hash = digest.into();
-    let entry = payload_store
-        .get(&hash)
-        .await
-        .map_err(Error::PayloadStore)?;
+    let entry = store.get(&hash).await.map_err(Error::PayloadStore)?;
     let Some(entry) = entry else {
-        return Ok(false);
+        return Ok(None);
     };
-
-    let (writer, mut reader) = chunked_pipe(CHUNK_SIZE);
-    let write_stream_fut = entry
-        .write_verifiable_stream(offset, writer)
-        .map_err(Error::PayloadStore);
-    let send_fut = async {
-        while let Some(bytes) = reader.try_next().await.map_err(Error::PayloadStore)? {
-            let msg = map(bytes);
-            senders.send(msg).await?;
-        }
-        Ok(())
-    };
-    (write_stream_fut, send_fut).try_join().await?;
-    Ok(true)
+    let (writer, reader) = chunked_pipe(CHUNK_SIZE);
+    let write_stream_fut = async move { entry.write_verifiable_stream(offset, writer).await };
+    let progressing_reader =
+        ProgressingStream::new(reader, write_stream_fut).map_err(Error::PayloadStore);
+    Ok(Some(progressing_reader))
 }
 
 #[derive(Debug, Default)]

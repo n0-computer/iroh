@@ -5,39 +5,50 @@ use std::{
     task::{ready, Poll},
 };
 
-use crate::{
-    proto::{
-        data_model::{AuthorisationToken, AuthorisedEntry, Entry},
-        wgps::{DynamicToken, SetupBindStaticToken, StaticToken, StaticTokenHandle},
-    },
-    session::{channels::ChannelSenders, resource::ResourceMap, Error},
+use tokio::sync::mpsc;
+
+use crate::proto::{
+    data_model::{AuthorisationToken, AuthorisedEntry, Entry},
+    wgps::{DynamicToken, SetupBindStaticToken, StaticToken, StaticTokenHandle},
 };
 
-#[derive(Debug, Clone, Default)]
-pub struct StaticTokens(Rc<RefCell<Inner>>);
+use super::{resource::ResourceMap, Error};
 
-#[derive(Debug, Default)]
-struct Inner {
-    ours: ResourceMap<StaticTokenHandle, StaticToken>,
-    theirs: ResourceMap<StaticTokenHandle, StaticToken>,
+#[derive(Debug, Clone)]
+pub struct StaticTokenSender {
+    ours: Rc<RefCell<ResourceMap<StaticTokenHandle, StaticToken>>>,
+    sender: mpsc::Sender<SetupBindStaticToken>,
 }
 
-impl StaticTokens {
-    pub fn bind_theirs(&self, token: StaticToken) {
-        self.0.borrow_mut().theirs.bind(token);
+impl StaticTokenSender {
+    pub fn new(sender: mpsc::Sender<SetupBindStaticToken>) -> Self {
+        Self {
+            ours: Rc::new(RefCell::new(ResourceMap::default())),
+            sender,
+        }
     }
 
-    pub async fn bind_and_send_ours(
+    pub async fn bind_ours_if_new(
         &self,
         static_token: StaticToken,
-        send: &ChannelSenders,
     ) -> Result<StaticTokenHandle, Error> {
-        let (handle, is_new) = { self.0.borrow_mut().ours.bind_if_new(static_token.clone()) };
+        let (handle, is_new) = { self.ours.borrow_mut().bind_if_new(static_token.clone()) };
         if is_new {
             let msg = SetupBindStaticToken { static_token };
-            send.send(msg).await?;
+            self.sender.send(msg).await?;
         }
         Ok(handle)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct StaticTokenReceiver {
+    theirs: Rc<RefCell<ResourceMap<StaticTokenHandle, StaticToken>>>,
+}
+
+impl StaticTokenReceiver {
+    pub fn bind_theirs(&self, token: StaticToken) {
+        self.theirs.borrow_mut().bind(token);
     }
 
     pub async fn authorise_entry_eventually(
@@ -46,10 +57,10 @@ impl StaticTokens {
         static_token_handle: StaticTokenHandle,
         dynamic_token: DynamicToken,
     ) -> Result<AuthorisedEntry, Error> {
-        let inner = self.0.clone();
+        let inner = self.theirs.clone();
         let static_token = poll_fn(move |cx| {
             let mut inner = inner.borrow_mut();
-            let token = ready!(inner.theirs.poll_get_eventually(static_token_handle, cx));
+            let token = ready!(inner.poll_get_eventually(static_token_handle, cx));
             Poll::Ready(token.clone())
         })
         .await;

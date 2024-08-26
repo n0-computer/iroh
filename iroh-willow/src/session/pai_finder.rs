@@ -24,7 +24,7 @@ use crate::{
         meadowcap::{ReadAuthorisation, SubspaceCapability},
         pai::{Fragment, FragmentKind, FragmentSet, PaiScheme, PsiGroup, PsiScalar},
         wgps::{
-            IntersectionHandle, IntersectionMessage, Message, PaiBindFragment, PaiReplyFragment,
+            IntersectionHandle, IntersectionMessage, PaiBindFragment, PaiReplyFragment,
             PaiRequestSubspaceCapability,
         },
     },
@@ -63,7 +63,8 @@ pub enum Input {
 
 #[derive(Debug)]
 pub enum Output {
-    SendMessage(Message),
+    SendMessage(IntersectionMessage),
+    RequestSubspaceCap(PaiRequestSubspaceCapability),
     NewIntersection(PaiIntersection),
     SignAndSendSubspaceCap(IntersectionHandle, SubspaceCapability),
 }
@@ -300,7 +301,7 @@ impl PaiFinder {
                 OnIntersection::RequestSubspaceCap => {
                     self.requested_subspace_cap_handles.insert(our_handle);
                     let message = PaiRequestSubspaceCapability { handle };
-                    self.out(Output::SendMessage(message.into())).await;
+                    self.out(Output::RequestSubspaceCap(message)).await;
                 }
                 OnIntersection::ReplyReadCap | OnIntersection::DoNothing => {}
             }
@@ -704,6 +705,19 @@ mod tests {
         pub async fn next_message<T: TryFrom<Message>>(&self) -> T {
             match self.next().await {
                 Output::SendMessage(message) => {
+                    let dbg = format!("{}", message);
+                    let message: Message = message.into();
+                    match T::try_from(message) {
+                        Err(_err) => panic!(
+                            "wrong message type: expected {} but got {:?}",
+                            std::any::type_name::<T>(),
+                            dbg
+                        ),
+                        Ok(message) => message,
+                    }
+                }
+                Output::RequestSubspaceCap(message) => {
+                    let message: Message = message.into();
                     let dbg = format!("{}", message);
                     match T::try_from(message) {
                         Err(_err) => panic!(

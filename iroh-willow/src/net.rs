@@ -205,12 +205,12 @@ pub(crate) fn prepare_channels(
         send: ChannelSenders {
             control_send: ctrl.0,
             logical_send: LogicalChannelSenders {
-                intersection_send: pai.0,
-                reconciliation_send: rec.0,
-                static_tokens_send: stt.0,
-                aoi_send: aoi.0,
-                capability_send: cap.0,
-                data_send: dat.0,
+                intersection_send: pai.0.into(),
+                reconciliation_send: rec.0.into(),
+                static_token_send: stt.0.into(),
+                aoi_send: aoi.0.into(),
+                capability_send: cap.0.into(),
+                data_send: dat.0.into(),
             },
         },
         recv: ChannelReceivers {
@@ -218,7 +218,7 @@ pub(crate) fn prepare_channels(
             logical_recv: LogicalChannelReceivers {
                 intersection_recv: pai.1.into(),
                 reconciliation_recv: rec.1.into(),
-                static_tokens_recv: stt.1.into(),
+                static_token_recv: stt.1.into(),
                 aoi_recv: aoi.1.into(),
                 capability_recv: cap.1.into(),
                 data_recv: dat.1.into(),
@@ -233,7 +233,7 @@ fn prepare_channel(
     send_stream: SendStream,
     recv_stream: RecvStream,
 ) -> (
-    Sender<Message>,
+    Sender,
     Receiver<Message>,
     impl Future<Output = Result<()>> + Send,
 ) {
@@ -560,10 +560,8 @@ mod tests {
 
         info!(time=?start.elapsed(), "reconciliation finished");
 
-        let (senders_alfie, _alfie_cancelled) = res_alfie.unwrap();
-        let (senders_betty, _betty_cancelled) = res_betty.unwrap();
-        senders_alfie.close_all();
-        senders_betty.close_all();
+        let _alfie_cancelled = res_alfie.unwrap();
+        let _betty_cancelled = res_betty.unwrap();
 
         let (r1, r2) = tokio::try_join!(net_task_alfie, net_task_betty)
             .expect("failed to close connection loops");
@@ -716,18 +714,16 @@ mod tests {
         // Drop the alfie intent, which closes the session.
         drop(intent_handle_alfie);
 
-        let (senders_alfie, _alfie_cancelled) = session_alfie
+        let _alfie_cancelled = session_alfie
             .complete()
             .await
             .expect("failed to close alfie session");
         info!("close alfie session");
-        senders_alfie.close_all();
 
-        let (senders_betty, _betty_cancelled) = session_betty
+        let _betty_cancelled = session_betty
             .complete()
             .await
             .expect("failed to close alfie session");
-        senders_betty.close_all();
 
         let (r1, r2) = tokio::try_join!(net_task_alfie, net_task_betty)
             .expect("failed to close connection loops");

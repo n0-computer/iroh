@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    future::poll_fn,
+    future::{poll_fn, Future},
     io,
     rc::Rc,
     task::{Context, Poll, Waker},
@@ -150,5 +150,60 @@ impl Stream for PipeReader {
     fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut shared = self.shared.borrow_mut();
         shared.poll_next(cx)
+    }
+}
+
+pin_project_lite::pin_project! {
+    /// A stream that polls a future on each call to poll_next.
+    ///
+    /// Once the future returned ready, it will not be polled anymore.
+    ///
+    /// If the future returns an error, the error will be forwarded.
+    #[derive(Debug)]
+    pub struct ProgressingStream<S, F> {
+        #[pin]
+        stream: S,
+        #[pin]
+        fut: F,
+        fut_done: bool,
+    }
+}
+
+impl<S, F, T, E> ProgressingStream<S, F>
+where
+    S: Stream<Item = Result<T, E>>,
+    F: Future<Output = Result<(), E>>,
+{
+    pub fn new(stream: S, fut: F) -> Self {
+        Self {
+            stream,
+            fut,
+            fut_done: false,
+        }
+    }
+}
+
+impl<S, F, T, E> Stream for ProgressingStream<S, F>
+where
+    S: Stream<Item = Result<T, E>>,
+    F: Future<Output = Result<(), E>>,
+{
+    type Item = Result<T, E>;
+
+    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.project();
+        if !*this.fut_done {
+            match this.fut.poll(cx) {
+                Poll::Ready(Ok(())) => {
+                    *this.fut_done = true;
+                }
+                Poll::Ready(Err(err)) => {
+                    *this.fut_done = true;
+                    return Poll::Ready(Some(Err(err)));
+                }
+                Poll::Pending => {}
+            }
+        }
+        this.stream.poll_next(cx)
     }
 }

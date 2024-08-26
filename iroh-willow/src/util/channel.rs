@@ -1,5 +1,5 @@
 use std::{
-    cmp::{self},
+    cmp,
     future::poll_fn,
     io,
     marker::PhantomData,
@@ -37,14 +37,10 @@ use crate::util::codec::{DecodeOutcome, Decoder, Encoder};
 /// Optionally the channel can be assigned a limited number of [`Guarantees`]. If limited, a total
 /// limit of sendable bytes will be respected, and no further sends can happen once it is
 /// exhausted. The amount of guarantees can be raised with [`Sender::add_guarantees`].
-pub fn outbound_channel<T: Encoder>(
-    max_buffer_size: usize,
-    guarantees: Guarantees,
-) -> (Sender<T>, Reader) {
+pub fn outbound_channel(max_buffer_size: usize, guarantees: Guarantees) -> (Sender, Reader) {
     let shared = Shared::new(max_buffer_size, guarantees);
     let sender = Sender {
         shared: shared.clone(),
-        _ty: PhantomData,
     };
     let reader = Reader { shared };
     (sender, reader)
@@ -388,12 +384,11 @@ impl AsyncWrite for Writer {
 }
 
 #[derive(Debug)]
-pub struct Sender<T> {
+pub struct Sender {
     shared: Arc<Shared>,
-    _ty: PhantomData<T>,
 }
 
-impl<T: Encoder> Sender<T> {
+impl Sender {
     /// Close the channel.
     ///
     /// Sending messages after calling `close` will return an error.
@@ -405,7 +400,7 @@ impl<T: Encoder> Sender<T> {
     }
 
     /// Send a message into the channel.
-    pub async fn send_message(&self, message: &T) -> Result<(), WriteError> {
+    pub async fn send<T: Encoder>(&self, message: &T) -> Result<(), WriteError> {
         poll_fn(|cx| self.shared.lock().unwrap().poll_send_message(message, cx)).await
     }
 
@@ -414,9 +409,27 @@ impl<T: Encoder> Sender<T> {
         self.shared.lock().unwrap().add_guarantees(amount)
     }
 
+    pub fn guarantees_handle(&self) -> GuaranteesHandle {
+        GuaranteesHandle {
+            shared: Arc::clone(&self.shared),
+        }
+    }
+
     // pub fn set_max_buffer_size(&self, max_buffer_size: usize) -> bool {
     //     self.shared.lock().unwrap().set_max_buffer_size(max_buffer_size)
     // }
+}
+
+#[derive(Debug, Clone)]
+pub struct GuaranteesHandle {
+    shared: Arc<Shared>,
+}
+
+impl GuaranteesHandle {
+    /// Add guarantees available for sending messages.
+    pub fn add_guarantees(&self, amount: u64) {
+        self.shared.lock().unwrap().add_guarantees(amount)
+    }
 }
 
 #[derive(Debug)]
@@ -455,17 +468,16 @@ impl<T: Decoder> Stream for Receiver<T> {
     }
 }
 
-impl<T> Clone for Sender<T> {
+impl Clone for Sender {
     fn clone(&self) -> Self {
         self.shared.sender_count.fetch_add(1, Ordering::Relaxed);
         Self {
             shared: Arc::clone(&self.shared),
-            _ty: PhantomData,
         }
     }
 }
 
-impl<T> Drop for Sender<T> {
+impl Drop for Sender {
     fn drop(&mut self) {
         if self.shared.sender_count.fetch_sub(1, Ordering::Relaxed) == 1 {
             self.shared.lock().unwrap().close();

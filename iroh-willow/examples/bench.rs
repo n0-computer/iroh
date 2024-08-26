@@ -51,8 +51,11 @@ async fn main() -> Result<()> {
 
     let start = Instant::now();
     let init = SessionInit::new(Interests::all(), SessionMode::ReconcileOnce);
-    let mut intent_alfie = alfie.sync_with_peer(betty.node_id(), init.clone()).await.unwrap();
-    let mut intent_betty= betty.sync_with_peer(alfie.node_id(), init).await.unwrap();
+    let mut intent_alfie = alfie
+        .sync_with_peer(betty.node_id(), init.clone())
+        .await
+        .unwrap();
+    let mut intent_betty = betty.sync_with_peer(alfie.node_id(), init).await.unwrap();
     let completion_alfie = intent_alfie.complete().await?;
     // info!(t=?t.elapsed(), d=?start.elapsed(), "alfie done");
     // let start = Instant::now();
