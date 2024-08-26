@@ -2939,6 +2939,7 @@ dependencies = [
  "clap",
  "futures-lite 2.3.0",
  "hdrhistogram",
+ "iroh-metrics",
  "iroh-net",
  "quinn 0.10.2",
  "rcgen 0.11.3",

@@ -54,6 +54,12 @@ pub struct Opt {
     /// Show connection stats the at the end of the benchmark
     #[clap(long = "stats")]
     pub stats: bool,
+    /// Show iroh-net library counter metrics at the end of the benchmark
+    ///
+    /// These metrics are process-wide, so contain metrics for
+    /// clients and the server all summed up.
+    #[clap(long)]
+    pub metrics: bool,
     /// Whether to use the unordered read API
     #[clap(long = "unordered")]
     pub read_unordered: bool,
