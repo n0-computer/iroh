@@ -81,7 +81,7 @@ impl SessionMode {
 }
 
 /// Options to initialize a session.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SessionInit {
     /// Selects the areas we wish to synchronize.
     pub interests: Interests,
