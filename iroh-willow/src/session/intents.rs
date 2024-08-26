@@ -18,7 +18,7 @@ use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
 use futures_util::FutureExt;
 use genawaiter::rc::Co;
-
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, StreamMap, StreamNotifyClose};
 use tokio_util::sync::PollSender;
@@ -80,7 +80,7 @@ impl EventKind {
 }
 
 /// Updates that may be submitted from an intent into the synchronisation session.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum IntentUpdate {
     /// Submit new interests into the session.
     AddInterests(Interests),
@@ -641,4 +641,60 @@ fn flatten_interests(interests: &InterestMap) -> NamespaceInterests {
         out.entry(cap.namespace()).or_default().extend(aois.clone());
     }
     out
+}
+
+pub mod serde_encoding {
+    use serde::{Deserialize, Serialize};
+
+    use crate::proto::grouping::serde_encoding::{SerdeArea, SerdeAreaOfInterest};
+    use crate::proto::keys::NamespaceId;
+    use crate::session::intents::EventKind;
+
+    /// Serializable version of EventKind
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub enum Event {
+        CapabilityIntersection {
+            namespace: NamespaceId,
+            area: SerdeArea,
+        },
+        InterestIntersection {
+            namespace: NamespaceId,
+            area: SerdeAreaOfInterest,
+        },
+        Reconciled {
+            namespace: NamespaceId,
+            area: SerdeAreaOfInterest,
+        },
+        ReconciledAll,
+        Abort {
+            error: String, // Simplified error representation
+        },
+    }
+
+    impl From<EventKind> for Event {
+        fn from(event: EventKind) -> Self {
+            match event {
+                EventKind::CapabilityIntersection { namespace, area } => {
+                    Event::CapabilityIntersection {
+                        namespace,
+                        area: SerdeArea(area),
+                    }
+                }
+                EventKind::InterestIntersection { namespace, area } => {
+                    Event::InterestIntersection {
+                        namespace,
+                        area: SerdeAreaOfInterest(area),
+                    }
+                }
+                EventKind::Reconciled { namespace, area } => Event::Reconciled {
+                    namespace,
+                    area: SerdeAreaOfInterest(area),
+                },
+                EventKind::ReconciledAll => Event::ReconciledAll,
+                EventKind::Abort { error } => Event::Abort {
+                    error: error.to_string(),
+                },
+            }
+        }
+    }
 }

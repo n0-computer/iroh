@@ -10,7 +10,7 @@ use tokio::{
 use tracing::{debug, error, error_span, trace, warn, Instrument};
 
 use crate::{
-    form::{AuthForm, EntryForm, EntryOrForm},
+    form::{AuthForm, EntryOrForm},
     interest::{CapSelector, CapabilityPack, DelegateTo, InterestMap, Interests},
     net::ConnHandle,
     proto::{
@@ -84,32 +84,20 @@ impl ActorHandle {
         Ok(())
     }
 
-    pub async fn insert_entry(&self, entry: Entry, auth: impl Into<AuthForm>) -> Result<()> {
+    pub async fn insert_entry(
+        &self,
+        entry: impl Into<EntryOrForm>,
+        auth: impl Into<AuthForm>,
+    ) -> Result<(Entry, bool)> {
         let (reply, reply_rx) = oneshot::channel();
         self.send(Input::InsertEntry {
-            entry: EntryOrForm::Entry(entry),
+            entry: entry.into(),
             auth: auth.into(),
             reply,
         })
         .await?;
-        reply_rx.await??;
-        Ok(())
-    }
-
-    pub async fn insert(
-        &self,
-        form: EntryForm,
-        authorisation: impl Into<AuthForm>,
-    ) -> Result<(Entry, bool)> {
-        let (reply, reply_rx) = oneshot::channel();
-        self.send(Input::InsertEntry {
-            entry: EntryOrForm::Form(form),
-            auth: authorisation.into(),
-            reply,
-        })
-        .await?;
-        let inserted = reply_rx.await??;
-        Ok(inserted)
+        let (entry, inserted) = reply_rx.await??;
+        Ok((entry, inserted))
     }
 
     pub async fn insert_secret(&self, secret: impl Into<meadowcap::SecretKey>) -> Result<()> {

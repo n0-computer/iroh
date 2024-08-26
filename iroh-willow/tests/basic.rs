@@ -435,7 +435,7 @@ mod util {
     ) -> Result<()> {
         let path = Path::from_bytes(path)?;
         let entry = EntryForm::new_bytes(namespace_id, path, bytes);
-        handle.insert(entry, user).await?;
+        handle.insert_entry(entry, user).await?;
         Ok(())
     }
 }
