@@ -706,6 +706,12 @@ impl MagicSock {
 
             // find disco and stun packets and forward them to the actor
             for packet in buf[..meta.len].chunks_mut(meta.stride) {
+                if datagram.len() < meta.stride {
+                    trace!(
+                        len = %datagram.len(),
+                        %meta.stride,
+                        "Last GRO datagram smaller than stride",
+                    );
                 let packet_is_quic = if stun::is(packet) {
                     trace!(src = %meta.addr, len = %meta.stride, "UDP recv: stun packet");
                     let packet2 = Bytes::copy_from_slice(packet);
