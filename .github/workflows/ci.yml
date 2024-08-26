@@ -428,6 +428,17 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.5
 
+      - name: Prep
+        run: sudo apt-get install musl-tools -y
+
+      - name: Build iroh
+        run: cargo build --profile=dev-ci --all-features --bin iroh --target x86_64-unknown-linux-musl
+
+      - name: Prep bins
+        run: |
+          mkdir -p bins/linux/amd64
+          cp target/x86_64-unknown-linux-musl/dev-ci/iroh bins/linux/amd64/iroh
+
       - name: Cleanup Docker
         continue-on-error: true
         run: |
@@ -445,12 +456,14 @@ jobs:
           tags: n0computer/iroh-test:latest
           target: iroh
           platforms: linux/amd64
-          file: docker/Dockerfile
+          file: docker/Dockerfile.ci
 
       - name: Run Docker image & stats test
         run: |
           docker run -p 9090:9090 -p 4919:4919/udp -Pd n0computer/iroh-test:latest --rpc-addr 0.0.0.0:4919 start
-          cargo run --bin iroh -- --rpc-addr 127.0.0.1:4919 stats
+          # Give the server time to start
+          sleep 3
+          target/x86_64-unknown-linux-musl/dev-ci/iroh --rpc-addr 127.0.0.1:4919 stats
 
   codespell:
     runs-on: ubuntu-latest
