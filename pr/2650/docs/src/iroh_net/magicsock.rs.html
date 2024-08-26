@@ -3533,6 +3533,10 @@
 <a href="#3533" id="3533">3533</a>
 <a href="#3534" id="3534">3534</a>
 <a href="#3535" id="3535">3535</a>
+<a href="#3536" id="3536">3536</a>
+<a href="#3537" id="3537">3537</a>
+<a href="#3538" id="3538">3538</a>
+<a href="#3539" id="3539">3539</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4234,6 +4238,10 @@
         <span class="kw">for </span>(meta, buf) <span class="kw">in </span>metas.iter_mut().zip(bufs.iter_mut()).take(msgs) {
             <span class="kw">let </span><span class="kw-2">mut </span>is_quic = <span class="bool-val">false</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>quic_packets_count = <span class="number">0</span>;
+            <span class="kw">if </span>meta.len &gt; meta.stride {
+                <span class="macro">trace!</span>(%meta.len, %meta.stride, <span class="string">"GRO packet received"</span>);
+                <span class="comment">// TODO: Add a metric for this
+            </span>}
 
             <span class="comment">// find disco and stun packets and forward them to the actor
             </span><span class="kw">for </span>packet <span class="kw">in </span>buf[..meta.len].chunks_mut(meta.stride) {

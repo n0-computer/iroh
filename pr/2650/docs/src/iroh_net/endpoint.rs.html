@@ -1814,7 +1814,7 @@
     /// This key should normally remain secret but can be useful to debug networking issues
     /// by decrypting captured traffic.
     ///
-    /// If *keylog* is `true` then setting the `KEYLOGFILE` environment variable to a
+    /// If *keylog* is `true` then setting the `SSLKEYLOGFILE` environment variable to a
     /// filename will result in this file being used to log the TLS pre-master keys.
     </span><span class="kw">pub fn </span>keylog(<span class="kw-2">mut </span><span class="self">self</span>, keylog: bool) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.keylog = keylog;

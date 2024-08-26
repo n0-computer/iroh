@@ -67,12 +67,18 @@
 <a href="#67" id="67">67</a>
 <a href="#68" id="68">68</a>
 <a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! TLS configuration based on libp2p TLS specs.
 //!
 //! See &lt;https://github.com/libp2p/specs/blob/master/tls/tls.md&gt;.
 //! Based on rust-libp2p/transports/tls
 
 </span><span class="kw">use </span>std::sync::Arc;
+
+<span class="kw">use </span>tracing::warn;
 
 <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
 
@@ -104,6 +110,7 @@
         .expect(<span class="string">"Client cert key DER is valid; qed"</span>);
     crypto.alpn_protocols = alpn_protocols;
     <span class="kw">if </span>keylog {
+        <span class="macro">warn!</span>(<span class="string">"enabling SSLKEYLOGFILE for TLS pre-master keys"</span>);
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
 
@@ -132,6 +139,7 @@
         .expect(<span class="string">"Server cert key DER is valid; qed"</span>);
     crypto.alpn_protocols = alpn_protocols;
     <span class="kw">if </span>keylog {
+        <span class="macro">warn!</span>(<span class="string">"enabling SSLKEYLOGFILE for TLS pre-master keys"</span>);
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
     <span class="prelude-val">Ok</span>(crypto)

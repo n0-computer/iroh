@@ -252,6 +252,13 @@
 <a href="#252" id="252">252</a>
 <a href="#253" id="253">253</a>
 <a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     num::ParseIntError,
     str::FromStr,
@@ -314,6 +321,13 @@
     <span class="doccomment">/// Starting guess for maximum UDP payload size
     </span><span class="attr">#[clap(long, default_value = <span class="string">"1200"</span>)]
     </span><span class="kw">pub </span>initial_mtu: u16,
+    <span class="doccomment">/// Whether to run a local relay and have the server and clients connect to that.
+    ///
+    /// Can be combined with the `DEV_RELAY_ONLY` environment variable (at compile time)
+    /// to test throughput for relay-only traffic locally.
+    /// (e.g. `DEV_RELAY_ONLY=true cargo run --release -- iroh --with-relay`)
+    </span><span class="attr">#[clap(long, default_value_t = <span class="bool-val">false</span>)]
+    </span><span class="kw">pub </span>with_relay: bool,
 }
 
 <span class="kw">pub enum </span>EndpointSelector {

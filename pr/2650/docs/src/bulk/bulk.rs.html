@@ -120,6 +120,16 @@
 <a href="#120" id="120">120</a>
 <a href="#121" id="121">121</a>
 <a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>clap::Parser;
 
@@ -154,9 +164,18 @@
 <span class="kw">pub fn </span>run_iroh(opt: Opt) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="kw">let </span>server_span = <span class="macro">tracing::error_span!</span>(<span class="string">"server"</span>);
     <span class="kw">let </span>runtime = rt();
+
+    <span class="kw">let </span>(relay_url, _guard) = <span class="kw">if </span>opt.with_relay {
+        <span class="kw">let </span>(<span class="kw">_</span>, relay_url, _guard) = runtime.block_on(iroh_net::test_utils::run_relay_server())<span class="question-mark">?</span>;
+
+        (<span class="prelude-val">Some</span>(relay_url), <span class="prelude-val">Some</span>(_guard))
+    } <span class="kw">else </span>{
+        (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
+    };
+
     <span class="kw">let </span>(server_addr, endpoint) = {
         <span class="kw">let </span>_guard = server_span.enter();
-        iroh::server_endpoint(<span class="kw-2">&amp;</span>runtime, <span class="kw-2">&amp;</span>opt)
+        iroh::server_endpoint(<span class="kw-2">&amp;</span>runtime, <span class="kw-2">&amp;</span>relay_url, <span class="kw-2">&amp;</span>opt)
     };
 
     <span class="kw">let </span>server_thread = std::thread::spawn(<span class="kw">move </span>|| {
@@ -169,10 +188,11 @@
     <span class="kw">let </span><span class="kw-2">mut </span>handles = Vec::new();
     <span class="kw">for </span>id <span class="kw">in </span><span class="number">0</span>..opt.clients {
         <span class="kw">let </span>server_addr = server_addr.clone();
+        <span class="kw">let </span>relay_url = relay_url.clone();
         handles.push(std::thread::spawn(<span class="kw">move </span>|| {
             <span class="kw">let </span>_guard = <span class="macro">tracing::error_span!</span>(<span class="string">"client"</span>, id).entered();
             <span class="kw">let </span>runtime = rt();
-            <span class="kw">match </span>runtime.block_on(iroh::client(server_addr, opt)) {
+            <span class="kw">match </span>runtime.block_on(iroh::client(server_addr, relay_url.clone(), opt)) {
                 <span class="prelude-val">Ok</span>(stats) =&gt; <span class="prelude-val">Ok</span>(stats),
                 <span class="prelude-val">Err</span>(e) =&gt; {
                     <span class="macro">eprintln!</span>(<span class="string">"client failed: {e:#}"</span>);
