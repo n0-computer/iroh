@@ -3540,6 +3540,11 @@
 <a href="#3540" id="3540">3540</a>
 <a href="#3541" id="3541">3541</a>
 <a href="#3542" id="3542">3542</a>
+<a href="#3543" id="3543">3543</a>
+<a href="#3544" id="3544">3544</a>
+<a href="#3545" id="3545">3545</a>
+<a href="#3546" id="3546">3546</a>
+<a href="#3547" id="3547">3547</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4239,17 +4244,23 @@
         <span class="kw">let </span><span class="kw-2">mut </span>quic_packets_total = <span class="number">0</span>;
 
         <span class="kw">for </span>(meta, buf) <span class="kw">in </span>metas.iter_mut().zip(bufs.iter_mut()).take(msgs) {
-            <span class="kw">let </span><span class="kw-2">mut </span>start = <span class="number">0</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>is_quic = <span class="bool-val">false</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>quic_packets_count = <span class="number">0</span>;
+            <span class="kw">if </span>meta.len &gt; meta.stride {
+                <span class="macro">trace!</span>(%meta.len, %meta.stride, <span class="string">"GRO datagram received"</span>);
+                <span class="macro">inc!</span>(MagicsockMetrics, recv_gro_datagrams);
+            }
 
             <span class="comment">// find disco and stun packets and forward them to the actor
-            </span><span class="kw">loop </span>{
-                <span class="kw">let </span>end = start + meta.stride;
-                <span class="kw">if </span>end &gt; meta.len {
-                    <span class="kw">break</span>;
+            </span><span class="kw">for </span>packet <span class="kw">in </span>buf[..meta.len].chunks_mut(meta.stride) {
+                <span class="kw">if </span>packet.len() &lt; meta.stride {
+                    <span class="macro">trace!</span>(
+                        len = %packet.len(),
+                        %meta.stride,
+                        <span class="string">"Last GRO datagram smaller than stride"</span>,
+                    );
                 }
-                <span class="kw">let </span>packet = <span class="kw-2">&amp;</span>buf[start..end];
+
                 <span class="kw">let </span>packet_is_quic = <span class="kw">if </span>stun::is(packet) {
                     <span class="macro">trace!</span>(src = %meta.addr, len = %meta.stride, <span class="string">"UDP recv: stun packet"</span>);
                     <span class="kw">let </span>packet2 = Bytes::copy_from_slice(packet);
@@ -4267,9 +4278,9 @@
                 </span>} <span class="kw">else </span>{
                     <span class="macro">trace!</span>(src = %meta.addr, len = %meta.stride, <span class="string">"UDP recv: quic packet"</span>);
                     <span class="kw">if </span>from_ipv4 {
-                        <span class="macro">inc_by!</span>(MagicsockMetrics, recv_data_ipv4, buf.len() <span class="kw">as _</span>);
+                        <span class="macro">inc_by!</span>(MagicsockMetrics, recv_data_ipv4, packet.len() <span class="kw">as _</span>);
                     } <span class="kw">else </span>{
-                        <span class="macro">inc_by!</span>(MagicsockMetrics, recv_data_ipv6, buf.len() <span class="kw">as _</span>);
+                        <span class="macro">inc_by!</span>(MagicsockMetrics, recv_data_ipv6, packet.len() <span class="kw">as _</span>);
                     }
                     <span class="bool-val">true
                 </span>};
@@ -4282,9 +4293,8 @@
                     // this makes quinn reliably and quickly ignore the packet as long as
                     // [`quinn::EndpointConfig::grease_quic_bit`] is set to `false`
                     // (which we always do in Endpoint::bind).
-                    </span>buf[start] = <span class="number">0u8</span>;
+                    </span>packet[<span class="number">0</span>] = <span class="number">0u8</span>;
                 }
-                start = end;
             }
 
             <span class="kw">if </span>is_quic {
