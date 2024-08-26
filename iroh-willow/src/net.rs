@@ -802,7 +802,7 @@ mod tests {
                 timestamp: TimestampForm::Now,
                 payload: PayloadForm::Bytes(payload.into()),
             };
-            let (entry, inserted) = handle.insert(entry, AuthForm::Any(user_id)).await?;
+            let (entry, inserted) = handle.insert_entry(entry, AuthForm::Any(user_id)).await?;
             assert!(inserted);
             track_entries.extend([entry]);
         }

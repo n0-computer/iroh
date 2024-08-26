@@ -24,15 +24,15 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Default)]
-pub struct Store {
+pub struct Store<PS> {
     secrets: Rc<RefCell<SecretStore>>,
     entries: Rc<RefCell<EntryStore>>,
-    payloads: iroh_blobs::store::mem::Store,
+    payloads: PS,
     caps: Rc<RefCell<CapsStore>>,
 }
 
-impl Store {
-    pub fn new(payloads: iroh_blobs::store::mem::Store) -> Self {
+impl<PS: iroh_blobs::store::Store> Store<PS> {
+    pub fn new(payloads: PS) -> Self {
         Self {
             payloads,
             secrets: Default::default(),
@@ -42,10 +42,10 @@ impl Store {
     }
 }
 
-impl traits::Storage for Store {
+impl<PS: iroh_blobs::store::Store> traits::Storage for Store<PS> {
     type Entries = Rc<RefCell<EntryStore>>;
     type Secrets = Rc<RefCell<SecretStore>>;
-    type Payloads = iroh_blobs::store::mem::Store;
+    type Payloads = PS;
     type Caps = Rc<RefCell<CapsStore>>;
 
     fn entries(&self) -> &Self::Entries {

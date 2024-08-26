@@ -117,8 +117,7 @@ impl<S: Storage> Auth<S> {
                     }
                 }
                 Ok(out)
-            }
-            Interests::Exact(interests) => Ok(interests),
+            } // Interests::Exact(interests) => Ok(interests),
         }
     }
 
