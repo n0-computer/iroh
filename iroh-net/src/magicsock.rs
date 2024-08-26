@@ -701,17 +701,19 @@ impl MagicSock {
             let mut quic_packets_count = 0;
             if meta.len > meta.stride {
                 trace!(%meta.len, %meta.stride, "GRO packet received");
-                // TODO: Add a metric for this
+                inc!(MagicsockMetrics, recv_gro_packets);
             }
 
             // find disco and stun packets and forward them to the actor
             for packet in buf[..meta.len].chunks_mut(meta.stride) {
-                if datagram.len() < meta.stride {
+                if packet.len() < meta.stride {
                     trace!(
-                        len = %datagram.len(),
+                        len = %packet.len(),
                         %meta.stride,
                         "Last GRO datagram smaller than stride",
                     );
+                }
+
                 let packet_is_quic = if stun::is(packet) {
                     trace!(src = %meta.addr, len = %meta.stride, "UDP recv: stun packet");
                     let packet2 = Bytes::copy_from_slice(packet);
