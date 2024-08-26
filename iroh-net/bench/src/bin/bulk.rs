@@ -32,9 +32,18 @@ fn main() {
 pub fn run_iroh(opt: Opt) -> Result<()> {
     let server_span = tracing::error_span!("server");
     let runtime = rt();
+
+    let (relay_url, _guard) = if opt.with_relay {
+        let (_, relay_url, _guard) = runtime.block_on(iroh_net::test_utils::run_relay_server())?;
+
+        (Some(relay_url), Some(_guard))
+    } else {
+        (None, None)
+    };
+
     let (server_addr, endpoint) = {
         let _guard = server_span.enter();
-        iroh::server_endpoint(&runtime, &opt)
+        iroh::server_endpoint(&runtime, &relay_url, &opt)
     };
 
     let server_thread = std::thread::spawn(move || {
@@ -47,10 +56,11 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
     let mut handles = Vec::new();
     for id in 0..opt.clients {
         let server_addr = server_addr.clone();
+        let relay_url = relay_url.clone();
         handles.push(std::thread::spawn(move || {
             let _guard = tracing::error_span!("client", id).entered();
             let runtime = rt();
-            match runtime.block_on(iroh::client(server_addr, opt)) {
+            match runtime.block_on(iroh::client(server_addr, relay_url.clone(), opt)) {
                 Ok(stats) => Ok(stats),
                 Err(e) => {
                     eprintln!("client failed: {e:#}");
