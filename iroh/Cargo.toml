@@ -31,6 +31,7 @@ iroh-base = { version = "0.23.0", path = "../iroh-base", features = ["key"] }
 iroh-io = { version = "0.6.0", features = ["stats"] }
 iroh-metrics = { version = "0.23.0", path = "../iroh-metrics", optional = true }
 iroh-net = { version = "0.23.0", path = "../iroh-net", features = ["discovery-local-network"] }
+iroh-willow = { version = "0.23.0", path = "../iroh-willow", optional = true }
 nested_enum_utils = "0.1.0"
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
@@ -62,7 +63,7 @@ console = { version = "0.15.5", optional = true }
 url = { version = "2.5.0", features = ["serde"] }
 
 [features]
-default = ["metrics", "fs-store"]
+default = ["metrics", "fs-store", "willow"]
 metrics = ["iroh-metrics", "iroh-blobs/metrics"]
 fs-store = ["iroh-blobs/fs-store"]
 test = []
@@ -70,6 +71,7 @@ examples = ["dep:clap", "dep:indicatif"]
 discovery-local-network = ["iroh-net/discovery-local-network", "examples", "dep:console"]
 discovery-pkarr-dht = ["iroh-net/discovery-pkarr-dht"]
 test-utils = ["iroh-net/test-utils"]
+willow = ["dep:iroh-willow"]
 
 [dev-dependencies]
 anyhow = { version = "1" }

@@ -2502,6 +2502,7 @@ dependencies = [
  "iroh-net",
  "iroh-quinn",
  "iroh-test",
+ "iroh-willow",
  "nested_enum_utils",
  "num_cpus",
  "parking_lot",
@@ -3012,7 +3013,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-willow"
-version = "0.18.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "bytes",

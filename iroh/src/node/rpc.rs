@@ -77,6 +77,7 @@ use crate::rpc_protocol::{
 use super::IrohServerEndpoint;
 
 mod docs;
+mod spaces;
 
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 /// Chunk size for getting blobs over RPC
@@ -463,6 +464,9 @@ impl<D: BaoStore> Handler<D> {
             Authors(msg) => self.handle_authors_request(msg, chan).await,
             Docs(msg) => self.handle_docs_request(msg, chan).await,
             Gossip(msg) => self.handle_gossip_request(msg, chan).await,
+            Spaces(msg) => {
+                self::spaces::handle_rpc_request(self.inner.willow.clone(), msg, chan).await
+            }
         }
     }
 

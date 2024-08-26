@@ -118,6 +118,7 @@ struct NodeInner<D> {
     downloader: Downloader,
     blob_batches: tokio::sync::Mutex<BlobBatches>,
     local_pool_handle: LocalPoolHandle,
+    willow: iroh_willow::Engine,
 }
 
 /// Keeps track of all the currently active batch operations of the blobs api.
