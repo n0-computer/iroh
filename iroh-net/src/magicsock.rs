@@ -700,8 +700,8 @@ impl MagicSock {
             let mut is_quic = false;
             let mut quic_packets_count = 0;
             if meta.len > meta.stride {
-                trace!(%meta.len, %meta.stride, "GRO packet received");
-                inc!(MagicsockMetrics, recv_gro_packets);
+                trace!(%meta.len, %meta.stride, "GRO datagram received");
+                inc!(MagicsockMetrics, recv_gro_datagrams);
             }
 
             // find disco and stun packets and forward them to the actor
