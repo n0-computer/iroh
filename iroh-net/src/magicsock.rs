@@ -725,9 +725,9 @@ impl MagicSock {
                 } else {
                     trace!(src = %meta.addr, len = %meta.stride, "UDP recv: quic packet");
                     if from_ipv4 {
-                        inc_by!(MagicsockMetrics, recv_data_ipv4, buf.len() as _);
+                        inc_by!(MagicsockMetrics, recv_data_ipv4, packet.len() as _);
                     } else {
-                        inc_by!(MagicsockMetrics, recv_data_ipv6, buf.len() as _);
+                        inc_by!(MagicsockMetrics, recv_data_ipv6, packet.len() as _);
                     }
                     true
                 };
