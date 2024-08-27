@@ -76,7 +76,7 @@ pub(super) struct NodeMapInner {
 ///
 /// You can look up entries in [`NodeMap`] with various keys, depending on the context you
 /// have for the node.  These are all the keys the [`NodeMap`] can use.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 enum NodeStateKey {
     Idx(usize),
     NodeId(NodeId),
@@ -287,7 +287,6 @@ impl NodeMapInner {
             active: false,
             source,
         });
-
         node_state.update_from_node_addr(&info);
         let id = node_state.id();
         for addr in &info.direct_addresses {

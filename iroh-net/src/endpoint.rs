@@ -294,6 +294,7 @@ impl StaticConfig {
 }
 
 /// Creates a [`quinn::ServerConfig`] with the given secret key and limits.
+// TODO: this return type can not longer be used anywhere in our public API.  Remove this.
 pub fn make_server_config(
     secret_key: &SecretKey,
     alpn_protocols: Vec<Vec<u8>>,
