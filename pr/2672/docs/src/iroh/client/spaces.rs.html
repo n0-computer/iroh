@@ -251,6 +251,12 @@
 <a href="#251" id="251">251</a>
 <a href="#252" id="252">252</a>
 <a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for managing iroh spaces
 //!
 //! iroh spaces is an implementation of the [Willow] protocol.
@@ -270,7 +276,7 @@
 <span class="kw">use </span>futures_util::{Sink, SinkExt};
 <span class="kw">use </span>iroh_base::key::NodeId;
 <span class="kw">use </span>iroh_willow::{
-    form::{AuthForm, SerdeEntryOrForm},
+    form::{AuthForm, SerdeEntryForm <span class="kw">as </span>EntryForm, SerdeEntryOrForm <span class="kw">as </span>EntryOrForm},
     interest::{CapSelector, CapabilityPack, DelegateTo, Interests},
     proto::{
         data_model::{AuthorisedEntry, Entry},
@@ -296,17 +302,15 @@
 }
 
 <span class="kw">impl </span>Client {
-    <span class="doccomment">/// Ingest an authorised entry into the Willow store.
-    </span><span class="kw">pub async fn </span>ingest_entry(<span class="kw-2">&amp;</span><span class="self">self</span>, authorised_entry: AuthorisedEntry) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>req = IngestEntryRequest { authorised_entry };
-        <span class="self">self</span>.rpc.rpc(req).<span class="kw">await</span><span class="question-mark">??</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="doccomment">/// Insert an entry into the Willow store.
+    <span class="doccomment">/// Insert a new entry.
+    ///
+    /// `entry` can be a [`EntryForm`] or a [`Entry`].
+    /// `auth` can either be a [`AuthForm`] or simply a [`UserId`].
+    /// When passing a [`UserId`], a matching capability will be selected for the user.
+    /// If you want to select the capability to use more specifically, use the methods on [`AuthForm`].
     </span><span class="kw">pub async fn </span>insert_entry(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        entry: <span class="kw">impl </span>Into&lt;SerdeEntryOrForm&gt;,
+        entry: <span class="kw">impl </span>Into&lt;EntryOrForm&gt;,
         auth: <span class="kw">impl </span>Into&lt;AuthForm&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>req = InsertEntryRequest {
@@ -314,6 +318,14 @@
             auth: auth.into(),
         };
         <span class="kw">let </span>_res: InsertEntryResponse = <span class="self">self</span>.rpc.rpc(req).<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="doccomment">/// Ingest an authorised entry.
+    </span><span class="comment">// TODO: Not sure if we should expose this on the client at all.
+    </span><span class="kw">pub async fn </span>ingest_entry(<span class="kw-2">&amp;</span><span class="self">self</span>, authorised_entry: AuthorisedEntry) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>req = IngestEntryRequest { authorised_entry };
+        <span class="self">self</span>.rpc.rpc(req).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(())
     }
 

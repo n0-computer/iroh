@@ -230,6 +230,39 @@
 <a href="#230" id="230">230</a>
 <a href="#231" id="231">231</a>
 <a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::SocketAddr,
     time::{Duration, Instant},
@@ -237,9 +270,10 @@
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
+<span class="kw">use </span>futures_lite::StreamExt <span class="kw">as _</span>;
 <span class="kw">use </span>iroh_net::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
-    relay::RelayMode,
+    relay::{RelayMap, RelayMode, RelayUrl},
     Endpoint, NodeAddr,
 };
 <span class="kw">use </span>tracing::trace;
@@ -251,27 +285,47 @@
 <span class="kw">pub const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/iroh-net-bench/0"</span>;
 
 <span class="doccomment">/// Creates a server endpoint which runs on the given runtime
-</span><span class="kw">pub fn </span>server_endpoint(rt: <span class="kw-2">&amp;</span>tokio::runtime::Runtime, opt: <span class="kw-2">&amp;</span>Opt) -&gt; (NodeAddr, Endpoint) {
+</span><span class="kw">pub fn </span>server_endpoint(
+    rt: <span class="kw-2">&amp;</span>tokio::runtime::Runtime,
+    relay_url: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
+    opt: <span class="kw-2">&amp;</span>Opt,
+) -&gt; (NodeAddr, Endpoint) {
     <span class="kw">let </span>_guard = rt.enter();
     rt.block_on(<span class="kw">async move </span>{
+        <span class="kw">let </span>relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
+            RelayMode::Custom(RelayMap::from_url(url))
+        });
         <span class="kw">let </span>ep = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
+            .insecure_skip_relay_cert_verify(relay_url.is_some())
+            .relay_mode(relay_mode)
             .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
             .bind(<span class="number">0</span>)
             .<span class="kw">await
             </span>.unwrap();
+
+        <span class="kw">if </span>relay_url.is_some() {
+            ep.watch_home_relay().next().<span class="kw">await</span>;
+        }
+
         <span class="kw">let </span>addr = ep.bound_sockets();
         <span class="kw">let </span>addr = SocketAddr::new(<span class="string">"127.0.0.1"</span>.parse().unwrap(), addr.<span class="number">0</span>.port());
-        <span class="kw">let </span>addr = NodeAddr::new(ep.node_id()).with_direct_addresses([addr]);
+        <span class="kw">let </span><span class="kw-2">mut </span>addr = NodeAddr::new(ep.node_id()).with_direct_addresses([addr]);
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(relay_url) = relay_url {
+            addr = addr.with_relay_url(relay_url.clone());
+        }
         (addr, ep)
     })
 }
 
 <span class="doccomment">/// Create and run a client
-</span><span class="kw">pub async fn </span>client(server_addr: NodeAddr, opt: Opt) -&gt; <span class="prelude-ty">Result</span>&lt;ClientStats&gt; {
+</span><span class="kw">pub async fn </span>client(
+    server_addr: NodeAddr,
+    relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
+    opt: Opt,
+) -&gt; <span class="prelude-ty">Result</span>&lt;ClientStats&gt; {
     <span class="kw">let </span>client_start = std::time::Instant::now();
-    <span class="kw">let </span>(endpoint, connection) = connect_client(server_addr, opt).<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="kw">let </span>(endpoint, connection) = connect_client(server_addr, relay_url, opt).<span class="kw">await</span><span class="question-mark">?</span>;
     <span class="kw">let </span>client_connect_time = client_start.elapsed();
     <span class="kw">let </span><span class="kw-2">mut </span>res = client_handler(
         EndpointSelector::Iroh(endpoint),
@@ -284,14 +338,26 @@
 }
 
 <span class="doccomment">/// Create a client endpoint and client connection
-</span><span class="kw">pub async fn </span>connect_client(server_addr: NodeAddr, opt: Opt) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, Connection)&gt; {
+</span><span class="kw">pub async fn </span>connect_client(
+    server_addr: NodeAddr,
+    relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
+    opt: Opt,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, Connection)&gt; {
+    <span class="kw">let </span>relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
+        RelayMode::Custom(RelayMap::from_url(url))
+    });
     <span class="kw">let </span>endpoint = Endpoint::builder()
         .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
-        .relay_mode(RelayMode::Disabled)
+        .insecure_skip_relay_cert_verify(relay_url.is_some())
+        .relay_mode(relay_mode)
         .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
         .bind(<span class="number">0</span>)
         .<span class="kw">await
         </span>.unwrap();
+
+    <span class="kw">if </span>relay_url.is_some() {
+        endpoint.watch_home_relay().next().<span class="kw">await</span>;
+    }
 
     <span class="comment">// TODO: We don't support passing client transport config currently
     // let mut client_config = quinn::ClientConfig::new(Arc::new(crypto));

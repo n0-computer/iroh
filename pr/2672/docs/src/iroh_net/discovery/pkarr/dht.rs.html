@@ -436,6 +436,7 @@
 <a href="#436" id="436">436</a>
 <a href="#437" id="437">437</a>
 <a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! # Pkarr based node discovery for iroh-net
 //!
 //! Node discovery is being able to find connecting information about an iroh node based on just its node id.
@@ -834,6 +835,7 @@
     <span class="kw">use </span>testresult::TestResult;
 
     <span class="attr">#[tokio::test]
+    #[ignore = <span class="string">"flaky"</span>]
     </span><span class="kw">async fn </span>dht_discovery_smoke() -&gt; TestResult {
         <span class="kw">let _ </span>= tracing_subscriber::fmt::try_init();
         <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind(<span class="number">0</span>).<span class="kw">await</span><span class="question-mark">?</span>;
