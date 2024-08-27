@@ -258,7 +258,7 @@
 }
 
 <span class="doccomment">/// Options to initialize a session.
-</span><span class="attr">#[derive(Debug)]
+</span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>SessionInit {
     <span class="doccomment">/// Selects the areas we wish to synchronize.
     </span><span class="kw">pub </span>interests: Interests,

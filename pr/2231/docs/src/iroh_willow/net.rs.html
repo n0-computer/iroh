@@ -817,6 +817,11 @@
 <a href="#817" id="817">817</a>
 <a href="#818" id="818">818</a>
 <a href="#819" id="819">819</a>
+<a href="#820" id="820">820</a>
+<a href="#821" id="821">821</a>
+<a href="#822" id="822">822</a>
+<a href="#823" id="823">823</a>
+<a href="#824" id="824">824</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Networking implementation for iroh-willow.
 
 </span><span class="kw">use </span>std::{future::Future, time::Duration};
@@ -1208,7 +1213,9 @@
 </span><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::{
-        collections::BTreeSet, sync::Arc, time::{Duration, Instant}
+        collections::BTreeSet,
+        sync::Arc,
+        time::{Duration, Instant},
     };
 
     <span class="kw">use </span>anyhow::Result;
@@ -1555,7 +1562,10 @@
         <span class="macro">info!</span>(time=<span class="question-mark">?</span>start.elapsed(), <span class="string">"finished"</span>);
         <span class="macro">info!</span>(<span class="string">"betty intent res {:?}"</span>, res_betty);
         <span class="macro">assert!</span>(res_betty.is_err());
-        <span class="macro">assert_eq!</span>(res_betty, <span class="prelude-val">Err</span>(Arc::new(<span class="kw">crate</span>::session::Error::SessionClosedByPeer)));
+        <span class="macro">assert_eq!</span>(
+            res_betty,
+            <span class="prelude-val">Err</span>(Arc::new(<span class="kw">crate</span>::session::Error::SessionClosedByPeer))
+        );
 
         <span class="macro">tokio::try_join!</span>(
             terminate_gracefully(<span class="kw-2">&amp;</span>conn_alfie),

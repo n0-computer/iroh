@@ -901,18 +901,126 @@
 <a href="#901" id="901">901</a>
 <a href="#902" id="902">902</a>
 <a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a>
+<a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a>
+<a href="#924" id="924">924</a>
+<a href="#925" id="925">925</a>
+<a href="#926" id="926">926</a>
+<a href="#927" id="927">927</a>
+<a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a>
+<a href="#951" id="951">951</a>
+<a href="#952" id="952">952</a>
+<a href="#953" id="953">953</a>
+<a href="#954" id="954">954</a>
+<a href="#955" id="955">955</a>
+<a href="#956" id="956">956</a>
+<a href="#957" id="957">957</a>
+<a href="#958" id="958">958</a>
+<a href="#959" id="959">959</a>
+<a href="#960" id="960">960</a>
+<a href="#961" id="961">961</a>
+<a href="#962" id="962">962</a>
+<a href="#963" id="963">963</a>
+<a href="#964" id="964">964</a>
+<a href="#965" id="965">965</a>
+<a href="#966" id="966">966</a>
+<a href="#967" id="967">967</a>
+<a href="#968" id="968">968</a>
+<a href="#969" id="969">969</a>
+<a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a>
+<a href="#972" id="972">972</a>
+<a href="#973" id="973">973</a>
+<a href="#974" id="974">974</a>
+<a href="#975" id="975">975</a>
+<a href="#976" id="976">976</a>
+<a href="#977" id="977">977</a>
+<a href="#978" id="978">978</a>
+<a href="#979" id="979">979</a>
+<a href="#980" id="980">980</a>
+<a href="#981" id="981">981</a>
+<a href="#982" id="982">982</a>
+<a href="#983" id="983">983</a>
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
+<a href="#997" id="997">997</a>
+<a href="#998" id="998">998</a>
+<a href="#999" id="999">999</a>
+<a href="#1000" id="1000">1000</a>
+<a href="#1001" id="1001">1001</a>
+<a href="#1002" id="1002">1002</a>
+<a href="#1003" id="1003">1003</a>
+<a href="#1004" id="1004">1004</a>
+<a href="#1005" id="1005">1005</a>
+<a href="#1006" id="1006">1006</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 </span><span class="kw">use </span>std::{collections::BTreeSet, future::Future, io, path::PathBuf};
 
 <span class="kw">use </span>bao_tree::{
-    io::fsm::{BaoContentItem, Outboard},
+    io::{
+        fsm::{
+            encode_ranges_validated, BaoContentItem, Outboard, ResponseDecoder, ResponseDecoderNext,
+        },
+        DecodeError,
+    },
     BaoTree, ChunkRanges,
 };
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>genawaiter::rc::{Co, Gen};
 <span class="kw">use </span>iroh_base::rpc::RpcError;
-<span class="kw">use </span>iroh_io::AsyncSliceReader;
+<span class="kw">use </span>iroh_io::{AsyncSliceReader, AsyncStreamReader, AsyncStreamWriter};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::io::AsyncRead;
 
@@ -995,6 +1103,31 @@
     </span><span class="kw">fn </span>outboard(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;<span class="kw">impl </span>Outboard&gt;&gt; + Send;
     <span class="doccomment">/// A future that resolves to a reader that can be used to read the data
     </span><span class="kw">fn </span>data_reader(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;<span class="kw">impl </span>AsyncSliceReader&gt;&gt; + Send;
+
+    <span class="doccomment">/// Encodes data and outboard into a [`AsyncStreamWriter`].
+    ///
+    /// Data and outboard parts will be interleaved.
+    ///
+    /// `offset` is the byte offset in the blob to start the stream from. It will be rounded down to
+    /// the next chunk group.
+    ///
+    /// Returns immediately without error if `start` is equal or larger than the entry's size.
+    </span><span class="kw">fn </span>write_verifiable_stream&lt;<span class="lifetime">'a</span>&gt;(
+        <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
+        offset: u64,
+        writer: <span class="kw">impl </span>AsyncStreamWriter + <span class="lifetime">'a</span>,
+    ) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;()&gt;&gt; + <span class="lifetime">'a </span>{
+        <span class="kw">async move </span>{
+            <span class="kw">let </span>size = <span class="self">self</span>.size().value();
+            <span class="kw">if </span>offset &gt;= size {
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+            }
+            <span class="kw">let </span>ranges = range_from_offset_and_length(offset, size - offset);
+            <span class="kw">let </span>(outboard, data) = <span class="macro">tokio::try_join!</span>(<span class="self">self</span>.outboard(), <span class="self">self</span>.data_reader())<span class="question-mark">?</span>;
+            encode_ranges_validated(data, outboard, <span class="kw-2">&amp;</span>ranges, writer).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="prelude-val">Ok</span>(())
+        }
+    }
 }
 
 <span class="doccomment">/// A generic map from hashes to bao blobs (blobs with bao outboards).
@@ -1246,6 +1379,74 @@
         <span class="self">self</span>.import_stream(stream, format, progress)
     }
 
+    <span class="doccomment">/// Import a blob from a verified stream, as emitted by [`MapEntry::write_verifiable_stream`];
+    ///
+    /// `total_size` is the total size of the blob as reported by the remote.
+    /// `offset` is the byte offset in the blob where the stream starts. It will be rounded
+    /// to the next chunk group.
+    </span><span class="kw">fn </span>import_verifiable_stream&lt;<span class="lifetime">'a</span>&gt;(
+        <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
+        hash: Hash,
+        total_size: u64,
+        offset: u64,
+        reader: <span class="kw">impl </span>AsyncStreamReader + <span class="lifetime">'a</span>,
+    ) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;()&gt;&gt; + <span class="lifetime">'a </span>{
+        <span class="kw">async move </span>{
+            <span class="kw">if </span>offset &gt;= total_size {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    <span class="string">"offset must not be greater than total_size"</span>,
+                ));
+            }
+            <span class="kw">let </span>entry = <span class="self">self</span>.get_or_create(hash, total_size).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>bw = entry.batch_writer().<span class="kw">await</span><span class="question-mark">?</span>;
+
+            <span class="kw">let </span>ranges = range_from_offset_and_length(offset, total_size - offset);
+            <span class="kw">let </span><span class="kw-2">mut </span>decoder = ResponseDecoder::new(
+                hash.into(),
+                ranges,
+                BaoTree::new(total_size, IROH_BLOCK_SIZE),
+                reader,
+            );
+            <span class="kw">let </span>size = decoder.tree().size();
+            <span class="kw">let </span><span class="kw-2">mut </span>buf = Vec::new();
+            <span class="kw">let </span>is_complete = <span class="kw">loop </span>{
+                decoder = <span class="kw">match </span>decoder.next().<span class="kw">await </span>{
+                    ResponseDecoderNext::More((decoder, item)) =&gt; {
+                        <span class="kw">let </span>item = <span class="kw">match </span>item {
+                            <span class="prelude-val">Err</span>(DecodeError::LeafNotFound(<span class="kw">_</span>) | DecodeError::ParentNotFound(<span class="kw">_</span>)) =&gt; {
+                                <span class="kw">break </span><span class="bool-val">false
+                            </span>}
+                            <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(err.into()),
+                            <span class="prelude-val">Ok</span>(item) =&gt; item,
+                        };
+                        <span class="kw">match </span><span class="kw-2">&amp;</span>item {
+                            BaoContentItem::Parent(<span class="kw">_</span>) =&gt; {
+                                buf.push(item);
+                            }
+                            BaoContentItem::Leaf(<span class="kw">_</span>) =&gt; {
+                                buf.push(item);
+                                <span class="kw">let </span>batch = std::mem::take(<span class="kw-2">&amp;mut </span>buf);
+                                bw.write_batch(size, batch).<span class="kw">await</span><span class="question-mark">?</span>;
+                            }
+                        }
+                        decoder
+                    }
+                    ResponseDecoderNext::Done(_reader) =&gt; {
+                        <span class="macro">debug_assert!</span>(buf.is_empty(), <span class="string">"last node of bao tree must be leaf node"</span>);
+                        <span class="kw">break </span><span class="bool-val">true</span>;
+                    }
+                };
+            };
+            bw.sync().<span class="kw">await</span><span class="question-mark">?</span>;
+            drop(bw);
+            <span class="kw">if </span>is_complete {
+                <span class="self">self</span>.insert_complete(entry).<span class="kw">await</span><span class="question-mark">?</span>;
+            }
+            <span class="prelude-val">Ok</span>(())
+        }
+    }
+
     <span class="doccomment">/// Set a tag
     </span><span class="kw">fn </span>set_tag(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -1319,6 +1520,11 @@
     ) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;()&gt;&gt; + Send {
         validate_impl(<span class="self">self</span>, repair, tx)
     }
+}
+
+<span class="kw">fn </span>range_from_offset_and_length(offset: u64, length: u64) -&gt; bao_tree::ChunkRanges {
+    <span class="kw">let </span>ranges = bao_tree::ByteRanges::from(offset..(offset + length));
+    bao_tree::io::round_up_to_chunks(<span class="kw-2">&amp;</span>ranges)
 }
 
 <span class="kw">async fn </span>validate_impl(

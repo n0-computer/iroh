@@ -34,12 +34,12 @@
 <span class="kw">pub use </span>handles::<span class="kw-2">*</span>;
 <span class="kw">pub use </span>messages::<span class="kw-2">*</span>;
 
-<span class="kw">pub const </span>MAX_PAYLOAD_SIZE_POWER: u8 = <span class="number">12</span>;
+<span class="kw">pub const </span>MAX_PAYLOAD_SIZE_POWER: u8 = <span class="number">18</span>;
 
 <span class="doccomment">/// The maximum payload size limits when the other peer may include Payloads directly when transmitting Entries:
 /// when an Entry’s payload_length is strictly greater than the maximum payload size,
 /// its Payload may only be transmitted when explicitly requested.
 ///
-/// The value is 4096.
+/// The value is 256KiB.
 </span><span class="kw">pub const </span>MAX_PAYLOAD_SIZE: usize = <span class="number">2usize</span>.pow(MAX_PAYLOAD_SIZE_POWER <span class="kw">as </span>u32);
 </code></pre></div></section></main></body></html>

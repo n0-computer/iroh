@@ -536,6 +536,7 @@
 <a href="#536" id="536">536</a>
 <a href="#537" id="537">537</a>
 <a href="#538" id="538">538</a>
+<a href="#539" id="539">539</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::io::Write;
 
 <span class="kw">use </span>serde::{Deserialize, Serialize};
@@ -926,9 +927,10 @@
 }
 
 <span class="doccomment">/// Transmit some transformed Payload bytes.
-</span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize)]
+</span><span class="attr">#[derive(derive_more::Debug, Clone, Serialize, Deserialize)]
 </span><span class="kw">pub struct </span>ReconciliationSendPayload {
     <span class="comment">// A substring of the bytes obtained by applying transform_payload to the Payload to be transmitted.
+    </span><span class="attr">#[debug(<span class="string">"Bytes({})"</span>, <span class="self">self</span>.bytes.len())]
     </span><span class="kw">pub </span>bytes: bytes::Bytes,
 }
 

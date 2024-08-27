@@ -177,8 +177,6 @@
 <a href="#177" id="177">177</a>
 <a href="#178" id="178">178</a>
 <a href="#179" id="179">179</a>
-<a href="#180" id="180">180</a>
-<a href="#181" id="181">181</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>futures_lite::StreamExt;
 <span class="kw">use </span>tokio::sync::broadcast;
 
@@ -187,10 +185,7 @@
         data_model::AuthorisedEntry,
         wgps::{DataMessage, DataSendEntry, DataSendPayload, StaticToken},
     },
-    session::{
-        channels::ChannelSenders, payload::DEFAULT_CHUNK_SIZE, static_tokens::StaticTokens, Error,
-        SessionId,
-    },
+    session::{channels::ChannelSenders, static_tokens::StaticTokens, Error, SessionId},
     store::{
         entry::{EntryChannel, EntryOrigin},
         traits::Storage,
@@ -275,24 +270,21 @@
             .bind_and_send_ours(static_token, <span class="kw-2">&amp;</span><span class="self">self</span>.send)
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>digest = <span class="kw-2">*</span>entry.payload_digest();
+        <span class="kw">let </span>offset = <span class="number">0</span>;
         <span class="kw">let </span>msg = DataSendEntry {
             entry: entry.into(),
             static_token_handle,
             dynamic_token,
-            offset: <span class="number">0</span>,
+            offset,
         };
         <span class="self">self</span>.send.send(msg).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// TODO: only send payload if configured to do so and/or under size limit.
         </span><span class="kw">let </span>send_payloads = <span class="bool-val">true</span>;
         <span class="kw">if </span>send_payloads {
-            send_payload_chunked(
-                digest,
-                <span class="self">self</span>.store.payloads(),
-                <span class="kw-2">&amp;</span><span class="self">self</span>.send,
-                DEFAULT_CHUNK_SIZE,
-                |bytes| DataSendPayload { bytes }.into(),
-            )
+            send_payload_chunked(digest, <span class="self">self</span>.store.payloads(), <span class="kw-2">&amp;</span><span class="self">self</span>.send, offset, |bytes| {
+                DataSendPayload { bytes }.into()
+            })
             .<span class="kw">await</span><span class="question-mark">?</span>;
         }
         <span class="prelude-val">Ok</span>(())
@@ -345,8 +337,12 @@
         )<span class="question-mark">?</span>;
         <span class="kw">let </span>(entry, _token) = authorised_entry.into_parts();
         <span class="comment">// TODO: handle offset
-        </span><span class="self">self</span>.current_payload
-            .set(<span class="kw-2">*</span>entry.payload_digest(), entry.payload_length())<span class="question-mark">?</span>;
+        </span><span class="self">self</span>.current_payload.set(
+            <span class="kw-2">*</span>entry.payload_digest(),
+            entry.payload_length(),
+            <span class="prelude-val">None</span>,
+            <span class="prelude-val">Some</span>(message.offset),
+        )<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 

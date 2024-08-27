@@ -652,7 +652,7 @@
     session::{
         aoi_finder::AoiIntersection,
         channels::{ChannelSenders, MessageReceiver},
-        payload::{send_payload_chunked, CurrentPayload, DEFAULT_CHUNK_SIZE},
+        payload::{send_payload_chunked, CurrentPayload},
         static_tokens::StaticTokens,
         Error, Role, SessionId,
     },
@@ -686,7 +686,7 @@
     shared: Shared&lt;S&gt;,
     recv: Cancelable&lt;MessageReceiver&lt;ReconciliationMessage&gt;&gt;,
     targets: TargetMap&lt;S&gt;,
-    current_entry: CurrentEntry,
+    entry_state: EntryState,
 }
 
 <span class="kw">type </span>TargetId = (AreaOfInterestHandle, AreaOfInterestHandle);
@@ -720,7 +720,7 @@
                 shared,
                 recv,
                 targets: TargetMap::new(inbox),
-                current_entry: Default::default(),
+                entry_state: Default::default(),
             }
             .run()
         })
@@ -758,13 +758,13 @@
                 target
                     .received_send_fingerprint(<span class="kw-2">&amp;</span><span class="self">self</span>.shared, message)
                     .<span class="kw">await</span><span class="question-mark">?</span>;
-                <span class="kw">if </span>target.is_complete() &amp;&amp; <span class="self">self</span>.current_entry.is_none() {
+                <span class="kw">if </span>target.is_complete() &amp;&amp; <span class="self">self</span>.entry_state.is_empty() {
                     <span class="self">self</span>.complete_target(target_id).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
             }
             ReconciliationMessage::AnnounceEntries(message) =&gt; {
                 <span class="kw">let </span>target_id = message.handles();
-                <span class="self">self</span>.current_entry
+                <span class="self">self</span>.entry_state
                     .received_announce_entries(target_id, message.count)<span class="question-mark">?</span>;
                 <span class="kw">let </span>target = <span class="self">self
                     </span>.targets
@@ -773,7 +773,7 @@
                 target
                     .received_announce_entries(<span class="kw-2">&amp;</span><span class="self">self</span>.shared, message)
                     .<span class="kw">await</span><span class="question-mark">?</span>;
-                <span class="kw">if </span>target.is_complete() &amp;&amp; <span class="self">self</span>.current_entry.is_none() {
+                <span class="kw">if </span>target.is_complete() &amp;&amp; <span class="self">self</span>.entry_state.is_empty() {
                     <span class="self">self</span>.complete_target(target_id).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
             }
@@ -787,8 +787,9 @@
                         message.dynamic_token,
                     )
                     .<span class="kw">await</span><span class="question-mark">?</span>;
-                <span class="self">self</span>.current_entry.received_entry(
+                <span class="self">self</span>.entry_state.received_send_entry(
                     <span class="kw-2">*</span>authorised_entry.entry().payload_digest(),
+                    authorised_entry.entry().payload_length(),
                     message.entry.available,
                 )<span class="question-mark">?</span>;
                 <span class="self">self</span>.shared.store.entries().ingest(
@@ -800,13 +801,13 @@
                 )<span class="question-mark">?</span>;
             }
             ReconciliationMessage::SendPayload(message) =&gt; {
-                <span class="self">self</span>.current_entry
+                <span class="self">self</span>.entry_state
                     .received_send_payload(<span class="self">self</span>.shared.store.payloads(), message.bytes)
                     .<span class="kw">await</span><span class="question-mark">?</span>;
             }
             ReconciliationMessage::TerminatePayload(_message) =&gt; {
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(completed_target) =
-                    <span class="self">self</span>.current_entry.received_terminate_payload().<span class="kw">await</span><span class="question-mark">?
+                    <span class="self">self</span>.entry_state.received_terminate_payload().<span class="kw">await</span><span class="question-mark">?
                 </span>{
                     <span class="kw">let </span>target = <span class="self">self
                         </span>.targets
@@ -912,45 +913,45 @@
 }
 
 <span class="attr">#[derive(Debug, Default)]
-</span><span class="kw">struct </span>CurrentEntry(<span class="prelude-ty">Option</span>&lt;EntryState&gt;);
+</span><span class="kw">struct </span>EntryState(<span class="prelude-ty">Option</span>&lt;EntryStateInner&gt;);
 
-<span class="kw">impl </span>CurrentEntry {
-    <span class="kw">pub fn </span>is_none(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<span class="kw">impl </span>EntryState {
+    <span class="kw">pub fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="self">self</span>.<span class="number">0</span>.is_none()
     }
 
-    <span class="kw">pub fn </span>received_announce_entries(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        target: TargetId,
-        count: u64,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;TargetId&gt;, Error&gt; {
+    <span class="kw">pub fn </span>received_announce_entries(<span class="kw-2">&amp;mut </span><span class="self">self</span>, target: TargetId, count: u64) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="kw">if </span><span class="self">self</span>.<span class="number">0</span>.is_some() {
             <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidMessageInCurrentState);
         }
         <span class="kw">if let </span><span class="prelude-val">Some</span>(count) = NonZeroU64::new(count) {
-            <span class="self">self</span>.<span class="number">0 </span>= <span class="prelude-val">Some</span>(EntryState {
+            <span class="self">self</span>.<span class="number">0 </span>= <span class="prelude-val">Some</span>(EntryStateInner {
                 target,
-                remaining: <span class="prelude-val">Some</span>(count),
-                payload: CurrentPayload::default(),
+                remaining_entries: <span class="prelude-val">Some</span>(count),
+                current_payload: CurrentPayload::default(),
             });
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
-        } <span class="kw">else </span>{
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(target))
         }
+        <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">pub fn </span>received_entry(
+    <span class="kw">pub fn </span>received_send_entry(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         payload_digest: PayloadDigest,
-        expected_length: u64,
+        total_payload_length: u64,
+        available_payload_length: u64,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="kw">let </span>state = <span class="self">self</span>.get_mut()<span class="question-mark">?</span>;
-        state.payload.ensure_none()<span class="question-mark">?</span>;
-        state.remaining = <span class="kw">match </span>state.remaining.take() {
+        state.current_payload.ensure_none()<span class="question-mark">?</span>;
+        state.remaining_entries = <span class="kw">match </span>state.remaining_entries.take() {
             <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidMessageInCurrentState),
             <span class="prelude-val">Some</span>(c) =&gt; NonZeroU64::new(c.get().saturating_sub(<span class="number">1</span>)),
         };
-        state.payload.set(payload_digest, expected_length)<span class="question-mark">?</span>;
+        state.current_payload.set(
+            payload_digest,
+            total_payload_length,
+            <span class="prelude-val">Some</span>(available_payload_length),
+            <span class="prelude-val">None</span>,
+        )<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
@@ -959,15 +960,18 @@
         store: <span class="kw-2">&amp;</span>P,
         bytes: Bytes,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
-        <span class="self">self</span>.get_mut()<span class="question-mark">?</span>.payload.recv_chunk(store, bytes).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.get_mut()<span class="question-mark">?
+            </span>.current_payload
+            .recv_chunk(store, bytes)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">pub async fn </span>received_terminate_payload(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;TargetId&gt;, Error&gt; {
-        <span class="kw">let </span>s = <span class="self">self</span>.get_mut()<span class="question-mark">?</span>;
-        s.payload.finalize().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">if </span>s.remaining.is_none() {
-            <span class="kw">let </span>target_id = s.target;
+        <span class="kw">let </span>state = <span class="self">self</span>.get_mut()<span class="question-mark">?</span>;
+        state.current_payload.finalize().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">if </span>state.remaining_entries.is_none() {
+            <span class="kw">let </span>target_id = state.target;
             <span class="self">self</span>.<span class="number">0 </span>= <span class="prelude-val">None</span>;
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(target_id))
         } <span class="kw">else </span>{
@@ -975,7 +979,7 @@
         }
     }
 
-    <span class="kw">pub fn </span>get_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;mut </span>EntryState, Error&gt; {
+    <span class="kw">pub fn </span>get_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;mut </span>EntryStateInner, Error&gt; {
         <span class="kw">match </span><span class="self">self</span>.<span class="number">0</span>.as_mut() {
             <span class="prelude-val">Some</span>(s) =&gt; <span class="prelude-val">Ok</span>(s),
             <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(Error::InvalidMessageInCurrentState),
@@ -984,10 +988,10 @@
 }
 
 <span class="attr">#[derive(Debug)]
-</span><span class="kw">struct </span>EntryState {
+</span><span class="kw">struct </span>EntryStateInner {
     target: TargetId,
-    remaining: <span class="prelude-ty">Option</span>&lt;NonZeroU64&gt;,
-    payload: CurrentPayload,
+    remaining_entries: <span class="prelude-ty">Option</span>&lt;NonZeroU64&gt;,
+    current_payload: CurrentPayload,
 }
 
 <span class="attr">#[derive(derive_more::Debug)]
@@ -1213,13 +1217,9 @@
 
             <span class="comment">// TODO: only send payload if configured to do so and/or under size limit.
             </span><span class="kw">if </span>payload_len &lt;= shared.max_eager_payload_size {
-                send_payload_chunked(
-                    digest,
-                    shared.store.payloads(),
-                    <span class="kw-2">&amp;</span>shared.send,
-                    DEFAULT_CHUNK_SIZE,
-                    |bytes| ReconciliationSendPayload { bytes }.into(),
-                )
+                send_payload_chunked(digest, shared.store.payloads(), <span class="kw-2">&amp;</span>shared.send, <span class="number">0</span>, |bytes| {
+                    ReconciliationSendPayload { bytes }.into()
+                })
                 .<span class="kw">await</span><span class="question-mark">?</span>;
             }
             shared.send.send(ReconciliationTerminatePayload).<span class="kw">await</span><span class="question-mark">?</span>;

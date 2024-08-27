@@ -642,9 +642,6 @@
 <a href="#642" id="642">642</a>
 <a href="#643" id="643">643</a>
 <a href="#644" id="644">644</a>
-<a href="#645" id="645">645</a>
-<a href="#646" id="646">646</a>
-<a href="#647" id="647">647</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Intents are handles onto a Willow synchronisation session.
 //!
 //! They are created with [`crate::Engine::sync_with_peer`].
@@ -1264,11 +1261,8 @@
         <span class="kw">if </span>matches {
             <span class="self">self</span>.send(event.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">if </span>is_reconciled &amp;&amp; <span class="self">self</span>.interests.is_empty() {
-                <span class="macro">debug!</span>(<span class="string">"SEND RECONCILED ALL"</span>);
                 <span class="self">self</span>.send(EventKind::ReconciledAll).<span class="kw">await</span><span class="question-mark">?
-            </span>} <span class="kw">else </span>{
-                <span class="macro">debug!</span>(<span class="string">"DO NOT SEND RECONCILED ALL"</span>);
-            }
+            </span>}
         }
         <span class="prelude-val">Ok</span>(<span class="self">self</span>.is_complete())
     }
