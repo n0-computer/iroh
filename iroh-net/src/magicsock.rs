@@ -572,14 +572,7 @@ impl MagicSock {
                     // and are just timeouts.  Hence we opt for returning Ok.  See
                     // test_try_send_no_udp_addr_or_relay_url to explore this further.
                     error!("no UDP or relay paths available for node");
-                    let err = udp_error.unwrap_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::Other,
-                            "no UDP or relay address available for node",
-                        )
-                    });
-                    return Err(err);
-                    // return Ok(());
+                    return Ok(());
                 }
 
                 trace!(
