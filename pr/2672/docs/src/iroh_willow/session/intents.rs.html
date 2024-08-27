@@ -698,6 +698,33 @@
 <a href="#698" id="698">698</a>
 <a href="#699" id="699">699</a>
 <a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
+<a href="#704" id="704">704</a>
+<a href="#705" id="705">705</a>
+<a href="#706" id="706">706</a>
+<a href="#707" id="707">707</a>
+<a href="#708" id="708">708</a>
+<a href="#709" id="709">709</a>
+<a href="#710" id="710">710</a>
+<a href="#711" id="711">711</a>
+<a href="#712" id="712">712</a>
+<a href="#713" id="713">713</a>
+<a href="#714" id="714">714</a>
+<a href="#715" id="715">715</a>
+<a href="#716" id="716">716</a>
+<a href="#717" id="717">717</a>
+<a href="#718" id="718">718</a>
+<a href="#719" id="719">719</a>
+<a href="#720" id="720">720</a>
+<a href="#721" id="721">721</a>
+<a href="#722" id="722">722</a>
+<a href="#723" id="723">723</a>
+<a href="#724" id="724">724</a>
+<a href="#725" id="725">725</a>
+<a href="#726" id="726">726</a>
+<a href="#727" id="727">727</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Intents are handles onto a Willow synchronisation session.
 //!
 //! They are created with [`crate::Engine::sync_with_peer`].
@@ -716,7 +743,7 @@
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
-<span class="kw">use </span>futures_util::FutureExt;
+<span class="kw">use </span>futures_util::{FutureExt, Sink, SinkExt};
 <span class="kw">use </span>genawaiter::rc::Co;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::sync::mpsc;
@@ -832,10 +859,7 @@
     ) -&gt; (<span class="self">Self</span>, IntentHandle) {
         <span class="kw">let </span>(event_tx, event_rx) = mpsc::channel(event_cap);
         <span class="kw">let </span>(update_tx, update_rx) = mpsc::channel(update_cap);
-        <span class="kw">let </span>handle = IntentHandle {
-            event_rx,
-            update_tx,
-        };
+        <span class="kw">let </span>handle = IntentHandle::from_mpsc(update_tx, event_rx);
         <span class="kw">let </span>channels = IntentChannels {
             event_tx,
             update_rx,
@@ -878,19 +902,49 @@
 /// otherwise the session will be blocked from progressing.
 ///
 /// The [`IntentHandle`] can also submit new interests into the session.
-</span><span class="attr">#[derive(Debug)]
+</span><span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub struct </span>IntentHandle {
-    event_rx: Receiver&lt;EventKind&gt;,
-    update_tx: Sender&lt;IntentUpdate&gt;,
+    <span class="attr">#[debug(<span class="string">"EventReceiver"</span>)]
+    </span>event_rx: EventReceiver,
+    <span class="attr">#[debug(<span class="string">"UpdateSender"</span>)]
+    </span>update_tx: UpdateSender,
 }
 
+<span class="kw">pub type </span>UpdateSender =
+    Pin&lt;Box&lt;<span class="kw">dyn </span>Sink&lt;IntentUpdate, Error = SendError&lt;IntentUpdate&gt;&gt; + Send + <span class="lifetime">'static</span>&gt;&gt;;
+<span class="kw">pub type </span>EventReceiver = Pin&lt;Box&lt;<span class="kw">dyn </span>Stream&lt;Item = EventKind&gt; + Send + <span class="lifetime">'static</span>&gt;&gt;;
+
+<span class="attr">#[derive(Debug, thiserror::Error)]
+#[error(<span class="string">"Failed to send update: Receiver dropped."</span>)]
+</span><span class="kw">pub struct </span>SendError&lt;T&gt;(<span class="kw">pub </span>T);
+
 <span class="kw">impl </span>IntentHandle {
+    <span class="kw">pub fn </span>new(
+        update_tx: UpdateSender,
+        event_rx: EventReceiver,
+        <span class="comment">// PollSender::new(self.update_tx),
+        // ReceiverStream::new(self.event_rx),
+    </span>) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            update_tx,
+            event_rx,
+        }
+    }
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>from_mpsc(
+        update_tx: mpsc::Sender&lt;IntentUpdate&gt;,
+        event_rx: mpsc::Receiver&lt;EventKind&gt;,
+    ) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>update_tx = PollSender::new(update_tx);
+        <span class="kw">let </span>update_tx = update_tx
+            .sink_map_err(|err| SendError(err.into_inner().expect(<span class="string">"invalid use of Sink trait"</span>)));
+        <span class="kw">let </span>event_rx = ReceiverStream::new(event_rx);
+        <span class="self">Self</span>::new(Box::pin(update_tx), Box::pin(event_rx))
+    }
+
     <span class="doccomment">/// Split the [`IntentHandle`] into a update sink and event stream.
-    </span><span class="kw">pub fn </span>split(<span class="self">self</span>) -&gt; (PollSender&lt;IntentUpdate&gt;, ReceiverStream&lt;EventKind&gt;) {
-        (
-            PollSender::new(<span class="self">self</span>.update_tx),
-            ReceiverStream::new(<span class="self">self</span>.event_rx),
-        )
+    </span><span class="kw">pub fn </span>split(<span class="self">self</span>) -&gt; (UpdateSender, EventReceiver) {
+        (<span class="self">self</span>.update_tx, <span class="self">self</span>.event_rx)
     }
 
     <span class="doccomment">/// Wait for the intent to be completed.
@@ -904,7 +958,7 @@
     </span><span class="kw">pub async fn </span>complete(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Completion, Arc&lt;Error&gt;&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>complete = <span class="bool-val">false</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>partial = <span class="bool-val">false</span>;
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(event) = <span class="self">self</span>.event_rx.recv().<span class="kw">await </span>{
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(event) = <span class="self">self</span>.event_rx.next().<span class="kw">await </span>{
             <span class="kw">match </span>event {
                 EventKind::ReconciledAll =&gt; complete = <span class="bool-val">true</span>,
                 <span class="comment">// TODO: track partial reconciliations
@@ -928,7 +982,7 @@
     ///
     /// The [`IntentHandle`] will then receive events for these interests in addition to already
     /// submitted interests.
-    </span><span class="kw">pub async fn </span>add_interests(<span class="kw-2">&amp;</span><span class="self">self</span>, interests: <span class="kw">impl </span>Into&lt;Interests&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub async fn </span>add_interests(<span class="kw-2">&amp;mut </span><span class="self">self</span>, interests: <span class="kw">impl </span>Into&lt;Interests&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="self">self</span>.update_tx
             .send(IntentUpdate::AddInterests(interests.into()))
             .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -936,7 +990,7 @@
     }
 
     <span class="doccomment">/// Close the intent.
-    </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+    </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="self">self</span>.update_tx.send(IntentUpdate::Close).<span class="kw">await</span>.ok();
     }
 }
@@ -945,7 +999,7 @@
     <span class="kw">type </span>Item = EventKind;
 
     <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
-        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.event_rx).poll_recv(cx)
+        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.event_rx).poll_next(cx)
     }
 }
 

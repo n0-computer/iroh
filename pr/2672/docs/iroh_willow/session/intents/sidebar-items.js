@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Completion","EventKind","IntentUpdate"],"mod":["serde_encoding"],"struct":["Intent","IntentHandle"],"type":["IntentId"]};
+window.SIDEBAR_ITEMS = {"enum":["Completion","EventKind","IntentUpdate"],"mod":["serde_encoding"],"struct":["Intent","IntentHandle","SendError"],"type":["EventReceiver","IntentId","UpdateSender"]};

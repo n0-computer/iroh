@@ -770,7 +770,7 @@
     },
     proto::wgps::AccessChallenge,
     session::{
-        intents::{EventKind, Intent},
+        intents::{EventKind, EventReceiver, Intent},
         Error, InitialTransmission, Role, SessionEvent, SessionHandle, SessionInit, SessionUpdate,
     },
 };
@@ -1452,7 +1452,7 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>EventForwarder {
     _join_handle: AbortingJoinHandle&lt;()&gt;,
-    stream_sender: mpsc::Sender&lt;(NodeId, ReceiverStream&lt;EventKind&gt;)&gt;,
+    stream_sender: mpsc::Sender&lt;(NodeId, EventReceiver)&gt;,
 }
 
 <span class="kw">impl </span>EventForwarder {
@@ -1480,7 +1480,7 @@
         }
     }
 
-    <span class="kw">pub async fn </span>add_intent(<span class="kw-2">&amp;</span><span class="self">self</span>, peer: NodeId, event_stream: ReceiverStream&lt;EventKind&gt;) {
+    <span class="kw">pub async fn </span>add_intent(<span class="kw-2">&amp;</span><span class="self">self</span>, peer: NodeId, event_stream: EventReceiver) {
         <span class="self">self</span>.stream_sender.send((peer, event_stream)).<span class="kw">await</span>.ok();
     }
 }
