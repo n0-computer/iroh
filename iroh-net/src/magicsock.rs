@@ -3770,7 +3770,8 @@ mod tests {
         // aka assert!(res.is_ok()) but with nicer error reporting.
         res.unwrap();
 
-        // Now check if we can connect to a repaired ep_3
+        // TODO: Now check if we can connect to a repaired ep_3, but we can't modify that
+        // much internal state for now.
     }
 
     #[tokio::test]
