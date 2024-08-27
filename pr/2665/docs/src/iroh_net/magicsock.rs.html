@@ -3878,6 +3878,7 @@
 <a href="#3878" id="3878">3878</a>
 <a href="#3879" id="3879">3879</a>
 <a href="#3880" id="3880">3880</a>
+<a href="#3881" id="3881">3881</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -7650,7 +7651,8 @@
         <span class="comment">// aka assert!(res.is_ok()) but with nicer error reporting.
         </span>res.unwrap();
 
-        <span class="comment">// Now check if we can connect to a repaired ep_3
+        <span class="comment">// TODO: Now check if we can connect to a repaired ep_3, but we can't modify that
+        // much internal state for now.
     </span>}
 
     <span class="attr">#[tokio::test]
