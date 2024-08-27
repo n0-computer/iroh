@@ -86,6 +86,8 @@ async fn main() -> Result<()> {
     info!("betty has now {} entries", betty_count);
     assert_eq!(alfie_count, n_alfie + n_betty);
     assert_eq!(betty_count, n_alfie + n_betty);
+    alfie.shutdown().await?;
+    betty.shutdown().await?;
 
     Ok(())
 }
