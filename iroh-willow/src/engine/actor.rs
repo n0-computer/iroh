@@ -7,6 +7,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
 };
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, error_span, trace, warn, Instrument};
 
 use crate::{
@@ -125,14 +126,14 @@ impl ActorHandle {
         namespace: NamespaceId,
         range: Range3d,
     ) -> Result<impl Stream<Item = anyhow::Result<Entry>>> {
-        let (tx, rx) = flume::bounded(1024);
+        let (tx, rx) = tokio::sync::mpsc::channel(1024);
         self.send(Input::GetEntries {
             namespace,
             reply: tx,
             range,
         })
         .await?;
-        Ok(rx.into_stream())
+        Ok(ReceiverStream::new(rx))
     }
 
     pub(crate) async fn init_session(
@@ -232,7 +233,7 @@ pub enum Input {
         namespace: NamespaceId,
         range: Range3d,
         #[debug(skip)]
-        reply: flume::Sender<Result<Entry>>,
+        reply: mpsc::Sender<Result<Entry>>,
     },
     IngestEntry {
         authorised_entry: AuthorisedEntry,
@@ -379,12 +380,12 @@ impl<S: Storage> Actor<S> {
             } => {
                 let snapshot = self.store.entries().snapshot();
                 match snapshot {
-                    Err(err) => reply.send(Err(err)).map_err(send_reply_error),
+                    Err(err) => reply.send(Err(err)).await.map_err(send_reply_error),
                     Ok(snapshot) => {
                         self.tasks.spawn_local(async move {
                             let iter = snapshot.get_entries(namespace, &range);
                             for entry in iter {
-                                if reply.send_async(entry).await.is_err() {
+                                if reply.send(entry).await.is_err() {
                                     break;
                                 }
                             }
