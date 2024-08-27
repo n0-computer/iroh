@@ -3660,25 +3660,40 @@ mod tests {
         addr: QuicMappedAddr,
         node_id: NodeId,
     ) -> Result<quinn::Connection> {
+        // Endpoint::connect sets this, do the same for behaviour.
+        let mut transport_config = quinn::TransportConfig::default();
+        transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
+
+        magicsock_connet_with_transport_config(
+            ep,
+            ep_secret_key,
+            addr,
+            node_id,
+            Arc::new(transport_config),
+        )
+        .await
+    }
+
+    /// Connects from `ep` returned by [`magicsock_ep`] to the `node_id`.
+    ///
+    /// This version allows customising the transport config.
+    ///
+    /// Uses [`ALPN`], `node_id`, must match `addr`.
+    #[instrument(name = "connect", skip_all, fields(me = ep_secret_key.public().fmt_short()))]
+    async fn magicsock_connet_with_transport_config(
+        ep: &quinn::Endpoint,
+        ep_secret_key: SecretKey,
+        addr: QuicMappedAddr,
+        node_id: NodeId,
+        transport_config: Arc<quinn::TransportConfig>,
+    ) -> Result<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
         let quic_client_config =
             tls::make_client_config(&ep_secret_key, Some(node_id), alpns, true)?;
-        let client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
-        // let mut transport_config = quinn::TransportConfig::default();
-        // transport_config.max_idle_timeout(Some(Duration::from_secs(1).try_into().unwrap()));
-        // client_config.transport_config(Arc::new(transport_config));
-        info!("connect");
+        let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
+        client_config.transport_config(transport_config);
         let connect = ep.connect_with(client_config, addr.0, "localhost")?;
-        info!("connecting");
-        // let connection = connect.await?;
-        let connection = match connect.await {
-            Ok(conn) => conn,
-            Err(err) => {
-                error!("connection error: {err:#}");
-                panic!("oops");
-            }
-        };
-        info!("connected");
+        let connection = connect.await?;
         Ok(connection)
     }
 
@@ -3713,20 +3728,27 @@ mod tests {
         // Now check we can still create another connection with this endpoint.
         let (ep_2, msock_2) = magicsock_ep(secret_key_2.clone()).await.unwrap();
 
-        // We need a task to accept the connection.
+        // This needs an accept task
         let accept_task = tokio::spawn({
+            async fn accept(ep: quinn::Endpoint) -> Result<()> {
+                let incoming = ep.accept().await.ok_or(anyhow!("no incoming"))?;
+                let _conn = incoming.accept()?.await?;
+
+                // Keep this connection alive for a while
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                info!("accept finished");
+                Ok(())
+            }
             let ep_2 = ep_2.clone();
             async move {
-                if let Some(incoming) = ep_2.accept().await {
-                    let _conn = incoming.accept().unwrap().await.unwrap();
-
-                    // Stay alive for a while to not close this connection immediately.
-                    tokio::time::sleep(Duration::from_secs(10)).await;
+                if let Err(err) = accept(ep_2).await {
+                    error!("{err:#}");
                 }
             }
-            .instrument(info_span!("ep2.accept", me = node_id_2.fmt_short()))
+            .instrument(info_span!("ep2.accept, me = node_id_2.fmt_short()"))
         });
         let _accept_task = AbortingJoinHandle::from(accept_task);
+
         let node_addr_2 = NodeAddr {
             node_id: node_id_2,
             info: AddrInfo {
@@ -3773,25 +3795,23 @@ mod tests {
 
         // We need a task to accept the connection.
         let accept_task = tokio::spawn({
+            async fn accept(ep: quinn::Endpoint) -> Result<()> {
+                let incoming = ep.accept().await.ok_or(anyhow!("no incoming"))?;
+                let conn = incoming.accept()?.await?;
+                let mut stream = conn.accept_uni().await?;
+                stream.read_to_end(1 << 16).await?;
+                info!("accept finished");
+                Ok(())
+            }
             let ep_2 = ep_2.clone();
             async move {
-                if let Some(incoming) = ep_2.accept().await {
-                    info!("incoming connection");
-                    let conn = incoming.accept().unwrap().await.unwrap();
-                    info!("accepted connection");
-                    let mut stream = conn.accept_uni().await.unwrap();
-                    info!("accepted stream");
-                    stream.read_to_end(1 << 16).await.unwrap();
-                    info!("stream finished");
-
-                    // // Stay alive for a while to not close this connection immediately.
-                    // tokio::time::sleep(Duration::from_secs(10)).await;
+                if let Err(err) = accept(ep_2).await {
+                    error!("{err:#}");
                 }
-                warn!("XXXXXXXXXXXXX accepting task closed");
             }
             .instrument(info_span!("ep2.accept", me = node_id_2.fmt_short()))
         });
-        let accept_task = AbortingJoinHandle::from(accept_task);
+        let _accept_task = AbortingJoinHandle::from(accept_task);
 
         // Add an empty entry in the NodeMap of ep_1
         msock_1.node_map.add_node_addr(
@@ -3803,16 +3823,28 @@ mod tests {
         );
         let addr_2 = msock_1.get_mapping_addr(node_id_2).unwrap();
 
-        // 500ms is rather fast here.  Running this locally it should always be the correct
-        // timeout.  If this is too slow however the test will not become flaky as we are
-        // expecting the timeout, we might just get the timeout for the wrong reason.  But
-        // this speeds up the test.
-        let res = tokio::time::timeout(
-            Duration::from_millis(500),
-            magicsock_connect(&ep_1, secret_key_1.clone(), addr_2, node_id_2),
+        // Set a low max_idle_timeout so quinn gives up on this quickly and our test does
+        // not take forever.  You need to check the log output to verify this is really
+        // triggering the correct error.
+        // In test_try_send_no_send_addr() above you may have noticed we used
+        // tokio::time::timeout() on the connection attempt instead.  Here however we want
+        // Quinn itself to have fully given up on the connection attempt because we will
+        // later connect to **the same** node.  If Quinn did not give up on the connection
+        // we'd close it on drop, and the retransmits of the close packets would interfere
+        // with the next handshake, closing it during the handshake.  This makes the test a
+        // little slower though.
+        let mut transport_config = quinn::TransportConfig::default();
+        transport_config.max_idle_timeout(Some(Duration::from_millis(200).try_into().unwrap()));
+        let res = magicsock_connet_with_transport_config(
+            &ep_1,
+            secret_key_1.clone(),
+            addr_2,
+            node_id_2,
+            Arc::new(transport_config),
         )
         .await;
         assert!(res.is_err(), "expected timeout");
+        info!("first connect timed out as expected");
 
         // Provide correct addressing information
         msock_1.node_map.add_node_addr(
@@ -3834,7 +3866,7 @@ mod tests {
         );
 
         // We can now connect
-        let connect_fut = tokio::time::timeout(Duration::from_secs(10), async move {
+        tokio::time::timeout(Duration::from_secs(10), async move {
             info!("establishing new connection");
             let conn = magicsock_connect(&ep_1, secret_key_1.clone(), addr_2, node_id_2)
                 .await
@@ -3845,19 +3877,11 @@ mod tests {
             stream.finish().unwrap();
             stream.stopped().await.unwrap();
             info!("finished stream");
-        });
-
-        tokio::select! {
-            biased;
-            res = connect_fut => res.expect("connection timed out"),
-            res = accept_task => {
-                if let Err(join_error) = res {
-                    join_error.try_into_panic().ok();
-                }
-            }
-        }
+        })
+        .await
+        .expect("connection timed out");
 
         // TODO: could remove the addresses again, send, add it back and see it recover.
-        // But we don't have that much private access to the NodeMap.
+        // But we don't have that much private access to the NodeMap.  This will do for now.
     }
 }
