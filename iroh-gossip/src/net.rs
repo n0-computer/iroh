@@ -840,13 +840,16 @@ mod test {
         rng: &mut rand_chacha::ChaCha12Rng,
         relay_map: RelayMap,
     ) -> anyhow::Result<Endpoint> {
-        Endpoint::builder()
+        let ep = Endpoint::builder()
             .secret_key(SecretKey::generate_with_rng(rng))
             .alpns(vec![GOSSIP_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .insecure_skip_relay_cert_verify(true)
             .bind(0)
-            .await
+            .await?;
+
+        ep.watch_home_relay().next().await;
+        Ok(ep)
     }
 
     async fn endpoint_loop(

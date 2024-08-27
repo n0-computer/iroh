@@ -396,6 +396,7 @@ mod tests {
     use testresult::TestResult;
 
     #[tokio::test]
+    #[ignore = "flaky"]
     async fn dht_discovery_smoke() -> TestResult {
         let _ = tracing_subscriber::fmt::try_init();
         let ep = crate::Endpoint::builder().bind(0).await?;

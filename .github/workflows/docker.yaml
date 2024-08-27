@@ -88,7 +88,7 @@ jobs:
           uses: docker/build-push-action@v6
           with:
             context: .
-            push: true
+            push: ${{ github.event.inputs.publish }}
             tags: n0computer/iroh:latest,n0computer/iroh:${{ github.event.inputs.release_version }}
             target: iroh
             platforms: linux/amd64,linux/arm64/v8
@@ -98,7 +98,7 @@ jobs:
           uses: docker/build-push-action@v6
           with:
             context: .
-            push: true
+            push: ${{ github.event.inputs.publish }}
             tags: n0computer/iroh-relay:latest,n0computer/iroh-relay:${{ github.event.inputs.release_version }}
             target: iroh-relay
             platforms: linux/amd64,linux/arm64/v8
@@ -108,7 +108,7 @@ jobs:
           uses: docker/build-push-action@v6
           with:
             context: .
-            push: true
+            push: ${{ github.event.inputs.publish }}
             tags: n0computer/iroh-dns-server:latest,n0computer/iroh-dns-server:${{ github.event.inputs.release_version }}
             target: iroh-dns-server
             platforms: linux/amd64,linux/arm64/v8
