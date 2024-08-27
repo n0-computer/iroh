@@ -1691,6 +1691,7 @@
 <a href="#1691" id="1691">1691</a>
 <a href="#1692" id="1692">1692</a>
 <a href="#1693" id="1693">1693</a>
+<a href="#1694" id="1694">1694</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1987,6 +1988,7 @@
 }
 
 <span class="doccomment">/// Creates a [`quinn::ServerConfig`] with the given secret key and limits.
+</span><span class="comment">// TODO: this return type can not longer be used anywhere in our public API.  Remove this.
 </span><span class="kw">pub fn </span>make_server_config(
     secret_key: <span class="kw-2">&amp;</span>SecretKey,
     alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,

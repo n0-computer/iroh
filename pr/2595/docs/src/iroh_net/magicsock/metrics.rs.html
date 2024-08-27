@@ -138,6 +138,9 @@
 <a href="#138" id="138">138</a>
 <a href="#139" id="139">139</a>
 <a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,
@@ -164,6 +167,8 @@
     <span class="kw">pub </span>recv_data_ipv6: Counter,
     <span class="doccomment">/// Number of QUIC datagrams received.
     </span><span class="kw">pub </span>recv_datagrams: Counter,
+    <span class="doccomment">/// Number of datagrams received using GRO
+    </span><span class="kw">pub </span>recv_gro_datagrams: Counter,
 
     <span class="comment">// Disco packets
     </span><span class="kw">pub </span>send_disco_udp: Counter,
@@ -230,6 +235,7 @@
             recv_data_ipv4: Counter::new(<span class="string">"recv_data_ipv4"</span>),
             recv_data_ipv6: Counter::new(<span class="string">"recv_data_ipv6"</span>),
             recv_datagrams: Counter::new(<span class="string">"recv_datagrams"</span>),
+            recv_gro_datagrams: Counter::new(<span class="string">"recv_gro_packets"</span>),
 
             <span class="comment">// Disco packets
             </span>send_disco_udp: Counter::new(<span class="string">"disco_send_udp"</span>),
