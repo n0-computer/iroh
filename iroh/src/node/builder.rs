@@ -307,29 +307,6 @@ where
             })?;
         let docs_storage = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
 
-        #[allow(deprecated)]
-        let v0 = blobs_store
-            .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
-                complete: root.join("blobs.v0"),
-                partial: root.join("blobs-partial.v0"),
-                meta: root.join("blobs-meta.v0"),
-            })
-            .await?;
-        #[allow(deprecated)]
-        let v1 = blobs_store
-            .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
-                complete: root.join("blobs.v1").join("complete"),
-                partial: root.join("blobs.v1").join("partial"),
-                meta: root.join("blobs.v1").join("meta"),
-            })
-            .await?;
-        if v0 || v1 {
-            tracing::warn!("Imported deprecated flat data. Future versions will stop supporting migrations from flat stores");
-            blobs_store
-                .update_inline_options(iroh_blobs::store::fs::InlineOptions::default(), true)
-                .await?;
-        }
-
         let secret_key_path = IrohPaths::SecretKey.with_root(root);
         let secret_key = load_secret_key(secret_key_path).await?;
 

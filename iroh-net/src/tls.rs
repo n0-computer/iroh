@@ -5,6 +5,8 @@
 
 use std::sync::Arc;
 
+use tracing::warn;
+
 use crate::key::{PublicKey, SecretKey};
 
 pub mod certificate;
@@ -35,6 +37,7 @@ pub fn make_client_config(
         .expect("Client cert key DER is valid; qed");
     crypto.alpn_protocols = alpn_protocols;
     if keylog {
+        warn!("enabling SSLKEYLOGFILE for TLS pre-master keys");
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
 
@@ -63,6 +66,7 @@ pub fn make_server_config(
         .expect("Server cert key DER is valid; qed");
     crypto.alpn_protocols = alpn_protocols;
     if keylog {
+        warn!("enabling SSLKEYLOGFILE for TLS pre-master keys");
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
     Ok(crypto)

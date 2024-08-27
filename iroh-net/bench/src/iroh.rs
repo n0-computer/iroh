@@ -5,9 +5,10 @@ use std::{
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use futures_lite::StreamExt as _;
 use iroh_net::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
-    relay::RelayMode,
+    relay::{RelayMap, RelayMode, RelayUrl},
     Endpoint, NodeAddr,
 };
 use tracing::trace;
@@ -19,27 +20,47 @@ use crate::{
 pub const ALPN: &[u8] = b"n0/iroh-net-bench/0";
 
 /// Creates a server endpoint which runs on the given runtime
-pub fn server_endpoint(rt: &tokio::runtime::Runtime, opt: &Opt) -> (NodeAddr, Endpoint) {
+pub fn server_endpoint(
+    rt: &tokio::runtime::Runtime,
+    relay_url: &Option<RelayUrl>,
+    opt: &Opt,
+) -> (NodeAddr, Endpoint) {
     let _guard = rt.enter();
     rt.block_on(async move {
+        let relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
+            RelayMode::Custom(RelayMap::from_url(url))
+        });
         let ep = Endpoint::builder()
             .alpns(vec![ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
+            .insecure_skip_relay_cert_verify(relay_url.is_some())
+            .relay_mode(relay_mode)
             .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
             .bind(0)
             .await
             .unwrap();
+
+        if relay_url.is_some() {
+            ep.watch_home_relay().next().await;
+        }
+
         let addr = ep.bound_sockets();
         let addr = SocketAddr::new("127.0.0.1".parse().unwrap(), addr.0.port());
-        let addr = NodeAddr::new(ep.node_id()).with_direct_addresses([addr]);
+        let mut addr = NodeAddr::new(ep.node_id()).with_direct_addresses([addr]);
+        if let Some(relay_url) = relay_url {
+            addr = addr.with_relay_url(relay_url.clone());
+        }
         (addr, ep)
     })
 }
 
 /// Create and run a client
-pub async fn client(server_addr: NodeAddr, opt: Opt) -> Result<ClientStats> {
+pub async fn client(
+    server_addr: NodeAddr,
+    relay_url: Option<RelayUrl>,
+    opt: Opt,
+) -> Result<ClientStats> {
     let client_start = std::time::Instant::now();
-    let (endpoint, connection) = connect_client(server_addr, opt).await?;
+    let (endpoint, connection) = connect_client(server_addr, relay_url, opt).await?;
     let client_connect_time = client_start.elapsed();
     let mut res = client_handler(
         EndpointSelector::Iroh(endpoint),
@@ -52,14 +73,26 @@ pub async fn client(server_addr: NodeAddr, opt: Opt) -> Result<ClientStats> {
 }
 
 /// Create a client endpoint and client connection
-pub async fn connect_client(server_addr: NodeAddr, opt: Opt) -> Result<(Endpoint, Connection)> {
+pub async fn connect_client(
+    server_addr: NodeAddr,
+    relay_url: Option<RelayUrl>,
+    opt: Opt,
+) -> Result<(Endpoint, Connection)> {
+    let relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
+        RelayMode::Custom(RelayMap::from_url(url))
+    });
     let endpoint = Endpoint::builder()
         .alpns(vec![ALPN.to_vec()])
-        .relay_mode(RelayMode::Disabled)
+        .insecure_skip_relay_cert_verify(relay_url.is_some())
+        .relay_mode(relay_mode)
         .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
         .bind(0)
         .await
         .unwrap();
+
+    if relay_url.is_some() {
+        endpoint.watch_home_relay().next().await;
+    }
 
     // TODO: We don't support passing client transport config currently
     // let mut client_config = quinn::ClientConfig::new(Arc::new(crypto));

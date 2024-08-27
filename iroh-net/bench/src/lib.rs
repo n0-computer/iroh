@@ -54,12 +54,25 @@ pub struct Opt {
     /// Show connection stats the at the end of the benchmark
     #[clap(long = "stats")]
     pub stats: bool,
+    /// Show iroh-net library counter metrics at the end of the benchmark
+    ///
+    /// These metrics are process-wide, so contain metrics for
+    /// clients and the server all summed up.
+    #[clap(long)]
+    pub metrics: bool,
     /// Whether to use the unordered read API
     #[clap(long = "unordered")]
     pub read_unordered: bool,
     /// Starting guess for maximum UDP payload size
     #[clap(long, default_value = "1200")]
     pub initial_mtu: u16,
+    /// Whether to run a local relay and have the server and clients connect to that.
+    ///
+    /// Can be combined with the `DEV_RELAY_ONLY` environment variable (at compile time)
+    /// to test throughput for relay-only traffic locally.
+    /// (e.g. `DEV_RELAY_ONLY=true cargo run --release -- iroh --with-relay`)
+    #[clap(long, default_value_t = false)]
+    pub with_relay: bool,
 }
 
 pub enum EndpointSelector {

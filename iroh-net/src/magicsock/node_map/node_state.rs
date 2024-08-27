@@ -1300,15 +1300,6 @@ impl RemoteInfo {
             .min()
     }
 
-    /// Returns the elapsed time since the relay path to the node last received data.
-    #[deprecated(
-        since = "0.23.0",
-        note = "access relay_url.last_alive directly instead"
-    )]
-    pub fn last_alive_relay(&self) -> Option<Duration> {
-        self.relay_url.as_ref().and_then(|r| r.last_alive)
-    }
-
     /// Whether there is a possible known network path to the remote node.
     ///
     /// Note that this does not provide any guarantees of whether any network path is

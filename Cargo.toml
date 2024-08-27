@@ -21,6 +21,10 @@ debug = true
 [profile.bench]
 debug = true
 
+[profile.dev-ci]
+inherits = 'dev'
+opt-level = 1 
+
 [profile.optimized-release]
 inherits = 'release'
 debug = false
