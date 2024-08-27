@@ -12,4 +12,5 @@ pub mod session;
 pub mod store;
 pub mod util;
 
+pub use engine::Engine;
 pub use net::ALPN;
