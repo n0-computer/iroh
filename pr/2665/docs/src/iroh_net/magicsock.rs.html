@@ -3878,13 +3878,6 @@
 <a href="#3878" id="3878">3878</a>
 <a href="#3879" id="3879">3879</a>
 <a href="#3880" id="3880">3880</a>
-<a href="#3881" id="3881">3881</a>
-<a href="#3882" id="3882">3882</a>
-<a href="#3883" id="3883">3883</a>
-<a href="#3884" id="3884">3884</a>
-<a href="#3885" id="3885">3885</a>
-<a href="#3886" id="3886">3886</a>
-<a href="#3887" id="3887">3887</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4459,15 +4452,8 @@
                     // and are just timeouts.  Hence we opt for returning Ok.  See
                     // test_try_send_no_udp_addr_or_relay_url to explore this further.
                     </span><span class="macro">error!</span>(<span class="string">"no UDP or relay paths available for node"</span>);
-                    <span class="kw">let </span>err = udp_error.unwrap_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::Other,
-                            <span class="string">"no UDP or relay address available for node"</span>,
-                        )
-                    });
-                    <span class="kw">return </span><span class="prelude-val">Err</span>(err);
-                    <span class="comment">// return Ok(());
-                </span>}
+                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                }
 
                 <span class="macro">trace!</span>(
                     node = %node_id.fmt_short(),
