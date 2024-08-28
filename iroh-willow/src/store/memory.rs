@@ -348,13 +348,13 @@ impl CapsStore {
                 self.read_caps
                     .entry(*cap.read_cap().granted_namespace())
                     .or_default()
-                    .push(cap.into());
+                    .push(cap);
             }
             CapabilityPack::Write(cap) => {
                 self.write_caps
                     .entry(*cap.granted_namespace())
                     .or_default()
-                    .push(cap.into());
+                    .push(cap);
             }
         }
     }
