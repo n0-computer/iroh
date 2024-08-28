@@ -624,7 +624,7 @@
             <span class="kw">let </span>(entry, capability, signature): (SerdeEntry, SerdeMcCapability, UserSignature) =
                 Deserialize::deserialize(deserializer)<span class="question-mark">?</span>;
             <span class="kw">let </span>token = AuthorisationToken::new(capability.<span class="number">0</span>, signature);
-            <span class="prelude-val">Ok</span>(AuthorisedEntry::new(entry.<span class="number">0</span>, token).map_err(de::Error::custom)<span class="question-mark">?</span>)
+            AuthorisedEntry::new(entry.<span class="number">0</span>, token).map_err(de::Error::custom)
         }
     }
 

@@ -186,6 +186,8 @@
 <a href="#186" id="186">186</a>
 <a href="#187" id="187">187</a>
 <a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::Stream;
 <span class="kw">use </span>futures_util::SinkExt;
@@ -261,7 +263,7 @@
                     .get_entries(req.namespace, req.range)
                     .<span class="kw">await
                     </span>.map_err(map_err)<span class="question-mark">?</span>;
-                <span class="prelude-val">Ok</span>(stream.map(|res| res.map(|e| GetEntriesResponse(e)).map_err(map_err)))
+                <span class="prelude-val">Ok</span>(stream.map(|res| res.map(GetEntriesResponse).map_err(map_err)))
             })
             .<span class="kw">await
         </span>}
@@ -344,7 +346,8 @@
     }
 }
 
-<span class="kw">async fn </span>sync_with_peer(
+<span class="comment">// TODO: Try to use the streams directly instead of spawning two tasks.
+</span><span class="kw">async fn </span>sync_with_peer(
     engine: Engine,
     req: SyncWithPeerRequest,
     events_tx: mpsc::Sender&lt;RpcResult&lt;SyncWithPeerResponse&gt;&gt;,
@@ -357,17 +360,18 @@
     <span class="kw">let </span>(<span class="kw-2">mut </span>update_sink, <span class="kw-2">mut </span>events) = handle.split();
     tokio::task::spawn(<span class="kw">async move </span>{
         <span class="kw">while let </span><span class="prelude-val">Some</span>(update) = update_stream.next().<span class="kw">await </span>{
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(<span class="kw">_</span>) = update_sink.send(update.<span class="number">0</span>).<span class="kw">await </span>{
+            <span class="kw">if </span>update_sink.send(update.<span class="number">0</span>).<span class="kw">await</span>.is_err() {
                 <span class="kw">break</span>;
             }
         }
     });
     tokio::task::spawn(<span class="kw">async move </span>{
         <span class="kw">while let </span><span class="prelude-val">Some</span>(event) = events.next().<span class="kw">await </span>{
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(<span class="kw">_</span>) = events_tx
+            <span class="kw">if </span>events_tx
                 .send(<span class="prelude-val">Ok</span>(SyncWithPeerResponse::Event(event.into())))
                 .<span class="kw">await
-            </span>{
+                </span>.is_err()
+            {
                 <span class="kw">break</span>;
             }
         }

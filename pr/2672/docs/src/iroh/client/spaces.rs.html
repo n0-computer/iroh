@@ -564,6 +564,16 @@
 <a href="#564" id="564">564</a>
 <a href="#565" id="565">565</a>
 <a href="#566" id="566">566</a>
+<a href="#567" id="567">567</a>
+<a href="#568" id="568">568</a>
+<a href="#569" id="569">569</a>
+<a href="#570" id="570">570</a>
+<a href="#571" id="571">571</a>
+<a href="#572" id="572">572</a>
+<a href="#573" id="573">573</a>
+<a href="#574" id="574">574</a>
+<a href="#575" id="575">575</a>
+<a href="#576" id="576">576</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for managing iroh spaces
 //!
 //! iroh spaces is an implementation of the [Willow] protocol.
@@ -572,6 +582,8 @@
 //! You obtain a [`Client`] via [`Iroh::spaces()`](crate::client::Iroh::spaces).
 //!
 //! [Willow]: https://willowprotocol.org/
+
+</span><span class="comment">// TODO: Reexport everything that is needed from iroh_willow.
 
 </span><span class="kw">use </span>std::{
     collections::HashMap,
@@ -588,7 +600,7 @@
 <span class="kw">use </span>iroh_blobs::Hash;
 <span class="kw">use </span>iroh_net::NodeAddr;
 <span class="kw">use </span>iroh_willow::{
-    form::{AuthForm, PayloadForm2, SerdeEntryForm, SubspaceForm, TimestampForm},
+    form::{AuthForm, SubspaceForm, TimestampForm},
     interest::{
         AreaOfInterestSelector, CapSelector, CapabilityPack, DelegateTo, Interests, RestrictArea,
     },
@@ -753,8 +765,8 @@
         <span class="self">self</span>.namespace_id
     }
 
-    <span class="kw">async fn </span>insert(<span class="kw-2">&amp;</span><span class="self">self</span>, entry: EntryForm, payload: PayloadForm2) -&gt; <span class="prelude-ty">Result</span>&lt;InsertEntrySuccess&gt; {
-        <span class="kw">let </span>form = SerdeEntryForm {
+    <span class="kw">async fn </span>insert(<span class="kw-2">&amp;</span><span class="self">self</span>, entry: EntryForm, payload: PayloadForm) -&gt; <span class="prelude-ty">Result</span>&lt;InsertEntrySuccess&gt; {
+        <span class="kw">let </span>form = FullEntryForm {
             namespace_id: <span class="self">self</span>.namespace_id,
             subspace_id: entry.subspace_id,
             path: entry.path,
@@ -762,26 +774,16 @@
             payload,
         };
         <span class="kw">let </span>auth = entry.auth;
-        <span class="kw">let </span>req = InsertEntryRequest {
-            entry: form.into(),
-            auth,
-        };
+        <span class="kw">let </span>req = InsertEntryRequest { entry: form, auth };
         <span class="kw">let </span>res = <span class="self">self</span>.rpc.rpc(req).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(res)
     }
 
-    <span class="comment">// Insert a new entry.
-
-    // `entry` can be a [`EntryForm`] or a `Entry`.
-    // `auth` can either be a [`AuthForm`] or simply a [`UserId`].
-    // When passing a [`UserId`], a matching capability will be selected for the user.
-    // If you want to select the capability to use more specifically, use the methods on [`AuthForm`].
-    // TODO: Not sure I like the impl Into, better change to two methods.
-    </span><span class="doccomment">/// Inserts a new entry, with the payload digest set to a hash.
+    <span class="doccomment">/// Inserts a new entry, with the payload set to the hash of a blob.
     ///
     /// Note that the payload must exist in the local blob store, otherwise the operation will fail.
     </span><span class="kw">pub async fn </span>insert_hash(<span class="kw-2">&amp;</span><span class="self">self</span>, entry: EntryForm, payload: Hash) -&gt; <span class="prelude-ty">Result</span>&lt;InsertEntrySuccess&gt; {
-        <span class="kw">let </span>payload = PayloadForm2::Checked(payload);
+        <span class="kw">let </span>payload = PayloadForm::Checked(payload);
         <span class="self">self</span>.insert(entry, payload).<span class="kw">await
     </span>}
 
@@ -931,12 +933,12 @@
     }
 
     <span class="doccomment">/// TODO
-    </span><span class="kw">pub async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>, _area: Area) {
+    </span><span class="kw">pub fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>, _area: Area) {
         <span class="macro">todo!</span>()
     }
 
     <span class="doccomment">/// TODO
-    </span><span class="kw">pub async fn </span>subscribe_offset(<span class="kw-2">&amp;</span><span class="self">self</span>, _area: Area, _offset: u64) {
+    </span><span class="kw">pub fn </span>subscribe_offset(<span class="kw-2">&amp;</span><span class="self">self</span>, _area: Area, _offset: u64) {
         <span class="macro">todo!</span>()
     }
 }
@@ -1128,6 +1130,24 @@
 
     <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
         Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.event_rx).poll_next(cx)
+    }
+}
+
+<span class="doccomment">/// Options for setting the payload on the a new entry.
+</span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
+</span><span class="kw">pub enum </span>PayloadForm {
+    <span class="doccomment">/// Make sure the hash is available in the blob store, and use the length from the blob store.
+    </span>Checked(Hash),
+    <span class="doccomment">/// Insert with the specified hash and length, without checking if the blob is in the local blob store.
+    </span>Unchecked(Hash, u64),
+}
+
+<span class="kw">impl </span>From&lt;PayloadForm&gt; <span class="kw">for </span>iroh_willow::form::PayloadForm {
+    <span class="kw">fn </span>from(value: PayloadForm) -&gt; <span class="self">Self </span>{
+        <span class="kw">match </span>value {
+            PayloadForm::Checked(hash) =&gt; <span class="self">Self</span>::Hash(hash),
+            PayloadForm::Unchecked(hash, len) =&gt; <span class="self">Self</span>::HashUnchecked(hash, len),
+        }
     }
 }
 </code></pre></div></section></main></body></html>

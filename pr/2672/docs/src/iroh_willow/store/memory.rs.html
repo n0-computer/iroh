@@ -738,13 +738,13 @@
                 <span class="self">self</span>.read_caps
                     .entry(<span class="kw-2">*</span>cap.read_cap().granted_namespace())
                     .or_default()
-                    .push(cap.into());
+                    .push(cap);
             }
             CapabilityPack::Write(cap) =&gt; {
                 <span class="self">self</span>.write_caps
                     .entry(<span class="kw-2">*</span>cap.granted_namespace())
                     .or_default()
-                    .push(cap.into());
+                    .push(cap);
             }
         }
     }

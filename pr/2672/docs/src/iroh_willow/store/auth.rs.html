@@ -444,7 +444,7 @@
             McCapability::new_owned(namespace_key, <span class="kw-2">&amp;</span>namespace_secret, user_key, AccessMode::Read)<span class="question-mark">?
         </span>};
         <span class="comment">// TODO: Subspace capability.
-        </span><span class="kw">let </span>pack = CapabilityPack::Read(ReadAuthorisation::new(cap, <span class="prelude-val">None</span>).into());
+        </span><span class="kw">let </span>pack = CapabilityPack::Read(ReadAuthorisation::new(cap, <span class="prelude-val">None</span>));
         <span class="prelude-val">Ok</span>(pack)
     }
 
@@ -467,7 +467,7 @@
                 AccessMode::Write,
             )<span class="question-mark">?
         </span>};
-        <span class="kw">let </span>pack = CapabilityPack::Write(cap.into());
+        <span class="kw">let </span>pack = CapabilityPack::Write(cap);
         <span class="prelude-val">Ok</span>(pack)
     }
 
@@ -527,7 +527,7 @@
             <span class="prelude-val">None
         </span>};
         <span class="kw">let </span>pack =
-            CapabilityPack::Read(ReadAuthorisation::new(new_read_cap, new_subspace_cap).into());
+            CapabilityPack::Read(ReadAuthorisation::new(new_read_cap, new_subspace_cap));
         <span class="prelude-val">Ok</span>(pack)
     }
 
@@ -544,7 +544,7 @@
             .ok_or(AuthError::MissingUserSecret(<span class="kw-2">*</span>cap.receiver()))<span class="question-mark">?</span>;
         <span class="kw">let </span>area = restrict_area.or_default(cap.granted_area());
         <span class="kw">let </span>new_cap = cap.delegate(<span class="kw-2">&amp;</span>user_secret, <span class="kw-2">&amp;</span>to, <span class="kw-2">&amp;</span>area)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(CapabilityPack::Write(new_cap.into()))
+        <span class="prelude-val">Ok</span>(CapabilityPack::Write(new_cap))
     }
 }
 
