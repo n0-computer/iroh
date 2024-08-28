@@ -1707,8 +1707,13 @@ impl AsyncUdpSocket for Handle {
 
     fn max_receive_segments(&self) -> usize {
         if let Some(pconn6) = self.pconn6.as_ref() {
-            // TODO(matheus23): This is somewhat incorrect. Needs updates to `MagicSock::poll_recv` to fix this though.
-            std::cmp::min(
+            // `max_receive_segments` controls the size of the `RecvMeta` buffer
+            // that quinn creates. Having buffers slightly bigger than necessary
+            // isn't terrible, and makes sure a single socket can read the maximum
+            // amount with a single poll. We considered adding these numbers instead,
+            // but we never get data from both sockets at the same time in `poll_recv`
+            // and it's impossible and unnecessary to be refactored that way.
+            std::cmp::max(
                 pconn6.max_receive_segments(),
                 self.pconn4.max_receive_segments(),
             )
