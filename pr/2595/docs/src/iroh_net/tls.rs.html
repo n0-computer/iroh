@@ -145,7 +145,7 @@
         rustls::crypto::ring::default_provider(),
     ))
     .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-    .expect(<span class="string">"fixed config"</span>)
+    .expect(<span class="string">"version supported by ring"</span>)
     .dangerous()
     .with_custom_certificate_verifier(Arc::new(
         verifier::Libp2pCertificateVerifier::with_remote_peer_id(remote_peer_id),
