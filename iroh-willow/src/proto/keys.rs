@@ -65,9 +65,9 @@ impl IsCommunal for NamespacePublicKey {
 /// and if the last bit is zero it is an owned namespace.
 #[derive(Debug, Eq, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub enum NamespaceKind {
-    /// Communal namespace, needs [`super::meadowcap::CommunalCapability`] to authorizse.
+    /// Communal namespace.
     Communal,
-    /// Owned namespace, needs [`super::meadowcap::OwnedCapability`] to authorize.
+    /// Owned namespace.
     Owned,
 }
 

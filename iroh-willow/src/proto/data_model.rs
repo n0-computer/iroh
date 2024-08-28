@@ -48,7 +48,7 @@ pub type Component<'a> = willow_data_model::Component<'a, MAX_COMPONENT_LENGTH>;
 
 /// A payload digest used in entries.
 ///
-/// This wraps a [`Hash`] blake3 hash.
+/// This wraps a [`iroh_blobs::Hash`] blake3 hash.
 #[derive(
     Debug,
     Clone,

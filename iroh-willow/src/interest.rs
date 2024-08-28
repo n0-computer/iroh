@@ -29,7 +29,7 @@ pub enum Interests {
 }
 
 impl Interests {
-    /// Returns a [`SelectBuilder`] to build our [`Interests`].
+    /// Returns a [`InterestBuilder`] to build our [`Interests`].
     pub fn builder() -> InterestBuilder {
         InterestBuilder::default()
     }
