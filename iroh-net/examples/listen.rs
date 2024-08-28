@@ -3,9 +3,14 @@
 //! This example uses the default relay servers to attempt to holepunch, and will use that relay server to relay packets if the two devices cannot establish a direct UDP connection.
 //! run this example from the project root:
 //!     $ cargo run --example listen
+use std::time::Duration;
+
 use anyhow::Context;
 use futures_lite::StreamExt;
-use iroh_net::{key::SecretKey, relay::RelayMode, Endpoint};
+use iroh_net::endpoint::ConnectionError;
+use iroh_net::key::SecretKey;
+use iroh_net::relay::RelayMode;
+use iroh_net::Endpoint;
 use tracing::{debug, info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -95,6 +100,18 @@ async fn main() -> anyhow::Result<()> {
             // call `finish` to close the connection gracefully
             send.finish()?;
 
+            // We sent the last message, so wait for the client to close the connection once
+            // it received this message.
+            let res = tokio::time::timeout(Duration::from_secs(3), async move {
+                let closed = conn.closed().await;
+                if !matches!(closed, ConnectionError::ApplicationClosed(_)) {
+                    println!("node {node_id} diconnected with an error: {closed:#}");
+                }
+            })
+            .await;
+            if res.is_err() {
+                println!("node {node_id} did not disconnect within 3 seconds");
+            }
             Ok::<_, anyhow::Error>(())
         });
     }
