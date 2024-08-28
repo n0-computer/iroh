@@ -12,7 +12,7 @@
 //! [module docs]: crate
 
 use std::any::Any;
-use std::future::Future;
+use std::future::{Future, IntoFuture};
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -22,26 +22,25 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
+use pin_project::pin_project;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
-use tracing::{debug, info_span, trace, warn};
+use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
-use crate::{
-    discovery::{Discovery, DiscoveryTask},
-    dns::{default_resolver, DnsResolver},
-    key::{PublicKey, SecretKey},
-    magicsock::{self, Handle},
-    relay::{RelayMode, RelayUrl},
-    tls, NodeId,
-};
+use crate::discovery::{Discovery, DiscoveryTask};
+use crate::dns::{default_resolver, DnsResolver};
+use crate::key::{PublicKey, SecretKey};
+use crate::magicsock::{self, Handle, QuicMappedAddr};
+use crate::relay::{RelayMode, RelayUrl};
+use crate::{tls, NodeId};
 
 mod rtt_actor;
 
 use self::rtt_actor::RttMessage;
 
 pub use quinn::{
-    Connection, ConnectionError, ReadError, RecvStream, SendStream, TransportConfig, VarInt,
-    WriteError,
+    ApplicationClose, Connection, ConnectionClose, ConnectionError, ReadError, RecvStream,
+    RetryError, SendStream, ServerConfig, TransportConfig, VarInt, WriteError,
 };
 
 pub use super::magicsock::{
@@ -74,7 +73,6 @@ pub struct Builder {
     relay_mode: RelayMode,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
-    concurrent_connections: Option<u32>,
     keylog: bool,
     discovery: Option<Box<dyn Discovery>>,
     proxy_url: Option<Url>,
@@ -92,7 +90,6 @@ impl Default for Builder {
             relay_mode: default_relay_mode(),
             alpn_protocols: Default::default(),
             transport_config: Default::default(),
-            concurrent_connections: Default::default(),
             keylog: Default::default(),
             discovery: Default::default(),
             proxy_url: None,
@@ -123,7 +120,6 @@ impl Builder {
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config.unwrap_or_default()),
             keylog: self.keylog,
-            concurrent_connections: self.concurrent_connections,
             secret_key: secret_key.clone(),
         };
         let dns_resolver = self
@@ -274,15 +270,6 @@ impl Builder {
         self.insecure_skip_relay_cert_verify = skip_verify;
         self
     }
-
-    /// Maximum number of simultaneous connections to accept.
-    ///
-    /// New incoming connections are only accepted if the total number of incoming or
-    /// outgoing connections is less than this. Outgoing connections are unaffected.
-    pub fn concurrent_connections(mut self, concurrent_connections: u32) -> Self {
-        self.concurrent_connections = Some(concurrent_connections);
-        self
-    }
 }
 
 /// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
@@ -291,35 +278,35 @@ struct StaticConfig {
     secret_key: SecretKey,
     transport_config: Arc<quinn::TransportConfig>,
     keylog: bool,
-    concurrent_connections: Option<u32>,
 }
 
 impl StaticConfig {
     /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
     fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> Result<quinn::ServerConfig> {
-        let mut server_config = make_server_config(
+        let server_config = make_server_config(
             &self.secret_key,
             alpn_protocols,
             self.transport_config.clone(),
             self.keylog,
         )?;
-        if let Some(c) = self.concurrent_connections {
-            server_config.concurrent_connections(c);
-        }
         Ok(server_config)
     }
 }
 
 /// Creates a [`quinn::ServerConfig`] with the given secret key and limits.
+// This return type can not longer be used anywhere in our public API.  It is however still
+// used by iroh::node::Node (or rather iroh::node::Builder) to create a plain Quinn
+// endpoint.
 pub fn make_server_config(
     secret_key: &SecretKey,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Arc<quinn::TransportConfig>,
     keylog: bool,
 ) -> Result<quinn::ServerConfig> {
-    let tls_server_config = tls::make_server_config(secret_key, alpn_protocols, keylog)?;
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+    let quic_server_config = tls::make_server_config(secret_key, alpn_protocols, keylog)?;
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
     server_config.transport_config(transport_config);
+
     Ok(server_config)
 }
 
@@ -370,13 +357,12 @@ impl Endpoint {
     ///
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
+    #[instrument("ep", skip_all, fields(me = %static_config.secret_key.public().fmt_short()))]
     async fn bind(
         static_config: StaticConfig,
         msock_opts: magicsock::Options,
         initial_alpns: Vec<Vec<u8>>,
     ) -> Result<Self> {
-        let span = info_span!("magic_ep", me = %static_config.secret_key.public().fmt_short());
-        let _guard = span.enter();
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
 
@@ -393,7 +379,7 @@ impl Endpoint {
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             Some(server_config),
-            msock.clone(),
+            Arc::new(msock.clone()),
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");
@@ -439,6 +425,7 @@ impl Endpoint {
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
+    #[instrument(skip_all, fields(me = %self.node_id().fmt_short(), remote = %node_addr.node_id.fmt_short(), alpn = ?String::from_utf8_lossy(alpn)))]
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
@@ -459,7 +446,13 @@ impl Endpoint {
         // address information for this node.
         let (addr, discovery) = self
             .get_mapping_addr_and_maybe_start_discovery(node_addr)
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "No addressing information for NodeId({}), unable to connect",
+                    node_id.fmt_short()
+                )
+            })?;
 
         debug!(
             "connecting to {}: (via {} - {:?})",
@@ -497,17 +490,17 @@ impl Endpoint {
         &self,
         node_id: NodeId,
         alpn: &[u8],
-        addr: SocketAddr,
+        addr: QuicMappedAddr,
     ) -> Result<quinn::Connection> {
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
-            let tls_client_config = tls::make_client_config(
+            let quic_client_config = tls::make_client_config(
                 &self.static_config.secret_key,
                 Some(node_id),
                 alpn_protocols,
                 self.static_config.keylog,
             )?;
-            let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+            let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
             client_config.transport_config(Arc::new(transport_config));
@@ -517,9 +510,11 @@ impl Endpoint {
         // TODO: We'd eventually want to replace "localhost" with something that makes more sense.
         let connect = self
             .endpoint
-            .connect_with(client_config, addr, "localhost")?;
+            .connect_with(client_config, addr.0, "localhost")?;
 
-        let connection = connect.await.context("failed connecting to provider")?;
+        let connection = connect
+            .await
+            .context("failed connecting to remote endpoint")?;
 
         let rtt_msg = RttMessage::NewConnection {
             connection: connection.weak_handle(),
@@ -545,7 +540,7 @@ impl Endpoint {
     pub fn accept(&self) -> Accept<'_> {
         Accept {
             inner: self.endpoint.accept(),
-            magic_ep: self.clone(),
+            ep: self.clone(),
         }
     }
 
@@ -847,7 +842,7 @@ impl Endpoint {
     async fn get_mapping_addr_and_maybe_start_discovery(
         &self,
         node_addr: NodeAddr,
-    ) -> Result<(SocketAddr, Option<DiscoveryTask>)> {
+    ) -> Result<(QuicMappedAddr, Option<DiscoveryTask>)> {
         let node_id = node_addr.node_id;
 
         // Only return a mapped addr if we have some way of dialing this node, in other
@@ -878,13 +873,16 @@ impl Endpoint {
                 // So, we start a discovery task and wait for the first result to arrive, and
                 // only then continue, because otherwise we wouldn't have any
                 // path to the remote endpoint.
-                let mut discovery = DiscoveryTask::start(self.clone(), node_id)?;
-                discovery.first_arrived().await?;
-                if self.msock.has_send_address(node_id) {
-                    let addr = self.msock.get_mapping_addr(node_id).expect("checked");
+                let mut discovery = DiscoveryTask::start(self.clone(), node_id)
+                    .context("Discovery service required due to missing addressing information")?;
+                discovery
+                    .first_arrived()
+                    .await
+                    .context("Discovery service failed")?;
+                if let Some(addr) = self.msock.get_mapping_addr(node_id) {
                     Ok((addr, Some(discovery)))
                 } else {
-                    bail!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}");
+                    bail!("Discovery did not find addressing information");
                 }
             }
         }
@@ -902,37 +900,155 @@ impl Endpoint {
 
 /// Future produced by [`Endpoint::accept`].
 #[derive(Debug)]
-#[pin_project::pin_project]
+#[pin_project]
 pub struct Accept<'a> {
     #[pin]
     #[debug("quinn::Accept")]
     inner: quinn::Accept<'a>,
-    magic_ep: Endpoint,
+    ep: Endpoint,
 }
 
 impl<'a> Future for Accept<'a> {
-    type Output = Option<Connecting>;
+    type Output = Option<Incoming>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         match this.inner.poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(inner)) => Poll::Ready(Some(Connecting {
+            Poll::Ready(Some(inner)) => Poll::Ready(Some(Incoming {
                 inner,
-                magic_ep: this.magic_ep.clone(),
+                ep: this.ep.clone(),
             })),
+        }
+    }
+}
+
+/// An incoming connection for which the server has not yet begun its parts of the
+/// handshake.
+#[derive(Debug)]
+pub struct Incoming {
+    inner: quinn::Incoming,
+    ep: Endpoint,
+}
+
+impl Incoming {
+    /// Attempts to accept this incoming connection (an error may still occur).
+    ///
+    /// Errors occurring here are likely not caused by the application or remote.  The QUIC
+    /// connection listens on a normal UDP socket and any reachable network endpoint can
+    /// send datagrams to it, solicited or not.  Even if the first few bytes look like a
+    /// QUIC packet, it might not even be a QUIC packet that is being received.
+    ///
+    /// Thus it is common to simply log the errors here and accept them as something which
+    /// can happen.
+    pub fn accept(self) -> Result<Connecting, ConnectionError> {
+        self.inner.accept().map(|conn| Connecting {
+            inner: conn,
+            ep: self.ep,
+        })
+    }
+
+    /// Accepts this incoming connection using a custom configuration.
+    ///
+    /// See [`accept()`] for more details.
+    ///
+    /// [`accept()`]: Incoming::accept
+    pub fn accept_with(
+        self,
+        server_config: Arc<ServerConfig>,
+    ) -> Result<Connecting, ConnectionError> {
+        self.inner
+            .accept_with(server_config)
+            .map(|conn| Connecting {
+                inner: conn,
+                ep: self.ep,
+            })
+    }
+
+    /// Rejects this incoming connection attempt.
+    pub fn refuse(self) {
+        self.inner.refuse()
+    }
+
+    /// Responds with a retry packet.
+    ///
+    /// This requires the client to retry with address validation.
+    ///
+    /// Errors if `remote_address_validated()` is true.
+    pub fn retry(self) -> Result<(), RetryError> {
+        self.inner.retry()
+    }
+
+    /// Ignores this incoming connection attempt, not sending any packet in response.
+    pub fn ignore(self) {
+        self.inner.ignore()
+    }
+
+    /// Returns the local IP address which was used when the peer established the
+    /// connection.
+    pub fn local_ip(&self) -> Option<IpAddr> {
+        self.inner.local_ip()
+    }
+
+    /// Returns the peer's UDP address.
+    pub fn remote_address(&self) -> SocketAddr {
+        self.inner.remote_address()
+    }
+
+    /// Whether the socket address that is initiating this connection has been validated.
+    ///
+    /// This means that the sender of the initial packet has proved that they can receive
+    /// traffic sent to `self.remote_address()`.
+    pub fn remote_address_validated(&self) -> bool {
+        self.inner.remote_address_validated()
+    }
+}
+
+impl IntoFuture for Incoming {
+    type Output = Result<Connection, ConnectionError>;
+    type IntoFuture = IncomingFuture;
+
+    fn into_future(self) -> Self::IntoFuture {
+        IncomingFuture {
+            inner: self.inner.into_future(),
+            ep: self.ep,
+        }
+    }
+}
+
+/// Adaptor to let [`Incoming`] be `await`ed like a [`Connecting`].
+#[derive(Debug)]
+#[pin_project]
+pub struct IncomingFuture {
+    #[pin]
+    inner: quinn::IncomingFuture,
+    ep: Endpoint,
+}
+
+impl Future for IncomingFuture {
+    type Output = Result<quinn::Connection, ConnectionError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        match this.inner.poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Ok(conn)) => {
+                try_send_rtt_msg(&conn, this.ep);
+                Poll::Ready(Ok(conn))
+            }
         }
     }
 }
 
 /// In-progress connection attempt future
 #[derive(Debug)]
-#[pin_project::pin_project]
+#[pin_project]
 pub struct Connecting {
     #[pin]
     inner: quinn::Connecting,
-    magic_ep: Endpoint,
+    ep: Endpoint,
 }
 
 impl Connecting {
@@ -940,13 +1056,10 @@ impl Connecting {
     pub fn into_0rtt(self) -> Result<(quinn::Connection, quinn::ZeroRttAccepted), Self> {
         match self.inner.into_0rtt() {
             Ok((conn, zrtt_accepted)) => {
-                try_send_rtt_msg(&conn, &self.magic_ep);
+                try_send_rtt_msg(&conn, &self.ep);
                 Ok((conn, zrtt_accepted))
             }
-            Err(inner) => Err(Self {
-                inner,
-                magic_ep: self.magic_ep,
-            }),
+            Err(inner) => Err(Self { inner, ep: self.ep }),
         }
     }
 
@@ -989,7 +1102,7 @@ impl Future for Connecting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(conn)) => {
-                try_send_rtt_msg(&conn, this.magic_ep);
+                try_send_rtt_msg(&conn, this.ep);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -997,11 +1110,12 @@ impl Future for Connecting {
 }
 
 /// Extract the [`PublicKey`] from the peer's TLS certificate.
+// TODO: make this a method now
 pub fn get_remote_node_id(connection: &quinn::Connection) -> Result<PublicKey> {
     let data = connection.peer_identity();
     match data {
         None => bail!("no peer certificate found"),
-        Some(data) => match data.downcast::<Vec<rustls::Certificate>>() {
+        Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
             Ok(certs) => {
                 if certs.len() != 1 {
                     bail!(
@@ -1182,10 +1296,10 @@ mod tests {
                     let incoming = ep.accept().await.unwrap();
                     let conn = incoming.await.unwrap();
                     let mut stream = conn.accept_uni().await.unwrap();
-                    let mut buf = [0u8, 5];
+                    let mut buf = [0u8; 5];
                     stream.read_exact(&mut buf).await.unwrap();
                     info!("Accepted 1 stream, received {buf:?}.  Closing now.");
-                    // close the stream
+                    // close the connection
                     conn.close(7u8.into(), b"bye");
 
                     let res = conn.accept_uni().await;
@@ -1224,6 +1338,7 @@ mod tests {
                 // the error.
                 stream.write_all(b"hello").await.unwrap();
 
+                info!("waiting for closed");
                 // Remote now closes the connection, we should see an error sometime soon.
                 let err = conn.closed().await;
                 let expected_err =
@@ -1233,12 +1348,7 @@ mod tests {
                     });
                 assert_eq!(err, expected_err);
 
-                let res = stream.finish().await;
-                assert_eq!(
-                    res.unwrap_err(),
-                    quinn::WriteError::ConnectionLost(expected_err.clone())
-                );
-
+                info!("opening new - expect it to fail");
                 let res = conn.open_uni().await;
                 assert_eq!(res.unwrap_err(), expected_err);
                 info!("client test completed");
@@ -1246,7 +1356,12 @@ mod tests {
             .instrument(info_span!("test-client")),
         );
 
-        let (server, client) = tokio::join!(server, client);
+        let (server, client) = tokio::time::timeout(
+            Duration::from_secs(5),
+            futures_lite::future::zip(server, client),
+        )
+        .await
+        .expect("timeout");
         server.unwrap();
         client.unwrap();
     }
@@ -1346,7 +1461,8 @@ mod tests {
                             recv.read_exact(&mut buf).await.unwrap();
                             send.write_all(&buf).await.unwrap();
                         }
-                        send.finish().await.unwrap();
+                        send.finish().unwrap();
+                        send.stopped().await.unwrap();
                         recv.read_to_end(0).await.unwrap();
                         info!(%i, peer = %peer_id.fmt_short(), "finished");
                         println!("[server] round {} done in {:?}", i + 1, now.elapsed());
@@ -1390,7 +1506,8 @@ mod tests {
                     recv.read_exact(&mut buf).await.unwrap();
                     assert_eq!(buf, vec![i; chunk_size]);
                 }
-                send.finish().await.unwrap();
+                send.finish().unwrap();
+                send.stopped().await.unwrap();
                 recv.read_to_end(0).await.unwrap();
                 info!("client finished");
                 ep.close(0u32.into(), &[]).await.unwrap();
@@ -1438,30 +1555,62 @@ mod tests {
         async fn connect_hello(ep: Endpoint, dst: NodeAddr) {
             let conn = ep.connect(dst, TEST_ALPN).await.unwrap();
             let (mut send, mut recv) = conn.open_bi().await.unwrap();
+            info!("sending hello");
             send.write_all(b"hello").await.unwrap();
-            send.finish().await.unwrap();
+            send.finish().unwrap();
+            info!("receiving world");
             let m = recv.read_to_end(100).await.unwrap();
             assert_eq!(m, b"world");
+            conn.close(1u8.into(), b"done");
         }
 
         async fn accept_world(ep: Endpoint, src: NodeId) {
-            let mut incoming = ep.accept().await.unwrap();
-            let alpn = incoming.alpn().await.unwrap();
-            let conn = incoming.await.unwrap();
+            let incoming = ep.accept().await.unwrap();
+            let mut iconn = incoming.accept().unwrap();
+            let alpn = iconn.alpn().await.unwrap();
+            let conn = iconn.await.unwrap();
             let node_id = get_remote_node_id(&conn).unwrap();
             assert_eq!(node_id, src);
             assert_eq!(alpn, TEST_ALPN);
             let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+            info!("receiving hello");
             let m = recv.read_to_end(100).await.unwrap();
             assert_eq!(m, b"hello");
+            info!("sending hello");
             send.write_all(b"world").await.unwrap();
-            send.finish().await.unwrap();
+            send.finish().unwrap();
+            match conn.closed().await {
+                ConnectionError::ApplicationClosed(closed) => {
+                    assert_eq!(closed.error_code, 1u8.into());
+                }
+                _ => panic!("wrong close error"),
+            }
         }
 
-        let p1_accept = tokio::spawn(accept_world(ep1.clone(), ep2_nodeid));
-        let p2_accept = tokio::spawn(accept_world(ep2.clone(), ep1_nodeid));
-        let p1_connect = tokio::spawn(connect_hello(ep1.clone(), ep2_nodeaddr));
-        let p2_connect = tokio::spawn(connect_hello(ep2.clone(), ep1_nodeaddr));
+        let p1_accept = tokio::spawn(accept_world(ep1.clone(), ep2_nodeid).instrument(info_span!(
+            "p1_accept",
+            ep1 = %ep1.node_id().fmt_short(),
+            dst = %ep2_nodeid.fmt_short(),
+        )));
+        let p2_accept = tokio::spawn(accept_world(ep2.clone(), ep1_nodeid).instrument(info_span!(
+            "p2_accept",
+            ep2 = %ep2.node_id().fmt_short(),
+            dst = %ep1_nodeid.fmt_short(),
+        )));
+        let p1_connect = tokio::spawn(connect_hello(ep1.clone(), ep2_nodeaddr).instrument(
+            info_span!(
+                "p1_connect",
+                ep1 = %ep1.node_id().fmt_short(),
+                dst = %ep2_nodeid.fmt_short(),
+            ),
+        ));
+        let p2_connect = tokio::spawn(connect_hello(ep2.clone(), ep1_nodeaddr).instrument(
+            info_span!(
+                "p2_connect",
+                ep2 = %ep2.node_id().fmt_short(),
+                dst = %ep1_nodeid.fmt_short(),
+            ),
+        ));
 
         p1_accept.await.unwrap();
         p2_accept.await.unwrap();

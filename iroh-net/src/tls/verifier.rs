@@ -7,14 +7,12 @@
 //! Technologies (UK) Ltd.
 use std::sync::Arc;
 
+use rustls::pki_types::CertificateDer as Certificate;
 use rustls::{
-    cipher_suite::{
-        TLS13_AES_128_GCM_SHA256, TLS13_AES_256_GCM_SHA384, TLS13_CHACHA20_POLY1305_SHA256,
-    },
-    client::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
-    server::{ClientCertVerified, ClientCertVerifier},
-    Certificate, CertificateError, DigitallySignedStruct, DistinguishedName, PeerMisbehaved,
-    SignatureScheme, SupportedCipherSuite, SupportedProtocolVersion,
+    client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    server::danger::{ClientCertVerified, ClientCertVerifier},
+    CertificateError, DigitallySignedStruct, DistinguishedName, OtherError, PeerMisbehaved,
+    SignatureScheme, SupportedProtocolVersion,
 };
 
 use crate::key::PublicKey;
@@ -29,18 +27,10 @@ use super::certificate;
 /// > Endpoints MUST NOT negotiate lower TLS versions.
 pub static PROTOCOL_VERSIONS: &[&SupportedProtocolVersion] = &[&rustls::version::TLS13];
 
-/// A list of the TLS 1.3 cipher suites supported by rustls.
-// By default rustls creates client/server configs with both
-// TLS 1.3 __and__ 1.2 cipher suites. But we don't need 1.2.
-pub static CIPHERSUITES: &[SupportedCipherSuite] = &[
-    TLS13_AES_128_GCM_SHA256,
-    TLS13_AES_256_GCM_SHA384,
-    TLS13_CHACHA20_POLY1305_SHA256,
-];
-
 /// Implementation of the `rustls` certificate verification traits for libp2p.
 ///
 /// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
+#[derive(Debug)]
 pub struct Libp2pCertificateVerifier {
     /// The peer ID we intend to connect to
     remote_peer_id: Option<PublicKey>,
@@ -83,10 +73,9 @@ impl ServerCertVerifier for Libp2pCertificateVerifier {
         &self,
         end_entity: &Certificate,
         intermediates: &[Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _server_name: &rustls::pki_types::ServerName,
         _ocsp_response: &[u8],
-        _now: std::time::SystemTime,
+        _now: rustls::pki_types::UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
         let peer_id = verify_presented_certs(end_entity, intermediates)?;
 
@@ -140,15 +129,11 @@ impl ClientCertVerifier for Libp2pCertificateVerifier {
         true
     }
 
-    fn client_auth_root_subjects(&self) -> &[DistinguishedName] {
-        &[][..]
-    }
-
     fn verify_client_cert(
         &self,
         end_entity: &Certificate,
         intermediates: &[Certificate],
-        _now: std::time::SystemTime,
+        _now: rustls::pki_types::UnixTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
         verify_presented_certs(end_entity, intermediates)?;
 
@@ -175,6 +160,10 @@ impl ClientCertVerifier for Libp2pCertificateVerifier {
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         Self::verification_schemes()
+    }
+
+    fn root_hint_subjects(&self) -> &[DistinguishedName] {
+        &[][..]
     }
 }
 
@@ -215,7 +204,9 @@ impl From<certificate::ParseError> for rustls::Error {
         use webpki::Error::*;
         match e {
             BadDer => rustls::Error::InvalidCertificate(CertificateError::BadEncoding),
-            e => rustls::Error::InvalidCertificate(CertificateError::Other(Arc::new(e))),
+            e => {
+                rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(Arc::new(e))))
+            }
         }
     }
 }
@@ -229,7 +220,9 @@ impl From<certificate::VerificationError> for rustls::Error {
             UnsupportedSignatureAlgorithm | UnsupportedSignatureAlgorithmForPublicKey => {
                 rustls::Error::InvalidCertificate(CertificateError::BadSignature)
             }
-            e => rustls::Error::InvalidCertificate(CertificateError::Other(Arc::new(e))),
+            e => {
+                rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(Arc::new(e))))
+            }
         }
     }
 }

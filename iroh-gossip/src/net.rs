@@ -861,9 +861,20 @@ mod test {
             tokio::select! {
                 biased;
                 _ = cancel.cancelled() => break,
-                conn = endpoint.accept() => match conn {
+                incoming = endpoint.accept() => match incoming {
                     None => break,
-                    Some(conn) => gossip.handle_connection(conn.await?).await?
+                    Some(incoming) => {
+                        let connecting = match incoming.accept() {
+                            Ok(connecting) => connecting,
+                            Err(err) => {
+                                warn!("incoming connection failed: {err:#}");
+                                // we can carry on in these cases:
+                                // this can be caused by retransmitted datagrams
+                                continue;
+                            }
+                        };
+                        gossip.handle_connection(connecting.await?).await?
+                    }
                 }
             }
         }

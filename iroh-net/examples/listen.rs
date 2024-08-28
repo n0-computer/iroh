@@ -3,10 +3,15 @@
 //! This example uses the default relay servers to attempt to holepunch, and will use that relay server to relay packets if the two devices cannot establish a direct UDP connection.
 //! run this example from the project root:
 //!     $ cargo run --example listen
+use std::time::Duration;
+
 use anyhow::Context;
 use futures_lite::StreamExt;
-use iroh_net::{key::SecretKey, relay::RelayMode, Endpoint};
-use tracing::{debug, info};
+use iroh_net::endpoint::ConnectionError;
+use iroh_net::key::SecretKey;
+use iroh_net::relay::RelayMode;
+use iroh_net::Endpoint;
+use tracing::{debug, info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
 const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
@@ -61,9 +66,18 @@ async fn main() -> anyhow::Result<()> {
         "\tcargo run --example connect -- --node-id {me} --addrs \"{local_addrs}\" --relay-url {relay_url}\n"
     );
     // accept incoming connections, returns a normal QUIC connection
-    while let Some(mut conn) = endpoint.accept().await {
-        let alpn = conn.alpn().await?;
-        let conn = conn.await?;
+    while let Some(incoming) = endpoint.accept().await {
+        let mut connecting = match incoming.accept() {
+            Ok(connecting) => connecting,
+            Err(err) => {
+                warn!("incoming connection failed: {err:#}");
+                // we can carry on in these cases:
+                // this can be caused by retransmitted datagrams
+                continue;
+            }
+        };
+        let alpn = connecting.alpn().await?;
+        let conn = connecting.await?;
         let node_id = iroh_net::endpoint::get_remote_node_id(&conn)?;
         info!(
             "new connection from {node_id} with ALPN {} (coming from {})",
@@ -84,8 +98,20 @@ async fn main() -> anyhow::Result<()> {
             let message = format!("hi! you connected to {me}. bye bye");
             send.write_all(message.as_bytes()).await?;
             // call `finish` to close the connection gracefully
-            send.finish().await?;
+            send.finish()?;
 
+            // We sent the last message, so wait for the client to close the connection once
+            // it received this message.
+            let res = tokio::time::timeout(Duration::from_secs(3), async move {
+                let closed = conn.closed().await;
+                if !matches!(closed, ConnectionError::ApplicationClosed(_)) {
+                    println!("node {node_id} disconnected with an error: {closed:#}");
+                }
+            })
+            .await;
+            if res.is_err() {
+                println!("node {node_id} did not disconnect within 3 seconds");
+            }
             Ok::<_, anyhow::Error>(())
         });
     }
