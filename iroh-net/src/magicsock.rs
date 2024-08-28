@@ -553,9 +553,8 @@ impl MagicSock {
                             send_relay = ?relay_url,
                             "sent transmit",
                         );
-                    }
-                    if !relay_sent && !udp_sent && !pings_sent {
-                        // Returning Ok here means we let QUIC handle a timeout for a lots
+                    } else if !pings_sent {
+                        // Returning Ok here means we let QUIC handle a timeout for a lost
                         // packet, same would happen if we returned any errors.  The
                         // philosophy of quinn-udp is that a UDP connection could come back
                         // at any time so these errors should be treated as transient and
