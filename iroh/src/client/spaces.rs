@@ -24,7 +24,7 @@ use iroh_base::key::NodeId;
 use iroh_blobs::Hash;
 use iroh_net::NodeAddr;
 use iroh_willow::{
-    form::{AuthForm, PayloadForm2, SerdeEntryForm, SubspaceForm, TimestampForm},
+    form::{AuthForm, SubspaceForm, TimestampForm},
     interest::{
         AreaOfInterestSelector, CapSelector, CapabilityPack, DelegateTo, Interests, RestrictArea,
     },
@@ -189,8 +189,8 @@ impl Space {
         self.namespace_id
     }
 
-    async fn insert(&self, entry: EntryForm, payload: PayloadForm2) -> Result<InsertEntrySuccess> {
-        let form = SerdeEntryForm {
+    async fn insert(&self, entry: EntryForm, payload: PayloadForm) -> Result<InsertEntrySuccess> {
+        let form = FullEntryForm {
             namespace_id: self.namespace_id,
             subspace_id: entry.subspace_id,
             path: entry.path,
@@ -203,18 +203,11 @@ impl Space {
         Ok(res)
     }
 
-    // Insert a new entry.
-
-    // `entry` can be a [`EntryForm`] or a `Entry`.
-    // `auth` can either be a [`AuthForm`] or simply a [`UserId`].
-    // When passing a [`UserId`], a matching capability will be selected for the user.
-    // If you want to select the capability to use more specifically, use the methods on [`AuthForm`].
-    // TODO: Not sure I like the impl Into, better change to two methods.
-    /// Inserts a new entry, with the payload digest set to a hash.
+    /// Inserts a new entry, with the payload set to the hash of a blob.
     ///
     /// Note that the payload must exist in the local blob store, otherwise the operation will fail.
     pub async fn insert_hash(&self, entry: EntryForm, payload: Hash) -> Result<InsertEntrySuccess> {
-        let payload = PayloadForm2::Checked(payload);
+        let payload = PayloadForm::Checked(payload);
         self.insert(entry, payload).await
     }
 
@@ -364,12 +357,12 @@ impl Space {
     }
 
     /// TODO
-    pub async fn subscribe(&self, _area: Area) {
+    pub fn subscribe(&self, _area: Area) {
         todo!()
     }
 
     /// TODO
-    pub async fn subscribe_offset(&self, _area: Area, _offset: u64) {
+    pub fn subscribe_offset(&self, _area: Area, _offset: u64) {
         todo!()
     }
 }
@@ -561,5 +554,23 @@ impl Stream for MergedIntentHandle {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.event_rx).poll_next(cx)
+    }
+}
+
+/// Options for setting the payload on the a new entry.
+#[derive(Debug, Serialize, Deserialize)]
+pub enum PayloadForm {
+    /// Make sure the hash is available in the blob store, and use the length from the blob store.
+    Checked(Hash),
+    /// Insert with the specified hash and length, without checking if the blob is in the local blob store.
+    Unchecked(Hash, u64),
+}
+
+impl From<PayloadForm> for iroh_willow::form::PayloadForm {
+    fn from(value: PayloadForm) -> Self {
+        match value {
+            PayloadForm::Checked(hash) => Self::Hash(hash),
+            PayloadForm::Unchecked(hash, len) => Self::HashUnchecked(hash, len),
+        }
     }
 }

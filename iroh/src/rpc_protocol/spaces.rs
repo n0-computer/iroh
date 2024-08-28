@@ -1,11 +1,11 @@
 use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_net::NodeId;
 use iroh_willow::{
-    form::{AuthForm, SerdeEntryForm},
+    form::{AuthForm, SubspaceForm, TimestampForm},
     interest::{CapSelector, CapabilityPack, DelegateTo},
     proto::{
         data_model::{
-            self, serde_encoding::SerdeAuthorisedEntry, AuthorisedEntry, NamespaceId, Path,
+            self, serde_encoding::SerdeAuthorisedEntry, AuthorisedEntry, Entry, NamespaceId, Path,
             SubspaceId,
         },
         grouping::{self, Range3d},
@@ -20,6 +20,8 @@ use iroh_willow::{
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
+
+use crate::client::spaces::PayloadForm;
 
 use super::RpcService;
 
@@ -78,7 +80,7 @@ pub struct IngestEntryRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InsertEntryRequest {
-    pub entry: SerdeEntryForm,
+    pub entry: FullEntryForm,
     pub auth: AuthForm,
 }
 
@@ -176,14 +178,6 @@ pub struct ImportCapsRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ImportCapsResponse;
 
-// #[derive(Debug, Serialize, Deserialize)]
-// pub struct ResolveInterestsRequest {
-//     pub interests: Interests,
-// }
-
-// #[derive(Debug, Serialize, Deserialize)]
-// pub struct ResolveInterestsResponse(pub InterestMap);
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SyncWithPeerRequest {
     pub peer: NodeId,
@@ -197,4 +191,43 @@ pub struct SyncWithPeerUpdate(pub IntentUpdate);
 pub enum SyncWithPeerResponse {
     Started,
     Event(Event),
+}
+
+/// Either a [`Entry`] or a [`EntryForm`].
+#[derive(Debug, Serialize, Deserialize)]
+pub enum EntryOrForm {
+    Entry(#[serde(with = "data_model::serde_encoding::entry")] Entry),
+    Form(FullEntryForm),
+}
+
+impl From<EntryOrForm> for iroh_willow::form::EntryOrForm {
+    fn from(value: EntryOrForm) -> Self {
+        match value {
+            EntryOrForm::Entry(entry) => Self::Entry(entry),
+            EntryOrForm::Form(form) => Self::Form(form.into()),
+        }
+    }
+}
+
+/// Creates an entry while setting some fields automatically.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FullEntryForm {
+    pub namespace_id: NamespaceId,
+    pub subspace_id: SubspaceForm,
+    #[serde(with = "data_model::serde_encoding::path")]
+    pub path: Path,
+    pub timestamp: TimestampForm,
+    pub payload: PayloadForm,
+}
+
+impl From<FullEntryForm> for iroh_willow::form::EntryForm {
+    fn from(value: FullEntryForm) -> Self {
+        Self {
+            namespace_id: value.namespace_id,
+            subspace_id: value.subspace_id,
+            path: value.path,
+            timestamp: value.timestamp,
+            payload: value.payload.into(),
+        }
+    }
 }

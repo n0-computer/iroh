@@ -156,6 +156,7 @@ pub(crate) async fn handle_rpc_request(
     }
 }
 
+// TODO: Try to use the streams directly instead of spawning two tasks.
 async fn sync_with_peer(
     engine: Engine,
     req: SyncWithPeerRequest,
@@ -169,16 +170,17 @@ async fn sync_with_peer(
     let (mut update_sink, mut events) = handle.split();
     tokio::task::spawn(async move {
         while let Some(update) = update_stream.next().await {
-            if let Err(_) = update_sink.send(update.0).await {
+            if update_sink.send(update.0).await.is_err() {
                 break;
             }
         }
     });
     tokio::task::spawn(async move {
         while let Some(event) = events.next().await {
-            if let Err(_) = events_tx
+            if events_tx
                 .send(Ok(SyncWithPeerResponse::Event(event.into())))
                 .await
+                .is_err()
             {
                 break;
             }

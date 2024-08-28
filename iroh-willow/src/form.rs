@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
 
 use crate::proto::{
-    data_model::{self, Entry, NamespaceId, Path, SubspaceId, Timestamp},
+    data_model::{Entry, NamespaceId, Path, SubspaceId, Timestamp},
     keys::UserId,
     meadowcap::{self, WriteCapability},
 };
@@ -156,61 +156,4 @@ pub enum TimestampForm {
     Now,
     /// Set the timestamp to the provided value.
     Exact(Timestamp),
-}
-
-/// Either a [`Entry`] or a [`EntryForm`].
-#[derive(Debug, Serialize, Deserialize)]
-pub enum SerdeEntryOrForm {
-    Entry(#[serde(with = "data_model::serde_encoding::entry")] Entry),
-    Form(SerdeEntryForm),
-}
-
-impl From<SerdeEntryOrForm> for EntryOrForm {
-    fn from(value: SerdeEntryOrForm) -> Self {
-        match value {
-            SerdeEntryOrForm::Entry(entry) => EntryOrForm::Entry(entry),
-            SerdeEntryOrForm::Form(form) => EntryOrForm::Form(form.into()),
-        }
-    }
-}
-
-/// Creates an entry while setting some fields automatically.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SerdeEntryForm {
-    pub namespace_id: NamespaceId,
-    pub subspace_id: SubspaceForm,
-    #[serde(with = "data_model::serde_encoding::path")]
-    pub path: Path,
-    pub timestamp: TimestampForm,
-    pub payload: PayloadForm2,
-}
-
-///
-#[derive(Debug, Serialize, Deserialize)]
-pub enum PayloadForm2 {
-    /// Make sure the hash is available in the blob store, and use the length from the blob store.
-    Checked(Hash),
-    /// Insert with the specified hash and length, without checking if the blob is in the local blob store.
-    Unchecked(Hash, u64),
-}
-
-impl From<PayloadForm2> for PayloadForm {
-    fn from(value: PayloadForm2) -> Self {
-        match value {
-            PayloadForm2::Checked(hash) => PayloadForm::Hash(hash),
-            PayloadForm2::Unchecked(hash, len) => PayloadForm::HashUnchecked(hash, len),
-        }
-    }
-}
-
-impl From<SerdeEntryForm> for EntryForm {
-    fn from(value: SerdeEntryForm) -> Self {
-        EntryForm {
-            namespace_id: value.namespace_id,
-            subspace_id: value.subspace_id,
-            path: value.path,
-            timestamp: value.timestamp,
-            payload: value.payload.into(),
-        }
-    }
 }
