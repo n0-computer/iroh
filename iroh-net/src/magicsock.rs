@@ -441,7 +441,7 @@ impl MagicSock {
         // instead of the existing .try_send() because then we would have control over this.
         //
         // Right now however we have one single poller behaving the same for each
-        // connection.  It checks all paths returns Poll::Ready as soon as any path is
+        // connection.  It checks all paths and returns Poll::Ready as soon as any path is
         // ready.
         let ipv4_poller = Arc::new(self.pconn4.clone()).create_io_poller();
         let ipv6_poller = self
@@ -513,7 +513,7 @@ impl MagicSock {
                             trace!(node = %node_id.fmt_short(), dst = %addr,
                                    "sent transmit over UDP");
                             udp_sent = true;
-                            // TODO: record metrics?
+                            // TODO: record metrics
                         }
                         Err(err) => {
                             error!(node = %node_id.fmt_short(), dst = %addr,
@@ -528,6 +528,7 @@ impl MagicSock {
                     match self.try_send_relay(relay_url, node_id, split_packets(&transmit)) {
                         Ok(()) => {
                             relay_sent = true;
+                            // TODO: record metrics
                         }
                         Err(err) => {
                             relay_error = Some(err);

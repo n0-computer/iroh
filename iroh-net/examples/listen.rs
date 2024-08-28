@@ -105,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
             let res = tokio::time::timeout(Duration::from_secs(3), async move {
                 let closed = conn.closed().await;
                 if !matches!(closed, ConnectionError::ApplicationClosed(_)) {
-                    println!("node {node_id} diconnected with an error: {closed:#}");
+                    println!("node {node_id} disconnected with an error: {closed:#}");
                 }
             })
             .await;
