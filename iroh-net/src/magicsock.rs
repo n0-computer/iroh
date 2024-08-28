@@ -536,23 +536,6 @@ impl MagicSock {
                     }
                 }
 
-                if udp_addr.is_none() && relay_url.is_none() {
-                    // Returning an error here would lock up the entire `Endpoint`.
-                    //
-                    // If we returned `Poll::Pending`, the waker driving the `poll_send`
-                    // will never get woken up.
-                    //
-                    // Our best bet here is to log an error and return `Ok(())`.  In doing
-                    // so, we are effectively dropping this transmit, by lying to QUIC and
-                    // saying they were sent.  If we returned `Err(WouldBlock)` instead
-                    // Quinn would loop to attempt to re-send this transmit, blocking other
-                    // destinations.
-                    //
-                    // When `Quinn` gets no `ACK`s for those messages, the connection will
-                    // eventually timeout.
-                    error!(node = %node_id.fmt_short(), "failed to send: no UDP or relay addr");
-                    return Ok(());
-                }
                 let udp_pending = udp_error
                     .as_ref()
                     .map(|err| err.kind() == io::ErrorKind::WouldBlock)
@@ -563,26 +546,30 @@ impl MagicSock {
                     .unwrap_or_default();
                 if udp_pending && relay_pending {
                     // Handle backpressure.
-                    return Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"));
+                    Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"))
+                } else {
+                    if relay_sent || udp_sent {
+                        trace!(
+                            node = %node_id.fmt_short(),
+                            send_udp = ?udp_addr,
+                            send_relay = ?relay_url,
+                            "sent transmit",
+                        );
+                    }
+                    if !relay_sent && !udp_sent && !pings_sent {
+                        // Returning Ok here means we let QUIC handle a timeout for a lots
+                        // packet, same would happen if we returned any errors.  The
+                        // philosophy of quinn-udp is that a UDP connection could come back
+                        // at any time so these errors should be treated as transient and
+                        // are just timeouts.  Hence we opt for returning Ok.  See
+                        // test_try_send_no_udp_addr_or_relay_url to explore this further.
+                        error!(
+                            node = %node_id.fmt_short(),
+                            "no UDP or relay paths available for node",
+                        );
+                    }
+                    Ok(())
                 }
-
-                if !relay_sent && !udp_sent && !pings_sent {
-                    // Returning Ok here means we let QUIC timeout, same with returning any
-                    // errors.  The philosophy of quinn-udp is that a UDP connection could
-                    // come back at any time so these errors should be treated as transient
-                    // and are just timeouts.  Hence we opt for returning Ok.  See
-                    // test_try_send_no_udp_addr_or_relay_url to explore this further.
-                    error!("no UDP or relay paths available for node");
-                    return Ok(());
-                }
-
-                trace!(
-                    node = %node_id.fmt_short(),
-                    send_udp = ?udp_addr,
-                    send_relay = ?relay_url,
-                    "sent transmit",
-                );
-                Ok(())
             }
             None => {
                 error!(%dest, "no NodeState for mapped address");
