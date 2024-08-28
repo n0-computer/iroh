@@ -909,6 +909,10 @@
 <a href="#909" id="909">909</a>
 <a href="#910" id="910">910</a>
 <a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
@@ -1683,6 +1687,10 @@
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(docs) = <span class="self">self</span>.inner.docs.clone() {
             <span class="self">self </span>= <span class="self">self</span>.accept(DOCS_ALPN, Arc::new(docs));
         }
+
+        <span class="comment">// TODO: Make willow optional.
+        </span><span class="kw">let </span>willow_engine = <span class="self">self</span>.inner.willow.clone();
+        <span class="self">self </span>= <span class="self">self</span>.accept(iroh_willow::ALPN, Arc::new(willow_engine));
 
         <span class="self">self
     </span>}

@@ -204,6 +204,16 @@
 <a href="#204" id="204">204</a>
 <a href="#205" id="205">205</a>
 <a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Structs that allow constructing entries and other structs where some fields may be
 //! automatically filled.
 
@@ -221,8 +231,9 @@
 <span class="kw">use </span>tokio::io::AsyncRead;
 
 <span class="kw">use </span><span class="kw">crate</span>::proto::{
-    data_model::{<span class="self">self</span>, Entry, NamespaceId, Path, SerdeWriteCapability, SubspaceId, Timestamp},
+    data_model::{<span class="self">self</span>, Entry, NamespaceId, Path, SubspaceId, Timestamp},
     keys::UserId,
+    meadowcap::{<span class="self">self</span>, WriteCapability},
 };
 
 <span class="doccomment">/// Sources where payload data can come from.
@@ -231,6 +242,9 @@
     <span class="doccomment">/// Set the payload hash directly. The blob must exist in the node's blob store, this will fail
     /// otherwise.
     </span>Hash(Hash),
+    <span class="doccomment">/// Set the payload hash directly. The blob must exist in the node's blob store, this will fail
+    /// otherwise.
+    </span>HashUnchecked(Hash, u64),
     <span class="doccomment">/// Import data from the provided bytes and set as payload.
     </span><span class="attr">#[debug(<span class="string">"Bytes({})"</span>, _0.len())]
     </span>Bytes(Bytes),
@@ -255,6 +269,7 @@
                 <span class="kw">let </span>entry = entry.ok_or_else(|| <span class="macro">anyhow::anyhow!</span>(<span class="string">"hash not foundA"</span>))<span class="question-mark">?</span>;
                 (digest, entry.size().value())
             }
+            PayloadForm::HashUnchecked(digest, len) =&gt; (digest, len),
             PayloadForm::Bytes(bytes) =&gt; {
                 <span class="kw">let </span>len = bytes.len();
                 <span class="kw">let </span>temp_tag = store.import_bytes(bytes, BlobFormat::Raw).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -324,7 +339,7 @@
     /// user.
     </span>Any(UserId),
     <span class="doccomment">/// Use the provided [`WriteCapability`].
-    </span>Exact(SerdeWriteCapability),
+    </span>Exact(<span class="attr">#[serde(with = <span class="string">"meadowcap::serde_encoding::mc_capability"</span>)] </span>WriteCapability),
 }
 
 <span class="kw">impl </span>AuthForm {
@@ -340,18 +355,20 @@
 
 <span class="doccomment">/// Set the subspace either to a provided [`SubspaceId`], or use the user authenticating the entry
 /// as subspace.
-</span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize)]
+</span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 </span><span class="kw">pub enum </span>SubspaceForm {
     <span class="doccomment">/// Set the subspace to the [`UserId`] of the user authenticating the entry.
+    </span><span class="attr">#[default]
     </span>User,
     <span class="doccomment">/// Set the subspace to the provided [`SubspaceId`].
     </span>Exact(SubspaceId),
 }
 
 <span class="doccomment">/// Set the timestamp either to the provided [`Timestamp`] or to the current system time.
-</span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize)]
+</span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 </span><span class="kw">pub enum </span>TimestampForm {
     <span class="doccomment">/// Set the timestamp to the current system time.
+    </span><span class="attr">#[default]
     </span>Now,
     <span class="doccomment">/// Set the timestamp to the provided value.
     </span>Exact(Timestamp),
@@ -381,20 +398,23 @@
     <span class="attr">#[serde(with = <span class="string">"data_model::serde_encoding::path"</span>)]
     </span><span class="kw">pub </span>path: Path,
     <span class="kw">pub </span>timestamp: TimestampForm,
-    <span class="kw">pub </span>payload: SerdePayloadForm,
+    <span class="kw">pub </span>payload: PayloadForm2,
 }
 
-<span class="attr">#[derive(Debug, Serialize, Deserialize)]
-</span><span class="kw">pub enum </span>SerdePayloadForm {
-    <span class="doccomment">/// Set the payload hash directly. The blob must exist in the node's blob store, this will fail
-    /// otherwise.
-    </span>Hash(Hash),
+<span class="doccomment">///
+</span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
+</span><span class="kw">pub enum </span>PayloadForm2 {
+    <span class="doccomment">/// Make sure the hash is available in the blob store, and use the length from the blob store.
+    </span>Checked(Hash),
+    <span class="doccomment">/// Insert with the specified hash and length, without checking if the blob is in the local blob store.
+    </span>Unchecked(Hash, u64),
 }
 
-<span class="kw">impl </span>From&lt;SerdePayloadForm&gt; <span class="kw">for </span>PayloadForm {
-    <span class="kw">fn </span>from(value: SerdePayloadForm) -&gt; <span class="self">Self </span>{
+<span class="kw">impl </span>From&lt;PayloadForm2&gt; <span class="kw">for </span>PayloadForm {
+    <span class="kw">fn </span>from(value: PayloadForm2) -&gt; <span class="self">Self </span>{
         <span class="kw">match </span>value {
-            SerdePayloadForm::Hash(hash) =&gt; PayloadForm::Hash(hash),
+            PayloadForm2::Checked(hash) =&gt; PayloadForm::Hash(hash),
+            PayloadForm2::Unchecked(hash, len) =&gt; PayloadForm::HashUnchecked(hash, len),
         }
     }
 }

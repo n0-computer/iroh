@@ -822,6 +822,7 @@
 <a href="#822" id="822">822</a>
 <a href="#823" id="823">823</a>
 <a href="#824" id="824">824</a>
+<a href="#825" id="825">825</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Networking implementation for iroh-willow.
 
 </span><span class="kw">use </span>std::{future::Future, time::Duration};
@@ -1300,7 +1301,7 @@
 
         <span class="kw">let </span>cap_for_betty = handle_alfie
             .delegate_caps(
-                CapSelector::widest(namespace_id),
+                CapSelector::any(namespace_id),
                 AccessMode::Write,
                 DelegateTo::new(user_betty, RestrictArea::None),
             )
@@ -1431,7 +1432,7 @@
 
         <span class="kw">let </span>cap_for_betty = handle_alfie
             .delegate_caps(
-                CapSelector::widest(namespace_id),
+                CapSelector::any(namespace_id),
                 AccessMode::Write,
                 DelegateTo::new(user_betty, RestrictArea::None),
             )
@@ -1602,7 +1603,8 @@
         <span class="kw">let </span>entries: <span class="prelude-ty">Result</span>&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt; = store
             .get_entries(namespace, Range3d::new_full())
             .<span class="kw">await</span><span class="question-mark">?
-            </span>.try_collect()
+            </span>.map(|entry| entry.map(|entry| entry.into_parts().<span class="number">0</span>))
+            .try_collect()
             .<span class="kw">await</span>;
         entries
     }
@@ -1628,7 +1630,7 @@
             };
             <span class="kw">let </span>(entry, inserted) = handle.insert_entry(entry, AuthForm::Any(user_id)).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="macro">assert!</span>(inserted);
-            track_entries.extend([entry]);
+            track_entries.extend([entry.into_parts().<span class="number">0</span>]);
         }
         <span class="prelude-val">Ok</span>(())
     }

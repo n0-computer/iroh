@@ -172,6 +172,13 @@
 <a href="#172" id="172">172</a>
 <a href="#173" id="173">173</a>
 <a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Traits for storage backends for the Willow store.
 
 </span><span class="kw">use </span>std::fmt::Debug;
@@ -181,7 +188,7 @@
 <span class="kw">use crate</span>::{
     interest::{CapSelector, CapabilityPack},
     proto::{
-        data_model::{AuthorisedEntry, Entry, NamespaceId, WriteCapability},
+        data_model::{AuthorisedEntry, Entry, NamespaceId, Path, SubspaceId, WriteCapability},
         grouping::Range3d,
         keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
         meadowcap::{<span class="self">self</span>, ReadAuthorisation},
@@ -272,7 +279,14 @@
 
     <span class="kw">fn </span>count(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>Range3d) -&gt; <span class="prelude-ty">Result</span>&lt;u64&gt;;
 
-    <span class="kw">fn </span>get_entries_with_authorisation&lt;<span class="lifetime">'a</span>&gt;(
+    <span class="kw">fn </span>get_entry(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        namespace: NamespaceId,
+        subspace: SubspaceId,
+        path: <span class="kw-2">&amp;</span>Path,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;AuthorisedEntry&gt;&gt;;
+
+    <span class="kw">fn </span>get_authorised_entries&lt;<span class="lifetime">'a</span>&gt;(
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
         namespace: NamespaceId,
         range: <span class="kw-2">&amp;</span>Range3d,
@@ -283,7 +297,7 @@
         namespace: NamespaceId,
         range: <span class="kw-2">&amp;</span>Range3d,
     ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;Entry&gt;&gt; {
-        <span class="self">self</span>.get_entries_with_authorisation(namespace, range)
+        <span class="self">self</span>.get_authorised_entries(namespace, range)
             .map(|e| e.map(|e| e.into_parts().<span class="number">0</span>))
     }
 }

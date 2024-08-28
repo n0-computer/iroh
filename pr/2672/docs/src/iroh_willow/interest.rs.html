@@ -335,6 +335,20 @@
 <a href="#335" id="335">335</a>
 <a href="#336" id="336">336</a>
 <a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Types for defining synchronisation interests.
 
 </span><span class="kw">use </span>std::collections::{hash_map, HashMap, HashSet};
@@ -399,14 +413,20 @@
 }
 
 <span class="kw">impl </span>InterestBuilder {
+    <span class="doccomment">/// Add a capability and areas of interest
+    ///
+    /// See [`CapSelector`] for how to specify the capability to use.
+    </span><span class="kw">pub fn </span>add(<span class="kw-2">mut </span><span class="self">self</span>, cap: <span class="kw">impl </span>Into&lt;CapSelector&gt;, areas: AreaOfInterestSelector) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>cap = cap.into();
+        <span class="self">self</span>.<span class="number">0</span>.insert(cap, areas);
+        <span class="self">self
+    </span>}
     <span class="doccomment">/// Add the full area of a capability we have into the interests.
     ///
     /// See [`CapSelector`] for how to specify the capability to use.
-    </span><span class="kw">pub fn </span>add_full_cap(<span class="kw-2">mut </span><span class="self">self</span>, cap: <span class="kw">impl </span>Into&lt;CapSelector&gt;) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>cap = cap.into();
-        <span class="self">self</span>.<span class="number">0</span>.insert(cap, AreaOfInterestSelector::Widest);
-        <span class="self">self
-    </span>}
+    </span><span class="kw">pub fn </span>add_full_cap(<span class="self">self</span>, cap: <span class="kw">impl </span>Into&lt;CapSelector&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.add(cap, AreaOfInterestSelector::Widest)
+    }
 
     <span class="doccomment">/// Add a specific area included in one of our capabilities into the interests.
     ///
@@ -486,14 +506,14 @@
     <span class="doccomment">/// The namespace to which the capability must grant access.
     </span><span class="kw">pub </span>namespace_id: NamespaceId,
     <span class="doccomment">/// Select the user who may use the capability.
-    </span><span class="kw">pub </span>receiver: ReceiverSelector,
+    </span><span class="kw">pub </span>receiver: UserSelector,
     <span class="doccomment">/// Select the area to which the capability grants access.
     </span><span class="kw">pub </span>granted_area: AreaSelector,
 }
 
 <span class="kw">impl </span>From&lt;NamespaceId&gt; <span class="kw">for </span>CapSelector {
     <span class="kw">fn </span>from(value: NamespaceId) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::widest(value)
+        <span class="self">Self</span>::any(value)
     }
 }
 
@@ -508,7 +528,7 @@
     <span class="doccomment">/// Creates a new [`CapSelector`].
     </span><span class="kw">pub fn </span>new(
         namespace_id: NamespaceId,
-        receiver: ReceiverSelector,
+        receiver: UserSelector,
         granted_area: AreaSelector,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
@@ -523,7 +543,7 @@
     </span><span class="kw">pub fn </span>with_user(namespace_id: NamespaceId, user_id: UserId) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::new(
             namespace_id,
-            ReceiverSelector::Exact(user_id),
+            UserSelector::Exact(user_id),
             AreaSelector::Widest,
         )
     }
@@ -533,13 +553,13 @@
     /// Will use any user available in our secret store and select the capability which grants the
     /// widest area.
     </span><span class="comment">// TODO: Document exact selection process if there are capabilities with distinct areas.
-    </span><span class="kw">pub fn </span>widest(namespace: NamespaceId) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::new(namespace, ReceiverSelector::Any, AreaSelector::Widest)
+    </span><span class="kw">pub fn </span>any(namespace: NamespaceId) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::new(namespace, UserSelector::Any, AreaSelector::Widest)
     }
 
     <span class="doccomment">/// Select a capability which authorises writing the provided `entry` on behalf of the provided
     /// `user_id`.
-    </span><span class="kw">pub fn </span>for_entry(entry: <span class="kw-2">&amp;</span>Entry, user_id: ReceiverSelector) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>for_entry(entry: <span class="kw-2">&amp;</span>Entry, user_id: UserSelector) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>granted_area = AreaSelector::ContainsPoint(Point::from_entry(entry));
         <span class="self">Self </span>{
             namespace_id: <span class="kw-2">*</span>entry.namespace_id(),
@@ -553,7 +573,7 @@
 </span><span class="attr">#[derive(
     Debug, Default, Clone, Copy, Eq, PartialEq, derive_more::From, Serialize, Deserialize, Hash,
 )]
-</span><span class="kw">pub enum </span>ReceiverSelector {
+</span><span class="kw">pub enum </span>UserSelector {
     <span class="doccomment">/// The receiver may be any user for which we have a secret key stored.
     </span><span class="attr">#[default]
     </span>Any,
@@ -561,7 +581,7 @@
     </span>Exact(UserId),
 }
 
-<span class="kw">impl </span>ReceiverSelector {
+<span class="kw">impl </span>UserSelector {
     <span class="kw">pub fn </span>includes(<span class="kw-2">&amp;</span><span class="self">self</span>, user: <span class="kw-2">&amp;</span>UserId) -&gt; bool {
         <span class="kw">match </span><span class="self">self </span>{
             <span class="self">Self</span>::Any =&gt; <span class="bool-val">true</span>,
@@ -608,6 +628,13 @@
         <span class="kw">match </span><span class="self">self </span>{
             CapabilityPack::Read(auth) =&gt; <span class="kw-2">*</span>auth.read_cap().receiver(),
             CapabilityPack::Write(cap) =&gt; <span class="kw-2">*</span>cap.receiver(),
+        }
+    }
+
+    <span class="kw">pub fn </span>namespace(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NamespaceId {
+        <span class="kw">match </span><span class="self">self </span>{
+            CapabilityPack::Read(cap) =&gt; cap.namespace(),
+            CapabilityPack::Write(cap) =&gt; <span class="kw-2">*</span>cap.granted_namespace(),
         }
     }
 
@@ -658,14 +685,15 @@
 }
 
 <span class="comment">// TODO: This doesn't really belong into this module.
-</span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize)]
+</span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 </span><span class="kw">pub enum </span>RestrictArea {
-    <span class="prelude-val">None</span>,
+    <span class="attr">#[default]
+    </span><span class="prelude-val">None</span>,
     Restrict(<span class="attr">#[serde(with = <span class="string">"grouping::serde_encoding::area"</span>)] </span>Area),
 }
 
 <span class="kw">impl </span>RestrictArea {
-    <span class="kw">pub fn </span>with_default(<span class="self">self</span>, default: Area) -&gt; Area {
+    <span class="kw">pub fn </span>or_default(<span class="self">self</span>, default: Area) -&gt; Area {
         <span class="kw">match </span><span class="self">self </span>{
             RestrictArea::None =&gt; default.clone(),
             RestrictArea::Restrict(area) =&gt; area,

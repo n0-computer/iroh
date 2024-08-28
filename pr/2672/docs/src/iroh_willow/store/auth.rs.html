@@ -510,7 +510,7 @@
             </span>.secrets
             .get_user(user_id)
             .ok_or(AuthError::MissingUserSecret(<span class="kw-2">*</span>user_id))<span class="question-mark">?</span>;
-        <span class="kw">let </span>area = restrict_area.with_default(read_cap.granted_area());
+        <span class="kw">let </span>area = restrict_area.or_default(read_cap.granted_area());
         <span class="kw">let </span>new_read_cap = read_cap.delegate(<span class="kw-2">&amp;</span>user_secret, <span class="kw-2">&amp;</span>to, <span class="kw-2">&amp;</span>area)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>new_subspace_cap = <span class="kw">if let </span><span class="prelude-val">Some</span>(subspace_cap) = subspace_cap {
@@ -542,7 +542,7 @@
             </span>.secrets
             .get_user(cap.receiver())
             .ok_or(AuthError::MissingUserSecret(<span class="kw-2">*</span>cap.receiver()))<span class="question-mark">?</span>;
-        <span class="kw">let </span>area = restrict_area.with_default(cap.granted_area());
+        <span class="kw">let </span>area = restrict_area.or_default(cap.granted_area());
         <span class="kw">let </span>new_cap = cap.delegate(<span class="kw-2">&amp;</span>user_secret, <span class="kw-2">&amp;</span>to, <span class="kw-2">&amp;</span>area)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(CapabilityPack::Write(new_cap.into()))
     }

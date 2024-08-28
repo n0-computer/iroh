@@ -156,15 +156,60 @@
 <a href="#156" id="156">156</a>
 <a href="#157" id="157">157</a>
 <a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>iroh_base::rpc::{RpcError, RpcResult};
 <span class="kw">use </span>iroh_net::NodeId;
 <span class="kw">use </span>iroh_willow::{
-    form::{AuthForm, SerdeEntryOrForm},
+    form::{AuthForm, SerdeEntryForm},
     interest::{CapSelector, CapabilityPack, DelegateTo},
     proto::{
-        data_model::{<span class="self">self</span>, serde_encoding::SerdeEntry, AuthorisedEntry},
+        data_model::{
+            <span class="self">self</span>, serde_encoding::SerdeAuthorisedEntry, AuthorisedEntry, NamespaceId, Path,
+            SubspaceId,
+        },
         grouping::{<span class="self">self</span>, Range3d},
-        keys::{NamespaceId, NamespaceKind, UserId},
+        keys::{NamespaceKind, UserId},
         meadowcap::{<span class="self">self</span>, AccessMode, SecretKey},
     },
     session::{
@@ -183,14 +228,16 @@
 #[enum_conversions(<span class="kw">super</span>::Request)]
 #[rpc_requests(RpcService)]
 </span><span class="kw">pub enum </span>Request {
-    <span class="attr">#[rpc(response = RpcResult&lt;IngestEntryResponse&gt;)]
+    <span class="attr">#[rpc(response = RpcResult&lt;IngestEntrySuccess&gt;)]
     </span>IngestEntry(IngestEntryRequest),
-    <span class="attr">#[rpc(response = RpcResult&lt;InsertEntryResponse&gt;)]
+    <span class="attr">#[rpc(response = RpcResult&lt;InsertEntrySuccess&gt;)]
     </span>InsertEntry(InsertEntryRequest),
     <span class="attr">#[rpc(response = RpcResult&lt;InsertSecretResponse&gt;)]
     </span>InsertSecret(InsertSecretRequest),
     <span class="attr">#[try_server_streaming(create_error = RpcError, item_error = RpcError, item = GetEntriesResponse)]
     </span>GetEntries(GetEntriesRequest),
+    <span class="attr">#[rpc(response = RpcResult&lt;GetEntryResponse&gt;)]
+    </span>GetEntry(GetEntryRequest),
     <span class="attr">#[rpc(response = RpcResult&lt;CreateNamespaceResponse&gt;)]
     </span>CreateNamespace(CreateNamespaceRequest),
     <span class="attr">#[rpc(response = RpcResult&lt;CreateUserResponse&gt;)]
@@ -210,10 +257,11 @@
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[enum_conversions(<span class="kw">super</span>::Response)]
 </span><span class="kw">pub enum </span>Response {
-    IngestEntry(RpcResult&lt;IngestEntryResponse&gt;),
-    InsertEntry(RpcResult&lt;InsertEntryResponse&gt;),
+    IngestEntry(RpcResult&lt;IngestEntrySuccess&gt;),
+    InsertEntry(RpcResult&lt;InsertEntrySuccess&gt;),
     InsertSecret(RpcResult&lt;InsertSecretResponse&gt;),
     GetEntries(RpcResult&lt;GetEntriesResponse&gt;),
+    GetEntry(RpcResult&lt;GetEntryResponse&gt;),
     CreateNamespace(RpcResult&lt;CreateNamespaceResponse&gt;),
     CreateUser(RpcResult&lt;CreateUserResponse&gt;),
     DelegateCaps(RpcResult&lt;DelegateCapsResponse&gt;),
@@ -229,16 +277,37 @@
 }
 
 <span class="attr">#[derive(Debug, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>IngestEntryResponse;
-
-<span class="attr">#[derive(Debug, Serialize, Deserialize)]
 </span><span class="kw">pub struct </span>InsertEntryRequest {
-    <span class="kw">pub </span>entry: SerdeEntryOrForm,
+    <span class="kw">pub </span>entry: SerdeEntryForm,
     <span class="kw">pub </span>auth: AuthForm,
 }
 
 <span class="attr">#[derive(Debug, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>InsertEntryResponse;
+</span><span class="kw">pub enum </span>InsertEntrySuccess {
+    Inserted(<span class="attr">#[serde(with = <span class="string">"data_model::serde_encoding::authorised_entry"</span>)] </span>AuthorisedEntry),
+    Obsolete,
+}
+
+<span class="attr">#[derive(Debug, Serialize, Deserialize)]
+</span><span class="kw">pub enum </span>IngestEntrySuccess {
+    Inserted,
+    Obsolete,
+}
+
+<span class="kw">impl </span>InsertEntrySuccess {
+    <span class="doccomment">/// Returns the inserted entry, or an error if the entry was not inserted
+    /// because it is obsoleted by a newer entry.
+    </span><span class="kw">pub fn </span>inserted(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;AuthorisedEntry, EntryObsoleteError&gt; {
+        <span class="kw">match </span><span class="self">self </span>{
+            <span class="self">Self</span>::Inserted(entry) =&gt; <span class="prelude-val">Ok</span>(entry),
+            <span class="self">Self</span>::Obsolete =&gt; <span class="prelude-val">Err</span>(EntryObsoleteError),
+        }
+    }
+}
+
+<span class="attr">#[derive(Debug, thiserror::Error)]
+#[error(<span class="string">"The entry was not inserted because a newer entry exists."</span>)]
+</span><span class="kw">pub struct </span>EntryObsoleteError;
 
 <span class="attr">#[derive(Debug, Serialize, Deserialize)]
 </span><span class="kw">pub struct </span>InsertSecretRequest {
@@ -256,7 +325,22 @@
 }
 
 <span class="attr">#[derive(Debug, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>GetEntriesResponse(<span class="kw">pub </span>SerdeEntry);
+</span><span class="kw">pub struct </span>GetEntriesResponse(
+    <span class="attr">#[serde(with = <span class="string">"data_model::serde_encoding::authorised_entry"</span>)] </span><span class="kw">pub </span>AuthorisedEntry,
+);
+
+<span class="attr">#[derive(Debug, Serialize, Deserialize)]
+</span><span class="kw">pub struct </span>GetEntryRequest {
+    <span class="kw">pub </span>namespace: NamespaceId,
+    <span class="kw">pub </span>subspace: SubspaceId,
+    <span class="attr">#[serde(with = <span class="string">"data_model::serde_encoding::path"</span>)]
+    </span><span class="kw">pub </span>path: Path,
+}
+
+<span class="attr">#[derive(Debug, Serialize, Deserialize)]
+</span><span class="kw">pub struct </span>GetEntryResponse(
+    <span class="kw">pub </span><span class="prelude-ty">Option</span>&lt;SerdeAuthorisedEntry&gt;, <span class="comment">// #[serde(with = "data_model::serde_encoding::authorised_entry")] pub AuthorisedEntry,
+</span>);
 
 <span class="attr">#[derive(Debug, Serialize, Deserialize)]
 </span><span class="kw">pub struct </span>CreateNamespaceRequest {

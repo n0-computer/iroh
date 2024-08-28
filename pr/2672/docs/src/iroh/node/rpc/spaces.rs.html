@@ -162,11 +162,36 @@
 <a href="#162" id="162">162</a>
 <a href="#163" id="163">163</a>
 <a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::Stream;
 <span class="kw">use </span>futures_util::SinkExt;
 <span class="kw">use </span>futures_util::StreamExt;
 <span class="kw">use </span>iroh_base::rpc::{RpcError, RpcResult};
+<span class="kw">use </span>iroh_willow::form::EntryOrForm;
 <span class="kw">use </span>iroh_willow::Engine;
 <span class="kw">use </span>quic_rpc::server::{RpcChannel, RpcServerError};
 <span class="kw">use </span>tokio::sync::mpsc;
@@ -192,17 +217,30 @@
                 engine
                     .ingest_entry(req.authorised_entry)
                     .<span class="kw">await
-                    </span>.map(|<span class="kw">_</span>| IngestEntryResponse)
+                    </span>.map(|inserted| {
+                        <span class="kw">if </span>inserted {
+                            IngestEntrySuccess::Inserted
+                        } <span class="kw">else </span>{
+                            IngestEntrySuccess::Obsolete
+                        }
+                    })
                     .map_err(map_err)
             })
             .<span class="kw">await
         </span>}
         InsertEntry(msg) =&gt; {
             chan.rpc(msg, engine, |engine, req| <span class="kw">async move </span>{
+                <span class="kw">let </span>entry = EntryOrForm::Form(req.entry.into());
                 engine
-                    .insert_entry(req.entry, req.auth)
+                    .insert_entry(entry, req.auth)
                     .<span class="kw">await
-                    </span>.map(|<span class="kw">_</span>| InsertEntryResponse)
+                    </span>.map(|(entry, inserted)| {
+                        <span class="kw">if </span>inserted {
+                            InsertEntrySuccess::Inserted(entry)
+                        } <span class="kw">else </span>{
+                            InsertEntrySuccess::Obsolete
+                        }
+                    })
                     .map_err(map_err)
             })
             .<span class="kw">await
@@ -223,7 +261,17 @@
                     .get_entries(req.namespace, req.range)
                     .<span class="kw">await
                     </span>.map_err(map_err)<span class="question-mark">?</span>;
-                <span class="prelude-val">Ok</span>(stream.map(|res| res.map(|e| GetEntriesResponse(e.into())).map_err(map_err)))
+                <span class="prelude-val">Ok</span>(stream.map(|res| res.map(|e| GetEntriesResponse(e)).map_err(map_err)))
+            })
+            .<span class="kw">await
+        </span>}
+        GetEntry(msg) =&gt; {
+            chan.rpc(msg, engine, |engine, req| <span class="kw">async move </span>{
+                engine
+                    .get_entry(req.namespace, req.subspace, req.path)
+                    .<span class="kw">await
+                    </span>.map(|entry| GetEntryResponse(entry.map(Into::into)))
+                    .map_err(map_err)
             })
             .<span class="kw">await
         </span>}
