@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["area","area_of_interest","range_3d"],"struct":["SerdeArea","SerdeAreaOfInterest","SerdeRange3d"]};
+window.SIDEBAR_ITEMS = {"struct":["SerdeAreaOfInterest","SerdeRange3d"]};

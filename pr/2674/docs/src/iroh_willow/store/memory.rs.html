@@ -395,15 +395,15 @@
 };
 
 <span class="attr">#[derive(Debug, Clone, Default)]
-</span><span class="kw">pub struct </span>Store&lt;PS&gt; {
+</span><span class="kw">pub struct </span>Store {
     secrets: Rc&lt;RefCell&lt;SecretStore&gt;&gt;,
     entries: Rc&lt;RefCell&lt;EntryStore&gt;&gt;,
-    payloads: PS,
+    payloads: iroh_blobs::store::mem::Store,
     caps: Rc&lt;RefCell&lt;CapsStore&gt;&gt;,
 }
 
-<span class="kw">impl</span>&lt;PS: iroh_blobs::store::Store&gt; Store&lt;PS&gt; {
-    <span class="kw">pub fn </span>new(payloads: PS) -&gt; <span class="self">Self </span>{
+<span class="kw">impl </span>Store {
+    <span class="kw">pub fn </span>new(payloads: iroh_blobs::store::mem::Store) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             payloads,
             secrets: Default::default(),
@@ -413,10 +413,10 @@
     }
 }
 
-<span class="kw">impl</span>&lt;PS: iroh_blobs::store::Store&gt; traits::Storage <span class="kw">for </span>Store&lt;PS&gt; {
+<span class="kw">impl </span>traits::Storage <span class="kw">for </span>Store {
     <span class="kw">type </span>Entries = Rc&lt;RefCell&lt;EntryStore&gt;&gt;;
     <span class="kw">type </span>Secrets = Rc&lt;RefCell&lt;SecretStore&gt;&gt;;
-    <span class="kw">type </span>Payloads = PS;
+    <span class="kw">type </span>Payloads = iroh_blobs::store::mem::Store;
     <span class="kw">type </span>Caps = Rc&lt;RefCell&lt;CapsStore&gt;&gt;;
 
     <span class="kw">fn </span>entries(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="self">Self</span>::Entries {

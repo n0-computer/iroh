@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AuthForm","EntryOrForm","PayloadForm","SerdeEntryOrForm","SerdePayloadForm","SubspaceForm","TimestampForm"],"struct":["EntryForm","SerdeEntryForm"]};
+window.SIDEBAR_ITEMS = {"enum":["AuthForm","EntryOrForm","PayloadForm","SubspaceForm","TimestampForm"],"struct":["EntryForm"]};

@@ -175,7 +175,6 @@
 <a href="#175" id="175">175</a>
 <a href="#176" id="176">176</a>
 <a href="#177" id="177">177</a>
-<a href="#178" id="178">178</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The `session` module contains an implementation of the Willow General Purpose Sync Protocol
 //! (WGPS).
 //!
@@ -188,7 +187,6 @@
 </span><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>channels::ChannelSenders;
-<span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::sync::mpsc;
 
 <span class="kw">use crate</span>::{
@@ -244,7 +242,7 @@
 /// * [`Self::Continuous`] will enable the live data channels to synchronize updates in real-time.
 /// * [`Self::ReconcileOnce`] will run a single reconciliation of the interests declared at session
 ///   start, and then close the session.
-</span><span class="attr">#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+</span><span class="attr">#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 </span><span class="kw">pub enum </span>SessionMode {
     <span class="doccomment">/// Run a single, full reconciliation, and then quit.
     </span>ReconcileOnce,
@@ -260,7 +258,7 @@
 }
 
 <span class="doccomment">/// Options to initialize a session.
-</span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize)]
+</span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>SessionInit {
     <span class="doccomment">/// Selects the areas we wish to synchronize.
     </span><span class="kw">pub </span>interests: Interests,

@@ -855,7 +855,7 @@
 ///
 /// A [`NamespacePublicKey`] whose last bit is 1 is defined to be a communal namespace,
 /// and if the last bit is zero it is an owned namespace.
-</span><span class="attr">#[derive(Debug, Eq, PartialEq, Copy, Clone, Serialize, Deserialize)]
+</span><span class="attr">#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 </span><span class="kw">pub enum </span>NamespaceKind {
     <span class="doccomment">/// Communal namespace, needs [`super::meadowcap::CommunalCapability`] to authorizse.
     </span>Communal,

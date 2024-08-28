@@ -898,40 +898,6 @@
 <a href="#898" id="898">898</a>
 <a href="#899" id="899">899</a>
 <a href="#900" id="900">900</a>
-<a href="#901" id="901">901</a>
-<a href="#902" id="902">902</a>
-<a href="#903" id="903">903</a>
-<a href="#904" id="904">904</a>
-<a href="#905" id="905">905</a>
-<a href="#906" id="906">906</a>
-<a href="#907" id="907">907</a>
-<a href="#908" id="908">908</a>
-<a href="#909" id="909">909</a>
-<a href="#910" id="910">910</a>
-<a href="#911" id="911">911</a>
-<a href="#912" id="912">912</a>
-<a href="#913" id="913">913</a>
-<a href="#914" id="914">914</a>
-<a href="#915" id="915">915</a>
-<a href="#916" id="916">916</a>
-<a href="#917" id="917">917</a>
-<a href="#918" id="918">918</a>
-<a href="#919" id="919">919</a>
-<a href="#920" id="920">920</a>
-<a href="#921" id="921">921</a>
-<a href="#922" id="922">922</a>
-<a href="#923" id="923">923</a>
-<a href="#924" id="924">924</a>
-<a href="#925" id="925">925</a>
-<a href="#926" id="926">926</a>
-<a href="#927" id="927">927</a>
-<a href="#928" id="928">928</a>
-<a href="#929" id="929">929</a>
-<a href="#930" id="930">930</a>
-<a href="#931" id="931">931</a>
-<a href="#932" id="932">932</a>
-<a href="#933" id="933">933</a>
-<a href="#934" id="934">934</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
@@ -1241,29 +1207,6 @@
             })<span class="question-mark">?</span>;
         <span class="kw">let </span>docs_storage = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
 
-        <span class="attr">#[allow(deprecated)]
-        </span><span class="kw">let </span>v0 = blobs_store
-            .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
-                complete: root.join(<span class="string">"blobs.v0"</span>),
-                partial: root.join(<span class="string">"blobs-partial.v0"</span>),
-                meta: root.join(<span class="string">"blobs-meta.v0"</span>),
-            })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="attr">#[allow(deprecated)]
-        </span><span class="kw">let </span>v1 = blobs_store
-            .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
-                complete: root.join(<span class="string">"blobs.v1"</span>).join(<span class="string">"complete"</span>),
-                partial: root.join(<span class="string">"blobs.v1"</span>).join(<span class="string">"partial"</span>),
-                meta: root.join(<span class="string">"blobs.v1"</span>).join(<span class="string">"meta"</span>),
-            })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">if </span>v0 || v1 {
-            <span class="macro">tracing::warn!</span>(<span class="string">"Imported deprecated flat data. Future versions will stop supporting migrations from flat stores"</span>);
-            blobs_store
-                .update_inline_options(iroh_blobs::store::fs::InlineOptions::default(), <span class="bool-val">true</span>)
-                .<span class="kw">await</span><span class="question-mark">?</span>;
-        }
-
         <span class="kw">let </span>secret_key_path = IrohPaths::SecretKey.with_root(root);
         <span class="kw">let </span>secret_key = load_secret_key(secret_key_path).<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -1545,16 +1488,6 @@
         )
         .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="comment">// Spawn the willow engine.
-        // TODO: Allow to disable.
-        </span><span class="kw">let </span>blobs_store = <span class="self">self</span>.blobs_store.clone();
-        <span class="kw">let </span>create_store = <span class="kw">move </span>|| iroh_willow::store::memory::Store::new(blobs_store);
-        <span class="kw">let </span>willow = iroh_willow::Engine::spawn(
-            endpoint.clone(),
-            create_store,
-            iroh_willow::engine::AcceptOpts::default(),
-        );
-
         <span class="comment">// Initialize the internal RPC connection.
         </span><span class="kw">let </span>(internal_rpc, controller) = quic_rpc::transport::flume::connection::&lt;RpcService&gt;(<span class="number">32</span>);
         <span class="kw">let </span>internal_rpc = quic_rpc::transport::boxed::ServerEndpoint::new(internal_rpc);
@@ -1575,7 +1508,6 @@
             gossip,
             local_pool_handle: lp.handle().clone(),
             blob_batches: Default::default(),
-            willow,
         });
 
         <span class="kw">let </span>protocol_builder = ProtocolBuilder {

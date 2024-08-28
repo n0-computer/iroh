@@ -61,9 +61,6 @@
 <a href="#61" id="61">61</a>
 <a href="#62" id="62">62</a>
 <a href="#63" id="63">63</a>
-<a href="#64" id="64">64</a>
-<a href="#65" id="65">65</a>
-<a href="#66" id="66">66</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This defines the RPC protocol used for communication between a CLI and an iroh node.
 //!
 //! RPC is done using the [`quic-rpc`](https://docs.rs/quic-rpc) crate.
@@ -89,7 +86,6 @@
 <span class="kw">pub mod </span>gossip;
 <span class="kw">pub mod </span>net;
 <span class="kw">pub mod </span>node;
-<span class="kw">pub mod </span>spaces;
 <span class="kw">pub mod </span>tags;
 
 <span class="doccomment">/// The RPC service for the iroh provider process.
@@ -108,7 +104,6 @@
     Tags(tags::Request),
     Authors(authors::Request),
     Gossip(gossip::Request),
-    Spaces(spaces::Request),
 }
 
 <span class="doccomment">/// The response enum, listing all possible responses.
@@ -123,7 +118,6 @@
     Docs(docs::Response),
     Authors(authors::Response),
     Gossip(gossip::Response),
-    Spaces(spaces::Response),
 }
 
 <span class="kw">impl </span>quic_rpc::Service <span class="kw">for </span>RpcService {

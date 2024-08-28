@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["access_mode","mc_capability","mc_subspace_capability","read_authorisation"],"struct":["SerdeMcCapability","SerdeMcSubspaceCapability","SerdeReadAuthorisation"]};
+window.SIDEBAR_ITEMS = {"struct":["SerdeMcCapability","SerdeMcSubspaceCapability","SerdeReadAuthorisation"]};

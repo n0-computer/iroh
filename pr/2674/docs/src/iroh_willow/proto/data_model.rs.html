@@ -254,71 +254,6 @@
 <a href="#254" id="254">254</a>
 <a href="#255" id="255">255</a>
 <a href="#256" id="256">256</a>
-<a href="#257" id="257">257</a>
-<a href="#258" id="258">258</a>
-<a href="#259" id="259">259</a>
-<a href="#260" id="260">260</a>
-<a href="#261" id="261">261</a>
-<a href="#262" id="262">262</a>
-<a href="#263" id="263">263</a>
-<a href="#264" id="264">264</a>
-<a href="#265" id="265">265</a>
-<a href="#266" id="266">266</a>
-<a href="#267" id="267">267</a>
-<a href="#268" id="268">268</a>
-<a href="#269" id="269">269</a>
-<a href="#270" id="270">270</a>
-<a href="#271" id="271">271</a>
-<a href="#272" id="272">272</a>
-<a href="#273" id="273">273</a>
-<a href="#274" id="274">274</a>
-<a href="#275" id="275">275</a>
-<a href="#276" id="276">276</a>
-<a href="#277" id="277">277</a>
-<a href="#278" id="278">278</a>
-<a href="#279" id="279">279</a>
-<a href="#280" id="280">280</a>
-<a href="#281" id="281">281</a>
-<a href="#282" id="282">282</a>
-<a href="#283" id="283">283</a>
-<a href="#284" id="284">284</a>
-<a href="#285" id="285">285</a>
-<a href="#286" id="286">286</a>
-<a href="#287" id="287">287</a>
-<a href="#288" id="288">288</a>
-<a href="#289" id="289">289</a>
-<a href="#290" id="290">290</a>
-<a href="#291" id="291">291</a>
-<a href="#292" id="292">292</a>
-<a href="#293" id="293">293</a>
-<a href="#294" id="294">294</a>
-<a href="#295" id="295">295</a>
-<a href="#296" id="296">296</a>
-<a href="#297" id="297">297</a>
-<a href="#298" id="298">298</a>
-<a href="#299" id="299">299</a>
-<a href="#300" id="300">300</a>
-<a href="#301" id="301">301</a>
-<a href="#302" id="302">302</a>
-<a href="#303" id="303">303</a>
-<a href="#304" id="304">304</a>
-<a href="#305" id="305">305</a>
-<a href="#306" id="306">306</a>
-<a href="#307" id="307">307</a>
-<a href="#308" id="308">308</a>
-<a href="#309" id="309">309</a>
-<a href="#310" id="310">310</a>
-<a href="#311" id="311">311</a>
-<a href="#312" id="312">312</a>
-<a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a>
-<a href="#315" id="315">315</a>
-<a href="#316" id="316">316</a>
-<a href="#317" id="317">317</a>
-<a href="#318" id="318">318</a>
-<a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Types for the basic data model of Willow.
 
 </span><span class="kw">use </span>iroh_base::hash::Hash;
@@ -548,96 +483,31 @@
 }
 
 <span class="kw">pub mod </span>serde_encoding {
-    <span class="kw">use </span>serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+    <span class="kw">use </span>serde::{de, Deserialize, Deserializer, Serialize};
 
     <span class="kw">use </span><span class="kw">crate</span>::util::codec2::{from_bytes, to_vec};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
-    <span class="kw">pub mod </span>path {
-
-        <span class="kw">use super</span>::<span class="kw-2">*</span>;
-        <span class="kw">pub fn </span>serialize&lt;S: Serializer&gt;(path: <span class="kw-2">&amp;</span>Path, serializer: S) -&gt; <span class="prelude-ty">Result</span>&lt;S::Ok, S::Error&gt; {
-            to_vec(path).serialize(serializer)
-        }
-
-        <span class="kw">pub fn </span>deserialize&lt;<span class="lifetime">'de</span>, D&gt;(deserializer: D) -&gt; <span class="prelude-ty">Result</span>&lt;Path, D::Error&gt;
-        <span class="kw">where
-            </span>D: Deserializer&lt;<span class="lifetime">'de</span>&gt;,
-        {
-            <span class="kw">let </span>bytes: Vec&lt;u8&gt; = Deserialize::deserialize(deserializer)<span class="question-mark">?</span>;
-            <span class="kw">let </span>decoded = from_bytes(<span class="kw-2">&amp;</span>bytes).map_err(de::Error::custom)<span class="question-mark">?</span>;
-            <span class="prelude-val">Ok</span>(decoded)
-        }
-    }
-
-    <span class="kw">pub mod </span>entry {
-        <span class="kw">use super</span>::<span class="kw-2">*</span>;
-        <span class="kw">pub fn </span>serialize&lt;S: Serializer&gt;(entry: <span class="kw-2">&amp;</span>Entry, serializer: S) -&gt; <span class="prelude-ty">Result</span>&lt;S::Ok, S::Error&gt; {
-            to_vec(entry).serialize(serializer)
-        }
-
-        <span class="kw">pub fn </span>deserialize&lt;<span class="lifetime">'de</span>, D&gt;(deserializer: D) -&gt; <span class="prelude-ty">Result</span>&lt;Entry, D::Error&gt;
-        <span class="kw">where
-            </span>D: Deserializer&lt;<span class="lifetime">'de</span>&gt;,
-        {
-            <span class="kw">let </span>bytes: Vec&lt;u8&gt; = Deserialize::deserialize(deserializer)<span class="question-mark">?</span>;
-            <span class="kw">let </span>decoded = from_bytes(<span class="kw-2">&amp;</span>bytes).map_err(de::Error::custom)<span class="question-mark">?</span>;
-            <span class="prelude-val">Ok</span>(decoded)
-        }
-    }
-
     <span class="doccomment">/// [`Entry`] wrapper that can be serialized with [`serde`].
-    </span><span class="attr">#[derive(
-        Debug,
-        Clone,
-        derive_more::From,
-        derive_more::Into,
-        derive_more::Deref,
-        Serialize,
-        Deserialize,
-    )]
-    </span><span class="kw">pub struct </span>SerdeEntry(<span class="attr">#[serde(with = <span class="string">"entry"</span>)] </span><span class="kw">pub </span>Entry);
+    </span><span class="attr">#[derive(Debug, Clone, derive_more::From, derive_more::Into, derive_more::Deref)]
+    </span><span class="kw">pub struct </span>SerdeEntry(<span class="kw">pub </span>Entry);
 
-    <span class="kw">pub mod </span>authorised_entry {
-        <span class="kw">use </span><span class="kw">crate</span>::proto::meadowcap::serde_encoding::SerdeMcCapability;
-        <span class="kw">use </span>keys::UserSignature;
-
-        <span class="kw">use super</span>::<span class="kw-2">*</span>;
-        <span class="kw">pub fn </span>serialize&lt;S: Serializer&gt;(
-            entry: <span class="kw-2">&amp;</span>AuthorisedEntry,
-            serializer: S,
-        ) -&gt; <span class="prelude-ty">Result</span>&lt;S::Ok, S::Error&gt; {
-            <span class="kw">let </span>(entry, token) = entry.clone().into_parts();
-            (
-                SerdeEntry(entry),
-                SerdeMcCapability(token.capability),
-                token.signature,
-            )
-                .serialize(serializer)
-        }
-
-        <span class="kw">pub fn </span>deserialize&lt;<span class="lifetime">'de</span>, D&gt;(deserializer: D) -&gt; <span class="prelude-ty">Result</span>&lt;AuthorisedEntry, D::Error&gt;
-        <span class="kw">where
-            </span>D: Deserializer&lt;<span class="lifetime">'de</span>&gt;,
-        {
-            <span class="kw">let </span>(entry, capability, signature): (SerdeEntry, SerdeMcCapability, UserSignature) =
-                Deserialize::deserialize(deserializer)<span class="question-mark">?</span>;
-            <span class="kw">let </span>token = AuthorisationToken::new(capability.<span class="number">0</span>, signature);
-            <span class="prelude-val">Ok</span>(AuthorisedEntry::new(entry.<span class="number">0</span>, token).map_err(de::Error::custom)<span class="question-mark">?</span>)
+    <span class="kw">impl </span>Serialize <span class="kw">for </span>SerdeEntry {
+        <span class="kw">fn </span>serialize&lt;S: serde::Serializer&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, serializer: S) -&gt; <span class="prelude-ty">Result</span>&lt;S::Ok, S::Error&gt; {
+            to_vec(<span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>).serialize(serializer)
         }
     }
 
-    <span class="doccomment">/// [`AuthorisedEntry`] wrapper that can be serialized with [`serde`].
-    </span><span class="attr">#[derive(
-        Debug,
-        Clone,
-        derive_more::From,
-        derive_more::Into,
-        derive_more::Deref,
-        Serialize,
-        Deserialize,
-    )]
-    </span><span class="kw">pub struct </span>SerdeAuthorisedEntry(<span class="attr">#[serde(with = <span class="string">"authorised_entry"</span>)] </span><span class="kw">pub </span>AuthorisedEntry);
+    <span class="kw">impl</span>&lt;<span class="lifetime">'de</span>&gt; Deserialize&lt;<span class="lifetime">'de</span>&gt; <span class="kw">for </span>SerdeEntry {
+        <span class="kw">fn </span>deserialize&lt;D&gt;(deserializer: D) -&gt; <span class="prelude-ty">Result</span>&lt;SerdeEntry, D::Error&gt;
+        <span class="kw">where
+            </span>D: Deserializer&lt;<span class="lifetime">'de</span>&gt;,
+        {
+            <span class="kw">let </span>bytes: Vec&lt;u8&gt; = Deserialize::deserialize(deserializer)<span class="question-mark">?</span>;
+            <span class="kw">let </span>decoded = from_bytes(<span class="kw-2">&amp;</span>bytes).map_err(de::Error::custom)<span class="question-mark">?</span>;
+            <span class="prelude-val">Ok</span>(<span class="self">Self</span>(decoded))
+        }
+    }
 }
 </code></pre></div></section></main></body></html>

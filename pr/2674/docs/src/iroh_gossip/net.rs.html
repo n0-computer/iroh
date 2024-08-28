@@ -998,6 +998,9 @@
 <a href="#998" id="998">998</a>
 <a href="#999" id="999">999</a>
 <a href="#1000" id="1000">1000</a>
+<a href="#1001" id="1001">1001</a>
+<a href="#1002" id="1002">1002</a>
+<a href="#1003" id="1003">1003</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Networking for the `iroh-gossip` protocol
 
 </span><span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
@@ -1840,14 +1843,17 @@
         rng: <span class="kw-2">&amp;mut </span>rand_chacha::ChaCha12Rng,
         relay_map: RelayMap,
     ) -&gt; anyhow::Result&lt;Endpoint&gt; {
-        Endpoint::builder()
+        <span class="kw">let </span>ep = Endpoint::builder()
             .secret_key(SecretKey::generate_with_rng(rng))
             .alpns(<span class="macro">vec!</span>[GOSSIP_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
             .bind(<span class="number">0</span>)
-            .<span class="kw">await
-    </span>}
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        ep.watch_home_relay().next().<span class="kw">await</span>;
+        <span class="prelude-val">Ok</span>(ep)
+    }
 
     <span class="kw">async fn </span>endpoint_loop(
         endpoint: Endpoint,
