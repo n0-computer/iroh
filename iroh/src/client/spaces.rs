@@ -13,10 +13,10 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     pin::Pin,
-    task::{Context, Poll},
+    task::{ready, Context, Poll},
 };
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use futures_util::{Sink, SinkExt};
@@ -42,10 +42,13 @@ use iroh_willow::{
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
-use tokio_stream::StreamMap;
+use tokio_stream::{StreamMap, StreamNotifyClose};
 
 use crate::client::RpcClient;
+
 use crate::rpc_protocol::spaces::*;
+
+pub use crate::rpc_protocol::spaces::PayloadForm;
 
 /// Iroh Willow client.
 #[derive(Debug, Clone, RefCast)]
@@ -98,10 +101,7 @@ impl Client {
     }
 
     /// Import a ticket and start to synchronize.
-    pub async fn import_and_sync(
-        &self,
-        ticket: SpaceTicket,
-    ) -> Result<(Space, MergedIntentHandle)> {
+    pub async fn import_and_sync(&self, ticket: SpaceTicket) -> Result<(Space, SyncIntentSet)> {
         if ticket.caps.is_empty() {
             anyhow::bail!("Invalid ticket: Does not include any capabilities");
         }
@@ -114,19 +114,19 @@ impl Client {
         self.import_caps(ticket.caps).await?;
         let interests = Interests::builder().add_full_cap(CapSelector::any(namespace));
         let init = SessionInit::reconcile_once(interests);
-        let mut intents = MergedIntentHandle::default();
+        let mut intents = SyncIntentSet::default();
         for addr in ticket.nodes {
             let node_id = addr.node_id;
             self.net().add_node_addr(addr).await?;
             let intent = self.sync_with_peer(node_id, init.clone()).await?;
-            intents.insert(node_id, intent);
+            intents.insert(node_id, intent)?;
         }
         let space = Space::new(self.rpc.clone(), namespace);
         Ok((space, intents))
     }
 
     /// Synchronize with a peer.
-    pub async fn sync_with_peer(&self, peer: NodeId, init: SessionInit) -> Result<IntentHandle> {
+    pub async fn sync_with_peer(&self, peer: NodeId, init: SessionInit) -> Result<SyncIntent> {
         let req = SyncWithPeerRequest { peer, init };
         let (update_tx, event_rx) = self.rpc.bidi(req).await?;
 
@@ -147,7 +147,7 @@ impl Client {
             },
         }));
 
-        Ok(IntentHandle::new(update_tx, event_rx))
+        Ok(SyncIntent::new(update_tx, event_rx, Default::default()))
     }
 
     /// Import a secret into the Willow store.
@@ -304,7 +304,7 @@ impl Space {
         &self,
         node: NodeId,
         areas: AreaOfInterestSelector,
-    ) -> Result<IntentHandle> {
+    ) -> Result<SyncIntent> {
         let cap = CapSelector::any(self.namespace_id);
         let interests = Interests::builder().add(cap, areas);
         let init = SessionInit::reconcile_once(interests);
@@ -324,7 +324,7 @@ impl Space {
         &self,
         node: NodeId,
         areas: AreaOfInterestSelector,
-    ) -> Result<IntentHandle> {
+    ) -> Result<SyncIntent> {
         let cap = CapSelector::any(self.namespace_id);
         let interests = Interests::builder().add(cap, areas);
         let init = SessionInit::continuous(interests);
@@ -420,11 +420,12 @@ impl EntryForm {
 // to cross the RPC boundary. Maybe look into making the main iroh_willow Error type
 // serializable instead.
 #[derive(derive_more::Debug)]
-pub struct IntentHandle {
+pub struct SyncIntent {
     #[debug("UpdateSender")]
     update_tx: UpdateSender,
     #[debug("EventReceiver")]
     event_rx: EventReceiver,
+    state: SyncProgress,
 }
 
 /// Sends updates into a reconciliation intent.
@@ -434,19 +435,20 @@ pub type UpdateSender = Pin<Box<dyn Sink<IntentUpdate, Error = anyhow::Error> + 
 
 /// Receives events for a reconciliation intent.
 ///
-/// Can be obtained from [`IntentHandle::split`].
+/// Can be obtained from [`SyncIntent::split`].
 pub type EventReceiver = Pin<Box<dyn Stream<Item = Event> + Send + 'static>>;
 
-impl IntentHandle {
-    /// Creates a new `IntentHandle` with the given update sender and event receiver.
-    fn new(update_tx: UpdateSender, event_rx: EventReceiver) -> Self {
+impl SyncIntent {
+    /// Creates a new `SyncIntent` with the given update sender and event receiver.
+    fn new(update_tx: UpdateSender, event_rx: EventReceiver, state: SyncProgress) -> Self {
         Self {
             update_tx,
             event_rx,
+            state,
         }
     }
 
-    /// Splits the `IntentHandle` into a update sender sink and event receiver stream.
+    /// Splits the `SyncIntent` into a update sender sink and event receiver stream.
     ///
     /// The intent will be dropped once both the sender and receiver are dropped.
     pub fn split(self) -> (UpdateSender, EventReceiver) {
@@ -461,12 +463,19 @@ impl IntentHandle {
     /// Note that successful completion of this future does not guarantee that all interests were
     /// fulfilled.
     pub async fn complete(&mut self) -> Result<Completion> {
-        complete(&mut self.event_rx).await
+        let mut state = SyncProgress::default();
+        while let Some(event) = self.event_rx.next().await {
+            state.handle_event(&event);
+            if state.is_ready() {
+                break;
+            }
+        }
+        state.into_completion()
     }
 
     /// Submit new synchronisation interests into the session.
     ///
-    /// The `IntentHandle` will then receive events for these interests in addition to already
+    /// The `SyncIntent` will then receive events for these interests in addition to already
     /// submitted interests.
     pub async fn add_interests(&mut self, interests: impl Into<Interests>) -> Result<()> {
         self.update_tx
@@ -482,95 +491,154 @@ impl IntentHandle {
     // }
 }
 
-impl Stream for IntentHandle {
+impl Stream for SyncIntent {
     type Item = Event;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.event_rx).poll_next(cx)
+        Poll::Ready(match ready!(Pin::new(&mut self.event_rx).poll_next(cx)) {
+            None => None,
+            Some(event) => {
+                self.state.handle_event(&event);
+                Some(event)
+            }
+        })
     }
 }
 
-async fn complete(event_rx: &mut EventReceiver) -> Result<Completion> {
-    let mut complete = false;
-    let mut partial = false;
-    while let Some(event) = event_rx.next().await {
+/// Completion state for a [`SyncIntent`].
+#[derive(Debug, Default)]
+pub struct SyncProgress {
+    partial: bool,
+    complete: bool,
+    failed: Option<String>,
+}
+impl SyncProgress {
+    fn handle_event(&mut self, event: &Event) {
         match event {
-            Event::ReconciledAll => complete = true,
-            Event::Reconciled { .. } => partial = true,
-            Event::Abort { error } => return Err(anyhow::anyhow!(error)),
+            Event::ReconciledAll => self.complete = true,
+            Event::Reconciled { .. } => self.partial = true,
+            Event::Abort { error } => self.failed = Some(error.clone()),
             _ => {}
         }
     }
-    let completion = if complete {
-        Completion::Complete
-    } else if partial {
-        Completion::Partial
-    } else {
-        Completion::Nothing
-    };
 
-    Ok(completion)
+    fn is_ready(&self) -> bool {
+        self.complete == true || self.failed.is_some()
+    }
+
+    fn into_completion(self) -> Result<Completion> {
+        if let Some(error) = self.failed {
+            Err(anyhow!(error))
+        } else if self.complete {
+            Ok(Completion::Complete)
+        } else if self.partial {
+            Ok(Completion::Partial)
+        } else {
+            Ok(Completion::Nothing)
+        }
+    }
 }
 
 /// Merges synchronisation intent handles into one struct.
 #[derive(Default, derive_more::Debug)]
 #[debug("MergedIntentHandle({:?})", self.event_rx.keys().collect::<Vec<_>>())]
-pub struct MergedIntentHandle {
-    event_rx: StreamMap<NodeId, EventReceiver>,
-    update_tx: HashMap<NodeId, UpdateSender>,
+pub struct SyncIntentSet {
+    event_rx: StreamMap<NodeId, StreamNotifyClose<EventReceiver>>,
+    intents: HashMap<NodeId, SyncIntentState>,
 }
 
-impl MergedIntentHandle {
-    /// Add an intent to this merged handle.
-    pub fn insert(&mut self, peer: NodeId, handle: IntentHandle) {
-        let (update_tx, event_rx) = handle.split();
-        self.event_rx.insert(peer, event_rx);
-        self.update_tx.insert(peer, update_tx);
+#[derive(derive_more::Debug)]
+struct SyncIntentState {
+    #[debug("UpdateSender")]
+    update_tx: UpdateSender,
+    state: SyncProgress,
+}
+
+impl SyncIntentSet {
+    /// Add a sync intent to the set.
+    ///
+    /// Returns an error if there is already a sync intent for this peer in the set.
+    pub fn insert(&mut self, peer: NodeId, handle: SyncIntent) -> Result<(), IntentExistsError> {
+        if self.intents.contains_key(&peer) {
+            Err(IntentExistsError(peer))
+        } else {
+            let SyncIntent {
+                update_tx,
+                event_rx,
+                state,
+            } = handle;
+            self.event_rx.insert(peer, StreamNotifyClose::new(event_rx));
+            self.intents
+                .insert(peer, SyncIntentState { update_tx, state });
+            Ok(())
+        }
+    }
+
+    /// Removes a sync intent from the set.
+    pub fn remove(&mut self, peer: &NodeId) -> Option<SyncIntent> {
+        self.event_rx.remove(peer).and_then(|event_rx| {
+            self.intents.remove(peer).map(|state| {
+                SyncIntent::new(
+                    state.update_tx,
+                    event_rx.into_inner().expect("unreachable"),
+                    state.state,
+                )
+            })
+        })
     }
 
     /// Submit new synchronisation interests into all sessions.
     pub async fn add_interests(&mut self, interests: impl Into<Interests>) -> Result<()> {
         let interests: Interests = interests.into();
-        let futs = self
-            .update_tx
-            .values_mut()
-            .map(|tx| tx.send(IntentUpdate::AddInterests(interests.clone())));
+        let futs = self.intents.values_mut().map(|intent| {
+            intent
+                .update_tx
+                .send(IntentUpdate::AddInterests(interests.clone()))
+        });
         futures_buffered::try_join_all(futs).await?;
         Ok(())
     }
 
     /// Wait for all intents to complete.
     pub async fn complete_all(mut self) -> HashMap<NodeId, Result<Completion>> {
-        let streams = self.event_rx.iter_mut();
-        let futs =
-            streams.map(|(node_id, stream)| async move { (*node_id, complete(stream).await) });
+        let futs = self.intents.drain().map(|(node_id, state)| {
+            let event_rx = self
+                .event_rx
+                .remove(&node_id)
+                .expect("unreachable")
+                .into_inner()
+                .expect("unreachable");
+            async move {
+                let res = SyncIntent::new(state.update_tx, event_rx, state.state)
+                    .complete()
+                    .await;
+                (node_id, res)
+            }
+        });
         let res = futures_buffered::join_all(futs).await;
         res.into_iter().collect()
     }
 }
 
-impl Stream for MergedIntentHandle {
+impl Stream for SyncIntentSet {
     type Item = (NodeId, Event);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.event_rx).poll_next(cx)
-    }
-}
-
-/// Options for setting the payload on the a new entry.
-#[derive(Debug, Serialize, Deserialize)]
-pub enum PayloadForm {
-    /// Make sure the hash is available in the blob store, and use the length from the blob store.
-    Checked(Hash),
-    /// Insert with the specified hash and length, without checking if the blob is in the local blob store.
-    Unchecked(Hash, u64),
-}
-
-impl From<PayloadForm> for iroh_willow::form::PayloadForm {
-    fn from(value: PayloadForm) -> Self {
-        match value {
-            PayloadForm::Checked(hash) => Self::Hash(hash),
-            PayloadForm::Unchecked(hash, len) => Self::HashUnchecked(hash, len),
+        loop {
+            match ready!(Pin::new(&mut self.event_rx).poll_next(cx)) {
+                None => break Poll::Ready(None),
+                Some((peer, Some(event))) => break Poll::Ready(Some((peer, event))),
+                Some((peer, None)) => {
+                    self.intents.remove(&peer);
+                    self.event_rx.remove(&peer);
+                    continue;
+                }
+            }
         }
     }
 }
+
+/// Error returned when trying to insert a [`SyncIntent] into a [`SyncIntentSet] for a peer that is already in the set.
+#[derive(Debug, thiserror::Error)]
+#[error("The set already contains a sync intent for this peer.")]
+pub struct IntentExistsError(pub NodeId);

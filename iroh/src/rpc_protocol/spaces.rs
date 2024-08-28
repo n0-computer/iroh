@@ -1,4 +1,5 @@
 use iroh_base::rpc::{RpcError, RpcResult};
+use iroh_blobs::Hash;
 use iroh_net::NodeId;
 use iroh_willow::{
     form::{AuthForm, SubspaceForm, TimestampForm},
@@ -20,8 +21,6 @@ use iroh_willow::{
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
-
-use crate::client::spaces::PayloadForm;
 
 use super::RpcService;
 
@@ -228,6 +227,24 @@ impl From<FullEntryForm> for iroh_willow::form::EntryForm {
             path: value.path,
             timestamp: value.timestamp,
             payload: value.payload.into(),
+        }
+    }
+}
+
+/// Options for setting the payload on the a new entry.
+#[derive(Debug, Serialize, Deserialize)]
+pub enum PayloadForm {
+    /// Make sure the hash is available in the blob store, and use the length from the blob store.
+    Checked(Hash),
+    /// Insert with the specified hash and length, without checking if the blob is in the local blob store.
+    Unchecked(Hash, u64),
+}
+
+impl From<PayloadForm> for iroh_willow::form::PayloadForm {
+    fn from(value: PayloadForm) -> Self {
+        match value {
+            PayloadForm::Checked(hash) => Self::Hash(hash),
+            PayloadForm::Unchecked(hash, len) => Self::HashUnchecked(hash, len),
         }
     }
 }
