@@ -303,7 +303,7 @@ pub mod serde_encoding {
             let (entry, capability, signature): (SerdeEntry, SerdeMcCapability, UserSignature) =
                 Deserialize::deserialize(deserializer)?;
             let token = AuthorisationToken::new(capability.0, signature);
-            Ok(AuthorisedEntry::new(entry.0, token).map_err(de::Error::custom)?)
+            AuthorisedEntry::new(entry.0, token).map_err(de::Error::custom)
         }
     }
 

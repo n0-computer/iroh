@@ -154,7 +154,7 @@ impl<S: Storage> Auth<S> {
             McCapability::new_owned(namespace_key, &namespace_secret, user_key, AccessMode::Read)?
         };
         // TODO: Subspace capability.
-        let pack = CapabilityPack::Read(ReadAuthorisation::new(cap, None).into());
+        let pack = CapabilityPack::Read(ReadAuthorisation::new(cap, None));
         Ok(pack)
     }
 
@@ -177,7 +177,7 @@ impl<S: Storage> Auth<S> {
                 AccessMode::Write,
             )?
         };
-        let pack = CapabilityPack::Write(cap.into());
+        let pack = CapabilityPack::Write(cap);
         Ok(pack)
     }
 
@@ -237,7 +237,7 @@ impl<S: Storage> Auth<S> {
             None
         };
         let pack =
-            CapabilityPack::Read(ReadAuthorisation::new(new_read_cap, new_subspace_cap).into());
+            CapabilityPack::Read(ReadAuthorisation::new(new_read_cap, new_subspace_cap));
         Ok(pack)
     }
 
@@ -254,7 +254,7 @@ impl<S: Storage> Auth<S> {
             .ok_or(AuthError::MissingUserSecret(*cap.receiver()))?;
         let area = restrict_area.or_default(cap.granted_area());
         let new_cap = cap.delegate(&user_secret, &to, &area)?;
-        Ok(CapabilityPack::Write(new_cap.into()))
+        Ok(CapabilityPack::Write(new_cap))
     }
 }
 

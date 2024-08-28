@@ -7,6 +7,8 @@
 //!
 //! [Willow]: https://willowprotocol.org/
 
+// TODO: Reexport everything that is needed from iroh_willow.
+
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -196,10 +198,7 @@ impl Space {
             payload,
         };
         let auth = entry.auth;
-        let req = InsertEntryRequest {
-            entry: form.into(),
-            auth,
-        };
+        let req = InsertEntryRequest { entry: form, auth };
         let res = self.rpc.rpc(req).await??;
         Ok(res)
     }

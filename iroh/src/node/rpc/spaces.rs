@@ -73,7 +73,7 @@ pub(crate) async fn handle_rpc_request(
                     .get_entries(req.namespace, req.range)
                     .await
                     .map_err(map_err)?;
-                Ok(stream.map(|res| res.map(|e| GetEntriesResponse(e)).map_err(map_err)))
+                Ok(stream.map(|res| res.map(GetEntriesResponse).map_err(map_err)))
             })
             .await
         }
