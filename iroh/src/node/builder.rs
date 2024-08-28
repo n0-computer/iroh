@@ -773,6 +773,10 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
             self = self.accept(DOCS_ALPN, Arc::new(docs));
         }
 
+        // TODO: Make willow optional.
+        let willow_engine = self.inner.willow.clone();
+        self = self.accept(iroh_willow::ALPN, Arc::new(willow_engine));
+
         self
     }
 

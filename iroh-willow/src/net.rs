@@ -476,7 +476,7 @@ mod tests {
 
         let cap_for_betty = handle_alfie
             .delegate_caps(
-                CapSelector::widest(namespace_id),
+                CapSelector::any(namespace_id),
                 AccessMode::Write,
                 DelegateTo::new(user_betty, RestrictArea::None),
             )
@@ -607,7 +607,7 @@ mod tests {
 
         let cap_for_betty = handle_alfie
             .delegate_caps(
-                CapSelector::widest(namespace_id),
+                CapSelector::any(namespace_id),
                 AccessMode::Write,
                 DelegateTo::new(user_betty, RestrictArea::None),
             )
@@ -778,6 +778,7 @@ mod tests {
         let entries: Result<BTreeSet<_>> = store
             .get_entries(namespace, Range3d::new_full())
             .await?
+            .map(|entry| entry.map(|entry| entry.into_parts().0))
             .try_collect()
             .await;
         entries
@@ -804,7 +805,7 @@ mod tests {
             };
             let (entry, inserted) = handle.insert_entry(entry, AuthForm::Any(user_id)).await?;
             assert!(inserted);
-            track_entries.extend([entry]);
+            track_entries.extend([entry.into_parts().0]);
         }
         Ok(())
     }

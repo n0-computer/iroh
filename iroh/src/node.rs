@@ -498,6 +498,11 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             }
         };
 
+        // Shutdown willow gracefully.
+        if let Err(error) = self.willow.clone().shutdown().await {
+            warn!(?error, "Error while shutting down willow");
+        }
+
         // We ignore all errors during shutdown.
         let _ = tokio::join!(
             // Close the endpoint.

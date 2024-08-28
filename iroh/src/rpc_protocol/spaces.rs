@@ -1,12 +1,15 @@
 use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_net::NodeId;
 use iroh_willow::{
-    form::{AuthForm, SerdeEntryOrForm},
+    form::{AuthForm, SerdeEntryForm},
     interest::{CapSelector, CapabilityPack, DelegateTo},
     proto::{
-        data_model::{self, serde_encoding::SerdeEntry, AuthorisedEntry},
+        data_model::{
+            self, serde_encoding::SerdeAuthorisedEntry, AuthorisedEntry, NamespaceId, Path,
+            SubspaceId,
+        },
         grouping::{self, Range3d},
-        keys::{NamespaceId, NamespaceKind, UserId},
+        keys::{NamespaceKind, UserId},
         meadowcap::{self, AccessMode, SecretKey},
     },
     session::{
@@ -25,14 +28,16 @@ use super::RpcService;
 #[enum_conversions(super::Request)]
 #[rpc_requests(RpcService)]
 pub enum Request {
-    #[rpc(response = RpcResult<IngestEntryResponse>)]
+    #[rpc(response = RpcResult<IngestEntrySuccess>)]
     IngestEntry(IngestEntryRequest),
-    #[rpc(response = RpcResult<InsertEntryResponse>)]
+    #[rpc(response = RpcResult<InsertEntrySuccess>)]
     InsertEntry(InsertEntryRequest),
     #[rpc(response = RpcResult<InsertSecretResponse>)]
     InsertSecret(InsertSecretRequest),
     #[try_server_streaming(create_error = RpcError, item_error = RpcError, item = GetEntriesResponse)]
     GetEntries(GetEntriesRequest),
+    #[rpc(response = RpcResult<GetEntryResponse>)]
+    GetEntry(GetEntryRequest),
     #[rpc(response = RpcResult<CreateNamespaceResponse>)]
     CreateNamespace(CreateNamespaceRequest),
     #[rpc(response = RpcResult<CreateUserResponse>)]
@@ -52,10 +57,11 @@ pub enum Request {
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[enum_conversions(super::Response)]
 pub enum Response {
-    IngestEntry(RpcResult<IngestEntryResponse>),
-    InsertEntry(RpcResult<InsertEntryResponse>),
+    IngestEntry(RpcResult<IngestEntrySuccess>),
+    InsertEntry(RpcResult<InsertEntrySuccess>),
     InsertSecret(RpcResult<InsertSecretResponse>),
     GetEntries(RpcResult<GetEntriesResponse>),
+    GetEntry(RpcResult<GetEntryResponse>),
     CreateNamespace(RpcResult<CreateNamespaceResponse>),
     CreateUser(RpcResult<CreateUserResponse>),
     DelegateCaps(RpcResult<DelegateCapsResponse>),
@@ -71,16 +77,37 @@ pub struct IngestEntryRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct IngestEntryResponse;
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct InsertEntryRequest {
-    pub entry: SerdeEntryOrForm,
+    pub entry: SerdeEntryForm,
     pub auth: AuthForm,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct InsertEntryResponse;
+pub enum InsertEntrySuccess {
+    Inserted(#[serde(with = "data_model::serde_encoding::authorised_entry")] AuthorisedEntry),
+    Obsolete,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum IngestEntrySuccess {
+    Inserted,
+    Obsolete,
+}
+
+impl InsertEntrySuccess {
+    /// Returns the inserted entry, or an error if the entry was not inserted
+    /// because it is obsoleted by a newer entry.
+    pub fn inserted(self) -> Result<AuthorisedEntry, EntryObsoleteError> {
+        match self {
+            Self::Inserted(entry) => Ok(entry),
+            Self::Obsolete => Err(EntryObsoleteError),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("The entry was not inserted because a newer entry exists.")]
+pub struct EntryObsoleteError;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InsertSecretRequest {
@@ -98,7 +125,22 @@ pub struct GetEntriesRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct GetEntriesResponse(pub SerdeEntry);
+pub struct GetEntriesResponse(
+    #[serde(with = "data_model::serde_encoding::authorised_entry")] pub AuthorisedEntry,
+);
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GetEntryRequest {
+    pub namespace: NamespaceId,
+    pub subspace: SubspaceId,
+    #[serde(with = "data_model::serde_encoding::path")]
+    pub path: Path,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GetEntryResponse(
+    pub Option<SerdeAuthorisedEntry>, // #[serde(with = "data_model::serde_encoding::authorised_entry")] pub AuthorisedEntry,
+);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateNamespaceRequest {

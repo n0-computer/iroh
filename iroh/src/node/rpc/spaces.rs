@@ -3,6 +3,7 @@ use futures_lite::Stream;
 use futures_util::SinkExt;
 use futures_util::StreamExt;
 use iroh_base::rpc::{RpcError, RpcResult};
+use iroh_willow::form::EntryOrForm;
 use iroh_willow::Engine;
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::sync::mpsc;
@@ -28,17 +29,30 @@ pub(crate) async fn handle_rpc_request(
                 engine
                     .ingest_entry(req.authorised_entry)
                     .await
-                    .map(|_| IngestEntryResponse)
+                    .map(|inserted| {
+                        if inserted {
+                            IngestEntrySuccess::Inserted
+                        } else {
+                            IngestEntrySuccess::Obsolete
+                        }
+                    })
                     .map_err(map_err)
             })
             .await
         }
         InsertEntry(msg) => {
             chan.rpc(msg, engine, |engine, req| async move {
+                let entry = EntryOrForm::Form(req.entry.into());
                 engine
-                    .insert_entry(req.entry, req.auth)
+                    .insert_entry(entry, req.auth)
                     .await
-                    .map(|_| InsertEntryResponse)
+                    .map(|(entry, inserted)| {
+                        if inserted {
+                            InsertEntrySuccess::Inserted(entry)
+                        } else {
+                            InsertEntrySuccess::Obsolete
+                        }
+                    })
                     .map_err(map_err)
             })
             .await
@@ -59,7 +73,17 @@ pub(crate) async fn handle_rpc_request(
                     .get_entries(req.namespace, req.range)
                     .await
                     .map_err(map_err)?;
-                Ok(stream.map(|res| res.map(|e| GetEntriesResponse(e.into())).map_err(map_err)))
+                Ok(stream.map(|res| res.map(|e| GetEntriesResponse(e)).map_err(map_err)))
+            })
+            .await
+        }
+        GetEntry(msg) => {
+            chan.rpc(msg, engine, |engine, req| async move {
+                engine
+                    .get_entry(req.namespace, req.subspace, req.path)
+                    .await
+                    .map(|entry| GetEntryResponse(entry.map(Into::into)))
+                    .map_err(map_err)
             })
             .await
         }

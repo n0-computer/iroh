@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
-        data_model::{AuthorisedEntry, Entry, EntryExt, WriteCapability},
+        data_model::{AuthorisedEntry, Entry, EntryExt, Path, SubspaceId, WriteCapability},
         grouping::{Range, Range3d, RangeEnd},
         keys::{NamespaceId, NamespaceSecretKey, UserId, UserSecretKey},
         meadowcap::{self, is_wider_than, ReadAuthorisation},
@@ -185,7 +185,7 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
         Ok(self.get_entries(namespace, range).count() as u64)
     }
 
-    fn get_entries_with_authorisation<'a>(
+    fn get_authorised_entries<'a>(
         &'a self,
         namespace: NamespaceId,
         range: &Range3d,
@@ -199,6 +199,25 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
             .map(|e| anyhow::Result::Ok(e.clone()))
             .collect::<Vec<_>>()
             .into_iter()
+    }
+
+    fn get_entry(
+        &self,
+        namespace: NamespaceId,
+        subspace: SubspaceId,
+        path: &Path,
+    ) -> Result<Option<AuthorisedEntry>> {
+        let inner = self.borrow();
+        let Some(entries) = inner.entries.get(&namespace) else {
+            return Ok(None);
+        };
+        Ok(entries
+            .iter()
+            .find(|e| {
+                let e = e.entry();
+                *e.namespace_id() == namespace && *e.subspace_id() == subspace && e.path() == path
+            })
+            .cloned())
     }
 }
 
