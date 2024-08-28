@@ -932,6 +932,14 @@ pub struct Incoming {
 
 impl Incoming {
     /// Attempts to accept this incoming connection (an error may still occur).
+    ///
+    /// Errors occurring here are likely not caused by the application or remote.  The QUIC
+    /// connection listens on a normal UDP socket and any reachable network endpoint can
+    /// send datagrams to it, solicited or not.  Even if the first few bytes look like a
+    /// QUIC packet, it might not even be a QUIC packet that is being received.
+    ///
+    /// Thus it is common to simply log the errors here and accept them as something which
+    /// can happen.
     pub fn accept(self) -> Result<Connecting, ConnectionError> {
         self.inner.accept().map(|conn| Connecting {
             inner: conn,
