@@ -2049,7 +2049,7 @@
     ///
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
-    </span><span class="attr">#[instrument(skip_all, fields(me = %static_config.secret_key.public().fmt_short()))]
+    </span><span class="attr">#[instrument(<span class="string">"ep"</span>, skip_all, fields(me = %static_config.secret_key.public().fmt_short()))]
     </span><span class="kw">async fn </span>bind(
         static_config: StaticConfig,
         msock_opts: magicsock::Options,
@@ -2117,7 +2117,7 @@
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
-    </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.node_id().fmt_short(), node_id = %node_addr.node_id.fmt_short(), alpn = <span class="question-mark">?</span>String::from_utf8_lossy(alpn)))]
+    </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.node_id().fmt_short(), remote = %node_addr.node_id.fmt_short(), alpn = <span class="question-mark">?</span>String::from_utf8_lossy(alpn)))]
     </span><span class="kw">pub async fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
         <span class="comment">// Connecting to ourselves is not supported.
         </span><span class="kw">if </span>node_addr.node_id == <span class="self">self</span>.node_id() {
