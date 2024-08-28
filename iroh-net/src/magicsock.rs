@@ -1696,7 +1696,7 @@ impl AsyncUdpSocket for Handle {
 
     fn max_transmit_segments(&self) -> usize {
         if let Some(pconn6) = self.pconn6.as_ref() {
-            std::cmp::max(
+            std::cmp::min(
                 pconn6.max_transmit_segments(),
                 self.pconn4.max_transmit_segments(),
             )
