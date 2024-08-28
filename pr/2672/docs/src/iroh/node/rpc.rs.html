@@ -1494,8 +1494,6 @@
 <a href="#1494" id="1494">1494</a>
 <a href="#1495" id="1495">1495</a>
 <a href="#1496" id="1496">1496</a>
-<a href="#1497" id="1497">1497</a>
-<a href="#1498" id="1498">1498</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::{Arc, Mutex};
@@ -1962,9 +1960,7 @@
             Authors(msg) =&gt; <span class="self">self</span>.handle_authors_request(msg, chan).<span class="kw">await</span>,
             Docs(msg) =&gt; <span class="self">self</span>.handle_docs_request(msg, chan).<span class="kw">await</span>,
             Gossip(msg) =&gt; <span class="self">self</span>.handle_gossip_request(msg, chan).<span class="kw">await</span>,
-            Spaces(msg) =&gt; {
-                <span class="self">self</span>::spaces::handle_rpc_request(<span class="self">self</span>.inner.willow.clone(), msg, chan).<span class="kw">await
-            </span>}
+            Spaces(msg) =&gt; <span class="self">self</span>::spaces::handle_rpc_request(<span class="kw-2">&amp;</span><span class="self">self</span>.inner.willow, msg, chan).<span class="kw">await</span>,
         }
     }
 
