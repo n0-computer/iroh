@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["PayloadForm"],"struct":["Client","EntryForm","IntentHandle","MergedIntentHandle","Space","SpaceTicket"],"type":["EventReceiver","UpdateSender"]};
+window.SIDEBAR_ITEMS = {"struct":["Client","EntryForm","IntentExistsError","Space","SpaceTicket","SyncHandle","SyncHandleSet","SyncProgress"],"type":["EventReceiver","UpdateSender"]};

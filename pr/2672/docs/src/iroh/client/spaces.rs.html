@@ -574,6 +574,70 @@
 <a href="#574" id="574">574</a>
 <a href="#575" id="575">575</a>
 <a href="#576" id="576">576</a>
+<a href="#577" id="577">577</a>
+<a href="#578" id="578">578</a>
+<a href="#579" id="579">579</a>
+<a href="#580" id="580">580</a>
+<a href="#581" id="581">581</a>
+<a href="#582" id="582">582</a>
+<a href="#583" id="583">583</a>
+<a href="#584" id="584">584</a>
+<a href="#585" id="585">585</a>
+<a href="#586" id="586">586</a>
+<a href="#587" id="587">587</a>
+<a href="#588" id="588">588</a>
+<a href="#589" id="589">589</a>
+<a href="#590" id="590">590</a>
+<a href="#591" id="591">591</a>
+<a href="#592" id="592">592</a>
+<a href="#593" id="593">593</a>
+<a href="#594" id="594">594</a>
+<a href="#595" id="595">595</a>
+<a href="#596" id="596">596</a>
+<a href="#597" id="597">597</a>
+<a href="#598" id="598">598</a>
+<a href="#599" id="599">599</a>
+<a href="#600" id="600">600</a>
+<a href="#601" id="601">601</a>
+<a href="#602" id="602">602</a>
+<a href="#603" id="603">603</a>
+<a href="#604" id="604">604</a>
+<a href="#605" id="605">605</a>
+<a href="#606" id="606">606</a>
+<a href="#607" id="607">607</a>
+<a href="#608" id="608">608</a>
+<a href="#609" id="609">609</a>
+<a href="#610" id="610">610</a>
+<a href="#611" id="611">611</a>
+<a href="#612" id="612">612</a>
+<a href="#613" id="613">613</a>
+<a href="#614" id="614">614</a>
+<a href="#615" id="615">615</a>
+<a href="#616" id="616">616</a>
+<a href="#617" id="617">617</a>
+<a href="#618" id="618">618</a>
+<a href="#619" id="619">619</a>
+<a href="#620" id="620">620</a>
+<a href="#621" id="621">621</a>
+<a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
+<a href="#624" id="624">624</a>
+<a href="#625" id="625">625</a>
+<a href="#626" id="626">626</a>
+<a href="#627" id="627">627</a>
+<a href="#628" id="628">628</a>
+<a href="#629" id="629">629</a>
+<a href="#630" id="630">630</a>
+<a href="#631" id="631">631</a>
+<a href="#632" id="632">632</a>
+<a href="#633" id="633">633</a>
+<a href="#634" id="634">634</a>
+<a href="#635" id="635">635</a>
+<a href="#636" id="636">636</a>
+<a href="#637" id="637">637</a>
+<a href="#638" id="638">638</a>
+<a href="#639" id="639">639</a>
+<a href="#640" id="640">640</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for managing iroh spaces
 //!
 //! iroh spaces is an implementation of the [Willow] protocol.
@@ -589,10 +653,10 @@
     collections::HashMap,
     path::PathBuf,
     pin::Pin,
-    task::{Context, Poll},
+    task::{ready, Context, Poll},
 };
 
-<span class="kw">use </span>anyhow::Result;
+<span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>futures_util::{Sink, SinkExt};
@@ -618,7 +682,7 @@
 <span class="kw">use </span>ref_cast::RefCast;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::io::AsyncRead;
-<span class="kw">use </span>tokio_stream::StreamMap;
+<span class="kw">use </span>tokio_stream::{StreamMap, StreamNotifyClose};
 
 <span class="kw">use </span><span class="kw">crate</span>::client::RpcClient;
 <span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::spaces::<span class="kw-2">*</span>;
@@ -674,10 +738,7 @@
     }
 
     <span class="doccomment">/// Import a ticket and start to synchronize.
-    </span><span class="kw">pub async fn </span>import_and_sync(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        ticket: SpaceTicket,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Space, MergedIntentHandle)&gt; {
+    </span><span class="kw">pub async fn </span>import_and_sync(<span class="kw-2">&amp;</span><span class="self">self</span>, ticket: SpaceTicket) -&gt; <span class="prelude-ty">Result</span>&lt;(Space, SyncHandleSet)&gt; {
         <span class="kw">if </span>ticket.caps.is_empty() {
             <span class="macro">anyhow::bail!</span>(<span class="string">"Invalid ticket: Does not include any capabilities"</span>);
         }
@@ -690,19 +751,19 @@
         <span class="self">self</span>.import_caps(ticket.caps).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>interests = Interests::builder().add_full_cap(CapSelector::any(namespace));
         <span class="kw">let </span>init = SessionInit::reconcile_once(interests);
-        <span class="kw">let </span><span class="kw-2">mut </span>intents = MergedIntentHandle::default();
+        <span class="kw">let </span><span class="kw-2">mut </span>intents = SyncHandleSet::default();
         <span class="kw">for </span>addr <span class="kw">in </span>ticket.nodes {
             <span class="kw">let </span>node_id = addr.node_id;
             <span class="self">self</span>.net().add_node_addr(addr).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span>intent = <span class="self">self</span>.sync_with_peer(node_id, init.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-            intents.insert(node_id, intent);
+            intents.insert(node_id, intent)<span class="question-mark">?</span>;
         }
         <span class="kw">let </span>space = Space::new(<span class="self">self</span>.rpc.clone(), namespace);
         <span class="prelude-val">Ok</span>((space, intents))
     }
 
     <span class="doccomment">/// Synchronize with a peer.
-    </span><span class="kw">pub async fn </span>sync_with_peer(<span class="kw-2">&amp;</span><span class="self">self</span>, peer: NodeId, init: SessionInit) -&gt; <span class="prelude-ty">Result</span>&lt;IntentHandle&gt; {
+    </span><span class="kw">pub async fn </span>sync_with_peer(<span class="kw-2">&amp;</span><span class="self">self</span>, peer: NodeId, init: SessionInit) -&gt; <span class="prelude-ty">Result</span>&lt;SyncHandle&gt; {
         <span class="kw">let </span>req = SyncWithPeerRequest { peer, init };
         <span class="kw">let </span>(update_tx, event_rx) = <span class="self">self</span>.rpc.bidi(req).<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -723,7 +784,7 @@
             },
         }));
 
-        <span class="prelude-val">Ok</span>(IntentHandle::new(update_tx, event_rx))
+        <span class="prelude-val">Ok</span>(SyncHandle::new(update_tx, event_rx, Default::default()))
     }
 
     <span class="doccomment">/// Import a secret into the Willow store.
@@ -821,13 +882,13 @@
     </span>}
 
     <span class="doccomment">/// Inserts a new entry, with the payload imported from a file.
-    </span><span class="kw">pub async fn </span>insert_from_path(
+    </span><span class="kw">pub async fn </span>insert_from_file(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         entry: EntryForm,
-        payload: PathBuf,
+        file_path: PathBuf,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;InsertEntrySuccess&gt; {
         <span class="kw">let </span>batch = <span class="self">self</span>.blobs().batch().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>(tag, _len) = batch.add_file(payload).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(tag, _len) = batch.add_file(file_path).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="self">self</span>.insert_hash(entry, <span class="kw-2">*</span>tag.hash()).<span class="kw">await
     </span>}
 
@@ -869,8 +930,8 @@
 
     <span class="doccomment">/// Syncs with a peer and quit the session after a single reconciliation of the selected areas.
     ///
-    /// Returns an [`IntentHandle`] that emits events for the reconciliation. If you want to wait for everything to complete,
-    /// await [`IntentHandle::complete`].
+    /// Returns an [`SyncHandle`] that emits events for the reconciliation. If you want to wait for everything to complete,
+    /// await [`SyncHandle::complete`].
     ///
     /// This will connect to the node, start a sync session, and submit all our capabilities for this namespace,
     /// constrained to the selected areas.
@@ -880,7 +941,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node: NodeId,
         areas: AreaOfInterestSelector,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;IntentHandle&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;SyncHandle&gt; {
         <span class="kw">let </span>cap = CapSelector::any(<span class="self">self</span>.namespace_id);
         <span class="kw">let </span>interests = Interests::builder().add(cap, areas);
         <span class="kw">let </span>init = SessionInit::reconcile_once(interests);
@@ -889,8 +950,8 @@
 
     <span class="doccomment">/// Sync with a peer and keep sending and receiving live updates for the selected areas.
     ///
-    /// Returns an [`IntentHandle`] that emits events for the reconciliation. If you want to wait for everything to complete,
-    /// await [`IntentHandle::complete`].
+    /// Returns an [`SyncHandle`] that emits events for the reconciliation. If you want to wait for everything to complete,
+    /// await [`SyncHandle::complete`].
     ///
     /// This will connect to the node, start a sync session, and submit all our capabilities for this namespace,
     /// constrained to the selected areas.
@@ -900,7 +961,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node: NodeId,
         areas: AreaOfInterestSelector,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;IntentHandle&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;SyncHandle&gt; {
         <span class="kw">let </span>cap = CapSelector::any(<span class="self">self</span>.namespace_id);
         <span class="kw">let </span>interests = Interests::builder().add(cap, areas);
         <span class="kw">let </span>init = SessionInit::continuous(interests);
@@ -952,6 +1013,240 @@
     </span><span class="kw">pub </span>nodes: Vec&lt;NodeAddr&gt;,
 }
 
+<span class="doccomment">/// Handle to a synchronization intent.
+///
+/// The `SyncHandle` is a `Stream` of [`Event`]s. It *must* be progressed in a loop,
+/// otherwise the session will be blocked from progressing.
+///
+/// The `SyncHandle` can also submit new interests into the session.
+///
+</span><span class="comment">// This version of SyncHandle differs from the one in iroh-willow intents module
+// by using the Event type instead of EventKind, which serializes the error to a string
+// to cross the RPC boundary. Maybe look into making the main iroh_willow Error type
+// serializable instead.
+</span><span class="attr">#[derive(derive_more::Debug)]
+</span><span class="kw">pub struct </span>SyncHandle {
+    <span class="attr">#[debug(<span class="string">"UpdateSender"</span>)]
+    </span>update_tx: UpdateSender,
+    <span class="attr">#[debug(<span class="string">"EventReceiver"</span>)]
+    </span>event_rx: EventReceiver,
+    state: SyncProgress,
+}
+
+<span class="doccomment">/// Sends updates into a reconciliation intent.
+///
+/// Can be obtained from [`SyncHandle::split`].
+</span><span class="kw">pub type </span>UpdateSender = Pin&lt;Box&lt;<span class="kw">dyn </span>Sink&lt;IntentUpdate, Error = anyhow::Error&gt; + Send + <span class="lifetime">'static</span>&gt;&gt;;
+
+<span class="doccomment">/// Receives events for a reconciliation intent.
+///
+/// Can be obtained from [`SyncHandle::split`].
+</span><span class="kw">pub type </span>EventReceiver = Pin&lt;Box&lt;<span class="kw">dyn </span>Stream&lt;Item = Event&gt; + Send + <span class="lifetime">'static</span>&gt;&gt;;
+
+<span class="kw">impl </span>SyncHandle {
+    <span class="doccomment">/// Creates a new `SyncHandle` with the given update sender and event receiver.
+    </span><span class="kw">fn </span>new(update_tx: UpdateSender, event_rx: EventReceiver, state: SyncProgress) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            update_tx,
+            event_rx,
+            state,
+        }
+    }
+
+    <span class="doccomment">/// Splits the `SyncHandle` into a update sender sink and event receiver stream.
+    ///
+    /// The intent will be dropped once both the sender and receiver are dropped.
+    </span><span class="kw">pub fn </span>split(<span class="self">self</span>) -&gt; (UpdateSender, EventReceiver) {
+        (<span class="self">self</span>.update_tx, <span class="self">self</span>.event_rx)
+    }
+
+    <span class="doccomment">/// Waits for the intent to be completed.
+    ///
+    /// This future completes either if the session terminated, or if all interests of the intent
+    /// are reconciled and the intent is not in live data mode.
+    ///
+    /// Note that successful completion of this future does not guarantee that all interests were
+    /// fulfilled.
+    </span><span class="kw">pub async fn </span>complete(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Completion&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>state = SyncProgress::default();
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(event) = <span class="self">self</span>.event_rx.next().<span class="kw">await </span>{
+            state.handle_event(<span class="kw-2">&amp;</span>event);
+            <span class="kw">if </span>state.is_ready() {
+                <span class="kw">break</span>;
+            }
+        }
+        state.into_completion()
+    }
+
+    <span class="doccomment">/// Submit new synchronisation interests into the session.
+    ///
+    /// The `SyncHandle` will then receive events for these interests in addition to already
+    /// submitted interests.
+    </span><span class="kw">pub async fn </span>add_interests(<span class="kw-2">&amp;mut </span><span class="self">self</span>, interests: <span class="kw">impl </span>Into&lt;Interests&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="self">self</span>.update_tx
+            .send(IntentUpdate::AddInterests(interests.into()))
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="comment">// TODO: I think all should work via dropping, but let's make sure that is the case.
+    // /// Close the intent.
+    // pub async fn close(&amp;mut self) {
+    //     self.update_tx.send(IntentUpdate::Close).await.ok();
+    // }
+</span>}
+
+<span class="kw">impl </span>Stream <span class="kw">for </span>SyncHandle {
+    <span class="kw">type </span>Item = Event;
+
+    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
+        Poll::Ready(<span class="kw">match </span><span class="macro">ready!</span>(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.event_rx).poll_next(cx)) {
+            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
+            <span class="prelude-val">Some</span>(event) =&gt; {
+                <span class="self">self</span>.state.handle_event(<span class="kw-2">&amp;</span>event);
+                <span class="prelude-val">Some</span>(event)
+            }
+        })
+    }
+}
+
+<span class="doccomment">/// Completion state for a [`SyncHandle`].
+</span><span class="attr">#[derive(Debug, Default)]
+</span><span class="kw">pub struct </span>SyncProgress {
+    partial: bool,
+    complete: bool,
+    failed: <span class="prelude-ty">Option</span>&lt;String&gt;,
+}
+<span class="kw">impl </span>SyncProgress {
+    <span class="kw">fn </span>handle_event(<span class="kw-2">&amp;mut </span><span class="self">self</span>, event: <span class="kw-2">&amp;</span>Event) {
+        <span class="kw">match </span>event {
+            Event::ReconciledAll =&gt; <span class="self">self</span>.complete = <span class="bool-val">true</span>,
+            Event::Reconciled { .. } =&gt; <span class="self">self</span>.partial = <span class="bool-val">true</span>,
+            Event::Abort { error } =&gt; <span class="self">self</span>.failed = <span class="prelude-val">Some</span>(error.clone()),
+            <span class="kw">_ </span>=&gt; {}
+        }
+    }
+
+    <span class="kw">fn </span>is_ready(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="self">self</span>.complete == <span class="bool-val">true </span>|| <span class="self">self</span>.failed.is_some()
+    }
+
+    <span class="kw">fn </span>into_completion(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Completion&gt; {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(error) = <span class="self">self</span>.failed {
+            <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(error))
+        } <span class="kw">else if </span><span class="self">self</span>.complete {
+            <span class="prelude-val">Ok</span>(Completion::Complete)
+        } <span class="kw">else if </span><span class="self">self</span>.partial {
+            <span class="prelude-val">Ok</span>(Completion::Partial)
+        } <span class="kw">else </span>{
+            <span class="prelude-val">Ok</span>(Completion::Nothing)
+        }
+    }
+}
+
+<span class="doccomment">/// Merges synchronisation intent handles into one struct.
+</span><span class="attr">#[derive(Default, derive_more::Debug)]
+#[debug(<span class="string">"MergedSyncHandle({:?})"</span>, <span class="self">self</span>.event_rx.keys().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;())]
+</span><span class="kw">pub struct </span>SyncHandleSet {
+    event_rx: StreamMap&lt;NodeId, StreamNotifyClose&lt;EventReceiver&gt;&gt;,
+    intents: HashMap&lt;NodeId, HandleState&gt;,
+}
+
+<span class="attr">#[derive(derive_more::Debug)]
+</span><span class="kw">struct </span>HandleState {
+    <span class="attr">#[debug(<span class="string">"UpdateSender"</span>)]
+    </span>update_tx: UpdateSender,
+    state: SyncProgress,
+}
+
+<span class="kw">impl </span>SyncHandleSet {
+    <span class="doccomment">/// Add a sync intent to the set.
+    ///
+    /// Returns an error if there is already a sync intent for this peer in the set.
+    </span><span class="kw">pub fn </span>insert(<span class="kw-2">&amp;mut </span><span class="self">self</span>, peer: NodeId, handle: SyncHandle) -&gt; <span class="prelude-ty">Result</span>&lt;(), IntentExistsError&gt; {
+        <span class="kw">if </span><span class="self">self</span>.intents.contains_key(<span class="kw-2">&amp;</span>peer) {
+            <span class="prelude-val">Err</span>(IntentExistsError(peer))
+        } <span class="kw">else </span>{
+            <span class="kw">let </span>SyncHandle {
+                update_tx,
+                event_rx,
+                state,
+            } = handle;
+            <span class="self">self</span>.event_rx.insert(peer, StreamNotifyClose::new(event_rx));
+            <span class="self">self</span>.intents.insert(peer, HandleState { update_tx, state });
+            <span class="prelude-val">Ok</span>(())
+        }
+    }
+
+    <span class="doccomment">/// Removes a sync intent from the set.
+    </span><span class="kw">pub fn </span>remove(<span class="kw-2">&amp;mut </span><span class="self">self</span>, peer: <span class="kw-2">&amp;</span>NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;SyncHandle&gt; {
+        <span class="self">self</span>.event_rx.remove(peer).and_then(|event_rx| {
+            <span class="self">self</span>.intents.remove(peer).map(|state| {
+                SyncHandle::new(
+                    state.update_tx,
+                    event_rx.into_inner().expect(<span class="string">"unreachable"</span>),
+                    state.state,
+                )
+            })
+        })
+    }
+
+    <span class="doccomment">/// Submit new synchronisation interests into all sessions.
+    </span><span class="kw">pub async fn </span>add_interests(<span class="kw-2">&amp;mut </span><span class="self">self</span>, interests: <span class="kw">impl </span>Into&lt;Interests&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>interests: Interests = interests.into();
+        <span class="kw">let </span>futs = <span class="self">self</span>.intents.values_mut().map(|intent| {
+            intent
+                .update_tx
+                .send(IntentUpdate::AddInterests(interests.clone()))
+        });
+        futures_buffered::try_join_all(futs).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="doccomment">/// Wait for all intents to complete.
+    </span><span class="kw">pub async fn </span>complete_all(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; HashMap&lt;NodeId, <span class="prelude-ty">Result</span>&lt;Completion&gt;&gt; {
+        <span class="kw">let </span>futs = <span class="self">self</span>.intents.drain().map(|(node_id, state)| {
+            <span class="kw">let </span>event_rx = <span class="self">self
+                </span>.event_rx
+                .remove(<span class="kw-2">&amp;</span>node_id)
+                .expect(<span class="string">"unreachable"</span>)
+                .into_inner()
+                .expect(<span class="string">"unreachable"</span>);
+            <span class="kw">async move </span>{
+                <span class="kw">let </span>res = SyncHandle::new(state.update_tx, event_rx, state.state)
+                    .complete()
+                    .<span class="kw">await</span>;
+                (node_id, res)
+            }
+        });
+        <span class="kw">let </span>res = futures_buffered::join_all(futs).<span class="kw">await</span>;
+        res.into_iter().collect()
+    }
+}
+
+<span class="kw">impl </span>Stream <span class="kw">for </span>SyncHandleSet {
+    <span class="kw">type </span>Item = (NodeId, Event);
+
+    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
+        <span class="kw">loop </span>{
+            <span class="kw">match </span><span class="macro">ready!</span>(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.event_rx).poll_next(cx)) {
+                <span class="prelude-val">None </span>=&gt; <span class="kw">break </span>Poll::Ready(<span class="prelude-val">None</span>),
+                <span class="prelude-val">Some</span>((peer, <span class="prelude-val">Some</span>(event))) =&gt; <span class="kw">break </span>Poll::Ready(<span class="prelude-val">Some</span>((peer, event))),
+                <span class="prelude-val">Some</span>((peer, <span class="prelude-val">None</span>)) =&gt; {
+                    <span class="self">self</span>.intents.remove(<span class="kw-2">&amp;</span>peer);
+                    <span class="self">self</span>.event_rx.remove(<span class="kw-2">&amp;</span>peer);
+                    <span class="kw">continue</span>;
+                }
+            }
+        }
+    }
+}
+
+<span class="doccomment">/// Error returned when trying to insert a [`SyncHandle`] into a [`SyncHandleSet] for a peer that is already in the set.
+</span><span class="attr">#[derive(Debug, thiserror::Error)]
+#[error(<span class="string">"The set already contains a sync intent for this peer."</span>)]
+</span><span class="kw">pub struct </span>IntentExistsError(<span class="kw">pub </span>NodeId);
+
 <span class="doccomment">/// Form to insert a new entry
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>EntryForm {
@@ -983,171 +1278,4 @@
 
     <span class="comment">// TODO: Add builder methods for auth, subspace_id, timestamp
 </span>}
-
-<span class="doccomment">/// Handle to a synchronization intent.
-///
-/// The `IntentHandle` is a `Stream` of `Event`s. It *must* be progressed in a loop,
-/// otherwise the session will be blocked from progressing.
-///
-/// The `IntentHandle` can also submit new interests into the session.
-///
-</span><span class="comment">// This version of IntentHandle differs from the one in iroh-willow intents module
-// by using the Event type instead of EventKind, which serializes the error to a string
-// to cross the RPC boundary. Maybe look into making the main iroh_willow Error type
-// serializable instead.
-</span><span class="attr">#[derive(derive_more::Debug)]
-</span><span class="kw">pub struct </span>IntentHandle {
-    <span class="attr">#[debug(<span class="string">"UpdateSender"</span>)]
-    </span>update_tx: UpdateSender,
-    <span class="attr">#[debug(<span class="string">"EventReceiver"</span>)]
-    </span>event_rx: EventReceiver,
-}
-
-<span class="doccomment">/// Sends updates into a reconciliation intent.
-///
-/// Can be obtained from [`IntentHandle::split`].
-</span><span class="kw">pub type </span>UpdateSender = Pin&lt;Box&lt;<span class="kw">dyn </span>Sink&lt;IntentUpdate, Error = anyhow::Error&gt; + Send + <span class="lifetime">'static</span>&gt;&gt;;
-
-<span class="doccomment">/// Receives events for a reconciliation intent.
-///
-/// Can be obtained from [`IntentHandle::split`].
-</span><span class="kw">pub type </span>EventReceiver = Pin&lt;Box&lt;<span class="kw">dyn </span>Stream&lt;Item = Event&gt; + Send + <span class="lifetime">'static</span>&gt;&gt;;
-
-<span class="kw">impl </span>IntentHandle {
-    <span class="doccomment">/// Creates a new `IntentHandle` with the given update sender and event receiver.
-    </span><span class="kw">fn </span>new(update_tx: UpdateSender, event_rx: EventReceiver) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            update_tx,
-            event_rx,
-        }
-    }
-
-    <span class="doccomment">/// Splits the `IntentHandle` into a update sender sink and event receiver stream.
-    ///
-    /// The intent will be dropped once both the sender and receiver are dropped.
-    </span><span class="kw">pub fn </span>split(<span class="self">self</span>) -&gt; (UpdateSender, EventReceiver) {
-        (<span class="self">self</span>.update_tx, <span class="self">self</span>.event_rx)
-    }
-
-    <span class="doccomment">/// Waits for the intent to be completed.
-    ///
-    /// This future completes either if the session terminated, or if all interests of the intent
-    /// are reconciled and the intent is not in live data mode.
-    ///
-    /// Note that successful completion of this future does not guarantee that all interests were
-    /// fulfilled.
-    </span><span class="kw">pub async fn </span>complete(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Completion&gt; {
-        complete(<span class="kw-2">&amp;mut </span><span class="self">self</span>.event_rx).<span class="kw">await
-    </span>}
-
-    <span class="doccomment">/// Submit new synchronisation interests into the session.
-    ///
-    /// The `IntentHandle` will then receive events for these interests in addition to already
-    /// submitted interests.
-    </span><span class="kw">pub async fn </span>add_interests(<span class="kw-2">&amp;mut </span><span class="self">self</span>, interests: <span class="kw">impl </span>Into&lt;Interests&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="self">self</span>.update_tx
-            .send(IntentUpdate::AddInterests(interests.into()))
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="comment">// TODO: I think all should work via dropping, but let's make sure that is the case.
-    // /// Close the intent.
-    // pub async fn close(&amp;mut self) {
-    //     self.update_tx.send(IntentUpdate::Close).await.ok();
-    // }
-</span>}
-
-<span class="kw">impl </span>Stream <span class="kw">for </span>IntentHandle {
-    <span class="kw">type </span>Item = Event;
-
-    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
-        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.event_rx).poll_next(cx)
-    }
-}
-
-<span class="kw">async fn </span>complete(event_rx: <span class="kw-2">&amp;mut </span>EventReceiver) -&gt; <span class="prelude-ty">Result</span>&lt;Completion&gt; {
-    <span class="kw">let </span><span class="kw-2">mut </span>complete = <span class="bool-val">false</span>;
-    <span class="kw">let </span><span class="kw-2">mut </span>partial = <span class="bool-val">false</span>;
-    <span class="kw">while let </span><span class="prelude-val">Some</span>(event) = event_rx.next().<span class="kw">await </span>{
-        <span class="kw">match </span>event {
-            Event::ReconciledAll =&gt; complete = <span class="bool-val">true</span>,
-            Event::Reconciled { .. } =&gt; partial = <span class="bool-val">true</span>,
-            Event::Abort { error } =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">anyhow::anyhow!</span>(error)),
-            <span class="kw">_ </span>=&gt; {}
-        }
-    }
-    <span class="kw">let </span>completion = <span class="kw">if </span>complete {
-        Completion::Complete
-    } <span class="kw">else if </span>partial {
-        Completion::Partial
-    } <span class="kw">else </span>{
-        Completion::Nothing
-    };
-
-    <span class="prelude-val">Ok</span>(completion)
-}
-
-<span class="doccomment">/// Merges synchronisation intent handles into one struct.
-</span><span class="attr">#[derive(Default, derive_more::Debug)]
-#[debug(<span class="string">"MergedIntentHandle({:?})"</span>, <span class="self">self</span>.event_rx.keys().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;())]
-</span><span class="kw">pub struct </span>MergedIntentHandle {
-    event_rx: StreamMap&lt;NodeId, EventReceiver&gt;,
-    update_tx: HashMap&lt;NodeId, UpdateSender&gt;,
-}
-
-<span class="kw">impl </span>MergedIntentHandle {
-    <span class="doccomment">/// Add an intent to this merged handle.
-    </span><span class="kw">pub fn </span>insert(<span class="kw-2">&amp;mut </span><span class="self">self</span>, peer: NodeId, handle: IntentHandle) {
-        <span class="kw">let </span>(update_tx, event_rx) = handle.split();
-        <span class="self">self</span>.event_rx.insert(peer, event_rx);
-        <span class="self">self</span>.update_tx.insert(peer, update_tx);
-    }
-
-    <span class="doccomment">/// Submit new synchronisation interests into all sessions.
-    </span><span class="kw">pub async fn </span>add_interests(<span class="kw-2">&amp;mut </span><span class="self">self</span>, interests: <span class="kw">impl </span>Into&lt;Interests&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>interests: Interests = interests.into();
-        <span class="kw">let </span>futs = <span class="self">self
-            </span>.update_tx
-            .values_mut()
-            .map(|tx| tx.send(IntentUpdate::AddInterests(interests.clone())));
-        futures_buffered::try_join_all(futs).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="doccomment">/// Wait for all intents to complete.
-    </span><span class="kw">pub async fn </span>complete_all(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; HashMap&lt;NodeId, <span class="prelude-ty">Result</span>&lt;Completion&gt;&gt; {
-        <span class="kw">let </span>streams = <span class="self">self</span>.event_rx.iter_mut();
-        <span class="kw">let </span>futs =
-            streams.map(|(node_id, stream)| <span class="kw">async move </span>{ (<span class="kw-2">*</span>node_id, complete(stream).<span class="kw">await</span>) });
-        <span class="kw">let </span>res = futures_buffered::join_all(futs).<span class="kw">await</span>;
-        res.into_iter().collect()
-    }
-}
-
-<span class="kw">impl </span>Stream <span class="kw">for </span>MergedIntentHandle {
-    <span class="kw">type </span>Item = (NodeId, Event);
-
-    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
-        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.event_rx).poll_next(cx)
-    }
-}
-
-<span class="doccomment">/// Options for setting the payload on the a new entry.
-</span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
-</span><span class="kw">pub enum </span>PayloadForm {
-    <span class="doccomment">/// Make sure the hash is available in the blob store, and use the length from the blob store.
-    </span>Checked(Hash),
-    <span class="doccomment">/// Insert with the specified hash and length, without checking if the blob is in the local blob store.
-    </span>Unchecked(Hash, u64),
-}
-
-<span class="kw">impl </span>From&lt;PayloadForm&gt; <span class="kw">for </span>iroh_willow::form::PayloadForm {
-    <span class="kw">fn </span>from(value: PayloadForm) -&gt; <span class="self">Self </span>{
-        <span class="kw">match </span>value {
-            PayloadForm::Checked(hash) =&gt; <span class="self">Self</span>::Hash(hash),
-            PayloadForm::Unchecked(hash, len) =&gt; <span class="self">Self</span>::HashUnchecked(hash, len),
-        }
-    }
-}
 </code></pre></div></section></main></body></html>
