@@ -17,7 +17,6 @@ env:
 
 jobs:
   netsim-compat-tests:
-    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
     name: Run network simulations/benchmarks
     runs-on: [self-hosted, linux, X64]
@@ -150,6 +149,6 @@ jobs:
       with:
         issue-number: ${{ github.event.pull_request.number }}
         body: |
-        `${{ env.HEAD_REF }}.${{ env.LAST_COMMIT_SHA }}`
-        Perf report:
-        ${{ steps.generate_report.outputs.NETSIM_REPORT }}
+            `${{ env.HEAD_REF }}.${{ env.LAST_COMMIT_SHA }}`
+            Perf report:
+            ${{ steps.generate_report.outputs.NETSIM_REPORT }}
