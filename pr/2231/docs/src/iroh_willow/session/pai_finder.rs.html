@@ -725,6 +725,11 @@
 <a href="#725" id="725">725</a>
 <a href="#726" id="726">726</a>
 <a href="#727" id="727">727</a>
+<a href="#728" id="728">728</a>
+<a href="#729" id="729">729</a>
+<a href="#730" id="730">730</a>
+<a href="#731" id="731">731</a>
+<a href="#732" id="732">732</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Private Area Intersection finder
 //!
 //! As defined by the willow spec: [Private Area Intersection](https://willowprotocol.org/specs/pai/index.html)
@@ -1230,6 +1235,8 @@
     <span class="kw">use </span>futures_util::SinkExt;
     <span class="kw">use </span>rand_core::{CryptoRngCore, SeedableRng};
     <span class="kw">use </span>tokio::task::{spawn_local, JoinHandle, LocalSet};
+    <span class="kw">use </span>tokio_stream::wrappers::ReceiverStream;
+    <span class="kw">use </span>tokio_util::sync::PollSender;
     <span class="kw">use </span>tracing::{error_span, Instrument, Span};
 
     <span class="kw">use crate</span>::{
@@ -1263,15 +1270,15 @@
         <span class="kw">let </span>auth_alfie = ReadAuthorisation::new_owned(<span class="kw-2">&amp;</span>namespace_secret, alfie_public).unwrap();
         <span class="kw">let </span>auth_betty = ReadAuthorisation::new_owned(<span class="kw-2">&amp;</span>namespace_secret, betty_public).unwrap();
 
-        <span class="kw">let </span>(alfie, betty) = Handle::create_two();
+        <span class="kw">let </span>(<span class="kw-2">mut </span>alfie, <span class="kw-2">mut </span>betty) = Handle::create_two();
 
         alfie.submit(auth_alfie.clone()).<span class="kw">await</span>;
         betty.submit(auth_betty.clone()).<span class="kw">await</span>;
 
-        transfer::&lt;PaiBindFragment&gt;(<span class="kw-2">&amp;</span>alfie, <span class="kw-2">&amp;</span>betty).<span class="kw">await</span>;
-        transfer::&lt;PaiBindFragment&gt;(<span class="kw-2">&amp;</span>betty, <span class="kw-2">&amp;</span>alfie).<span class="kw">await</span>;
-        transfer::&lt;PaiReplyFragment&gt;(<span class="kw-2">&amp;</span>alfie, <span class="kw-2">&amp;</span>betty).<span class="kw">await</span>;
-        transfer::&lt;PaiReplyFragment&gt;(<span class="kw-2">&amp;</span>betty, <span class="kw-2">&amp;</span>alfie).<span class="kw">await</span>;
+        transfer::&lt;PaiBindFragment&gt;(<span class="kw-2">&amp;mut </span>alfie, <span class="kw-2">&amp;</span>betty).<span class="kw">await</span>;
+        transfer::&lt;PaiBindFragment&gt;(<span class="kw-2">&amp;mut </span>betty, <span class="kw-2">&amp;</span>alfie).<span class="kw">await</span>;
+        transfer::&lt;PaiReplyFragment&gt;(<span class="kw-2">&amp;mut </span>alfie, <span class="kw-2">&amp;</span>betty).<span class="kw">await</span>;
+        transfer::&lt;PaiReplyFragment&gt;(<span class="kw-2">&amp;mut </span>betty, <span class="kw-2">&amp;</span>alfie).<span class="kw">await</span>;
 
         <span class="macro">assert_eq!</span>(alfie.next_intersection().<span class="kw">await</span>.authorisation, auth_alfie);
         <span class="macro">assert_eq!</span>(betty.next_intersection().<span class="kw">await</span>.authorisation, auth_betty);
@@ -1316,22 +1323,22 @@
             .unwrap();
         <span class="macro">assert!</span>(betty_auth.subspace_cap().is_some());
 
-        <span class="kw">let </span>(alfie, betty) = Handle::create_two();
+        <span class="kw">let </span>(<span class="kw-2">mut </span>alfie, <span class="kw-2">mut </span>betty) = Handle::create_two();
 
         alfie.submit(alfie_auth.clone()).<span class="kw">await</span>;
         betty.submit(betty_auth.clone()).<span class="kw">await</span>;
 
-        transfer::&lt;PaiBindFragment&gt;(<span class="kw-2">&amp;</span>alfie, <span class="kw-2">&amp;</span>betty).<span class="kw">await</span>;
-        transfer::&lt;PaiBindFragment&gt;(<span class="kw-2">&amp;</span>betty, <span class="kw-2">&amp;</span>alfie).<span class="kw">await</span>;
+        transfer::&lt;PaiBindFragment&gt;(<span class="kw-2">&amp;mut </span>alfie, <span class="kw-2">&amp;</span>betty).<span class="kw">await</span>;
+        transfer::&lt;PaiBindFragment&gt;(<span class="kw-2">&amp;mut </span>betty, <span class="kw-2">&amp;</span>alfie).<span class="kw">await</span>;
 
-        transfer::&lt;PaiBindFragment&gt;(<span class="kw-2">&amp;</span>alfie, <span class="kw-2">&amp;</span>betty).<span class="kw">await</span>;
-        transfer::&lt;PaiBindFragment&gt;(<span class="kw-2">&amp;</span>betty, <span class="kw-2">&amp;</span>alfie).<span class="kw">await</span>;
+        transfer::&lt;PaiBindFragment&gt;(<span class="kw-2">&amp;mut </span>alfie, <span class="kw-2">&amp;</span>betty).<span class="kw">await</span>;
+        transfer::&lt;PaiBindFragment&gt;(<span class="kw-2">&amp;mut </span>betty, <span class="kw-2">&amp;</span>alfie).<span class="kw">await</span>;
 
-        transfer::&lt;PaiReplyFragment&gt;(<span class="kw-2">&amp;</span>alfie, <span class="kw-2">&amp;</span>betty).<span class="kw">await</span>;
-        transfer::&lt;PaiReplyFragment&gt;(<span class="kw-2">&amp;</span>betty, <span class="kw-2">&amp;</span>alfie).<span class="kw">await</span>;
+        transfer::&lt;PaiReplyFragment&gt;(<span class="kw-2">&amp;mut </span>alfie, <span class="kw-2">&amp;</span>betty).<span class="kw">await</span>;
+        transfer::&lt;PaiReplyFragment&gt;(<span class="kw-2">&amp;mut </span>betty, <span class="kw-2">&amp;</span>alfie).<span class="kw">await</span>;
 
-        transfer::&lt;PaiReplyFragment&gt;(<span class="kw-2">&amp;</span>alfie, <span class="kw-2">&amp;</span>betty).<span class="kw">await</span>;
-        transfer::&lt;PaiReplyFragment&gt;(<span class="kw-2">&amp;</span>betty, <span class="kw-2">&amp;</span>alfie).<span class="kw">await</span>;
+        transfer::&lt;PaiReplyFragment&gt;(<span class="kw-2">&amp;mut </span>alfie, <span class="kw-2">&amp;</span>betty).<span class="kw">await</span>;
+        transfer::&lt;PaiReplyFragment&gt;(<span class="kw-2">&amp;mut </span>betty, <span class="kw-2">&amp;</span>alfie).<span class="kw">await</span>;
 
         <span class="kw">let </span>next: PaiRequestSubspaceCapability = alfie.next_message().<span class="kw">await</span>;
         betty
@@ -1368,7 +1375,10 @@
         (secret, public.id())
     }
 
-    <span class="kw">async fn </span>transfer&lt;T: TryFrom&lt;Message&gt; + Into&lt;IntersectionMessage&gt;&gt;(from: <span class="kw-2">&amp;</span>Handle, to: <span class="kw-2">&amp;</span>Handle) {
+    <span class="kw">async fn </span>transfer&lt;T: TryFrom&lt;Message&gt; + Into&lt;IntersectionMessage&gt;&gt;(
+        from: <span class="kw-2">&amp;mut </span>Handle,
+        to: <span class="kw-2">&amp;</span>Handle,
+    ) {
         <span class="kw">let </span>message = from.next_message::&lt;T&gt;().<span class="kw">await</span>;
         <span class="kw">let </span>message: IntersectionMessage = message.into();
         to.receive(message).<span class="kw">await</span>;
@@ -1376,9 +1386,10 @@
 
     <span class="kw">struct </span>Handle {
         task: JoinHandle&lt;<span class="prelude-ty">Result</span>&lt;(), Error&gt;&gt;,
-        input: flume::Sender&lt;Input&gt;,
-        output: flume::Receiver&lt;Output&gt;,
+        input: tokio::sync::mpsc::Sender&lt;Input&gt;,
+        output: tokio::sync::mpsc::Receiver&lt;Output&gt;,
     }
+
     <span class="kw">impl </span>Handle {
         <span class="kw">pub fn </span>create_two() -&gt; (<span class="self">Self</span>, <span class="self">Self</span>) {
             (
@@ -1388,13 +1399,12 @@
         }
 
         <span class="kw">pub fn </span>new(span: Span) -&gt; <span class="self">Self </span>{
-            <span class="kw">let </span>(input, input_rx) = flume::bounded(<span class="number">1</span>);
-            <span class="kw">let </span>(output_tx, output) = flume::bounded(<span class="number">1</span>);
+            <span class="kw">let </span>(input, input_rx) = tokio::sync::mpsc::channel(<span class="number">1</span>);
+            <span class="kw">let </span>(output_tx, output) = tokio::sync::mpsc::channel(<span class="number">1</span>);
             input.try_send(Input::Established).expect(<span class="string">"has capacity"</span>);
-            <span class="kw">let </span>outbox = output_tx
-                .into_sink()
-                .sink_map_err(|<span class="kw">_</span>| Error::InvalidState(<span class="string">"failed to send"</span>));
-            <span class="kw">let </span>inbox = input_rx.into_stream();
+            <span class="kw">let </span>outbox =
+                PollSender::new(output_tx).sink_map_err(|<span class="kw">_</span>| Error::InvalidState(<span class="string">"failed to send"</span>));
+            <span class="kw">let </span>inbox = ReceiverStream::new(input_rx);
             <span class="kw">let </span>task = spawn_local(
                 <span class="kw">async move </span>{ PaiFinder::run_with_sink(inbox, outbox).<span class="kw">await </span>}.instrument(span),
             );
@@ -1406,7 +1416,7 @@
         }
 
         <span class="kw">pub async fn </span>input(<span class="kw-2">&amp;</span><span class="self">self</span>, input: Input) {
-            <span class="self">self</span>.input.send_async(input).<span class="kw">await</span>.unwrap();
+            <span class="self">self</span>.input.send(input).<span class="kw">await</span>.unwrap();
         }
 
         <span class="kw">pub async fn </span>submit(<span class="kw-2">&amp;</span><span class="self">self</span>, auth: ReadAuthorisation) {
@@ -1417,18 +1427,18 @@
             <span class="self">self</span>.input(Input::ReceivedMessage(<span class="prelude-val">Ok</span>(message.into()))).<span class="kw">await
         </span>}
 
-        <span class="kw">pub async fn </span>next(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Output {
-            <span class="self">self</span>.output.recv_async().<span class="kw">await</span>.unwrap()
+        <span class="kw">pub async fn </span>next(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; Output {
+            <span class="self">self</span>.output.recv().<span class="kw">await</span>.unwrap()
         }
 
-        <span class="kw">pub async fn </span>next_intersection(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PaiIntersection {
+        <span class="kw">pub async fn </span>next_intersection(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; PaiIntersection {
             <span class="kw">match </span><span class="self">self</span>.next().<span class="kw">await </span>{
                 Output::NewIntersection(intersection) =&gt; intersection,
                 out =&gt; <span class="macro">panic!</span>(<span class="string">"expected NewIntersection but got {out:?}"</span>),
             }
         }
 
-        <span class="kw">pub async fn </span>next_message&lt;T: TryFrom&lt;Message&gt;&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; T {
+        <span class="kw">pub async fn </span>next_message&lt;T: TryFrom&lt;Message&gt;&gt;(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; T {
             <span class="kw">match </span><span class="self">self</span>.next().<span class="kw">await </span>{
                 Output::SendMessage(message) =&gt; {
                     <span class="kw">let </span>dbg = <span class="macro">format!</span>(<span class="string">"{}"</span>, message);
