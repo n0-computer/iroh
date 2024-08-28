@@ -513,7 +513,6 @@ impl MagicSock {
                             trace!(node = %node_id.fmt_short(), dst = %addr,
                                    "sent transmit over UDP");
                             udp_sent = true;
-                            // TODO: record metrics
                         }
                         Err(err) => {
                             error!(node = %node_id.fmt_short(), dst = %addr,
@@ -528,7 +527,6 @@ impl MagicSock {
                     match self.try_send_relay(relay_url, node_id, split_packets(&transmit)) {
                         Ok(()) => {
                             relay_sent = true;
-                            // TODO: record metrics
                         }
                         Err(err) => {
                             relay_error = Some(err);
@@ -536,23 +534,6 @@ impl MagicSock {
                     }
                 }
 
-                if udp_addr.is_none() && relay_url.is_none() {
-                    // Returning an error here would lock up the entire `Endpoint`.
-                    //
-                    // If we returned `Poll::Pending`, the waker driving the `poll_send`
-                    // will never get woken up.
-                    //
-                    // Our best bet here is to log an error and return `Ok(())`.  In doing
-                    // so, we are effectively dropping this transmit, by lying to QUIC and
-                    // saying they were sent.  If we returned `Err(WouldBlock)` instead
-                    // Quinn would loop to attempt to re-send this transmit, blocking other
-                    // destinations.
-                    //
-                    // When `Quinn` gets no `ACK`s for those messages, the connection will
-                    // eventually timeout.
-                    error!(node = %node_id.fmt_short(), "failed to send: no UDP or relay addr");
-                    return Ok(());
-                }
                 let udp_pending = udp_error
                     .as_ref()
                     .map(|err| err.kind() == io::ErrorKind::WouldBlock)
@@ -563,26 +544,29 @@ impl MagicSock {
                     .unwrap_or_default();
                 if udp_pending && relay_pending {
                     // Handle backpressure.
-                    return Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"));
+                    Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"))
+                } else {
+                    if relay_sent || udp_sent {
+                        trace!(
+                            node = %node_id.fmt_short(),
+                            send_udp = ?udp_addr,
+                            send_relay = ?relay_url,
+                            "sent transmit",
+                        );
+                    } else if !pings_sent {
+                        // Returning Ok here means we let QUIC handle a timeout for a lost
+                        // packet, same would happen if we returned any errors.  The
+                        // philosophy of quinn-udp is that a UDP connection could come back
+                        // at any time so these errors should be treated as transient and
+                        // are just timeouts.  Hence we opt for returning Ok.  See
+                        // test_try_send_no_udp_addr_or_relay_url to explore this further.
+                        error!(
+                            node = %node_id.fmt_short(),
+                            "no UDP or relay paths available for node",
+                        );
+                    }
+                    Ok(())
                 }
-
-                if !relay_sent && !udp_sent && !pings_sent {
-                    // Returning Ok here means we let QUIC timeout, same with returning any
-                    // errors.  The philosophy of quinn-udp is that a UDP connection could
-                    // come back at any time so these errors should be treated as transient
-                    // and are just timeouts.  Hence we opt for returning Ok.  See
-                    // test_try_send_no_udp_addr_or_relay_url to explore this further.
-                    error!("no UDP or relay paths available for node");
-                    return Ok(());
-                }
-
-                trace!(
-                    node = %node_id.fmt_short(),
-                    send_udp = ?udp_addr,
-                    send_relay = ?relay_url,
-                    "sent transmit",
-                );
-                Ok(())
             }
             None => {
                 error!(%dest, "no NodeState for mapped address");
@@ -693,9 +677,21 @@ impl MagicSock {
             Poll::Ready(n) => (n, true),
         };
 
+        // Adding the IP address we received something on results in Quinn using this
+        // address on the send path to send from.  However we let Quinn use a
+        // QuicMappedAddress, not a real address.  So we used to substitute our bind address
+        // here so that Quinn would send on the right address.  But that would sometimes
+        // result in the wrong address family and Windows trips up on that.
+        //
+        // What should be done is that this dst_ip from the RecvMeta is stored in the
+        // NodeState/PathState.  Then on the send path it should be retrieved from the
+        // NodeState/PathSate together with the send address and substituted at send time.
+        // This is relevant for IPv6 link-local addresses where the OS otherwise does not
+        // know which intervace to send from.
         #[cfg(not(windows))]
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
-        // Reasoning for this here: https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
+        // Reasoning for this here:
+        // https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
         #[cfg(windows)]
         let dst_ip = None;
 
@@ -2548,7 +2544,7 @@ impl DiscoveredDirectAddrs {
 ///
 /// This allocates the data.
 ///
-/// If the transmit has a segment size i contains multiple GSO packets.  It will be split
+/// If the transmit has a segment size it contains multiple GSO packets.  It will be split
 /// into multiple packets according to that segment size.  If it does not have a segment
 /// size, the contents will be sent as a single packet.
 // TODO: If quinn stayed on bytes this would probably be much cheaper, probably.  Need to
@@ -3659,7 +3655,7 @@ mod tests {
         addr: QuicMappedAddr,
         node_id: NodeId,
     ) -> Result<quinn::Connection> {
-        // Endpoint::connect sets this, do the same for behaviour.
+        // Endpoint::connect sets this, do the same to have similar behaviour.
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
 
