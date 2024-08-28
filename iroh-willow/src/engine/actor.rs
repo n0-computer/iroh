@@ -7,6 +7,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
 };
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, error_span, trace, warn, Instrument};
 
 use crate::{
@@ -34,7 +35,7 @@ pub const SESSION_UPDATE_CHANNEL_CAP: usize = 64;
 /// Handle to a Willow storage thread.
 #[derive(Debug, Clone)]
 pub struct ActorHandle {
-    inbox_tx: flume::Sender<Input>,
+    inbox_tx: tokio::sync::mpsc::Sender<Input>,
     join_handle: Arc<Option<JoinHandle<()>>>,
 }
 
@@ -47,7 +48,7 @@ impl ActorHandle {
         create_store: impl 'static + Send + FnOnce() -> S,
         me: NodeId,
     ) -> ActorHandle {
-        let (inbox_tx, inbox_rx) = flume::bounded(INBOX_CAP);
+        let (inbox_tx, inbox_rx) = tokio::sync::mpsc::channel(INBOX_CAP);
         let join_handle = std::thread::Builder::new()
             .name("willow".to_string())
             .spawn(move || {
@@ -68,7 +69,7 @@ impl ActorHandle {
     }
 
     async fn send(&self, action: Input) -> Result<()> {
-        self.inbox_tx.send_async(action).await?;
+        self.inbox_tx.send(action).await?;
         Ok(())
     }
 
@@ -125,14 +126,14 @@ impl ActorHandle {
         namespace: NamespaceId,
         range: Range3d,
     ) -> Result<impl Stream<Item = anyhow::Result<Entry>>> {
-        let (tx, rx) = flume::bounded(1024);
+        let (tx, rx) = tokio::sync::mpsc::channel(1024);
         self.send(Input::GetEntries {
             namespace,
             reply: tx,
             range,
         })
         .await?;
-        Ok(rx.into_stream())
+        Ok(ReceiverStream::new(rx))
     }
 
     pub(crate) async fn init_session(
@@ -213,7 +214,21 @@ impl Drop for ActorHandle {
         // this means we're dropping the last reference
         if let Some(handle) = Arc::get_mut(&mut self.join_handle) {
             let handle = handle.take().expect("can only drop once");
-            self.inbox_tx.send(Input::Shutdown { reply: None }).ok();
+
+            match tokio::runtime::Handle::try_current() {
+                Ok(runtime) => {
+                    let (dumb, _) = tokio::sync::mpsc::channel(1);
+                    let inbox_tx = std::mem::replace(&mut self.inbox_tx, dumb);
+                    runtime
+                        .spawn(async move { inbox_tx.send(Input::Shutdown { reply: None }).await });
+                }
+                Err(_) => {
+                    self.inbox_tx
+                        .blocking_send(Input::Shutdown { reply: None })
+                        .ok();
+                }
+            }
+
             if let Err(err) = handle.join() {
                 warn!(?err, "Failed to join sync actor");
             }
@@ -232,7 +247,7 @@ pub enum Input {
         namespace: NamespaceId,
         range: Range3d,
         #[debug(skip)]
-        reply: flume::Sender<Result<Entry>>,
+        reply: mpsc::Sender<Result<Entry>>,
     },
     IngestEntry {
         authorised_entry: AuthorisedEntry,
@@ -279,14 +294,14 @@ pub enum Input {
 
 #[derive(Debug)]
 struct Actor<S: Storage> {
-    inbox_rx: flume::Receiver<Input>,
+    inbox_rx: tokio::sync::mpsc::Receiver<Input>,
     store: Store<S>,
     next_session_id: u64,
     tasks: JoinSet<()>,
 }
 
 impl<S: Storage> Actor<S> {
-    pub fn new(store: Store<S>, inbox_rx: flume::Receiver<Input>) -> Self {
+    pub fn new(store: Store<S>, inbox_rx: tokio::sync::mpsc::Receiver<Input>) -> Self {
         Self {
             store,
             inbox_rx,
@@ -306,9 +321,9 @@ impl<S: Storage> Actor<S> {
     async fn run_async(mut self) -> Result<()> {
         loop {
             tokio::select! {
-                msg = self.inbox_rx.recv_async() => match msg {
-                    Err(_) => break,
-                    Ok(Input::Shutdown { reply }) => {
+                msg = self.inbox_rx.recv() => match msg {
+                    None => break,
+                    Some(Input::Shutdown { reply }) => {
                         self.tasks.shutdown().await;
                         drop(self);
                         if let Some(reply) = reply {
@@ -316,7 +331,7 @@ impl<S: Storage> Actor<S> {
                         }
                         break;
                     }
-                    Ok(msg) => {
+                    Some(msg) => {
                         if self.handle_message(msg).await.is_err() {
                             warn!("failed to send reply: receiver dropped");
                         }
@@ -379,12 +394,12 @@ impl<S: Storage> Actor<S> {
             } => {
                 let snapshot = self.store.entries().snapshot();
                 match snapshot {
-                    Err(err) => reply.send(Err(err)).map_err(send_reply_error),
+                    Err(err) => reply.send(Err(err)).await.map_err(send_reply_error),
                     Ok(snapshot) => {
                         self.tasks.spawn_local(async move {
                             let iter = snapshot.get_entries(namespace, &range);
                             for entry in iter {
-                                if reply.send_async(entry).await.is_err() {
+                                if reply.send(entry).await.is_err() {
                                     break;
                                 }
                             }
