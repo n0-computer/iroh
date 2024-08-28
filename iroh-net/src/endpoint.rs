@@ -355,7 +355,7 @@ impl Endpoint {
     ///
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
-    #[instrument(skip_all, fields(me = %static_config.secret_key.public().fmt_short()))]
+    #[instrument("ep", skip_all, fields(me = %static_config.secret_key.public().fmt_short()))]
     async fn bind(
         static_config: StaticConfig,
         msock_opts: magicsock::Options,
@@ -423,7 +423,7 @@ impl Endpoint {
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
-    #[instrument(skip_all, fields(me = %self.node_id().fmt_short(), node_id = %node_addr.node_id.fmt_short(), alpn = ?String::from_utf8_lossy(alpn)))]
+    #[instrument(skip_all, fields(me = %self.node_id().fmt_short(), remote = %node_addr.node_id.fmt_short(), alpn = ?String::from_utf8_lossy(alpn)))]
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {

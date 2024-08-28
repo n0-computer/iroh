@@ -89,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
     let message = String::from_utf8(message)?;
     println!("received: {message}");
 
-    // We received the last message: close the (all) connections and allow for the close
+    // We received the last message: close all connections and allow for the close
     // message to be sent.
     endpoint.close(0u8.into(), b"bye").await?;
     Ok(())
