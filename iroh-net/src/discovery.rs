@@ -97,7 +97,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     }
 
     /// Subscribe to all addresses that get discovered.
-    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+    fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
         None
     }
 }
@@ -122,9 +122,9 @@ struct Inner {
 
 #[derive(derive_more::Debug)]
 enum Message {
-    Subscribe((u64, Sender<DiscoveryItem>)),
+    Subscribe((u64, Sender<(NodeId, DiscoveryItem)>)),
     Unsubscribe(u64),
-    Event(DiscoveryItem),
+    Event((NodeId, DiscoveryItem)),
 }
 
 impl Drop for DiscoveryEvents {
@@ -138,7 +138,8 @@ impl DiscoveryEvents {
         let (sender, mut recv) = channel(20);
         let event_loop = async move {
             loop {
-                let mut subscribers: HashMap<u64, Sender<DiscoveryItem>> = HashMap::default();
+                let mut subscribers: HashMap<u64, Sender<(NodeId, DiscoveryItem)>> =
+                    HashMap::default();
                 let msg = recv.recv().await;
                 match msg {
                     Some(Message::Subscribe((id, subscriber))) => {
@@ -154,7 +155,7 @@ impl DiscoveryEvents {
                         for (id, subscriber) in &subscribers {
                             if let Err(e) = subscriber.send(discovery_item.clone()).await {
                                 error!("Message::Event - Subscriber {id} dropped: {e}");
-                                bad_subscribers.push(id.clone());
+                                bad_subscribers.push(*id);
                             }
                         }
                         for bad_subscriber in bad_subscribers {
@@ -174,10 +175,10 @@ impl DiscoveryEvents {
         }))
     }
 
-    pub async fn send_event(&self, discovery_item: DiscoveryItem) {
+    pub async fn send_event(&self, node_id: NodeId, discovery_item: DiscoveryItem) {
         self.0
             .sender
-            .send(Message::Event(discovery_item))
+            .send(Message::Event((node_id, discovery_item)))
             .await
             .ok();
     }
@@ -192,7 +193,7 @@ impl DiscoveryEvents {
     pub fn subscribe(
         &self,
     ) -> (
-        BoxStream<DiscoveryItem>,
+        BoxStream<(NodeId, DiscoveryItem)>,
         impl std::future::Future<Output = ()>,
     ) {
         let (send, recv) = channel(20);
@@ -288,7 +289,7 @@ impl Discovery for ConcurrentDiscovery {
         Some(Box::pin(streams))
     }
 
-    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+    fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
         let streams = self
             .services
             .iter()
@@ -562,7 +563,7 @@ mod tests {
                             endpoint.node_id().fmt_short(),
                             node_id.fmt_short()
                         );
-                        events.send_event(item.clone()).await;
+                        events.send_event(node_id, item.clone()).await;
                         Ok(item)
                     };
                     futures_lite::stream::once_future(fut).boxed()
@@ -572,7 +573,7 @@ mod tests {
             Some(stream)
         }
 
-        fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+        fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
             let (stream, _) = self.events.subscribe();
             Some(stream)
         }
@@ -591,7 +592,7 @@ mod tests {
             Some(futures_lite::stream::empty().boxed())
         }
 
-        fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+        fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
             Some(futures_lite::stream::empty().boxed())
         }
     }

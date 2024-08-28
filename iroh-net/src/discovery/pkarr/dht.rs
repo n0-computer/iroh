@@ -285,6 +285,7 @@ impl DhtDiscovery {
         match response {
             Ok(Some(signed_packet)) => {
                 if let Ok(node_info) = NodeInfo::from_pkarr_signed_packet(&signed_packet) {
+                    let node_id = node_info.node_id;
                     let addr_info = node_info.into();
                     tracing::info!("discovered node info from relay {:?}", addr_info);
                     let item = DiscoveryItem {
@@ -292,7 +293,7 @@ impl DhtDiscovery {
                         last_updated: None,
                         addr_info,
                     };
-                    self.0.events.send_event(item.clone()).await;
+                    self.0.events.send_event(node_id, item.clone()).await;
                     co.yield_(Ok(item)).await;
                 } else {
                     tracing::debug!("failed to parse signed packet as node info");
@@ -330,6 +331,7 @@ impl DhtDiscovery {
             return;
         };
         if let Ok(node_info) = NodeInfo::from_pkarr_signed_packet(&signed_packet) {
+            let node_id = node_info.node_id;
             let addr_info = node_info.into();
             tracing::info!("discovered node info from DHT {:?}", addr_info);
             let item = DiscoveryItem {
@@ -337,7 +339,7 @@ impl DhtDiscovery {
                 last_updated: None,
                 addr_info,
             };
-            self.0.events.send_event(item.clone()).await;
+            self.0.events.send_event(node_id, item.clone()).await;
             co.yield_(Ok(item)).await;
         } else {
             tracing::debug!("failed to parse signed packet as node info");
@@ -392,7 +394,7 @@ impl Discovery for DhtDiscovery {
         Some(Gen::new(|co| async move { this.gen_resolve(node_id, co).await }).boxed())
     }
 
-    fn subscribe(&self) -> Option<Boxed<DiscoveryItem>> {
+    fn subscribe(&self) -> Option<Boxed<(NodeId, DiscoveryItem)>> {
         let (stream, _) = self.0.events.subscribe();
         Some(stream)
     }

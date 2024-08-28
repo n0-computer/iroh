@@ -97,14 +97,14 @@ impl Discovery for DnsDiscovery {
                 last_updated: None,
                 addr_info: node_addr.info,
             };
-            events.send_event(item.clone()).await;
+            events.send_event(node_id, item.clone()).await;
             Ok(item)
         };
         let stream = futures_lite::stream::once_future(fut);
         Some(Box::pin(stream))
     }
 
-    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+    fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
         let (stream, _) = self.events.subscribe();
         Some(stream)
     }

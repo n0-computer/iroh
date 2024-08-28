@@ -250,14 +250,14 @@ impl Discovery for PkarrResolver {
                 last_updated: None,
                 addr_info: info.into(),
             };
-            events.send_event(item.clone()).await;
+            events.send_event(node_id, item.clone()).await;
             Ok(item)
         };
         let stream = futures_lite::stream::once_future(fut);
         Some(Box::pin(stream))
     }
 
-    fn subscribe(&self) -> Option<futures_lite::stream::Boxed<DiscoveryItem>> {
+    fn subscribe(&self) -> Option<BoxStream<'static, (NodeId, DiscoveryItem)>> {
         let (stream, _) = self.events.subscribe();
         Some(stream)
     }

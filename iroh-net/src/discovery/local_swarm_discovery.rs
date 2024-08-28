@@ -47,7 +47,7 @@ enum Message {
     SendAddrs(NodeId, mpsc::Sender<Result<DiscoveryItem>>),
     ChangeLocalAddrs(AddrInfo),
     Timeout(NodeId, usize),
-    Subscribe(mpsc::Sender<DiscoveryItem>),
+    Subscribe(mpsc::Sender<(NodeId, DiscoveryItem)>),
 }
 
 impl LocalSwarmDiscovery {
@@ -74,7 +74,7 @@ impl LocalSwarmDiscovery {
 
         let discovery_fut = async move {
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
-            let mut subscribers: Vec<mpsc::Sender<DiscoveryItem>> = vec![];
+            let mut subscribers: Vec<mpsc::Sender<(NodeId, DiscoveryItem)>> = vec![];
             let mut last_id = 0;
             let mut senders: HashMap<
                 PublicKey,
@@ -150,8 +150,9 @@ impl LocalSwarmDiscovery {
                         let mut clean_up = vec![];
                         for (i, subscriber) in subscribers.iter().enumerate() {
                             // assume subscriber was dropped
-                            if let Err(_) = subscriber.send(item.clone()).await {
-                                clean_up.push(i.clone());
+                            if (subscriber.send((discovered_node_id, item.clone())).await).is_err()
+                            {
+                                clean_up.push(i);
                             }
                         }
                         for i in &clean_up {
@@ -303,7 +304,7 @@ impl Discovery for LocalSwarmDiscovery {
         });
     }
 
-    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+    fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
         let (sender, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
         tokio::spawn(async move {

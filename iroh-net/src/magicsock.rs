@@ -32,6 +32,7 @@ use std::{
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use futures_lite::{FutureExt, Stream, StreamExt};
+use futures_util::stream::BoxStream;
 use iroh_base::key::NodeId;
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
@@ -53,7 +54,7 @@ use watchable::Watchable;
 use crate::{
     defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
     disco::{self, SendAddr},
-    discovery::Discovery,
+    discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
@@ -1836,6 +1837,14 @@ impl Actor {
             self.msock.direct_addr_update_state.running.subscribe();
         let mut portmap_watcher = self.port_mapper.watch_external_address();
 
+        // TODO: make thing that when poll and stream is none, we return poll pending, otherwise wait on stream
+        let mut discovery_events: BoxStream<(NodeId, DiscoveryItem)> =
+            Box::pin(futures_lite::stream::empty());
+        if let Some(d) = self.msock.discovery() {
+            if let Some(events) = d.subscribe() {
+                discovery_events = events;
+            }
+        }
         loop {
             inc!(Metrics, actor_tick_main);
             tokio::select! {
@@ -1882,6 +1891,13 @@ impl Actor {
                     trace!("tick: link change {}", is_major);
                     inc!(Metrics, actor_link_change);
                     self.handle_network_change(is_major).await;
+                }
+                Some((node_id, discovery_item)) = discovery_events.next() => {
+                    trace!("tick: discovery event, address discovered: {discovery_item:?}");
+                    let node_addr = NodeAddr {node_id, info: discovery_item.addr_info};
+                    if let Err(e) = self.msock.add_node_addr(node_addr.clone(), Source::NamedApp { name: discovery_item.provenance }) {
+                        warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
+                    }
                 }
                 else => {
                     trace!("tick: other");
