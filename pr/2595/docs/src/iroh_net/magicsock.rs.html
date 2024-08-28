@@ -3881,10 +3881,6 @@
 <a href="#3881" id="3881">3881</a>
 <a href="#3882" id="3882">3882</a>
 <a href="#3883" id="3883">3883</a>
-<a href="#3884" id="3884">3884</a>
-<a href="#3885" id="3885">3885</a>
-<a href="#3886" id="3886">3886</a>
-<a href="#3887" id="3887">3887</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4400,8 +4396,7 @@
                             <span class="macro">trace!</span>(node = %node_id.fmt_short(), dst = %addr,
                                    <span class="string">"sent transmit over UDP"</span>);
                             udp_sent = <span class="bool-val">true</span>;
-                            <span class="comment">// TODO: record metrics
-                        </span>}
+                        }
                         <span class="prelude-val">Err</span>(err) =&gt; {
                             <span class="macro">error!</span>(node = %node_id.fmt_short(), dst = %addr,
                                    <span class="string">"failed to send udp: {err:#}"</span>);
@@ -4415,31 +4410,13 @@
                     <span class="kw">match </span><span class="self">self</span>.try_send_relay(relay_url, node_id, split_packets(<span class="kw-2">&amp;</span>transmit)) {
                         <span class="prelude-val">Ok</span>(()) =&gt; {
                             relay_sent = <span class="bool-val">true</span>;
-                            <span class="comment">// TODO: record metrics
-                        </span>}
+                        }
                         <span class="prelude-val">Err</span>(err) =&gt; {
                             relay_error = <span class="prelude-val">Some</span>(err);
                         }
                     }
                 }
 
-                <span class="kw">if </span>udp_addr.is_none() &amp;&amp; relay_url.is_none() {
-                    <span class="comment">// Returning an error here would lock up the entire `Endpoint`.
-                    //
-                    // If we returned `Poll::Pending`, the waker driving the `poll_send`
-                    // will never get woken up.
-                    //
-                    // Our best bet here is to log an error and return `Ok(())`.  In doing
-                    // so, we are effectively dropping this transmit, by lying to QUIC and
-                    // saying they were sent.  If we returned `Err(WouldBlock)` instead
-                    // Quinn would loop to attempt to re-send this transmit, blocking other
-                    // destinations.
-                    //
-                    // When `Quinn` gets no `ACK`s for those messages, the connection will
-                    // eventually timeout.
-                    </span><span class="macro">error!</span>(node = %node_id.fmt_short(), <span class="string">"failed to send: no UDP or relay addr"</span>);
-                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-                }
                 <span class="kw">let </span>udp_pending = udp_error
                     .as_ref()
                     .map(|err| err.kind() == io::ErrorKind::WouldBlock)
@@ -4450,26 +4427,29 @@
                     .unwrap_or_default();
                 <span class="kw">if </span>udp_pending &amp;&amp; relay_pending {
                     <span class="comment">// Handle backpressure.
-                    </span><span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::WouldBlock, <span class="string">"pending"</span>));
+                    </span><span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::WouldBlock, <span class="string">"pending"</span>))
+                } <span class="kw">else </span>{
+                    <span class="kw">if </span>relay_sent || udp_sent {
+                        <span class="macro">trace!</span>(
+                            node = %node_id.fmt_short(),
+                            send_udp = <span class="question-mark">?</span>udp_addr,
+                            send_relay = <span class="question-mark">?</span>relay_url,
+                            <span class="string">"sent transmit"</span>,
+                        );
+                    } <span class="kw">else if </span>!pings_sent {
+                        <span class="comment">// Returning Ok here means we let QUIC handle a timeout for a lost
+                        // packet, same would happen if we returned any errors.  The
+                        // philosophy of quinn-udp is that a UDP connection could come back
+                        // at any time so these errors should be treated as transient and
+                        // are just timeouts.  Hence we opt for returning Ok.  See
+                        // test_try_send_no_udp_addr_or_relay_url to explore this further.
+                        </span><span class="macro">error!</span>(
+                            node = %node_id.fmt_short(),
+                            <span class="string">"no UDP or relay paths available for node"</span>,
+                        );
+                    }
+                    <span class="prelude-val">Ok</span>(())
                 }
-
-                <span class="kw">if </span>!relay_sent &amp;&amp; !udp_sent &amp;&amp; !pings_sent {
-                    <span class="comment">// Returning Ok here means we let QUIC timeout, same with returning any
-                    // errors.  The philosophy of quinn-udp is that a UDP connection could
-                    // come back at any time so these errors should be treated as transient
-                    // and are just timeouts.  Hence we opt for returning Ok.  See
-                    // test_try_send_no_udp_addr_or_relay_url to explore this further.
-                    </span><span class="macro">error!</span>(<span class="string">"no UDP or relay paths available for node"</span>);
-                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-                }
-
-                <span class="macro">trace!</span>(
-                    node = %node_id.fmt_short(),
-                    send_udp = <span class="question-mark">?</span>udp_addr,
-                    send_relay = <span class="question-mark">?</span>relay_url,
-                    <span class="string">"sent transmit"</span>,
-                );
-                <span class="prelude-val">Ok</span>(())
             }
             <span class="prelude-val">None </span>=&gt; {
                 <span class="macro">error!</span>(%dest, <span class="string">"no NodeState for mapped address"</span>);
@@ -4580,9 +4560,21 @@
             Poll::Ready(n) =&gt; (n, <span class="bool-val">true</span>),
         };
 
-        <span class="attr">#[cfg(not(windows))]
+        <span class="comment">// Adding the IP address we received something on results in Quinn using this
+        // address on the send path to send from.  However we let Quinn use a
+        // QuicMappedAddress, not a real address.  So we used to substitute our bind address
+        // here so that Quinn would send on the right address.  But that would sometimes
+        // result in the wrong address family and Windows trips up on that.
+        //
+        // What should be done is that this dst_ip from the RecvMeta is stored in the
+        // NodeState/PathState.  Then on the send path it should be retrieved from the
+        // NodeState/PathSate together with the send address and substituted at send time.
+        // This is relevant for IPv6 link-local addresses where the OS otherwise does not
+        // know which intervace to send from.
+        </span><span class="attr">#[cfg(not(windows))]
         </span><span class="kw">let </span>dst_ip = <span class="self">self</span>.normalized_local_addr().ok().map(|addr| addr.ip());
-        <span class="comment">// Reasoning for this here: https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
+        <span class="comment">// Reasoning for this here:
+        // https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
         </span><span class="attr">#[cfg(windows)]
         </span><span class="kw">let </span>dst_ip = <span class="prelude-val">None</span>;
 
@@ -6435,7 +6427,7 @@
 ///
 /// This allocates the data.
 ///
-/// If the transmit has a segment size i contains multiple GSO packets.  It will be split
+/// If the transmit has a segment size it contains multiple GSO packets.  It will be split
 /// into multiple packets according to that segment size.  If it does not have a segment
 /// size, the contents will be sent as a single packet.
 </span><span class="comment">// TODO: If quinn stayed on bytes this would probably be much cheaper, probably.  Need to
@@ -7546,7 +7538,7 @@
         addr: QuicMappedAddr,
         node_id: NodeId,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
-        <span class="comment">// Endpoint::connect sets this, do the same for behaviour.
+        <span class="comment">// Endpoint::connect sets this, do the same to have similar behaviour.
         </span><span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
         transport_config.keep_alive_interval(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">1</span>)));
 
