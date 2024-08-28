@@ -193,7 +193,7 @@ pub enum SyncWithPeerResponse {
     Event(Event),
 }
 
-/// Either a [`Entry`] or a [`EntryForm`].
+/// Either a complete [`Entry`] or a [`FullEntryForm`].
 #[derive(Debug, Serialize, Deserialize)]
 pub enum EntryOrForm {
     Entry(#[serde(with = "data_model::serde_encoding::entry")] Entry),

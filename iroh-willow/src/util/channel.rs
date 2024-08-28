@@ -115,7 +115,7 @@ impl Guarantees {
 
 /// Shared state for a in-memory pipe.
 ///
-/// Roughly modeled after https://docs.rs/tokio/latest/src/tokio/io/util/mem.rs.html#58
+/// Roughly modeled after [tokio](https://docs.rs/tokio/latest/src/tokio/io/util/mem.rs.html#58)
 #[derive(Debug)]
 struct Shared {
     inner: Mutex<Inner>,

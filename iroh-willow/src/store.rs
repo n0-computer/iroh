@@ -1,7 +1,5 @@
 //! Store for entries, secrets, and capabilities used in the Willow engine.
 //!
-//! The [`Store`] is the high-level wrapper for the different stores we need.
-//!
 //! The storage backend is defined in the [`Storage`] trait and its associated types.
 //!
 //! The only implementation is currently an in-memory store at [`memory`].

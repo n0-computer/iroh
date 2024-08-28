@@ -118,8 +118,6 @@ impl EventSender {
 }
 
 /// Events emitted from a session.
-///
-/// These are handled in the [`PeerManager`](crate::engine::peer_manager::PeerManager).
 #[derive(derive_more::Debug)]
 pub(crate) enum SessionEvent {
     Established,

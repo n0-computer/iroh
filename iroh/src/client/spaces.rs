@@ -245,13 +245,13 @@ impl Space {
     }
 
     /// Inserts a new entry, with the payload imported from a file.
-    pub async fn insert_from_path(
+    pub async fn insert_from_file(
         &self,
         entry: EntryForm,
-        payload: PathBuf,
+        file_path: PathBuf,
     ) -> Result<InsertEntrySuccess> {
         let batch = self.blobs().batch().await?;
-        let (tag, _len) = batch.add_file(payload).await?;
+        let (tag, _len) = batch.add_file(file_path).await?;
         self.insert_hash(entry, *tag.hash()).await
     }
 
