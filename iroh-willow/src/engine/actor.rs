@@ -14,7 +14,7 @@ use crate::{
     interest::{CapSelector, CapabilityPack, DelegateTo, InterestMap, Interests},
     net::ConnHandle,
     proto::{
-        data_model::{AuthorisedEntry, Entry},
+        data_model::{AuthorisedEntry, Path, SubspaceId},
         grouping::Range3d,
         keys::{NamespaceId, NamespaceKind, UserId, UserSecretKey},
         meadowcap::{self, AccessMode},
@@ -72,7 +72,7 @@ impl ActorHandle {
         Ok(())
     }
 
-    pub async fn ingest_entry(&self, authorised_entry: AuthorisedEntry) -> Result<()> {
+    pub async fn ingest_entry(&self, authorised_entry: AuthorisedEntry) -> Result<bool> {
         let (reply, reply_rx) = oneshot::channel();
         self.send(Input::IngestEntry {
             authorised_entry,
@@ -80,15 +80,15 @@ impl ActorHandle {
             reply,
         })
         .await?;
-        reply_rx.await??;
-        Ok(())
+        let inserted = reply_rx.await??;
+        Ok(inserted)
     }
 
     pub async fn insert_entry(
         &self,
         entry: impl Into<EntryOrForm>,
         auth: impl Into<AuthForm>,
-    ) -> Result<(Entry, bool)> {
+    ) -> Result<(AuthorisedEntry, bool)> {
         let (reply, reply_rx) = oneshot::channel();
         self.send(Input::InsertEntry {
             entry: entry.into(),
@@ -108,11 +108,28 @@ impl ActorHandle {
         Ok(())
     }
 
+    pub async fn get_entry(
+        &self,
+        namespace: NamespaceId,
+        subspace: SubspaceId,
+        path: Path,
+    ) -> Result<Option<AuthorisedEntry>> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.send(Input::GetEntry {
+            namespace,
+            subspace,
+            path,
+            reply,
+        })
+        .await?;
+        reply_rx.await?
+    }
+
     pub async fn get_entries(
         &self,
         namespace: NamespaceId,
         range: Range3d,
-    ) -> Result<impl Stream<Item = anyhow::Result<Entry>>> {
+    ) -> Result<impl Stream<Item = anyhow::Result<AuthorisedEntry>>> {
         let (tx, rx) = flume::bounded(1024);
         self.send(Input::GetEntries {
             namespace,
@@ -220,7 +237,13 @@ pub enum Input {
         namespace: NamespaceId,
         range: Range3d,
         #[debug(skip)]
-        reply: flume::Sender<Result<Entry>>,
+        reply: flume::Sender<Result<AuthorisedEntry>>,
+    },
+    GetEntry {
+        namespace: NamespaceId,
+        subspace: SubspaceId,
+        path: Path,
+        reply: oneshot::Sender<Result<Option<AuthorisedEntry>>>,
     },
     IngestEntry {
         authorised_entry: AuthorisedEntry,
@@ -230,7 +253,7 @@ pub enum Input {
     InsertEntry {
         entry: EntryOrForm,
         auth: AuthForm,
-        reply: oneshot::Sender<Result<(Entry, bool), Error>>,
+        reply: oneshot::Sender<Result<(AuthorisedEntry, bool), Error>>,
     },
     InsertSecret {
         secret: meadowcap::SecretKey,
@@ -370,7 +393,7 @@ impl<S: Storage> Actor<S> {
                     Err(err) => reply.send(Err(err)).map_err(send_reply_error),
                     Ok(snapshot) => {
                         self.tasks.spawn_local(async move {
-                            let iter = snapshot.get_entries(namespace, &range);
+                            let iter = snapshot.get_authorised_entries(namespace, &range);
                             for entry in iter {
                                 if reply.send_async(entry).await.is_err() {
                                     break;
@@ -380,6 +403,19 @@ impl<S: Storage> Actor<S> {
                         Ok(())
                     }
                 }
+            }
+            Input::GetEntry {
+                namespace,
+                subspace,
+                path,
+                reply,
+            } => {
+                let res = self
+                    .store
+                    .entries()
+                    .reader()
+                    .get_entry(namespace, subspace, &path);
+                send_reply(reply, res)
             }
             Input::IngestEntry {
                 authorised_entry,

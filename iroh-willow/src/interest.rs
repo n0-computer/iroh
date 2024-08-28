@@ -62,13 +62,19 @@ impl IntoAreaOfInterest for Area {
 }
 
 impl InterestBuilder {
+    /// Add a capability and areas of interest
+    ///
+    /// See [`CapSelector`] for how to specify the capability to use.
+    pub fn add(mut self, cap: impl Into<CapSelector>, areas: AreaOfInterestSelector) -> Self {
+        let cap = cap.into();
+        self.0.insert(cap, areas);
+        self
+    }
     /// Add the full area of a capability we have into the interests.
     ///
     /// See [`CapSelector`] for how to specify the capability to use.
-    pub fn add_full_cap(mut self, cap: impl Into<CapSelector>) -> Self {
-        let cap = cap.into();
-        self.0.insert(cap, AreaOfInterestSelector::Widest);
-        self
+    pub fn add_full_cap(self, cap: impl Into<CapSelector>) -> Self {
+        self.add(cap, AreaOfInterestSelector::Widest)
     }
 
     /// Add a specific area included in one of our capabilities into the interests.
@@ -149,14 +155,14 @@ pub struct CapSelector {
     /// The namespace to which the capability must grant access.
     pub namespace_id: NamespaceId,
     /// Select the user who may use the capability.
-    pub receiver: ReceiverSelector,
+    pub receiver: UserSelector,
     /// Select the area to which the capability grants access.
     pub granted_area: AreaSelector,
 }
 
 impl From<NamespaceId> for CapSelector {
     fn from(value: NamespaceId) -> Self {
-        Self::widest(value)
+        Self::any(value)
     }
 }
 
@@ -171,7 +177,7 @@ impl CapSelector {
     /// Creates a new [`CapSelector`].
     pub fn new(
         namespace_id: NamespaceId,
-        receiver: ReceiverSelector,
+        receiver: UserSelector,
         granted_area: AreaSelector,
     ) -> Self {
         Self {
@@ -186,7 +192,7 @@ impl CapSelector {
     pub fn with_user(namespace_id: NamespaceId, user_id: UserId) -> Self {
         Self::new(
             namespace_id,
-            ReceiverSelector::Exact(user_id),
+            UserSelector::Exact(user_id),
             AreaSelector::Widest,
         )
     }
@@ -196,13 +202,13 @@ impl CapSelector {
     /// Will use any user available in our secret store and select the capability which grants the
     /// widest area.
     // TODO: Document exact selection process if there are capabilities with distinct areas.
-    pub fn widest(namespace: NamespaceId) -> Self {
-        Self::new(namespace, ReceiverSelector::Any, AreaSelector::Widest)
+    pub fn any(namespace: NamespaceId) -> Self {
+        Self::new(namespace, UserSelector::Any, AreaSelector::Widest)
     }
 
     /// Select a capability which authorises writing the provided `entry` on behalf of the provided
     /// `user_id`.
-    pub fn for_entry(entry: &Entry, user_id: ReceiverSelector) -> Self {
+    pub fn for_entry(entry: &Entry, user_id: UserSelector) -> Self {
         let granted_area = AreaSelector::ContainsPoint(Point::from_entry(entry));
         Self {
             namespace_id: *entry.namespace_id(),
@@ -216,7 +222,7 @@ impl CapSelector {
 #[derive(
     Debug, Default, Clone, Copy, Eq, PartialEq, derive_more::From, Serialize, Deserialize, Hash,
 )]
-pub enum ReceiverSelector {
+pub enum UserSelector {
     /// The receiver may be any user for which we have a secret key stored.
     #[default]
     Any,
@@ -224,7 +230,7 @@ pub enum ReceiverSelector {
     Exact(UserId),
 }
 
-impl ReceiverSelector {
+impl UserSelector {
     pub fn includes(&self, user: &UserId) -> bool {
         match self {
             Self::Any => true,
@@ -271,6 +277,13 @@ impl CapabilityPack {
         match self {
             CapabilityPack::Read(auth) => *auth.read_cap().receiver(),
             CapabilityPack::Write(cap) => *cap.receiver(),
+        }
+    }
+
+    pub fn namespace(&self) -> NamespaceId {
+        match self {
+            CapabilityPack::Read(cap) => cap.namespace(),
+            CapabilityPack::Write(cap) => *cap.granted_namespace(),
         }
     }
 
@@ -321,14 +334,15 @@ impl DelegateTo {
 }
 
 // TODO: This doesn't really belong into this module.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RestrictArea {
+    #[default]
     None,
     Restrict(#[serde(with = "grouping::serde_encoding::area")] Area),
 }
 
 impl RestrictArea {
-    pub fn with_default(self, default: Area) -> Area {
+    pub fn or_default(self, default: Area) -> Area {
         match self {
             RestrictArea::None => default.clone(),
             RestrictArea::Restrict(area) => area,

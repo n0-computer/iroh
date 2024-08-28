@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
 
 use crate::proto::{
-    data_model::{self, Entry, NamespaceId, Path, SerdeWriteCapability, SubspaceId, Timestamp},
+    data_model::{self, Entry, NamespaceId, Path, SubspaceId, Timestamp},
     keys::UserId,
+    meadowcap::{self, WriteCapability},
 };
 
 /// Sources where payload data can come from.
@@ -25,6 +26,9 @@ pub enum PayloadForm {
     /// Set the payload hash directly. The blob must exist in the node's blob store, this will fail
     /// otherwise.
     Hash(Hash),
+    /// Set the payload hash directly. The blob must exist in the node's blob store, this will fail
+    /// otherwise.
+    HashUnchecked(Hash, u64),
     /// Import data from the provided bytes and set as payload.
     #[debug("Bytes({})", _0.len())]
     Bytes(Bytes),
@@ -49,6 +53,7 @@ impl PayloadForm {
                 let entry = entry.ok_or_else(|| anyhow::anyhow!("hash not foundA"))?;
                 (digest, entry.size().value())
             }
+            PayloadForm::HashUnchecked(digest, len) => (digest, len),
             PayloadForm::Bytes(bytes) => {
                 let len = bytes.len();
                 let temp_tag = store.import_bytes(bytes, BlobFormat::Raw).await?;
@@ -118,7 +123,7 @@ pub enum AuthForm {
     /// user.
     Any(UserId),
     /// Use the provided [`WriteCapability`].
-    Exact(SerdeWriteCapability),
+    Exact(#[serde(with = "meadowcap::serde_encoding::mc_capability")] WriteCapability),
 }
 
 impl AuthForm {
@@ -134,18 +139,20 @@ impl AuthForm {
 
 /// Set the subspace either to a provided [`SubspaceId`], or use the user authenticating the entry
 /// as subspace.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum SubspaceForm {
     /// Set the subspace to the [`UserId`] of the user authenticating the entry.
+    #[default]
     User,
     /// Set the subspace to the provided [`SubspaceId`].
     Exact(SubspaceId),
 }
 
 /// Set the timestamp either to the provided [`Timestamp`] or to the current system time.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum TimestampForm {
     /// Set the timestamp to the current system time.
+    #[default]
     Now,
     /// Set the timestamp to the provided value.
     Exact(Timestamp),
@@ -175,20 +182,23 @@ pub struct SerdeEntryForm {
     #[serde(with = "data_model::serde_encoding::path")]
     pub path: Path,
     pub timestamp: TimestampForm,
-    pub payload: SerdePayloadForm,
+    pub payload: PayloadForm2,
 }
 
+///
 #[derive(Debug, Serialize, Deserialize)]
-pub enum SerdePayloadForm {
-    /// Set the payload hash directly. The blob must exist in the node's blob store, this will fail
-    /// otherwise.
-    Hash(Hash),
+pub enum PayloadForm2 {
+    /// Make sure the hash is available in the blob store, and use the length from the blob store.
+    Checked(Hash),
+    /// Insert with the specified hash and length, without checking if the blob is in the local blob store.
+    Unchecked(Hash, u64),
 }
 
-impl From<SerdePayloadForm> for PayloadForm {
-    fn from(value: SerdePayloadForm) -> Self {
+impl From<PayloadForm2> for PayloadForm {
+    fn from(value: PayloadForm2) -> Self {
         match value {
-            SerdePayloadForm::Hash(hash) => PayloadForm::Hash(hash),
+            PayloadForm2::Checked(hash) => PayloadForm::Hash(hash),
+            PayloadForm2::Unchecked(hash, len) => PayloadForm::HashUnchecked(hash, len),
         }
     }
 }

@@ -416,7 +416,7 @@ mod util {
 
         let cap_for_betty = alfie
             .delegate_caps(
-                CapSelector::widest(namespace_id),
+                CapSelector::any(namespace_id),
                 AccessMode::Write,
                 DelegateTo::new(user_betty, RestrictArea::None),
             )
@@ -508,7 +508,7 @@ async fn peer_manager_big_payload() -> Result<()> {
     let entries: Vec<_> = entries.try_collect().await?;
     assert_eq!(entries.len(), 1);
     let entry = &entries[0];
-    let hash: iroh_blobs::Hash = (*entry.payload_digest()).into();
+    let hash: iroh_blobs::Hash = (*entry.entry().payload_digest()).into();
     let blob = alfie.blobs.get(&hash).await?.expect("missing blob");
     let actual = blob.data_reader().await?.read_to_end().await?;
     assert_eq!(actual.len(), payload.len());
