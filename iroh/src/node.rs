@@ -118,7 +118,7 @@ struct NodeInner<D> {
     downloader: Downloader,
     blob_batches: tokio::sync::Mutex<BlobBatches>,
     local_pool_handle: LocalPoolHandle,
-    willow: iroh_willow::Engine,
+    willow: Option<iroh_willow::Engine>,
 }
 
 /// Keeps track of all the currently active batch operations of the blobs api.
@@ -499,9 +499,16 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         };
 
         // Shutdown willow gracefully.
-        if let Err(error) = self.willow.clone().shutdown().await {
-            warn!(?error, "Error while shutting down willow");
-        }
+        let spaces_shutdown = {
+            let engine = self.willow.clone();
+            async move {
+                if let Some(engine) = engine {
+                    if let Err(error) = engine.shutdown().await {
+                        warn!(?error, "Error while shutting down willow");
+                    }
+                }
+            }
+        };
 
         // We ignore all errors during shutdown.
         let _ = tokio::join!(
@@ -514,6 +521,8 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 .close(error_code.into(), error_code.reason()),
             // Shutdown docs engine.
             docs_shutdown,
+            // Shutdown spaces engine.
+            spaces_shutdown,
             // Shutdown blobs store engine.
             self.db.shutdown(),
             // Shutdown protocol handlers.

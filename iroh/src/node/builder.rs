@@ -67,6 +67,18 @@ pub enum DocsStorage {
     Persistent(PathBuf),
 }
 
+/// Storage backend for spaces.
+#[derive(Debug, Clone)]
+pub enum SpacesStorage {
+    /// Disable docs completely.
+    Disabled,
+    /// In-memory storage.
+    Memory,
+    /// File-based persistent storage.
+    #[allow(unused)]
+    Persistent(PathBuf),
+}
+
 /// Builder for the [`Node`].
 ///
 /// You must supply a blob store and a document store.
@@ -108,6 +120,7 @@ where
     dns_resolver: Option<DnsResolver>,
     node_discovery: DiscoveryConfig,
     docs_storage: DocsStorage,
+    spaces_storage: SpacesStorage,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
     /// Callback to register when a gc loop is done
@@ -235,6 +248,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             rpc_addr: None,
             gc_policy: GcPolicy::Disabled,
             docs_storage: DocsStorage::Memory,
+            spaces_storage: SpacesStorage::Memory,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -269,6 +283,8 @@ impl<D: Map> Builder<D> {
             rpc_addr: None,
             gc_policy: GcPolicy::Disabled,
             docs_storage,
+            // TODO: Expose in function
+            spaces_storage: SpacesStorage::Disabled,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -322,6 +338,8 @@ where
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
             docs_storage,
+            // TODO: Switch to SpacesStorage::Persistent once we have a store.
+            spaces_storage: SpacesStorage::Disabled,
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -373,6 +391,12 @@ where
     /// Disables documents support on this node completely.
     pub fn disable_docs(mut self) -> Self {
         self.docs_storage = DocsStorage::Disabled;
+        self
+    }
+
+    /// Disables spaces support on this node completely.
+    pub fn disable_spaces(mut self) -> Self {
+        self.spaces_storage = SpacesStorage::Disabled;
         self
     }
 
@@ -588,15 +612,24 @@ where
         )
         .await?;
 
+        let willow = match self.spaces_storage {
+            SpacesStorage::Disabled => None,
+            SpacesStorage::Memory => {
+                let blobs_store = self.blobs_store.clone();
+                let create_store = move || iroh_willow::store::memory::Store::new(blobs_store);
+                let engine = iroh_willow::Engine::spawn(
+                    endpoint.clone(),
+                    create_store,
+                    iroh_willow::engine::AcceptOpts::default(),
+                );
+                Some(engine)
+            }
+            SpacesStorage::Persistent(_) => {
+                unimplemented!("peristent storage for willow is not yet implemented")
+            }
+        };
         // Spawn the willow engine.
         // TODO: Allow to disable.
-        let blobs_store = self.blobs_store.clone();
-        let create_store = move || iroh_willow::store::memory::Store::new(blobs_store);
-        let willow = iroh_willow::Engine::spawn(
-            endpoint.clone(),
-            create_store,
-            iroh_willow::engine::AcceptOpts::default(),
-        );
 
         // Initialize the internal RPC connection.
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection::<RpcService>(32);
@@ -773,9 +806,9 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
             self = self.accept(DOCS_ALPN, Arc::new(docs));
         }
 
-        // TODO: Make willow optional.
-        let willow_engine = self.inner.willow.clone();
-        self = self.accept(iroh_willow::ALPN, Arc::new(willow_engine));
+        if let Some(engine) = self.inner.willow.clone() {
+            self = self.accept(iroh_willow::ALPN, Arc::new(engine));
+        }
 
         self
     }
