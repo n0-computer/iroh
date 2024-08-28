@@ -48,7 +48,7 @@ pub fn make_client_config(
         rustls::crypto::ring::default_provider(),
     ))
     .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-    .expect("fixed config")
+    .expect("version supported by ring")
     .dangerous()
     .with_custom_certificate_verifier(Arc::new(
         verifier::Libp2pCertificateVerifier::with_remote_peer_id(remote_peer_id),
