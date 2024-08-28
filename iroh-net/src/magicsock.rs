@@ -513,7 +513,6 @@ impl MagicSock {
                             trace!(node = %node_id.fmt_short(), dst = %addr,
                                    "sent transmit over UDP");
                             udp_sent = true;
-                            // TODO: record metrics
                         }
                         Err(err) => {
                             error!(node = %node_id.fmt_short(), dst = %addr,
@@ -528,7 +527,6 @@ impl MagicSock {
                     match self.try_send_relay(relay_url, node_id, split_packets(&transmit)) {
                         Ok(()) => {
                             relay_sent = true;
-                            // TODO: record metrics
                         }
                         Err(err) => {
                             relay_error = Some(err);
@@ -680,9 +678,21 @@ impl MagicSock {
             Poll::Ready(n) => (n, true),
         };
 
+        // Adding the IP address we received something on results in Quinn using this
+        // address on the send path to send from.  However we let Quinn use a
+        // QuicMappedAddress, not a real address.  So we used to substitute our bind address
+        // here so that Quinn would send on the right address.  But that would sometimes
+        // result in the wrong address family and Windows trips up on that.
+        //
+        // What should be done is that this dst_ip from the RecvMeta is stored in the
+        // NodeState/PathState.  Then on the send path it should be retrieved from the
+        // NodeState/PathSate together with the send address and substituted at send time.
+        // This is relevant for IPv6 link-local addresses where the OS otherwise does not
+        // know which intervace to send from.
         #[cfg(not(windows))]
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
-        // Reasoning for this here: https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
+        // Reasoning for this here:
+        // https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
         #[cfg(windows)]
         let dst_ip = None;
 
@@ -2535,7 +2545,7 @@ impl DiscoveredDirectAddrs {
 ///
 /// This allocates the data.
 ///
-/// If the transmit has a segment size i contains multiple GSO packets.  It will be split
+/// If the transmit has a segment size it contains multiple GSO packets.  It will be split
 /// into multiple packets according to that segment size.  If it does not have a segment
 /// size, the contents will be sent as a single packet.
 // TODO: If quinn stayed on bytes this would probably be much cheaper, probably.  Need to
@@ -3646,7 +3656,7 @@ mod tests {
         addr: QuicMappedAddr,
         node_id: NodeId,
     ) -> Result<quinn::Connection> {
-        // Endpoint::connect sets this, do the same for behaviour.
+        // Endpoint::connect sets this, do the same to have similar behaviour.
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
 
