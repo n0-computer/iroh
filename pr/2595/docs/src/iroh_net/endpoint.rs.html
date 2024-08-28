@@ -1692,6 +1692,14 @@
 <a href="#1692" id="1692">1692</a>
 <a href="#1693" id="1693">1693</a>
 <a href="#1694" id="1694">1694</a>
+<a href="#1695" id="1695">1695</a>
+<a href="#1696" id="1696">1696</a>
+<a href="#1697" id="1697">1697</a>
+<a href="#1698" id="1698">1698</a>
+<a href="#1699" id="1699">1699</a>
+<a href="#1700" id="1700">1700</a>
+<a href="#1701" id="1701">1701</a>
+<a href="#1702" id="1702">1702</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -2626,6 +2634,14 @@
 
 <span class="kw">impl </span>Incoming {
     <span class="doccomment">/// Attempts to accept this incoming connection (an error may still occur).
+    ///
+    /// Errors occurring here are likely not caused by the application or remote.  The QUIC
+    /// connection listens on a normal UDP socket and any reachable network endpoint can
+    /// send datagrams to it, solicited or not.  Even if the first few bytes look like a
+    /// QUIC packet, it might not even be a QUIC packet that is being received.
+    ///
+    /// Thus it is common to simply log the errors here and accept them as something which
+    /// can happen.
     </span><span class="kw">pub fn </span>accept(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Connecting, ConnectionError&gt; {
         <span class="self">self</span>.inner.accept().map(|conn| Connecting {
             inner: conn,
