@@ -5579,7 +5579,7 @@
 
     <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(pconn6) = <span class="self">self</span>.pconn6.as_ref() {
-            std::cmp::max(
+            std::cmp::min(
                 pconn6.max_transmit_segments(),
                 <span class="self">self</span>.pconn4.max_transmit_segments(),
             )
