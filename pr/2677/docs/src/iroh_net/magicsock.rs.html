@@ -3881,7 +3881,6 @@
 <a href="#3881" id="3881">3881</a>
 <a href="#3882" id="3882">3882</a>
 <a href="#3883" id="3883">3883</a>
-<a href="#3884" id="3884">3884</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4437,9 +4436,8 @@
                             send_relay = <span class="question-mark">?</span>relay_url,
                             <span class="string">"sent transmit"</span>,
                         );
-                    }
-                    <span class="kw">if </span>!relay_sent &amp;&amp; !udp_sent &amp;&amp; !pings_sent {
-                        <span class="comment">// Returning Ok here means we let QUIC handle a timeout for a lots
+                    } <span class="kw">else if </span>!pings_sent {
+                        <span class="comment">// Returning Ok here means we let QUIC handle a timeout for a lost
                         // packet, same would happen if we returned any errors.  The
                         // philosophy of quinn-udp is that a UDP connection could come back
                         // at any time so these errors should be treated as transient and
