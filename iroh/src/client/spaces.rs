@@ -45,10 +45,7 @@ use tokio::io::AsyncRead;
 use tokio_stream::{StreamMap, StreamNotifyClose};
 
 use crate::client::RpcClient;
-
 use crate::rpc_protocol::spaces::*;
-
-pub use crate::rpc_protocol::spaces::PayloadForm;
 
 /// Iroh Willow client.
 #[derive(Debug, Clone, RefCast)]
@@ -101,7 +98,7 @@ impl Client {
     }
 
     /// Import a ticket and start to synchronize.
-    pub async fn import_and_sync(&self, ticket: SpaceTicket) -> Result<(Space, SyncIntentSet)> {
+    pub async fn import_and_sync(&self, ticket: SpaceTicket) -> Result<(Space, SyncHandleSet)> {
         if ticket.caps.is_empty() {
             anyhow::bail!("Invalid ticket: Does not include any capabilities");
         }
@@ -114,7 +111,7 @@ impl Client {
         self.import_caps(ticket.caps).await?;
         let interests = Interests::builder().add_full_cap(CapSelector::any(namespace));
         let init = SessionInit::reconcile_once(interests);
-        let mut intents = SyncIntentSet::default();
+        let mut intents = SyncHandleSet::default();
         for addr in ticket.nodes {
             let node_id = addr.node_id;
             self.net().add_node_addr(addr).await?;
@@ -126,7 +123,7 @@ impl Client {
     }
 
     /// Synchronize with a peer.
-    pub async fn sync_with_peer(&self, peer: NodeId, init: SessionInit) -> Result<SyncIntent> {
+    pub async fn sync_with_peer(&self, peer: NodeId, init: SessionInit) -> Result<SyncHandle> {
         let req = SyncWithPeerRequest { peer, init };
         let (update_tx, event_rx) = self.rpc.bidi(req).await?;
 
@@ -147,7 +144,7 @@ impl Client {
             },
         }));
 
-        Ok(SyncIntent::new(update_tx, event_rx, Default::default()))
+        Ok(SyncHandle::new(update_tx, event_rx, Default::default()))
     }
 
     /// Import a secret into the Willow store.
@@ -293,8 +290,8 @@ impl Space {
 
     /// Syncs with a peer and quit the session after a single reconciliation of the selected areas.
     ///
-    /// Returns an [`IntentHandle`] that emits events for the reconciliation. If you want to wait for everything to complete,
-    /// await [`IntentHandle::complete`].
+    /// Returns an [`SyncHandle`] that emits events for the reconciliation. If you want to wait for everything to complete,
+    /// await [`SyncHandle::complete`].
     ///
     /// This will connect to the node, start a sync session, and submit all our capabilities for this namespace,
     /// constrained to the selected areas.
@@ -304,7 +301,7 @@ impl Space {
         &self,
         node: NodeId,
         areas: AreaOfInterestSelector,
-    ) -> Result<SyncIntent> {
+    ) -> Result<SyncHandle> {
         let cap = CapSelector::any(self.namespace_id);
         let interests = Interests::builder().add(cap, areas);
         let init = SessionInit::reconcile_once(interests);
@@ -313,8 +310,8 @@ impl Space {
 
     /// Sync with a peer and keep sending and receiving live updates for the selected areas.
     ///
-    /// Returns an [`IntentHandle`] that emits events for the reconciliation. If you want to wait for everything to complete,
-    /// await [`IntentHandle::complete`].
+    /// Returns an [`SyncHandle`] that emits events for the reconciliation. If you want to wait for everything to complete,
+    /// await [`SyncHandle::complete`].
     ///
     /// This will connect to the node, start a sync session, and submit all our capabilities for this namespace,
     /// constrained to the selected areas.
@@ -324,7 +321,7 @@ impl Space {
         &self,
         node: NodeId,
         areas: AreaOfInterestSelector,
-    ) -> Result<SyncIntent> {
+    ) -> Result<SyncHandle> {
         let cap = CapSelector::any(self.namespace_id);
         let interests = Interests::builder().add(cap, areas);
         let init = SessionInit::continuous(interests);
@@ -376,51 +373,19 @@ pub struct SpaceTicket {
     pub nodes: Vec<NodeAddr>,
 }
 
-/// Form to insert a new entry
-#[derive(Debug)]
-pub struct EntryForm {
-    /// The authorisation, either an exact capability, or a user id to select a capability for automatically.
-    pub auth: AuthForm,
-    /// The subspace, either exact or automatically set to the authorising user.
-    pub subspace_id: SubspaceForm,
-    /// The path
-    pub path: Path,
-    /// The timestamp, either exact or automatically set current time.
-    pub timestamp: TimestampForm,
-}
-
-impl EntryForm {
-    /// Creates a new entry form with the specified user and path.
-    ///
-    /// The subspace will be set to the specified user id.
-    /// The timestamp will be set to the current system time.
-    /// To authorise the entry, any applicable capability issued to the specified user id
-    /// that covers this path will be used, or return an error if no such capability is available.
-    pub fn new(user: UserId, path: Path) -> Self {
-        Self {
-            auth: AuthForm::Any(user),
-            path,
-            subspace_id: Default::default(),
-            timestamp: Default::default(),
-        }
-    }
-
-    // TODO: Add builder methods for auth, subspace_id, timestamp
-}
-
 /// Handle to a synchronization intent.
 ///
-/// The `IntentHandle` is a `Stream` of `Event`s. It *must* be progressed in a loop,
+/// The `SyncHandle` is a `Stream` of [`Event`]s. It *must* be progressed in a loop,
 /// otherwise the session will be blocked from progressing.
 ///
-/// The `IntentHandle` can also submit new interests into the session.
+/// The `SyncHandle` can also submit new interests into the session.
 ///
-// This version of IntentHandle differs from the one in iroh-willow intents module
+// This version of SyncHandle differs from the one in iroh-willow intents module
 // by using the Event type instead of EventKind, which serializes the error to a string
 // to cross the RPC boundary. Maybe look into making the main iroh_willow Error type
 // serializable instead.
 #[derive(derive_more::Debug)]
-pub struct SyncIntent {
+pub struct SyncHandle {
     #[debug("UpdateSender")]
     update_tx: UpdateSender,
     #[debug("EventReceiver")]
@@ -430,16 +395,16 @@ pub struct SyncIntent {
 
 /// Sends updates into a reconciliation intent.
 ///
-/// Can be obtained from [`IntentHandle::split`].
+/// Can be obtained from [`SyncHandle::split`].
 pub type UpdateSender = Pin<Box<dyn Sink<IntentUpdate, Error = anyhow::Error> + Send + 'static>>;
 
 /// Receives events for a reconciliation intent.
 ///
-/// Can be obtained from [`SyncIntent::split`].
+/// Can be obtained from [`SyncHandle::split`].
 pub type EventReceiver = Pin<Box<dyn Stream<Item = Event> + Send + 'static>>;
 
-impl SyncIntent {
-    /// Creates a new `SyncIntent` with the given update sender and event receiver.
+impl SyncHandle {
+    /// Creates a new `SyncHandle` with the given update sender and event receiver.
     fn new(update_tx: UpdateSender, event_rx: EventReceiver, state: SyncProgress) -> Self {
         Self {
             update_tx,
@@ -448,7 +413,7 @@ impl SyncIntent {
         }
     }
 
-    /// Splits the `SyncIntent` into a update sender sink and event receiver stream.
+    /// Splits the `SyncHandle` into a update sender sink and event receiver stream.
     ///
     /// The intent will be dropped once both the sender and receiver are dropped.
     pub fn split(self) -> (UpdateSender, EventReceiver) {
@@ -475,7 +440,7 @@ impl SyncIntent {
 
     /// Submit new synchronisation interests into the session.
     ///
-    /// The `SyncIntent` will then receive events for these interests in addition to already
+    /// The `SyncHandle` will then receive events for these interests in addition to already
     /// submitted interests.
     pub async fn add_interests(&mut self, interests: impl Into<Interests>) -> Result<()> {
         self.update_tx
@@ -491,7 +456,7 @@ impl SyncIntent {
     // }
 }
 
-impl Stream for SyncIntent {
+impl Stream for SyncHandle {
     type Item = Event;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -505,7 +470,7 @@ impl Stream for SyncIntent {
     }
 }
 
-/// Completion state for a [`SyncIntent`].
+/// Completion state for a [`SyncHandle`].
 #[derive(Debug, Default)]
 pub struct SyncProgress {
     partial: bool,
@@ -541,44 +506,43 @@ impl SyncProgress {
 
 /// Merges synchronisation intent handles into one struct.
 #[derive(Default, derive_more::Debug)]
-#[debug("MergedIntentHandle({:?})", self.event_rx.keys().collect::<Vec<_>>())]
-pub struct SyncIntentSet {
+#[debug("MergedSyncHandle({:?})", self.event_rx.keys().collect::<Vec<_>>())]
+pub struct SyncHandleSet {
     event_rx: StreamMap<NodeId, StreamNotifyClose<EventReceiver>>,
-    intents: HashMap<NodeId, SyncIntentState>,
+    intents: HashMap<NodeId, HandleState>,
 }
 
 #[derive(derive_more::Debug)]
-struct SyncIntentState {
+struct HandleState {
     #[debug("UpdateSender")]
     update_tx: UpdateSender,
     state: SyncProgress,
 }
 
-impl SyncIntentSet {
+impl SyncHandleSet {
     /// Add a sync intent to the set.
     ///
     /// Returns an error if there is already a sync intent for this peer in the set.
-    pub fn insert(&mut self, peer: NodeId, handle: SyncIntent) -> Result<(), IntentExistsError> {
+    pub fn insert(&mut self, peer: NodeId, handle: SyncHandle) -> Result<(), IntentExistsError> {
         if self.intents.contains_key(&peer) {
             Err(IntentExistsError(peer))
         } else {
-            let SyncIntent {
+            let SyncHandle {
                 update_tx,
                 event_rx,
                 state,
             } = handle;
             self.event_rx.insert(peer, StreamNotifyClose::new(event_rx));
-            self.intents
-                .insert(peer, SyncIntentState { update_tx, state });
+            self.intents.insert(peer, HandleState { update_tx, state });
             Ok(())
         }
     }
 
     /// Removes a sync intent from the set.
-    pub fn remove(&mut self, peer: &NodeId) -> Option<SyncIntent> {
+    pub fn remove(&mut self, peer: &NodeId) -> Option<SyncHandle> {
         self.event_rx.remove(peer).and_then(|event_rx| {
             self.intents.remove(peer).map(|state| {
-                SyncIntent::new(
+                SyncHandle::new(
                     state.update_tx,
                     event_rx.into_inner().expect("unreachable"),
                     state.state,
@@ -609,7 +573,7 @@ impl SyncIntentSet {
                 .into_inner()
                 .expect("unreachable");
             async move {
-                let res = SyncIntent::new(state.update_tx, event_rx, state.state)
+                let res = SyncHandle::new(state.update_tx, event_rx, state.state)
                     .complete()
                     .await;
                 (node_id, res)
@@ -620,7 +584,7 @@ impl SyncIntentSet {
     }
 }
 
-impl Stream for SyncIntentSet {
+impl Stream for SyncHandleSet {
     type Item = (NodeId, Event);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -638,7 +602,39 @@ impl Stream for SyncIntentSet {
     }
 }
 
-/// Error returned when trying to insert a [`SyncIntent] into a [`SyncIntentSet] for a peer that is already in the set.
+/// Error returned when trying to insert a [`SyncHandle`] into a [`SyncHandleSet] for a peer that is already in the set.
 #[derive(Debug, thiserror::Error)]
 #[error("The set already contains a sync intent for this peer.")]
 pub struct IntentExistsError(pub NodeId);
+
+/// Form to insert a new entry
+#[derive(Debug)]
+pub struct EntryForm {
+    /// The authorisation, either an exact capability, or a user id to select a capability for automatically.
+    pub auth: AuthForm,
+    /// The subspace, either exact or automatically set to the authorising user.
+    pub subspace_id: SubspaceForm,
+    /// The path
+    pub path: Path,
+    /// The timestamp, either exact or automatically set current time.
+    pub timestamp: TimestampForm,
+}
+
+impl EntryForm {
+    /// Creates a new entry form with the specified user and path.
+    ///
+    /// The subspace will be set to the specified user id.
+    /// The timestamp will be set to the current system time.
+    /// To authorise the entry, any applicable capability issued to the specified user id
+    /// that covers this path will be used, or return an error if no such capability is available.
+    pub fn new(user: UserId, path: Path) -> Self {
+        Self {
+            auth: AuthForm::Any(user),
+            path,
+            subspace_id: Default::default(),
+            timestamp: Default::default(),
+        }
+    }
+
+    // TODO: Add builder methods for auth, subspace_id, timestamp
+}

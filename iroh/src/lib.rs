@@ -102,6 +102,8 @@ pub use iroh_docs as docs;
 pub use iroh_gossip as gossip;
 #[doc(inline)]
 pub use iroh_net as net;
+#[doc(inline)]
+pub use iroh_willow as spaces;
 
 pub mod client;
 pub mod node;
