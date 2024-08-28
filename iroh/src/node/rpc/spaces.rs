@@ -18,7 +18,7 @@ fn map_err(err: anyhow::Error) -> RpcError {
 }
 
 pub(crate) async fn handle_rpc_request(
-    engine: Engine,
+    engine: &Engine,
     msg: Request,
     chan: RpcChannel<RpcService, IrohServerEndpoint>,
 ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
@@ -127,20 +127,11 @@ pub(crate) async fn handle_rpc_request(
             })
             .await
         }
-        // ResolveInterests(msg) => {
-        //     chan.rpc(msg, engine, |engine, req| async move {
-        //         engine
-        //             .resolve_interests(req.interests)
-        //             .await
-        //             .map(ResolveInterestsResponse)
-        //             .map_err(map_err)
-        //     })
-        //     .await
-        // }
         SyncWithPeer(msg) => {
             chan.bidi_streaming(msg, engine, |engine, req, update_stream| {
                 // TODO: refactor to use less tasks
                 let (events_tx, events_rx) = tokio::sync::mpsc::channel(32);
+                let engine = engine.clone();
                 tokio::task::spawn(async move {
                     if let Err(err) =
                         sync_with_peer(engine, req, events_tx.clone(), update_stream).await
