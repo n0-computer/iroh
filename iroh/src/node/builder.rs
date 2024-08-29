@@ -622,7 +622,7 @@ where
                 Some(engine)
             }
             SpacesStorage::Persistent(_) => {
-                unimplemented!("peristent storage for willow is not yet implemented")
+                unimplemented!("persistent storage for willow is not yet implemented")
             }
         };
         // Spawn the willow engine.

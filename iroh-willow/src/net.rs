@@ -295,7 +295,7 @@ async fn send_loop(
     }
     trace!(?channel, "send: close writer");
     send_stream.finish()?;
-    // We don't await SendStream::stopped, because we rely on application level closing notifiations,
+    // We don't await SendStream::stopped, because we rely on application level closing notifications,
     // and make sure that the connection is closed gracefully in any case.
     trace!(?channel, "send: done");
     Ok(())
