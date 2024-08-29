@@ -6,8 +6,9 @@ use anyhow::{anyhow, ensure, Context as _, Result};
 use futures_concurrency::future::TryJoin;
 use futures_util::future::TryFutureExt;
 use iroh_base::key::NodeId;
-use iroh_net::endpoint::{Connection, ConnectionError, ReadError, RecvStream, SendStream, VarInt};
-use quinn::ReadExactError;
+use iroh_net::endpoint::{
+    Connection, ConnectionError, ReadError, ReadExactError, RecvStream, SendStream, VarInt,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, trace};
 
@@ -293,7 +294,9 @@ async fn send_loop(
         // trace!(len, "sent");
     }
     trace!(?channel, "send: close writer");
-    send_stream.finish().await?;
+    send_stream.finish()?;
+    // We don't await SendStream::stopped, because we rely on application level closing notifiations,
+    // and make sure that the connection is closed gracefully in any case.
     trace!(?channel, "send: done");
     Ok(())
 }
@@ -323,7 +326,7 @@ pub(crate) async fn terminate_gracefully(conn: &Connection) -> Result<()> {
     // Send a single byte on a newly opened uni stream.
     let mut send_stream = conn.open_uni().await?;
     send_stream.write_u8(1).await?;
-    send_stream.finish().await?;
+    send_stream.finish()?;
     // Wait until we either receive the goodbye byte from the other peer, or for the other peer
     // to close the connection with the expected error code.
     match tokio::time::timeout(SHUTDOWN_TIMEOUT, wait_for_goodbye_or_graceful_close(conn)).await {

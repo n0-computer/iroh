@@ -33,7 +33,6 @@ iroh-metrics = { version = "0.23.0", path = "../iroh-metrics", optional = true }
 iroh-net = { version = "0.23.0", path = "../iroh-net" }
 meadowcap = "0.1.0"
 postcard = { version = "1", default-features = false, features = [ "alloc", "use-std", "experimental-derive", ] }
-quinn = { package = "iroh-quinn", version = "0.10.5" }
 rand = "0.8.5"
 rand_core = "0.6.4"
 redb = { version = "2.0.0" }
