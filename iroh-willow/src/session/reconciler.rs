@@ -29,8 +29,7 @@ use crate::{
         Error, Role, SessionId,
     },
     store::{
-        entry::{EntryChannel, EntryOrigin},
-        traits::{EntryReader, EntryStorage, SplitAction, SplitOpts, Storage},
+        traits::{EntryOrigin, EntryReader, EntryStorage, SplitAction, SplitOpts, Storage},
         Store,
     },
     util::{
@@ -164,12 +163,9 @@ impl<S: Storage> Reconciler<S> {
                     authorised_entry.entry().payload_length(),
                     message.entry.available,
                 )?;
-                self.shared.store.entries().ingest(
+                self.shared.store.entries().ingest_entry(
                     &authorised_entry,
-                    EntryOrigin::Remote {
-                        session: self.shared.session_id,
-                        channel: EntryChannel::Reconciliation,
-                    },
+                    EntryOrigin::Remote(self.shared.session_id),
                 )?;
             }
             ReconciliationMessage::SendPayload(message) => {

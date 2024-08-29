@@ -22,8 +22,7 @@ use crate::{
     },
     session::{intents::Intent, run_session, Error, EventSender, SessionHandle},
     store::{
-        entry::EntryOrigin,
-        traits::{EntryReader, SecretStorage, Storage},
+        traits::{EntryOrigin, EntryReader, EntryStorage, SecretStorage, Storage},
         Store,
     },
 };
@@ -445,7 +444,7 @@ impl<S: Storage> Actor<S> {
                 origin,
                 reply,
             } => {
-                let res = self.store.entries().ingest(&authorised_entry, origin);
+                let res = self.store.entries().ingest_entry(&authorised_entry, origin);
                 send_reply(reply, res)
             }
             Input::InsertEntry { entry, auth, reply } => {
