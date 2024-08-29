@@ -18,7 +18,10 @@ use crate::{
         data_model::WriteCapability,
         grouping::AreaOfInterest,
         keys::{NamespaceId, UserId},
-        meadowcap::{AccessMode, FailedDelegationError, McCapability, ReadAuthorisation},
+        meadowcap::{
+            AccessMode, FailedDelegationError, McCapability, McSubspaceCapability,
+            ReadAuthorisation,
+        },
     },
     store::traits::{CapsStorage, SecretStorage, SecretStoreError, Storage},
 };
@@ -126,12 +129,6 @@ impl<S: Storage> Auth<S> {
         namespace_id: NamespaceId,
         user_id: UserId,
     ) -> Result<[CapabilityPack; 2], AuthError> {
-        // let namespace_key = namespace_id
-        //     .into_public_key()
-        //     .map_err(|_| AuthError::InvalidNamespaceId(namespace_id))?;
-        // let user_key: UserPublicKey = user_id
-        //     .into_public_key()
-        //     .map_err(|_| AuthError::InvalidUserId(user_id))?;
         let read_cap = self.create_read_cap(namespace_id, user_id)?;
         let write_cap = self.create_write_cap(namespace_id, user_id)?;
         let pack = [read_cap, write_cap];
@@ -145,16 +142,25 @@ impl<S: Storage> Auth<S> {
         user_key: UserId,
     ) -> Result<CapabilityPack, AuthError> {
         let cap = if namespace_key.is_communal() {
-            McCapability::new_communal(namespace_key, user_key, AccessMode::Read)?
+            let read_cap = McCapability::new_communal(namespace_key, user_key, AccessMode::Read)?;
+            ReadAuthorisation::new(read_cap, None)
         } else {
             let namespace_secret = self
                 .secrets
                 .get_namespace(&namespace_key)
                 .ok_or(AuthError::MissingNamespaceSecret(namespace_key))?;
-            McCapability::new_owned(namespace_key, &namespace_secret, user_key, AccessMode::Read)?
+            let read_cap = McCapability::new_owned(
+                namespace_key,
+                &namespace_secret,
+                user_key,
+                AccessMode::Read,
+            )?;
+            let subspace_cap =
+                McSubspaceCapability::new(namespace_key, &namespace_secret, user_key)
+                    .map_err(AuthError::SubspaceCapDelegationFailed)?;
+            ReadAuthorisation::new(read_cap, Some(subspace_cap))
         };
-        // TODO: Subspace capability.
-        let pack = CapabilityPack::Read(ReadAuthorisation::new(cap, None));
+        let pack = CapabilityPack::Read(cap);
         Ok(pack)
     }
 
