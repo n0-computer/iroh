@@ -36,7 +36,7 @@ use iroh_willow::{
     },
     session::{
         intents::{serde_encoding::Event, Completion, IntentUpdate},
-        SessionInit,
+        SessionInit, SessionMode,
     },
     store::traits::{StoreEvent, SubscribeParams},
 };
@@ -99,7 +99,11 @@ impl Client {
     }
 
     /// Import a ticket and start to synchronize.
-    pub async fn import_and_sync(&self, ticket: SpaceTicket) -> Result<(Space, SyncHandleSet)> {
+    pub async fn import_and_sync(
+        &self,
+        ticket: SpaceTicket,
+        mode: SessionMode,
+    ) -> Result<(Space, SyncHandleSet)> {
         if ticket.caps.is_empty() {
             anyhow::bail!("Invalid ticket: Does not include any capabilities");
         }
@@ -111,7 +115,7 @@ impl Client {
 
         self.import_caps(ticket.caps).await?;
         let interests = Interests::builder().add_full_cap(CapSelector::any(namespace));
-        let init = SessionInit::reconcile_once(interests);
+        let init = SessionInit::new(interests, mode);
         let mut intents = SyncHandleSet::default();
         for addr in ticket.nodes {
             let node_id = addr.node_id;

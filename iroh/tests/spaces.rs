@@ -10,7 +10,8 @@ use iroh_willow::{
         keys::NamespaceKind,
         meadowcap::AccessMode,
     },
-    session::intents::Completion,
+    session::{intents::Completion, SessionMode},
+    store::traits::{EntryOrigin, StoreEvent},
 };
 use tracing::info;
 
@@ -75,7 +76,10 @@ async fn spaces_smoke() -> Result<()> {
         .await?;
 
     println!("ticket {ticket:?}");
-    let (betty_space, betty_sync_intent) = betty.spaces().import_and_sync(ticket).await?;
+    let (betty_space, betty_sync_intent) = betty
+        .spaces()
+        .import_and_sync(ticket, SessionMode::ReconcileOnce)
+        .await?;
 
     let mut completion = betty_sync_intent.complete_all().await;
     assert_eq!(completion.len(), 1);
@@ -129,6 +133,81 @@ async fn spaces_smoke() -> Result<()> {
         .try_collect()
         .await?;
     assert_eq!(alfie_entries.len(), 3);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn spaces_subscription() -> Result<()> {
+    iroh_test::logging::setup_multithreaded();
+    let (alfie_addr, alfie) = spawn_node().await;
+    let (betty_addr, betty) = spawn_node().await;
+    info!("alfie is {}", alfie_addr.node_id.fmt_short());
+    info!("betty is {}", betty_addr.node_id.fmt_short());
+
+    let betty_user = betty.spaces().create_user().await?;
+    let alfie_user = alfie.spaces().create_user().await?;
+    let alfie_space = alfie
+        .spaces()
+        .create(NamespaceKind::Owned, alfie_user)
+        .await?;
+
+    let _namespace = alfie_space.namespace_id();
+
+    let mut alfie_sub = alfie_space
+        .subscribe_area(Area::new_full(), Default::default())
+        .await?;
+
+    let ticket = alfie_space
+        .share(betty_user, AccessMode::Write, RestrictArea::None)
+        .await?;
+
+    let (betty_space, betty_sync_intent) = betty
+        .spaces()
+        .import_and_sync(ticket, SessionMode::ReconcileOnce)
+        .await?;
+
+    let _sync_task = tokio::task::spawn(async move {
+        // TODO: We should add a "detach" method to a sync intent!
+        // (leaves the sync running but stop consuming events)
+        let _ = betty_sync_intent.complete_all().await;
+    });
+
+    let mut betty_sub = betty_space
+        .resume_subscription(0, Area::new_full(), Default::default())
+        .await?;
+
+    alfie_space
+        .insert_bytes(
+            EntryForm::new(alfie_user, Path::from_bytes(&[b"foo"])?),
+            "hi",
+        )
+        .await?;
+
+    betty_space
+        .insert_bytes(
+            EntryForm::new(betty_user, Path::from_bytes(&[b"foo"])?),
+            "hi",
+        )
+        .await?;
+
+    alfie_space
+        .insert_bytes(
+            EntryForm::new(alfie_user, Path::from_bytes(&[b"foo"])?),
+            "hi!!",
+        )
+        .await?;
+
+    let ev = alfie_sub.next().await.unwrap();
+    println!("ALFIE 2");
+    assert!(matches!(ev, StoreEvent::Ingested(0, _, EntryOrigin::Local)));
+
+    let ev = betty_sub.next().await.unwrap();
+    println!("BETTY 2");
+    assert!(matches!(
+        ev,
+        StoreEvent::Ingested(0, _, EntryOrigin::Remote(_))
+    ));
 
     Ok(())
 }
