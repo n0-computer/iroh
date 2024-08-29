@@ -37,6 +37,7 @@ pub type AreaOfInterest = willow_data_model::grouping::AreaOfInterest<
 >;
 
 /// Extension methods for [`AreaOfInterest`].
+// TODO: Upstream to willow-rs as methods on [`AreaOfInterest].
 pub trait AreaOfInterestExt {
     /// Creates a new area of interest with the specified area and no other limits.
     fn with_area(area: Area) -> AreaOfInterest;
@@ -53,6 +54,7 @@ impl AreaOfInterestExt for AreaOfInterest {
 }
 
 /// Extension methods for [`Area`].
+// TODO: Upstream to willow-rs as methods on [`Area`].
 pub trait AreaExt {
     /// Returns `true` if the area contains `point`.
     fn includes_point(&self, point: &Point) -> bool;
@@ -93,6 +95,7 @@ impl AreaExt for Area {
 /// A single point in the 3D range space.
 ///
 /// I.e. an entry.
+// TODO: Upstream to willow-rs.
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Point {
     #[serde(with = "data_model::serde_encoding::path")]

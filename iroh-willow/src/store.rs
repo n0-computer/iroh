@@ -6,6 +6,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use rand_core::CryptoRngCore;
+use traits::EntryStorage;
 
 use crate::{
     form::{AuthForm, EntryForm, EntryOrForm, SubspaceForm, TimestampForm},
@@ -22,42 +23,40 @@ use crate::{
 use self::auth::{Auth, AuthError};
 use self::traits::Storage;
 
-pub(crate) use self::entry::{EntryOrigin, WatchableEntryStore};
+pub(crate) use self::traits::EntryOrigin;
 
 pub(crate) mod auth;
-pub(crate) mod entry;
 pub mod memory;
 pub mod traits;
 
 /// Storage for the Willow engine.
+///
+/// Wraps a `Storage` instance and adds the [`Auth`] struct that uses the secret and caps storage to provide
+/// authentication when inserting entries.
 #[derive(Debug, Clone)]
 pub(crate) struct Store<S: Storage> {
-    entries: WatchableEntryStore<S::Entries>,
-    secrets: S::Secrets,
-    payloads: S::Payloads,
+    storage: S,
     auth: Auth<S>,
 }
 
 impl<S: Storage> Store<S> {
     pub fn new(storage: S) -> Self {
         Self {
-            entries: WatchableEntryStore::new(storage.entries().clone()),
-            secrets: storage.secrets().clone(),
-            payloads: storage.payloads().clone(),
             auth: Auth::new(storage.secrets().clone(), storage.caps().clone()),
+            storage,
         }
     }
 
-    pub fn entries(&self) -> &WatchableEntryStore<S::Entries> {
-        &self.entries
+    pub fn entries(&self) -> &S::Entries {
+        self.storage.entries()
     }
 
     pub fn secrets(&self) -> &S::Secrets {
-        &self.secrets
+        self.storage.secrets()
     }
 
     pub fn payloads(&self) -> &S::Payloads {
-        &self.payloads
+        self.storage.payloads()
     }
 
     pub fn auth(&self) -> &Auth<S> {
@@ -97,7 +96,7 @@ impl<S: Storage> Store<S> {
         let authorised_entry = AuthorisedEntry::new_unchecked(entry, token);
         let inserted = self
             .entries()
-            .ingest(&authorised_entry, EntryOrigin::Local)?;
+            .ingest_entry(&authorised_entry, EntryOrigin::Local)?;
         Ok((authorised_entry, inserted))
     }
 
@@ -118,7 +117,7 @@ impl<S: Storage> Store<S> {
     /// the provided [`Store`].
     ///
     /// `user_id` must be set to the user who is authenticating the entry.
-    pub async fn form_to_entry(
+    async fn form_to_entry(
         &self,
         form: EntryForm,
         user_id: UserId, // auth: AuthForm,

@@ -386,9 +386,6 @@ pub(crate) async fn run_session<S: Storage>(
         .try_join()
         .await;
 
-    // Unsubscribe from the store.
-    store.entries().unsubscribe(&session_id);
-
     // Track if we closed the session by triggering the cancel token, or if the remote peer closed
     // the session by closing the control channel.
     let we_cancelled = close_session_token.is_cancelled();
