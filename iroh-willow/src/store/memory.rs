@@ -257,16 +257,12 @@ impl EntryStore {
             }
         }
         for i in to_prune {
-            let pruned = entries.remove(i).into_parts().0;
-            self.events.insert(|id| {
+            let pruned = entries.remove(i);
+            self.events.insert(move |id| {
                 StoreEvent::Pruned(
                     id,
                     traits::PruneEvent {
-                        pruned: (
-                            pruned.namespace_id().clone(),
-                            pruned.subspace_id().clone(),
-                            pruned.path().clone(),
-                        ),
+                        pruned,
                         by: entry.clone(),
                     },
                 )
@@ -404,7 +400,7 @@ impl<T> Default for EventQueue<T> {
 }
 
 impl<T: Clone> EventQueue<T> {
-    fn insert(&mut self, f: impl Fn(u64) -> T) {
+    fn insert(&mut self, f: impl FnOnce(u64) -> T) {
         let progress_id = self.next_progress_id();
         let event = f(progress_id);
         self.events.push_back(event);

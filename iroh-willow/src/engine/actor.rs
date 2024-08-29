@@ -1,7 +1,7 @@
 use std::{sync::Arc, thread::JoinHandle};
 
 use anyhow::Result;
-use futures_lite::stream::Stream;
+use futures_lite::{stream::Stream, StreamExt};
 use iroh_base::key::NodeId;
 use tokio::{
     sync::{mpsc, oneshot},
@@ -16,13 +16,16 @@ use crate::{
     net::ConnHandle,
     proto::{
         data_model::{AuthorisedEntry, Path, SubspaceId},
-        grouping::Range3d,
+        grouping::{Area, Range3d},
         keys::{NamespaceId, NamespaceKind, UserId, UserSecretKey},
         meadowcap::{self, AccessMode},
     },
     session::{intents::Intent, run_session, Error, EventSender, SessionHandle},
     store::{
-        traits::{EntryOrigin, EntryReader, EntryStorage, SecretStorage, Storage},
+        traits::{
+            EntryOrigin, EntryReader, EntryStorage, SecretStorage, Storage, StoreEvent,
+            SubscribeParams,
+        },
         Store,
     },
 };
@@ -211,6 +214,42 @@ impl ActorHandle {
         reply_rx.await?;
         Ok(())
     }
+
+    pub async fn subscribe_area(
+        &self,
+        namespace: NamespaceId,
+        area: Area,
+        params: SubscribeParams,
+        sender: mpsc::Sender<StoreEvent>,
+    ) -> Result<()> {
+        self.send(Input::SubscribeArea {
+            namespace,
+            area,
+            params,
+            sender,
+        })
+        .await?;
+        Ok(())
+    }
+
+    pub async fn resume_subscription(
+        &self,
+        progress_id: u64,
+        namespace: NamespaceId,
+        area: Area,
+        params: SubscribeParams,
+        sender: mpsc::Sender<StoreEvent>,
+    ) -> Result<()> {
+        self.send(Input::ResumeSubscription {
+            progress_id,
+            namespace,
+            area,
+            params,
+            sender,
+        })
+        .await?;
+        Ok(())
+    }
 }
 
 impl Drop for ActorHandle {
@@ -307,6 +346,19 @@ pub enum Input {
     Shutdown {
         #[debug(skip)]
         reply: Option<oneshot::Sender<()>>,
+    },
+    SubscribeArea {
+        namespace: NamespaceId,
+        area: Area,
+        params: SubscribeParams,
+        sender: mpsc::Sender<StoreEvent>,
+    },
+    ResumeSubscription {
+        progress_id: u64,
+        namespace: NamespaceId,
+        area: Area,
+        params: SubscribeParams,
+        sender: mpsc::Sender<StoreEvent>,
     },
 }
 
@@ -487,6 +539,44 @@ impl<S: Storage> Actor<S> {
             Input::ResolveInterests { interests, reply } => {
                 let res = self.store.auth().resolve_interests(interests);
                 send_reply(reply, res.map_err(anyhow::Error::from))
+            }
+            Input::SubscribeArea {
+                namespace,
+                area,
+                params,
+                sender,
+            } => {
+                let store = self.store.clone();
+                self.tasks.spawn_local(async move {
+                    let mut stream = store.entries().subscribe_area(namespace, area, params);
+                    while let Some(event) = stream.next().await {
+                        if let Err(_) = sender.send(event).await {
+                            break;
+                        }
+                    }
+                });
+                Ok(())
+            }
+            Input::ResumeSubscription {
+                progress_id,
+                namespace,
+                area,
+                params,
+                sender,
+            } => {
+                let store = self.store.clone();
+                self.tasks.spawn_local(async move {
+                    let mut stream =
+                        store
+                            .entries()
+                            .resume_subscription(progress_id, namespace, area, params);
+                    while let Some(event) = stream.next().await {
+                        if let Err(_) = sender.send(event).await {
+                            break;
+                        }
+                    }
+                });
+                Ok(())
             }
         }
     }
