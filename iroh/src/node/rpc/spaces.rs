@@ -155,6 +155,32 @@ impl<D: Store> Handler<D> {
                 .await
             }
             SyncWithPeerUpdate(_) => Err(RpcServerError::UnexpectedStartMessage),
+            Subscribe(msg) => {
+                chan.try_server_streaming(msg, self, |handler, req| async move {
+                    let (tx, rx) = mpsc::channel(1024);
+                    if let Some(progress_id) = req.initial_progress_id {
+                        handler
+                            .spaces()?
+                            .resume_subscription(
+                                progress_id,
+                                req.namespace,
+                                req.area,
+                                req.params,
+                                tx,
+                            )
+                            .await
+                            .map_err(map_err)?;
+                    } else {
+                        handler
+                            .spaces()?
+                            .subscribe_area(req.namespace, req.area, req.params, tx)
+                            .await
+                            .map_err(map_err)?;
+                    }
+                    Ok(ReceiverStream::new(rx).map(Ok))
+                })
+                .await
+            }
         }
     }
 }

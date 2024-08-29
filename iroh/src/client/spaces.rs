@@ -38,6 +38,7 @@ use iroh_willow::{
         intents::{serde_encoding::Event, Completion, IntentUpdate},
         SessionInit,
     },
+    store::traits::{StoreEvent, SubscribeParams},
 };
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
@@ -353,14 +354,39 @@ impl Space {
         })
     }
 
-    /// TODO
-    pub fn subscribe(&self, _area: Area) {
-        todo!()
+    /// Subscribe to events concerning entries included by an `Area`.
+    pub async fn subscribe_area(
+        &self,
+        area: Area,
+        params: SubscribeParams,
+    ) -> Result<impl Stream<Item = Result<StoreEvent>>> {
+        let req = SubscribeRequest {
+            namespace: self.namespace_id,
+            area,
+            params,
+            initial_progress_id: None,
+        };
+        let stream = self.rpc.try_server_streaming(req).await?;
+        let stream = stream.map(|item| item.map_err(anyhow::Error::from));
+        Ok(stream)
     }
 
-    /// TODO
-    pub fn subscribe_offset(&self, _area: Area, _offset: u64) {
-        todo!()
+    /// Resume a subscription using a progress ID obtained from a previous subscription.
+    pub async fn resume_subscription(
+        &self,
+        progress_id: u64,
+        area: Area,
+        params: SubscribeParams,
+    ) -> Result<impl Stream<Item = Result<StoreEvent>>> {
+        let req = SubscribeRequest {
+            namespace: self.namespace_id,
+            area,
+            params,
+            initial_progress_id: Some(progress_id),
+        };
+        let stream = self.rpc.try_server_streaming(req).await?;
+        let stream = stream.map(|item| item.map_err(anyhow::Error::from));
+        Ok(stream)
     }
 }
 

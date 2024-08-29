@@ -4,11 +4,14 @@ use std::fmt::Debug;
 
 use anyhow::Result;
 use futures_lite::Stream;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
-        data_model::{AuthorisedEntry, Entry, NamespaceId, Path, SubspaceId, WriteCapability},
+        data_model::{
+            self, AuthorisedEntry, Entry, NamespaceId, Path, SubspaceId, WriteCapability,
+        },
         grouping::{Area, Range3d},
         keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
         meadowcap::{self, ReadAuthorisation},
@@ -209,10 +212,14 @@ pub trait CapsStorage: Debug + Clone {
 
 /// An event which took place within a [`EntryStorage`].
 /// Each event includes a *progress ID* which can be used to *resume* a subscription at any point in the future.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StoreEvent {
     /// A new entry was ingested.
-    Ingested(u64, AuthorisedEntry, EntryOrigin),
+    Ingested(
+        u64,
+        #[serde(with = "data_model::serde_encoding::authorised_entry")] AuthorisedEntry,
+        EntryOrigin,
+    ),
     // PayloadForgotten(u64, PD),
     /// An entry was pruned via prefix pruning.
     Pruned(u64, PruneEvent),
@@ -249,9 +256,8 @@ impl StoreEvent {
             }
             StoreEvent::Pruned(_, PruneEvent { pruned, by: _ }) => {
                 if !params.ingest_only
-                    && pruned.0 == namespace_id
-                    && area.subspace().includes(&pruned.1)
-                    && area.path().is_prefix_of(&pruned.2)
+                    && *pruned.entry().namespace_id() == namespace_id
+                    && area.includes_entry(pruned.entry())
                 {
                     true
                 } else {
@@ -263,16 +269,17 @@ impl StoreEvent {
 }
 
 /// Describes an [`AuthorisedEntry`] which was pruned and the [`AuthorisedEntry`] which triggered the pruning.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PruneEvent {
-    /// The subspace ID and path of the entry which was pruned.
-    pub pruned: (NamespaceId, SubspaceId, Path),
+    #[serde(with = "data_model::serde_encoding::authorised_entry")]
+    pub pruned: AuthorisedEntry,
     /// The entry which triggered the pruning.
+    #[serde(with = "data_model::serde_encoding::authorised_entry")]
     pub by: AuthorisedEntry,
 }
 
 /// The origin of an entry ingestion event.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub enum EntryOrigin {
     /// The entry was probably created on this machine.
     Local,
@@ -287,7 +294,7 @@ pub enum EntryChannel {
 }
 
 /// Describes which entries to ignore during a query.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SubscribeParams {
     /// Omit entries whose payload is the empty string.
     pub ignore_empty_payloads: bool,

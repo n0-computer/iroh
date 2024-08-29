@@ -9,7 +9,7 @@ use iroh_willow::{
             self, serde_encoding::SerdeAuthorisedEntry, AuthorisedEntry, Entry, NamespaceId, Path,
             SubspaceId,
         },
-        grouping::{self, Range3d},
+        grouping::{self, Area, Range3d},
         keys::{NamespaceKind, UserId},
         meadowcap::{self, AccessMode, SecretKey},
     },
@@ -17,6 +17,7 @@ use iroh_willow::{
         intents::{serde_encoding::Event, IntentUpdate},
         SessionInit,
     },
+    store::traits::{StoreEvent, SubscribeParams},
 };
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
@@ -47,11 +48,11 @@ pub enum Request {
     DelegateCaps(DelegateCapsRequest),
     #[rpc(response = RpcResult<ImportCapsResponse>)]
     ImportCaps(ImportCapsRequest),
-    // #[rpc(response = RpcResult<ResolveInterestsResponse>)]
-    // ResolveInterests(ResolveInterestsRequest),
     #[bidi_streaming(update = SyncWithPeerUpdate, response = RpcResult<SyncWithPeerResponse>)]
     SyncWithPeer(SyncWithPeerRequest),
     SyncWithPeerUpdate(SyncWithPeerUpdate),
+    #[try_server_streaming(create_error = RpcError, item_error = RpcError, item = StoreEvent)]
+    Subscribe(SubscribeRequest),
 }
 
 #[allow(missing_docs)]
@@ -67,8 +68,8 @@ pub enum Response {
     CreateUser(RpcResult<CreateUserResponse>),
     DelegateCaps(RpcResult<DelegateCapsResponse>),
     ImportCaps(RpcResult<ImportCapsResponse>),
-    // ResolveInterests(RpcResult<ResolveInterestsResponse>),
     SyncWithPeer(RpcResult<SyncWithPeerResponse>),
+    Subscribe(RpcResult<StoreEvent>),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -139,9 +140,7 @@ pub struct GetEntryRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct GetEntryResponse(
-    pub Option<SerdeAuthorisedEntry>, // #[serde(with = "data_model::serde_encoding::authorised_entry")] pub AuthorisedEntry,
-);
+pub struct GetEntryResponse(pub Option<SerdeAuthorisedEntry>);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateNamespaceRequest {
@@ -190,6 +189,15 @@ pub struct SyncWithPeerUpdate(pub IntentUpdate);
 pub enum SyncWithPeerResponse {
     Started,
     Event(Event),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SubscribeRequest {
+    pub namespace: NamespaceId,
+    #[serde(with = "grouping::serde_encoding::area")]
+    pub area: Area,
+    pub params: SubscribeParams,
+    pub initial_progress_id: Option<u64>,
 }
 
 /// Either a complete [`Entry`] or a [`FullEntryForm`].
