@@ -164,7 +164,7 @@ async fn spaces_subscription() -> Result<()> {
 
     let (betty_space, betty_sync_intent) = betty
         .spaces()
-        .import_and_sync(ticket, SessionMode::ReconcileOnce)
+        .import_and_sync(ticket, SessionMode::Continuous)
         .await?;
 
     let _sync_task = tokio::task::spawn(async move {
@@ -177,13 +177,6 @@ async fn spaces_subscription() -> Result<()> {
         .resume_subscription(0, Area::new_full(), Default::default())
         .await?;
 
-    alfie_space
-        .insert_bytes(
-            EntryForm::new(alfie_user, Path::from_bytes(&[b"foo"])?),
-            "hi",
-        )
-        .await?;
-
     betty_space
         .insert_bytes(
             EntryForm::new(betty_user, Path::from_bytes(&[b"foo"])?),
@@ -191,23 +184,39 @@ async fn spaces_subscription() -> Result<()> {
         )
         .await?;
 
-    alfie_space
-        .insert_bytes(
-            EntryForm::new(alfie_user, Path::from_bytes(&[b"foo"])?),
-            "hi!!",
-        )
-        .await?;
-
-    let ev = alfie_sub.next().await.unwrap();
-    println!("ALFIE 2");
+    let ev = betty_sub.next().await.unwrap().unwrap();
+    println!("BETTY 1 {ev:?}");
     assert!(matches!(ev, StoreEvent::Ingested(0, _, EntryOrigin::Local)));
 
-    let ev = betty_sub.next().await.unwrap();
-    println!("BETTY 2");
+    let ev = alfie_sub.next().await.unwrap().unwrap();
+    println!("ALFIE 1 {ev:?}");
     assert!(matches!(
         ev,
         StoreEvent::Ingested(0, _, EntryOrigin::Remote(_))
     ));
+
+    alfie_space
+        .insert_bytes(
+            EntryForm::new(alfie_user, Path::from_bytes(&[b"bar"])?),
+            "hi!!",
+        )
+        .await?;
+
+    let ev = alfie_sub.next().await.unwrap().unwrap();
+    println!("ALFIE 2 {ev:?}");
+    assert!(matches!(ev, StoreEvent::Ingested(1, _, EntryOrigin::Local)));
+
+    let ev = betty_sub.next().await.unwrap().unwrap();
+    println!("BETTY 2 {ev:?}");
+    assert!(matches!(
+        ev,
+        StoreEvent::Ingested(1, _, EntryOrigin::Remote(_))
+    ));
+
+    // let resume_sub = alfie_space
+    //     .resume_subscription(0, Area::new_full(), Default::default())
+    //     .await?;
+    // assert_eq!(resume_sub.count().await, 2);
 
     Ok(())
 }
