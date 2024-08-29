@@ -1700,6 +1700,8 @@
 <a href="#1700" id="1700">1700</a>
 <a href="#1701" id="1701">1701</a>
 <a href="#1702" id="1702">1702</a>
+<a href="#1703" id="1703">1703</a>
+<a href="#1704" id="1704">1704</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1996,7 +1998,9 @@
 }
 
 <span class="doccomment">/// Creates a [`quinn::ServerConfig`] with the given secret key and limits.
-</span><span class="comment">// TODO: this return type can not longer be used anywhere in our public API.  Remove this.
+</span><span class="comment">// This return type can not longer be used anywhere in our public API.  It is however still
+// used by iroh::node::Node (or rather iroh::node::Builder) to create a plain Quinn
+// endpoint.
 </span><span class="kw">pub fn </span>make_server_config(
     secret_key: <span class="kw-2">&amp;</span>SecretKey,
     alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,

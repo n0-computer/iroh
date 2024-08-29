@@ -3881,6 +3881,11 @@
 <a href="#3881" id="3881">3881</a>
 <a href="#3882" id="3882">3882</a>
 <a href="#3883" id="3883">3883</a>
+<a href="#3884" id="3884">3884</a>
+<a href="#3885" id="3885">3885</a>
+<a href="#3886" id="3886">3886</a>
+<a href="#3887" id="3887">3887</a>
+<a href="#3888" id="3888">3888</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -5127,7 +5132,7 @@
     }
 
     <span class="doccomment">/// Triggers an address discovery. The provided why string is for debug logging only.
-    </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.me))]
+    </span><span class="attr">#[instrument(skip_all)]
     </span><span class="kw">fn </span>re_stun(<span class="kw-2">&amp;</span><span class="self">self</span>, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
         <span class="macro">debug!</span>(<span class="string">"re_stun: {}"</span>, why);
         <span class="macro">inc!</span>(MagicsockMetrics, re_stun_calls);
@@ -5254,8 +5259,8 @@
             </span>);
         }
 
-        <span class="self">Self</span>::with_name(me.clone(), opts)
-            .instrument(<span class="macro">error_span!</span>(<span class="string">"magicsock"</span>, %me))
+        <span class="self">Self</span>::with_name(me, opts)
+            .instrument(<span class="macro">error_span!</span>(<span class="string">"magicsock"</span>))
             .<span class="kw">await
     </span>}
 
@@ -5579,7 +5584,7 @@
 
     <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(pconn6) = <span class="self">self</span>.pconn6.as_ref() {
-            std::cmp::max(
+            std::cmp::min(
                 pconn6.max_transmit_segments(),
                 <span class="self">self</span>.pconn4.max_transmit_segments(),
             )
@@ -5590,8 +5595,13 @@
 
     <span class="kw">fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(pconn6) = <span class="self">self</span>.pconn6.as_ref() {
-            <span class="comment">// TODO(matheus23): This is somewhat incorrect. Needs updates to `MagicSock::poll_recv` to fix this though.
-            </span>std::cmp::min(
+            <span class="comment">// `max_receive_segments` controls the size of the `RecvMeta` buffer
+            // that quinn creates. Having buffers slightly bigger than necessary
+            // isn't terrible, and makes sure a single socket can read the maximum
+            // amount with a single poll. We considered adding these numbers instead,
+            // but we never get data from both sockets at the same time in `poll_recv`
+            // and it's impossible and unnecessary to be refactored that way.
+            </span>std::cmp::max(
                 pconn6.max_receive_segments(),
                 <span class="self">self</span>.pconn4.max_receive_segments(),
             )
