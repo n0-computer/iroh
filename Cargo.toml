@@ -50,6 +50,6 @@ unused-async = "warn"
 # willow-data-model = { path = "../willow-rs/data-model" }
 # willow-encoding = { path = "../willow-rs/encoding" }
 # meadowcap = { path = "../willow-rs/meadowcap" }
-willow-data-model = { git = "https://github.com/n0-computer/willow-rs.git", branch = "iroh-dev" }
-willow-encoding = { git = "https://github.com/n0-computer/willow-rs.git", branch = "iroh-dev" }
-meadowcap = { git = "https://github.com/n0-computer/willow-rs.git", branch = "iroh-dev" }
+willow-data-model = { git = "https://github.com/n0-computer/willow-rs.git", branch = "main" }
+willow-encoding = { git = "https://github.com/n0-computer/willow-rs.git", branch = "main" }
+meadowcap = { git = "https://github.com/n0-computer/willow-rs.git", branch = "main" }
