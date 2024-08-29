@@ -1244,7 +1244,7 @@ impl MagicSock {
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
-    #[instrument(skip_all, fields(me = %self.me))]
+    #[instrument(skip_all)]
     fn re_stun(&self, why: &'static str) {
         debug!("re_stun: {}", why);
         inc!(MagicsockMetrics, re_stun_calls);
@@ -1371,8 +1371,8 @@ impl Handle {
             );
         }
 
-        Self::with_name(me.clone(), opts)
-            .instrument(error_span!("magicsock", %me))
+        Self::with_name(me, opts)
+            .instrument(error_span!("magicsock"))
             .await
     }
 
