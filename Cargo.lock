@@ -2795,7 +2795,6 @@ dependencies = [
  "iroh-blake3",
  "iroh-metrics",
  "iroh-net",
- "iroh-quinn",
  "iroh-test",
  "postcard",
  "rand",
