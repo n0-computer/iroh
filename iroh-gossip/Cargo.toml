@@ -30,7 +30,6 @@ rand_core = "0.6.4"
 serde = { version = "1.0.164", features = ["derive"] }
 
 # net dependencies (optional)
-quinn = { package = "iroh-quinn", version = "0.11", optional = true }
 futures-lite = { version = "2.3", optional = true }
 futures-concurrency = { version = "7.6.1", optional = true }
 futures-util = { version = "0.3.30", optional = true }
