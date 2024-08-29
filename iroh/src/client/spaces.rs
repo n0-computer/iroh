@@ -488,7 +488,7 @@ impl SyncProgress {
     }
 
     fn is_ready(&self) -> bool {
-        self.complete == true || self.failed.is_some()
+        self.complete || self.failed.is_some()
     }
 
     fn into_completion(self) -> Result<Completion> {
@@ -524,17 +524,17 @@ impl SyncHandleSet {
     ///
     /// Returns an error if there is already a sync intent for this peer in the set.
     pub fn insert(&mut self, peer: NodeId, handle: SyncHandle) -> Result<(), IntentExistsError> {
-        if self.intents.contains_key(&peer) {
-            Err(IntentExistsError(peer))
-        } else {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.intents.entry(peer) {
             let SyncHandle {
                 update_tx,
                 event_rx,
                 state,
             } = handle;
             self.event_rx.insert(peer, StreamNotifyClose::new(event_rx));
-            self.intents.insert(peer, HandleState { update_tx, state });
+            e.insert(HandleState { update_tx, state });
             Ok(())
+        } else {
+            Err(IntentExistsError(peer))
         }
     }
 
