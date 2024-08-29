@@ -287,6 +287,12 @@
 <a href="#287" id="287">287</a>
 <a href="#288" id="288">288</a>
 <a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Authentication backend for Willow.
 //!
 //! Manages capabilities.
@@ -307,7 +313,10 @@
         data_model::WriteCapability,
         grouping::AreaOfInterest,
         keys::{NamespaceId, UserId},
-        meadowcap::{AccessMode, FailedDelegationError, McCapability, ReadAuthorisation},
+        meadowcap::{
+            AccessMode, FailedDelegationError, McCapability, McSubspaceCapability,
+            ReadAuthorisation,
+        },
     },
     store::traits::{CapsStorage, SecretStorage, SecretStoreError, Storage},
 };
@@ -415,13 +424,7 @@
         namespace_id: NamespaceId,
         user_id: UserId,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;[CapabilityPack; <span class="number">2</span>], AuthError&gt; {
-        <span class="comment">// let namespace_key = namespace_id
-        //     .into_public_key()
-        //     .map_err(|_| AuthError::InvalidNamespaceId(namespace_id))?;
-        // let user_key: UserPublicKey = user_id
-        //     .into_public_key()
-        //     .map_err(|_| AuthError::InvalidUserId(user_id))?;
-        </span><span class="kw">let </span>read_cap = <span class="self">self</span>.create_read_cap(namespace_id, user_id)<span class="question-mark">?</span>;
+        <span class="kw">let </span>read_cap = <span class="self">self</span>.create_read_cap(namespace_id, user_id)<span class="question-mark">?</span>;
         <span class="kw">let </span>write_cap = <span class="self">self</span>.create_write_cap(namespace_id, user_id)<span class="question-mark">?</span>;
         <span class="kw">let </span>pack = [read_cap, write_cap];
         <span class="self">self</span>.insert_caps_unchecked(pack.clone())<span class="question-mark">?</span>;
@@ -434,16 +437,25 @@
         user_key: UserId,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;CapabilityPack, AuthError&gt; {
         <span class="kw">let </span>cap = <span class="kw">if </span>namespace_key.is_communal() {
-            McCapability::new_communal(namespace_key, user_key, AccessMode::Read)<span class="question-mark">?
-        </span>} <span class="kw">else </span>{
+            <span class="kw">let </span>read_cap = McCapability::new_communal(namespace_key, user_key, AccessMode::Read)<span class="question-mark">?</span>;
+            ReadAuthorisation::new(read_cap, <span class="prelude-val">None</span>)
+        } <span class="kw">else </span>{
             <span class="kw">let </span>namespace_secret = <span class="self">self
                 </span>.secrets
                 .get_namespace(<span class="kw-2">&amp;</span>namespace_key)
                 .ok_or(AuthError::MissingNamespaceSecret(namespace_key))<span class="question-mark">?</span>;
-            McCapability::new_owned(namespace_key, <span class="kw-2">&amp;</span>namespace_secret, user_key, AccessMode::Read)<span class="question-mark">?
-        </span>};
-        <span class="comment">// TODO: Subspace capability.
-        </span><span class="kw">let </span>pack = CapabilityPack::Read(ReadAuthorisation::new(cap, <span class="prelude-val">None</span>));
+            <span class="kw">let </span>read_cap = McCapability::new_owned(
+                namespace_key,
+                <span class="kw-2">&amp;</span>namespace_secret,
+                user_key,
+                AccessMode::Read,
+            )<span class="question-mark">?</span>;
+            <span class="kw">let </span>subspace_cap =
+                McSubspaceCapability::new(namespace_key, <span class="kw-2">&amp;</span>namespace_secret, user_key)
+                    .map_err(AuthError::SubspaceCapDelegationFailed)<span class="question-mark">?</span>;
+            ReadAuthorisation::new(read_cap, <span class="prelude-val">Some</span>(subspace_cap))
+        };
+        <span class="kw">let </span>pack = CapabilityPack::Read(cap);
         <span class="prelude-val">Ok</span>(pack)
     }
 

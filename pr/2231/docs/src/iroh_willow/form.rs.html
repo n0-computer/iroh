@@ -157,6 +157,12 @@
 <a href="#157" id="157">157</a>
 <a href="#158" id="158">158</a>
 <a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Structs that allow constructing entries and other structs where some fields may be
 //! automatically filled.
 
@@ -273,6 +279,12 @@
             payload: PayloadForm::Bytes(payload.into()),
         }
     }
+
+    <span class="doccomment">/// Sets the subspace for the entry.
+    </span><span class="kw">pub fn </span>subspace(<span class="kw-2">mut </span><span class="self">self</span>, subspace: SubspaceId) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.subspace_id = SubspaceForm::Exact(subspace);
+        <span class="self">self
+    </span>}
 }
 
 <span class="doccomment">/// Select which capability to use for authenticating a new entry.
