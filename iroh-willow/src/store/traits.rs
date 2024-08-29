@@ -255,14 +255,9 @@ impl StoreEvent {
                     && params.includes_origin(origin)
             }
             StoreEvent::Pruned(_, PruneEvent { pruned, by: _ }) => {
-                if !params.ingest_only
+                !params.ingest_only
                     && *pruned.entry().namespace_id() == namespace_id
                     && area.includes_entry(pruned.entry())
-                {
-                    true
-                } else {
-                    false
-                }
             }
         }
     }
@@ -328,11 +323,7 @@ impl SubscribeParams {
     }
 
     pub fn includes_entry(&self, entry: &Entry) -> bool {
-        if self.ignore_empty_payloads && entry.payload_length() == 0 {
-            false
-        } else {
-            true
-        }
+        !(self.ignore_empty_payloads && entry.payload_length() == 0)
     }
 
     pub fn includes_origin(&self, origin: &EntryOrigin) -> bool {

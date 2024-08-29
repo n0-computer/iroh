@@ -335,7 +335,7 @@ impl traits::EntryStorage for Rc<RefCell<EntryStore>> {
             params,
             namespace,
             progress_id,
-            store: Rc::downgrade(&self),
+            store: Rc::downgrade(self),
         }
     }
 
@@ -351,7 +351,7 @@ impl traits::EntryStorage for Rc<RefCell<EntryStore>> {
             params,
             progress_id,
             namespace,
-            store: Rc::downgrade(&self),
+            store: Rc::downgrade(self),
         }
     }
 }
