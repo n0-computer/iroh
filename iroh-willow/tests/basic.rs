@@ -8,16 +8,19 @@ use futures_lite::StreamExt;
 use iroh_blobs::store::{Map, MapEntry};
 use iroh_io::AsyncSliceReaderExt;
 use iroh_willow::{
-    interest::{Interests, IntoAreaOfInterest},
+    form::EntryForm,
+    interest::{CapSelector, DelegateTo, Interests, IntoAreaOfInterest, RestrictArea},
     proto::{
         data_model::{Path, PathExt},
         grouping::{Area, AreaExt, Range3d},
+        keys::NamespaceKind,
     },
     session::{
         intents::{Completion, EventKind},
         SessionInit, SessionMode,
     },
 };
+use meadowcap::AccessMode;
 
 use self::util::{create_rng, insert, setup_and_delegate, spawn_two, Peer};
 
@@ -273,6 +276,60 @@ async fn peer_manager_twoway_loop() -> Result<()> {
         task_betty.await.unwrap();
     }
     [alfie, betty].map(Peer::shutdown).try_join().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn owned_namespace_subspace_write_sync() -> Result<()> {
+    iroh_test::logging::setup_multithreaded();
+    let mut rng = create_rng("owned_namespace_subspace_write_sync");
+
+    let [alfie, betty] = spawn_two(&mut rng).await?;
+
+    let user_alfie = alfie.create_user().await?;
+    let user_betty = betty.create_user().await?;
+
+    let namespace_id = alfie
+        .create_namespace(NamespaceKind::Owned, user_alfie)
+        .await?;
+
+    let restriction = RestrictArea::Restrict(Area::new_subspace(user_betty));
+
+    let cap_for_betty = alfie
+        .delegate_caps(
+            CapSelector::any(namespace_id),
+            AccessMode::Write,
+            DelegateTo::new(user_betty, restriction),
+        )
+        .await?;
+
+    betty.import_caps(cap_for_betty).await?;
+
+    // Insert an entry into our subspace.
+    let path = Path::from_bytes(&[b"foo"])?;
+    let entry = EntryForm::new_bytes(namespace_id, path, "foo");
+    betty.insert_entry(entry, user_betty).await?;
+
+    // Make sure we cannot write into alfie's subspace.
+    let path = Path::from_bytes(&[b"foo"])?;
+    let entry = EntryForm::new_bytes(namespace_id, path, "foo").subspace(user_alfie);
+    assert!(betty.insert_entry(entry, user_betty).await.is_err());
+
+    // Make sure sync runs correctl.y
+    let init = SessionInit::new(
+        Interests::builder().add_full_cap(namespace_id),
+        SessionMode::ReconcileOnce,
+    );
+    let mut intent = alfie.sync_with_peer(betty.node_id(), init).await.unwrap();
+    let completion = intent.complete().await.expect("failed to complete intent");
+    assert_eq!(completion, Completion::Partial);
+    let entries: Vec<_> = alfie
+        .get_entries(namespace_id, Range3d::new_full())
+        .await?
+        .try_collect()
+        .await?;
+    assert_eq!(entries.len(), 1);
+
     Ok(())
 }
 
