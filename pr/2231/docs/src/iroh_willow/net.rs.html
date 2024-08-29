@@ -1123,7 +1123,7 @@
     </span>}
     <span class="macro">trace!</span>(<span class="question-mark">?</span>channel, <span class="string">"send: close writer"</span>);
     send_stream.finish()<span class="question-mark">?</span>;
-    <span class="comment">// We don't await SendStream::stopped, because we rely on application level closing notifiations,
+    <span class="comment">// We don't await SendStream::stopped, because we rely on application level closing notifications,
     // and make sure that the connection is closed gracefully in any case.
     </span><span class="macro">trace!</span>(<span class="question-mark">?</span>channel, <span class="string">"send: done"</span>);
     <span class="prelude-val">Ok</span>(())

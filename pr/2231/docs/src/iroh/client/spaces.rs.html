@@ -1128,7 +1128,7 @@
     }
 
     <span class="kw">fn </span>is_ready(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.complete == <span class="bool-val">true </span>|| <span class="self">self</span>.failed.is_some()
+        <span class="self">self</span>.complete || <span class="self">self</span>.failed.is_some()
     }
 
     <span class="kw">fn </span>into_completion(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Completion&gt; {
@@ -1164,17 +1164,17 @@
     ///
     /// Returns an error if there is already a sync intent for this peer in the set.
     </span><span class="kw">pub fn </span>insert(<span class="kw-2">&amp;mut </span><span class="self">self</span>, peer: NodeId, handle: SyncHandle) -&gt; <span class="prelude-ty">Result</span>&lt;(), IntentExistsError&gt; {
-        <span class="kw">if </span><span class="self">self</span>.intents.contains_key(<span class="kw-2">&amp;</span>peer) {
-            <span class="prelude-val">Err</span>(IntentExistsError(peer))
-        } <span class="kw">else </span>{
+        <span class="kw">if let </span>std::collections::hash_map::Entry::Vacant(e) = <span class="self">self</span>.intents.entry(peer) {
             <span class="kw">let </span>SyncHandle {
                 update_tx,
                 event_rx,
                 state,
             } = handle;
             <span class="self">self</span>.event_rx.insert(peer, StreamNotifyClose::new(event_rx));
-            <span class="self">self</span>.intents.insert(peer, HandleState { update_tx, state });
+            e.insert(HandleState { update_tx, state });
             <span class="prelude-val">Ok</span>(())
+        } <span class="kw">else </span>{
+            <span class="prelude-val">Err</span>(IntentExistsError(peer))
         }
     }
 

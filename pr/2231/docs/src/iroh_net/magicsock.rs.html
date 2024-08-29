@@ -5132,7 +5132,7 @@
     }
 
     <span class="doccomment">/// Triggers an address discovery. The provided why string is for debug logging only.
-    </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.me))]
+    </span><span class="attr">#[instrument(skip_all)]
     </span><span class="kw">fn </span>re_stun(<span class="kw-2">&amp;</span><span class="self">self</span>, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
         <span class="macro">debug!</span>(<span class="string">"re_stun: {}"</span>, why);
         <span class="macro">inc!</span>(MagicsockMetrics, re_stun_calls);
@@ -5259,8 +5259,8 @@
             </span>);
         }
 
-        <span class="self">Self</span>::with_name(me.clone(), opts)
-            .instrument(<span class="macro">error_span!</span>(<span class="string">"magicsock"</span>, %me))
+        <span class="self">Self</span>::with_name(me, opts)
+            .instrument(<span class="macro">error_span!</span>(<span class="string">"magicsock"</span>))
             .<span class="kw">await
     </span>}
 
