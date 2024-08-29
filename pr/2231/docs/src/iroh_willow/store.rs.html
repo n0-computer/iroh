@@ -142,9 +142,8 @@
 <a href="#142" id="142">142</a>
 <a href="#143" id="143">143</a>
 <a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Store for entries, secrets, and capabilities used in the Willow engine.
-//!
-//! The [`Store`] is the high-level wrapper for the different stores we need.
 //!
 //! The storage backend is defined in the [`Storage`] trait and its associated types.
 //!
@@ -155,7 +154,7 @@
 
 <span class="kw">use crate</span>::{
     form::{AuthForm, EntryForm, EntryOrForm, SubspaceForm, TimestampForm},
-    interest::{CapSelector, ReceiverSelector},
+    interest::{CapSelector, UserSelector},
     proto::{
         data_model::Entry,
         data_model::{AuthorisedEntry, PayloadDigest},
@@ -210,16 +209,20 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>.auth
     }
 
-    <span class="kw">pub async fn </span>insert_entry(<span class="kw-2">&amp;</span><span class="self">self</span>, entry: EntryOrForm, auth: AuthForm) -&gt; <span class="prelude-ty">Result</span>&lt;(Entry, bool)&gt; {
+    <span class="kw">pub async fn </span>insert_entry(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        entry: EntryOrForm,
+        auth: AuthForm,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(AuthorisedEntry, bool)&gt; {
         <span class="kw">let </span>user_id = auth.user_id();
         <span class="kw">let </span>entry = <span class="kw">match </span>entry {
             EntryOrForm::Entry(entry) =&gt; <span class="prelude-val">Ok</span>(entry),
             EntryOrForm::Form(form) =&gt; <span class="self">self</span>.form_to_entry(form, user_id).<span class="kw">await</span>,
         }<span class="question-mark">?</span>;
         <span class="kw">let </span>capability = <span class="kw">match </span>auth {
-            AuthForm::Exact(cap) =&gt; cap.<span class="number">0</span>,
+            AuthForm::Exact(cap) =&gt; cap,
             AuthForm::Any(user_id) =&gt; {
-                <span class="kw">let </span>selector = CapSelector::for_entry(<span class="kw-2">&amp;</span>entry, ReceiverSelector::Exact(user_id));
+                <span class="kw">let </span>selector = CapSelector::for_entry(<span class="kw-2">&amp;</span>entry, UserSelector::Exact(user_id));
                 <span class="self">self</span>.auth()
                     .get_write_cap(<span class="kw-2">&amp;</span>selector)<span class="question-mark">?
                     </span>.ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"no write capability available"</span>))<span class="question-mark">?
@@ -240,8 +243,7 @@
         <span class="kw">let </span>inserted = <span class="self">self
             </span>.entries()
             .ingest(<span class="kw-2">&amp;</span>authorised_entry, EntryOrigin::Local)<span class="question-mark">?</span>;
-        <span class="kw">let </span>(entry, _token) = authorised_entry.into_parts();
-        <span class="prelude-val">Ok</span>((entry, inserted))
+        <span class="prelude-val">Ok</span>((authorised_entry, inserted))
     }
 
     <span class="kw">pub fn </span>create_namespace(

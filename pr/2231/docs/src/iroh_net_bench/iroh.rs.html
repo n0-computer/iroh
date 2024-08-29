@@ -263,6 +263,19 @@
 <a href="#263" id="263">263</a>
 <a href="#264" id="264">264</a>
 <a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::SocketAddr,
     time::{Duration, Instant},
@@ -276,7 +289,7 @@
     relay::{RelayMap, RelayMode, RelayUrl},
     Endpoint, NodeAddr,
 };
-<span class="kw">use </span>tracing::trace;
+<span class="kw">use </span>tracing::{trace, warn};
 
 <span class="kw">use crate</span>::{
     client_handler, stats::TransferResult, ClientStats, ConnectionSelector, EndpointSelector, Opt,
@@ -456,7 +469,11 @@
             </span>.context(<span class="string">"failed sending data"</span>)<span class="question-mark">?</span>;
     }
 
-    stream.finish().<span class="kw">await</span>.context(<span class="string">"failed finishing stream"</span>)<span class="question-mark">?</span>;
+    stream.finish().context(<span class="string">"failed finishing stream"</span>)<span class="question-mark">?</span>;
+    stream
+        .stopped()
+        .<span class="kw">await
+        </span>.context(<span class="string">"failed to wait for stream to be stopped"</span>)<span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>(())
 }
@@ -490,8 +507,17 @@
 
     <span class="comment">// Handle only the expected amount of clients
     </span><span class="kw">for _ in </span><span class="number">0</span>..opt.clients {
-        <span class="kw">let </span>handshake = endpoint.accept().<span class="kw">await</span>.unwrap();
-        <span class="kw">let </span>connection = handshake.<span class="kw">await</span>.context(<span class="string">"handshake failed"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>incoming = endpoint.accept().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>connecting = <span class="kw">match </span>incoming.accept() {
+            <span class="prelude-val">Ok</span>(connecting) =&gt; connecting,
+            <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="macro">warn!</span>(<span class="string">"incoming connection failed: {err:#}"</span>);
+                <span class="comment">// we can carry on in these cases:
+                // this can be caused by retransmitted datagrams
+                </span><span class="kw">continue</span>;
+            }
+        };
+        <span class="kw">let </span>connection = connecting.<span class="kw">await</span>.context(<span class="string">"handshake failed"</span>)<span class="question-mark">?</span>;
 
         server_tasks.push(tokio::spawn(<span class="kw">async move </span>{
             <span class="kw">loop </span>{

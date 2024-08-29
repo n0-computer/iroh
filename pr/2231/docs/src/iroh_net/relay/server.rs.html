@@ -1045,6 +1045,9 @@
 <a href="#1045" id="1045">1045</a>
 <a href="#1046" id="1046">1046</a>
 <a href="#1047" id="1047">1047</a>
+<a href="#1048" id="1048">1048</a>
+<a href="#1049" id="1049">1049</a>
+<a href="#1050" id="1050">1050</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1204,9 +1207,9 @@
     <span class="doccomment">/// Use a static TLS key and certificate chain.
     </span>Manual {
         <span class="doccomment">/// The TLS private key.
-        </span>private_key: rustls::PrivateKey,
+        </span>private_key: rustls::pki_types::PrivateKeyDer&lt;<span class="lifetime">'static</span>&gt;,
         <span class="doccomment">/// The TLS certificate chain.
-        </span>certs: Vec&lt;rustls::Certificate&gt;,
+        </span>certs: Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;,
     },
 }
 
@@ -1302,9 +1305,12 @@
                     .request_handler(Method::GET, <span class="string">"/robots.txt"</span>, Box::new(robots_handler));
                 <span class="kw">let </span>http_addr = <span class="kw">match </span>relay_config.tls {
                     <span class="prelude-val">Some</span>(tls_config) =&gt; {
-                        <span class="kw">let </span>server_config = rustls::ServerConfig::builder()
-                            .with_safe_defaults()
-                            .with_no_client_auth();
+                        <span class="kw">let </span>server_config = rustls::ServerConfig::builder_with_provider(Arc::new(
+                            rustls::crypto::ring::default_provider(),
+                        ))
+                        .with_safe_default_protocol_versions()
+                        .expect(<span class="string">"protocols supported by ring"</span>)
+                        .with_no_client_auth();
                         <span class="kw">let </span>server_tls_config = <span class="kw">match </span>tls_config.cert {
                             CertConfig::LetsEncrypt { config } =&gt; {
                                 <span class="kw">let </span><span class="kw-2">mut </span>state = config.state();
@@ -1330,8 +1336,8 @@
                                 })
                             }
                             CertConfig::Manual { private_key, certs } =&gt; {
-                                <span class="kw">let </span>server_config = server_config
-                                    .with_single_cert(certs.clone(), private_key.clone())<span class="question-mark">?</span>;
+                                <span class="kw">let </span>server_config =
+                                    server_config.with_single_cert(certs.clone(), private_key)<span class="question-mark">?</span>;
                                 <span class="kw">let </span>server_config = Arc::new(server_config);
                                 <span class="kw">let </span>acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());

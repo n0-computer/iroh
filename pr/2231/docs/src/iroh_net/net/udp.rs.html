@@ -145,9 +145,6 @@
 <a href="#145" id="145">145</a>
 <a href="#146" id="146">146</a>
 <a href="#147" id="147">147</a>
-<a href="#148" id="148">148</a>
-<a href="#149" id="149">149</a>
-<a href="#150" id="150">150</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::net::SocketAddr;
 
 <span class="kw">use </span>anyhow::{ensure, Context, <span class="prelude-ty">Result</span>};
@@ -187,21 +184,21 @@
     <span class="doccomment">/// Bind to the given port only on localhost.
     </span><span class="kw">pub fn </span>bind_local(network: IpFamily, port: u16) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>addr = SocketAddr::new(network.local_addr(), port);
-        <span class="self">Self</span>::bind_raw(addr, <span class="bool-val">true</span>).with_context(|| <span class="macro">format!</span>(<span class="string">"{addr:?}"</span>))
+        <span class="self">Self</span>::bind_raw(addr).with_context(|| <span class="macro">format!</span>(<span class="string">"{addr:?}"</span>))
     }
 
     <span class="doccomment">/// Bind to the given port and listen on all interfaces.
     </span><span class="kw">pub fn </span>bind(network: IpFamily, port: u16) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>addr = SocketAddr::new(network.unspecified_addr(), port);
-        <span class="self">Self</span>::bind_raw(addr, <span class="bool-val">true</span>).with_context(|| <span class="macro">format!</span>(<span class="string">"{addr:?}"</span>))
+        <span class="self">Self</span>::bind_raw(addr).with_context(|| <span class="macro">format!</span>(<span class="string">"{addr:?}"</span>))
     }
 
-    <span class="doccomment">/// Bind to any provided [`SocketAddr`]. Does not prepare for using the socket as QUIC socket.
+    <span class="doccomment">/// Bind to any provided [`SocketAddr`].
     </span><span class="kw">pub fn </span>bind_full(addr: <span class="kw">impl </span>Into&lt;SocketAddr&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="self">Self</span>::bind_raw(addr, <span class="bool-val">false</span>)
+        <span class="self">Self</span>::bind_raw(addr)
     }
 
-    <span class="kw">fn </span>bind_raw(addr: <span class="kw">impl </span>Into&lt;SocketAddr&gt;, prepare_for_quinn: bool) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">fn </span>bind_raw(addr: <span class="kw">impl </span>Into&lt;SocketAddr&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>addr = addr.into();
         <span class="kw">let </span>network = IpFamily::from(addr.ip());
         <span class="kw">let </span>socket = socket2::Socket::new(
@@ -232,9 +229,6 @@
         // is not yet available on all OSes.
         </span>socket.bind(<span class="kw-2">&amp;</span>addr.into()).context(<span class="string">"binding"</span>)<span class="question-mark">?</span>;
 
-        <span class="kw">if </span>prepare_for_quinn {
-            quinn_udp::UdpSocketState::configure((<span class="kw-2">&amp;</span>socket).into()).context(<span class="string">"QUIC config"</span>)<span class="question-mark">?</span>;
-        }
         <span class="comment">// Ensure nonblocking
         </span>socket.set_nonblocking(<span class="bool-val">true</span>).context(<span class="string">"nonblocking: true"</span>)<span class="question-mark">?</span>;
 

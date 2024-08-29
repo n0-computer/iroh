@@ -71,6 +71,30 @@
 <a href="#71" id="71">71</a>
 <a href="#72" id="72">72</a>
 <a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! TLS configuration based on libp2p TLS specs.
 //!
 //! See &lt;https://github.com/libp2p/specs/blob/master/tls/tls.md&gt;.
@@ -78,12 +102,26 @@
 
 </span><span class="kw">use </span>std::sync::Arc;
 
+<span class="kw">use </span>quinn::crypto::rustls::{NoInitialCipherSuite, QuicClientConfig, QuicServerConfig};
 <span class="kw">use </span>tracing::warn;
 
 <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
 
+<span class="kw">use </span><span class="self">self</span>::certificate::AlwaysResolvesCert;
+
 <span class="kw">pub mod </span>certificate;
 <span class="kw">mod </span>verifier;
+
+<span class="doccomment">/// Error for generating iroh p2p TLS configs.
+</span><span class="attr">#[derive(Debug, thiserror::Error)]
+</span><span class="kw">pub enum </span>CreateConfigError {
+    <span class="doccomment">/// Error generating the certificate.
+    </span><span class="attr">#[error(<span class="string">"Error generating the certificate"</span>)]
+    </span>CertError(<span class="attr">#[from] </span>certificate::GenError),
+    <span class="doccomment">/// Error creating QUIC config.
+    </span><span class="attr">#[error(<span class="string">"Error creating QUIC config"</span>)]
+    </span>ConfigError(<span class="attr">#[from] </span>NoInitialCipherSuite),
+}
 
 <span class="doccomment">/// Create a TLS client configuration.
 ///
@@ -95,26 +133,31 @@
     remote_peer_id: <span class="prelude-ty">Option</span>&lt;PublicKey&gt;,
     alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
     keylog: bool,
-) -&gt; <span class="prelude-ty">Result</span>&lt;rustls::ClientConfig, certificate::GenError&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;QuicClientConfig, CreateConfigError&gt; {
     <span class="kw">let </span>(certificate, secret_key) = certificate::generate(secret_key)<span class="question-mark">?</span>;
 
-    <span class="kw">let </span><span class="kw-2">mut </span>crypto = rustls::ClientConfig::builder()
-        .with_cipher_suites(verifier::CIPHERSUITES)
-        .with_safe_default_kx_groups()
-        .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-        .expect(<span class="string">"Cipher suites and kx groups are configured; qed"</span>)
-        .with_custom_certificate_verifier(Arc::new(
-            verifier::Libp2pCertificateVerifier::with_remote_peer_id(remote_peer_id),
-        ))
-        .with_client_auth_cert(<span class="macro">vec!</span>[certificate], secret_key)
-        .expect(<span class="string">"Client cert key DER is valid; qed"</span>);
+    <span class="kw">let </span>cert_resolver = Arc::new(
+        AlwaysResolvesCert::new(certificate, <span class="kw-2">&amp;</span>secret_key)
+            .expect(<span class="string">"Client cert key DER is valid; qed"</span>),
+    );
+
+    <span class="kw">let </span><span class="kw-2">mut </span>crypto = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+    .expect(<span class="string">"version supported by ring"</span>)
+    .dangerous()
+    .with_custom_certificate_verifier(Arc::new(
+        verifier::Libp2pCertificateVerifier::with_remote_peer_id(remote_peer_id),
+    ))
+    .with_client_cert_resolver(cert_resolver);
     crypto.alpn_protocols = alpn_protocols;
     <span class="kw">if </span>keylog {
         <span class="macro">warn!</span>(<span class="string">"enabling SSLKEYLOGFILE for TLS pre-master keys"</span>);
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
-
-    <span class="prelude-val">Ok</span>(crypto)
+    <span class="kw">let </span>config = crypto.try_into()<span class="question-mark">?</span>;
+    <span class="prelude-val">Ok</span>(config)
 }
 
 <span class="doccomment">/// Create a TLS server configuration.
@@ -126,22 +169,27 @@
     secret_key: <span class="kw-2">&amp;</span>SecretKey,
     alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
     keylog: bool,
-) -&gt; <span class="prelude-ty">Result</span>&lt;rustls::ServerConfig, certificate::GenError&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;QuicServerConfig, CreateConfigError&gt; {
     <span class="kw">let </span>(certificate, secret_key) = certificate::generate(secret_key)<span class="question-mark">?</span>;
 
-    <span class="kw">let </span><span class="kw-2">mut </span>crypto = rustls::ServerConfig::builder()
-        .with_cipher_suites(verifier::CIPHERSUITES)
-        .with_safe_default_kx_groups()
-        .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-        .expect(<span class="string">"Cipher suites and kx groups are configured; qed"</span>)
-        .with_client_cert_verifier(Arc::new(verifier::Libp2pCertificateVerifier::new()))
-        .with_single_cert(<span class="macro">vec!</span>[certificate], secret_key)
-        .expect(<span class="string">"Server cert key DER is valid; qed"</span>);
+    <span class="kw">let </span>cert_resolver = Arc::new(
+        AlwaysResolvesCert::new(certificate, <span class="kw-2">&amp;</span>secret_key)
+            .expect(<span class="string">"Server cert key DER is valid; qed"</span>),
+    );
+
+    <span class="kw">let </span><span class="kw-2">mut </span>crypto = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+    .expect(<span class="string">"fixed config"</span>)
+    .with_client_cert_verifier(Arc::new(verifier::Libp2pCertificateVerifier::new()))
+    .with_cert_resolver(cert_resolver);
     crypto.alpn_protocols = alpn_protocols;
     <span class="kw">if </span>keylog {
         <span class="macro">warn!</span>(<span class="string">"enabling SSLKEYLOGFILE for TLS pre-master keys"</span>);
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
-    <span class="prelude-val">Ok</span>(crypto)
+    <span class="kw">let </span>config = crypto.try_into()<span class="question-mark">?</span>;
+    <span class="prelude-val">Ok</span>(config)
 }
 </code></pre></div></section></main></body></html>

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["base","blobs","client","docs","gossip","metrics","net","node","util"]};
+window.SIDEBAR_ITEMS = {"mod":["base","blobs","client","docs","gossip","metrics","net","node","spaces","util"]};

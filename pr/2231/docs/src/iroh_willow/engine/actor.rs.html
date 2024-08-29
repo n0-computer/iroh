@@ -471,6 +471,29 @@
 <a href="#471" id="471">471</a>
 <a href="#472" id="472">472</a>
 <a href="#473" id="473">473</a>
+<a href="#474" id="474">474</a>
+<a href="#475" id="475">475</a>
+<a href="#476" id="476">476</a>
+<a href="#477" id="477">477</a>
+<a href="#478" id="478">478</a>
+<a href="#479" id="479">479</a>
+<a href="#480" id="480">480</a>
+<a href="#481" id="481">481</a>
+<a href="#482" id="482">482</a>
+<a href="#483" id="483">483</a>
+<a href="#484" id="484">484</a>
+<a href="#485" id="485">485</a>
+<a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
+<a href="#488" id="488">488</a>
+<a href="#489" id="489">489</a>
+<a href="#490" id="490">490</a>
+<a href="#491" id="491">491</a>
+<a href="#492" id="492">492</a>
+<a href="#493" id="493">493</a>
+<a href="#494" id="494">494</a>
+<a href="#495" id="495">495</a>
+<a href="#496" id="496">496</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{sync::Arc, thread::JoinHandle};
 
 <span class="kw">use </span>anyhow::Result;
@@ -484,11 +507,11 @@
 <span class="kw">use </span>tracing::{debug, error, error_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
-    form::{AuthForm, EntryForm, EntryOrForm},
+    form::{AuthForm, EntryOrForm},
     interest::{CapSelector, CapabilityPack, DelegateTo, InterestMap, Interests},
     net::ConnHandle,
     proto::{
-        data_model::{AuthorisedEntry, Entry},
+        data_model::{AuthorisedEntry, Path, SubspaceId},
         grouping::Range3d,
         keys::{NamespaceId, NamespaceKind, UserId, UserSecretKey},
         meadowcap::{<span class="self">self</span>, AccessMode},
@@ -546,7 +569,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">pub async fn </span>ingest_entry(<span class="kw-2">&amp;</span><span class="self">self</span>, authorised_entry: AuthorisedEntry) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">pub async fn </span>ingest_entry(<span class="kw-2">&amp;</span><span class="self">self</span>, authorised_entry: AuthorisedEntry) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
         <span class="kw">let </span>(reply, reply_rx) = oneshot::channel();
         <span class="self">self</span>.send(Input::IngestEntry {
             authorised_entry,
@@ -554,36 +577,24 @@
             reply,
         })
         .<span class="kw">await</span><span class="question-mark">?</span>;
-        reply_rx.<span class="kw">await</span><span class="question-mark">??</span>;
-        <span class="prelude-val">Ok</span>(())
+        <span class="kw">let </span>inserted = reply_rx.<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="prelude-val">Ok</span>(inserted)
     }
 
-    <span class="kw">pub async fn </span>insert_entry(<span class="kw-2">&amp;</span><span class="self">self</span>, entry: Entry, auth: <span class="kw">impl </span>Into&lt;AuthForm&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">pub async fn </span>insert_entry(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        entry: <span class="kw">impl </span>Into&lt;EntryOrForm&gt;,
+        auth: <span class="kw">impl </span>Into&lt;AuthForm&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(AuthorisedEntry, bool)&gt; {
         <span class="kw">let </span>(reply, reply_rx) = oneshot::channel();
         <span class="self">self</span>.send(Input::InsertEntry {
-            entry: EntryOrForm::Entry(entry),
+            entry: entry.into(),
             auth: auth.into(),
             reply,
         })
         .<span class="kw">await</span><span class="question-mark">?</span>;
-        reply_rx.<span class="kw">await</span><span class="question-mark">??</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="kw">pub async fn </span>insert(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        form: EntryForm,
-        authorisation: <span class="kw">impl </span>Into&lt;AuthForm&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Entry, bool)&gt; {
-        <span class="kw">let </span>(reply, reply_rx) = oneshot::channel();
-        <span class="self">self</span>.send(Input::InsertEntry {
-            entry: EntryOrForm::Form(form),
-            auth: authorisation.into(),
-            reply,
-        })
-        .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>inserted = reply_rx.<span class="kw">await</span><span class="question-mark">??</span>;
-        <span class="prelude-val">Ok</span>(inserted)
+        <span class="kw">let </span>(entry, inserted) = reply_rx.<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="prelude-val">Ok</span>((entry, inserted))
     }
 
     <span class="kw">pub async fn </span>insert_secret(<span class="kw-2">&amp;</span><span class="self">self</span>, secret: <span class="kw">impl </span>Into&lt;meadowcap::SecretKey&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
@@ -594,11 +605,28 @@
         <span class="prelude-val">Ok</span>(())
     }
 
+    <span class="kw">pub async fn </span>get_entry(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        namespace: NamespaceId,
+        subspace: SubspaceId,
+        path: Path,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;AuthorisedEntry&gt;&gt; {
+        <span class="kw">let </span>(reply, reply_rx) = oneshot::channel();
+        <span class="self">self</span>.send(Input::GetEntry {
+            namespace,
+            subspace,
+            path,
+            reply,
+        })
+        .<span class="kw">await</span><span class="question-mark">?</span>;
+        reply_rx.<span class="kw">await</span><span class="question-mark">?
+    </span>}
+
     <span class="kw">pub async fn </span>get_entries(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         namespace: NamespaceId,
         range: Range3d,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = anyhow::Result&lt;Entry&gt;&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = anyhow::Result&lt;AuthorisedEntry&gt;&gt;&gt; {
         <span class="kw">let </span>(tx, rx) = tokio::sync::mpsc::channel(<span class="number">1024</span>);
         <span class="self">self</span>.send(Input::GetEntries {
             namespace,
@@ -719,8 +747,13 @@
     GetEntries {
         namespace: NamespaceId,
         range: Range3d,
-        <span class="attr">#[debug(skip)]
-        </span>reply: mpsc::Sender&lt;<span class="prelude-ty">Result</span>&lt;Entry&gt;&gt;,
+        reply: mpsc::Sender&lt;<span class="prelude-ty">Result</span>&lt;AuthorisedEntry&gt;&gt;,
+    },
+    GetEntry {
+        namespace: NamespaceId,
+        subspace: SubspaceId,
+        path: Path,
+        reply: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;AuthorisedEntry&gt;&gt;&gt;,
     },
     IngestEntry {
         authorised_entry: AuthorisedEntry,
@@ -730,7 +763,7 @@
     InsertEntry {
         entry: EntryOrForm,
         auth: AuthForm,
-        reply: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;(Entry, bool), Error&gt;&gt;,
+        reply: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;(AuthorisedEntry, bool), Error&gt;&gt;,
     },
     InsertSecret {
         secret: meadowcap::SecretKey,
@@ -870,7 +903,7 @@
                     <span class="prelude-val">Err</span>(err) =&gt; reply.send(<span class="prelude-val">Err</span>(err)).<span class="kw">await</span>.map_err(send_reply_error),
                     <span class="prelude-val">Ok</span>(snapshot) =&gt; {
                         <span class="self">self</span>.tasks.spawn_local(<span class="kw">async move </span>{
-                            <span class="kw">let </span>iter = snapshot.get_entries(namespace, <span class="kw-2">&amp;</span>range);
+                            <span class="kw">let </span>iter = snapshot.get_authorised_entries(namespace, <span class="kw-2">&amp;</span>range);
                             <span class="kw">for </span>entry <span class="kw">in </span>iter {
                                 <span class="kw">if </span>reply.send(entry).<span class="kw">await</span>.is_err() {
                                     <span class="kw">break</span>;
@@ -880,6 +913,19 @@
                         <span class="prelude-val">Ok</span>(())
                     }
                 }
+            }
+            Input::GetEntry {
+                namespace,
+                subspace,
+                path,
+                reply,
+            } =&gt; {
+                <span class="kw">let </span>res = <span class="self">self
+                    </span>.store
+                    .entries()
+                    .reader()
+                    .get_entry(namespace, subspace, <span class="kw-2">&amp;</span>path);
+                send_reply(reply, res)
             }
             Input::IngestEntry {
                 authorised_entry,

@@ -879,7 +879,7 @@
 ///
 /// You can look up entries in [`NodeMap`] with various keys, depending on the context you
 /// have for the node.  These are all the keys the [`NodeMap`] can use.
-</span><span class="attr">#[derive(Clone)]
+</span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">enum </span>NodeStateKey {
     Idx(usize),
     NodeId(NodeId),
@@ -1002,6 +1002,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock();
         <span class="kw">let </span>ep = inner.get_mut(NodeStateKey::QuicMappedAddr(addr))<span class="question-mark">?</span>;
         <span class="kw">let </span>public_key = <span class="kw-2">*</span>ep.public_key();
+        <span class="macro">trace!</span>(dest = %addr, node_id = %public_key.fmt_short(), <span class="string">"dst mapped to NodeId"</span>);
         <span class="kw">let </span>(udp_addr, relay_url, msgs) = ep.get_send_addrs(have_ipv6);
         <span class="prelude-val">Some</span>((public_key, udp_addr, relay_url, msgs))
     }
@@ -1089,7 +1090,6 @@
             active: <span class="bool-val">false</span>,
             source,
         });
-
         node_state.update_from_node_addr(<span class="kw-2">&amp;</span>info);
         <span class="kw">let </span>id = node_state.id();
         <span class="kw">for </span>addr <span class="kw">in </span><span class="kw-2">&amp;</span>info.direct_addresses {

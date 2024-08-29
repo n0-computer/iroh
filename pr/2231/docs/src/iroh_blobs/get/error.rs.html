@@ -177,6 +177,17 @@
 <a href="#177" id="177">177</a>
 <a href="#178" id="178">178</a>
 <a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Error returned from get operations
 
 </span><span class="kw">use </span>iroh_net::endpoint;
@@ -252,6 +263,11 @@
                 // TODO(@divma): don't see how this is reachable but let's just not use the peer
                 </span>GetError::Io(e.into())
             }
+            e @ quinn::ConnectionError::CidsExhausted =&gt; {
+                <span class="comment">// &gt; The connection could not be created because not enough of the CID space
+                // &gt; is available
+                </span>GetError::Io(e.into())
+            }
         }
     }
 }
@@ -262,13 +278,18 @@
         <span class="kw">match </span>value {
             e @ ReadError::Reset(<span class="kw">_</span>) =&gt; GetError::RemoteReset(e.into()),
             ReadError::ConnectionLost(conn_error) =&gt; conn_error.into(),
-            ReadError::UnknownStream
+            ReadError::ClosedStream
             | ReadError::IllegalOrderedRead
             | ReadError::ZeroRttRejected =&gt; {
                 <span class="comment">// all these errors indicate the peer is not usable at this moment
                 </span>GetError::Io(value.into())
             }
         }
+    }
+}
+<span class="kw">impl </span>From&lt;quinn::ClosedStream&gt; <span class="kw">for </span>GetError {
+    <span class="kw">fn </span>from(value: quinn::ClosedStream) -&gt; <span class="self">Self </span>{
+        GetError::Io(value.into())
     }
 }
 
@@ -278,7 +299,7 @@
         <span class="kw">match </span>value {
             e @ WriteError::Stopped(<span class="kw">_</span>) =&gt; GetError::RemoteReset(e.into()),
             WriteError::ConnectionLost(conn_error) =&gt; conn_error.into(),
-            WriteError::UnknownStream | WriteError::ZeroRttRejected =&gt; {
+            WriteError::ClosedStream | WriteError::ZeroRttRejected =&gt; {
                 <span class="comment">// all these errors indicate the peer is not usable at this moment
                 </span>GetError::Io(value.into())
             }
@@ -299,6 +320,7 @@
                 </span>GetError::BadRequest(e.into())
             }
             Write(e) =&gt; e.into(),
+            Closed(e) =&gt; e.into(),
             e @ Io(<span class="kw">_</span>) =&gt; {
                 <span class="comment">// io errors are likely recoverable
                 </span>GetError::Io(e.into())

@@ -939,6 +939,9 @@
 <a href="#939" id="939">939</a>
 <a href="#940" id="940">940</a>
 <a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The client side API
 //!
 //! To get data, create a connection using [iroh-net] or use any quinn
@@ -1129,7 +1132,10 @@
         </span>RequestTooBig,
         <span class="doccomment">/// Error when writing the request to the [`SendStream`].
         </span><span class="attr">#[error(<span class="string">"write: {0}"</span>)]
-        </span>Write(<span class="attr">#[from] </span>endpoint::WriteError),
+        </span>Write(<span class="attr">#[from] </span>quinn::WriteError),
+        <span class="doccomment">/// Quic connection is closed.
+        </span><span class="attr">#[error(<span class="string">"closed"</span>)]
+        </span>Closed(<span class="attr">#[from] </span>quinn::ClosedStream),
         <span class="doccomment">/// A generic io error
         </span><span class="attr">#[error(<span class="string">"io {0}"</span>)]
         </span>Io(io::Error),
@@ -1198,7 +1204,7 @@
 
             <span class="comment">// 2. Finish writing before expecting a response
             </span><span class="kw">let </span>(<span class="kw-2">mut </span>writer, bytes_written) = writer.into_parts();
-            writer.finish().<span class="kw">await</span><span class="question-mark">?</span>;
+            writer.finish()<span class="question-mark">?</span>;
 
             <span class="kw">let </span>hash = request.hash;
             <span class="kw">let </span>ranges_iter = RangesIter::new(request.ranges);

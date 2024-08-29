@@ -1492,6 +1492,16 @@
 <a href="#1492" id="1492">1492</a>
 <a href="#1493" id="1493">1493</a>
 <a href="#1494" id="1494">1494</a>
+<a href="#1495" id="1495">1495</a>
+<a href="#1496" id="1496">1496</a>
+<a href="#1497" id="1497">1497</a>
+<a href="#1498" id="1498">1498</a>
+<a href="#1499" id="1499">1499</a>
+<a href="#1500" id="1500">1500</a>
+<a href="#1501" id="1501">1501</a>
+<a href="#1502" id="1502">1502</a>
+<a href="#1503" id="1503">1503</a>
+<a href="#1504" id="1504">1504</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::{Arc, Mutex};
@@ -1571,6 +1581,7 @@
 <span class="kw">use </span><span class="kw">super</span>::IrohServerEndpoint;
 
 <span class="kw">mod </span>docs;
+<span class="kw">mod </span>spaces;
 
 <span class="kw">const </span>HEALTH_POLL_WAIT: Duration = Duration::from_secs(<span class="number">1</span>);
 <span class="doccomment">/// Chunk size for getting blobs over RPC
@@ -1594,6 +1605,10 @@
 <span class="kw">impl</span>&lt;D: BaoStore&gt; Handler&lt;D&gt; {
     <span class="kw">fn </span>docs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>DocsEngine&gt; {
         <span class="self">self</span>.inner.docs.as_ref()
+    }
+
+    <span class="kw">fn </span>spaces(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span>iroh_willow::Engine, RpcError&gt; {
+        <span class="self">self</span>.inner.willow.as_ref().ok_or_else(spaces_disabled)
     }
 
     <span class="kw">async fn </span>with_docs&lt;T, F, Fut&gt;(<span class="self">self</span>, f: F) -&gt; RpcResult&lt;T&gt;
@@ -1957,6 +1972,7 @@
             Authors(msg) =&gt; <span class="self">self</span>.handle_authors_request(msg, chan).<span class="kw">await</span>,
             Docs(msg) =&gt; <span class="self">self</span>.handle_docs_request(msg, chan).<span class="kw">await</span>,
             Gossip(msg) =&gt; <span class="self">self</span>.handle_gossip_request(msg, chan).<span class="kw">await</span>,
+            Spaces(msg) =&gt; <span class="self">self</span>.handle_spaces_request(msg, chan).<span class="kw">await</span>,
         }
     }
 
@@ -2985,5 +3001,9 @@
 
 <span class="kw">fn </span>docs_disabled() -&gt; RpcError {
     <span class="macro">anyhow!</span>(<span class="string">"docs are disabled"</span>).into()
+}
+
+<span class="kw">fn </span>spaces_disabled() -&gt; RpcError {
+    <span class="macro">anyhow::anyhow!</span>(<span class="string">"spaces are disabled"</span>).into()
 }
 </code></pre></div></section></main></body></html>

@@ -172,6 +172,11 @@
 <a href="#172" id="172">172</a>
 <a href="#173" id="173">173</a>
 <a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -241,6 +246,11 @@
     </span><span class="doccomment">/// Returns a store snapshot.
     </span><span class="kw">pub fn </span>snapshot(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; anyhow::Result&lt;ES::Snapshot&gt; {
         <span class="self">self</span>.storage.snapshot()
+    }
+
+    <span class="doccomment">/// Returns a store reader.
+    </span><span class="kw">pub fn </span>reader(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ES::Reader {
+        <span class="self">self</span>.storage.reader()
     }
 
     <span class="doccomment">/// Ingest a new entry.

@@ -369,6 +369,25 @@
 <a href="#369" id="369">369</a>
 <a href="#370" id="370">370</a>
 <a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! In-memory storage implementation for testing purposes.
 //!
 //! This is a minimal, but spec-compliant (unless there's bugs) implementation of a willow store.
@@ -385,7 +404,7 @@
 <span class="kw">use crate</span>::{
     interest::{CapSelector, CapabilityPack},
     proto::{
-        data_model::{AuthorisedEntry, Entry, EntryExt, WriteCapability},
+        data_model::{AuthorisedEntry, Entry, EntryExt, Path, SubspaceId, WriteCapability},
         grouping::{Range, Range3d, RangeEnd},
         keys::{NamespaceId, NamespaceSecretKey, UserId, UserSecretKey},
         meadowcap::{<span class="self">self</span>, is_wider_than, ReadAuthorisation},
@@ -395,15 +414,15 @@
 };
 
 <span class="attr">#[derive(Debug, Clone, Default)]
-</span><span class="kw">pub struct </span>Store {
+</span><span class="kw">pub struct </span>Store&lt;PS&gt; {
     secrets: Rc&lt;RefCell&lt;SecretStore&gt;&gt;,
     entries: Rc&lt;RefCell&lt;EntryStore&gt;&gt;,
-    payloads: iroh_blobs::store::mem::Store,
+    payloads: PS,
     caps: Rc&lt;RefCell&lt;CapsStore&gt;&gt;,
 }
 
-<span class="kw">impl </span>Store {
-    <span class="kw">pub fn </span>new(payloads: iroh_blobs::store::mem::Store) -&gt; <span class="self">Self </span>{
+<span class="kw">impl</span>&lt;PS: iroh_blobs::store::Store&gt; Store&lt;PS&gt; {
+    <span class="kw">pub fn </span>new(payloads: PS) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             payloads,
             secrets: Default::default(),
@@ -413,10 +432,10 @@
     }
 }
 
-<span class="kw">impl </span>traits::Storage <span class="kw">for </span>Store {
+<span class="kw">impl</span>&lt;PS: iroh_blobs::store::Store&gt; traits::Storage <span class="kw">for </span>Store&lt;PS&gt; {
     <span class="kw">type </span>Entries = Rc&lt;RefCell&lt;EntryStore&gt;&gt;;
     <span class="kw">type </span>Secrets = Rc&lt;RefCell&lt;SecretStore&gt;&gt;;
-    <span class="kw">type </span>Payloads = iroh_blobs::store::mem::Store;
+    <span class="kw">type </span>Payloads = PS;
     <span class="kw">type </span>Caps = Rc&lt;RefCell&lt;CapsStore&gt;&gt;;
 
     <span class="kw">fn </span>entries(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="self">Self</span>::Entries {
@@ -556,7 +575,7 @@
         <span class="prelude-val">Ok</span>(<span class="self">self</span>.get_entries(namespace, range).count() <span class="kw">as </span>u64)
     }
 
-    <span class="kw">fn </span>get_entries_with_authorisation&lt;<span class="lifetime">'a</span>&gt;(
+    <span class="kw">fn </span>get_authorised_entries&lt;<span class="lifetime">'a</span>&gt;(
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
         namespace: NamespaceId,
         range: <span class="kw-2">&amp;</span>Range3d,
@@ -570,6 +589,25 @@
             .map(|e| anyhow::Result::Ok(e.clone()))
             .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
             .into_iter()
+    }
+
+    <span class="kw">fn </span>get_entry(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        namespace: NamespaceId,
+        subspace: SubspaceId,
+        path: <span class="kw-2">&amp;</span>Path,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;AuthorisedEntry&gt;&gt; {
+        <span class="kw">let </span>inner = <span class="self">self</span>.borrow();
+        <span class="kw">let </span><span class="prelude-val">Some</span>(entries) = inner.entries.get(<span class="kw-2">&amp;</span>namespace) <span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+        };
+        <span class="prelude-val">Ok</span>(entries
+            .iter()
+            .find(|e| {
+                <span class="kw">let </span>e = e.entry();
+                <span class="kw-2">*</span>e.namespace_id() == namespace &amp;&amp; <span class="kw-2">*</span>e.subspace_id() == subspace &amp;&amp; e.path() == path
+            })
+            .cloned())
     }
 }
 
@@ -700,13 +738,13 @@
                 <span class="self">self</span>.read_caps
                     .entry(<span class="kw-2">*</span>cap.read_cap().granted_namespace())
                     .or_default()
-                    .push(cap.into());
+                    .push(cap);
             }
             CapabilityPack::Write(cap) =&gt; {
                 <span class="self">self</span>.write_caps
                     .entry(<span class="kw-2">*</span>cap.granted_namespace())
                     .or_default()
-                    .push(cap.into());
+                    .push(cap);
             }
         }
     }

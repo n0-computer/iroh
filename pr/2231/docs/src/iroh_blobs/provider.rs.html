@@ -953,7 +953,7 @@
                 stats.send += tw.stats();
                 stats.read += blob_read_stats;
                 <span class="kw">if </span>SentStatus::NotFound == status {
-                    writer.inner.finish().<span class="kw">await</span><span class="question-mark">?</span>;
+                    writer.inner.finish()<span class="question-mark">?</span>;
                     <span class="kw">return </span><span class="prelude-val">Ok</span>(status);
                 }
 
@@ -1177,7 +1177,7 @@
         <span class="prelude-val">None </span>=&gt; {
             <span class="macro">debug!</span>(<span class="string">"not found {}"</span>, hash);
             writer.notify_transfer_aborted(<span class="prelude-val">None</span>).<span class="kw">await</span>;
-            writer.inner.finish().<span class="kw">await</span><span class="question-mark">?</span>;
+            writer.inner.finish()<span class="question-mark">?</span>;
         }
     };
 

@@ -395,6 +395,55 @@
 <a href="#395" id="395">395</a>
 <a href="#396" id="396">396</a>
 <a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! X.509 certificate handling.
 //!
 //! This module handles generation, signing, and verification of certificates.
@@ -406,6 +455,8 @@
 <span class="kw">use </span>x509_parser::prelude::<span class="kw-2">*</span>;
 
 <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey, Signature};
+
+<span class="kw">use </span>std::sync::Arc;
 
 <span class="doccomment">/// The libp2p Public Key Extension is a X.509 extension
 /// with the Object Identifier 1.3.6.1.4.1.53594.1.1,
@@ -423,6 +474,45 @@
 // Similarly, hash functions with an output length less than 256 bits MUST NOT be used.
 </span><span class="kw">static </span>P2P_SIGNATURE_ALGORITHM: <span class="kw-2">&amp;</span>rcgen::SignatureAlgorithm = <span class="kw-2">&amp;</span>rcgen::PKCS_ECDSA_P256_SHA256;
 
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>AlwaysResolvesCert(Arc&lt;rustls::sign::CertifiedKey&gt;);
+
+<span class="kw">impl </span>AlwaysResolvesCert {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(
+        cert: rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;,
+        key: <span class="kw-2">&amp;</span>rustls::pki_types::PrivateKeyDer&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, rustls::Error&gt; {
+        <span class="kw">let </span>certified_key = rustls::sign::CertifiedKey::new(
+            <span class="macro">vec!</span>[cert],
+            rustls::crypto::ring::sign::any_ecdsa_type(key)<span class="question-mark">?</span>,
+        );
+        <span class="prelude-val">Ok</span>(<span class="self">Self</span>(Arc::new(certified_key)))
+    }
+}
+
+<span class="kw">impl </span>rustls::client::ResolvesClientCert <span class="kw">for </span>AlwaysResolvesCert {
+    <span class="kw">fn </span>resolve(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        _root_hint_subjects: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>[u8]],
+        _sigschemes: <span class="kw-2">&amp;</span>[rustls::SignatureScheme],
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;rustls::sign::CertifiedKey&gt;&gt; {
+        <span class="prelude-val">Some</span>(Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>))
+    }
+
+    <span class="kw">fn </span>has_certs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="bool-val">true
+    </span>}
+}
+
+<span class="kw">impl </span>rustls::server::ResolvesServerCert <span class="kw">for </span>AlwaysResolvesCert {
+    <span class="kw">fn </span>resolve(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        _client_hello: rustls::server::ClientHello&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;rustls::sign::CertifiedKey&gt;&gt; {
+        <span class="prelude-val">Some</span>(Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>))
+    }
+}
+
 <span class="doccomment">/// The public host key and the signature are ANS.1-encoded
 /// into the SignedKey data structure, which is carried  in the libp2p Public Key Extension.
 </span><span class="attr">#[derive(Clone, Debug, Eq, PartialEq, Sequence)]
@@ -435,15 +525,21 @@
 /// certificate extension containing the public key of the given secret key.
 </span><span class="kw">pub fn </span>generate(
     identity_secret_key: <span class="kw-2">&amp;</span>SecretKey,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(rustls::Certificate, rustls::PrivateKey), GenError&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;
+    (
+        rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;,
+        rustls::pki_types::PrivateKeyDer&lt;<span class="lifetime">'static</span>&gt;,
+    ),
+    GenError,
+&gt; {
     <span class="comment">// SecretKey used to sign the certificate.
     // SHOULD NOT be related to the host's key.
     // Endpoints MAY generate a new key and certificate
     // for every connection attempt, or they MAY reuse the same key
     // and certificate for multiple connections.
     </span><span class="kw">let </span>certificate_keypair = rcgen::KeyPair::generate(P2P_SIGNATURE_ALGORITHM)<span class="question-mark">?</span>;
-    <span class="kw">let </span>rustls_key = rustls::PrivateKey(certificate_keypair.serialize_der());
-
+    <span class="kw">let </span>rustls_key =
+        rustls::pki_types::PrivateKeyDer::try_from(certificate_keypair.serialize_der()).unwrap();
     <span class="kw">let </span>certificate = {
         <span class="kw">let </span><span class="kw-2">mut </span>params = rcgen::CertificateParams::new(<span class="macro">vec!</span>[]);
         params.distinguished_name = rcgen::DistinguishedName::new();
@@ -456,7 +552,7 @@
         rcgen::Certificate::from_params(params)<span class="question-mark">?
     </span>};
 
-    <span class="kw">let </span>rustls_certificate = rustls::Certificate(certificate.serialize_der()<span class="question-mark">?</span>);
+    <span class="kw">let </span>rustls_certificate = rustls::pki_types::CertificateDer::from(certificate.serialize_der()<span class="question-mark">?</span>);
 
     <span class="prelude-val">Ok</span>((rustls_certificate, rustls_key))
 }
@@ -465,7 +561,9 @@
 ///
 /// For this to succeed, the certificate must contain the specified extension and the signature must
 /// match the embedded public key.
-</span><span class="kw">pub fn </span>parse(certificate: <span class="kw-2">&amp;</span>rustls::Certificate) -&gt; <span class="prelude-ty">Result</span>&lt;P2pCertificate&lt;<span class="lifetime">'_</span>&gt;, ParseError&gt; {
+</span><span class="kw">pub fn </span>parse&lt;<span class="lifetime">'a</span>&gt;(
+    certificate: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>rustls::pki_types::CertificateDer&lt;<span class="lifetime">'_</span>&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;P2pCertificate&lt;<span class="lifetime">'a</span>&gt;, ParseError&gt; {
     <span class="kw">let </span>certificate = parse_unverified(certificate.as_ref())<span class="question-mark">?</span>;
 
     certificate.verify()<span class="question-mark">?</span>;

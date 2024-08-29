@@ -822,6 +822,10 @@
 <a href="#822" id="822">822</a>
 <a href="#823" id="823">823</a>
 <a href="#824" id="824">824</a>
+<a href="#825" id="825">825</a>
+<a href="#826" id="826">826</a>
+<a href="#827" id="827">827</a>
+<a href="#828" id="828">828</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Networking implementation for iroh-willow.
 
 </span><span class="kw">use </span>std::{future::Future, time::Duration};
@@ -830,8 +834,9 @@
 <span class="kw">use </span>futures_concurrency::future::TryJoin;
 <span class="kw">use </span>futures_util::future::TryFutureExt;
 <span class="kw">use </span>iroh_base::key::NodeId;
-<span class="kw">use </span>iroh_net::endpoint::{Connection, ConnectionError, ReadError, RecvStream, SendStream, VarInt};
-<span class="kw">use </span>quinn::ReadExactError;
+<span class="kw">use </span>iroh_net::endpoint::{
+    Connection, ConnectionError, ReadError, ReadExactError, RecvStream, SendStream, VarInt,
+};
 <span class="kw">use </span>tokio::io::{AsyncReadExt, AsyncWriteExt};
 <span class="kw">use </span>tracing::{debug, trace};
 
@@ -1117,8 +1122,10 @@
         <span class="comment">// trace!(len, "sent");
     </span>}
     <span class="macro">trace!</span>(<span class="question-mark">?</span>channel, <span class="string">"send: close writer"</span>);
-    send_stream.finish().<span class="kw">await</span><span class="question-mark">?</span>;
-    <span class="macro">trace!</span>(<span class="question-mark">?</span>channel, <span class="string">"send: done"</span>);
+    send_stream.finish()<span class="question-mark">?</span>;
+    <span class="comment">// We don't await SendStream::stopped, because we rely on application level closing notifiations,
+    // and make sure that the connection is closed gracefully in any case.
+    </span><span class="macro">trace!</span>(<span class="question-mark">?</span>channel, <span class="string">"send: done"</span>);
     <span class="prelude-val">Ok</span>(())
 }
 
@@ -1147,7 +1154,7 @@
     <span class="comment">// Send a single byte on a newly opened uni stream.
     </span><span class="kw">let </span><span class="kw-2">mut </span>send_stream = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
     send_stream.write_u8(<span class="number">1</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-    send_stream.finish().<span class="kw">await</span><span class="question-mark">?</span>;
+    send_stream.finish()<span class="question-mark">?</span>;
     <span class="comment">// Wait until we either receive the goodbye byte from the other peer, or for the other peer
     // to close the connection with the expected error code.
     </span><span class="kw">match </span>tokio::time::timeout(SHUTDOWN_TIMEOUT, wait_for_goodbye_or_graceful_close(conn)).<span class="kw">await </span>{
@@ -1300,7 +1307,7 @@
 
         <span class="kw">let </span>cap_for_betty = handle_alfie
             .delegate_caps(
-                CapSelector::widest(namespace_id),
+                CapSelector::any(namespace_id),
                 AccessMode::Write,
                 DelegateTo::new(user_betty, RestrictArea::None),
             )
@@ -1431,7 +1438,7 @@
 
         <span class="kw">let </span>cap_for_betty = handle_alfie
             .delegate_caps(
-                CapSelector::widest(namespace_id),
+                CapSelector::any(namespace_id),
                 AccessMode::Write,
                 DelegateTo::new(user_betty, RestrictArea::None),
             )
@@ -1602,7 +1609,8 @@
         <span class="kw">let </span>entries: <span class="prelude-ty">Result</span>&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt; = store
             .get_entries(namespace, Range3d::new_full())
             .<span class="kw">await</span><span class="question-mark">?
-            </span>.try_collect()
+            </span>.map(|entry| entry.map(|entry| entry.into_parts().<span class="number">0</span>))
+            .try_collect()
             .<span class="kw">await</span>;
         entries
     }
@@ -1626,9 +1634,9 @@
                 timestamp: TimestampForm::Now,
                 payload: PayloadForm::Bytes(payload.into()),
             };
-            <span class="kw">let </span>(entry, inserted) = handle.insert(entry, AuthForm::Any(user_id)).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>(entry, inserted) = handle.insert_entry(entry, AuthForm::Any(user_id)).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="macro">assert!</span>(inserted);
-            track_entries.extend([entry]);
+            track_entries.extend([entry.into_parts().<span class="number">0</span>]);
         }
         <span class="prelude-val">Ok</span>(())
     }

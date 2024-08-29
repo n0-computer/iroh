@@ -898,6 +898,51 @@
 <a href="#898" id="898">898</a>
 <a href="#899" id="899">899</a>
 <a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a>
+<a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a>
+<a href="#924" id="924">924</a>
+<a href="#925" id="925">925</a>
+<a href="#926" id="926">926</a>
+<a href="#927" id="927">927</a>
+<a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
@@ -954,8 +999,6 @@
 <span class="doccomment">/// Default interval between GC runs.
 </span><span class="kw">const </span>DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(<span class="number">60 </span>* <span class="number">5</span>);
 
-<span class="kw">const </span>MAX_CONNECTIONS: u32 = <span class="number">1024</span>;
-
 <span class="doccomment">/// Storage backend for documents.
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub enum </span>DocsStorage {
@@ -964,6 +1007,18 @@
     <span class="doccomment">/// In-memory storage.
     </span>Memory,
     <span class="doccomment">/// File-based persistent storage.
+    </span>Persistent(PathBuf),
+}
+
+<span class="doccomment">/// Storage backend for spaces.
+</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub enum </span>SpacesStorage {
+    <span class="doccomment">/// Disable docs completely.
+    </span>Disabled,
+    <span class="doccomment">/// In-memory storage.
+    </span>Memory,
+    <span class="doccomment">/// File-based persistent storage.
+    </span><span class="attr">#[allow(unused)]
     </span>Persistent(PathBuf),
 }
 
@@ -1008,6 +1063,7 @@
     dns_resolver: <span class="prelude-ty">Option</span>&lt;DnsResolver&gt;,
     node_discovery: DiscoveryConfig,
     docs_storage: DocsStorage,
+    spaces_storage: SpacesStorage,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span>insecure_skip_relay_cert_verify: bool,
     <span class="doccomment">/// Callback to register when a gc loop is done
@@ -1135,6 +1191,7 @@
             rpc_addr: <span class="prelude-val">None</span>,
             gc_policy: GcPolicy::Disabled,
             docs_storage: DocsStorage::Memory,
+            spaces_storage: SpacesStorage::Memory,
             node_discovery: Default::default(),
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
@@ -1169,6 +1226,8 @@
             rpc_addr: <span class="prelude-val">None</span>,
             gc_policy: GcPolicy::Disabled,
             docs_storage,
+            <span class="comment">// TODO: Expose in function
+            </span>spaces_storage: SpacesStorage::Disabled,
             node_discovery: Default::default(),
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
@@ -1222,6 +1281,8 @@
             dns_resolver: <span class="self">self</span>.dns_resolver,
             gc_policy: <span class="self">self</span>.gc_policy,
             docs_storage,
+            <span class="comment">// TODO: Switch to SpacesStorage::Persistent once we have a store.
+            </span>spaces_storage: SpacesStorage::Disabled,
             node_discovery: <span class="self">self</span>.node_discovery,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
@@ -1273,6 +1334,12 @@
     <span class="doccomment">/// Disables documents support on this node completely.
     </span><span class="kw">pub fn </span>disable_docs(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.docs_storage = DocsStorage::Disabled;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Disables spaces support on this node completely.
+    </span><span class="kw">pub fn </span>disable_spaces(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.spaces_storage = SpacesStorage::Disabled;
         <span class="self">self
     </span>}
 
@@ -1435,7 +1502,6 @@
                 .secret_key(<span class="self">self</span>.secret_key.clone())
                 .proxy_from_env()
                 .keylog(<span class="self">self</span>.keylog)
-                .concurrent_connections(MAX_CONNECTIONS)
                 .relay_mode(<span class="self">self</span>.relay_mode);
             <span class="kw">let </span>endpoint = <span class="kw">match </span>discovery {
                 <span class="prelude-val">Some</span>(discovery) =&gt; endpoint.discovery(discovery),
@@ -1488,7 +1554,26 @@
         )
         .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="comment">// Initialize the internal RPC connection.
+        <span class="kw">let </span>willow = <span class="kw">match </span><span class="self">self</span>.spaces_storage {
+            SpacesStorage::Disabled =&gt; <span class="prelude-val">None</span>,
+            SpacesStorage::Memory =&gt; {
+                <span class="kw">let </span>blobs_store = <span class="self">self</span>.blobs_store.clone();
+                <span class="kw">let </span>create_store = <span class="kw">move </span>|| iroh_willow::store::memory::Store::new(blobs_store);
+                <span class="kw">let </span>engine = iroh_willow::Engine::spawn(
+                    endpoint.clone(),
+                    create_store,
+                    iroh_willow::engine::AcceptOpts::default(),
+                );
+                <span class="prelude-val">Some</span>(engine)
+            }
+            SpacesStorage::Persistent(<span class="kw">_</span>) =&gt; {
+                <span class="macro">unimplemented!</span>(<span class="string">"peristent storage for willow is not yet implemented"</span>)
+            }
+        };
+        <span class="comment">// Spawn the willow engine.
+        // TODO: Allow to disable.
+
+        // Initialize the internal RPC connection.
         </span><span class="kw">let </span>(internal_rpc, controller) = quic_rpc::transport::flume::connection::&lt;RpcService&gt;(<span class="number">32</span>);
         <span class="kw">let </span>internal_rpc = quic_rpc::transport::boxed::ServerEndpoint::new(internal_rpc);
         <span class="comment">// box the controller. Boxing has a special case for the flume channel that avoids allocations,
@@ -1508,6 +1593,7 @@
             gossip,
             local_pool_handle: lp.handle().clone(),
             blob_batches: Default::default(),
+            willow,
         });
 
         <span class="kw">let </span>protocol_builder = ProtocolBuilder {
@@ -1662,6 +1748,10 @@
             <span class="self">self </span>= <span class="self">self</span>.accept(DOCS_ALPN, Arc::new(docs));
         }
 
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(engine) = <span class="self">self</span>.inner.willow.clone() {
+            <span class="self">self </span>= <span class="self">self</span>.accept(iroh_willow::ALPN, Arc::new(engine));
+        }
+
         <span class="self">self
     </span>}
 
@@ -1751,14 +1841,15 @@
 }
 
 <span class="kw">const </span>DEFAULT_RPC_PORT: u16 = <span class="number">0x1337</span>;
-<span class="kw">const </span>MAX_RPC_CONNECTIONS: u32 = <span class="number">16</span>;
 <span class="kw">const </span>MAX_RPC_STREAMS: u32 = <span class="number">1024</span>;
 
 <span class="doccomment">/// The default bind addr of the RPC .
 </span><span class="kw">pub const </span>DEFAULT_RPC_ADDR: SocketAddr =
     SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, DEFAULT_RPC_PORT));
 
-<span class="doccomment">/// Makes a an RPC endpoint that uses a QUIC transport
+<span class="doccomment">/// Makes a an RPC endpoint that uses a QUIC transport.
+///
+/// Note that this uses the Quinn version used by quic-rpc.
 </span><span class="kw">fn </span>make_rpc_endpoint(
     secret_key: <span class="kw-2">&amp;</span>SecretKey,
     <span class="kw-2">mut </span>rpc_addr: SocketAddr,
@@ -1767,13 +1858,12 @@
     transport_config
         .max_concurrent_bidi_streams(MAX_RPC_STREAMS.into())
         .max_concurrent_uni_streams(<span class="number">0u32</span>.into());
-    <span class="kw">let </span><span class="kw-2">mut </span>server_config = iroh_net::endpoint::make_server_config(
+    <span class="kw">let </span>server_config = iroh_net::endpoint::make_server_config(
         secret_key,
         <span class="macro">vec!</span>[RPC_ALPN.to_vec()],
         Arc::new(transport_config),
         <span class="bool-val">false</span>,
     )<span class="question-mark">?</span>;
-    server_config.concurrent_connections(MAX_RPC_CONNECTIONS);
 
     <span class="kw">let </span>rpc_quinn_endpoint = quinn::Endpoint::server(server_config.clone(), rpc_addr);
     <span class="kw">let </span>rpc_quinn_endpoint = <span class="kw">match </span>rpc_quinn_endpoint {

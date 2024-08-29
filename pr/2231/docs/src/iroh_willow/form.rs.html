@@ -151,6 +151,12 @@
 <a href="#151" id="151">151</a>
 <a href="#152" id="152">152</a>
 <a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Structs that allow constructing entries and other structs where some fields may be
 //! automatically filled.
 
@@ -168,9 +174,9 @@
 <span class="kw">use </span>tokio::io::AsyncRead;
 
 <span class="kw">use </span><span class="kw">crate</span>::proto::{
-    data_model::SerdeWriteCapability,
     data_model::{Entry, NamespaceId, Path, SubspaceId, Timestamp},
     keys::UserId,
+    meadowcap::{<span class="self">self</span>, WriteCapability},
 };
 
 <span class="doccomment">/// Sources where payload data can come from.
@@ -179,6 +185,9 @@
     <span class="doccomment">/// Set the payload hash directly. The blob must exist in the node's blob store, this will fail
     /// otherwise.
     </span>Hash(Hash),
+    <span class="doccomment">/// Set the payload hash directly. The blob must exist in the node's blob store, this will fail
+    /// otherwise.
+    </span>HashUnchecked(Hash, u64),
     <span class="doccomment">/// Import data from the provided bytes and set as payload.
     </span><span class="attr">#[debug(<span class="string">"Bytes({})"</span>, _0.len())]
     </span>Bytes(Bytes),
@@ -203,6 +212,7 @@
                 <span class="kw">let </span>entry = entry.ok_or_else(|| <span class="macro">anyhow::anyhow!</span>(<span class="string">"hash not foundA"</span>))<span class="question-mark">?</span>;
                 (digest, entry.size().value())
             }
+            PayloadForm::HashUnchecked(digest, len) =&gt; (digest, len),
             PayloadForm::Bytes(bytes) =&gt; {
                 <span class="kw">let </span>len = bytes.len();
                 <span class="kw">let </span>temp_tag = store.import_bytes(bytes, BlobFormat::Raw).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -235,7 +245,7 @@
 }
 
 <span class="doccomment">/// Either a [`Entry`] or a [`EntryForm`].
-</span><span class="attr">#[derive(Debug)]
+</span><span class="attr">#[derive(Debug, derive_more::From)]
 </span><span class="kw">pub enum </span>EntryOrForm {
     Entry(Entry),
     Form(EntryForm),
@@ -272,7 +282,7 @@
     /// user.
     </span>Any(UserId),
     <span class="doccomment">/// Use the provided [`WriteCapability`].
-    </span>Exact(SerdeWriteCapability),
+    </span>Exact(<span class="attr">#[serde(with = <span class="string">"meadowcap::serde_encoding::mc_capability"</span>)] </span>WriteCapability),
 }
 
 <span class="kw">impl </span>AuthForm {
@@ -288,18 +298,20 @@
 
 <span class="doccomment">/// Set the subspace either to a provided [`SubspaceId`], or use the user authenticating the entry
 /// as subspace.
-</span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize)]
+</span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 </span><span class="kw">pub enum </span>SubspaceForm {
     <span class="doccomment">/// Set the subspace to the [`UserId`] of the user authenticating the entry.
+    </span><span class="attr">#[default]
     </span>User,
     <span class="doccomment">/// Set the subspace to the provided [`SubspaceId`].
     </span>Exact(SubspaceId),
 }
 
 <span class="doccomment">/// Set the timestamp either to the provided [`Timestamp`] or to the current system time.
-</span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize)]
+</span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 </span><span class="kw">pub enum </span>TimestampForm {
     <span class="doccomment">/// Set the timestamp to the current system time.
+    </span><span class="attr">#[default]
     </span>Now,
     <span class="doccomment">/// Set the timestamp to the provided value.
     </span>Exact(Timestamp),

@@ -237,14 +237,14 @@
     ///
     /// This will try to close all connections gracefully for up to 10 seconds,
     /// and abort them otherwise.
-    </span><span class="kw">pub async fn </span>shutdown(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub async fn </span>shutdown(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="macro">debug!</span>(<span class="string">"shutdown engine"</span>);
         <span class="kw">let </span>(reply, reply_rx) = oneshot::channel();
         <span class="self">self</span>.peer_manager_inbox
             .send(peer_manager::Input::Shutdown { reply })
             .<span class="kw">await</span><span class="question-mark">?</span>;
         reply_rx.<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>res = <span class="self">self</span>.peer_manager_task.<span class="kw">await</span>;
+        <span class="kw">let </span>res = (<span class="kw-2">&amp;mut </span><span class="self">self</span>.peer_manager_task).<span class="kw">await</span>;
         <span class="kw">match </span>res {
             <span class="prelude-val">Err</span>(err) =&gt; <span class="macro">error!</span>(<span class="question-mark">?</span>err, <span class="string">"peer manager task panicked"</span>),
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="macro">error!</span>(<span class="question-mark">?</span>err, <span class="string">"peer manager task failed"</span>),
