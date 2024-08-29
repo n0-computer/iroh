@@ -47,19 +47,21 @@ enum CertMode {
     LetsEncrypt,
 }
 
-fn load_certs(filename: impl AsRef<Path>) -> Result<Vec<rustls::Certificate>> {
+fn load_certs(
+    filename: impl AsRef<Path>,
+) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>> {
     let certfile = std::fs::File::open(filename).context("cannot open certificate file")?;
     let mut reader = std::io::BufReader::new(certfile);
 
-    let certs = rustls_pemfile::certs(&mut reader)?
-        .iter()
-        .map(|v| rustls::Certificate(v.clone()))
-        .collect();
+    let certs: Result<Vec<_>, std::io::Error> = rustls_pemfile::certs(&mut reader).collect();
+    let certs = certs?;
 
     Ok(certs)
 }
 
-fn load_secret_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
+fn load_secret_key(
+    filename: impl AsRef<Path>,
+) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
     let filename = filename.as_ref();
     let keyfile = std::fs::File::open(filename)
         .with_context(|| format!("cannot open secret key file {}", filename.display()))?;
@@ -67,9 +69,15 @@ fn load_secret_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
 
     loop {
         match rustls_pemfile::read_one(&mut reader).context("cannot parse secret key .pem file")? {
-            Some(rustls_pemfile::Item::RSAKey(key)) => return Ok(rustls::PrivateKey(key)),
-            Some(rustls_pemfile::Item::PKCS8Key(key)) => return Ok(rustls::PrivateKey(key)),
-            Some(rustls_pemfile::Item::ECKey(key)) => return Ok(rustls::PrivateKey(key)),
+            Some(rustls_pemfile::Item::Pkcs1Key(key)) => {
+                return Ok(rustls::pki_types::PrivateKeyDer::Pkcs1(key));
+            }
+            Some(rustls_pemfile::Item::Pkcs8Key(key)) => {
+                return Ok(rustls::pki_types::PrivateKeyDer::Pkcs8(key));
+            }
+            Some(rustls_pemfile::Item::Sec1Key(key)) => {
+                return Ok(rustls::pki_types::PrivateKeyDer::Sec1(key));
+            }
             None => break,
             _ => {}
         }

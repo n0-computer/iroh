@@ -12,6 +12,7 @@ use std::str::FromStr;
 
 use clap::Parser;
 use iroh_net::{endpoint::get_remote_node_id, Endpoint, NodeId};
+use tracing::warn;
 use url::Url;
 
 const CHAT_ALPN: &[u8] = b"pkarr-discovery-demo-chat";
@@ -75,7 +76,16 @@ async fn chat_server(args: Args) -> anyhow::Result<()> {
     println!("Listening on {}", node_id);
     println!("pkarr z32: {}", zid);
     println!("see https://app.pkarr.org/?pk={}", zid);
-    while let Some(connecting) = endpoint.accept().await {
+    while let Some(incoming) = endpoint.accept().await {
+        let connecting = match incoming.accept() {
+            Ok(connecting) => connecting,
+            Err(err) => {
+                warn!("incoming connection failed: {err:#}");
+                // we can carry on in these cases:
+                // this can be caused by retransmitted datagrams
+                continue;
+            }
+        };
         tokio::spawn(async move {
             let connection = connecting.await?;
             let remote_node_id = get_remote_node_id(&connection)?;

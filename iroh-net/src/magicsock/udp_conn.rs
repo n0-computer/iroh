@@ -1,13 +1,16 @@
 use std::{
     fmt::Debug,
+    future::Future,
     io,
     net::SocketAddr,
+    pin::Pin,
     sync::Arc,
     task::{ready, Context, Poll},
 };
 
 use anyhow::{bail, Context as _};
 use quinn::AsyncUdpSocket;
+use quinn_udp::{Transmit, UdpSockRef};
 use tokio::io::Interest;
 use tracing::{debug, trace, warn};
 
@@ -18,7 +21,7 @@ use crate::net::UdpSocket;
 #[derive(Clone, Debug)]
 pub struct UdpConn {
     io: Arc<UdpSocket>,
-    state: Arc<quinn_udp::UdpSocketState>,
+    inner: Arc<quinn_udp::UdpSocketState>,
 }
 
 impl UdpConn {
@@ -28,9 +31,10 @@ impl UdpConn {
 
     pub(super) fn bind(port: u16, network: IpFamily) -> anyhow::Result<Self> {
         let sock = bind(port, network)?;
+        let state = quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(&sock))?;
         Ok(Self {
             io: Arc::new(sock),
-            state: Default::default(),
+            inner: Arc::new(state),
         })
     }
 
@@ -46,32 +50,22 @@ impl UdpConn {
 }
 
 impl AsyncUdpSocket for UdpConn {
-    fn poll_send(
-        &self,
-        state: &quinn_udp::UdpState,
-        cx: &mut Context,
-        transmits: &[quinn_udp::Transmit],
-    ) -> Poll<io::Result<usize>> {
-        let inner = &self.state;
-        let io = &self.io;
-        loop {
-            ready!(io.poll_send_ready(cx))?;
-            if let Ok(res) = io.try_io(Interest::WRITABLE, || {
-                inner.send(Arc::as_ref(io).into(), state, transmits)
-            }) {
-                for t in transmits.iter().take(res) {
-                    trace!(
-                        dst = %t.destination,
-                        len = t.contents.len(),
-                        count = t.segment_size.map(|ss| t.contents.len() / ss).unwrap_or(1),
-                        src = %t.src_ip.map(|x| x.to_string()).unwrap_or_default(),
-                        "UDP send"
-                    );
-                }
+    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
+        let sock = self.io.clone();
+        Box::pin(IoPoller {
+            next_waiter: move || {
+                let sock = sock.clone();
+                async move { sock.writable().await }
+            },
+            waiter: None,
+        })
+    }
 
-                return Poll::Ready(Ok(res));
-            }
-        }
+    fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()> {
+        self.io.try_io(Interest::WRITABLE, || {
+            let sock_ref = UdpSockRef::from(&self.io);
+            self.inner.send(sock_ref, transmit)
+        })
     }
 
     fn poll_recv(
@@ -83,7 +77,7 @@ impl AsyncUdpSocket for UdpConn {
         loop {
             ready!(self.io.poll_recv_ready(cx))?;
             if let Ok(res) = self.io.try_io(Interest::READABLE, || {
-                self.state.recv(Arc::as_ref(&self.io).into(), bufs, meta)
+                self.inner.recv(Arc::as_ref(&self.io).into(), bufs, meta)
             }) {
                 for meta in meta.iter().take(res) {
                     trace!(
@@ -102,6 +96,18 @@ impl AsyncUdpSocket for UdpConn {
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
         self.io.local_addr()
+    }
+
+    fn may_fragment(&self) -> bool {
+        self.inner.may_fragment()
+    }
+
+    fn max_transmit_segments(&self) -> usize {
+        self.inner.max_gso_segments()
+    }
+
+    fn max_receive_segments(&self) -> usize {
+        self.inner.gro_segments()
     }
 }
 
@@ -145,6 +151,53 @@ fn bind(port: u16, network: IpFamily) -> anyhow::Result<UdpSocket> {
     );
 }
 
+/// Poller for when the socket is writable.
+///
+/// The tricky part is that we only have `tokio::net::UdpSocket::writable()` to create the
+/// waiter we need, which does not return a named future type.  In order to be able to store
+/// this waiter in a struct without boxing we need to specify the future itself as a type
+/// parameter, which we can only do if we introduce a second type parameter which returns
+/// the future.  So we end up with a function which we do not need, but it makes the types
+/// work.
+#[derive(derive_more::Debug)]
+#[pin_project::pin_project]
+struct IoPoller<F, Fut>
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = io::Result<()>> + Send + Sync + 'static,
+{
+    /// Function which can create a new waiter if there is none.
+    #[debug("next_waiter")]
+    next_waiter: F,
+    /// The waiter which tells us when the socket is writable.
+    #[debug("waiter")]
+    #[pin]
+    waiter: Option<Fut>,
+}
+
+impl<F, Fut> quinn::UdpPoller for IoPoller<F, Fut>
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = io::Result<()>> + Send + Sync + 'static,
+{
+    fn poll_writable(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+        let mut this = self.project();
+        if this.waiter.is_none() {
+            this.waiter.set(Some((this.next_waiter)()));
+        }
+        let result = this
+            .waiter
+            .as_mut()
+            .as_pin_mut()
+            .expect("just set")
+            .poll(cx);
+        if result.is_ready() {
+            this.waiter.set(None);
+        }
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{key, tls};
@@ -152,33 +205,36 @@ mod tests {
     use super::*;
     use anyhow::Result;
     use tokio::sync::mpsc;
+    use tracing::{info_span, Instrument};
 
     const ALPN: &[u8] = b"n0/test/1";
 
     fn wrap_socket(conn: impl AsyncUdpSocket) -> Result<(quinn::Endpoint, key::SecretKey)> {
         let key = key::SecretKey::generate();
-        let tls_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
-        let server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+        let quic_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
+        let server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
         let mut quic_ep = quinn::Endpoint::new_with_abstract_socket(
             quinn::EndpointConfig::default(),
             Some(server_config),
-            conn,
+            Arc::new(conn),
             Arc::new(quinn::TokioRuntime),
         )?;
 
-        let tls_client_config = tls::make_client_config(&key, None, vec![ALPN.to_vec()], false)?;
-        let client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+        let quic_client_config = tls::make_client_config(&key, None, vec![ALPN.to_vec()], false)?;
+        let client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         quic_ep.set_default_client_config(client_config);
         Ok((quic_ep, key))
     }
 
     #[tokio::test]
     async fn test_rebinding_conn_send_recv_ipv4() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
         rebinding_conn_send_recv(IpFamily::V4).await
     }
 
     #[tokio::test]
     async fn test_rebinding_conn_send_recv_ipv6() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
         if !crate::netcheck::os_has_ipv6() {
             return Ok(());
         }
@@ -195,24 +251,29 @@ mod tests {
         let m1_addr = SocketAddr::new(network.local_addr(), m1.local_addr()?.port());
         let (m1_send, mut m1_recv) = mpsc::channel(8);
 
-        let m1_task = tokio::task::spawn(async move {
-            if let Some(conn) = m1.accept().await {
-                let conn = conn.await?;
-                let (mut send_bi, mut recv_bi) = conn.accept_bi().await?;
+        let m1_task = tokio::task::spawn(
+            async move {
+                // we skip accept() errors, they can be caused by retransmits
+                if let Some(conn) = m1.accept().await.and_then(|inc| inc.accept().ok()) {
+                    let conn = conn.await?;
+                    let (mut send_bi, mut recv_bi) = conn.accept_bi().await?;
 
-                let val = recv_bi.read_to_end(usize::MAX).await?;
-                m1_send.send(val).await?;
-                send_bi.finish().await?;
+                    let val = recv_bi.read_to_end(usize::MAX).await?;
+                    m1_send.send(val).await?;
+                    send_bi.finish()?;
+                    send_bi.stopped().await?;
+                }
+
+                Ok::<_, anyhow::Error>(())
             }
-
-            Ok::<_, anyhow::Error>(())
-        });
+            .instrument(info_span!("m1_task")),
+        );
 
         let conn = m2.connect(m1_addr, "localhost")?.await?;
 
         let (mut send_bi, mut recv_bi) = conn.open_bi().await?;
         send_bi.write_all(b"hello").await?;
-        send_bi.finish().await?;
+        send_bi.finish()?;
 
         let _ = recv_bi.read_to_end(usize::MAX).await?;
         conn.close(0u32.into(), b"done");

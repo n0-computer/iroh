@@ -13,33 +13,33 @@ readme = "README.md"
 anyhow = "1.0.80"
 async-trait = "0.1.77"
 axum = { version = "0.7.4", features = ["macros"] }
-axum-server = { version = "0.6.0", features = ["tls-rustls"] }
+axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
 base64-url = "2.0.2"
-bytes = "1.5.0"
+bytes = "1.7"
 clap = { version = "4.5.1", features = ["derive"] }
 derive_more = { version = "=1.0.0-beta.7", features = ["debug", "display", "into", "from"] }
 dirs-next = "2.0.0"
 futures-lite = "2.3.0"
 governor = "0.6.3"
-hickory-proto = "0.24.0"
-hickory-server = { version = "0.24.0", features = ["dns-over-rustls"] }
+hickory-proto = "=0.25.0-alpha.2"
+hickory-server = { version = "=0.25.0-alpha.2", features = ["dns-over-rustls"] }
 http = "1.0.0"
 iroh-metrics = { version = "0.23.0", path = "../iroh-metrics" }
 lru = "0.12.3"
 mainline = "2.0.1"
 parking_lot = "0.12.1"
-pkarr = { version = "2.0.0", features = [ "async", "relay", "dht"], default-features = false }
+pkarr = { version = "2.2.0", features = [ "async", "relay", "dht"], default-features = false }
 rcgen = "0.12.1"
 redb = "2.0.0"
 regex = "1.10.3"
-rustls = "0.21.11"
-rustls-pemfile = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rustls-pemfile = { version = "2.1" }
 serde = { version = "1.0.197", features = ["derive"] }
 struct_iterable = "0.1.1"
 strum = { version = "0.26.1", features = ["derive"] }
 tokio = { version = "1.36.0", features = ["full"] }
-tokio-rustls = "0.24.1"
-tokio-rustls-acme = { version = "0.3", features = ["axum"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
+tokio-rustls-acme = { version = "0.4", features = ["axum"] }
 tokio-stream = "0.1.14"
 tokio-util = "0.7.10"
 toml = "0.8.10"
@@ -52,10 +52,10 @@ url = "2.5.0"
 z32 = "1.1.1"
 
 [dev-dependencies]
-hickory-resolver = "0.24.0"
+hickory-resolver = "=0.25.0-alpha.2"
 iroh-net = { version = "0.23.0", path = "../iroh-net" }
 iroh-test = { path = "../iroh-test" }
-pkarr = { version = "2.0.0", features = ["rand"] }
+pkarr = { version = "2.2.0", features = ["rand"] }
 
 [package.metadata.docs.rs]
 all-features = true

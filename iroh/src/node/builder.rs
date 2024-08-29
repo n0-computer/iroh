@@ -54,8 +54,6 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 /// Default interval between GC runs.
 const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
-const MAX_CONNECTIONS: u32 = 1024;
-
 /// Storage backend for documents.
 #[derive(Debug, Clone)]
 pub enum DocsStorage {
@@ -559,7 +557,6 @@ where
                 .secret_key(self.secret_key.clone())
                 .proxy_from_env()
                 .keylog(self.keylog)
-                .concurrent_connections(MAX_CONNECTIONS)
                 .relay_mode(self.relay_mode);
             let endpoint = match discovery {
                 Some(discovery) => endpoint.discovery(discovery),
@@ -899,14 +896,15 @@ impl Default for GcPolicy {
 }
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
-const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u32 = 1024;
 
 /// The default bind addr of the RPC .
 pub const DEFAULT_RPC_ADDR: SocketAddr =
     SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, DEFAULT_RPC_PORT));
 
-/// Makes a an RPC endpoint that uses a QUIC transport
+/// Makes a an RPC endpoint that uses a QUIC transport.
+///
+/// Note that this uses the Quinn version used by quic-rpc.
 fn make_rpc_endpoint(
     secret_key: &SecretKey,
     mut rpc_addr: SocketAddr,
@@ -915,13 +913,12 @@ fn make_rpc_endpoint(
     transport_config
         .max_concurrent_bidi_streams(MAX_RPC_STREAMS.into())
         .max_concurrent_uni_streams(0u32.into());
-    let mut server_config = iroh_net::endpoint::make_server_config(
+    let server_config = iroh_net::endpoint::make_server_config(
         secret_key,
         vec![RPC_ALPN.to_vec()],
         Arc::new(transport_config),
         false,
     )?;
-    server_config.concurrent_connections(MAX_RPC_CONNECTIONS);
 
     let rpc_quinn_endpoint = quinn::Endpoint::server(server_config.clone(), rpc_addr);
     let rpc_quinn_endpoint = match rpc_quinn_endpoint {

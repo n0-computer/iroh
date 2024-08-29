@@ -11,7 +11,7 @@ use iroh_net::{
     relay::{RelayMap, RelayMode, RelayUrl},
     Endpoint, NodeAddr,
 };
-use tracing::trace;
+use tracing::{trace, warn};
 
 use crate::{
     client_handler, stats::TransferResult, ClientStats, ConnectionSelector, EndpointSelector, Opt,
@@ -191,7 +191,11 @@ async fn send_data_on_stream(stream: &mut SendStream, stream_size: u64) -> Resul
             .context("failed sending data")?;
     }
 
-    stream.finish().await.context("failed finishing stream")?;
+    stream.finish().context("failed finishing stream")?;
+    stream
+        .stopped()
+        .await
+        .context("failed to wait for stream to be stopped")?;
 
     Ok(())
 }
@@ -225,8 +229,17 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
 
     // Handle only the expected amount of clients
     for _ in 0..opt.clients {
-        let handshake = endpoint.accept().await.unwrap();
-        let connection = handshake.await.context("handshake failed")?;
+        let incoming = endpoint.accept().await.unwrap();
+        let connecting = match incoming.accept() {
+            Ok(connecting) => connecting,
+            Err(err) => {
+                warn!("incoming connection failed: {err:#}");
+                // we can carry on in these cases:
+                // this can be caused by retransmitted datagrams
+                continue;
+            }
+        };
+        let connection = connecting.await.context("handshake failed")?;
 
         server_tasks.push(tokio::spawn(async move {
             loop {

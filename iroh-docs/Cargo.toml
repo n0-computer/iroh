@@ -18,7 +18,7 @@ workspace = true
 anyhow = "1"
 async-channel = "2.3.1"
 blake3 = { package = "iroh-blake3", version = "1.4.5"}
-bytes = { version = "1.4", features = ["serde"] }
+bytes = { version = "1.7", features = ["serde"] }
 derive_more = { version = "=1.0.0-beta.7", features = ["debug", "deref", "display", "from", "try_into", "into", "as_ref"] }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
 futures-buffered = "0.2.4"

@@ -169,7 +169,11 @@ impl ProtocolHandler for BlobSearch {
 
             // By calling `finish` on the send stream we signal that we will not send anything
             // further, which makes the receive stream on the other end terminate.
-            send.finish().await?;
+            send.finish()?;
+            // By calling stopped we wait until the remote iroh Endpoint has acknowledged
+            // all data.  This does not mean the remote application has received all data
+            // from the Endpoint.
+            send.stopped().await?;
             Ok(())
         })
     }
@@ -200,7 +204,11 @@ impl BlobSearch {
 
         // Finish the send stream, signalling that no further data will be sent.
         // This makes the `read_to_end` call on the accepting side terminate.
-        send.finish().await?;
+        send.finish()?;
+        // By calling stopped we wait until the remote iroh Endpoint has acknowledged all
+        // data.  This does not mean the remote application has received all data from the
+        // Endpoint.
+        send.stopped().await?;
 
         // In this example, we simply collect all results into a vector.
         // For real protocols, you'd usually want to return a stream of results instead.
@@ -214,7 +222,7 @@ impl BlobSearch {
             match recv.read_exact(&mut hash_bytes).await {
                 // FinishedEarly means that the remote side did not send further data,
                 // so in this case we break our loop.
-                Err(quinn::ReadExactError::FinishedEarly) => break,
+                Err(quinn::ReadExactError::FinishedEarly(_)) => break,
                 // Other errors are connection errors, so we bail.
                 Err(err) => return Err(err.into()),
                 Ok(_) => {}

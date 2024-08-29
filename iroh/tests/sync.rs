@@ -100,7 +100,7 @@ async fn sync_simple() -> Result<()> {
     let peer1 = nodes[1].node_id();
     let doc1 = clients[1].docs().import(ticket.clone()).await?;
     let mut events1 = doc1.subscribe().await?;
-    info!("node1: assert 4 events");
+    info!("node1: assert 5 events");
     assert_next_unordered(
         &mut events1,
         TIMEOUT,

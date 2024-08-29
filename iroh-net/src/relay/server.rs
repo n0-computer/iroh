@@ -157,9 +157,9 @@ pub enum CertConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// Use a static TLS key and certificate chain.
     Manual {
         /// The TLS private key.
-        private_key: rustls::PrivateKey,
+        private_key: rustls::pki_types::PrivateKeyDer<'static>,
         /// The TLS certificate chain.
-        certs: Vec<rustls::Certificate>,
+        certs: Vec<rustls::pki_types::CertificateDer<'static>>,
     },
 }
 
@@ -255,9 +255,12 @@ impl Server {
                     .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
                 let http_addr = match relay_config.tls {
                     Some(tls_config) => {
-                        let server_config = rustls::ServerConfig::builder()
-                            .with_safe_defaults()
-                            .with_no_client_auth();
+                        let server_config = rustls::ServerConfig::builder_with_provider(Arc::new(
+                            rustls::crypto::ring::default_provider(),
+                        ))
+                        .with_safe_default_protocol_versions()
+                        .expect("protocols supported by ring")
+                        .with_no_client_auth();
                         let server_tls_config = match tls_config.cert {
                             CertConfig::LetsEncrypt { config } => {
                                 let mut state = config.state();
@@ -283,8 +286,8 @@ impl Server {
                                 })
                             }
                             CertConfig::Manual { private_key, certs } => {
-                                let server_config = server_config
-                                    .with_single_cert(certs.clone(), private_key.clone())?;
+                                let server_config =
+                                    server_config.with_single_cert(certs.clone(), private_key)?;
                                 let server_config = Arc::new(server_config);
                                 let acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());

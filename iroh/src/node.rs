@@ -440,10 +440,10 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                     }
                 },
                 // handle incoming p2p connections.
-                Some(connecting) = self.endpoint.accept() => {
+                Some(incoming) = self.endpoint.accept() => {
                     let protocols = protocols.clone();
                     join_set.spawn(async move {
-                        handle_connection(connecting, protocols).await;
+                        handle_connection(incoming, protocols).await;
                         Ok(())
                     });
                 },
@@ -612,14 +612,18 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
     }
 }
 
-async fn handle_connection(
-    mut connecting: iroh_net::endpoint::Connecting,
-    protocols: Arc<ProtocolMap>,
-) {
+async fn handle_connection(incoming: iroh_net::endpoint::Incoming, protocols: Arc<ProtocolMap>) {
+    let mut connecting = match incoming.accept() {
+        Ok(conn) => conn,
+        Err(err) => {
+            warn!("Ignoring connection: accepting failed: {err:#}");
+            return;
+        }
+    };
     let alpn = match connecting.alpn().await {
         Ok(alpn) => alpn,
         Err(err) => {
-            warn!("Ignoring connection: invalid handshake: {:?}", err);
+            warn!("Ignoring connection: invalid handshake: {err:#}");
             return;
         }
     };

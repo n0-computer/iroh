@@ -6,7 +6,7 @@
 use anyhow::Context;
 use futures_lite::StreamExt;
 use iroh_net::{key::SecretKey, relay::RelayMode, Endpoint};
-use tracing::info;
+use tracing::{info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
 const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
@@ -62,9 +62,18 @@ async fn main() -> anyhow::Result<()> {
     );
     // accept incoming connections, returns a normal QUIC connection
 
-    while let Some(mut conn) = endpoint.accept().await {
-        let alpn = conn.alpn().await?;
-        let conn = conn.await?;
+    while let Some(incoming) = endpoint.accept().await {
+        let mut connecting = match incoming.accept() {
+            Ok(connecting) => connecting,
+            Err(err) => {
+                warn!("incoming connection failed: {err:#}");
+                // we can carry on in these cases:
+                // this can be caused by retransmitted datagrams
+                continue;
+            }
+        };
+        let alpn = connecting.alpn().await?;
+        let conn = connecting.await?;
         let node_id = iroh_net::endpoint::get_remote_node_id(&conn)?;
         info!(
             "new (unreliable) connection from {node_id} with ALPN {} (coming from {})",

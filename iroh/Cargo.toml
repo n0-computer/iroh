@@ -19,7 +19,7 @@ workspace = true
 anyhow = { version = "1" }
 async-channel = "2.3.1"
 bao-tree = { version = "0.13", features = ["tokio_fsm"], default-features = false }
-bytes = "1"
+bytes = "1.7"
 derive_more = { version = "=1.0.0-beta.7", features = ["debug", "display", "from", "try_into", "from_str"] }
 futures-buffered = "0.2.4"
 futures-lite = "2.3"
@@ -39,9 +39,9 @@ iroh-docs = { version = "0.23.0", path = "../iroh-docs" }
 iroh-gossip = { version = "0.23.0", path = "../iroh-gossip" }
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quic-rpc = { version = "0.11", default-features = false, features = ["flume-transport", "quinn-transport"] }
-quic-rpc-derive = { version = "0.11" }
-quinn = { package = "iroh-quinn", version = "0.10" }
+quic-rpc = { version = "0.12", default-features = false, features = ["flume-transport", "quinn-transport"] }
+quic-rpc-derive = { version = "0.12" }
+quinn = { package = "iroh-quinn", version = "0.11" }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 strum = { version = "0.25", features = ["derive"] }
@@ -74,7 +74,6 @@ test-utils = ["iroh-net/test-utils"]
 
 [dev-dependencies]
 anyhow = { version = "1" }
-bytes = "1"
 genawaiter = { version = "0.99", features = ["futures03"] }
 iroh = { path = ".", features = ["test-utils"] }
 iroh-test = { path = "../iroh-test" }
