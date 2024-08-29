@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use channels::ChannelSenders;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -65,7 +66,7 @@ impl Role {
 /// * [`Self::Continuous`] will enable the live data channels to synchronize updates in real-time.
 /// * [`Self::ReconcileOnce`] will run a single reconciliation of the interests declared at session
 ///   start, and then close the session.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub enum SessionMode {
     /// Run a single, full reconciliation, and then quit.
     ReconcileOnce,
@@ -81,7 +82,7 @@ impl SessionMode {
 }
 
 /// Options to initialize a session.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInit {
     /// Selects the areas we wish to synchronize.
     pub interests: Interests,
@@ -117,8 +118,6 @@ impl EventSender {
 }
 
 /// Events emitted from a session.
-///
-/// These are handled in the [`PeerManager`](crate::engine::peer_manager::PeerManager).
 #[derive(derive_more::Debug)]
 pub(crate) enum SessionEvent {
     Established,

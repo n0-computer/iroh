@@ -5,12 +5,10 @@ use std::collections::{hash_map, HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::proto::{
-    data_model::{Entry, SerdeWriteCapability},
-    grouping::{Area, AreaExt, AreaOfInterest, Point},
+    data_model::Entry,
+    grouping::{self, Area, AreaExt, AreaOfInterest, Point},
     keys::{NamespaceId, UserId},
-    meadowcap::{
-        serde_encoding::SerdeReadAuthorisation, AccessMode, McCapability, ReadAuthorisation,
-    },
+    meadowcap::{self, AccessMode, McCapability, ReadAuthorisation},
 };
 
 pub type InterestMap = HashMap<ReadAuthorisation, HashSet<AreaOfInterest>>;
@@ -18,19 +16,20 @@ pub type InterestMap = HashMap<ReadAuthorisation, HashSet<AreaOfInterest>>;
 /// Enum for describing synchronisation interests.
 ///
 /// You should use [`Self::builder`] for a straightforward way to construct this.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub enum Interests {
     /// Use all the capabilities we have.
     #[default]
     All,
     /// Use the selected capabilities and areas.
     Select(HashMap<CapSelector, AreaOfInterestSelector>),
-    /// Use exactly the specified capabilities and areas.
-    Exact(InterestMap),
+    // /// Use exactly the specified capabilities and areas.
+    // TODO: removed this for now, maybe we want and need it. Will need serde support.
+    // Exact(InterestMap),
 }
 
 impl Interests {
-    /// Returns a [`SelectBuilder`] to build our [`Interests`].
+    /// Returns a [`InterestBuilder`] to build our [`Interests`].
     pub fn builder() -> InterestBuilder {
         InterestBuilder::default()
     }
@@ -63,13 +62,19 @@ impl IntoAreaOfInterest for Area {
 }
 
 impl InterestBuilder {
+    /// Add a capability and areas of interest
+    ///
+    /// See [`CapSelector`] for how to specify the capability to use.
+    pub fn add(mut self, cap: impl Into<CapSelector>, areas: AreaOfInterestSelector) -> Self {
+        let cap = cap.into();
+        self.0.insert(cap, areas);
+        self
+    }
     /// Add the full area of a capability we have into the interests.
     ///
     /// See [`CapSelector`] for how to specify the capability to use.
-    pub fn add_full_cap(mut self, cap: impl Into<CapSelector>) -> Self {
-        let cap = cap.into();
-        self.0.insert(cap, AreaOfInterestSelector::Widest);
-        self
+    pub fn add_full_cap(self, cap: impl Into<CapSelector>) -> Self {
+        self.add(cap, AreaOfInterestSelector::Widest)
     }
 
     /// Add a specific area included in one of our capabilities into the interests.
@@ -108,29 +113,56 @@ impl From<InterestBuilder> for Interests {
 }
 
 /// Selector for an [`AreaOfInterest`].
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub enum AreaOfInterestSelector {
     /// Use the widest area allowed by a capability, with no further limits.
     #[default]
     Widest,
     /// Use the specified set of [`AreaOfInterest`].
+    #[serde(with = "serde_area_of_interest_set")]
     Exact(HashSet<AreaOfInterest>),
 }
 
+mod serde_area_of_interest_set {
+    // TODO: Less clones and allocs.
+    use crate::proto::grouping::serde_encoding::SerdeAreaOfInterest;
+    use serde::Deserializer;
+
+    use super::*;
+    pub fn serialize<S: serde::Serializer>(
+        items: &HashSet<AreaOfInterest>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let items: Vec<_> = items
+            .iter()
+            .map(|aoi| SerdeAreaOfInterest(aoi.clone()))
+            .collect();
+        items.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<HashSet<AreaOfInterest>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let items: Vec<SerdeAreaOfInterest> = Deserialize::deserialize(deserializer)?;
+        Ok(items.into_iter().map(|aoi| aoi.0).collect())
+    }
+}
+
 /// Selector for a capability.
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CapSelector {
     /// The namespace to which the capability must grant access.
     pub namespace_id: NamespaceId,
     /// Select the user who may use the capability.
-    pub receiver: ReceiverSelector,
+    pub receiver: UserSelector,
     /// Select the area to which the capability grants access.
     pub granted_area: AreaSelector,
 }
 
 impl From<NamespaceId> for CapSelector {
     fn from(value: NamespaceId) -> Self {
-        Self::widest(value)
+        Self::any(value)
     }
 }
 
@@ -145,7 +177,7 @@ impl CapSelector {
     /// Creates a new [`CapSelector`].
     pub fn new(
         namespace_id: NamespaceId,
-        receiver: ReceiverSelector,
+        receiver: UserSelector,
         granted_area: AreaSelector,
     ) -> Self {
         Self {
@@ -160,7 +192,7 @@ impl CapSelector {
     pub fn with_user(namespace_id: NamespaceId, user_id: UserId) -> Self {
         Self::new(
             namespace_id,
-            ReceiverSelector::Exact(user_id),
+            UserSelector::Exact(user_id),
             AreaSelector::Widest,
         )
     }
@@ -170,13 +202,13 @@ impl CapSelector {
     /// Will use any user available in our secret store and select the capability which grants the
     /// widest area.
     // TODO: Document exact selection process if there are capabilities with distinct areas.
-    pub fn widest(namespace: NamespaceId) -> Self {
-        Self::new(namespace, ReceiverSelector::Any, AreaSelector::Widest)
+    pub fn any(namespace: NamespaceId) -> Self {
+        Self::new(namespace, UserSelector::Any, AreaSelector::Widest)
     }
 
     /// Select a capability which authorises writing the provided `entry` on behalf of the provided
     /// `user_id`.
-    pub fn for_entry(entry: &Entry, user_id: ReceiverSelector) -> Self {
+    pub fn for_entry(entry: &Entry, user_id: UserSelector) -> Self {
         let granted_area = AreaSelector::ContainsPoint(Point::from_entry(entry));
         Self {
             namespace_id: *entry.namespace_id(),
@@ -190,7 +222,7 @@ impl CapSelector {
 #[derive(
     Debug, Default, Clone, Copy, Eq, PartialEq, derive_more::From, Serialize, Deserialize, Hash,
 )]
-pub enum ReceiverSelector {
+pub enum UserSelector {
     /// The receiver may be any user for which we have a secret key stored.
     #[default]
     Any,
@@ -198,7 +230,7 @@ pub enum ReceiverSelector {
     Exact(UserId),
 }
 
-impl ReceiverSelector {
+impl UserSelector {
     pub fn includes(&self, user: &UserId) -> bool {
         match self {
             Self::Any => true,
@@ -208,13 +240,13 @@ impl ReceiverSelector {
 }
 
 /// Selector for the area to which a capability must grant access.
-#[derive(Debug, Clone, Default, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Default, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub enum AreaSelector {
     /// Use the capability which covers the biggest area.
     #[default]
     Widest,
     /// Use any capability that covers the provided area.
-    ContainsArea(Area),
+    ContainsArea(#[serde(with = "grouping::serde_encoding::area")] Area),
     /// Use any capability that covers the provided point (i.e. entry).
     ContainsPoint(Point),
 }
@@ -235,9 +267,9 @@ impl AreaSelector {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum CapabilityPack {
     /// A read authorisation.
-    Read(SerdeReadAuthorisation),
+    Read(#[serde(with = "meadowcap::serde_encoding::read_authorisation")] ReadAuthorisation),
     /// A write authorisation.
-    Write(SerdeWriteCapability),
+    Write(#[serde(with = "meadowcap::serde_encoding::mc_capability")] McCapability),
 }
 
 impl CapabilityPack {
@@ -248,11 +280,18 @@ impl CapabilityPack {
         }
     }
 
+    pub fn namespace(&self) -> NamespaceId {
+        match self {
+            CapabilityPack::Read(cap) => cap.namespace(),
+            CapabilityPack::Write(cap) => *cap.granted_namespace(),
+        }
+    }
+
     pub fn validate(&self) -> Result<(), InvalidCapabilityPack> {
         // meadowcap capability themselves are validated on creation/deserialization.
         let is_valid = match self {
             Self::Read(cap) => cap.read_cap().access_mode() == AccessMode::Read,
-            Self::Write(cap) => cap.0.access_mode() == AccessMode::Write,
+            Self::Write(cap) => cap.access_mode() == AccessMode::Write,
         };
         if !is_valid {
             Err(InvalidCapabilityPack)
@@ -279,7 +318,7 @@ impl CapabilityPack {
 pub struct InvalidCapabilityPack;
 
 // TODO: This doesn't really belong into this module.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DelegateTo {
     pub user: UserId,
     pub restrict_area: RestrictArea,
@@ -295,14 +334,15 @@ impl DelegateTo {
 }
 
 // TODO: This doesn't really belong into this module.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RestrictArea {
+    #[default]
     None,
-    Restrict(Area),
+    Restrict(#[serde(with = "grouping::serde_encoding::area")] Area),
 }
 
 impl RestrictArea {
-    pub fn with_default(self, default: Area) -> Area {
+    pub fn or_default(self, default: Area) -> Area {
         match self {
             RestrictArea::None => default.clone(),
             RestrictArea::Restrict(area) => area,

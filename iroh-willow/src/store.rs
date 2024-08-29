@@ -1,7 +1,5 @@
 //! Store for entries, secrets, and capabilities used in the Willow engine.
 //!
-//! The [`Store`] is the high-level wrapper for the different stores we need.
-//!
 //! The storage backend is defined in the [`Storage`] trait and its associated types.
 //!
 //! The only implementation is currently an in-memory store at [`memory`].
@@ -11,7 +9,7 @@ use rand_core::CryptoRngCore;
 
 use crate::{
     form::{AuthForm, EntryForm, EntryOrForm, SubspaceForm, TimestampForm},
-    interest::{CapSelector, ReceiverSelector},
+    interest::{CapSelector, UserSelector},
     proto::{
         data_model::Entry,
         data_model::{AuthorisedEntry, PayloadDigest},
@@ -66,16 +64,20 @@ impl<S: Storage> Store<S> {
         &self.auth
     }
 
-    pub async fn insert_entry(&self, entry: EntryOrForm, auth: AuthForm) -> Result<(Entry, bool)> {
+    pub async fn insert_entry(
+        &self,
+        entry: EntryOrForm,
+        auth: AuthForm,
+    ) -> Result<(AuthorisedEntry, bool)> {
         let user_id = auth.user_id();
         let entry = match entry {
             EntryOrForm::Entry(entry) => Ok(entry),
             EntryOrForm::Form(form) => self.form_to_entry(form, user_id).await,
         }?;
         let capability = match auth {
-            AuthForm::Exact(cap) => cap.0,
+            AuthForm::Exact(cap) => cap,
             AuthForm::Any(user_id) => {
-                let selector = CapSelector::for_entry(&entry, ReceiverSelector::Exact(user_id));
+                let selector = CapSelector::for_entry(&entry, UserSelector::Exact(user_id));
                 self.auth()
                     .get_write_cap(&selector)?
                     .ok_or_else(|| anyhow!("no write capability available"))?
@@ -96,8 +98,7 @@ impl<S: Storage> Store<S> {
         let inserted = self
             .entries()
             .ingest(&authorised_entry, EntryOrigin::Local)?;
-        let (entry, _token) = authorised_entry.into_parts();
-        Ok((entry, inserted))
+        Ok((authorised_entry, inserted))
     }
 
     pub fn create_namespace(

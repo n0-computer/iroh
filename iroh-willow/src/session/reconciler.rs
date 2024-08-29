@@ -565,7 +565,7 @@ impl<S: Storage> Target<S> {
 
         for authorised_entry in self
             .snapshot
-            .get_entries_with_authorisation(self.namespace(), range)
+            .get_authorised_entries(self.namespace(), range)
         {
             let authorised_entry = authorised_entry?;
             let (entry, token) = authorised_entry.into_parts();
