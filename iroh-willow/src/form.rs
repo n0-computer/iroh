@@ -114,6 +114,12 @@ impl EntryForm {
             payload: PayloadForm::Bytes(payload.into()),
         }
     }
+
+    /// Sets the subspace for the entry.
+    pub fn subspace(mut self, subspace: SubspaceId) -> Self {
+        self.subspace_id = SubspaceForm::Exact(subspace);
+        self
+    }
 }
 
 /// Select which capability to use for authenticating a new entry.
