@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["KeyScope","SecretStoreError","SplitAction"],"struct":["SplitOpts"],"trait":["CapsStorage","EntryReader","EntryStorage","SecretStorage","Storage"],"type":["RangeSplit"]};
