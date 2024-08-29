@@ -550,7 +550,7 @@ impl<S: Storage> Actor<S> {
                 self.tasks.spawn_local(async move {
                     let mut stream = store.entries().subscribe_area(namespace, area, params);
                     while let Some(event) = stream.next().await {
-                        if let Err(_) = sender.send(event).await {
+                        if sender.send(event).await.is_err() {
                             break;
                         }
                     }
@@ -571,7 +571,7 @@ impl<S: Storage> Actor<S> {
                             .entries()
                             .resume_subscription(progress_id, namespace, area, params);
                     while let Some(event) = stream.next().await {
-                        if let Err(_) = sender.send(event).await {
+                        if sender.send(event).await.is_err() {
                             break;
                         }
                     }
