@@ -48,7 +48,7 @@ pub type Component<'a> = willow_data_model::Component<'a, MAX_COMPONENT_LENGTH>;
 
 /// A payload digest used in entries.
 ///
-/// This wraps a [`Hash`] blake3 hash.
+/// This wraps a [`iroh_blobs::Hash`] blake3 hash.
 #[derive(
     Debug,
     Clone,
@@ -227,30 +227,95 @@ mod encoding {
 }
 
 pub mod serde_encoding {
-    use serde::{de, Deserialize, Deserializer, Serialize};
+    use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
     use crate::util::codec2::{from_bytes, to_vec};
 
     use super::*;
 
-    /// [`Entry`] wrapper that can be serialized with [`serde`].
-    #[derive(Debug, Clone, derive_more::From, derive_more::Into, derive_more::Deref)]
-    pub struct SerdeEntry(pub Entry);
+    pub mod path {
 
-    impl Serialize for SerdeEntry {
-        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-            to_vec(&self.0).serialize(serializer)
+        use super::*;
+        pub fn serialize<S: Serializer>(path: &Path, serializer: S) -> Result<S::Ok, S::Error> {
+            to_vec(path).serialize(serializer)
         }
-    }
 
-    impl<'de> Deserialize<'de> for SerdeEntry {
-        fn deserialize<D>(deserializer: D) -> Result<SerdeEntry, D::Error>
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<Path, D::Error>
         where
             D: Deserializer<'de>,
         {
             let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
             let decoded = from_bytes(&bytes).map_err(de::Error::custom)?;
-            Ok(Self(decoded))
+            Ok(decoded)
         }
     }
+
+    pub mod entry {
+        use super::*;
+        pub fn serialize<S: Serializer>(entry: &Entry, serializer: S) -> Result<S::Ok, S::Error> {
+            to_vec(entry).serialize(serializer)
+        }
+
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<Entry, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+            let decoded = from_bytes(&bytes).map_err(de::Error::custom)?;
+            Ok(decoded)
+        }
+    }
+
+    /// [`Entry`] wrapper that can be serialized with [`serde`].
+    #[derive(
+        Debug,
+        Clone,
+        derive_more::From,
+        derive_more::Into,
+        derive_more::Deref,
+        Serialize,
+        Deserialize,
+    )]
+    pub struct SerdeEntry(#[serde(with = "entry")] pub Entry);
+
+    pub mod authorised_entry {
+        use crate::proto::meadowcap::serde_encoding::SerdeMcCapability;
+        use keys::UserSignature;
+
+        use super::*;
+        pub fn serialize<S: Serializer>(
+            entry: &AuthorisedEntry,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            let (entry, token) = entry.clone().into_parts();
+            (
+                SerdeEntry(entry),
+                SerdeMcCapability(token.capability),
+                token.signature,
+            )
+                .serialize(serializer)
+        }
+
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<AuthorisedEntry, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let (entry, capability, signature): (SerdeEntry, SerdeMcCapability, UserSignature) =
+                Deserialize::deserialize(deserializer)?;
+            let token = AuthorisationToken::new(capability.0, signature);
+            AuthorisedEntry::new(entry.0, token).map_err(de::Error::custom)
+        }
+    }
+
+    /// [`AuthorisedEntry`] wrapper that can be serialized with [`serde`].
+    #[derive(
+        Debug,
+        Clone,
+        derive_more::From,
+        derive_more::Into,
+        derive_more::Deref,
+        Serialize,
+        Deserialize,
+    )]
+    pub struct SerdeAuthorisedEntry(#[serde(with = "authorised_entry")] pub AuthorisedEntry);
 }

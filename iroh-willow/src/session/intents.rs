@@ -16,9 +16,9 @@ use std::{
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use futures_util::FutureExt;
+use futures_util::{FutureExt, Sink, SinkExt};
 use genawaiter::rc::Co;
-
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, StreamMap, StreamNotifyClose};
 use tokio_util::sync::PollSender;
@@ -80,7 +80,7 @@ impl EventKind {
 }
 
 /// Updates that may be submitted from an intent into the synchronisation session.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum IntentUpdate {
     /// Submit new interests into the session.
     AddInterests(Interests),
@@ -132,10 +132,7 @@ impl Intent {
     ) -> (Self, IntentHandle) {
         let (event_tx, event_rx) = mpsc::channel(event_cap);
         let (update_tx, update_rx) = mpsc::channel(update_cap);
-        let handle = IntentHandle {
-            event_rx,
-            update_tx,
-        };
+        let handle = IntentHandle::from_mpsc(update_tx, event_rx);
         let channels = IntentChannels {
             event_tx,
             update_rx,
@@ -178,19 +175,49 @@ pub enum Completion {
 /// otherwise the session will be blocked from progressing.
 ///
 /// The [`IntentHandle`] can also submit new interests into the session.
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct IntentHandle {
-    event_rx: Receiver<EventKind>,
-    update_tx: Sender<IntentUpdate>,
+    #[debug("EventReceiver")]
+    event_rx: EventReceiver,
+    #[debug("UpdateSender")]
+    update_tx: UpdateSender,
 }
 
+pub type UpdateSender =
+    Pin<Box<dyn Sink<IntentUpdate, Error = SendError<IntentUpdate>> + Send + 'static>>;
+pub type EventReceiver = Pin<Box<dyn Stream<Item = EventKind> + Send + 'static>>;
+
+#[derive(Debug, thiserror::Error)]
+#[error("Failed to send update: Receiver dropped.")]
+pub struct SendError<T>(pub T);
+
 impl IntentHandle {
+    pub fn new(
+        update_tx: UpdateSender,
+        event_rx: EventReceiver,
+        // PollSender::new(self.update_tx),
+        // ReceiverStream::new(self.event_rx),
+    ) -> Self {
+        Self {
+            update_tx,
+            event_rx,
+        }
+    }
+
+    pub(crate) fn from_mpsc(
+        update_tx: mpsc::Sender<IntentUpdate>,
+        event_rx: mpsc::Receiver<EventKind>,
+    ) -> Self {
+        let update_tx = PollSender::new(update_tx);
+        let update_tx = update_tx
+            .sink_map_err(|err| SendError(err.into_inner().expect("invalid use of Sink trait")));
+        let event_rx = ReceiverStream::new(event_rx);
+        Self::new(Box::pin(update_tx), Box::pin(event_rx))
+    }
+
     /// Split the [`IntentHandle`] into a update sink and event stream.
-    pub fn split(self) -> (PollSender<IntentUpdate>, ReceiverStream<EventKind>) {
-        (
-            PollSender::new(self.update_tx),
-            ReceiverStream::new(self.event_rx),
-        )
+    pub fn split(self) -> (UpdateSender, EventReceiver) {
+        (self.update_tx, self.event_rx)
     }
 
     /// Wait for the intent to be completed.
@@ -204,7 +231,7 @@ impl IntentHandle {
     pub async fn complete(&mut self) -> Result<Completion, Arc<Error>> {
         let mut complete = false;
         let mut partial = false;
-        while let Some(event) = self.event_rx.recv().await {
+        while let Some(event) = self.event_rx.next().await {
             match event {
                 EventKind::ReconciledAll => complete = true,
                 // TODO: track partial reconciliations
@@ -228,7 +255,7 @@ impl IntentHandle {
     ///
     /// The [`IntentHandle`] will then receive events for these interests in addition to already
     /// submitted interests.
-    pub async fn add_interests(&self, interests: impl Into<Interests>) -> Result<()> {
+    pub async fn add_interests(&mut self, interests: impl Into<Interests>) -> Result<()> {
         self.update_tx
             .send(IntentUpdate::AddInterests(interests.into()))
             .await?;
@@ -236,7 +263,7 @@ impl IntentHandle {
     }
 
     /// Close the intent.
-    pub async fn close(&self) {
+    pub async fn close(&mut self) {
         self.update_tx.send(IntentUpdate::Close).await.ok();
     }
 }
@@ -245,7 +272,7 @@ impl Stream for IntentHandle {
     type Item = EventKind;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.event_rx).poll_recv(cx)
+        Pin::new(&mut self.event_rx).poll_next(cx)
     }
 }
 
@@ -641,4 +668,60 @@ fn flatten_interests(interests: &InterestMap) -> NamespaceInterests {
         out.entry(cap.namespace()).or_default().extend(aois.clone());
     }
     out
+}
+
+pub mod serde_encoding {
+    use serde::{Deserialize, Serialize};
+
+    use crate::proto::grouping::serde_encoding::{SerdeArea, SerdeAreaOfInterest};
+    use crate::proto::keys::NamespaceId;
+    use crate::session::intents::EventKind;
+
+    /// Serializable version of EventKind
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub enum Event {
+        CapabilityIntersection {
+            namespace: NamespaceId,
+            area: SerdeArea,
+        },
+        InterestIntersection {
+            namespace: NamespaceId,
+            area: SerdeAreaOfInterest,
+        },
+        Reconciled {
+            namespace: NamespaceId,
+            area: SerdeAreaOfInterest,
+        },
+        ReconciledAll,
+        Abort {
+            error: String, // Simplified error representation
+        },
+    }
+
+    impl From<EventKind> for Event {
+        fn from(event: EventKind) -> Self {
+            match event {
+                EventKind::CapabilityIntersection { namespace, area } => {
+                    Event::CapabilityIntersection {
+                        namespace,
+                        area: SerdeArea(area),
+                    }
+                }
+                EventKind::InterestIntersection { namespace, area } => {
+                    Event::InterestIntersection {
+                        namespace,
+                        area: SerdeAreaOfInterest(area),
+                    }
+                }
+                EventKind::Reconciled { namespace, area } => Event::Reconciled {
+                    namespace,
+                    area: SerdeAreaOfInterest(area),
+                },
+                EventKind::ReconciledAll => Event::ReconciledAll,
+                EventKind::Abort { error } => Event::Abort {
+                    error: error.to_string(),
+                },
+            }
+        }
+    }
 }

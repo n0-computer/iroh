@@ -1,10 +1,12 @@
 //! Utilities for Willow's entry [groupings](https://willowprotocol.org/specs/grouping-entries/index.html#grouping_entries).
 
+use serde::{Deserialize, Serialize};
 pub use willow_data_model::grouping::{Range, RangeEnd};
 use willow_data_model::SubspaceId as _;
 
 use super::data_model::{
-    Entry, Path, SubspaceId, Timestamp, MAX_COMPONENT_COUNT, MAX_COMPONENT_LENGTH, MAX_PATH_LENGTH,
+    self, Entry, Path, SubspaceId, Timestamp, MAX_COMPONENT_COUNT, MAX_COMPONENT_LENGTH,
+    MAX_PATH_LENGTH,
 };
 
 /// See [`willow_data_model::grouping::Range3d`].
@@ -91,8 +93,9 @@ impl AreaExt for Area {
 /// A single point in the 3D range space.
 ///
 /// I.e. an entry.
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Point {
+    #[serde(with = "data_model::serde_encoding::path")]
     pub path: Path,
     pub timestamp: Timestamp,
     pub subspace_id: SubspaceId,
@@ -127,21 +130,40 @@ pub mod serde_encoding {
 
     use super::*;
 
-    #[derive(
-        Debug, Clone, Eq, PartialEq, derive_more::From, derive_more::Into, derive_more::Deref,
-    )]
-    pub struct SerdeAreaOfInterest(pub AreaOfInterest);
-
-    impl Serialize for SerdeAreaOfInterest {
-        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+    pub mod area {
+        use super::*;
+        pub fn serialize<S: serde::Serializer>(
+            area: &Area,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
             let previous = Area::new_full();
-            let encoded_area = to_vec_relative(&previous, &self.0.area);
-            (encoded_area, self.0.max_count, self.0.max_size).serialize(serializer)
+            let encoded_area = to_vec_relative(&previous, area);
+            encoded_area.serialize(serializer)
+        }
+
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<Area, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let relative = Area::new_full();
+            let encoded_area: Vec<u8> = Deserialize::deserialize(deserializer)?;
+            let area = from_bytes_relative(&relative, &encoded_area).map_err(de::Error::custom)?;
+            Ok(area)
         }
     }
 
-    impl<'de> Deserialize<'de> for SerdeAreaOfInterest {
-        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    pub mod area_of_interest {
+        use super::*;
+        pub fn serialize<S: serde::Serializer>(
+            aoi: &AreaOfInterest,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            let previous = Area::new_full();
+            let encoded_area = to_vec_relative(&previous, &aoi.area);
+            (encoded_area, aoi.max_count, aoi.max_size).serialize(serializer)
+        }
+
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<AreaOfInterest, D::Error>
         where
             D: Deserializer<'de>,
         {
@@ -149,31 +171,67 @@ pub mod serde_encoding {
             let (encoded_area, max_count, max_size): (Vec<u8>, u64, u64) =
                 Deserialize::deserialize(deserializer)?;
             let area = from_bytes_relative(&relative, &encoded_area).map_err(de::Error::custom)?;
-            Ok(Self(AreaOfInterest::new(area, max_count, max_size)))
+            Ok(AreaOfInterest::new(area, max_count, max_size))
         }
     }
 
-    #[derive(Debug, Clone, derive_more::From, derive_more::Into, derive_more::Deref)]
-    pub struct SerdeRange3d(pub Range3d);
-
-    impl Serialize for SerdeRange3d {
-        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+    pub mod range_3d {
+        use super::*;
+        pub fn serialize<S: serde::Serializer>(
+            range: &Range3d,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
             let previous = Range3d::new_full();
-            to_vec_relative(&previous, &self.0).serialize(serializer)
+            to_vec_relative(&previous, range).serialize(serializer)
         }
-    }
 
-    impl<'de> Deserialize<'de> for SerdeRange3d {
-        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<Range3d, D::Error>
         where
             D: Deserializer<'de>,
         {
             let previous = Range3d::new_full();
             let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
             let decoded = from_bytes_relative(&previous, &bytes).map_err(de::Error::custom)?;
-            Ok(Self(decoded))
+            Ok(decoded)
         }
     }
+
+    #[derive(
+        Debug,
+        Clone,
+        Eq,
+        PartialEq,
+        derive_more::From,
+        derive_more::Into,
+        derive_more::Deref,
+        Serialize,
+        Deserialize,
+    )]
+    pub struct SerdeArea(#[serde(with = "area")] pub Area);
+
+    #[derive(
+        Debug,
+        Clone,
+        Eq,
+        PartialEq,
+        derive_more::From,
+        derive_more::Into,
+        derive_more::Deref,
+        Serialize,
+        Deserialize,
+    )]
+    pub struct SerdeAreaOfInterest(#[serde(with = "area_of_interest")] pub AreaOfInterest);
+
+    #[derive(
+        Debug,
+        Clone,
+        derive_more::From,
+        derive_more::Into,
+        derive_more::Deref,
+        Serialize,
+        Deserialize,
+    )]
+    pub struct SerdeRange3d(#[serde(with = "range_3d")] pub Range3d);
 }
 
 #[cfg(test)]

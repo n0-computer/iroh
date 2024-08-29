@@ -27,7 +27,7 @@ use crate::{
     },
     proto::wgps::AccessChallenge,
     session::{
-        intents::{EventKind, Intent},
+        intents::{EventKind, EventReceiver, Intent},
         Error, InitialTransmission, Role, SessionEvent, SessionHandle, SessionInit, SessionUpdate,
     },
 };
@@ -709,7 +709,7 @@ impl AcceptHandlers {
 #[derive(Debug)]
 struct EventForwarder {
     _join_handle: AbortingJoinHandle<()>,
-    stream_sender: mpsc::Sender<(NodeId, ReceiverStream<EventKind>)>,
+    stream_sender: mpsc::Sender<(NodeId, EventReceiver)>,
 }
 
 impl EventForwarder {
@@ -737,7 +737,7 @@ impl EventForwarder {
         }
     }
 
-    pub async fn add_intent(&self, peer: NodeId, event_stream: ReceiverStream<EventKind>) {
+    pub async fn add_intent(&self, peer: NodeId, event_stream: EventReceiver) {
         self.stream_sender.send((peer, event_stream)).await.ok();
     }
 }

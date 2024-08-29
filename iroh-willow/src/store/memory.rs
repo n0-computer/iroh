@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
-        data_model::{AuthorisedEntry, Entry, EntryExt, WriteCapability},
+        data_model::{AuthorisedEntry, Entry, EntryExt, Path, SubspaceId, WriteCapability},
         grouping::{Range, Range3d, RangeEnd},
         keys::{NamespaceId, NamespaceSecretKey, UserId, UserSecretKey},
         meadowcap::{self, is_wider_than, ReadAuthorisation},
@@ -24,15 +24,15 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Default)]
-pub struct Store {
+pub struct Store<PS> {
     secrets: Rc<RefCell<SecretStore>>,
     entries: Rc<RefCell<EntryStore>>,
-    payloads: iroh_blobs::store::mem::Store,
+    payloads: PS,
     caps: Rc<RefCell<CapsStore>>,
 }
 
-impl Store {
-    pub fn new(payloads: iroh_blobs::store::mem::Store) -> Self {
+impl<PS: iroh_blobs::store::Store> Store<PS> {
+    pub fn new(payloads: PS) -> Self {
         Self {
             payloads,
             secrets: Default::default(),
@@ -42,10 +42,10 @@ impl Store {
     }
 }
 
-impl traits::Storage for Store {
+impl<PS: iroh_blobs::store::Store> traits::Storage for Store<PS> {
     type Entries = Rc<RefCell<EntryStore>>;
     type Secrets = Rc<RefCell<SecretStore>>;
-    type Payloads = iroh_blobs::store::mem::Store;
+    type Payloads = PS;
     type Caps = Rc<RefCell<CapsStore>>;
 
     fn entries(&self) -> &Self::Entries {
@@ -185,7 +185,7 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
         Ok(self.get_entries(namespace, range).count() as u64)
     }
 
-    fn get_entries_with_authorisation<'a>(
+    fn get_authorised_entries<'a>(
         &'a self,
         namespace: NamespaceId,
         range: &Range3d,
@@ -199,6 +199,25 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
             .map(|e| anyhow::Result::Ok(e.clone()))
             .collect::<Vec<_>>()
             .into_iter()
+    }
+
+    fn get_entry(
+        &self,
+        namespace: NamespaceId,
+        subspace: SubspaceId,
+        path: &Path,
+    ) -> Result<Option<AuthorisedEntry>> {
+        let inner = self.borrow();
+        let Some(entries) = inner.entries.get(&namespace) else {
+            return Ok(None);
+        };
+        Ok(entries
+            .iter()
+            .find(|e| {
+                let e = e.entry();
+                *e.namespace_id() == namespace && *e.subspace_id() == subspace && e.path() == path
+            })
+            .cloned())
     }
 }
 
@@ -329,13 +348,13 @@ impl CapsStore {
                 self.read_caps
                     .entry(*cap.read_cap().granted_namespace())
                     .or_default()
-                    .push(cap.into());
+                    .push(cap);
             }
             CapabilityPack::Write(cap) => {
                 self.write_caps
                     .entry(*cap.granted_namespace())
                     .or_default()
-                    .push(cap.into());
+                    .push(cap);
             }
         }
     }

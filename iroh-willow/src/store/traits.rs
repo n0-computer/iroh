@@ -7,7 +7,7 @@ use anyhow::Result;
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
-        data_model::{AuthorisedEntry, Entry, NamespaceId, WriteCapability},
+        data_model::{AuthorisedEntry, Entry, NamespaceId, Path, SubspaceId, WriteCapability},
         grouping::Range3d,
         keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
         meadowcap::{self, ReadAuthorisation},
@@ -98,7 +98,14 @@ pub trait EntryReader: Debug + 'static {
 
     fn count(&self, namespace: NamespaceId, range: &Range3d) -> Result<u64>;
 
-    fn get_entries_with_authorisation<'a>(
+    fn get_entry(
+        &self,
+        namespace: NamespaceId,
+        subspace: SubspaceId,
+        path: &Path,
+    ) -> Result<Option<AuthorisedEntry>>;
+
+    fn get_authorised_entries<'a>(
         &'a self,
         namespace: NamespaceId,
         range: &Range3d,
@@ -109,7 +116,7 @@ pub trait EntryReader: Debug + 'static {
         namespace: NamespaceId,
         range: &Range3d,
     ) -> impl Iterator<Item = Result<Entry>> {
-        self.get_entries_with_authorisation(namespace, range)
+        self.get_authorised_entries(namespace, range)
             .map(|e| e.map(|e| e.into_parts().0))
     }
 }

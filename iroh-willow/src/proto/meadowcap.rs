@@ -2,13 +2,13 @@
 //!
 //! Contains an instantiation of [`meadowcap`] for use in iroh-willow.
 
+use serde::{Deserialize, Serialize};
+use willow_data_model::AuthorisationToken;
+
 use super::{
     grouping::Area,
     keys::{self, NamespaceSecretKey, UserSecretKey},
 };
-
-use serde::Serialize;
-use willow_data_model::AuthorisationToken;
 
 pub type UserPublicKey = keys::UserPublicKey;
 pub type NamespacePublicKey = keys::NamespacePublicKey;
@@ -21,7 +21,7 @@ use super::data_model::{Entry, MAX_COMPONENT_COUNT, MAX_COMPONENT_LENGTH, MAX_PA
 
 pub use meadowcap::{AccessMode, IsCommunal};
 
-#[derive(Debug, derive_more::From)]
+#[derive(Debug, derive_more::From, Serialize, Deserialize)]
 pub enum SecretKey {
     User(keys::UserSecretKey),
     Namespace(keys::NamespaceSecretKey),
@@ -144,74 +144,133 @@ pub mod serde_encoding {
 
     use super::*;
 
-    #[derive(
-        Debug, Clone, Eq, PartialEq, Hash, derive_more::From, derive_more::Into, derive_more::Deref,
-    )]
-    pub struct SerdeReadAuthorisation(pub ReadAuthorisation);
-
-    impl Serialize for SerdeReadAuthorisation {
-        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-            let encoded_cap = to_vec_relative(&Area::new_full(), &self.0 .0);
-            let encoded_subspace_cap = self.0 .1.as_ref().map(to_vec);
+    pub mod read_authorisation {
+        use super::*;
+        pub fn serialize<S: serde::Serializer>(
+            value: &ReadAuthorisation,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            let encoded_cap = to_vec_relative(&Area::new_full(), value.read_cap());
+            let encoded_subspace_cap = value.subspace_cap().map(to_vec);
             (encoded_cap, encoded_subspace_cap).serialize(serializer)
         }
-    }
 
-    impl<'de> Deserialize<'de> for SerdeReadAuthorisation {
-        fn deserialize<D>(deserializer: D) -> Result<SerdeReadAuthorisation, D::Error>
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<ReadAuthorisation, D::Error>
         where
             D: Deserializer<'de>,
         {
             let (read_cap, subspace_cap): (SerdeMcCapability, Option<SerdeMcSubspaceCapability>) =
                 Deserialize::deserialize(deserializer)?;
-            Ok(Self(ReadAuthorisation(
+            Ok(ReadAuthorisation(
                 read_cap.into(),
                 subspace_cap.map(Into::into),
-            )))
+            ))
         }
     }
 
     #[derive(
-        Debug, Clone, Eq, PartialEq, Hash, derive_more::From, derive_more::Into, derive_more::Deref,
+        Debug,
+        Clone,
+        Eq,
+        PartialEq,
+        Hash,
+        derive_more::From,
+        derive_more::Into,
+        derive_more::Deref,
+        Serialize,
+        Deserialize,
     )]
-    pub struct SerdeMcCapability(pub McCapability);
+    pub struct SerdeReadAuthorisation(#[serde(with = "read_authorisation")] pub ReadAuthorisation);
 
-    impl Serialize for SerdeMcCapability {
-        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+    pub mod mc_capability {
+        use super::*;
+        pub fn serialize<S: serde::Serializer>(
+            value: &McCapability,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
             let previous = Area::new_full();
-            to_vec_relative(&previous, &self.0).serialize(serializer)
+            to_vec_relative(&previous, value).serialize(serializer)
         }
-    }
 
-    impl<'de> Deserialize<'de> for SerdeMcCapability {
-        fn deserialize<D>(deserializer: D) -> Result<SerdeMcCapability, D::Error>
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<McCapability, D::Error>
         where
             D: Deserializer<'de>,
         {
             let previous = Area::new_full();
             let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
             let decoded = from_bytes_relative(&previous, &bytes).map_err(de::Error::custom)?;
-            Ok(Self(decoded))
+            Ok(decoded)
         }
     }
 
-    #[derive(Debug, Clone, derive_more::From, derive_more::Into, derive_more::Deref)]
-    pub struct SerdeMcSubspaceCapability(pub McSubspaceCapability);
+    #[derive(
+        Debug,
+        Clone,
+        Eq,
+        PartialEq,
+        Hash,
+        derive_more::From,
+        derive_more::Into,
+        derive_more::Deref,
+        Serialize,
+        Deserialize,
+    )]
+    pub struct SerdeMcCapability(#[serde(with = "mc_capability")] pub McCapability);
 
-    impl Serialize for SerdeMcSubspaceCapability {
-        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-            to_vec(&self.0).serialize(serializer)
+    pub mod mc_subspace_capability {
+        use super::*;
+        pub fn serialize<S: serde::Serializer>(
+            value: &McSubspaceCapability,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            to_vec(value).serialize(serializer)
         }
-    }
 
-    impl<'de> Deserialize<'de> for SerdeMcSubspaceCapability {
-        fn deserialize<D>(deserializer: D) -> Result<SerdeMcSubspaceCapability, D::Error>
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<McSubspaceCapability, D::Error>
         where
             D: Deserializer<'de>,
         {
             let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
             let decoded = from_bytes(&bytes).map_err(de::Error::custom)?;
-            Ok(Self(decoded))
+            Ok(decoded)
+        }
+    }
+
+    #[derive(
+        Debug,
+        Clone,
+        derive_more::From,
+        derive_more::Into,
+        derive_more::Deref,
+        Serialize,
+        Deserialize,
+    )]
+    pub struct SerdeMcSubspaceCapability(
+        #[serde(with = "mc_subspace_capability")] pub McSubspaceCapability,
+    );
+
+    pub mod access_mode {
+        use super::*;
+        pub fn serialize<S: serde::Serializer>(
+            value: &AccessMode,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            match value {
+                AccessMode::Read => 0u8.serialize(serializer),
+                AccessMode::Write => 1u8.serialize(serializer),
+            }
+        }
+
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<AccessMode, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value: u8 = Deserialize::deserialize(deserializer)?;
+            match value {
+                0 => Ok(AccessMode::Read),
+                1 => Ok(AccessMode::Write),
+                _ => Err(de::Error::custom("Invalid access mode")),
+            }
         }
     }
 }

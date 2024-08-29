@@ -9,16 +9,16 @@ pub enum HandleType {
     /// * completed (both peers performed scalar multiplication).
     Intersection,
 
-    /// Resource handle for [`ReadCapability`] that certify access to some Entries.
+    /// Resource handle for [`crate::proto::meadowcap::ReadAuthorisation`] that certify access to some Entries.
     Capability,
 
-    /// Resource handle for [`AreaOfInterest`]s that peers wish to sync.
+    /// Resource handle for [`crate::proto::grouping::AreaOfInterest`]s that peers wish to sync.
     AreaOfInterest,
 
     /// Resource handle that controls the matching from Payload transmissions to Payload requests.
     PayloadRequest,
 
-    /// Resource handle for [`StaticToken`]s that peers need to transmit.
+    /// Resource handle for [`super::StaticToken`]s that peers need to transmit.
     StaticToken,
 }
 
