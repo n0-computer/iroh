@@ -332,14 +332,17 @@ mod util {
                 let engine = engine.clone();
                 let endpoint = endpoint.clone();
                 async move {
-                    while let Some(mut conn) = endpoint.accept().await {
-                        let Ok(alpn) = conn.alpn().await else {
+                    while let Some(incoming) = endpoint.accept().await {
+                        let Ok(mut connecting) = incoming.accept() else {
+                            continue;
+                        };
+                        let Ok(alpn) = connecting.alpn().await else {
                             continue;
                         };
                         if alpn != ALPN {
                             continue;
                         }
-                        let Ok(conn) = conn.await else {
+                        let Ok(conn) = connecting.await else {
                             continue;
                         };
                         engine.handle_connection(conn).await?;
