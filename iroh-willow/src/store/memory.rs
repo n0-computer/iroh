@@ -103,7 +103,12 @@ impl traits::SecretStorage for Rc<RefCell<SecretStore>> {
 
 #[derive(Debug, Default)]
 pub struct EntryStore {
-    entries: HashMap<NamespaceId, Vec<AuthorisedEntry>>,
+    stores: HashMap<NamespaceId, NamespaceStore>,
+}
+
+#[derive(Debug, Default)]
+pub struct NamespaceStore {
+    entries: Vec<AuthorisedEntry>,
     events: EventQueue<StoreEvent>,
 }
 
@@ -199,8 +204,9 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
         range: &Range3d,
     ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a {
         let slf = self.borrow();
-        slf.entries
+        slf.stores
             .get(&namespace)
+            .map(|s| &s.entries)
             .into_iter()
             .flatten()
             .filter(|entry| range.includes_entry(entry.entry()))
@@ -216,10 +222,11 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
         path: &Path,
     ) -> Result<Option<AuthorisedEntry>> {
         let inner = self.borrow();
-        let Some(entries) = inner.entries.get(&namespace) else {
+        let Some(entries) = inner.stores.get(&namespace) else {
             return Ok(None);
         };
         Ok(entries
+            .entries
             .iter()
             .find(|e| {
                 let e = e.entry();
@@ -231,10 +238,11 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
 
 impl EntryStore {
     fn ingest_entry(&mut self, entry: &AuthorisedEntry, origin: EntryOrigin) -> Result<bool> {
-        let entries = self
-            .entries
+        let store = self
+            .stores
             .entry(*entry.entry().namespace_id())
             .or_default();
+        let entries = &mut store.entries;
         let new = entry.entry();
         let mut to_prune = vec![];
         for (i, existing) in entries.iter().enumerate() {
@@ -258,7 +266,7 @@ impl EntryStore {
         }
         for i in to_prune {
             let pruned = entries.remove(i);
-            self.events.insert(move |id| {
+            store.events.insert(move |id| {
                 StoreEvent::Pruned(
                     id,
                     traits::PruneEvent {
@@ -269,7 +277,8 @@ impl EntryStore {
             });
         }
         entries.push(entry.clone());
-        self.events
+        store
+            .events
             .insert(|id| StoreEvent::Ingested(id, entry.clone(), origin));
         Ok(true)
     }
@@ -284,11 +293,23 @@ impl traits::EntryStorage for Rc<RefCell<EntryStore>> {
     }
 
     fn snapshot(&self) -> Result<Self::Snapshot> {
-        let entries = self.borrow().entries.clone();
-        Ok(Rc::new(RefCell::new(EntryStore {
-            entries,
-            events: EventQueue::default(),
-        })))
+        // This is quite ugly. But this is a quick memory impl only.
+        // But we should really maybe strive to not expose snapshots.
+        let stores = self
+            .borrow()
+            .stores
+            .iter()
+            .map(|(key, value)| {
+                (
+                    *key,
+                    NamespaceStore {
+                        entries: value.entries.clone(),
+                        events: Default::default(),
+                    },
+                )
+            })
+            .collect();
+        Ok(Rc::new(RefCell::new(EntryStore { stores })))
     }
 
     fn ingest_entry(&self, entry: &AuthorisedEntry, origin: EntryOrigin) -> Result<bool> {
@@ -302,11 +323,18 @@ impl traits::EntryStorage for Rc<RefCell<EntryStore>> {
         area: Area,
         params: SubscribeParams,
     ) -> impl Stream<Item = traits::StoreEvent> + Unpin + 'static {
+        let progress_id = self
+            .borrow_mut()
+            .stores
+            .entry(namespace)
+            .or_default()
+            .events
+            .next_progress_id();
         EventStream {
             area,
             params,
             namespace,
-            progress_id: self.borrow().events.next_progress_id(),
+            progress_id,
             store: Rc::downgrade(&self),
         }
     }
@@ -345,16 +373,18 @@ struct EventStream {
 impl Stream for EventStream {
     type Item = StoreEvent;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let Some(store) = self.store.upgrade() else {
+        let Some(inner) = self.store.upgrade() else {
             return Poll::Ready(None);
         };
-        let mut store = store.borrow_mut();
+        let mut inner_mut = inner.borrow_mut();
+        let store = inner_mut.stores.entry(self.namespace).or_default();
         let res = ready!(store.events.poll_next(
             self.progress_id,
             |e| e.matches(self.namespace, &self.area, &self.params),
             cx,
         ));
-        drop(store);
+        drop(inner_mut);
+        drop(inner);
         Poll::Ready(match res {
             None => None,
             Some((next_id, event)) => {
