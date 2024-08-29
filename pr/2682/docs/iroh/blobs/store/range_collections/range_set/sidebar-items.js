@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RangeSetRange"],"struct":["Iter","RangeSet","RangeSetRef"],"trait":["RangeSetEntry"],"type":["RangeSet2"]};

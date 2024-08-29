@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Guarantees","ReadError","WriteError"],"fn":["inbound_channel","outbound_channel"],"struct":["Reader","Receiver","Sender","Writer"]};
