@@ -128,6 +128,9 @@ pub(super) struct NodeState {
     last_call_me_maybe: Option<Instant>,
     /// The type of connection we have to the node, either direct, relay, mixed, or none.
     conn_type: Watchable<ConnectionType>,
+    /// How we learned about this node. We can have learned about this node from multiple stores.
+    /// Sources later in the list were sources we learned from more recently.
+    sources: Vec<(super::Source, Instant)>,
 }
 
 /// Options for creating a new [`NodeState`].
@@ -165,6 +168,7 @@ impl NodeState {
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: None,
             conn_type: Watchable::new(ConnectionType::None),
+            sources: vec![(options.source, Instant::now())],
         }
     }
 
@@ -243,6 +247,11 @@ impl NodeState {
             conn_type,
             latency,
             last_used: self.last_used.map(|instant| now.duration_since(instant)),
+            sources: self
+                .sources
+                .iter()
+                .map(|(source, instant)| (source.clone(), now.duration_since(*instant)))
+                .collect(),
         }
     }
 
@@ -1291,6 +1300,10 @@ pub struct RemoteInfo {
     /// from the remote node. Note that sending to the remote node does not imply
     /// the remote node received anything.
     pub last_used: Option<Duration>,
+    /// List of places we have learned about this remote as well as [`Duration`] since we learned about it.
+    ///
+    /// Sources are sorted from least recent to most recent.
+    pub sources: Vec<(super::Source, Duration)>,
 }
 
 impl RemoteInfo {
@@ -1405,6 +1418,7 @@ mod tests {
                     last_used: Some(now),
                     last_call_me_maybe: None,
                     conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
+                    sources: Vec::new(),
                 },
                 ip_port.into(),
             )
@@ -1424,6 +1438,7 @@ mod tests {
                 last_used: Some(now),
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
+                sources: Vec::new(),
             }
         };
 
@@ -1445,6 +1460,7 @@ mod tests {
                 last_used: Some(now),
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
+                sources: Vec::new(),
             }
         };
 
@@ -1484,6 +1500,7 @@ mod tests {
                         socket_addr,
                         send_addr.clone(),
                     )),
+                    sources: Vec::new(),
                 },
                 socket_addr,
             )
@@ -1503,6 +1520,7 @@ mod tests {
                 conn_type: ConnectionType::Direct(a_socket_addr),
                 latency: Some(latency),
                 last_used: Some(elapsed),
+                sources: Vec::new(),
             },
             RemoteInfo {
                 node_id: b_endpoint.node_id,
@@ -1515,6 +1533,7 @@ mod tests {
                 conn_type: ConnectionType::Relay(send_addr.clone()),
                 latency: Some(latency),
                 last_used: Some(elapsed),
+                sources: Vec::new(),
             },
             RemoteInfo {
                 node_id: c_endpoint.node_id,
@@ -1527,6 +1546,7 @@ mod tests {
                 conn_type: ConnectionType::Relay(send_addr.clone()),
                 latency: None,
                 last_used: Some(elapsed),
+                sources: Vec::new(),
             },
             RemoteInfo {
                 node_id: d_endpoint.node_id,
@@ -1545,6 +1565,7 @@ mod tests {
                 conn_type: ConnectionType::Mixed(d_socket_addr, send_addr.clone()),
                 latency: Some(Duration::from_millis(50)),
                 last_used: Some(elapsed),
+                sources: Vec::new(),
             },
         ]);
 
@@ -1598,7 +1619,9 @@ mod tests {
             node_id: key.public(),
             relay_url: None,
             active: true,
-            source: crate::magicsock::Source::NamedApp { name: "test" },
+            source: crate::magicsock::Source::NamedApp {
+                name: "test".into(),
+            },
         };
         let mut ep = NodeState::new(0, opts);
 

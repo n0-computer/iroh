@@ -9,7 +9,7 @@ use human_time::ToHumanTimeString;
 use iroh::{
     client::Iroh,
     net::{
-        endpoint::{DirectAddrInfo, RemoteInfo},
+        endpoint::{DirectAddrInfo, RemoteInfo, Source},
         relay::RelayUrl,
         {NodeAddr, NodeId},
     },
@@ -103,11 +103,18 @@ async fn fmt_remote_infos(
 ) -> String {
     let mut table = Table::new();
     table.load_preset(NOTHING).set_header(
-        ["node id", "relay", "conn type", "latency", "last used"]
-            .into_iter()
-            .map(bold_cell),
+        [
+            "node id",
+            "relay",
+            "conn type",
+            "latency",
+            "last used",
+            "last source",
+        ]
+        .into_iter()
+        .map(bold_cell),
     );
-    while let Some(Ok(info)) = infos.next().await {
+    while let Some(Ok(mut info)) = infos.next().await {
         let node_id: Cell = info.node_id.to_string().into();
         let relay_url = info
             .relay_url
@@ -124,7 +131,20 @@ async fn fmt_remote_infos(
             .map(fmt_how_long_ago)
             .map(Cell::new)
             .unwrap_or_else(never);
-        table.add_row([node_id, relay_url, conn_type, latency, last_used]);
+        let last_source = info
+            .sources
+            .pop()
+            .map(|sources| sources.0.to_string())
+            .map(Cell::new)
+            .unwrap_or(Cell::new("none"));
+        table.add_row([
+            node_id,
+            relay_url,
+            conn_type,
+            latency,
+            last_used,
+            last_source,
+        ]);
     }
     table.to_string()
 }
@@ -138,6 +158,7 @@ fn fmt_info(info: RemoteInfo) -> String {
         conn_type,
         latency,
         last_used,
+        sources,
     } = info;
     let timestamp = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc2822)
@@ -164,7 +185,9 @@ fn fmt_info(info: RemoteInfo) -> String {
     let general_info = table.to_string();
 
     let addrs_info = fmt_addrs(addrs);
-    format!("{general_info}\n\n{addrs_info}",)
+
+    let source_info = fmt_sources(sources);
+    format!("{general_info}\n\n{addrs_info}\n\n{source_info}",)
 }
 
 /// Formats the [`DirectAddrInfo`] into a [`Table`].
@@ -213,6 +236,26 @@ fn fmt_addrs(addrs: Vec<DirectAddrInfo>) -> comfy_table::Table {
     );
     table.add_rows(addrs.into_iter().map(direct_addr_row));
     table
+}
+
+/// Formats a list of [`Source`]s into a [`Table`].
+fn fmt_sources(sources: Vec<(Source, Duration)>) -> comfy_table::Table {
+    let mut table = Table::new();
+    table
+        .load_preset(NOTHING)
+        .set_header(vec!["source", "added"].into_iter().map(bold_cell));
+    // `rev` because sources recently added sources are at the end of the list
+    table.add_rows(sources.into_iter().rev().map(source_row));
+    table
+}
+
+/// Formats a [`Source`] into a [`Row`]
+fn source_row(source: (Source, Duration)) -> comfy_table::Row {
+    let (source, duration) = source;
+
+    let duration = Cell::new(format!("{} ago", fmt_how_long_ago(duration)));
+
+    [Cell::new(source.to_string()), duration].into()
 }
 
 /// Creates a cell with the dimmed text "never".

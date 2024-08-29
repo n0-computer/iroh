@@ -56,7 +56,7 @@ pub mod local_swarm_discovery;
 pub mod pkarr;
 
 /// Name used for logging when new node addresses are added from discovery.
-const SOURCE_NAME: &str = "discovery";
+pub const SOURCE_NAME: &str = "discovery";
 
 /// Node discovery for [`super::Endpoint`].
 ///

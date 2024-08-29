@@ -11,6 +11,7 @@ use futures_lite::stream::Stream;
 use iroh_base::key::NodeId;
 use iroh_metrics::inc;
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};
 
@@ -87,9 +88,9 @@ enum NodeStateKey {
 /// Source for a new node.
 ///
 /// This is used for debugging purposes.
-#[derive(strum::Display, Debug)]
+#[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq)]
 #[strum(serialize_all = "kebab-case")]
-pub(crate) enum Source {
+pub enum Source {
     /// Node was loaded from the fs.
     Saved,
     /// Node communicated with us first via UDP.
@@ -98,8 +99,22 @@ pub(crate) enum Source {
     Relay,
     /// Application layer added the node directly.
     App,
+    /// Application layer with a specific name added the node directly.
     #[strum(serialize = "{name}")]
-    NamedApp { name: &'static str },
+    NamedApp {
+        /// The name of the application that added the node
+        name: String,
+    },
+}
+
+impl Source {
+    /// Returns true if the [`Source::NamedApp`] is the same as the given string.
+    pub fn is_named(&self, named_app: &str) -> bool {
+        if let Source::NamedApp { name } = self {
+            return name == named_app;
+        }
+        false
+    }
 }
 
 impl NodeMap {
@@ -636,7 +651,12 @@ mod tests {
     impl NodeMap {
         #[track_caller]
         fn add_test_addr(&self, node_addr: NodeAddr) {
-            self.add_node_addr(node_addr, Source::NamedApp { name: "test" })
+            self.add_node_addr(
+                node_addr,
+                Source::NamedApp {
+                    name: "test".into(),
+                },
+            )
         }
     }
 
@@ -719,7 +739,9 @@ mod tests {
                 node_id: public_key,
                 relay_url: None,
                 active: false,
-                source: Source::NamedApp { name: "test" },
+                source: Source::NamedApp {
+                    name: "test".into(),
+                },
             })
             .id();
 

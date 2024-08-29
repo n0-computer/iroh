@@ -77,7 +77,7 @@ mod relay_actor;
 mod timer;
 mod udp_conn;
 
-pub(crate) use node_map::Source;
+pub use node_map::Source;
 
 pub(super) use self::timer::Timer;
 
@@ -1895,7 +1895,7 @@ impl Actor {
                 Some((node_id, discovery_item)) = discovery_events.next() => {
                     trace!("tick: discovery event, address discovered: {discovery_item:?}");
                     let node_addr = NodeAddr {node_id, info: discovery_item.addr_info};
-                    if let Err(e) = self.msock.add_node_addr(node_addr.clone(), Source::NamedApp { name: discovery_item.provenance }) {
+                    if let Err(e) = self.msock.add_node_addr(node_addr.clone(), Source::NamedApp { name: discovery_item.provenance.into() }) {
                         warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
                     }
                 }
@@ -2846,8 +2846,13 @@ mod tests {
     impl MagicSock {
         #[track_caller]
         pub fn add_test_addr(&self, node_addr: NodeAddr) {
-            self.add_node_addr(node_addr, Source::NamedApp { name: "test" })
-                .unwrap()
+            self.add_node_addr(
+                node_addr,
+                Source::NamedApp {
+                    name: "test".into(),
+                },
+            )
+            .unwrap()
         }
     }
 
@@ -3794,7 +3799,12 @@ mod tests {
             },
         };
         msock_1
-            .add_node_addr(node_addr_2, Source::NamedApp { name: "test" })
+            .add_node_addr(
+                node_addr_2,
+                Source::NamedApp {
+                    name: "test".into(),
+                },
+            )
             .unwrap();
         let addr = msock_1.get_mapping_addr(node_id_2).unwrap();
         let res = tokio::time::timeout(
@@ -3850,7 +3860,9 @@ mod tests {
                 node_id: node_id_2,
                 info: AddrInfo::default(),
             },
-            Source::NamedApp { name: "test" },
+            Source::NamedApp {
+                name: "test".into(),
+            },
         );
         let addr_2 = msock_1.get_mapping_addr(node_id_2).unwrap();
 
@@ -3893,7 +3905,9 @@ mod tests {
                         .collect(),
                 },
             },
-            Source::NamedApp { name: "test" },
+            Source::NamedApp {
+                name: "test".into(),
+            },
         );
 
         // We can now connect

@@ -45,7 +45,7 @@ pub use quinn::{
 
 pub use super::magicsock::{
     ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
-    DirectAddrsStream, RemoteInfo,
+    DirectAddrsStream, RemoteInfo, Source,
 };
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
@@ -608,7 +608,12 @@ impl Endpoint {
         node_addr: NodeAddr,
         source: &'static str,
     ) -> Result<()> {
-        self.add_node_addr_inner(node_addr, magicsock::Source::NamedApp { name: source })
+        self.add_node_addr_inner(
+            node_addr,
+            magicsock::Source::NamedApp {
+                name: source.into(),
+            },
+        )
     }
 
     fn add_node_addr_inner(&self, node_addr: NodeAddr, source: magicsock::Source) -> Result<()> {
@@ -757,6 +762,21 @@ impl Endpoint {
     /// See also [`Endpoint::remote_info`] to only retrieve information about a single node.
     pub fn remote_info_iter(&self) -> impl Iterator<Item = RemoteInfo> {
         self.msock.list_remote_infos().into_iter()
+    }
+
+    /// Return all nodes discovered in the last `duration`.
+    pub fn recently_discovered_nodes(
+        &self,
+        duration: Duration,
+    ) -> impl Iterator<Item = RemoteInfo> {
+        self.msock
+            .list_remote_infos()
+            .into_iter()
+            .filter(move |remote| {
+                remote.sources.iter().any(|source| {
+                    source.0.is_named(crate::discovery::SOURCE_NAME) && source.1 <= duration
+                })
+            })
     }
 
     // # Methods for less common getters.
