@@ -335,6 +335,7 @@
 <a href="#335" id="335">335</a>
 <a href="#336" id="336">336</a>
 <a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Traits for storage backends for the Willow store.
 
 </span><span class="kw">use </span>std::fmt::Debug;
@@ -593,7 +594,8 @@
             }
             StoreEvent::Pruned(<span class="kw">_</span>, PruneEvent { pruned, by: <span class="kw">_ </span>}) =&gt; {
                 !params.ingest_only
-                    &amp;&amp; <span class="kw-2">*</span>pruned.entry().namespace_id() == namespace_id &amp;&amp; area.includes_entry(pruned.entry())
+                    &amp;&amp; <span class="kw-2">*</span>pruned.entry().namespace_id() == namespace_id
+                    &amp;&amp; area.includes_entry(pruned.entry())
             }
         }
     }
