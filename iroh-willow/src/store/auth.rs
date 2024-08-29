@@ -236,8 +236,7 @@ impl<S: Storage> Auth<S> {
         } else {
             None
         };
-        let pack =
-            CapabilityPack::Read(ReadAuthorisation::new(new_read_cap, new_subspace_cap));
+        let pack = CapabilityPack::Read(ReadAuthorisation::new(new_read_cap, new_subspace_cap));
         Ok(pack)
     }
 

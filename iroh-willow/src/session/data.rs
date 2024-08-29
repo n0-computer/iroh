@@ -1,5 +1,4 @@
 use futures_lite::StreamExt;
-use tokio::sync::broadcast;
 
 use crate::{
     proto::{
@@ -8,8 +7,7 @@ use crate::{
     },
     session::{channels::ChannelSenders, static_tokens::StaticTokens, Error, SessionId},
     store::{
-        entry::{EntryChannel, EntryOrigin},
-        traits::Storage,
+        traits::{EntryOrigin, EntryStorage, Storage, StoreEvent, SubscribeParams},
         Store,
     },
     util::stream::CancelableReceiver,
@@ -51,7 +49,7 @@ impl<S: Storage> DataSender<S> {
         }
     }
     pub async fn run(mut self) -> Result<(), Error> {
-        let mut entry_stream = self.store.entries().subscribe(self.session_id);
+        let mut entry_stream = futures_concurrency::stream::StreamGroup::new();
         loop {
             tokio::select! {
                 input = self.inbox.next() => {
@@ -59,21 +57,28 @@ impl<S: Storage> DataSender<S> {
                         break;
                     };
                     let Input::AoiIntersection(intersection) = input;
-                    self.store.entries().watch_area(
-                        self.session_id,
-                        intersection.namespace,
-                        intersection.intersection.area.clone(),
-                    );
+                    let params = SubscribeParams::default().ingest_only().ignore_remote(self.session_id);
+                    // TODO: We could start at the progress id at the beginning of the session.
+                    let stream = self
+                        .store
+                        .entries()
+                        .subscribe_area(
+                            intersection.namespace,
+                            intersection.intersection.area.clone(),
+                            params,
+                        )
+                        .filter_map(|event| match event {
+                            StoreEvent::Ingested(_id, entry, _origin) => Some(entry),
+                            // We get only Ingested events because we set ingest_only() param above.
+                            _ => unreachable!("expected only Ingested event but got another event"),
+                        });
+                    entry_stream.insert(stream);
                 },
-                entry = entry_stream.recv() => {
+                entry = entry_stream.next(), if !entry_stream.is_empty() => {
                     match entry {
-                        Ok(entry) => self.send_entry(entry).await?,
-                        Err(broadcast::error::RecvError::Closed) => break,
-                        Err(broadcast::error::RecvError::Lagged(_count)) => {
-                            // TODO: Queue another reconciliation
-                        }
+                        Some(entry) => self.send_entry(entry).await?,
+                        None => break,
                     }
-
                 }
             }
         }
@@ -149,13 +154,9 @@ impl<S: Storage> DataReceiver<S> {
                 message.dynamic_token,
             )
             .await?;
-        self.store.entries().ingest(
-            &authorised_entry,
-            EntryOrigin::Remote {
-                session: self.session_id,
-                channel: EntryChannel::Data,
-            },
-        )?;
+        self.store
+            .entries()
+            .ingest_entry(&authorised_entry, EntryOrigin::Remote(self.session_id))?;
         let (entry, _token) = authorised_entry.into_parts();
         // TODO: handle offset
         self.current_payload.set(
