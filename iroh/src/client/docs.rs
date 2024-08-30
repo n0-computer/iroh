@@ -757,7 +757,6 @@ mod tests {
     // Something in the addition of willow engine to the node makes this
     // test timeout - debugging outstanding.
     #[tokio::test]
-    #[ignore = "todo"]
     async fn test_drop_doc_client_sync() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
