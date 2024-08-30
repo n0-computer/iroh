@@ -545,7 +545,7 @@ mod tests {
         }
 
         fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
-            let (stream, _) = self.events.subscribe();
+            let stream = self.events.subscribe();
             Some(stream)
         }
     }
