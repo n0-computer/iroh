@@ -258,7 +258,7 @@ impl Discovery for PkarrResolver {
     }
 
     fn subscribe(&self) -> Option<BoxStream<'static, (NodeId, DiscoveryItem)>> {
-        let (stream, _) = self.events.subscribe();
+        let stream = self.events.subscribe();
         Some(stream)
     }
 }

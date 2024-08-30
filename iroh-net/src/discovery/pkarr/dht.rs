@@ -395,7 +395,7 @@ impl Discovery for DhtDiscovery {
     }
 
     fn subscribe(&self) -> Option<Boxed<(NodeId, DiscoveryItem)>> {
-        let (stream, _) = self.0.events.subscribe();
+        let stream = self.0.events.subscribe();
         Some(stream)
     }
 }

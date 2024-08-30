@@ -34,7 +34,7 @@ crossterm = "0.27.0"
 derive_more = { version = "1.0.0", features = ["display"] }
 dialoguer = { version = "0.11.0", default-features = false }
 dirs-next = "2.0.0"
-futures-buffered = "0.2.4"
+futures-buffered = "0.2.8"
 futures-lite = "2.3"
 futures-util = { version = "0.3.30", features = ["futures-sink"] }
 hex = "0.4.3"

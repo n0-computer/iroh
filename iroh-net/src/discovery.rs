@@ -39,15 +39,20 @@
 //! [`PkarrResolver`]: pkarr::PkarrResolver
 //! [pkarr relay servers]: https://pkarr.org/#servers
 
-use std::{sync::atomic::AtomicU64, time::Duration};
+use std::{sync::Arc, time::Duration};
 
+use crate::{util::AbortingJoinHandle, AddrInfo, Endpoint, NodeId};
 use anyhow::{anyhow, ensure, Result};
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
-use tokio::{sync::oneshot, task::JoinHandle};
-use tracing::{debug, error_span, warn, Instrument};
-
-use crate::{AddrInfo, Endpoint, NodeId};
+use tokio::{
+    sync::{
+        mpsc::{channel, Sender},
+        oneshot,
+    },
+    task::JoinHandle,
+};
+use tracing::{debug, error_span, trace, warn, Instrument};
 
 pub mod dns;
 
@@ -102,11 +107,6 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     }
 }
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::mpsc::{channel, Sender};
-use tracing::{error, trace};
-
 /// A loop that handles discovery event
 ///
 /// When dropped, the inner task is cleaned up.
@@ -115,51 +115,39 @@ pub(crate) struct DiscoveryEvents(std::sync::Arc<Inner>);
 
 #[derive(derive_more::Debug)]
 struct Inner {
-    handle: JoinHandle<()>,
+    #[allow(dead_code)]
+    handle: AbortingJoinHandle<()>,
     sender: tokio::sync::mpsc::Sender<Message>,
-    last_id: AtomicU64,
 }
 
 #[derive(derive_more::Debug)]
 enum Message {
-    Subscribe((u64, Sender<(NodeId, DiscoveryItem)>)),
-    Unsubscribe(u64),
+    Subscribe(Sender<(NodeId, DiscoveryItem)>),
     Event((NodeId, DiscoveryItem)),
 }
 
-impl Drop for DiscoveryEvents {
-    fn drop(&mut self) {
-        self.0.handle.abort();
-    }
-}
-
 impl DiscoveryEvents {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let (sender, mut recv) = channel(20);
+        let mut subscribers: Vec<Sender<(NodeId, DiscoveryItem)>> = Vec::new();
         let event_loop = async move {
             loop {
-                let mut subscribers: HashMap<u64, Sender<(NodeId, DiscoveryItem)>> =
-                    HashMap::default();
                 let msg = recv.recv().await;
                 match msg {
-                    Some(Message::Subscribe((id, subscriber))) => {
+                    Some(Message::Subscribe(subscriber)) => {
                         trace!("Message::Subscribe - Adding new subscriber to discovery events");
-                        subscribers.insert(id, subscriber);
-                    }
-                    Some(Message::Unsubscribe(id)) => {
-                        trace!("Message::Unsubscribe - Removing subscriber {id}");
-                        subscribers.remove(&id);
+                        subscribers.push(subscriber);
                     }
                     Some(Message::Event(discovery_item)) => {
                         let mut bad_subscribers = vec![];
-                        for (id, subscriber) in &subscribers {
+                        for (i, subscriber) in subscribers.iter().enumerate() {
                             if let Err(e) = subscriber.send(discovery_item.clone()).await {
-                                error!("Message::Event - Subscriber {id} dropped: {e}");
-                                bad_subscribers.push(*id);
+                                warn!("Message::Event - Subscriber {i} dropped: {e}");
+                                bad_subscribers.push(i);
                             }
                         }
                         for bad_subscriber in bad_subscribers {
-                            subscribers.remove(&bad_subscriber);
+                            subscribers.swap_remove(bad_subscriber);
                         }
                     }
                     None => {}
@@ -169,13 +157,12 @@ impl DiscoveryEvents {
 
         let handle = tokio::spawn(event_loop);
         Self(Arc::new(Inner {
-            handle,
+            handle: handle.into(),
             sender,
-            last_id: AtomicU64::new(0),
         }))
     }
 
-    pub async fn send_event(&self, node_id: NodeId, discovery_item: DiscoveryItem) {
+    pub(crate) async fn send_event(&self, node_id: NodeId, discovery_item: DiscoveryItem) {
         self.0
             .sender
             .send(Message::Event((node_id, discovery_item)))
@@ -190,30 +177,14 @@ impl DiscoveryEvents {
     ///
     /// If a stream is dropped, the `DiscoveryEvent` struct will clean
     /// up the dangling subscription, even if you do not unsubscribe.
-    pub fn subscribe(
-        &self,
-    ) -> (
-        BoxStream<(NodeId, DiscoveryItem)>,
-        impl std::future::Future<Output = ()>,
-    ) {
+    pub(crate) fn subscribe(&self) -> BoxStream<(NodeId, DiscoveryItem)> {
         let (send, recv) = channel(20);
-        let id = self
-            .0
-            .last_id
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let subscribe_sender = self.0.sender.clone();
         tokio::spawn(async move {
-            subscribe_sender
-                .send(Message::Subscribe((id, send)))
-                .await
-                .ok();
+            subscribe_sender.send(Message::Subscribe(send)).await.ok();
         });
-        let unsubscribe_sender = self.0.sender.clone();
-        let unsubscribe = async move {
-            unsubscribe_sender.send(Message::Unsubscribe(id)).await.ok();
-        };
         let stream = tokio_stream::wrappers::ReceiverStream::new(recv);
-        (Box::pin(stream), unsubscribe)
+        Box::pin(stream)
     }
 }
 
@@ -285,7 +256,7 @@ impl Discovery for ConcurrentDiscovery {
             .iter()
             .filter_map(|service| service.resolve(endpoint.clone(), node_id));
 
-        let streams = futures_buffered::Merge::from_iter(streams);
+        let streams = futures_buffered::MergeBounded::from_iter(streams);
         Some(Box::pin(streams))
     }
 
@@ -295,7 +266,7 @@ impl Discovery for ConcurrentDiscovery {
             .iter()
             .filter_map(|service| service.subscribe());
 
-        let streams = futures_buffered::Merge::from_iter(streams);
+        let streams = futures_buffered::MergeBounded::from_iter(streams);
         Some(Box::pin(streams))
     }
 }
