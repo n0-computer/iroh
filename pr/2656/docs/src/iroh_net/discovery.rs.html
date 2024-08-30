@@ -896,35 +896,6 @@
 <a href="#896" id="896">896</a>
 <a href="#897" id="897">897</a>
 <a href="#898" id="898">898</a>
-<a href="#899" id="899">899</a>
-<a href="#900" id="900">900</a>
-<a href="#901" id="901">901</a>
-<a href="#902" id="902">902</a>
-<a href="#903" id="903">903</a>
-<a href="#904" id="904">904</a>
-<a href="#905" id="905">905</a>
-<a href="#906" id="906">906</a>
-<a href="#907" id="907">907</a>
-<a href="#908" id="908">908</a>
-<a href="#909" id="909">909</a>
-<a href="#910" id="910">910</a>
-<a href="#911" id="911">911</a>
-<a href="#912" id="912">912</a>
-<a href="#913" id="913">913</a>
-<a href="#914" id="914">914</a>
-<a href="#915" id="915">915</a>
-<a href="#916" id="916">916</a>
-<a href="#917" id="917">917</a>
-<a href="#918" id="918">918</a>
-<a href="#919" id="919">919</a>
-<a href="#920" id="920">920</a>
-<a href="#921" id="921">921</a>
-<a href="#922" id="922">922</a>
-<a href="#923" id="923">923</a>
-<a href="#924" id="924">924</a>
-<a href="#925" id="925">925</a>
-<a href="#926" id="926">926</a>
-<a href="#927" id="927">927</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh-net node a [`NodeAddr`] is needed, which needs to contain either a
@@ -966,15 +937,20 @@
 //! [`PkarrResolver`]: pkarr::PkarrResolver
 //! [pkarr relay servers]: https://pkarr.org/#servers
 
-</span><span class="kw">use </span>std::{sync::atomic::AtomicU64, time::Duration};
+</span><span class="kw">use </span>std::{sync::Arc, time::Duration};
 
+<span class="kw">use crate</span>::{util::AbortingJoinHandle, AddrInfo, Endpoint, NodeId};
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::stream::{Boxed <span class="kw">as </span>BoxStream, StreamExt};
 <span class="kw">use </span>iroh_base::node_addr::NodeAddr;
-<span class="kw">use </span>tokio::{sync::oneshot, task::JoinHandle};
-<span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
-
-<span class="kw">use crate</span>::{AddrInfo, Endpoint, NodeId};
+<span class="kw">use </span>tokio::{
+    sync::{
+        mpsc::{channel, Sender},
+        oneshot,
+    },
+    task::JoinHandle,
+};
+<span class="kw">use </span>tracing::{debug, error_span, trace, warn, Instrument};
 
 <span class="kw">pub mod </span>dns;
 
@@ -1029,11 +1005,6 @@
     </span>}
 }
 
-<span class="kw">use </span>std::collections::HashMap;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>tokio::sync::mpsc::{channel, Sender};
-<span class="kw">use </span>tracing::{error, trace};
-
 <span class="doccomment">/// A loop that handles discovery event
 ///
 /// When dropped, the inner task is cleaned up.
@@ -1042,51 +1013,39 @@
 
 <span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">struct </span>Inner {
-    handle: JoinHandle&lt;()&gt;,
+    <span class="attr">#[allow(dead_code)]
+    </span>handle: AbortingJoinHandle&lt;()&gt;,
     sender: tokio::sync::mpsc::Sender&lt;Message&gt;,
-    last_id: AtomicU64,
 }
 
 <span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">enum </span>Message {
-    Subscribe((u64, Sender&lt;(NodeId, DiscoveryItem)&gt;)),
-    Unsubscribe(u64),
+    Subscribe(Sender&lt;(NodeId, DiscoveryItem)&gt;),
     Event((NodeId, DiscoveryItem)),
 }
 
-<span class="kw">impl </span>Drop <span class="kw">for </span>DiscoveryEvents {
-    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="self">self</span>.<span class="number">0</span>.handle.abort();
-    }
-}
-
 <span class="kw">impl </span>DiscoveryEvents {
-    <span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>(sender, <span class="kw-2">mut </span>recv) = channel(<span class="number">20</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>subscribers: Vec&lt;Sender&lt;(NodeId, DiscoveryItem)&gt;&gt; = Vec::new();
         <span class="kw">let </span>event_loop = <span class="kw">async move </span>{
             <span class="kw">loop </span>{
-                <span class="kw">let </span><span class="kw-2">mut </span>subscribers: HashMap&lt;u64, Sender&lt;(NodeId, DiscoveryItem)&gt;&gt; =
-                    HashMap::default();
                 <span class="kw">let </span>msg = recv.recv().<span class="kw">await</span>;
                 <span class="kw">match </span>msg {
-                    <span class="prelude-val">Some</span>(Message::Subscribe((id, subscriber))) =&gt; {
+                    <span class="prelude-val">Some</span>(Message::Subscribe(subscriber)) =&gt; {
                         <span class="macro">trace!</span>(<span class="string">"Message::Subscribe - Adding new subscriber to discovery events"</span>);
-                        subscribers.insert(id, subscriber);
-                    }
-                    <span class="prelude-val">Some</span>(Message::Unsubscribe(id)) =&gt; {
-                        <span class="macro">trace!</span>(<span class="string">"Message::Unsubscribe - Removing subscriber {id}"</span>);
-                        subscribers.remove(<span class="kw-2">&amp;</span>id);
+                        subscribers.push(subscriber);
                     }
                     <span class="prelude-val">Some</span>(Message::Event(discovery_item)) =&gt; {
                         <span class="kw">let </span><span class="kw-2">mut </span>bad_subscribers = <span class="macro">vec!</span>[];
-                        <span class="kw">for </span>(id, subscriber) <span class="kw">in </span><span class="kw-2">&amp;</span>subscribers {
+                        <span class="kw">for </span>(i, subscriber) <span class="kw">in </span>subscribers.iter().enumerate() {
                             <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = subscriber.send(discovery_item.clone()).<span class="kw">await </span>{
-                                <span class="macro">error!</span>(<span class="string">"Message::Event - Subscriber {id} dropped: {e}"</span>);
-                                bad_subscribers.push(<span class="kw-2">*</span>id);
+                                <span class="macro">warn!</span>(<span class="string">"Message::Event - Subscriber {i} dropped: {e}"</span>);
+                                bad_subscribers.push(i);
                             }
                         }
                         <span class="kw">for </span>bad_subscriber <span class="kw">in </span>bad_subscribers {
-                            subscribers.remove(<span class="kw-2">&amp;</span>bad_subscriber);
+                            subscribers.swap_remove(bad_subscriber);
                         }
                     }
                     <span class="prelude-val">None </span>=&gt; {}
@@ -1096,13 +1055,12 @@
 
         <span class="kw">let </span>handle = tokio::spawn(event_loop);
         <span class="self">Self</span>(Arc::new(Inner {
-            handle,
+            handle: handle.into(),
             sender,
-            last_id: AtomicU64::new(<span class="number">0</span>),
         }))
     }
 
-    <span class="kw">pub async fn </span>send_event(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId, discovery_item: DiscoveryItem) {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send_event(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId, discovery_item: DiscoveryItem) {
         <span class="self">self</span>.<span class="number">0
             </span>.sender
             .send(Message::Event((node_id, discovery_item)))
@@ -1117,30 +1075,14 @@
     ///
     /// If a stream is dropped, the `DiscoveryEvent` struct will clean
     /// up the dangling subscription, even if you do not unsubscribe.
-    </span><span class="kw">pub fn </span>subscribe(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-    ) -&gt; (
-        BoxStream&lt;(NodeId, DiscoveryItem)&gt;,
-        <span class="kw">impl </span>std::future::Future&lt;Output = ()&gt;,
-    ) {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxStream&lt;(NodeId, DiscoveryItem)&gt; {
         <span class="kw">let </span>(send, recv) = channel(<span class="number">20</span>);
-        <span class="kw">let </span>id = <span class="self">self
-            </span>.<span class="number">0
-            </span>.last_id
-            .fetch_add(<span class="number">1</span>, std::sync::atomic::Ordering::SeqCst);
         <span class="kw">let </span>subscribe_sender = <span class="self">self</span>.<span class="number">0</span>.sender.clone();
         tokio::spawn(<span class="kw">async move </span>{
-            subscribe_sender
-                .send(Message::Subscribe((id, send)))
-                .<span class="kw">await
-                </span>.ok();
+            subscribe_sender.send(Message::Subscribe(send)).<span class="kw">await</span>.ok();
         });
-        <span class="kw">let </span>unsubscribe_sender = <span class="self">self</span>.<span class="number">0</span>.sender.clone();
-        <span class="kw">let </span>unsubscribe = <span class="kw">async move </span>{
-            unsubscribe_sender.send(Message::Unsubscribe(id)).<span class="kw">await</span>.ok();
-        };
         <span class="kw">let </span>stream = tokio_stream::wrappers::ReceiverStream::new(recv);
-        (Box::pin(stream), unsubscribe)
+        Box::pin(stream)
     }
 }
 
@@ -1212,7 +1154,7 @@
             .iter()
             .filter_map(|service| service.resolve(endpoint.clone(), node_id));
 
-        <span class="kw">let </span>streams = futures_buffered::Merge::from_iter(streams);
+        <span class="kw">let </span>streams = futures_buffered::MergeBounded::from_iter(streams);
         <span class="prelude-val">Some</span>(Box::pin(streams))
     }
 
@@ -1222,7 +1164,7 @@
             .iter()
             .filter_map(|service| service.subscribe());
 
-        <span class="kw">let </span>streams = futures_buffered::Merge::from_iter(streams);
+        <span class="kw">let </span>streams = futures_buffered::MergeBounded::from_iter(streams);
         <span class="prelude-val">Some</span>(Box::pin(streams))
     }
 }
