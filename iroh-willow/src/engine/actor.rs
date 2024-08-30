@@ -218,24 +218,33 @@ impl Drop for ActorHandle {
     fn drop(&mut self) {
         // this means we're dropping the last reference
         if let Some(handle) = Arc::get_mut(&mut self.join_handle) {
+            // gain ownership of handle
             let handle = handle.take().expect("can only drop once");
+
+            // gain ownership of inbox_tx
+            let (dumb, _) = tokio::sync::mpsc::channel(1);
+            let inbox_tx = std::mem::replace(&mut self.inbox_tx, dumb);
+
+            // shutdown
+            let shutdown = move || {
+                if let Err(err) = inbox_tx.blocking_send(Input::Shutdown { reply: None }) {
+                    warn!(?err, "Failed to send shutdown");
+                } else {
+                    if let Err(err) = handle.join() {
+                        warn!(?err, "Failed to join sync actor");
+                    }
+                }
+            };
 
             match tokio::runtime::Handle::try_current() {
                 Ok(runtime) => {
-                    let (dumb, _) = tokio::sync::mpsc::channel(1);
-                    let inbox_tx = std::mem::replace(&mut self.inbox_tx, dumb);
-                    runtime
-                        .spawn(async move { inbox_tx.send(Input::Shutdown { reply: None }).await });
+                    // We shouldn't block the runtime
+                    runtime.spawn_blocking(shutdown);
                 }
                 Err(_) => {
-                    self.inbox_tx
-                        .blocking_send(Input::Shutdown { reply: None })
-                        .ok();
+                    // We can do everything sync
+                    shutdown();
                 }
-            }
-
-            if let Err(err) = handle.join() {
-                warn!(?err, "Failed to join sync actor");
             }
         }
     }
