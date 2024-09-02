@@ -323,6 +323,15 @@
 <a href="#323" id="323">323</a>
 <a href="#324" id="324">324</a>
 <a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
@@ -446,19 +455,28 @@
                             <span class="kw">continue</span>;
                         }
 
-                        <span class="kw">if let </span><span class="prelude-val">Some</span>(senders) = senders.get(<span class="kw-2">&amp;</span>discovered_node_id) {
-                            <span class="kw">for </span>sender <span class="kw">in </span>senders.values() {
-                                <span class="kw">let </span>item: DiscoveryItem = (<span class="kw-2">&amp;</span>peer_info).into();
-                                <span class="macro">trace!</span>(<span class="question-mark">?</span>item, <span class="string">"sending DiscoveryItem"</span>);
-                                sender.send(<span class="prelude-val">Ok</span>(item)).<span class="kw">await</span>.ok();
+                        <span class="kw">let </span>entry = node_addrs.entry(discovered_node_id);
+                        <span class="kw">if let </span>std::collections::hash_map::Entry::Occupied(<span class="kw-2">ref </span>entry) = entry {
+                            <span class="kw">if </span>entry.get() == <span class="kw-2">&amp;</span>peer_info {
+                                <span class="comment">// this is a republish we already know about
+                                </span><span class="kw">continue</span>;
                             }
                         }
+
                         <span class="macro">debug!</span>(
                             <span class="question-mark">?</span>discovered_node_id,
                             <span class="question-mark">?</span>peer_info,
                             <span class="string">"adding node to LocalSwarmDiscovery address book"
                         </span>);
-                        node_addrs.insert(discovered_node_id, peer_info);
+
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(senders) = senders.get(<span class="kw-2">&amp;</span>discovered_node_id) {
+                            <span class="kw">let </span>item: DiscoveryItem = (<span class="kw-2">&amp;</span>peer_info).into();
+                            <span class="macro">trace!</span>(<span class="question-mark">?</span>item, senders = senders.len(), <span class="string">"sending DiscoveryItem"</span>);
+                            <span class="kw">for </span>sender <span class="kw">in </span>senders.values() {
+                                sender.send(<span class="prelude-val">Ok</span>(item.clone())).<span class="kw">await</span>.ok();
+                            }
+                        }
+                        entry.or_insert(peer_info);
                     }
                     Message::SendAddrs(node_id, sender) =&gt; {
                         <span class="kw">let </span>id = last_id + <span class="number">1</span>;
