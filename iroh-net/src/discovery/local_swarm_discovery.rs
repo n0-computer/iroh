@@ -121,19 +121,28 @@ impl LocalSwarmDiscovery {
                             continue;
                         }
 
-                        if let Some(senders) = senders.get(&discovered_node_id) {
-                            for sender in senders.values() {
-                                let item: DiscoveryItem = (&peer_info).into();
-                                trace!(?item, "sending DiscoveryItem");
-                                sender.send(Ok(item)).await.ok();
+                        let entry = node_addrs.entry(discovered_node_id);
+                        if let std::collections::hash_map::Entry::Occupied(ref entry) = entry {
+                            if entry.get() == &peer_info {
+                                // this is a republish we already know about
+                                continue;
                             }
                         }
+
                         debug!(
                             ?discovered_node_id,
                             ?peer_info,
                             "adding node to LocalSwarmDiscovery address book"
                         );
-                        node_addrs.insert(discovered_node_id, peer_info);
+
+                        if let Some(senders) = senders.get(&discovered_node_id) {
+                            let item: DiscoveryItem = (&peer_info).into();
+                            trace!(?item, senders = senders.len(), "sending DiscoveryItem");
+                            for sender in senders.values() {
+                                sender.send(Ok(item.clone())).await.ok();
+                            }
+                        }
+                        entry.or_insert(peer_info);
                     }
                     Message::SendAddrs(node_id, sender) => {
                         let id = last_id + 1;
