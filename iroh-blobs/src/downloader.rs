@@ -717,7 +717,6 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 entry.get_mut().intents.insert(intent_id, intent_handlers);
             }
             hash_map::Entry::Vacant(entry) => {
-                tracing::warn!("is new, queue");
                 let progress_sender = self.progress_tracker.track(
                     kind,
                     intent_handlers
