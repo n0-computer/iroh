@@ -44,7 +44,10 @@ impl<S: Store> Getter for IoGetter<S> {
         let store = self.store.clone();
         async move {
             match get_to_db_in_steps(store, kind.hash_and_format(), progress_sender).await {
-                Err(err) => Err(err.into()),
+                Err(err) => {
+                    tracing::error!(?err, "downloader failed, likely non-fatal");
+                    Err(err.into())
+                }
                 Ok(crate::get::db::GetState::Complete(stats)) => {
                     Ok(super::GetOutput::Complete(stats))
                 }
