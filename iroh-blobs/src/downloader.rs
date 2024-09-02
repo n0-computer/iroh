@@ -411,7 +411,7 @@ impl Downloader {
         }
     }
 
-    /// Declare that certains nodes can be used to download a hash.
+    /// Declare that certain nodes can be used to download a hash.
     ///
     /// Note that this does not start a download, but only provides new nodes to already queued
     /// downloads. Use [`Self::queue`] to queue a download.
