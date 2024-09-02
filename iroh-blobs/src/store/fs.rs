@@ -1495,7 +1495,7 @@ impl Actor {
                     let mut delete_after_commit = Default::default();
                     let mut tables = Tables::new(&txn, &mut delete_after_commit)?;
                     let count = self.state.options.batch.max_write_batch;
-                    let timeout = tokio::time::sleep(self.state.options.batch.max_read_duration);
+                    let timeout = tokio::time::sleep(self.state.options.batch.max_write_duration);
                     tokio::pin!(timeout);
                     for _ in 0..count {
                         tokio::select! {
@@ -1814,11 +1814,11 @@ impl ActorState {
                         data.size(),
                         &hash,
                     )?;
-                    println!("creating complete entry for {}", hash.to_hex());
+                    tracing::debug!("creating complete entry for {}", hash.to_hex());
                     BaoFileHandle::new_complete(self.create_options.clone(), hash, data, outboard)
                 }
                 EntryState::Partial { .. } => {
-                    println!("creating partial entry for {}", hash.to_hex());
+                    tracing::debug!("creating partial entry for {}", hash.to_hex());
                     BaoFileHandle::incomplete_file(self.create_options.clone(), hash)?
                 }
             }
