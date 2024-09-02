@@ -1495,7 +1495,7 @@ impl Actor {
                     let mut delete_after_commit = Default::default();
                     let mut tables = Tables::new(&txn, &mut delete_after_commit)?;
                     let count = self.state.options.batch.max_write_batch;
-                    let timeout = tokio::time::sleep(self.state.options.batch.max_read_duration);
+                    let timeout = tokio::time::sleep(self.state.options.batch.max_write_duration);
                     tokio::pin!(timeout);
                     for _ in 0..count {
                         tokio::select! {
