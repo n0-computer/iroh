@@ -137,9 +137,9 @@ impl ProgressSender for BroadcastProgressSender {
         // making sure that the lock is not held across an await point.
         let futs = {
             let mut inner = self.shared.lock();
-            tracing::warn!(?msg, state_pre=?inner.state, "send to {}", inner.subscribers.len());
+            tracing::trace!(?msg, state_pre = ?inner.state, "send to {}", inner.subscribers.len());
             inner.on_progress(msg.clone());
-            tracing::warn!(state_post=?inner.state, "send");
+            tracing::trace!(state_post = ?inner.state, "send");
             let futs = inner
                 .subscribers
                 .iter_mut()
