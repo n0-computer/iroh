@@ -2,7 +2,42 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.23.0](https://github.com/n0-computer/iroh/compare/v0.22.0..0.23.0) - 2024-08-20
+## [0.24.0](https://github.com/n0-computer/iroh/compare/v0.23.0..0.24.0) - 2024-09-02
+
+### ⛰️  Features
+
+- *(bench)* Add `--with-relay` option to allow testing relay throughput ([#2664](https://github.com/n0-computer/iroh/issues/2664)) - ([5c09013](https://github.com/n0-computer/iroh/commit/5c090134227929bb978d7f16fe33c74125f25e56))
+- *(bench)* Add `--metrics` option printing iroh-net library metrics ([#2668](https://github.com/n0-computer/iroh/issues/2668)) - ([4f83c43](https://github.com/n0-computer/iroh/commit/4f83c43824eea7be3619f235f8944d228eaa79cc))
+- *(iroh-net)* [**breaking**] Upgrade to Quinn 0.11 and Rustls 0.23 ([#2595](https://github.com/n0-computer/iroh/issues/2595)) - ([34ec5e2](https://github.com/n0-computer/iroh/commit/34ec5e24b9cdae751a7fae8f9d14fb6fa77482f1))
+
+### 🐛 Bug Fixes
+
+- *(iroh-blobs)* Demote `warn!` to `trace!` logs ([#2689](https://github.com/n0-computer/iroh/issues/2689)) - ([6181455](https://github.com/n0-computer/iroh/commit/6181455e32d4e9f69430d89a7cb70bb622a5c29d))
+- *(iroh-blobs)* Turn `println!` into `tracing::debug!` ([#2686](https://github.com/n0-computer/iroh/issues/2686)) - ([5bbcb60](https://github.com/n0-computer/iroh/commit/5bbcb60838217ce2deaaeba259a1e6a56edf88bb))
+- *(iroh-blobs)* Timeout based on correct `max_write_duration` option ([#2688](https://github.com/n0-computer/iroh/issues/2688)) - ([2347565](https://github.com/n0-computer/iroh/commit/23475650e63178efd677e357737fa3972ef16ab9))
+- *(iroh-net)* Document the keylog environment variable correctly ([#2655](https://github.com/n0-computer/iroh/issues/2655)) - ([c70caaf](https://github.com/n0-computer/iroh/commit/c70caaf48ac39fcfb3b971366a76bff37b493ee9))
+- *(iroh-net)* Magic sock `recv_data_ipv4` and `recv_data_ipv6` metrics numbers ([#2667](https://github.com/n0-computer/iroh/issues/2667)) - ([cb1650a](https://github.com/n0-computer/iroh/commit/cb1650a5ebea2b27a3130b038159f7e04448c1ff))
+- *(iroh-net)* Also check the last packet in `MagicSock::poll_recv` ([#2650](https://github.com/n0-computer/iroh/issues/2650)) - ([54ca9c9](https://github.com/n0-computer/iroh/commit/54ca9c942fa7ce6e43825d1374483a049f4d4c13))
+- *(iroh-net)* Reduce noise in swarm discovery due to republish ([#2685](https://github.com/n0-computer/iroh/issues/2685)) - ([fd56763](https://github.com/n0-computer/iroh/commit/fd56763352bc2cc308234068ddd7bf0a2767c782))
+- Docker CI performance & release builds ([#2659](https://github.com/n0-computer/iroh/issues/2659)) - ([d567231](https://github.com/n0-computer/iroh/commit/d5672319d776789191c6e5b7076fea464d4f1208))
+
+### 🚜 Refactor
+
+- *(iroh, iroh-blobs, iroh-net)* [**breaking**] Remove deprecated items ([#2652](https://github.com/n0-computer/iroh/issues/2652)) - ([060bf83](https://github.com/n0-computer/iroh/commit/060bf8326d3d26b719c8e518c22708af4c20040b))
+
+### 🧪 Testing
+
+- *(iroh-gossip)* Wait for the relay to make `gossip_net_smoke` faster. ([#2663](https://github.com/n0-computer/iroh/issues/2663)) - ([1d3f3fa](https://github.com/n0-computer/iroh/commit/1d3f3fa8125761df509b94621eb173b91ed42904))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(iroh-net)* Do not add the NodeId in the magicsock span field ([#2679](https://github.com/n0-computer/iroh/issues/2679)) - ([05fff6a](https://github.com/n0-computer/iroh/commit/05fff6a11d9afd181a59e119a5aa98d5304d3f58))
+
+### Deps
+
+- *(iroh-gossip)* Do not depend directly on Quinn ([#2678](https://github.com/n0-computer/iroh/issues/2678)) - ([6296964](https://github.com/n0-computer/iroh/commit/6296964a596719afac3e734296be9fbbd6162d51))
+
+## [0.23.0](https://github.com/n0-computer/iroh/compare/v0.22.0..v0.23.0) - 2024-08-20
 
 ### ⛰️  Features
 
@@ -52,6 +87,7 @@ All notable changes to iroh will be documented in this file.
 
 - *(ci)* Use nextests groups to isolate some tests ([#2617](https://github.com/n0-computer/iroh/issues/2617)) - ([a5072c3](https://github.com/n0-computer/iroh/commit/a5072c3a0a11d931b3fc4e95ac48c32f12959a5b))
 - Fix deps issues ([#2643](https://github.com/n0-computer/iroh/issues/2643)) - ([83f6fcc](https://github.com/n0-computer/iroh/commit/83f6fccc2c0de6db47daded6af206ea59711ec99))
+- Release - ([855e1bb](https://github.com/n0-computer/iroh/commit/855e1bbdd2cf1fbf7a7af421603c114ae7d9d9be))
 
 ### Ref
 

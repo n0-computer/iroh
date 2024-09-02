@@ -1,6 +1,6 @@
 [package]
 name = "iroh-dns-server"
-version = "0.23.0"
+version = "0.24.0"
 edition = "2021"
 description = "A pkarr relay and DNS server"
 license = "MIT OR Apache-2.0"
@@ -24,7 +24,7 @@ governor = "0.6.3"
 hickory-proto = "=0.25.0-alpha.2"
 hickory-server = { version = "=0.25.0-alpha.2", features = ["dns-over-rustls"] }
 http = "1.0.0"
-iroh-metrics = { version = "0.23.0", path = "../iroh-metrics" }
+iroh-metrics = { version = "0.24.0", path = "../iroh-metrics" }
 lru = "0.12.3"
 mainline = "2.0.1"
 parking_lot = "0.12.1"
@@ -53,7 +53,7 @@ z32 = "1.1.1"
 
 [dev-dependencies]
 hickory-resolver = "=0.25.0-alpha.2"
-iroh-net = { version = "0.23.0", path = "../iroh-net" }
+iroh-net = { version = "0.24.0", path = "../iroh-net" }
 iroh-test = { path = "../iroh-test" }
 pkarr = { version = "2.2.0", features = ["rand"] }
 
