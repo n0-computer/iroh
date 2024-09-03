@@ -1485,7 +1485,7 @@
 </span><span class="kw">pub struct </span>GcConfig {
     <span class="doccomment">/// The period at which to execute the GC.
     </span><span class="kw">pub </span>period: Duration,
-    <span class="doccomment">/// An optional callback called everytime a GC round finishes.
+    <span class="doccomment">/// An optional callback called every time a GC round finishes.
     </span><span class="attr">#[debug(<span class="string">"done_callback"</span>)]
     </span><span class="kw">pub </span>done_callback: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() + Send&gt;&gt;,
 }
@@ -1499,7 +1499,7 @@
 ) <span class="kw">where
     </span>S: Store,
     F: Fn() -&gt; Fut,
-    Fut: Future&lt;Output = io::Result&lt;()&gt;&gt; + Send + <span class="lifetime">'static</span>,
+    Fut: Future&lt;Output = io::Result&lt;()&gt;&gt; + Send,
     G: Fn() -&gt; Gut,
     Gut: Future&lt;Output = BTreeSet&lt;Hash&gt;&gt; + Send,
 {

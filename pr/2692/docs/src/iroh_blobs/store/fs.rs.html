@@ -2614,10 +2614,6 @@
 <a href="#2614" id="2614">2614</a>
 <a href="#2615" id="2615">2615</a>
 <a href="#2616" id="2616">2616</a>
-<a href="#2617" id="2617">2617</a>
-<a href="#2618" id="2618">2618</a>
-<a href="#2619" id="2619">2619</a>
-<a href="#2620" id="2620">2620</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! redb backed storage
 //!
 //! Data can get into the store in two ways:
@@ -3250,7 +3246,7 @@
         hashes: Vec&lt;Hash&gt;,
         tx: oneshot::Sender&lt;ActorResult&lt;()&gt;&gt;,
     },
-    <span class="doccomment">/// Modification method: try to delete the data for a number of hashes
+    <span class="doccomment">/// Modification method: delete the data for a number of hashes, only if not protected
     </span>GcDelete {
         hashes: Vec&lt;Hash&gt;,
         tx: oneshot::Sender&lt;ActorResult&lt;()&gt;&gt;,
@@ -4776,14 +4772,10 @@
             }
 
             <span class="macro">tracing::debug!</span>(<span class="string">"deleting {}"</span>, <span class="kw-2">&amp;</span>hash.to_hex()[..<span class="number">8</span>]);
-            <span class="kw">let </span>handle = <span class="self">self</span>.handles.remove(<span class="kw-2">&amp;</span>hash);
-            <span class="kw">let </span>entry = tables.blobs.remove(hash)<span class="question-mark">?</span>;
-            <span class="macro">tracing::debug!</span>(<span class="string">"handle {:?}"</span>, handle);
-            <span class="macro">tracing::debug!</span>(<span class="string">"entry {}"</span>, entry.is_some());
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(entry) = entry {
-                <span class="kw">let </span>val = entry.value();
-                <span class="macro">tracing::debug!</span>(<span class="string">"del: {:?}"</span>, val);
-                <span class="kw">match </span>val {
+
+            <span class="self">self</span>.handles.remove(<span class="kw-2">&amp;</span>hash);
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(entry) = tables.blobs.remove(hash)<span class="question-mark">? </span>{
+                <span class="kw">match </span>entry.value() {
                     EntryState::Complete {
                         data_location,
                         outboard_location,
