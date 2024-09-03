@@ -346,14 +346,41 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         if let GcPolicy::Interval(gc_period) = gc_policy {
             let inner = self.clone();
             let handle = local_pool.spawn(move || async move {
-                // TODO: add protection for hashes from documents.
-
+                let inner2 = inner.clone();
                 inner
                     .db
-                    .gc_run(iroh_blobs::store::GcConfig {
-                        period: gc_period,
-                        done_callback: gc_done_callback,
-                    })
+                    .gc_run(
+                        iroh_blobs::store::GcConfig {
+                            period: gc_period,
+                            done_callback: gc_done_callback,
+                        },
+                        move || {
+                            let inner2 = inner2.clone();
+                            async move {
+                                let mut live = BTreeSet::default();
+                                if let Some(docs) = &inner2.docs {
+                                    let doc_hashes = match docs.sync.content_hashes().await {
+                                        Ok(hashes) => hashes,
+                                        Err(err) => {
+                                            tracing::warn!("Error getting doc hashes: {}", err);
+                                            return live;
+                                        }
+                                    };
+                                    for hash in doc_hashes {
+                                        match hash {
+                                            Ok(hash) => {
+                                                live.insert(hash);
+                                            }
+                                            Err(err) => {
+                                                tracing::error!("Error getting doc hash: {}", err);
+                                            }
+                                        }
+                                    }
+                                }
+                                live
+                            }
+                        },
+                    )
                     .await;
             });
             // We cannot spawn tasks that run on the local pool directly into the join set,

@@ -65,6 +65,7 @@
 //! errors when communicating with the actor.
 use std::{
     collections::{BTreeMap, BTreeSet},
+    future::Future,
     io,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
@@ -1374,15 +1375,24 @@ impl super::Store for Store {
         Ok(self.0.delete(hashes).await?)
     }
 
-    async fn gc_run(&self, config: super::GcConfig) {
+    async fn gc_run<G, Gut>(&self, config: super::GcConfig, protected_cb: G)
+    where
+        G: Fn() -> Gut,
+        Gut: Future<Output = BTreeSet<Hash>> + Send,
+    {
         let inner = self.0.clone();
-        super::gc_run_loop(self, config, move || {
-            let inner = inner.clone();
-            async move {
-                inner.gc_start().await?;
-                Ok(())
-            }
-        })
+        super::gc_run_loop(
+            self,
+            config,
+            move || {
+                let inner = inner.clone();
+                async move {
+                    inner.gc_start().await?;
+                    Ok(())
+                }
+            },
+            protected_cb,
+        )
         .await
     }
 

@@ -359,7 +359,10 @@ pub trait Store: ReadableStore + MapMut + std::fmt::Debug {
     /// Start the GC loop
     ///
     /// The gc task will shut down, when dropping the returned future.
-    fn gc_run(&self, config: GcConfig) -> impl Future<Output = ()>;
+    fn gc_run<G, Gut>(&self, config: super::GcConfig, protected_cb: G) -> impl Future<Output = ()>
+    where
+        G: Fn() -> Gut,
+        Gut: Future<Output = BTreeSet<Hash>> + Send;
 
     /// physically delete the given hashes from the store.
     fn delete(&self, hashes: Vec<Hash>) -> impl Future<Output = io::Result<()>> + Send;
@@ -522,16 +525,22 @@ pub struct GcConfig {
     /// The period at which to execute the GC.
     pub period: Duration,
     /// An optional callback called everytime a GC round finishes.
-    #[debug("callback")]
+    #[debug("done_callback")]
     pub done_callback: Option<Box<dyn Fn() + Send>>,
 }
 
 /// Implementation of the gc loop.
-pub(super) async fn gc_run_loop<S, F, Fut>(store: &S, config: GcConfig, start_cb: F)
-where
+pub(super) async fn gc_run_loop<S, F, Fut, G, Gut>(
+    store: &S,
+    config: GcConfig,
+    start_cb: F,
+    protected_cb: G,
+) where
     S: Store,
     F: Fn() -> Fut,
     Fut: Future<Output = io::Result<()>> + Send + 'static,
+    G: Fn() -> Gut,
+    Gut: Future<Output = BTreeSet<Hash>> + Send,
 {
     tracing::info!("Starting GC task with interval {:?}", config.period);
     let mut live = BTreeSet::new();
@@ -544,6 +553,9 @@ where
         tokio::time::sleep(config.period).await;
         tracing::debug!("Starting GC");
         live.clear();
+
+        let p = protected_cb().await;
+        live.extend(p);
 
         tracing::debug!("Starting GC mark phase");
         let live_ref = &mut live;
