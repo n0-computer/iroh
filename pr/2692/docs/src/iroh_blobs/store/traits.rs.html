@@ -1569,7 +1569,7 @@
 }
 
 <span class="doccomment">/// Implementation of the gc method.
-</span><span class="kw">async fn </span>gc_mark_task&lt;<span class="lifetime">'a</span>&gt;(
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>gc_mark_task&lt;<span class="lifetime">'a</span>&gt;(
     store: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw">impl </span>Store,
     live: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>BTreeSet&lt;Hash&gt;,
     co: <span class="kw-2">&amp;</span>Co&lt;GcMarkEvent&gt;,
