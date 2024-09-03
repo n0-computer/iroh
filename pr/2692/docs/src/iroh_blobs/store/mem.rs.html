@@ -687,9 +687,9 @@
         <span class="self">self</span>.inner.temp_tag(tag)
     }
 
-    <span class="kw">async fn </span>gc_start(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
-        <span class="prelude-val">Ok</span>(())
-    }
+    <span class="kw">async fn </span>gc_run(<span class="kw-2">&amp;</span><span class="self">self</span>, config: <span class="kw">super</span>::GcConfig) {
+        <span class="kw">super</span>::gc_run_loop(<span class="self">self</span>, config, <span class="kw">move </span>|| <span class="kw">async </span>{ <span class="prelude-val">Ok</span>(()) }).<span class="kw">await
+    </span>}
 
     <span class="kw">async fn </span>delete(<span class="kw-2">&amp;</span><span class="self">self</span>, hashes: Vec&lt;Hash&gt;) -&gt; io::Result&lt;()&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self</span>.write_lock();

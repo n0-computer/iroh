@@ -3132,7 +3132,6 @@
     </span>Delete {
         hashes: Vec&lt;Hash&gt;,
         tx: oneshot::Sender&lt;ActorResult&lt;()&gt;&gt;,
-        force: bool,
     },
     <span class="doccomment">/// Sync the entire database to disk.
     ///
@@ -3388,11 +3387,9 @@
         <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">??</span>)
     }
 
-    <span class="kw">async fn </span>delete(<span class="kw-2">&amp;</span><span class="self">self</span>, hashes: Vec&lt;Hash&gt;, force: bool) -&gt; OuterResult&lt;()&gt; {
+    <span class="kw">async fn </span>delete(<span class="kw-2">&amp;</span><span class="self">self</span>, hashes: Vec&lt;Hash&gt;) -&gt; OuterResult&lt;()&gt; {
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
-        <span class="self">self</span>.tx
-            .send(ActorMessage::Delete { hashes, tx, force })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.tx.send(ActorMessage::Delete { hashes, tx }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">??</span>)
     }
 
@@ -3880,13 +3877,20 @@
     }
 
     <span class="kw">async fn </span>delete(<span class="kw-2">&amp;</span><span class="self">self</span>, hashes: Vec&lt;Hash&gt;) -&gt; io::Result&lt;()&gt; {
-        <span class="prelude-val">Ok</span>(<span class="self">self</span>.<span class="number">0</span>.delete(hashes, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>)
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.<span class="number">0</span>.delete(hashes).<span class="kw">await</span><span class="question-mark">?</span>)
     }
 
-    <span class="kw">async fn </span>gc_start(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
-        <span class="self">self</span>.<span class="number">0</span>.gc_start().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
+    <span class="kw">async fn </span>gc_run(<span class="kw-2">&amp;</span><span class="self">self</span>, config: <span class="kw">super</span>::GcConfig) {
+        <span class="kw">let </span>inner = <span class="self">self</span>.<span class="number">0</span>.clone();
+        <span class="kw">super</span>::gc_run_loop(<span class="self">self</span>, config, <span class="kw">move </span>|| {
+            <span class="kw">let </span>inner = inner.clone();
+            <span class="kw">async move </span>{
+                inner.gc_start().<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="prelude-val">Ok</span>(())
+            }
+        })
+        .<span class="kw">await
+    </span>}
 
     <span class="kw">fn </span>temp_tag(<span class="kw-2">&amp;</span><span class="self">self</span>, value: HashAndFormat) -&gt; TempTag {
         <span class="self">self</span>.<span class="number">0</span>.temp.temp_tag(value)
@@ -4542,13 +4546,9 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>delete(<span class="kw-2">&amp;mut </span><span class="self">self</span>, tables: <span class="kw-2">&amp;mut </span>Tables, hashes: Vec&lt;Hash&gt;, force: bool) -&gt; ActorResult&lt;()&gt; {
+    <span class="kw">fn </span>delete(<span class="kw-2">&amp;mut </span><span class="self">self</span>, tables: <span class="kw-2">&amp;mut </span>Tables, hashes: Vec&lt;Hash&gt;) -&gt; ActorResult&lt;()&gt; {
         <span class="kw">for </span>hash <span class="kw">in </span>hashes {
             <span class="kw">if </span><span class="self">self</span>.temp.as_ref().read().unwrap().contains(<span class="kw-2">&amp;</span>hash) {
-                <span class="kw">continue</span>;
-            }
-            <span class="kw">if </span>!force &amp;&amp; <span class="self">self</span>.protected.contains(<span class="kw-2">&amp;</span>hash) {
-                <span class="macro">tracing::debug!</span>(<span class="string">"protected hash, continuing {}"</span>, <span class="kw-2">&amp;</span>hash.to_hex()[..<span class="number">8</span>]);
                 <span class="kw">continue</span>;
             }
             <span class="macro">tracing::debug!</span>(<span class="string">"deleting {}"</span>, <span class="kw-2">&amp;</span>hash.to_hex()[..<span class="number">8</span>]);
@@ -4766,8 +4766,8 @@
                 <span class="kw">let </span>res = <span class="self">self</span>.create_tag(tables, hash);
                 tx.send(res).ok();
             }
-            ActorMessage::Delete { hashes, tx, force } =&gt; {
-                <span class="kw">let </span>res = <span class="self">self</span>.delete(tables, hashes, force);
+            ActorMessage::Delete { hashes, tx } =&gt; {
+                <span class="kw">let </span>res = <span class="self">self</span>.delete(tables, hashes);
                 tx.send(res).ok();
             }
             ActorMessage::OnComplete { handle } =&gt; {

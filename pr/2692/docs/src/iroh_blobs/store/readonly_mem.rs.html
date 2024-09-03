@@ -664,9 +664,9 @@
         TempTag::new(inner, <span class="prelude-val">None</span>)
     }
 
-    <span class="kw">async fn </span>gc_start(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
-        <span class="prelude-val">Ok</span>(())
-    }
+    <span class="kw">async fn </span>gc_run(<span class="kw-2">&amp;</span><span class="self">self</span>, config: <span class="kw">super</span>::GcConfig) {
+        <span class="kw">super</span>::gc_run_loop(<span class="self">self</span>, config, <span class="kw">move </span>|| <span class="kw">async </span>{ <span class="prelude-val">Ok</span>(()) }).<span class="kw">await
+    </span>}
 
     <span class="kw">async fn </span>delete(<span class="kw-2">&amp;</span><span class="self">self</span>, _hashes: Vec&lt;Hash&gt;) -&gt; io::Result&lt;()&gt; {
         <span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::Other, <span class="string">"not implemented"</span>))
