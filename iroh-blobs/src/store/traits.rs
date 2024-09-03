@@ -608,7 +608,7 @@ pub(super) async fn gc_run_loop<S, F, Fut, G, Gut>(
 }
 
 /// Implementation of the gc method.
-async fn gc_mark_task<'a>(
+pub(super) async fn gc_mark_task<'a>(
     store: &'a impl Store,
     live: &'a mut BTreeSet<Hash>,
     co: &Co<GcMarkEvent>,
