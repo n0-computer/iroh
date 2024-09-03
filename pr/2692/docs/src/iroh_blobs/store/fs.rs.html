@@ -2504,6 +2504,16 @@
 <a href="#2504" id="2504">2504</a>
 <a href="#2505" id="2505">2505</a>
 <a href="#2506" id="2506">2506</a>
+<a href="#2507" id="2507">2507</a>
+<a href="#2508" id="2508">2508</a>
+<a href="#2509" id="2509">2509</a>
+<a href="#2510" id="2510">2510</a>
+<a href="#2511" id="2511">2511</a>
+<a href="#2512" id="2512">2512</a>
+<a href="#2513" id="2513">2513</a>
+<a href="#2514" id="2514">2514</a>
+<a href="#2515" id="2515">2515</a>
+<a href="#2516" id="2516">2516</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! redb backed storage
 //!
 //! Data can get into the store in two ways:
@@ -2571,6 +2581,7 @@
 //! errors when communicating with the actor.
 </span><span class="kw">use </span>std::{
     collections::{BTreeMap, BTreeSet},
+    future::Future,
     io,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
@@ -3880,15 +3891,24 @@
         <span class="prelude-val">Ok</span>(<span class="self">self</span>.<span class="number">0</span>.delete(hashes).<span class="kw">await</span><span class="question-mark">?</span>)
     }
 
-    <span class="kw">async fn </span>gc_run(<span class="kw-2">&amp;</span><span class="self">self</span>, config: <span class="kw">super</span>::GcConfig) {
+    <span class="kw">async fn </span>gc_run&lt;G, Gut&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, config: <span class="kw">super</span>::GcConfig, protected_cb: G)
+    <span class="kw">where
+        </span>G: Fn() -&gt; Gut,
+        Gut: Future&lt;Output = BTreeSet&lt;Hash&gt;&gt; + Send,
+    {
         <span class="kw">let </span>inner = <span class="self">self</span>.<span class="number">0</span>.clone();
-        <span class="kw">super</span>::gc_run_loop(<span class="self">self</span>, config, <span class="kw">move </span>|| {
-            <span class="kw">let </span>inner = inner.clone();
-            <span class="kw">async move </span>{
-                inner.gc_start().<span class="kw">await</span><span class="question-mark">?</span>;
-                <span class="prelude-val">Ok</span>(())
-            }
-        })
+        <span class="kw">super</span>::gc_run_loop(
+            <span class="self">self</span>,
+            config,
+            <span class="kw">move </span>|| {
+                <span class="kw">let </span>inner = inner.clone();
+                <span class="kw">async move </span>{
+                    inner.gc_start().<span class="kw">await</span><span class="question-mark">?</span>;
+                    <span class="prelude-val">Ok</span>(())
+                }
+            },
+            protected_cb,
+        )
         .<span class="kw">await
     </span>}
 

@@ -947,6 +947,18 @@
 <a href="#947" id="947">947</a>
 <a href="#948" id="948">948</a>
 <a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a>
+<a href="#951" id="951">951</a>
+<a href="#952" id="952">952</a>
+<a href="#953" id="953">953</a>
+<a href="#954" id="954">954</a>
+<a href="#955" id="955">955</a>
+<a href="#956" id="956">956</a>
+<a href="#957" id="957">957</a>
+<a href="#958" id="958">958</a>
+<a href="#959" id="959">959</a>
+<a href="#960" id="960">960</a>
+<a href="#961" id="961">961</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 </span><span class="kw">use </span>std::{collections::BTreeSet, future::Future, io, path::PathBuf, time::Duration};
 
@@ -1308,7 +1320,10 @@
     <span class="doccomment">/// Start the GC loop
     ///
     /// The gc task will shut down, when dropping the returned future.
-    </span><span class="kw">fn </span>gc_run(<span class="kw-2">&amp;</span><span class="self">self</span>, config: GcConfig) -&gt; <span class="kw">impl </span>Future&lt;Output = ()&gt;;
+    </span><span class="kw">fn </span>gc_run&lt;G, Gut&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, config: <span class="kw">super</span>::GcConfig, protected_cb: G) -&gt; <span class="kw">impl </span>Future&lt;Output = ()&gt;
+    <span class="kw">where
+        </span>G: Fn() -&gt; Gut,
+        Gut: Future&lt;Output = BTreeSet&lt;Hash&gt;&gt; + Send;
 
     <span class="doccomment">/// physically delete the given hashes from the store.
     </span><span class="kw">fn </span>delete(<span class="kw-2">&amp;</span><span class="self">self</span>, hashes: Vec&lt;Hash&gt;) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;()&gt;&gt; + Send;
@@ -1471,16 +1486,22 @@
     <span class="doccomment">/// The period at which to execute the GC.
     </span><span class="kw">pub </span>period: Duration,
     <span class="doccomment">/// An optional callback called everytime a GC round finishes.
-    </span><span class="attr">#[debug(<span class="string">"callback"</span>)]
+    </span><span class="attr">#[debug(<span class="string">"done_callback"</span>)]
     </span><span class="kw">pub </span>done_callback: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() + Send&gt;&gt;,
 }
 
 <span class="doccomment">/// Implementation of the gc loop.
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>gc_run_loop&lt;S, F, Fut&gt;(store: <span class="kw-2">&amp;</span>S, config: GcConfig, start_cb: F)
-<span class="kw">where
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>gc_run_loop&lt;S, F, Fut, G, Gut&gt;(
+    store: <span class="kw-2">&amp;</span>S,
+    config: GcConfig,
+    start_cb: F,
+    protected_cb: G,
+) <span class="kw">where
     </span>S: Store,
     F: Fn() -&gt; Fut,
     Fut: Future&lt;Output = io::Result&lt;()&gt;&gt; + Send + <span class="lifetime">'static</span>,
+    G: Fn() -&gt; Gut,
+    Gut: Future&lt;Output = BTreeSet&lt;Hash&gt;&gt; + Send,
 {
     <span class="macro">tracing::info!</span>(<span class="string">"Starting GC task with interval {:?}"</span>, config.period);
     <span class="kw">let </span><span class="kw-2">mut </span>live = BTreeSet::new();
@@ -1493,6 +1514,9 @@
         </span>tokio::time::sleep(config.period).<span class="kw">await</span>;
         <span class="macro">tracing::debug!</span>(<span class="string">"Starting GC"</span>);
         live.clear();
+
+        <span class="kw">let </span>p = protected_cb().<span class="kw">await</span>;
+        live.extend(p);
 
         <span class="macro">tracing::debug!</span>(<span class="string">"Starting GC mark phase"</span>);
         <span class="kw">let </span>live_ref = <span class="kw-2">&amp;mut </span>live;

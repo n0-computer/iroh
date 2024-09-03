@@ -909,6 +909,33 @@
 <a href="#909" id="909">909</a>
 <a href="#910" id="910">910</a>
 <a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a>
+<a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a>
+<a href="#924" id="924">924</a>
+<a href="#925" id="925">925</a>
+<a href="#926" id="926">926</a>
+<a href="#927" id="927">927</a>
+<a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node API
 //!
 //! An iroh node is a server that is identified by an Ed25519 keypair and is
@@ -1257,14 +1284,41 @@
         </span><span class="kw">if let </span>GcPolicy::Interval(gc_period) = gc_policy {
             <span class="kw">let </span>inner = <span class="self">self</span>.clone();
             <span class="kw">let </span>handle = local_pool.spawn(<span class="kw">move </span>|| <span class="kw">async move </span>{
-                <span class="comment">// TODO: add protection for hashes from documents.
-
-                </span>inner
+                <span class="kw">let </span>inner2 = inner.clone();
+                inner
                     .db
-                    .gc_run(iroh_blobs::store::GcConfig {
-                        period: gc_period,
-                        done_callback: gc_done_callback,
-                    })
+                    .gc_run(
+                        iroh_blobs::store::GcConfig {
+                            period: gc_period,
+                            done_callback: gc_done_callback,
+                        },
+                        <span class="kw">move </span>|| {
+                            <span class="kw">let </span>inner2 = inner2.clone();
+                            <span class="kw">async move </span>{
+                                <span class="kw">let </span><span class="kw-2">mut </span>live = BTreeSet::default();
+                                <span class="kw">if let </span><span class="prelude-val">Some</span>(docs) = <span class="kw-2">&amp;</span>inner2.docs {
+                                    <span class="kw">let </span>doc_hashes = <span class="kw">match </span>docs.sync.content_hashes().<span class="kw">await </span>{
+                                        <span class="prelude-val">Ok</span>(hashes) =&gt; hashes,
+                                        <span class="prelude-val">Err</span>(err) =&gt; {
+                                            <span class="macro">tracing::warn!</span>(<span class="string">"Error getting doc hashes: {}"</span>, err);
+                                            <span class="kw">return </span>live;
+                                        }
+                                    };
+                                    <span class="kw">for </span>hash <span class="kw">in </span>doc_hashes {
+                                        <span class="kw">match </span>hash {
+                                            <span class="prelude-val">Ok</span>(hash) =&gt; {
+                                                live.insert(hash);
+                                            }
+                                            <span class="prelude-val">Err</span>(err) =&gt; {
+                                                <span class="macro">tracing::error!</span>(<span class="string">"Error getting doc hash: {}"</span>, err);
+                                            }
+                                        }
+                                    }
+                                }
+                                live
+                            }
+                        },
+                    )
                     .<span class="kw">await</span>;
             });
             <span class="comment">// We cannot spawn tasks that run on the local pool directly into the join set,

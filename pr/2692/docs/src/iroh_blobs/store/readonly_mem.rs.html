@@ -338,11 +338,17 @@
 <a href="#338" id="338">338</a>
 <a href="#339" id="339">339</a>
 <a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A readonly in memory database for iroh-blobs, usable for testing and sharing static data.
 //!
 //! Main entry point is [Store].
 </span><span class="kw">use </span>std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
+    future::Future,
     io,
     path::PathBuf,
     sync::Arc,
@@ -664,8 +670,12 @@
         TempTag::new(inner, <span class="prelude-val">None</span>)
     }
 
-    <span class="kw">async fn </span>gc_run(<span class="kw-2">&amp;</span><span class="self">self</span>, config: <span class="kw">super</span>::GcConfig) {
-        <span class="kw">super</span>::gc_run_loop(<span class="self">self</span>, config, <span class="kw">move </span>|| <span class="kw">async </span>{ <span class="prelude-val">Ok</span>(()) }).<span class="kw">await
+    <span class="kw">async fn </span>gc_run&lt;G, Gut&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, config: <span class="kw">super</span>::GcConfig, protected_cb: G)
+    <span class="kw">where
+        </span>G: Fn() -&gt; Gut,
+        Gut: Future&lt;Output = BTreeSet&lt;Hash&gt;&gt; + Send,
+    {
+        <span class="kw">super</span>::gc_run_loop(<span class="self">self</span>, config, <span class="kw">move </span>|| <span class="kw">async </span>{ <span class="prelude-val">Ok</span>(()) }, protected_cb).<span class="kw">await
     </span>}
 
     <span class="kw">async fn </span>delete(<span class="kw-2">&amp;</span><span class="self">self</span>, _hashes: Vec&lt;Hash&gt;) -&gt; io::Result&lt;()&gt; {
