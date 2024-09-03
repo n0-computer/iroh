@@ -324,8 +324,8 @@ impl super::Store for Store {
         TempTag::new(inner, None)
     }
 
-    async fn gc_start(&self) -> io::Result<()> {
-        Ok(())
+    async fn gc_run(&self, config: super::GcConfig) {
+        super::gc_run_loop(self, config, move || async { Ok(()) }).await
     }
 
     async fn delete(&self, _hashes: Vec<Hash>) -> io::Result<()> {

@@ -626,7 +626,6 @@ pub(crate) enum ActorMessage {
     Delete {
         hashes: Vec<Hash>,
         tx: oneshot::Sender<ActorResult<()>>,
-        force: bool,
     },
     /// Sync the entire database to disk.
     ///
@@ -882,11 +881,9 @@ impl StoreInner {
         Ok(rx.await??)
     }
 
-    async fn delete(&self, hashes: Vec<Hash>, force: bool) -> OuterResult<()> {
+    async fn delete(&self, hashes: Vec<Hash>) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
-        self.tx
-            .send(ActorMessage::Delete { hashes, tx, force })
-            .await?;
+        self.tx.send(ActorMessage::Delete { hashes, tx }).await?;
         Ok(rx.await??)
     }
 
@@ -1374,12 +1371,19 @@ impl super::Store for Store {
     }
 
     async fn delete(&self, hashes: Vec<Hash>) -> io::Result<()> {
-        Ok(self.0.delete(hashes, true).await?)
+        Ok(self.0.delete(hashes).await?)
     }
 
-    async fn gc_start(&self) -> io::Result<()> {
-        self.0.gc_start().await?;
-        Ok(())
+    async fn gc_run(&self, config: super::GcConfig) {
+        let inner = self.0.clone();
+        super::gc_run_loop(self, config, move || {
+            let inner = inner.clone();
+            async move {
+                inner.gc_start().await?;
+                Ok(())
+            }
+        })
+        .await
     }
 
     fn temp_tag(&self, value: HashAndFormat) -> TempTag {
@@ -2036,13 +2040,9 @@ impl ActorState {
         Ok(())
     }
 
-    fn delete(&mut self, tables: &mut Tables, hashes: Vec<Hash>, force: bool) -> ActorResult<()> {
+    fn delete(&mut self, tables: &mut Tables, hashes: Vec<Hash>) -> ActorResult<()> {
         for hash in hashes {
             if self.temp.as_ref().read().unwrap().contains(&hash) {
-                continue;
-            }
-            if !force && self.protected.contains(&hash) {
-                tracing::debug!("protected hash, continuing {}", &hash.to_hex()[..8]);
                 continue;
             }
             tracing::debug!("deleting {}", &hash.to_hex()[..8]);
@@ -2260,8 +2260,8 @@ impl ActorState {
                 let res = self.create_tag(tables, hash);
                 tx.send(res).ok();
             }
-            ActorMessage::Delete { hashes, tx, force } => {
-                let res = self.delete(tables, hashes, force);
+            ActorMessage::Delete { hashes, tx } => {
+                let res = self.delete(tables, hashes);
                 tx.send(res).ok();
             }
             ActorMessage::OnComplete { handle } => {

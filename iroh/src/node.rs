@@ -44,7 +44,7 @@ use std::{fmt::Debug, time::Duration};
 use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
-use iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store as BaoStore};
+use iroh_blobs::store::Store as BaoStore;
 use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
 use iroh_blobs::{downloader::Downloader, protocol::Closed};
 use iroh_blobs::{HashAndFormat, TempTag};
@@ -345,7 +345,17 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         // Spawn a task for the garbage collection.
         if let GcPolicy::Interval(gc_period) = gc_policy {
             let inner = self.clone();
-            let handle = local_pool.spawn(move || inner.run_gc_loop(gc_period, gc_done_callback));
+            let handle = local_pool.spawn(move || async move {
+                // TODO: add protection for hashes from documents.
+
+                inner
+                    .db
+                    .gc_run(iroh_blobs::store::GcConfig {
+                        period: gc_period,
+                        done_callback: gc_done_callback,
+                    })
+                    .await;
+            });
             // We cannot spawn tasks that run on the local pool directly into the join set,
             // so instead we create a new task that supervises the local task.
             join_set.spawn({
@@ -513,87 +523,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             // Shutdown protocol handlers.
             protocols.shutdown(),
         );
-    }
-
-    async fn run_gc_loop(
-        self: Arc<Self>,
-        gc_period: Duration,
-        done_cb: Option<Box<dyn Fn() + Send>>,
-    ) {
-        tracing::info!("Starting GC task with interval {:?}", gc_period);
-        let db = &self.db;
-        let mut live = BTreeSet::new();
-        'outer: loop {
-            if let Err(cause) = db.gc_start().await {
-                tracing::debug!(
-                    "unable to notify the db of GC start: {cause}. Shutting down GC loop."
-                );
-                break;
-            }
-            // do delay before the two phases of GC
-            tokio::time::sleep(gc_period).await;
-            tracing::debug!("Starting GC");
-            live.clear();
-
-            if let Some(docs) = &self.docs {
-                let doc_hashes = match docs.sync.content_hashes().await {
-                    Ok(hashes) => hashes,
-                    Err(err) => {
-                        tracing::warn!("Error getting doc hashes: {}", err);
-                        continue 'outer;
-                    }
-                };
-                for hash in doc_hashes {
-                    match hash {
-                        Ok(hash) => {
-                            live.insert(hash);
-                        }
-                        Err(err) => {
-                            tracing::error!("Error getting doc hash: {}", err);
-                            continue 'outer;
-                        }
-                    }
-                }
-            }
-
-            tracing::debug!("Starting GC mark phase");
-            let mut stream = db.gc_mark(&mut live);
-            while let Some(item) = stream.next().await {
-                match item {
-                    GcMarkEvent::CustomDebug(text) => {
-                        tracing::debug!("{}", text);
-                    }
-                    GcMarkEvent::CustomWarning(text, _) => {
-                        tracing::warn!("{}", text);
-                    }
-                    GcMarkEvent::Error(err) => {
-                        tracing::error!("Fatal error during GC mark {}", err);
-                        continue 'outer;
-                    }
-                }
-            }
-            drop(stream);
-
-            tracing::debug!("Starting GC sweep phase");
-            let mut stream = db.gc_sweep(&live);
-            while let Some(item) = stream.next().await {
-                match item {
-                    GcSweepEvent::CustomDebug(text) => {
-                        tracing::debug!("{}", text);
-                    }
-                    GcSweepEvent::CustomWarning(text, _) => {
-                        tracing::warn!("{}", text);
-                    }
-                    GcSweepEvent::Error(err) => {
-                        tracing::error!("Fatal error during GC mark {}", err);
-                        continue 'outer;
-                    }
-                }
-            }
-            if let Some(ref cb) = done_cb {
-                cb();
-            }
-        }
     }
 }
 
