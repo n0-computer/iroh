@@ -524,7 +524,7 @@ async fn validate_impl(
 pub struct GcConfig {
     /// The period at which to execute the GC.
     pub period: Duration,
-    /// An optional callback called everytime a GC round finishes.
+    /// An optional callback called every time a GC round finishes.
     #[debug("done_callback")]
     pub done_callback: Option<Box<dyn Fn() + Send>>,
 }
@@ -538,7 +538,7 @@ pub(super) async fn gc_run_loop<S, F, Fut, G, Gut>(
 ) where
     S: Store,
     F: Fn() -> Fut,
-    Fut: Future<Output = io::Result<()>> + Send + 'static,
+    Fut: Future<Output = io::Result<()>> + Send,
     G: Fn() -> Gut,
     Gut: Future<Output = BTreeSet<Hash>> + Send,
 {

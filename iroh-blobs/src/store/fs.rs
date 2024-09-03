@@ -630,7 +630,7 @@ pub(crate) enum ActorMessage {
         hashes: Vec<Hash>,
         tx: oneshot::Sender<ActorResult<()>>,
     },
-    /// Modification method: try to delete the data for a number of hashes
+    /// Modification method: delete the data for a number of hashes, only if not protected
     GcDelete {
         hashes: Vec<Hash>,
         tx: oneshot::Sender<ActorResult<()>>,
@@ -2156,14 +2156,10 @@ impl ActorState {
             }
 
             tracing::debug!("deleting {}", &hash.to_hex()[..8]);
-            let handle = self.handles.remove(&hash);
-            let entry = tables.blobs.remove(hash)?;
-            tracing::debug!("handle {:?}", handle);
-            tracing::debug!("entry {}", entry.is_some());
-            if let Some(entry) = entry {
-                let val = entry.value();
-                tracing::debug!("del: {:?}", val);
-                match val {
+
+            self.handles.remove(&hash);
+            if let Some(entry) = tables.blobs.remove(hash)? {
+                match entry.value() {
                     EntryState::Complete {
                         data_location,
                         outboard_location,
