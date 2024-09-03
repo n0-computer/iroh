@@ -626,6 +626,7 @@ pub(crate) enum ActorMessage {
     Delete {
         hashes: Vec<Hash>,
         tx: oneshot::Sender<ActorResult<()>>,
+        force: bool,
     },
     /// Sync the entire database to disk.
     ///
@@ -881,9 +882,11 @@ impl StoreInner {
         Ok(rx.await??)
     }
 
-    async fn delete(&self, hashes: Vec<Hash>) -> OuterResult<()> {
+    async fn delete(&self, hashes: Vec<Hash>, force: bool) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send(ActorMessage::Delete { hashes, tx }).await?;
+        self.tx
+            .send(ActorMessage::Delete { hashes, tx, force })
+            .await?;
         Ok(rx.await??)
     }
 
@@ -1371,7 +1374,7 @@ impl super::Store for Store {
     }
 
     async fn delete(&self, hashes: Vec<Hash>) -> io::Result<()> {
-        Ok(self.0.delete(hashes).await?)
+        Ok(self.0.delete(hashes, true).await?)
     }
 
     async fn gc_start(&self) -> io::Result<()> {
@@ -2033,19 +2036,24 @@ impl ActorState {
         Ok(())
     }
 
-    fn delete(&mut self, tables: &mut Tables, hashes: Vec<Hash>) -> ActorResult<()> {
+    fn delete(&mut self, tables: &mut Tables, hashes: Vec<Hash>, force: bool) -> ActorResult<()> {
         for hash in hashes {
             if self.temp.as_ref().read().unwrap().contains(&hash) {
                 continue;
             }
-            if self.protected.contains(&hash) {
+            if !force && self.protected.contains(&hash) {
                 tracing::debug!("protected hash, continuing {}", &hash.to_hex()[..8]);
                 continue;
             }
             tracing::debug!("deleting {}", &hash.to_hex()[..8]);
-            self.handles.remove(&hash);
-            if let Some(entry) = tables.blobs.remove(hash)? {
-                match entry.value() {
+            let handle = self.handles.remove(&hash);
+            let entry = tables.blobs.remove(hash)?;
+            tracing::debug!("handle {:?}", handle);
+            tracing::debug!("entry {}", entry.is_some());
+            if let Some(entry) = entry {
+                let val = entry.value();
+                tracing::debug!("del: {:?}", val);
+                match val {
                     EntryState::Complete {
                         data_location,
                         outboard_location,
@@ -2252,8 +2260,8 @@ impl ActorState {
                 let res = self.create_tag(tables, hash);
                 tx.send(res).ok();
             }
-            ActorMessage::Delete { hashes, tx } => {
-                let res = self.delete(tables, hashes);
+            ActorMessage::Delete { hashes, tx, force } => {
+                let res = self.delete(tables, hashes, force);
                 tx.send(res).ok();
             }
             ActorMessage::OnComplete { handle } => {
