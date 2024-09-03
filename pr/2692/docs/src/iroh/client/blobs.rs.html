@@ -1560,6 +1560,52 @@
 <a href="#1560" id="1560">1560</a>
 <a href="#1561" id="1561">1561</a>
 <a href="#1562" id="1562">1562</a>
+<a href="#1563" id="1563">1563</a>
+<a href="#1564" id="1564">1564</a>
+<a href="#1565" id="1565">1565</a>
+<a href="#1566" id="1566">1566</a>
+<a href="#1567" id="1567">1567</a>
+<a href="#1568" id="1568">1568</a>
+<a href="#1569" id="1569">1569</a>
+<a href="#1570" id="1570">1570</a>
+<a href="#1571" id="1571">1571</a>
+<a href="#1572" id="1572">1572</a>
+<a href="#1573" id="1573">1573</a>
+<a href="#1574" id="1574">1574</a>
+<a href="#1575" id="1575">1575</a>
+<a href="#1576" id="1576">1576</a>
+<a href="#1577" id="1577">1577</a>
+<a href="#1578" id="1578">1578</a>
+<a href="#1579" id="1579">1579</a>
+<a href="#1580" id="1580">1580</a>
+<a href="#1581" id="1581">1581</a>
+<a href="#1582" id="1582">1582</a>
+<a href="#1583" id="1583">1583</a>
+<a href="#1584" id="1584">1584</a>
+<a href="#1585" id="1585">1585</a>
+<a href="#1586" id="1586">1586</a>
+<a href="#1587" id="1587">1587</a>
+<a href="#1588" id="1588">1588</a>
+<a href="#1589" id="1589">1589</a>
+<a href="#1590" id="1590">1590</a>
+<a href="#1591" id="1591">1591</a>
+<a href="#1592" id="1592">1592</a>
+<a href="#1593" id="1593">1593</a>
+<a href="#1594" id="1594">1594</a>
+<a href="#1595" id="1595">1595</a>
+<a href="#1596" id="1596">1596</a>
+<a href="#1597" id="1597">1597</a>
+<a href="#1598" id="1598">1598</a>
+<a href="#1599" id="1599">1599</a>
+<a href="#1600" id="1600">1600</a>
+<a href="#1601" id="1601">1601</a>
+<a href="#1602" id="1602">1602</a>
+<a href="#1603" id="1603">1603</a>
+<a href="#1604" id="1604">1604</a>
+<a href="#1605" id="1605">1605</a>
+<a href="#1606" id="1606">1606</a>
+<a href="#1607" id="1607">1607</a>
+<a href="#1608" id="1608">1608</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for blobs management.
 //!
 //! The main entry point is the [`Client`].
@@ -3118,6 +3164,52 @@
 
         <span class="macro">assert_eq!</span>(res.local_size, size);
         <span class="macro">assert_eq!</span>(res.downloaded_size, <span class="number">0</span>);
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_blob_delete_mem() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+
+        <span class="kw">let </span>node = <span class="kw">crate</span>::node::Node::memory().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>res = node.blobs().add_bytes(<span class="kw-2">&amp;</span><span class="string">b"hello world"</span>[..]).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>hashes: Vec&lt;<span class="kw">_</span>&gt; = node.blobs().list().<span class="kw">await</span><span class="question-mark">?</span>.try_collect().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">assert_eq!</span>(hashes.len(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(hashes[<span class="number">0</span>].hash, res.hash);
+
+        <span class="comment">// delete
+        </span>node.blobs().delete_blob(res.hash).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>hashes: Vec&lt;<span class="kw">_</span>&gt; = node.blobs().list().<span class="kw">await</span><span class="question-mark">?</span>.try_collect().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">assert!</span>(hashes.is_empty());
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_blob_delete_fs() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+
+        <span class="kw">let </span>dir = tempfile::tempdir()<span class="question-mark">?</span>;
+        <span class="kw">let </span>node = <span class="kw">crate</span>::node::Node::persistent(dir.path())
+            .<span class="kw">await</span><span class="question-mark">?
+            </span>.spawn()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>res = node.blobs().add_bytes(<span class="kw-2">&amp;</span><span class="string">b"hello world"</span>[..]).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>hashes: Vec&lt;<span class="kw">_</span>&gt; = node.blobs().list().<span class="kw">await</span><span class="question-mark">?</span>.try_collect().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">assert_eq!</span>(hashes.len(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(hashes[<span class="number">0</span>].hash, res.hash);
+
+        <span class="comment">// delete
+        </span>node.blobs().delete_blob(res.hash).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>hashes: Vec&lt;<span class="kw">_</span>&gt; = node.blobs().list().<span class="kw">await</span><span class="question-mark">?</span>.try_collect().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">assert!</span>(hashes.is_empty());
 
         <span class="prelude-val">Ok</span>(())
     }
