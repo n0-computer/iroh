@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["CapsStore","EntryStore","NamespaceStore","SecretStore","Store"]};
