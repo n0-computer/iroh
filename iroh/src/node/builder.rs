@@ -1,5 +1,5 @@
 use std::{
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -95,7 +95,8 @@ where
     D: Map,
 {
     storage: StorageConfig,
-    bind_port: Option<u16>,
+    addr_v4: SocketAddrV4,
+    addr_v6: SocketAddrV6,
     secret_key: SecretKey,
     rpc_endpoint: IrohServerEndpoint,
     rpc_addr: Option<SocketAddr>,
@@ -223,7 +224,8 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
 
         Self {
             storage: StorageConfig::Mem,
-            bind_port: None,
+            addr_v4: SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_BIND_PORT),
+            addr_v6: SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + 1, 0, 0),
             secret_key: SecretKey::generate(),
             blobs_store: Default::default(),
             keylog: false,
@@ -257,7 +259,8 @@ impl<D: Map> Builder<D> {
 
         Self {
             storage,
-            bind_port: None,
+            addr_v4: SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_BIND_PORT),
+            addr_v6: SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + 1, 0, 0),
             secret_key: SecretKey::generate(),
             blobs_store,
             keylog: false,
@@ -310,7 +313,8 @@ where
 
         Ok(Builder {
             storage: StorageConfig::Persistent(root.into()),
-            bind_port: self.bind_port,
+            addr_v4: self.addr_v4,
+            addr_v6: self.addr_v6,
             secret_key,
             blobs_store,
             keylog: self.keylog,
@@ -422,11 +426,22 @@ where
         self
     }
 
-    /// Binds the node service to a different socket.
-    ///
-    /// By default it binds to `127.0.0.1:11204`.
-    pub fn bind_port(mut self, port: u16) -> Self {
-        self.bind_port.replace(port);
+    /// Binds the node service to a specific socket IPv4 address.
+    pub fn bind_addr_v4(mut self, addr: SocketAddrV4) -> Self {
+        self.addr_v4 = addr;
+        self
+    }
+
+    /// Binds the node service to a specific socket IPv6 address.
+    pub fn bind_addr_v6(mut self, addr: SocketAddrV6) -> Self {
+        self.addr_v6 = addr;
+        self
+    }
+
+    /// Use a random port for both IPv4 and IPv6.
+    pub fn bind_random_port(mut self) -> Self {
+        self.addr_v4.set_port(0);
+        self.addr_v6.set_port(0);
         self
     }
 
@@ -560,8 +575,13 @@ where
                 }
                 StorageConfig::Mem => None,
             };
-            let bind_port = self.bind_port.unwrap_or(DEFAULT_BIND_PORT);
-            (endpoint.bind(bind_port).await?, nodes_data_path)
+
+            (
+                endpoint
+                    .bind(Some(self.addr_v4), Some(self.addr_v6))
+                    .await?,
+                nodes_data_path,
+            )
         };
         trace!("created endpoint");
 

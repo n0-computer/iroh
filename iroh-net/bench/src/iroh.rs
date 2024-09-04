@@ -41,7 +41,7 @@ pub fn server_endpoint(
             .alpns(vec![ALPN.to_vec()])
             .relay_mode(relay_mode)
             .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
-            .bind(0)
+            .bind(None, None)
             .await
             .unwrap();
 
@@ -97,7 +97,7 @@ pub async fn connect_client(
         .alpns(vec![ALPN.to_vec()])
         .relay_mode(relay_mode)
         .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
-        .bind(0)
+        .bind(None, None)
         .await
         .unwrap();
 

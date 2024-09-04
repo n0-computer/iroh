@@ -13,7 +13,7 @@
 
 use std::any::Any;
 use std::future::{Future, IntoFuture};
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
@@ -109,12 +109,18 @@ impl Builder {
 
     /// Binds the magic endpoint on the specified socket address.
     ///
-    /// The *bind_port* is the port that should be bound locally.
-    /// The port will be used to bind an IPv4 and, if supported, and IPv6 socket.
-    /// You can pass `0` to let the operating system choose a free port for you.
+    /// The *addr_v4* is the address that should be bound locally on IPv4.
     ///
-    /// NOTE: This will be improved soon to add support for binding on specific addresses.
-    pub async fn bind(self, bind_port: u16) -> Result<Endpoint> {
+    /// You can pass `None` to let the operating system choose a free port for you, and bind to `0.0.0.0`.
+    ///
+    /// The *addr_v6* is the address that should be bound locally on IPv6.
+    ///
+    /// You can pass `None` to let the operating system choose a free port for you, and bind to `::1`.
+    pub async fn bind(
+        self,
+        addr_v4: Option<SocketAddrV4>,
+        addr_v6: Option<SocketAddrV6>,
+    ) -> Result<Endpoint> {
         let relay_map = self.relay_mode.relay_map();
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
         let static_config = StaticConfig {
@@ -127,7 +133,8 @@ impl Builder {
             .unwrap_or_else(|| default_resolver().clone());
 
         let msock_opts = magicsock::Options {
-            port: bind_port,
+            addr_v4,
+            addr_v6,
             secret_key,
             relay_map,
             node_map: self.node_map,
@@ -1258,7 +1265,7 @@ mod tests {
         let _guard = iroh_test::logging::setup();
         let ep = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
-            .bind(0)
+            .bind(None, None)
             .await
             .unwrap();
         let my_addr = ep.node_addr().await.unwrap();
@@ -1289,7 +1296,7 @@ mod tests {
                         .alpns(vec![TEST_ALPN.to_vec()])
                         .relay_mode(RelayMode::Custom(relay_map))
                         .insecure_skip_relay_cert_verify(true)
-                        .bind(0)
+                        .bind(None, None)
                         .await
                         .unwrap();
                     info!("accepting connection");
@@ -1324,7 +1331,7 @@ mod tests {
                     .alpns(vec![TEST_ALPN.to_vec()])
                     .relay_mode(RelayMode::Custom(relay_map))
                     .insecure_skip_relay_cert_verify(true)
-                    .bind(0)
+                    .bind(None, None)
                     .await
                     .unwrap();
                 info!("client connecting");
@@ -1386,7 +1393,7 @@ mod tests {
             }
             builder
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .bind(0)
+                .bind(None, None)
                 .await
                 .unwrap()
         }
@@ -1443,7 +1450,7 @@ mod tests {
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
                         .relay_mode(RelayMode::Custom(relay_map))
-                        .bind(0)
+                        .bind(None, None)
                         .await
                         .unwrap();
                     let eps = ep.bound_sockets();
@@ -1489,7 +1496,7 @@ mod tests {
                     .insecure_skip_relay_cert_verify(true)
                     .relay_mode(RelayMode::Custom(relay_map))
                     .secret_key(client_secret_key)
-                    .bind(0)
+                    .bind(None, None)
                     .await
                     .unwrap();
                 let eps = ep.bound_sockets();
@@ -1534,13 +1541,13 @@ mod tests {
         let ep1 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled)
-            .bind(0)
+            .bind(None, None)
             .await
             .unwrap();
         let ep2 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled)
-            .bind(0)
+            .bind(None, None)
             .await
             .unwrap();
         let ep1_nodeaddr = ep1.node_addr().await.unwrap();
@@ -1631,7 +1638,7 @@ mod tests {
             .insecure_skip_relay_cert_verify(true)
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .bind(0)
+            .bind(None, None)
             .await
             .unwrap();
         let ep2 = Endpoint::builder()
@@ -1639,7 +1646,7 @@ mod tests {
             .insecure_skip_relay_cert_verify(true)
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
-            .bind(0)
+            .bind(None, None)
             .await
             .unwrap();
 
