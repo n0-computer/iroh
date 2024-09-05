@@ -2854,7 +2854,7 @@ mod tests {
                 .transport_config(transport_config)
                 .relay_mode(relay_mode)
                 .alpns(vec![ALPN.to_vec()])
-                .bind(None, None)
+                .bind()
                 .await?;
 
             Ok(Self {

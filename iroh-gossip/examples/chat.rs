@@ -111,10 +111,8 @@ async fn main() -> Result<()> {
         .secret_key(secret_key)
         .alpns(vec![GOSSIP_ALPN.to_vec()])
         .relay_mode(relay_mode)
-        .bind(
-            Some(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, args.bind_port)),
-            None,
-        )
+        .bind_addr_v4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, args.bind_port))
+        .bind()
         .await?;
     println!("> our node id: {}", endpoint.node_id());
 

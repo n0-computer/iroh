@@ -594,7 +594,7 @@ mod tests {
             .discovery(Box::new(disco))
             .relay_mode(RelayMode::Disabled)
             .alpns(vec![TEST_ALPN.to_vec()])
-            .bind(None, None)
+            .bind()
             .await
             .unwrap();
 
@@ -762,7 +762,7 @@ mod test_dns_pkarr {
             .alpns(vec![TEST_ALPN.to_vec()])
             .dns_resolver(dns_pkarr_server.dns_resolver())
             .discovery(dns_pkarr_server.discovery(secret_key))
-            .bind(None, None)
+            .bind()
             .await?;
 
         let handle = tokio::spawn({

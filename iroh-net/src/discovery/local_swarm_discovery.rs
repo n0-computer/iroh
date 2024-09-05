@@ -308,7 +308,7 @@ mod tests {
             };
 
             // pass in endpoint, this is never used
-            let ep = crate::endpoint::Builder::default().bind(None, None).await?;
+            let ep = crate::endpoint::Builder::default().bind().await?;
             // resolve twice to ensure we can create separate streams for the same node_id
             let mut s1 = discovery_a.resolve(ep.clone(), node_id_b).unwrap();
             let mut s2 = discovery_a.resolve(ep, node_id_b).unwrap();

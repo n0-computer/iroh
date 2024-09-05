@@ -30,7 +30,7 @@ use iroh_blobs::{
 async fn dial(secret_key: SecretKey, peer: NodeAddr) -> anyhow::Result<quinn::Connection> {
     let endpoint = iroh_net::Endpoint::builder()
         .secret_key(secret_key)
-        .bind(None, None)
+        .bind()
         .await?;
     endpoint
         .connect(peer, iroh::blobs::protocol::ALPN)

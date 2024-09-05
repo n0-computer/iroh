@@ -578,7 +578,9 @@ where
 
             (
                 endpoint
-                    .bind(Some(self.addr_v4), Some(self.addr_v6))
+                    .bind_addr_v4(self.addr_v4)
+                    .bind_addr_v6(self.addr_v6)
+                    .bind()
                     .await?,
                 nodes_data_path,
             )
