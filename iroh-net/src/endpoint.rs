@@ -690,7 +690,7 @@ impl Endpoint {
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
-    /// let mep =  Endpoint::builder().bind(0).await.unwrap();
+    /// let mep =  Endpoint::builder().bind(None, None).await.unwrap();
     /// let _addrs = mep.direct_addresses().next().await;
     /// # });
     /// ```

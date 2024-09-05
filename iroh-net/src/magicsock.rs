@@ -246,7 +246,7 @@ pub(crate) struct MagicSock {
 }
 
 impl MagicSock {
-    /// Creates a magic [`MagicSock`] listening on [`Options::port`].
+    /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] adn [`Options::addr_v6`].
     pub(crate) async fn spawn(opts: Options) -> Result<Handle> {
         Handle::new(opts).await
     }
@@ -1368,7 +1368,7 @@ impl DirectAddrUpdateState {
 }
 
 impl Handle {
-    /// Creates a magic [`MagicSock`] listening on [`Options::port`].
+    /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] adn [`Options::addr_v6`].
     async fn new(opts: Options) -> Result<Self> {
         let me = opts.secret_key.public().fmt_short();
         if crate::util::relay_only_mode() {
