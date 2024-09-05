@@ -668,7 +668,7 @@ async fn make_endpoint(
         Some(relay_map) => endpoint.relay_mode(RelayMode::Custom(relay_map)),
         None => endpoint,
     };
-    let endpoint = endpoint.bind(0).await?;
+    let endpoint = endpoint.bind().await?;
 
     tokio::time::timeout(Duration::from_secs(10), endpoint.direct_addresses().next())
         .await

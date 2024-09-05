@@ -70,7 +70,7 @@ async fn chat_server(args: Args) -> anyhow::Result<()> {
         .alpns(vec![CHAT_ALPN.to_vec()])
         .secret_key(secret_key)
         .discovery(Box::new(discovery))
-        .bind(0)
+        .bind()
         .await?;
     let zid = pkarr::PublicKey::try_from(node_id.as_bytes())?.to_z32();
     println!("Listening on {}", node_id);
@@ -115,7 +115,7 @@ async fn chat_client(args: Args) -> anyhow::Result<()> {
     let endpoint = Endpoint::builder()
         .secret_key(secret_key)
         .discovery(Box::new(discovery))
-        .bind(0)
+        .bind()
         .await?;
     println!("We are {} and connecting to {}", node_id, remote_node_id);
     let connection = endpoint

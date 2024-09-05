@@ -659,7 +659,7 @@ mod tests {
         let _guard = iroh_test::logging::setup();
 
         use std::io::Cursor;
-        let node = Node::memory().bind_port(0).spawn().await?;
+        let node = Node::memory().bind_random_port().spawn().await?;
 
         let _drop_guard = node.cancel_token().drop_guard();
         let client = node.client();
@@ -680,7 +680,7 @@ mod tests {
     async fn test_node_add_tagged_blob_event() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let node = Node::memory().bind_port(0).spawn().await?;
+        let node = Node::memory().bind_random_port().spawn().await?;
 
         let _drop_guard = node.cancel_token().drop_guard();
 
@@ -740,13 +740,13 @@ mod tests {
         let (relay_map, relay_url, _guard) = iroh_net::test_utils::run_relay_server().await?;
 
         let node1 = Node::memory()
-            .bind_port(0)
+            .bind_random_port()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(true)
             .spawn()
             .await?;
         let node2 = Node::memory()
-            .bind_port(0)
+            .bind_random_port()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(true)
             .spawn()
@@ -778,7 +778,7 @@ mod tests {
         let secret1 = SecretKey::generate();
         let node1 = Node::memory()
             .secret_key(secret1.clone())
-            .bind_port(0)
+            .bind_random_port()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(true)
             .dns_resolver(dns_pkarr_server.dns_resolver())
@@ -788,7 +788,7 @@ mod tests {
         let secret2 = SecretKey::generate();
         let node2 = Node::memory()
             .secret_key(secret2.clone())
-            .bind_port(0)
+            .bind_random_port()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(true)
             .dns_resolver(dns_pkarr_server.dns_resolver())

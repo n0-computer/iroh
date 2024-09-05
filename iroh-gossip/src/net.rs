@@ -845,7 +845,7 @@ mod test {
             .alpns(vec![GOSSIP_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .insecure_skip_relay_cert_verify(true)
-            .bind(0)
+            .bind()
             .await?;
 
         ep.watch_home_relay().next().await;

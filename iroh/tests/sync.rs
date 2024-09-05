@@ -491,14 +491,13 @@ async fn test_sync_via_relay() -> Result<()> {
     let (relay_map, _relay_url, _guard) = iroh_net::test_utils::run_relay_server().await?;
 
     let node1 = Node::memory()
-        .bind_port(0)
         .relay_mode(RelayMode::Custom(relay_map.clone()))
         .insecure_skip_relay_cert_verify(true)
         .spawn()
         .await?;
     let node1_id = node1.node_id();
     let node2 = Node::memory()
-        .bind_port(0)
+        .bind_random_port()
         .relay_mode(RelayMode::Custom(relay_map.clone()))
         .insecure_skip_relay_cert_verify(true)
         .spawn()

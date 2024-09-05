@@ -52,8 +52,8 @@ async fn main() -> anyhow::Result<()> {
         // Use `RelayMode::Disable` to disable holepunching and relaying over HTTPS
         // If you want to experiment with relaying using your own relay server, you must pass in the same custom relay url to both the `listen` code AND the `connect` code
         .relay_mode(RelayMode::Default)
-        // You can choose a port to bind to, but passing in `0` will bind the socket to a random available port
-        .bind(0)
+        // You can choose an address to bind to, but passing in `None` will bind the socket to a random available port
+        .bind()
         .await?;
 
     let me = endpoint.node_id();

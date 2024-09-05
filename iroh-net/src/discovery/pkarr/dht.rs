@@ -399,7 +399,7 @@ mod tests {
     #[ignore = "flaky"]
     async fn dht_discovery_smoke() -> TestResult {
         let _ = tracing_subscriber::fmt::try_init();
-        let ep = crate::Endpoint::builder().bind(0).await?;
+        let ep = crate::Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
         let testnet = mainline::dht::Testnet::new(2);
         let settings = pkarr::Settings {

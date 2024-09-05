@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fmt, str::FromStr};
+use std::{
+    collections::HashMap,
+    fmt,
+    net::{Ipv4Addr, SocketAddrV4},
+    str::FromStr,
+};
 
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
@@ -106,7 +111,8 @@ async fn main() -> Result<()> {
         .secret_key(secret_key)
         .alpns(vec![GOSSIP_ALPN.to_vec()])
         .relay_mode(relay_mode)
-        .bind(args.bind_port)
+        .bind_addr_v4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, args.bind_port))
+        .bind()
         .await?;
     println!("> our node id: {}", endpoint.node_id());
 
