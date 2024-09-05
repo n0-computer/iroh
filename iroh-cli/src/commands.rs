@@ -83,7 +83,7 @@ pub(crate) enum Commands {
     /// Open the iroh console.
     ///
     /// The console is a REPL for interacting with a running iroh node.
-    /// For more info on available commands, see https://iroh.computer/docs/api.
+    /// For more info on available commands, see <https://iroh.computer/docs/api>.
     ///
     /// For general configuration options see <https://iroh.computer/docs/reference/config>.
     Console,
