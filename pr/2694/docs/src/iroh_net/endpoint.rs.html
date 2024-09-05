@@ -1729,6 +1729,8 @@
 <a href="#1729" id="1729">1729</a>
 <a href="#1730" id="1730">1730</a>
 <a href="#1731" id="1731">1731</a>
+<a href="#1732" id="1732">1732</a>
+<a href="#1733" id="1733">1733</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1883,6 +1885,7 @@
     </span><span class="doccomment">/// Set the IPv4 bind address.
     ///
     /// Setting the port to `0` will use a random port.
+    /// If the port specified is already in use, it will fallback to choosing a random port.
     ///
     /// By default will use `0.0.0.0:0` to bind to.
     </span><span class="kw">pub fn </span>bind_addr_v4(<span class="kw-2">mut </span><span class="self">self</span>, addr: SocketAddrV4) -&gt; <span class="self">Self </span>{
@@ -1893,6 +1896,7 @@
     <span class="doccomment">/// Set the IPv6 bind address.
     ///
     /// Setting the port to `0` will use a random port.
+    /// If the port specified is already in use, it will fallback to choosing a random port.
     ///
     /// By default will use `[::]:0` to bind to.
     </span><span class="kw">pub fn </span>bind_addr_v6(<span class="kw-2">mut </span><span class="self">self</span>, addr: SocketAddrV6) -&gt; <span class="self">Self </span>{
