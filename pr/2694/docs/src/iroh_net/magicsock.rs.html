@@ -4148,7 +4148,7 @@
 }
 
 <span class="kw">impl </span>MagicSock {
-    <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::port`].
+    <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] adn [`Options::addr_v6`].
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>spawn(opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;Handle&gt; {
         Handle::new(opts).<span class="kw">await
     </span>}
@@ -5270,7 +5270,7 @@
 }
 
 <span class="kw">impl </span>Handle {
-    <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::port`].
+    <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] adn [`Options::addr_v6`].
     </span><span class="kw">async fn </span>new(opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>me = opts.secret_key.public().fmt_short();
         <span class="kw">if </span><span class="kw">crate</span>::util::relay_only_mode() {
