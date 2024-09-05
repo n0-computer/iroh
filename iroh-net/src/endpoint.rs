@@ -112,14 +112,6 @@ impl Builder {
     // # The final constructor that everyone needs.
 
     /// Binds the magic endpoint on the specified socket address.
-    ///
-    /// The *addr_v4* is the address that should be bound locally on IPv4.
-    ///
-    /// You can pass `None` to let the operating system choose a free port for you, and bind to `0.0.0.0`.
-    ///
-    /// The *addr_v6* is the address that should be bound locally on IPv6.
-    ///
-    /// You can pass `None` to let the operating system choose a free port for you, and bind to `[::]`.
     pub async fn bind(self) -> Result<Endpoint> {
         let relay_map = self.relay_mode.relay_map();
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
