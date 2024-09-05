@@ -111,7 +111,7 @@ impl Builder {
 
     // # The final constructor that everyone needs.
 
-    /// Binds the magic endpoint on the specified socket address.
+    /// Binds the magic endpoint.
     pub async fn bind(self) -> Result<Endpoint> {
         let relay_map = self.relay_mode.relay_map();
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
