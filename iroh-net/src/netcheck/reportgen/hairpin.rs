@@ -17,12 +17,12 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use anyhow::{bail, Context, Result};
 use tokio::sync::oneshot;
 use tokio::time::Instant;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::net::UdpSocket;
 use crate::netcheck::{self, reportgen, Inflight};
 use crate::stun;
-use crate::util::CancelOnDrop;
 
 use crate::defaults::timeouts::HAIRPIN_CHECK_TIMEOUT;
 
@@ -32,7 +32,7 @@ use crate::defaults::timeouts::HAIRPIN_CHECK_TIMEOUT;
 #[derive(Debug)]
 pub(super) struct Client {
     addr: Option<oneshot::Sender<Message>>,
-    _drop_guard: CancelOnDrop,
+    _drop_guard: AbortOnDropHandle<()>,
 }
 
 impl Client {
@@ -49,7 +49,7 @@ impl Client {
             tokio::spawn(async move { actor.run().await }.instrument(info_span!("hairpin.actor")));
         Self {
             addr: Some(addr),
-            _drop_guard: CancelOnDrop::new("hairpin actor", task.abort_handle()),
+            _drop_guard: AbortOnDropHandle::new(task),
         }
     }
 

@@ -35,7 +35,6 @@ use iroh::{
         netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
         ticket::NodeTicket,
-        util::CancelOnDrop,
         Endpoint, NodeAddr, NodeId,
     },
     util::{path::IrohPaths, progress::ProgressWriter},
@@ -44,6 +43,7 @@ use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
+use tokio_util::task::AbortOnDropHandle;
 
 use iroh::net::metrics::MagicsockMetrics;
 use iroh_metrics::core::Core;
@@ -372,7 +372,7 @@ struct Gui {
     recv_pb: ProgressBar,
     echo_pb: ProgressBar,
     #[allow(dead_code)]
-    counter_task: Option<CancelOnDrop>,
+    counter_task: Option<AbortOnDropHandle<()>>,
 }
 
 impl Gui {
@@ -412,10 +412,7 @@ impl Gui {
             send_pb,
             recv_pb,
             echo_pb,
-            counter_task: Some(CancelOnDrop::new(
-                "counter_task",
-                counter_task.abort_handle(),
-            )),
+            counter_task: Some(AbortOnDropHandle::new(counter_task)),
         }
     }
 

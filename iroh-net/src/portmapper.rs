@@ -110,7 +110,7 @@ pub struct Client {
     /// Channel used to communicate with the port mapping service.
     service_tx: mpsc::Sender<Message>,
     /// A handle to the service that will cancel the spawned task once the client is dropped.
-    _service_handle: std::sync::Arc<util::CancelOnDrop>,
+    _service_handle: std::sync::Arc<AbortOnDropHandle<Result<()>>>,
 }
 
 impl Default for Client {
@@ -126,13 +126,9 @@ impl Client {
 
         let (service, watcher) = Service::new(config, service_rx);
 
-        let handle = util::CancelOnDrop::new(
-            "portmap_service",
-            tokio::spawn(
-                async move { service.run().await }.instrument(info_span!("portmapper.service")),
-            )
-            .abort_handle(),
-        );
+        let handle = AbortOnDropHandle::new(tokio::spawn(
+            async move { service.run().await }.instrument(info_span!("portmapper.service")),
+        ));
 
         Client {
             port_mapping: watcher,

@@ -2679,6 +2679,7 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
+ "tokio-util",
  "toml",
  "tracing",
  "tracing-appender",

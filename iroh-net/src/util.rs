@@ -48,30 +48,6 @@ impl<T: Clone + Send> Drop for SharedAbortingJoinHandle<T> {
     }
 }
 
-/// Holds a handle to a task and aborts it on drop.
-///
-/// See [`tokio::task::AbortHandle`].
-#[derive(derive_more::Debug)]
-pub struct CancelOnDrop {
-    task_name: &'static str,
-    #[debug(skip)]
-    handle: tokio::task::AbortHandle,
-}
-
-impl CancelOnDrop {
-    /// Create a [`CancelOnDrop`] with a name and a handle to a task.
-    pub fn new(task_name: &'static str, handle: tokio::task::AbortHandle) -> Self {
-        CancelOnDrop { task_name, handle }
-    }
-}
-
-impl Drop for CancelOnDrop {
-    fn drop(&mut self) {
-        self.handle.abort();
-        tracing::trace!("{} completed (aborted)", self.task_name);
-    }
-}
-
 /// Resolves to pending if the inner is `None`.
 #[derive(Debug)]
 pub struct MaybeFuture<T> {
