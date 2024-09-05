@@ -14,10 +14,10 @@ use futures_lite::{Stream, StreamExt};
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::{store::EntryStatus, Hash};
 use iroh_gossip::net::Gossip;
-use iroh_net::util::SharedAbortingJoinHandle;
 use iroh_net::{key::PublicKey, Endpoint, NodeAddr};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{error, error_span, Instrument};
 
 use crate::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
@@ -49,7 +49,7 @@ pub struct Engine {
     pub default_author: Arc<DefaultAuthor>,
     to_live_actor: mpsc::Sender<ToLiveActor>,
     #[allow(dead_code)]
-    actor_handle: SharedAbortingJoinHandle<()>,
+    actor_handle: Arc<AbortOnDropHandle<()>>,
     #[debug("ContentStatusCallback")]
     content_status_cb: ContentStatusCallback,
 }
@@ -108,7 +108,7 @@ impl Engine {
             endpoint,
             sync,
             to_live_actor: live_actor_tx,
-            actor_handle: actor_handle.into(),
+            actor_handle: Arc::new(AbortOnDropHandle::new(actor_handle)),
             content_status_cb,
             default_author: Arc::new(default_author),
         })
