@@ -19,6 +19,11 @@ on:
         description: "Upload URL"
         required: false
         default: ""
+      base_hash:
+          description: "Commit hash from which to build"
+          required: false
+          type: string
+          default: ""
   push:
     tags:
     - "v*"
@@ -126,8 +131,16 @@ jobs:
           RUSTV: ${{ matrix.rust }}
         steps:
         - name: Checkout
+          if: inputs.base_hash == ''
           uses: actions/checkout@v4
           with:
+            submodules: recursive
+        
+        - name: Checkout specified commit
+          if: inputs.base_hash != ''
+          uses: actions/checkout@v4
+          with:
+            ref: ${{ inputs.base_hash }}
             submodules: recursive
     
         - name: Set build arch
