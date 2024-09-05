@@ -1,9 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    net::SocketAddr,
-    path::PathBuf,
-    time::Duration,
-};
+//! Define blob-related commands.
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use clap::Subcommand;
@@ -34,8 +29,15 @@ use iroh::{
     },
     net::{key::PublicKey, relay::RelayUrl, NodeAddr},
 };
+use std::{
+    collections::{BTreeMap, HashMap},
+    net::SocketAddr,
+    path::PathBuf,
+    time::Duration,
+};
 use tokio::io::AsyncWriteExt;
 
+/// Subcommds for the blob command.
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug, Clone)]
 pub enum BlobCommands {
@@ -160,6 +162,7 @@ pub enum BlobCommands {
     },
 }
 
+/// Possible outcomes of an input.
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum TicketOrHash {
     Ticket(BlobTicket),
@@ -181,6 +184,7 @@ impl std::str::FromStr for TicketOrHash {
 }
 
 impl BlobCommands {
+    /// Run the blob command given the iroh client.
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Get {
@@ -437,6 +441,7 @@ pub struct BlobAddOptions {
     pub no_ticket: bool,
 }
 
+/// Possible list subcommands.
 #[derive(Subcommand, Debug, Clone)]
 pub enum ListCommands {
     /// List the available blobs on the running provider.
@@ -448,6 +453,7 @@ pub enum ListCommands {
 }
 
 impl ListCommands {
+    /// Run a list subcommand.
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Blobs => {
@@ -494,6 +500,7 @@ impl ListCommands {
     }
 }
 
+/// Possible delete subcommands.
 #[derive(Subcommand, Debug, Clone)]
 pub enum DeleteCommands {
     /// Delete the given blobs
@@ -505,6 +512,7 @@ pub enum DeleteCommands {
 }
 
 impl DeleteCommands {
+    /// Run the delete command.
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Blob { hash } => {
@@ -518,6 +526,7 @@ impl DeleteCommands {
     }
 }
 
+/// Given the verbosity level, return the corresponding [`ReportLevel`].
 fn get_report_level(verbose: u8) -> ReportLevel {
     match verbose {
         0 => ReportLevel::Warn,
@@ -526,6 +535,7 @@ fn get_report_level(verbose: u8) -> ReportLevel {
     }
 }
 
+/// Apply the report level to the given text.
 fn apply_report_level(text: String, level: ReportLevel) -> console::StyledObject<String> {
     match level {
         ReportLevel::Trace => style(text).dim(),
@@ -535,6 +545,7 @@ fn apply_report_level(text: String, level: ReportLevel) -> console::StyledObject
     }
 }
 
+/// Check that the consistency of the blobs on the running node, and repair if instructed.
 pub async fn consistency_check(iroh: &Iroh, verbose: u8, repair: bool) -> Result<()> {
     let mut response = iroh.blobs().consistency_check(repair).await?;
     let verbosity = get_report_level(verbose);
@@ -576,6 +587,7 @@ pub async fn consistency_check(iroh: &Iroh, verbose: u8, repair: bool) -> Result
     Ok(())
 }
 
+/// Check the validity of the blobs on the running node, and repair if instructed.
 pub async fn validate(iroh: &Iroh, verbose: u8, repair: bool) -> Result<()> {
     let mut state = ValidateProgressState::new();
     let mut response = iroh.blobs().validate(repair).await?;
@@ -661,6 +673,7 @@ pub async fn validate(iroh: &Iroh, verbose: u8, repair: bool) -> Result<()> {
     Ok(())
 }
 
+/// Collection of all the validation progress state.
 struct ValidateProgressState {
     mp: MultiProgress,
     pbs: HashMap<u64, ProgressBar>,
@@ -685,6 +698,7 @@ impl ValidateProgressState {
         }
     }
 
+    /// Set the total number to the provided value and style the progress bar to starting.
     fn starting(&mut self, total: u64) {
         self.total = total;
         self.errors = 0;
@@ -699,6 +713,7 @@ impl ValidateProgressState {
         );
     }
 
+    /// Add a message to the progress bar in the given `id`.
     fn add_entry(&mut self, id: u64, hash: Hash, path: Option<String>, size: u64) {
         let pb = self.mp.insert_before(&self.overall, ProgressBar::new(size));
         pb.set_style(ProgressStyle::default_bar()
@@ -716,18 +731,21 @@ impl ValidateProgressState {
         self.pbs.insert(id, pb);
     }
 
+    /// Progress the progress bar with `id` by `progress` amount.
     fn progress(&mut self, id: u64, progress: u64) {
         if let Some(pb) = self.pbs.get_mut(&id) {
             pb.set_position(progress);
         }
     }
 
+    /// Set an error in the progress bar. Consumes the [`ValidateProgressState`].
     fn abort(self, error: String) {
         let error_line = self.mp.add(ProgressBar::new(0));
         error_line.set_style(ProgressStyle::default_bar().template("{msg}").unwrap());
         error_line.set_message(error);
     }
 
+    /// Finish a progress bar with a given error message.
     fn done(&mut self, id: u64, error: Option<String>) {
         if let Some(pb) = self.pbs.remove(&id) {
             let ok_char = style(Emoji("✔", "OK")).green();
@@ -796,6 +814,7 @@ pub enum TicketOption {
     Print,
 }
 
+/// Helper function to add a [`BlobSource`] given some [`BlobAddOptions`].
 pub async fn add_with_opts(
     client: &iroh::client::Iroh,
     source: BlobSource,
@@ -877,6 +896,7 @@ pub async fn add(
     Ok(())
 }
 
+/// Entry with a given name, size, and hash.
 #[derive(Debug)]
 pub struct ProvideResponseEntry {
     pub name: String,
@@ -884,6 +904,7 @@ pub struct ProvideResponseEntry {
     pub hash: Hash,
 }
 
+/// Combine the [`AddProgress`] outputs from a [`Stream`] into a single tuple.
 pub async fn aggregate_add_response(
     mut stream: impl Stream<Item = Result<AddProgress>> + Unpin,
 ) -> Result<(Hash, BlobFormat, Vec<ProvideResponseEntry>)> {
@@ -947,6 +968,7 @@ pub async fn aggregate_add_response(
     Ok((hash, format, entries))
 }
 
+/// Print out the add reponse.
 pub fn print_add_response(hash: Hash, format: BlobFormat, entries: Vec<ProvideResponseEntry>) {
     let mut total_size = 0;
     for ProvideResponseEntry { name, size, hash } in entries {
@@ -961,6 +983,7 @@ pub fn print_add_response(hash: Hash, format: BlobFormat, entries: Vec<ProvideRe
     }
 }
 
+/// Progress state for providing.
 #[derive(Debug)]
 pub struct ProvideProgressState {
     mp: MultiProgress,
@@ -975,6 +998,7 @@ impl ProvideProgressState {
         }
     }
 
+    /// Insert a new progress bar with the given id, name, and size.
     fn found(&mut self, name: String, id: u64, size: u64) {
         let pb = self.mp.add(ProgressBar::new(size));
         pb.set_style(ProgressStyle::default_bar()
@@ -987,12 +1011,14 @@ impl ProvideProgressState {
         self.pbs.insert(id, pb);
     }
 
+    /// Add some progress to the progress bar with the given id.
     fn progress(&mut self, id: u64, progress: u64) {
         if let Some(pb) = self.pbs.get_mut(&id) {
             pb.set_position(progress);
         }
     }
 
+    /// Set the multiprogress bar with the given id as finished and clear it.
     fn done(&mut self, id: u64, _hash: Hash) {
         if let Some(pb) = self.pbs.remove(&id) {
             pb.finish_and_clear();
@@ -1000,15 +1026,18 @@ impl ProvideProgressState {
         }
     }
 
+    /// Set the multiprogress bar as finished and clear them.
     fn all_done(self) {
         self.mp.clear().ok();
     }
 
+    /// Clear the multiprogress bar.
     fn error(self) {
         self.mp.clear().ok();
     }
 }
 
+/// Display the download progress for a given stream.
 pub async fn show_download_progress(
     hash: Hash,
     mut stream: impl Stream<Item = Result<DownloadProgress>> + Unpin,
@@ -1124,6 +1153,7 @@ impl From<String> for OutputTarget {
     }
 }
 
+/// Create a [`ProgressBar`] with some defaults for the overall progress.
 fn make_overall_progress() -> ProgressBar {
     let pb = ProgressBar::hidden();
     pb.enable_steady_tick(std::time::Duration::from_millis(100));
@@ -1137,6 +1167,7 @@ fn make_overall_progress() -> ProgressBar {
     pb
 }
 
+/// Create a [`ProgressBar`] with some defaults for the individual progress.
 fn make_individual_progress() -> ProgressBar {
     let pb = ProgressBar::hidden();
     pb.enable_steady_tick(std::time::Duration::from_millis(100));
