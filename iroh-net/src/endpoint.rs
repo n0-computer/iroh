@@ -160,7 +160,7 @@ impl Builder {
         self
     }
 
-    /// Set the IPv6 bind address.
+    /// Sets the IPv6 bind address.
     ///
     /// Setting the port to `0` will use a random port.
     /// If the port specified is already in use, it will fallback to choosing a random port.
