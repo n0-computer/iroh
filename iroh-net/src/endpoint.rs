@@ -152,6 +152,7 @@ impl Builder {
     /// Set the IPv4 bind address.
     ///
     /// Setting the port to `0` will use a random port.
+    /// If the port specified is already in use, it will fallback to choosing a random port.
     ///
     /// By default will use `0.0.0.0:0` to bind to.
     pub fn bind_addr_v4(mut self, addr: SocketAddrV4) -> Self {
@@ -162,6 +163,7 @@ impl Builder {
     /// Set the IPv6 bind address.
     ///
     /// Setting the port to `0` will use a random port.
+    /// If the port specified is already in use, it will fallback to choosing a random port.
     ///
     /// By default will use `[::]:0` to bind to.
     pub fn bind_addr_v6(mut self, addr: SocketAddrV6) -> Self {
