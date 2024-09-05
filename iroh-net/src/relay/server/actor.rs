@@ -16,6 +16,7 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::WebSocketStream;
 use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{info_span, trace, Instrument};
 use tungstenite::protocol::Role;
 
@@ -33,7 +34,6 @@ use crate::relay::{
     server::clients::Clients,
     server::metrics::Metrics,
 };
-use crate::util::AbortingJoinHandle;
 
 // TODO: skipping `verboseDropKeys` for now
 
@@ -62,7 +62,7 @@ pub struct ServerActorTask {
     /// When true, the server has been shutdown.
     closed: bool,
     /// Server loop handler
-    loop_handler: AbortingJoinHandle<Result<()>>,
+    loop_handler: AbortOnDropHandle<Result<()>>,
     /// Done token, forces a hard shutdown. To gracefully shutdown, use [`ServerActorTask::close`]
     cancel: CancellationToken,
     // TODO: stats collection
@@ -75,11 +75,10 @@ impl ServerActorTask {
         let server_actor = ServerActor::new(key.public(), server_channel_r);
         let cancel_token = CancellationToken::new();
         let done = cancel_token.clone();
-        let server_task = tokio::spawn(
+        let server_task = AbortOnDropHandle::new(tokio::spawn(
             async move { server_actor.run(done).await }
                 .instrument(info_span!("relay.server", me = %key.public().fmt_short())),
-        )
-        .into();
+        ));
         let meta_cert = init_meta_cert(&key.public());
         Self {
             write_timeout: Some(WRITE_TIMEOUT),
@@ -527,7 +526,7 @@ mod tests {
 
         // start a task as if a client is doing the "accept" handshake
         let pub_client_key = client_key.public();
-        let client_task: AbortingJoinHandle<Result<()>> = tokio::spawn(async move {
+        let client_task = AbortOnDropHandle::<Result<()>>::new(tokio::spawn(async move {
             // send the client info
             let client_info = ClientInfo {
                 version: PROTOCOL_VERSION,
@@ -536,8 +535,7 @@ mod tests {
                 .await?;
 
             Ok(())
-        })
-        .into();
+        }));
 
         // attempt to add the connection to the server
         handler

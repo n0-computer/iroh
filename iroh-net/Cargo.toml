@@ -66,7 +66,7 @@ tokio = { version = "1", features = ["io-util", "macros", "sync", "rt", "net", "
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
 tokio-tungstenite = "0.21"
 tokio-tungstenite-wasm = "0.3"
-tokio-util = { version = "0.7", features = ["io-util", "io", "codec"] }
+tokio-util = { version = "0.7", features = ["io-util", "io", "codec", "rt"] }
 tracing = "0.1"
 tungstenite = "0.21"
 url = { version = "2.4", features = ["serde"] }
