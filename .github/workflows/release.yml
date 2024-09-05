@@ -15,6 +15,10 @@ on:
         description: "Upload artifacts"
         required: true
         default: "true"
+      upload_url:
+        description: "Upload URL"
+        required: false
+        default: ""
   push:
     tags:
     - "v*"
@@ -261,7 +265,7 @@ jobs:
         - uses: n0-computer/actions-upload-release-asset@main
           if: (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push')
           with:
-            upload_url: ${{ needs.create-release.outputs.upload_url }}
+            upload_url: ${{ github.event.inputs.upload_url || needs.create-release.outputs.upload_url }}
             asset_path: ${{ env.ASSET }}
 
     docker:
