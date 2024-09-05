@@ -149,7 +149,7 @@ impl Builder {
 
     // # The very common methods everyone basically needs.
 
-    /// Set the IPv4 bind address.
+    /// Sets the IPv4 bind address.
     ///
     /// Setting the port to `0` will use a random port.
     /// If the port specified is already in use, it will fallback to choosing a random port.
