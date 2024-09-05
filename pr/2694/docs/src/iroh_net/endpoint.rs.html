@@ -1850,7 +1850,7 @@
     ///
     /// The *addr_v6* is the address that should be bound locally on IPv6.
     ///
-    /// You can pass `None` to let the operating system choose a free port for you, and bind to `::1`.
+    /// You can pass `None` to let the operating system choose a free port for you, and bind to `[::]`.
     </span><span class="kw">pub async fn </span>bind(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
         <span class="kw">let </span>relay_map = <span class="self">self</span>.relay_mode.relay_map();
         <span class="kw">let </span>secret_key = <span class="self">self</span>.secret_key.unwrap_or_else(SecretKey::generate);
@@ -1894,7 +1894,7 @@
     ///
     /// Setting the port to `0` will use a random port.
     ///
-    /// By default will use `::1:0` to bind to.
+    /// By default will use `[::]:0` to bind to.
     </span><span class="kw">pub fn </span>bind_addr_v6(<span class="kw-2">mut </span><span class="self">self</span>, addr: SocketAddrV6) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.addr_v6.replace(addr);
         <span class="self">self

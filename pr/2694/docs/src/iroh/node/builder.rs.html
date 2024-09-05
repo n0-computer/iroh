@@ -920,6 +920,29 @@
 <a href="#920" id="920">920</a>
 <a href="#921" id="921">921</a>
 <a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a>
+<a href="#924" id="924">924</a>
+<a href="#925" id="925">925</a>
+<a href="#926" id="926">926</a>
+<a href="#927" id="927">927</a>
+<a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -975,6 +998,14 @@
 
 <span class="doccomment">/// Default interval between GC runs.
 </span><span class="kw">const </span>DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(<span class="number">60 </span>* <span class="number">5</span>);
+
+<span class="doccomment">/// The default bind address for the iroh IPv4 socket.
+</span><span class="kw">pub const </span>DEFAULT_BIND_ADDR_V4: SocketAddrV4 =
+    SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_BIND_PORT);
+
+<span class="doccomment">/// The default bind address for the iroh IPv6 socket.
+</span><span class="kw">pub const </span>DEFAULT_BIND_ADDR_V6: SocketAddrV6 =
+    SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + <span class="number">1</span>, <span class="number">0</span>, <span class="number">0</span>);
 
 <span class="doccomment">/// Storage backend for documents.
 </span><span class="attr">#[derive(Debug, Clone)]
@@ -1146,8 +1177,8 @@
 
         <span class="self">Self </span>{
             storage: StorageConfig::Mem,
-            addr_v4: SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_BIND_PORT),
-            addr_v6: SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + <span class="number">1</span>, <span class="number">0</span>, <span class="number">0</span>),
+            addr_v4: DEFAULT_BIND_ADDR_V4,
+            addr_v6: DEFAULT_BIND_ADDR_V6,
             secret_key: SecretKey::generate(),
             blobs_store: Default::default(),
             keylog: <span class="bool-val">false</span>,
@@ -1350,20 +1381,35 @@
 
     <span class="doccomment">/// Binds the node service to a specific socket IPv4 address.
     ///
-    /// If the port used in the bind address is not free, a random different
-    /// port will be used.
+    /// By default this will be set to `0.0.0.0:11204`
+    ///
+    /// Setting the port to `0` will assign a random port.
+    /// If the port used is not free, a random different port will be used.
     </span><span class="kw">pub fn </span>bind_addr_v4(<span class="kw-2">mut </span><span class="self">self</span>, addr: SocketAddrV4) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.addr_v4 = addr;
         <span class="self">self
     </span>}
 
     <span class="doccomment">/// Binds the node service to a specific socket IPv6 address.
+    ///
+    /// By default this will be set to `[::]:11205`
+    ///
+    /// Setting the port to `0` will assign a random port.
+    /// If the port used is not free, a random different port will be used.
     </span><span class="kw">pub fn </span>bind_addr_v6(<span class="kw-2">mut </span><span class="self">self</span>, addr: SocketAddrV6) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.addr_v6 = addr;
         <span class="self">self
     </span>}
 
     <span class="doccomment">/// Use a random port for both IPv4 and IPv6.
+    ///
+    /// This is a convenience function useful when you do not need a specific port
+    /// and want to avoid conflicts when running multiple instances, e.g. in tests.
+    ///
+    /// This overrides the ports of the socket addresses provided by [`Builder::bind_addr_v4`]
+    /// and [`Builder::bind_addr_v6`].  By default both of those bind to the
+    /// unspecified address, which would result in `0.0.0.0:11204` and `[::]:11205` as bind
+    /// addresses unless they are changed.
     </span><span class="kw">pub fn </span>bind_random_port(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.addr_v4.set_port(<span class="number">0</span>);
         <span class="self">self</span>.addr_v6.set_port(<span class="number">0</span>);

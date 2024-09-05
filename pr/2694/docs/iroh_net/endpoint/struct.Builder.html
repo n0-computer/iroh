@@ -6,13 +6,13 @@ new <a href="../type.NodeId.html" title="type iroh_net::NodeId"><code>NodeId</co
 <p>The <em>addr_v4</em> is the address that should be bound locally on IPv4.</p>
 <p>You can pass <code>None</code> to let the operating system choose a free port for you, and bind to <code>0.0.0.0</code>.</p>
 <p>The <em>addr_v6</em> is the address that should be bound locally on IPv6.</p>
-<p>You can pass <code>None</code> to let the operating system choose a free port for you, and bind to <code>::1</code>.</p>
+<p>You can pass <code>None</code> to let the operating system choose a free port for you, and bind to <code>[::]</code>.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.bind_addr_v4" class="method"><a class="src rightside" href="../../src/iroh_net/endpoint.rs.html#157-160">source</a><h4 class="code-header">pub fn <a href="#method.bind_addr_v4" class="fn">bind_addr_v4</a>(self, addr: <a class="struct" href="https://doc.rust-lang.org/nightly/core/net/socket_addr/struct.SocketAddrV4.html" title="struct core::net::socket_addr::SocketAddrV4">SocketAddrV4</a>) -&gt; Self</h4></section></summary><div class="docblock"><p>Set the IPv4 bind address.</p>
 <p>Setting the port to <code>0</code> will use a random port.</p>
 <p>By default will use <code>0.0.0.0:0</code> to bind to.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.bind_addr_v6" class="method"><a class="src rightside" href="../../src/iroh_net/endpoint.rs.html#167-170">source</a><h4 class="code-header">pub fn <a href="#method.bind_addr_v6" class="fn">bind_addr_v6</a>(self, addr: <a class="struct" href="https://doc.rust-lang.org/nightly/core/net/socket_addr/struct.SocketAddrV6.html" title="struct core::net::socket_addr::SocketAddrV6">SocketAddrV6</a>) -&gt; Self</h4></section></summary><div class="docblock"><p>Set the IPv6 bind address.</p>
 <p>Setting the port to <code>0</code> will use a random port.</p>
-<p>By default will use <code>::1:0</code> to bind to.</p>
+<p>By default will use <code>[::]:0</code> to bind to.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.secret_key" class="method"><a class="src rightside" href="../../src/iroh_net/endpoint.rs.html#178-181">source</a><h4 class="code-header">pub fn <a href="#method.secret_key" class="fn">secret_key</a>(self, secret_key: <a class="struct" href="../key/struct.SecretKey.html" title="struct iroh_net::key::SecretKey">SecretKey</a>) -&gt; Self</h4></section></summary><div class="docblock"><p>Sets a secret key to authenticate with other peers.</p>
 <p>This secret key’s public key will be the <a href="../key/struct.PublicKey.html" title="struct iroh_net::key::PublicKey"><code>PublicKey</code></a> of this endpoint and thus
 also its <a href="../type.NodeId.html" title="type iroh_net::NodeId"><code>NodeId</code></a></p>
