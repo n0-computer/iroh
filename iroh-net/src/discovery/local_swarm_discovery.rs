@@ -17,10 +17,10 @@ use tracing::{debug, error, trace, warn};
 use iroh_base::key::PublicKey;
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::{sync::mpsc, task::JoinSet};
+use tokio_util::task::AbortOnDropHandle;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
-    util::AbortingJoinHandle,
     AddrInfo, Endpoint, NodeId,
 };
 
@@ -37,7 +37,7 @@ const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
 #[derive(Debug)]
 pub struct LocalSwarmDiscovery {
     #[allow(dead_code)]
-    handle: AbortingJoinHandle<()>,
+    handle: AbortOnDropHandle<()>,
     sender: mpsc::Sender<Message>,
 }
 
@@ -192,7 +192,7 @@ impl LocalSwarmDiscovery {
             }
         });
         Ok(Self {
-            handle: handle.into(),
+            handle: AbortOnDropHandle::new(handle),
             sender: send,
         })
     }

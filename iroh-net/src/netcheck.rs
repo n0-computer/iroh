@@ -17,12 +17,12 @@ use iroh_metrics::inc;
 use tokio::sync::{self, mpsc, oneshot};
 use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::dns::DnsResolver;
 use crate::net::{IpFamily, UdpSocket};
 use crate::relay::RelayUrl;
-use crate::util::CancelOnDrop;
 
 use super::portmapper;
 use super::relay::RelayMap;
@@ -174,7 +174,7 @@ pub struct Client {
     /// the actor will terminate.
     addr: Addr,
     /// Ensures the actor is terminated when the client is dropped.
-    _drop_guard: Arc<CancelOnDrop>,
+    _drop_guard: Arc<AbortOnDropHandle<()>>,
 }
 
 #[derive(Debug)]
@@ -210,7 +210,7 @@ impl Client {
         let addr = actor.addr();
         let task =
             tokio::spawn(async move { actor.run().await }.instrument(info_span!("netcheck.actor")));
-        let drop_guard = CancelOnDrop::new("netcheck actor", task.abort_handle());
+        let drop_guard = AbortOnDropHandle::new(task);
         Ok(Client {
             addr,
             _drop_guard: Arc::new(drop_guard),

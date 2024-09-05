@@ -35,14 +35,20 @@
 //! well, without going through [`client`](crate::client::Iroh))
 //!
 //! To shut down the node, call [`Node::shutdown`].
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Debug;
+use std::future::Future;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
-use std::{collections::BTreeSet, net::SocketAddr};
-use std::{fmt::Debug, time::Duration};
+use std::task::{Context, Poll};
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
+use futures_lite::future::Boxed as BoxFuture;
 use futures_lite::StreamExt;
+use futures_util::{future::Shared, FutureExt};
 use iroh_base::key::PublicKey;
 use iroh_blobs::store::Store as BaoStore;
 use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
@@ -51,7 +57,6 @@ use iroh_blobs::{HashAndFormat, TempTag};
 use iroh_gossip::net::Gossip;
 use iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
 use iroh_net::key::SecretKey;
-use iroh_net::util::SharedAbortingJoinHandle;
 use iroh_net::{AddrInfo, Endpoint, NodeAddr};
 use quic_rpc::transport::ServerEndpoint as _;
 use quic_rpc::RpcServer;
@@ -616,6 +621,45 @@ fn node_address_for_storage(info: RemoteInfo) -> Option<NodeAddr> {
                 direct_addresses,
             },
         })
+    }
+}
+
+/// A join handle that owns the task it is running, and aborts it when dropped.
+/// It is cloneable and will abort when the last instance is dropped.
+///
+/// Please do not copy/use this elsewhere, try and use
+/// [`tokio_util::task::AbortOnDropHandle`] instead.
+#[derive(Debug, Clone)]
+struct SharedAbortingJoinHandle<T: Clone + Send> {
+    fut: Shared<BoxFuture<std::result::Result<T, String>>>,
+    abort: Arc<tokio::task::AbortHandle>,
+}
+
+impl<T: Clone + Send + 'static> From<tokio::task::JoinHandle<T>> for SharedAbortingJoinHandle<T> {
+    fn from(handle: tokio::task::JoinHandle<T>) -> Self {
+        let abort = handle.abort_handle();
+        let fut: BoxFuture<std::result::Result<T, String>> =
+            Box::pin(async move { handle.await.map_err(|e| e.to_string()) });
+        Self {
+            fut: fut.shared(),
+            abort: Arc::new(abort),
+        }
+    }
+}
+
+impl<T: Clone + Send> Future for SharedAbortingJoinHandle<T> {
+    type Output = std::result::Result<T, String>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.fut).poll(cx)
+    }
+}
+
+impl<T: Clone + Send> Drop for SharedAbortingJoinHandle<T> {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.abort) == 1 {
+            self.abort.abort();
+        }
     }
 }
 

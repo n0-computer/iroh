@@ -18,6 +18,7 @@ use futures_util::SinkExt;
 use tokio::sync::mpsc;
 use tokio_tungstenite_wasm::WebSocketStream;
 use tokio_util::codec::{FramedRead, FramedWrite};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, info_span, trace, Instrument};
 
 use crate::defaults::timeouts::relay::CLIENT_RECV_TIMEOUT;
@@ -27,7 +28,6 @@ use crate::relay::codec::{
     write_frame, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
 };
 use crate::relay::codec::{ClientInfo, PER_CLIENT_READ_QUEUE_DEPTH};
-use crate::util::AbortingJoinHandle;
 
 impl PartialEq for Conn {
     fn eq(&self, other: &Self) -> bool {
@@ -76,8 +76,8 @@ pub struct ConnTasks {
     /// if there is ever an error writing to the server.
     writer_channel: mpsc::Sender<ConnWriterMessage>,
     /// JoinHandle for the [`ConnWriter`] task
-    writer_task: AbortingJoinHandle<Result<()>>,
-    reader_task: AbortingJoinHandle<()>,
+    writer_task: AbortOnDropHandle<Result<()>>,
+    reader_task: AbortOnDropHandle<()>,
 }
 
 impl Conn {
@@ -418,8 +418,8 @@ impl ConnBuilder {
             inner: Arc::new(ConnTasks {
                 local_addr: self.local_addr,
                 writer_channel: writer_sender,
-                writer_task: writer_task.into(),
-                reader_task: reader_task.into(),
+                writer_task: AbortOnDropHandle::new(writer_task),
+                reader_task: AbortOnDropHandle::new(reader_task),
             }),
         };
 

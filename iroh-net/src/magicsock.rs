@@ -2816,11 +2816,11 @@ mod tests {
     use anyhow::Context;
     use iroh_test::CallOnDrop;
     use rand::RngCore;
+    use tokio_util::task::AbortOnDropHandle;
 
     use crate::defaults::staging::EU_RELAY_HOSTNAME;
     use crate::relay::RelayMode;
     use crate::tls;
-    use crate::util::AbortingJoinHandle;
     use crate::Endpoint;
 
     use super::*;
@@ -3761,7 +3761,7 @@ mod tests {
             }
             .instrument(info_span!("ep2.accept, me = node_id_2.fmt_short()"))
         });
-        let _accept_task = AbortingJoinHandle::from(accept_task);
+        let _accept_task = AbortOnDropHandle::new(accept_task);
 
         let node_addr_2 = NodeAddr {
             node_id: node_id_2,
@@ -3826,7 +3826,7 @@ mod tests {
             }
             .instrument(info_span!("ep2.accept", me = node_id_2.fmt_short()))
         });
-        let _accept_task = AbortingJoinHandle::from(accept_task);
+        let _accept_task = AbortOnDropHandle::new(accept_task);
 
         // Add an empty entry in the NodeMap of ep_1
         msock_1.node_map.add_node_addr(
