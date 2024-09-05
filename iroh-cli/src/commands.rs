@@ -25,7 +25,7 @@ pub(crate) mod tags;
 
 /// iroh is a tool for building distributed apps.
 ///
-/// For more information, visit: https://iroh.computer/docs.
+/// For more information, visit: <https://iroh.computer/docs>.
 #[derive(Parser, Debug, Clone)]
 #[clap(version, verbatim_doc_comment)]
 pub(crate) struct Cli {
