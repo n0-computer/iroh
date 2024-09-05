@@ -242,6 +242,10 @@ impl Actor {
 
                 _ = &mut probe_timer => {
                     warn!("tick: probes timed out");
+                    // Set new timeout to not go into this branch multiple times.  We need
+                    // the abort to finish all probes normally.  PROBES_TIMEOUT is
+                    // sufficiently far in the future.
+                    probe_timer.as_mut().reset(Instant::now() + PROBES_TIMEOUT);
                     probes.abort_all();
                     self.handle_abort_probes();
                 }
