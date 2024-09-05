@@ -60,7 +60,7 @@ struct Inner {
     pkarr_relay: Option<PkarrRelayClientAsync>,
     /// The background task that periodically publishes the node address.
     ///
-    /// Due to [`ChildTask`], this will be aborted when the discovery is dropped.
+    /// Due to [`AbortOnDropHandle`], this will be aborted when the discovery is dropped.
     task: Mutex<Option<AbortOnDropHandle<()>>>,
     /// Optional keypair for signing the DNS packets.
     ///

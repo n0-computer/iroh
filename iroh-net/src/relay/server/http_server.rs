@@ -103,7 +103,7 @@ impl Server {
         self.cancel_server_loop.cancel();
     }
 
-    /// Returns the [`AbortingJoinHandle`] for the supervisor task managing the server.
+    /// Returns the [`AbortOnDropHandle`] for the supervisor task managing the server.
     ///
     /// This is the root of all the tasks for the server.  Aborting it will abort all the
     /// other tasks for the server.  Awaiting it will complete when all the server tasks are
