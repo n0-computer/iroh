@@ -119,7 +119,7 @@ impl Builder {
     ///
     /// The *addr_v6* is the address that should be bound locally on IPv6.
     ///
-    /// You can pass `None` to let the operating system choose a free port for you, and bind to `::1`.
+    /// You can pass `None` to let the operating system choose a free port for you, and bind to `[::]`.
     pub async fn bind(self) -> Result<Endpoint> {
         let relay_map = self.relay_mode.relay_map();
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
@@ -163,7 +163,7 @@ impl Builder {
     ///
     /// Setting the port to `0` will use a random port.
     ///
-    /// By default will use `::1:0` to bind to.
+    /// By default will use `[::]:0` to bind to.
     pub fn bind_addr_v6(mut self, addr: SocketAddrV6) -> Self {
         self.addr_v6.replace(addr);
         self
