@@ -1859,7 +1859,7 @@
             .alpns(<span class="macro">vec!</span>[GOSSIP_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
-            .bind(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
+            .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         ep.watch_home_relay().next().<span class="kw">await</span>;

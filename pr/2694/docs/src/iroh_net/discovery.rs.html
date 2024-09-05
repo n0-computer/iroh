@@ -1377,7 +1377,7 @@
             .discovery(Box::new(disco))
             .relay_mode(RelayMode::Disabled)
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-            .bind(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
+            .bind()
             .<span class="kw">await
             </span>.unwrap();
 
@@ -1545,7 +1545,7 @@
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .dns_resolver(dns_pkarr_server.dns_resolver())
             .discovery(dns_pkarr_server.discovery(secret_key))
-            .bind(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
+            .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>handle = tokio::spawn({

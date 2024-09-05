@@ -313,7 +313,7 @@
             .insecure_skip_relay_cert_verify(relay_url.is_some())
             .relay_mode(relay_mode)
             .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
-            .bind(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
+            .bind()
             .<span class="kw">await
             </span>.unwrap();
 
@@ -364,7 +364,7 @@
         .insecure_skip_relay_cert_verify(relay_url.is_some())
         .relay_mode(relay_mode)
         .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
-        .bind(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
+        .bind()
         .<span class="kw">await
         </span>.unwrap();
 

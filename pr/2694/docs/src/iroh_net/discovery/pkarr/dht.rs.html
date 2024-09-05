@@ -838,7 +838,7 @@
     #[ignore = <span class="string">"flaky"</span>]
     </span><span class="kw">async fn </span>dht_discovery_smoke() -&gt; TestResult {
         <span class="kw">let _ </span>= tracing_subscriber::fmt::try_init();
-        <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>secret = ep.secret_key().clone();
         <span class="kw">let </span>testnet = mainline::dht::Testnet::new(<span class="number">2</span>);
         <span class="kw">let </span>settings = pkarr::Settings {

@@ -6756,7 +6756,7 @@
                 .transport_config(transport_config)
                 .relay_mode(relay_mode)
                 .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
-                .bind(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
+                .bind()
                 .<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="prelude-val">Ok</span>(<span class="self">Self </span>{

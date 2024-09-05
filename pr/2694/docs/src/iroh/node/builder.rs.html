@@ -915,6 +915,8 @@
 <a href="#915" id="915">915</a>
 <a href="#916" id="916">916</a>
 <a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1495,7 +1497,9 @@
 
             (
                 endpoint
-                    .bind(<span class="prelude-val">Some</span>(<span class="self">self</span>.addr_v4), <span class="prelude-val">Some</span>(<span class="self">self</span>.addr_v6))
+                    .bind_addr_v4(<span class="self">self</span>.addr_v4)
+                    .bind_addr_v6(<span class="self">self</span>.addr_v6)
+                    .bind()
                     .<span class="kw">await</span><span class="question-mark">?</span>,
                 nodes_data_path,
             )
