@@ -96,7 +96,7 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 pub(crate) struct Options {
     /// The IPv4 address to listen on.
     ///
-    /// If set to `None` it will choose a random port and listen on `0.0.0.0`.
+    /// If set to `None` it will choose a random port and listen on `0.0.0.0:0`.
     pub(crate) addr_v4: Option<SocketAddrV4>,
     /// The IPv6 address to listen on.
     ///
