@@ -1723,14 +1723,6 @@
 <a href="#1723" id="1723">1723</a>
 <a href="#1724" id="1724">1724</a>
 <a href="#1725" id="1725">1725</a>
-<a href="#1726" id="1726">1726</a>
-<a href="#1727" id="1727">1727</a>
-<a href="#1728" id="1728">1728</a>
-<a href="#1729" id="1729">1729</a>
-<a href="#1730" id="1730">1730</a>
-<a href="#1731" id="1731">1731</a>
-<a href="#1732" id="1732">1732</a>
-<a href="#1733" id="1733">1733</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1845,14 +1837,6 @@
     // # The final constructor that everyone needs.
 
     </span><span class="doccomment">/// Binds the magic endpoint on the specified socket address.
-    ///
-    /// The *addr_v4* is the address that should be bound locally on IPv4.
-    ///
-    /// You can pass `None` to let the operating system choose a free port for you, and bind to `0.0.0.0`.
-    ///
-    /// The *addr_v6* is the address that should be bound locally on IPv6.
-    ///
-    /// You can pass `None` to let the operating system choose a free port for you, and bind to `[::]`.
     </span><span class="kw">pub async fn </span>bind(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
         <span class="kw">let </span>relay_map = <span class="self">self</span>.relay_mode.relay_map();
         <span class="kw">let </span>secret_key = <span class="self">self</span>.secret_key.unwrap_or_else(SecretKey::generate);
