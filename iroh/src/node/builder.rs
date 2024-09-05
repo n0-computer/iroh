@@ -427,6 +427,9 @@ where
     }
 
     /// Binds the node service to a specific socket IPv4 address.
+    ///
+    /// If the port used in the bind address is not free, a random different
+    /// port will be used.
     pub fn bind_addr_v4(mut self, addr: SocketAddrV4) -> Self {
         self.addr_v4 = addr;
         self
