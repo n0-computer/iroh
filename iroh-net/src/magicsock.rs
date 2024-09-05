@@ -100,7 +100,7 @@ pub(crate) struct Options {
     pub(crate) addr_v4: Option<SocketAddrV4>,
     /// The IPv6 address to listen on.
     ///
-    /// If set to `None` it will choose a random port and listen on `::1`.
+    /// If set to `None` it will choose a random port and listen on `[::]:0`.
     pub(crate) addr_v6: Option<SocketAddrV6>,
 
     /// Secret key for this node.
