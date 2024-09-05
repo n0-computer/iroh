@@ -202,7 +202,7 @@ impl Cli {
         }
     }
 
-    /// Load the configuration file or creates the default one, and sets the given metrics address.
+    /// Loads the configuration file or creates the default one, and sets the given metrics address.
     async fn load_config(
         config: Option<PathBuf>,
         metrics_addr: Option<SocketAddr>,
