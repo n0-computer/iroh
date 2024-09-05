@@ -6,11 +6,11 @@ use std::{
     task::{Context, Poll},
 };
 
-pub mod chain;
+pub(crate) mod chain;
 
 /// Resolves to pending if the inner is `None`.
 #[derive(Debug)]
-pub struct MaybeFuture<T> {
+pub(crate) struct MaybeFuture<T> {
     /// Future to be polled.
     pub inner: Option<T>,
 }
