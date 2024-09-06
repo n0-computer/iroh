@@ -297,9 +297,8 @@ async fn get_blob_inner<D: BaoStore>(
         // in that case we want to abort the write_all_with_outboard.
         sender2
             .try_send(DownloadProgress::Progress { id, offset })
-            .map_err(|e| {
+            .inspect_err(|_| {
                 tracing::info!("aborting download of {}", hash);
-                e
             })?;
         Ok(())
     };
@@ -348,9 +347,8 @@ async fn get_blob_inner_partial<D: BaoStore>(
         // in that case we want to abort the write_all_with_outboard.
         sender2
             .try_send(DownloadProgress::Progress { id, offset })
-            .map_err(|e| {
+            .inspect_err(|_| {
                 tracing::info!("aborting download of {}", hash);
-                e
             })?;
         Ok(())
     };
