@@ -37,7 +37,7 @@ pub enum GossipCommands {
 }
 
 impl GossipCommands {
-    /// Run the gossip command given the iroh client.
+    /// Runs the gossip command given the iroh client.
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Subscribe {
