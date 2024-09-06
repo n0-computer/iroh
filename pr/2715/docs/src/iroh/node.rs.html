@@ -941,6 +941,12 @@
 <a href="#941" id="941">941</a>
 <a href="#942" id="942">942</a>
 <a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node API
 //!
 //! An iroh node is a server that is identified by an Ed25519 keypair and is
@@ -1047,7 +1053,13 @@
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>Node&lt;D&gt; {
     inner: Arc&lt;NodeInner&lt;D&gt;&gt;,
-    task: Shared&lt;MapErr&lt;AbortOnDropHandle&lt;()&gt;, JoinErrToStr&gt;&gt;,
+    <span class="comment">// `Node` needs to be `Clone + Send`, and we need to `task.await` in its `shutdown()` impl.
+    // So we need
+    // - `Shared` so we can `task.await` from all `Node` clones
+    // - `MapErr` to map the `JoinError` to a `String`, because `JoinError` is `!Send`
+    // - `AbortOnDropHandle` to make sure that the `task` is cancelled when all `Node`s are dropped
+    //   (`Shared` acts like an `Arc` around its inner future).
+    </span>task: Shared&lt;MapErr&lt;AbortOnDropHandle&lt;()&gt;, JoinErrToStr&gt;&gt;,
     protocols: Arc&lt;ProtocolMap&gt;,
 }
 
