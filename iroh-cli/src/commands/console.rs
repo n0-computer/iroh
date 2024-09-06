@@ -11,7 +11,7 @@ use iroh::{base::base32::fmt_short, client::Iroh};
 use rustyline::{error::ReadlineError, Config, DefaultEditor};
 use tokio::sync::{mpsc, oneshot};
 
-/// Run the iroh console
+/// Runs the iroh console
 pub async fn run(iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
     println!("{}", "Welcome to the Iroh console!".purple().bold());
     println!("Type `{}` for a list of commands.", "help".bold());
@@ -39,7 +39,7 @@ pub struct Repl {
 }
 
 impl Repl {
-    /// Create a new REPL environment.
+    /// Creates a new REPL environment.
     pub fn spawn(env: ConsoleEnv) -> mpsc::Receiver<(RpcCommands, oneshot::Sender<()>)> {
         let (cmd_tx, cmd_rx) = mpsc::channel(1);
         let repl = Repl { env, cmd_tx };
@@ -87,7 +87,7 @@ impl Repl {
         Ok(())
     }
 
-    /// Return the prompt for the REPL as a `String`.
+    /// Returns the prompt for the REPL as a `String`.
     pub fn prompt(&self) -> String {
         let mut pwd = String::new();
         let author = self.env.author();
@@ -121,7 +121,7 @@ pub enum ReplCmd {
     Exit,
 }
 
-/// Try to convert a `&str`ing into a `clap` [`Subcommand`], and error if it fails.
+/// Tries to convert a `&str`ing into a `clap` [`Subcommand`], and error if it fails.
 fn try_parse_cmd<C: Subcommand>(s: &str) -> anyhow::Result<C> {
     let args = shell_words::split(s)?;
     let cmd = clap::Command::new("repl");
@@ -134,7 +134,7 @@ fn try_parse_cmd<C: Subcommand>(s: &str) -> anyhow::Result<C> {
     Ok(cmd)
 }
 
-/// Parse a `&str`ing into a `clap` [`Subcommand`].
+/// Parses a `&str`ing into a `clap` [`Subcommand`].
 fn parse_cmd<C: Subcommand>(s: &str) -> Option<C> {
     match try_parse_cmd::<C>(s) {
         Ok(cmd) => Some(cmd),
