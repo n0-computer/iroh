@@ -352,15 +352,14 @@ struct Addr {
 
 impl Addr {
     async fn send(&self, msg: Message) -> Result<(), mpsc::error::SendError<Message>> {
-        self.sender.send(msg).await.map_err(|err| {
+        self.sender.send(msg).await.inspect_err(|_| {
             error!("netcheck actor lost");
-            err
         })
     }
 
     fn try_send(&self, msg: Message) -> Result<(), mpsc::error::TrySendError<Message>> {
-        self.sender.try_send(msg).map_err(|err| {
-            match &err {
+        self.sender.try_send(msg).inspect_err(|err| {
+            match err {
                 mpsc::error::TrySendError::Full(_) => {
                     // TODO: metrics, though the only place that uses this already does its
                     // own metrics.
@@ -368,7 +367,6 @@ impl Addr {
                 }
                 mpsc::error::TrySendError::Closed(_) => error!("netcheck actor lost"),
             }
-            err
         })
     }
 }
