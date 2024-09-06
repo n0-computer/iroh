@@ -37,7 +37,7 @@ use std::{
 };
 use tokio::io::AsyncWriteExt;
 
-/// Subcommds for the blob command.
+/// Subcommands for the blob command.
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug, Clone)]
 pub enum BlobCommands {
