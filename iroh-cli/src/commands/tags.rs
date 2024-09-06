@@ -21,7 +21,7 @@ pub enum TagCommands {
 }
 
 impl TagCommands {
-    /// Run the tag command given the iroh client.
+    /// Runs the tag command given the iroh client.
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::List => {
