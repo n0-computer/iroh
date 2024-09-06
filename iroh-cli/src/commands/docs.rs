@@ -928,17 +928,17 @@ impl ImportProgressBar {
         self.add.inc(size);
     }
 
-    /// Make some progress on the import progress bar.
+    /// Marks having made one unit of progress on the import progress bar.
     fn import_progress(&self) {
         self.import.inc(1);
     }
 
-    /// Set the `add` progress bar as completed.
+    /// Sets the `add` progress bar as completed.
     fn add_done(&self) {
         self.add.set_position(self.add.length().unwrap_or_default());
     }
 
-    /// Set the all progress bars as completed.
+    /// Sets the all progress bars as done.
     fn all_done(self) {
         self.mp.clear().ok();
     }
