@@ -545,7 +545,7 @@ fn apply_report_level(text: String, level: ReportLevel) -> console::StyledObject
     }
 }
 
-/// Checks that the consistency of the blobs on the running node, and repair if instructed.
+/// Checks the consistency of the blobs on the running node, and repairs inconsistencies if instructed.
 pub async fn consistency_check(iroh: &Iroh, verbose: u8, repair: bool) -> Result<()> {
     let mut response = iroh.blobs().consistency_check(repair).await?;
     let verbosity = get_report_level(verbose);
