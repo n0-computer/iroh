@@ -170,7 +170,7 @@ struct Actor {
     // Internal state.
     /// The report being built.
     report: Report,
-    /// The hairping actor.
+    /// The hairpin actor.
     hairpin_actor: hairpin::Client,
     /// Which tasks the [`Actor`] is still waiting on.
     ///
