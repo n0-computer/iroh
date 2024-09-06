@@ -40,6 +40,7 @@ pub enum AuthorCommands {
 }
 
 impl AuthorCommands {
+    /// Runs the author command given an iroh client and console environment.
     pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
             Self::Switch { author } => {
