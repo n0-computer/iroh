@@ -93,13 +93,13 @@ pub enum Commands {
         #[clap(long, default_value_t = DEFAULT_STUN_PORT)]
         stun_port: u16,
     },
-    /// Wait for incoming requests from iroh doctor connect
+    /// Wait for incoming requests from iroh doctor connect.
     Accept {
         /// Our own secret key, in hex. If not specified, the locally configured key will be used.
         #[clap(long, default_value_t = SecretKeyOption::Local)]
         secret_key: SecretKeyOption,
 
-        /// Number of bytes to send to the remote for each test
+        /// Number of bytes to send to the remote for each test.
         #[clap(long, default_value_t = 1024 * 1024 * 16)]
         size: u64,
 
@@ -107,7 +107,7 @@ pub enum Commands {
         #[clap(long)]
         iterations: Option<u64>,
 
-        /// Use a local relay
+        /// Use a local relay.
         #[clap(long)]
         local_relay_server: bool,
 
@@ -122,10 +122,10 @@ pub enum Commands {
     },
     /// Connect to an iroh doctor accept node.
     Connect {
-        /// hex node id of the node to connect to
+        /// Hexadecimal node id of the node to connect to.
         dial: PublicKey,
 
-        /// One or more remote endpoints to use when dialing
+        /// One or more remote endpoints to use when dialing.
         #[clap(long)]
         remote_endpoint: Vec<SocketAddr>,
 
@@ -133,7 +133,7 @@ pub enum Commands {
         #[clap(long, default_value_t = SecretKeyOption::Random)]
         secret_key: SecretKeyOption,
 
-        /// Use a local relay
+        /// Use a local relay:
         ///
         /// Overrides the `relay_url` field.
         #[clap(long)]
@@ -152,7 +152,7 @@ pub enum Commands {
         /// Do not allow the node to dial and be dialed by id only.
         ///
         /// This disables DNS discovery, which would allow the node to dial other nodes by id only.
-        /// And it disables Pkarr Publishing, which would allow the node to announce its address for dns discovery.
+        /// It also disables Pkarr Publishing, which would allow the node to announce its address for DNS discovery.
         ///
         /// Default is `false`
         #[clap(long, default_value_t = false)]
@@ -253,7 +253,7 @@ struct TestConfig {
     iterations: Option<u64>,
 }
 
-/// Update the progress bar.
+/// Updates the progress bar.
 fn update_pb(
     task: &'static str,
     pb: Option<ProgressBar>,
@@ -274,7 +274,7 @@ fn update_pb(
     }
 }
 
-/// Handle a test stream request.
+/// Handles a test stream request.
 async fn handle_test_request(
     mut send: SendStream,
     mut recv: RecvStream,
@@ -323,7 +323,7 @@ async fn handle_test_request(
     Ok(())
 }
 
-/// Send the requested number of bytes, in blocks of the requested size.
+/// Sends the requested number of bytes, in blocks of the requested size.
 async fn send_blocks(
     mut send: impl tokio::io::AsyncWrite + Unpin,
     total_bytes: u64,
@@ -339,7 +339,7 @@ async fn send_blocks(
     Ok(())
 }
 
-/// Print a client report.
+/// Prints a client report.
 async fn report(
     stun_host: Option<String>,
     stun_port: u16,
@@ -420,7 +420,7 @@ impl Gui {
         }
     }
 
-    /// Update the information of the target progress bar.
+    /// Updates the information of the target progress bar.
     fn update_remote_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &NodeId) {
         let format_latency = |x: Option<Duration>| {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
@@ -455,7 +455,7 @@ impl Gui {
         target.set_message(msg);
     }
 
-    /// Update the counters for the target progress bar.
+    /// Updates the counters for the target progress bar.
     fn update_counters(target: &ProgressBar) {
         if let Some(core) = Core::get() {
             let metrics = core.get_collector::<MagicsockMetrics>().unwrap();
@@ -483,22 +483,22 @@ Ipv6:
         }
     }
 
-    /// Set the "send" text and the speed for the progress bar.
+    /// Sets the "send" text and the speed for the progress bar.
     fn set_send(&self, bytes: u64, duration: Duration) {
         Self::set_bench_speed(&self.send_pb, "send", bytes, duration);
     }
 
-    /// Set the "recv" text and the speed for the progress bar.
+    /// Sets the "recv" text and the speed for the progress bar.
     fn set_recv(&self, bytes: u64, duration: Duration) {
         Self::set_bench_speed(&self.recv_pb, "recv", bytes, duration);
     }
 
-    /// Set the "echo" text and the speed for the progress bar.
+    /// Sets the "echo" text and the speed for the progress bar.
     fn set_echo(&self, bytes: u64, duration: Duration) {
         Self::set_bench_speed(&self.echo_pb, "echo", bytes, duration);
     }
 
-    /// Set a text and the speed for the progress bar.
+    /// Sets a text and the speed for the progress bar.
     fn set_bench_speed(pb: &ProgressBar, text: &str, bytes: u64, duration: Duration) {
         pb.set_message(format!(
             "{}: {}/s",
@@ -507,13 +507,13 @@ Ipv6:
         ));
     }
 
-    /// Clear the [`MultiProgress`] field.
+    /// Clears the [`MultiProgress`] field.
     fn clear(&self) {
         self.mp.clear().ok();
     }
 }
 
-/// Send, receive and echo data in a connection.
+/// Sends, receives and echoes data in a connection.
 async fn active_side(
     connection: Connection,
     config: &TestConfig,
@@ -541,7 +541,7 @@ async fn active_side(
     Ok(())
 }
 
-/// Send a test request in a connection.
+/// Sends a test request in a connection.
 async fn send_test_request(
     send: &mut SendStream,
     request: &TestStreamRequest,
@@ -552,7 +552,7 @@ async fn send_test_request(
     Ok(())
 }
 
-/// Echo test a connection.
+/// Echoes test a connection.
 async fn echo_test(
     connection: &Connection,
     config: &TestConfig,
@@ -574,7 +574,7 @@ async fn echo_test(
     Ok(duration)
 }
 
-/// Send test a connection.
+/// Sends test a connection.
 async fn send_test(
     connection: &Connection,
     config: &TestConfig,
@@ -599,7 +599,7 @@ async fn send_test(
     Ok(duration)
 }
 
-/// Receive test a connection.
+/// Receives test a connection.
 async fn recv_test(
     connection: &Connection,
     config: &TestConfig,
@@ -627,7 +627,7 @@ async fn recv_test(
     Ok(duration)
 }
 
-/// Passive side that just accepts connections and answers requests (echo, drain or send)
+/// Accepts connections and answers requests (echo, drain or send) as passive side.
 async fn passive_side(gui: Gui, connection: Connection) -> anyhow::Result<()> {
     loop {
         match connection.accept_bi().await {
@@ -644,16 +644,17 @@ async fn passive_side(gui: Gui, connection: Connection) -> anyhow::Result<()> {
     }
 }
 
-/// Configure a relay map with some default values.
+/// Configures a relay map with some default values.
 fn configure_local_relay_map() -> RelayMap {
     let stun_port = DEFAULT_STUN_PORT;
     let url = "http://localhost:3340".parse().unwrap();
     RelayMap::default_from_node(url, stun_port)
 }
 
+/// ALPN protocol address.
 const DR_RELAY_ALPN: [u8; 11] = *b"n0/drderp/1";
 
-/// Create an iroh net [`Endpoint`] from a [SecreetKey`], a [`RelayMap`] and a [`Discovery`].
+/// Creates an iroh net [`Endpoint`] from a [SecreetKey`], a [`RelayMap`] and a [`Discovery`].
 async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
@@ -693,7 +694,7 @@ async fn make_endpoint(
     Ok(endpoint)
 }
 
-/// Connect to a [`NodeId`].
+/// Connects to a [`NodeId`].
 async fn connect(
     node_id: NodeId,
     secret_key: SecretKey,
@@ -727,7 +728,7 @@ async fn connect(
     Ok(())
 }
 
-/// Format a [`SocketAddr`] so that console doesn't escape it.
+/// Formats a [`SocketAddr`] so that console doesn't escape it.
 fn format_addr(addr: SocketAddr) -> String {
     if addr.is_ipv6() {
         format!("'{addr}'")
@@ -736,7 +737,7 @@ fn format_addr(addr: SocketAddr) -> String {
     }
 }
 
-/// Accept the connections.
+/// Accepts the connections.
 async fn accept(
     secret_key: SecretKey,
     config: TestConfig,
@@ -824,7 +825,7 @@ async fn accept(
     Ok(())
 }
 
-/// Log the connection changes to the multiprogress.
+/// Logs the connection changes to the multiprogress.
 fn log_connection_changes(pb: MultiProgress, node_id: NodeId, mut stream: ConnectionTypeStream) {
     tokio::spawn(async move {
         let start = Instant::now();
@@ -838,7 +839,7 @@ fn log_connection_changes(pb: MultiProgress, node_id: NodeId, mut stream: Connec
     });
 }
 
-/// Check if there's a port mapping in the local port, and if it's ready.
+/// Checks if there's a port mapping in the local port, and if it's ready.
 async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<()> {
     // Create the config that enables exclusively the required protocol
     let mut enable_upnp = false;
@@ -875,7 +876,7 @@ async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> 
     }
 }
 
-/// Probe a port map.
+/// Probes a port map.
 async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
     println!("probing port mapping protocols with {config:?}");
     let port_mapper = portmapper::Client::new(config);
@@ -885,7 +886,7 @@ async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Check a certain amount (`count`) of the nodes given by the [`NodeConfig`].
+/// Checks a certain amount (`count`) of the nodes given by the [`NodeConfig`].
 async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     let key = SecretKey::generate();
     if config.relay_nodes.is_empty() {
@@ -978,7 +979,7 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Details about a node and its connection.
+/// Information about a node and its connection.
 struct NodeDetails {
     connect: Option<Duration>,
     latency: Option<Duration>,
@@ -1005,7 +1006,7 @@ impl std::fmt::Display for NodeDetails {
     }
 }
 
-/// Creaet a [`SecretKey`] from a [`SecretKeyOption`].
+/// Creates a [`SecretKey`] from a [`SecretKeyOption`].
 fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     Ok(match secret_key {
         SecretKeyOption::Random => SecretKey::generate(),
@@ -1029,7 +1030,7 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     })
 }
 
-/// Create a [`Discovery`] service from a [`SecretKey`].
+/// Creates a [`Discovery`] service from a [`SecretKey`].
 fn create_discovery(disable_discovery: bool, secret_key: &SecretKey) -> Option<Box<dyn Discovery>> {
     if disable_discovery {
         None
@@ -1043,20 +1044,20 @@ fn create_discovery(disable_discovery: bool, secret_key: &SecretKey) -> Option<B
     }
 }
 
-/// Print a string in bold.
+/// Prints a string in bold.
 fn bold<T: Display>(x: T) -> String {
     style(x).bold().to_string()
 }
 
-/// Convert a [`NodeId`] public key to a [`zbase32`] string.
+/// Converts a [`NodeId`] public key to a [`zbase32`] string.
 fn to_z32(node_id: NodeId) -> String {
     pkarr::PublicKey::try_from(node_id.as_bytes())
         .unwrap()
         .to_z32()
 }
 
-/// Given a [`NodeAddr`], a prefix (`&str`) and whether or not it is zbase32, print the node's
-/// address.
+/// Prints the node's address give a [`NodeAddr`], a prefix (`&str`),
+/// and whether or not it is zbase32.
 fn print_node_addr(prefix: &str, node_addr: &NodeAddr, zbase32: bool) {
     let node = if zbase32 {
         to_z32(node_addr.node_id)
@@ -1072,7 +1073,7 @@ fn print_node_addr(prefix: &str, node_addr: &NodeAddr, zbase32: bool) {
     }
 }
 
-/// Inspect the ticker by printing its information.
+/// Inspects the ticker by printing its information.
 fn inspect_ticket(ticket: &str, zbase32: bool) -> anyhow::Result<()> {
     if ticket.starts_with(BlobTicket::KIND) {
         let ticket = BlobTicket::from_str(ticket).context("failed parsing blob ticket")?;
@@ -1104,7 +1105,7 @@ fn inspect_ticket(ticket: &str, zbase32: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Run the doctor commands.
+/// Runs the doctor commands.
 pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     let data_dir = iroh_data_root()?;
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
@@ -1249,7 +1250,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     cmd_res
 }
 
-/// Run the [`PlotterApp`].
+/// Runs the [`PlotterApp`].
 async fn run_plotter<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app: PlotterApp,
@@ -1278,7 +1279,7 @@ async fn run_plotter<B: Backend>(
     }
 }
 
-/// Convert an area into `n` chunks.
+/// Converts an area into `n` chunks.
 fn area_into_chunks(area: Rect, n: usize, is_horizontal: bool) -> std::rc::Rc<[Rect]> {
     let mut constraints = vec![];
     for _ in 0..n {
@@ -1291,7 +1292,7 @@ fn area_into_chunks(area: Rect, n: usize, is_horizontal: bool) -> std::rc::Rc<[R
     layout.split(area)
 }
 
-/// Create a collection of [`Rect`] by splitting an [`Rect`] area into `n` chunks.
+/// Creates a collection of [`Rect`] by splitting an [`Rect`] area into `n` chunks.
 fn generate_layout_chunks(area: Rect, n: usize) -> Vec<Rect> {
     if n < 4 {
         let chunks = area_into_chunks(area, n, false);
@@ -1306,7 +1307,7 @@ fn generate_layout_chunks(area: Rect, n: usize) -> Vec<Rect> {
     chunks
 }
 
-/// Given a [`PlotterApp`], draw the [`Frame`].
+/// Draws the [`Frame`] given a [`PlotterApp`].
 fn plotter_draw(f: &mut Frame, app: &mut PlotterApp) {
     let area = f.size();
 
@@ -1318,7 +1319,7 @@ fn plotter_draw(f: &mut Frame, app: &mut PlotterApp) {
     }
 }
 
-/// Draw the chart defined in the [`Frame`].
+/// Draws the chart defined in the [`Frame`].
 fn plot_chart(frame: &mut Frame, area: Rect, app: &PlotterApp, metric: &str) {
     let elapsed = app.internal_ts.as_secs_f64();
     let data = app.data.get(metric).unwrap().clone();
@@ -1418,7 +1419,7 @@ struct PlotterApp {
 }
 
 impl PlotterApp {
-    /// Create a new [`PlotterApp`].
+    /// Creates a new [`PlotterApp`].
     fn new(
         metrics: Vec<String>,
         timeframe: usize,
@@ -1475,7 +1476,7 @@ impl PlotterApp {
         }
     }
 
-    /// What to do when a key is pressed.
+    /// Chooses what to do when a key is pressed.
     fn on_key(&mut self, c: char) {
         match c {
             'q' => {
@@ -1488,7 +1489,7 @@ impl PlotterApp {
         }
     }
 
-    /// What to do on a tick.
+    /// Chooses what to do on a tick.
     async fn on_tick(&mut self) {
         if self.freeze {
             return;
@@ -1549,7 +1550,7 @@ impl PlotterApp {
     }
 }
 
-/// Parse CSV metrics into a [`HashMap`] of `String` -> `f64`.
+/// Parses CSV metrics into a [`HashMap`] of `String` -> `f64`.
 fn parse_csv_metrics(header: &[String], data: &str) -> anyhow::Result<HashMap<String, f64>> {
     let mut metrics = HashMap::new();
     let data = data.split(',').collect::<Vec<&str>>();
