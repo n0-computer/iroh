@@ -10,9 +10,14 @@ use crate::{
     ticket::{self, Ticket},
 };
 
-/// A token containing everything to get a file from the provider.
+/// A token containing information for dialing a node.
+///
+/// Contains
+/// - The [`NodeId`] of the node to connect to (a 32-byte ed25519 public key)
 ///
 /// It is a single item which can be easily serialized and deserialized.
+///
+/// [`NodeId`]: crate::key::NodeId
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 #[display("{}", Ticket::serialize(self))]
 pub struct NodeTicket {
@@ -57,6 +62,20 @@ impl NodeTicket {
     /// The [`NodeAddr`] of the provider for this ticket.
     pub fn node_addr(&self) -> &NodeAddr {
         &self.node
+    }
+}
+
+impl From<NodeAddr> for NodeTicket {
+    /// Creates a ticket from given addressing info.
+    fn from(addr: NodeAddr) -> Self {
+        Self { node: addr }
+    }
+}
+
+impl From<NodeTicket> for NodeAddr {
+    /// Returns the addressing info from given ticket.
+    fn from(ticket: NodeTicket) -> Self {
+        ticket.node
     }
 }
 
