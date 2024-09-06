@@ -307,7 +307,7 @@ impl From<Sorting> for iroh::docs::store::SortBy {
 }
 
 impl DocCommands {
-    /// Run the document command given the iroh client and the console environment.
+    /// Runs the document command given the iroh client and the console environment.
     pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
             Self::Switch { id: doc } => {
@@ -675,7 +675,7 @@ impl DocCommands {
     }
 }
 
-/// Get the document given the client, the environment (and maybe the [`NamespaceID`]).
+/// Gets the document given the client, the environment (and maybe the [`NamespaceID`]).
 async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyhow::Result<Doc> {
     iroh.docs()
         .open(env.doc(id)?)
@@ -683,7 +683,7 @@ async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyh
         .context("Document not found")
 }
 
-/// Format the content. If an error occurs it's returned in a formatted, friendly way.
+/// Formats the content. If an error occurs it's returned in a formatted, friendly way.
 async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Result<String, String> {
     let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
     let encode_hex = |err: std::string::FromUtf8Error| format!("0x{}", hex::encode(err.as_bytes()));
@@ -726,12 +726,12 @@ async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Resu
     }
 }
 
-/// Human bytes for the contents of this entry.
+/// Converts the [`Entry`] to human-readable bytes.
 fn human_len(entry: &Entry) -> HumanBytes {
     HumanBytes(entry.content_len())
 }
 
-/// Format an entry for display as a `String`.
+/// Formats an entry for display as a `String`.
 #[must_use = "this won't be printed, you need to print it yourself"]
 async fn fmt_entry(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> String {
     let key = std::str::from_utf8(entry.key())
@@ -743,13 +743,13 @@ async fn fmt_entry(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> String
     format!("@{author}: {key} = {content} ({len})")
 }
 
-/// Convert a path to a cannonical path.
+/// Converts a path to a cannonical path.
 fn canonicalize_path(path: &str) -> anyhow::Result<PathBuf> {
     let path = PathBuf::from(shellexpand::tilde(&path).to_string());
     Ok(path)
 }
 
-/// Create a [`Tag`] from a file name (given as a [`Path`]).
+/// Creates a [`Tag`] from a file name (given as a [`Path`]).
 fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
     match path.file_name() {
         Some(name) => name
@@ -762,8 +762,8 @@ fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
 }
 
 /// Takes the `BlobsClient::add_from_path` and coordinates adding blobs to a
-/// document via the hash of the blob.
-/// It also creates and powers the `ImportProgressBar`.
+/// document via the hash of the blob. It also creates and powers the
+/// `ImportProgressBar`.
 #[tracing::instrument(skip_all)]
 async fn import_coordinator(
     doc: Doc,
@@ -894,7 +894,7 @@ struct ImportProgressBar {
 }
 
 impl ImportProgressBar {
-    /// Create a new import progress bar.
+    /// Creates a new import progress bar.
     fn new(source: &str, doc_id: NamespaceId, expected_size: u64, expected_entries: u64) -> Self {
         let mp = MultiProgress::new();
         let add = mp.add(ProgressBar::new(0));
