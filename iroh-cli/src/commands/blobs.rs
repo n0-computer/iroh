@@ -587,7 +587,7 @@ pub async fn consistency_check(iroh: &Iroh, verbose: u8, repair: bool) -> Result
     Ok(())
 }
 
-/// Checks the validity of the blobs on the running node, and repair if instructed.
+/// Checks the validity of the blobs on the running node, and repairs anything invalid if instructed.
 pub async fn validate(iroh: &Iroh, verbose: u8, repair: bool) -> Result<()> {
     let mut state = ValidateProgressState::new();
     let mut response = iroh.blobs().validate(repair).await?;
