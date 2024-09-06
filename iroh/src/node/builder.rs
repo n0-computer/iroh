@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use futures_lite::StreamExt;
+use futures_util::{FutureExt as _, TryFutureExt as _};
 use iroh_base::key::SecretKey;
 use iroh_blobs::{
     downloader::Downloader,
@@ -28,7 +29,8 @@ use iroh_net::{
 
 use quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 use serde::{Deserialize, Serialize};
-use tokio_util::sync::CancellationToken;
+use tokio::task::JoinError;
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error_span, trace, Instrument};
 
 use crate::{
@@ -42,7 +44,9 @@ use crate::{
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-use super::{docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, Node, NodeInner};
+use super::{
+    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
+};
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
@@ -853,7 +857,9 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         let node = Node {
             inner,
             protocols,
-            task: task.into(),
+            task: AbortOnDropHandle::new(task)
+                .map_err(Box::new(|e: JoinError| e.to_string()) as JoinErrToStr)
+                .shared(),
         };
 
         // Wait for a single direct address update, to make sure
