@@ -37,7 +37,7 @@ pub enum NetCommands {
 }
 
 impl NetCommands {
-    /// Run the net command given the iroh client.
+    /// Runs the net command given the iroh client.
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::RemoteList => {
@@ -97,7 +97,7 @@ impl NetCommands {
     }
 }
 
-/// Format the remote information into a `Table`.
+/// Formats the remote information into a `Table`.
 async fn fmt_remote_infos(
     mut infos: impl Stream<Item = Result<RemoteInfo, anyhow::Error>> + Unpin,
 ) -> String {
@@ -129,7 +129,7 @@ async fn fmt_remote_infos(
     table.to_string()
 }
 
-/// Format the remote information into a `String`.
+/// Formats the remote information into a `String`.
 fn fmt_info(info: RemoteInfo) -> String {
     let RemoteInfo {
         node_id,
@@ -167,7 +167,7 @@ fn fmt_info(info: RemoteInfo) -> String {
     format!("{general_info}\n\n{addrs_info}",)
 }
 
-/// Format the [`DirectAddrInfo`] into a [`Table`].
+/// Formats the [`DirectAddrInfo`] into a [`Table`].
 fn direct_addr_row(info: DirectAddrInfo) -> comfy_table::Row {
     let DirectAddrInfo {
         addr,
@@ -203,7 +203,7 @@ fn direct_addr_row(info: DirectAddrInfo) -> comfy_table::Row {
     .into()
 }
 
-/// Format a collection o [`DirectAddrInfo`] into a [`Table`].
+/// Formats a collection o [`DirectAddrInfo`] into a [`Table`].
 fn fmt_addrs(addrs: Vec<DirectAddrInfo>) -> comfy_table::Table {
     let mut table = Table::new();
     table.load_preset(NOTHING).set_header(
@@ -215,12 +215,12 @@ fn fmt_addrs(addrs: Vec<DirectAddrInfo>) -> comfy_table::Table {
     table
 }
 
-/// A cell with the text "never" and dimmed.
+/// Creates a cell with the dimmed text "never".
 fn never() -> Cell {
     Cell::new("never").add_attribute(comfy_table::Attribute::Dim)
 }
 
-/// Format a [`Duration`] into a human-readable `String`.
+/// Formats a [`Duration`] into a human-readable `String`.
 fn fmt_how_long_ago(duration: Duration) -> String {
     duration
         .to_human_time_string()
@@ -230,7 +230,7 @@ fn fmt_how_long_ago(duration: Duration) -> String {
         .to_string()
 }
 
-/// Format the latency into a human-readable `String`.
+/// Formats the latency into a human-readable `String`.
 fn fmt_latency(latency: Option<Duration>) -> String {
     match latency {
         Some(latency) => latency.to_human_time_string(),
@@ -238,7 +238,7 @@ fn fmt_latency(latency: Option<Duration>) -> String {
     }
 }
 
-/// Create a bold cell with the given text.
+/// Creates a bold cell with the given text.
 fn bold_cell(s: &str) -> Cell {
     Cell::new(s).add_attribute(comfy_table::Attribute::Bold)
 }
