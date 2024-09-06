@@ -104,6 +104,12 @@ pub type IrohServerEndpoint = quic_rpc::transport::boxed::ServerEndpoint<
 #[derive(Debug, Clone)]
 pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
+    // `Node` needs to be `Clone + Send`, and we need to `task.await` in its `shutdown()` impl.
+    // So we need
+    // - `Shared` so we can `task.await` from all `Node` clones
+    // - `MapErr` to map the `JoinError` to a `String`, because `JoinError` is `!Send`
+    // - `AbortOnDropHandle` to make sure that the `task` is cancelled when all `Node`s are dropped
+    //   (`Shared` acts like an `Arc` around its inner future).
     task: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
     protocols: Arc<ProtocolMap>,
 }
