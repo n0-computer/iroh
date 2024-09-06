@@ -923,7 +923,7 @@ impl ImportProgressBar {
 
     fn import_found(&self, _name: String) {}
 
-    /// Make some progress to the progress bar.
+    /// Marks having made some progress to the progress bar.
     fn add_progress(&self, size: u64) {
         self.add.inc(size);
     }
