@@ -32,7 +32,7 @@ pub enum RunType {
 #[error("iroh is already running on port {0}")]
 pub struct AlreadyRunningError(u16);
 
-/// Run an iroh node with a given command.
+/// Runs an iroh node with a given command.
 pub async fn run_with_command<F, T>(
     config: &NodeConfig,
     iroh_data_root: &Path,
@@ -76,7 +76,7 @@ where
     res
 }
 
-/// Private function to run an iroh node with the given command.
+/// Runs an iroh node with the given command (private function).
 async fn run_with_command_inner<F, T>(
     config: &NodeConfig,
     iroh_data_root: &Path,
@@ -131,7 +131,7 @@ where
     Ok(())
 }
 
-/// Start an iroh node.
+/// Starts an iroh node.
 pub(crate) async fn start_node(
     iroh_data_root: &Path,
     rpc_addr: Option<SocketAddr>,
@@ -162,7 +162,7 @@ pub(crate) async fn start_node(
         .await
 }
 
-/// Create a welcome message for the given [`Node`].
+/// Creates a welcome message for the given [`Node`].
 fn welcome_message<B: iroh::blobs::store::Store>(node: &Node<B>) -> Result<String> {
     let msg = format!(
         "{}\nNode ID: {}\n",
@@ -173,7 +173,7 @@ fn welcome_message<B: iroh::blobs::store::Store>(node: &Node<B>) -> Result<Strin
     Ok(msg)
 }
 
-/// Create a nice spinner.
+/// Creates a nice spinner.
 fn create_spinner(msg: &'static str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
     pb.enable_steady_tick(Duration::from_millis(80));
@@ -207,7 +207,7 @@ pub fn start_metrics_server(
     None
 }
 
-/// Start an iroh metrics dumper service.
+/// Starts an iroh metrics dumper service.
 ///
 /// Returns `None` if succeded; otherwise, returns the `JoinHandle` with which the task can be aborted.
 pub fn start_metrics_dumper(
