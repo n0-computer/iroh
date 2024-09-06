@@ -1,18 +1,22 @@
-use std::net::SocketAddr;
-use std::time::Duration;
+//! Define the net subcommands.
 
 use anyhow::Result;
 use clap::Subcommand;
 use colored::Colorize;
-use comfy_table::Table;
-use comfy_table::{presets::NOTHING, Cell};
+use comfy_table::{presets::NOTHING, Cell, Table};
 use futures_lite::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
-use iroh::client::Iroh;
-use iroh::net::endpoint::{DirectAddrInfo, RemoteInfo};
-use iroh::net::relay::RelayUrl;
-use iroh::net::{NodeAddr, NodeId};
+use iroh::{
+    client::Iroh,
+    net::{
+        endpoint::{DirectAddrInfo, RemoteInfo},
+        relay::RelayUrl,
+        {NodeAddr, NodeId},
+    },
+};
+use std::{net::SocketAddr, time::Duration};
 
+/// Commands to manage the iroh network.
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum NetCommands {
@@ -33,6 +37,7 @@ pub enum NetCommands {
 }
 
 impl NetCommands {
+    /// Runs the net command given the iroh client.
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::RemoteList => {
@@ -92,6 +97,7 @@ impl NetCommands {
     }
 }
 
+/// Formats the remote information into a `Table`.
 async fn fmt_remote_infos(
     mut infos: impl Stream<Item = Result<RemoteInfo, anyhow::Error>> + Unpin,
 ) -> String {
@@ -123,6 +129,7 @@ async fn fmt_remote_infos(
     table.to_string()
 }
 
+/// Formats the remote information into a `String`.
 fn fmt_info(info: RemoteInfo) -> String {
     let RemoteInfo {
         node_id,
@@ -160,6 +167,7 @@ fn fmt_info(info: RemoteInfo) -> String {
     format!("{general_info}\n\n{addrs_info}",)
 }
 
+/// Formats the [`DirectAddrInfo`] into a [`Table`].
 fn direct_addr_row(info: DirectAddrInfo) -> comfy_table::Row {
     let DirectAddrInfo {
         addr,
@@ -195,6 +203,7 @@ fn direct_addr_row(info: DirectAddrInfo) -> comfy_table::Row {
     .into()
 }
 
+/// Formats a collection o [`DirectAddrInfo`] into a [`Table`].
 fn fmt_addrs(addrs: Vec<DirectAddrInfo>) -> comfy_table::Table {
     let mut table = Table::new();
     table.load_preset(NOTHING).set_header(
@@ -206,10 +215,12 @@ fn fmt_addrs(addrs: Vec<DirectAddrInfo>) -> comfy_table::Table {
     table
 }
 
+/// Creates a cell with the dimmed text "never".
 fn never() -> Cell {
     Cell::new("never").add_attribute(comfy_table::Attribute::Dim)
 }
 
+/// Formats a [`Duration`] into a human-readable `String`.
 fn fmt_how_long_ago(duration: Duration) -> String {
     duration
         .to_human_time_string()
@@ -219,6 +230,7 @@ fn fmt_how_long_ago(duration: Duration) -> String {
         .to_string()
 }
 
+/// Formats the latency into a human-readable `String`.
 fn fmt_latency(latency: Option<Duration>) -> String {
     match latency {
         Some(latency) => latency.to_human_time_string(),
@@ -226,6 +238,7 @@ fn fmt_latency(latency: Option<Duration>) -> String {
     }
 }
 
+/// Creates a bold cell with the given text.
 fn bold_cell(s: &str) -> Cell {
     Cell::new(s).add_attribute(comfy_table::Attribute::Bold)
 }
