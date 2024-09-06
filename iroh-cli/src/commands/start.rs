@@ -1,14 +1,18 @@
-use std::path::PathBuf;
-use std::{future::Future, net::SocketAddr, path::Path, time::Duration};
+//! Define commands to manage the start of the iroh node.
 
 use crate::config::NodeConfig;
 use anyhow::Result;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use iroh::node::{Node, DEFAULT_RPC_ADDR};
 use iroh::{
     net::relay::{RelayMap, RelayMode},
-    node::RpcStatus,
+    node::{Node, RpcStatus, DEFAULT_RPC_ADDR},
+};
+use std::{
+    future::Future,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    time::Duration,
 };
 use tracing::{info_span, trace, Instrument};
 
@@ -23,10 +27,12 @@ pub enum RunType {
     UntilStopped,
 }
 
+/// Error to show that iroh is already running in some port.
 #[derive(thiserror::Error, Debug)]
 #[error("iroh is already running on port {0}")]
 pub struct AlreadyRunningError(u16);
 
+/// Runs an iroh node with a given command.
 pub async fn run_with_command<F, T>(
     config: &NodeConfig,
     iroh_data_root: &Path,
@@ -45,9 +51,11 @@ where
 
     let res = run_with_command_inner(config, iroh_data_root, rpc_addr, run_type, command).await;
 
+    // If `Some`thing is returned, it means the starting has failed and the tasks should be aborted.
     if let Some(metrics_fut) = metrics_fut {
         metrics_fut.abort();
     }
+    // If `Some`thing is returned, it means the starting has failed and the tasks should be aborted.
     if let Some(metrics_dumper_fut) = metrics_dumper_fut {
         metrics_dumper_fut.abort();
     }
@@ -68,6 +76,7 @@ where
     res
 }
 
+/// Runs an iroh node with the given command (private function).
 async fn run_with_command_inner<F, T>(
     config: &NodeConfig,
     iroh_data_root: &Path,
@@ -122,6 +131,7 @@ where
     Ok(())
 }
 
+/// Starts an iroh node.
 pub(crate) async fn start_node(
     iroh_data_root: &Path,
     rpc_addr: Option<SocketAddr>,
@@ -133,7 +143,7 @@ pub(crate) async fn start_node(
             return Err(AlreadyRunningError(port).into());
         }
         RpcStatus::Stopped => {
-            // all good, we can go ahead
+            // all good, we can start the node
         }
     }
 
@@ -152,6 +162,7 @@ pub(crate) async fn start_node(
         .await
 }
 
+/// Creates a welcome message for the given [`Node`].
 fn welcome_message<B: iroh::blobs::store::Store>(node: &Node<B>) -> Result<String> {
     let msg = format!(
         "{}\nNode ID: {}\n",
@@ -162,7 +173,7 @@ fn welcome_message<B: iroh::blobs::store::Store>(node: &Node<B>) -> Result<Strin
     Ok(msg)
 }
 
-/// Create a nice spinner.
+/// Creates a nice spinner.
 fn create_spinner(msg: &'static str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
     pb.enable_steady_tick(Duration::from_millis(80));
@@ -176,6 +187,9 @@ fn create_spinner(msg: &'static str) -> ProgressBar {
     pb.with_finish(indicatif::ProgressFinish::AndClear)
 }
 
+/// Start an iroh metrics server to serve the OpenMetrics endpoint.
+///
+/// Returns `None` if succeeded; otherwise, returns the `JoinHandle` with which the task can be aborted.
 pub fn start_metrics_server(
     metrics_addr: Option<SocketAddr>,
 ) -> Option<tokio::task::JoinHandle<()>> {
@@ -193,6 +207,9 @@ pub fn start_metrics_server(
     None
 }
 
+/// Starts an iroh metrics dumper service.
+///
+/// Returns `None` if succeeded; otherwise, returns the `JoinHandle` with which the task can be aborted.
 pub fn start_metrics_dumper(
     path: Option<PathBuf>,
     interval: Duration,
