@@ -184,7 +184,7 @@ impl std::str::FromStr for TicketOrHash {
 }
 
 impl BlobCommands {
-    /// Run the blob command given the iroh client.
+    /// Runs the blob command given the iroh client.
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Get {
@@ -453,7 +453,7 @@ pub enum ListCommands {
 }
 
 impl ListCommands {
-    /// Run a list subcommand.
+    /// Runs a list subcommand.
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Blobs => {
@@ -512,7 +512,7 @@ pub enum DeleteCommands {
 }
 
 impl DeleteCommands {
-    /// Run the delete command.
+    /// Runs the delete command.
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Blob { hash } => {
@@ -526,7 +526,7 @@ impl DeleteCommands {
     }
 }
 
-/// Given the verbosity level, return the corresponding [`ReportLevel`].
+/// Returns the corresponding [`ReportLevel`] given the verbosity level.
 fn get_report_level(verbose: u8) -> ReportLevel {
     match verbose {
         0 => ReportLevel::Warn,
@@ -535,7 +535,7 @@ fn get_report_level(verbose: u8) -> ReportLevel {
     }
 }
 
-/// Apply the report level to the given text.
+/// Applies the report level to the given text.
 fn apply_report_level(text: String, level: ReportLevel) -> console::StyledObject<String> {
     match level {
         ReportLevel::Trace => style(text).dim(),
@@ -545,7 +545,7 @@ fn apply_report_level(text: String, level: ReportLevel) -> console::StyledObject
     }
 }
 
-/// Check that the consistency of the blobs on the running node, and repair if instructed.
+/// Checks that the consistency of the blobs on the running node, and repair if instructed.
 pub async fn consistency_check(iroh: &Iroh, verbose: u8, repair: bool) -> Result<()> {
     let mut response = iroh.blobs().consistency_check(repair).await?;
     let verbosity = get_report_level(verbose);
@@ -587,7 +587,7 @@ pub async fn consistency_check(iroh: &Iroh, verbose: u8, repair: bool) -> Result
     Ok(())
 }
 
-/// Check the validity of the blobs on the running node, and repair if instructed.
+/// Checks the validity of the blobs on the running node, and repair if instructed.
 pub async fn validate(iroh: &Iroh, verbose: u8, repair: bool) -> Result<()> {
     let mut state = ValidateProgressState::new();
     let mut response = iroh.blobs().validate(repair).await?;
@@ -684,6 +684,7 @@ struct ValidateProgressState {
 }
 
 impl ValidateProgressState {
+    /// Creates a new validation progress state collection.
     fn new() -> Self {
         let mp = MultiProgress::new();
         let overall = mp.add(ProgressBar::new(0));
@@ -698,7 +699,7 @@ impl ValidateProgressState {
         }
     }
 
-    /// Set the total number to the provided value and style the progress bar to starting.
+    /// Sets the total number to the provided value and style the progress bar to starting.
     fn starting(&mut self, total: u64) {
         self.total = total;
         self.errors = 0;
@@ -713,7 +714,7 @@ impl ValidateProgressState {
         );
     }
 
-    /// Add a message to the progress bar in the given `id`.
+    /// Adds a message to the progress bar in the given `id`.
     fn add_entry(&mut self, id: u64, hash: Hash, path: Option<String>, size: u64) {
         let pb = self.mp.insert_before(&self.overall, ProgressBar::new(size));
         pb.set_style(ProgressStyle::default_bar()
@@ -731,7 +732,7 @@ impl ValidateProgressState {
         self.pbs.insert(id, pb);
     }
 
-    /// Progress the progress bar with `id` by `progress` amount.
+    /// Progresses the progress bar with `id` by `progress` amount.
     fn progress(&mut self, id: u64, progress: u64) {
         if let Some(pb) = self.pbs.get_mut(&id) {
             pb.set_position(progress);
@@ -745,7 +746,7 @@ impl ValidateProgressState {
         error_line.set_message(error);
     }
 
-    /// Finish a progress bar with a given error message.
+    /// Finishes a progress bar with a given error message.
     fn done(&mut self, id: u64, error: Option<String>) {
         if let Some(pb) = self.pbs.remove(&id) {
             let ok_char = style(Emoji("✔", "OK")).green();
@@ -814,7 +815,7 @@ pub enum TicketOption {
     Print,
 }
 
-/// Helper function to add a [`BlobSource`] given some [`BlobAddOptions`].
+/// Adds a [`BlobSource`] given some [`BlobAddOptions`].
 pub async fn add_with_opts(
     client: &iroh::client::Iroh,
     source: BlobSource,
@@ -847,7 +848,7 @@ pub async fn add_with_opts(
     add(client, source, tag, ticket, wrap).await
 }
 
-/// Add data to iroh, either from a path or, if path is `None`, from STDIN.
+/// Adds data to iroh, either from a path or, if path is `None`, from STDIN.
 pub async fn add(
     client: &iroh::client::Iroh,
     source: BlobSourceIroh,
@@ -904,7 +905,7 @@ pub struct ProvideResponseEntry {
     pub hash: Hash,
 }
 
-/// Combine the [`AddProgress`] outputs from a [`Stream`] into a single tuple.
+/// Combines the [`AddProgress`] outputs from a [`Stream`] into a single tuple.
 pub async fn aggregate_add_response(
     mut stream: impl Stream<Item = Result<AddProgress>> + Unpin,
 ) -> Result<(Hash, BlobFormat, Vec<ProvideResponseEntry>)> {
@@ -968,7 +969,7 @@ pub async fn aggregate_add_response(
     Ok((hash, format, entries))
 }
 
-/// Print out the add reponse.
+/// Prints out the add reponse.
 pub fn print_add_response(hash: Hash, format: BlobFormat, entries: Vec<ProvideResponseEntry>) {
     let mut total_size = 0;
     for ProvideResponseEntry { name, size, hash } in entries {
@@ -991,6 +992,7 @@ pub struct ProvideProgressState {
 }
 
 impl ProvideProgressState {
+    /// Creates a new provide progress state.
     fn new() -> Self {
         Self {
             mp: MultiProgress::new(),
@@ -998,7 +1000,7 @@ impl ProvideProgressState {
         }
     }
 
-    /// Insert a new progress bar with the given id, name, and size.
+    /// Inserts a new progress bar with the given id, name, and size.
     fn found(&mut self, name: String, id: u64, size: u64) {
         let pb = self.mp.add(ProgressBar::new(size));
         pb.set_style(ProgressStyle::default_bar()
@@ -1011,14 +1013,14 @@ impl ProvideProgressState {
         self.pbs.insert(id, pb);
     }
 
-    /// Add some progress to the progress bar with the given id.
+    /// Adds some progress to the progress bar with the given id.
     fn progress(&mut self, id: u64, progress: u64) {
         if let Some(pb) = self.pbs.get_mut(&id) {
             pb.set_position(progress);
         }
     }
 
-    /// Set the multiprogress bar with the given id as finished and clear it.
+    /// Sets the multiprogress bar with the given id as finished and clear it.
     fn done(&mut self, id: u64, _hash: Hash) {
         if let Some(pb) = self.pbs.remove(&id) {
             pb.finish_and_clear();
@@ -1026,18 +1028,18 @@ impl ProvideProgressState {
         }
     }
 
-    /// Set the multiprogress bar as finished and clear them.
+    /// Sets the multiprogress bar as finished and clear them.
     fn all_done(self) {
         self.mp.clear().ok();
     }
 
-    /// Clear the multiprogress bar.
+    /// Clears the multiprogress bar.
     fn error(self) {
         self.mp.clear().ok();
     }
 }
 
-/// Display the download progress for a given stream.
+/// Displays the download progress for a given stream.
 pub async fn show_download_progress(
     hash: Hash,
     mut stream: impl Stream<Item = Result<DownloadProgress>> + Unpin,
@@ -1153,7 +1155,7 @@ impl From<String> for OutputTarget {
     }
 }
 
-/// Create a [`ProgressBar`] with some defaults for the overall progress.
+/// Creates a [`ProgressBar`] with some defaults for the overall progress.
 fn make_overall_progress() -> ProgressBar {
     let pb = ProgressBar::hidden();
     pb.enable_steady_tick(std::time::Duration::from_millis(100));
@@ -1167,7 +1169,7 @@ fn make_overall_progress() -> ProgressBar {
     pb
 }
 
-/// Create a [`ProgressBar`] with some defaults for the individual progress.
+/// Creates a [`ProgressBar`] with some defaults for the individual progress.
 fn make_individual_progress() -> ProgressBar {
     let pb = ProgressBar::hidden();
     pb.enable_steady_tick(std::time::Duration::from_millis(100));
