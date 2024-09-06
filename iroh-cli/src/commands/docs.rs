@@ -743,7 +743,7 @@ async fn fmt_entry(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> String
     format!("@{author}: {key} = {content} ({len})")
 }
 
-/// Converts a path to a cannonical path.
+/// Converts a path to a canonical path.
 fn canonicalize_path(path: &str) -> anyhow::Result<PathBuf> {
     let path = PathBuf::from(shellexpand::tilde(&path).to_string());
     Ok(path)
