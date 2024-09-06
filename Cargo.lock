@@ -2896,7 +2896,6 @@ dependencies = [
  "proptest",
  "rand",
  "rand_chacha",
- "rand_core",
  "rcgen",
  "regex",
  "reqwest",
