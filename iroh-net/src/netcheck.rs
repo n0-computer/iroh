@@ -165,7 +165,7 @@ impl RelayLatencies {
 /// If all [`Client`]s are dropped the actor stops running.
 ///
 /// While running the netcheck actor expects to be passed all received stun packets using
-/// [`Client::receive_stun_packet`].
+/// `Addr::receive_stun_packet`.
 #[derive(Debug)]
 pub struct Client {
     /// Channel to send message to the [`Actor`].
@@ -233,7 +233,7 @@ impl Client {
     /// STUN packets.  This function **will not read from the sockets**, as they may be
     /// receiving other traffic as well, normally they are the sockets carrying the real
     /// traffic. Thus all stun packets received on those sockets should be passed to
-    /// [`Client::receive_stun_packet`] in order for this function to receive the stun
+    /// `Addr::receive_stun_packet` in order for this function to receive the stun
     /// responses and function correctly.
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results
