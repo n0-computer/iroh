@@ -969,7 +969,7 @@ pub async fn aggregate_add_response(
     Ok((hash, format, entries))
 }
 
-/// Prints out the add reponse.
+/// Prints out the add response.
 pub fn print_add_response(hash: Hash, format: BlobFormat, entries: Vec<ProvideResponseEntry>) {
     let mut total_size = 0;
     for ProvideResponseEntry { name, size, hash } in entries {
