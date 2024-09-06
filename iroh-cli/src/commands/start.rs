@@ -189,7 +189,7 @@ fn create_spinner(msg: &'static str) -> ProgressBar {
 
 /// Start an iroh metrics server to serve the OpenMetrics endpoint.
 ///
-/// Returns `None` if succeded; otherwise, returns the `JoinHandle` with which the task can be aborted.
+/// Returns `None` if succeeded; otherwise, returns the `JoinHandle` with which the task can be aborted.
 pub fn start_metrics_server(
     metrics_addr: Option<SocketAddr>,
 ) -> Option<tokio::task::JoinHandle<()>> {
@@ -209,7 +209,7 @@ pub fn start_metrics_server(
 
 /// Starts an iroh metrics dumper service.
 ///
-/// Returns `None` if succeded; otherwise, returns the `JoinHandle` with which the task can be aborted.
+/// Returns `None` if succeeded; otherwise, returns the `JoinHandle` with which the task can be aborted.
 pub fn start_metrics_dumper(
     path: Option<PathBuf>,
     interval: Duration,
