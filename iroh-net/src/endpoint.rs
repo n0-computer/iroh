@@ -1251,7 +1251,7 @@ mod tests {
     use std::time::Instant;
 
     use iroh_test::CallOnDrop;
-    use rand_core::SeedableRng;
+    use rand::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
 
     use crate::test_utils::run_relay_server;
