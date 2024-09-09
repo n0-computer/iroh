@@ -335,9 +335,9 @@
         <span class="comment">// making sure that the lock is not held across an await point.
         </span><span class="kw">let </span>futs = {
             <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.shared.lock();
-            <span class="macro">tracing::warn!</span>(<span class="question-mark">?</span>msg, state_pre=<span class="question-mark">?</span>inner.state, <span class="string">"send to {}"</span>, inner.subscribers.len());
+            <span class="macro">tracing::trace!</span>(<span class="question-mark">?</span>msg, state_pre = <span class="question-mark">?</span>inner.state, <span class="string">"send to {}"</span>, inner.subscribers.len());
             inner.on_progress(msg.clone());
-            <span class="macro">tracing::warn!</span>(state_post=<span class="question-mark">?</span>inner.state, <span class="string">"send"</span>);
+            <span class="macro">tracing::trace!</span>(state_post = <span class="question-mark">?</span>inner.state, <span class="string">"send"</span>);
             <span class="kw">let </span>futs = inner
                 .subscribers
                 .iter_mut()

@@ -424,10 +424,10 @@
 <span class="kw">use </span>iroh_blobs::downloader::Downloader;
 <span class="kw">use </span>iroh_blobs::{store::EntryStatus, Hash};
 <span class="kw">use </span>iroh_gossip::net::Gossip;
-<span class="kw">use </span>iroh_net::util::SharedAbortingJoinHandle;
 <span class="kw">use </span>iroh_net::{key::PublicKey, Endpoint, NodeAddr};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::sync::{mpsc, oneshot};
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{error, error_span, Instrument};
 
 <span class="kw">use crate</span>::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
@@ -459,7 +459,7 @@
     </span><span class="kw">pub </span>default_author: Arc&lt;DefaultAuthor&gt;,
     to_live_actor: mpsc::Sender&lt;ToLiveActor&gt;,
     <span class="attr">#[allow(dead_code)]
-    </span>actor_handle: SharedAbortingJoinHandle&lt;()&gt;,
+    </span>actor_handle: Arc&lt;AbortOnDropHandle&lt;()&gt;&gt;,
     <span class="attr">#[debug(<span class="string">"ContentStatusCallback"</span>)]
     </span>content_status_cb: ContentStatusCallback,
 }
@@ -518,7 +518,7 @@
             endpoint,
             sync,
             to_live_actor: live_actor_tx,
-            actor_handle: actor_handle.into(),
+            actor_handle: Arc::new(AbortOnDropHandle::new(actor_handle)),
             content_status_cb,
             default_author: Arc::new(default_author),
         })

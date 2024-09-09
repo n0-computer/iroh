@@ -1598,7 +1598,7 @@
             .secret_key(SecretKey::generate_with_rng(rng))
             .relay_mode(iroh_net::relay::RelayMode::Disabled)
             .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
-            .bind(<span class="number">0</span>)
+            .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>addr = ep.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>node_id = ep.node_id();

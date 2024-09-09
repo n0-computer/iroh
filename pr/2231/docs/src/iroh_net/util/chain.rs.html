@@ -121,21 +121,6 @@
 <a href="#121" id="121">121</a>
 <a href="#122" id="122">122</a>
 <a href="#123" id="123">123</a>
-<a href="#124" id="124">124</a>
-<a href="#125" id="125">125</a>
-<a href="#126" id="126">126</a>
-<a href="#127" id="127">127</a>
-<a href="#128" id="128">128</a>
-<a href="#129" id="129">129</a>
-<a href="#130" id="130">130</a>
-<a href="#131" id="131">131</a>
-<a href="#132" id="132">132</a>
-<a href="#133" id="133">133</a>
-<a href="#134" id="134">134</a>
-<a href="#135" id="135">135</a>
-<a href="#136" id="136">136</a>
-<a href="#137" id="137">137</a>
-<a href="#138" id="138">138</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! IO utility to chain `AsyncRead`s together.
 
 </span><span class="comment">// Based on tokios chain implementation, that doesn't make the concrete type public.
@@ -152,7 +137,7 @@
 <span class="doccomment">/// Stream for the [`chain`] method.
 </span><span class="attr">#[must_use = <span class="string">"streams do nothing unless polled"</span>]
 #[pin_project]
-</span><span class="kw">pub struct </span>Chain&lt;T, U&gt; {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Chain&lt;T, U&gt; {
     <span class="attr">#[pin]
     </span>first: T,
     <span class="attr">#[pin]
@@ -161,7 +146,7 @@
 }
 
 <span class="doccomment">/// Chain two `AsyncRead`s together.
-</span><span class="kw">pub fn </span>chain&lt;T, U&gt;(first: T, second: U) -&gt; Chain&lt;T, U&gt;
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>chain&lt;T, U&gt;(first: T, second: U) -&gt; Chain&lt;T, U&gt;
 <span class="kw">where
     </span>T: AsyncRead,
     U: AsyncRead,
@@ -179,7 +164,7 @@
     U: AsyncRead,
 {
     <span class="doccomment">/// Gets references to the underlying readers in this `Chain`.
-    </span><span class="kw">pub fn </span>get_ref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (<span class="kw-2">&amp;</span>T, <span class="kw-2">&amp;</span>U) {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_ref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (<span class="kw-2">&amp;</span>T, <span class="kw-2">&amp;</span>U) {
         (<span class="kw-2">&amp;</span><span class="self">self</span>.first, <span class="kw-2">&amp;</span><span class="self">self</span>.second)
     }
 
@@ -188,23 +173,8 @@
     /// Care should be taken to avoid modifying the internal I/O state of the
     /// underlying readers as doing so may corrupt the internal state of this
     /// `Chain`.
-    </span><span class="kw">pub fn </span>get_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; (<span class="kw-2">&amp;mut </span>T, <span class="kw-2">&amp;mut </span>U) {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; (<span class="kw-2">&amp;mut </span>T, <span class="kw-2">&amp;mut </span>U) {
         (<span class="kw-2">&amp;mut </span><span class="self">self</span>.first, <span class="kw-2">&amp;mut </span><span class="self">self</span>.second)
-    }
-
-    <span class="doccomment">/// Gets pinned mutable references to the underlying readers in this `Chain`.
-    ///
-    /// Care should be taken to avoid modifying the internal I/O state of the
-    /// underlying readers as doing so may corrupt the internal state of this
-    /// `Chain`.
-    </span><span class="kw">pub fn </span>get_pin_mut(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;) -&gt; (Pin&lt;<span class="kw-2">&amp;mut </span>T&gt;, Pin&lt;<span class="kw-2">&amp;mut </span>U&gt;) {
-        <span class="kw">let </span>me = <span class="self">self</span>.project();
-        (me.first, me.second)
-    }
-
-    <span class="doccomment">/// Consumes the `Chain`, returning the wrapped readers.
-    </span><span class="kw">pub fn </span>into_inner(<span class="self">self</span>) -&gt; (T, U) {
-        (<span class="self">self</span>.first, <span class="self">self</span>.second)
     }
 }
 

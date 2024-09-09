@@ -935,6 +935,7 @@
 <span class="kw">use </span>tokio::net::{TcpListener, TcpStream};
 <span class="kw">use </span>tokio_rustls_acme::AcmeAcceptor;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
 <span class="kw">use </span>tungstenite::handshake::derive_accept_key;
 
@@ -942,7 +943,6 @@
 <span class="kw">use </span><span class="kw">crate</span>::relay::http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION};
 <span class="kw">use </span><span class="kw">crate</span>::relay::server::actor::{ClientConnHandler, ServerActorTask};
 <span class="kw">use </span><span class="kw">crate</span>::relay::server::streams::MaybeTlsStream;
-<span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
 
 <span class="kw">type </span>BytesBody = http_body_util::Full&lt;hyper::body::Bytes&gt;;
 <span class="kw">type </span>HyperError = Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync&gt;;
@@ -1000,7 +1000,7 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>Server {
     addr: SocketAddr,
-    http_server_task: AbortingJoinHandle&lt;()&gt;,
+    http_server_task: AbortOnDropHandle&lt;()&gt;,
     cancel_server_loop: CancellationToken,
 }
 
@@ -1020,12 +1020,12 @@
         <span class="self">self</span>.cancel_server_loop.cancel();
     }
 
-    <span class="doccomment">/// Returns the [`AbortingJoinHandle`] for the supervisor task managing the server.
+    <span class="doccomment">/// Returns the [`AbortOnDropHandle`] for the supervisor task managing the server.
     ///
     /// This is the root of all the tasks for the server.  Aborting it will abort all the
     /// other tasks for the server.  Awaiting it will complete when all the server tasks are
     /// completed.
-    </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortingJoinHandle&lt;()&gt; {
+    </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortOnDropHandle&lt;()&gt; {
         <span class="kw-2">&amp;mut </span><span class="self">self</span>.http_server_task
     }
 
@@ -1286,7 +1286,7 @@
 
         <span class="prelude-val">Ok</span>(Server {
             addr,
-            http_server_task: AbortingJoinHandle::from(task),
+            http_server_task: AbortOnDropHandle::new(task),
             cancel_server_loop,
         })
     }

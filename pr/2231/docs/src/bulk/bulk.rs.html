@@ -185,6 +185,18 @@
 <a href="#185" id="185">185</a>
 <a href="#186" id="186">186</a>
 <a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::BTreeMap;
 
 <span class="kw">use </span>anyhow::Result;
@@ -226,22 +238,33 @@
             metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
             metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
             metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
-            <span class="kw">if </span>opt.with_relay {
+            <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
+            </span><span class="kw">if </span>opt.with_relay {
                 metrics.insert(iroh_net::metrics::RelayMetrics::new(reg));
             }
         })<span class="question-mark">?</span>;
     }
 
+    <span class="attr">#[cfg(not(feature = <span class="string">"local-relay"</span>))]
+    </span><span class="kw">if </span>opt.with_relay {
+        <span class="macro">anyhow::bail!</span>(
+            <span class="string">"Must compile the benchmark with the `local-relay` feature flag to use this option"
+        </span>);
+    }
+
     <span class="kw">let </span>server_span = <span class="macro">tracing::error_span!</span>(<span class="string">"server"</span>);
     <span class="kw">let </span>runtime = rt();
 
-    <span class="kw">let </span>(relay_url, _guard) = <span class="kw">if </span>opt.with_relay {
+    <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
+    </span><span class="kw">let </span>(relay_url, _guard) = <span class="kw">if </span>opt.with_relay {
         <span class="kw">let </span>(<span class="kw">_</span>, relay_url, _guard) = runtime.block_on(iroh_net::test_utils::run_relay_server())<span class="question-mark">?</span>;
 
         (<span class="prelude-val">Some</span>(relay_url), <span class="prelude-val">Some</span>(_guard))
     } <span class="kw">else </span>{
         (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
     };
+    <span class="attr">#[cfg(not(feature = <span class="string">"local-relay"</span>))]
+    </span><span class="kw">let </span>relay_url = <span class="prelude-val">None</span>;
 
     <span class="kw">let </span>(server_addr, endpoint) = {
         <span class="kw">let </span>_guard = server_span.enter();
@@ -298,6 +321,7 @@
             core.get_collector::&lt;iroh_net::metrics::PortmapMetrics&gt;(),
         );
         <span class="comment">// if None, (this is the case if opt.with_relay is false), then this is skipped internally:
+        </span><span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
         </span>collect_and_print(
             <span class="string">"RelayMetrics"</span>,
             core.get_collector::&lt;iroh_net::metrics::RelayMetrics&gt;(),

@@ -1702,6 +1702,27 @@
 <a href="#1702" id="1702">1702</a>
 <a href="#1703" id="1703">1703</a>
 <a href="#1704" id="1704">1704</a>
+<a href="#1705" id="1705">1705</a>
+<a href="#1706" id="1706">1706</a>
+<a href="#1707" id="1707">1707</a>
+<a href="#1708" id="1708">1708</a>
+<a href="#1709" id="1709">1709</a>
+<a href="#1710" id="1710">1710</a>
+<a href="#1711" id="1711">1711</a>
+<a href="#1712" id="1712">1712</a>
+<a href="#1713" id="1713">1713</a>
+<a href="#1714" id="1714">1714</a>
+<a href="#1715" id="1715">1715</a>
+<a href="#1716" id="1716">1716</a>
+<a href="#1717" id="1717">1717</a>
+<a href="#1718" id="1718">1718</a>
+<a href="#1719" id="1719">1719</a>
+<a href="#1720" id="1720">1720</a>
+<a href="#1721" id="1721">1721</a>
+<a href="#1722" id="1722">1722</a>
+<a href="#1723" id="1723">1723</a>
+<a href="#1724" id="1724">1724</a>
+<a href="#1725" id="1725">1725</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1717,7 +1738,7 @@
 
 </span><span class="kw">use </span>std::any::Any;
 <span class="kw">use </span>std::future::{Future, IntoFuture};
-<span class="kw">use </span>std::net::{IpAddr, SocketAddr};
+<span class="kw">use </span>std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 <span class="kw">use </span>std::pin::Pin;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::task::Poll;
@@ -1785,6 +1806,8 @@
     dns_resolver: <span class="prelude-ty">Option</span>&lt;DnsResolver&gt;,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span>insecure_skip_relay_cert_verify: bool,
+    addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
+    addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Builder {
@@ -1801,6 +1824,8 @@
             dns_resolver: <span class="prelude-val">None</span>,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
+            addr_v4: <span class="prelude-val">None</span>,
+            addr_v6: <span class="prelude-val">None</span>,
         }
     }
 }
@@ -1811,14 +1836,8 @@
 
     // # The final constructor that everyone needs.
 
-    </span><span class="doccomment">/// Binds the magic endpoint on the specified socket address.
-    ///
-    /// The *bind_port* is the port that should be bound locally.
-    /// The port will be used to bind an IPv4 and, if supported, and IPv6 socket.
-    /// You can pass `0` to let the operating system choose a free port for you.
-    ///
-    /// NOTE: This will be improved soon to add support for binding on specific addresses.
-    </span><span class="kw">pub async fn </span>bind(<span class="self">self</span>, bind_port: u16) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
+    </span><span class="doccomment">/// Binds the magic endpoint.
+    </span><span class="kw">pub async fn </span>bind(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
         <span class="kw">let </span>relay_map = <span class="self">self</span>.relay_mode.relay_map();
         <span class="kw">let </span>secret_key = <span class="self">self</span>.secret_key.unwrap_or_else(SecretKey::generate);
         <span class="kw">let </span>static_config = StaticConfig {
@@ -1831,7 +1850,8 @@
             .unwrap_or_else(|| default_resolver().clone());
 
         <span class="kw">let </span>msock_opts = magicsock::Options {
-            port: bind_port,
+            addr_v4: <span class="self">self</span>.addr_v4,
+            addr_v6: <span class="self">self</span>.addr_v6,
             secret_key,
             relay_map,
             node_map: <span class="self">self</span>.node_map,
@@ -1846,7 +1866,29 @@
 
     <span class="comment">// # The very common methods everyone basically needs.
 
-    </span><span class="doccomment">/// Sets a secret key to authenticate with other peers.
+    </span><span class="doccomment">/// Sets the IPv4 bind address.
+    ///
+    /// Setting the port to `0` will use a random port.
+    /// If the port specified is already in use, it will fallback to choosing a random port.
+    ///
+    /// By default will use `0.0.0.0:0` to bind to.
+    </span><span class="kw">pub fn </span>bind_addr_v4(<span class="kw-2">mut </span><span class="self">self</span>, addr: SocketAddrV4) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.addr_v4.replace(addr);
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Sets the IPv6 bind address.
+    ///
+    /// Setting the port to `0` will use a random port.
+    /// If the port specified is already in use, it will fallback to choosing a random port.
+    ///
+    /// By default will use `[::]:0` to bind to.
+    </span><span class="kw">pub fn </span>bind_addr_v6(<span class="kw-2">mut </span><span class="self">self</span>, addr: SocketAddrV6) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.addr_v6.replace(addr);
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Sets a secret key to authenticate with other peers.
     ///
     /// This secret key's public key will be the [`PublicKey`] of this endpoint and thus
     /// also its [`NodeId`]
@@ -2387,7 +2429,7 @@
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
-    /// let mep =  Endpoint::builder().bind(0).await.unwrap();
+    /// let mep =  Endpoint::builder().bind().await.unwrap();
     /// let _addrs = mep.direct_addresses().next().await;
     /// # });
     /// ```
@@ -2934,7 +2976,7 @@
     <span class="kw">use </span>std::time::Instant;
 
     <span class="kw">use </span>iroh_test::CallOnDrop;
-    <span class="kw">use </span>rand_core::SeedableRng;
+    <span class="kw">use </span>rand::SeedableRng;
     <span class="kw">use </span>tracing::{error_span, info, info_span, Instrument};
 
     <span class="kw">use </span><span class="kw">crate</span>::test_utils::run_relay_server;
@@ -2962,7 +3004,7 @@
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>ep = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-            .bind(<span class="number">0</span>)
+            .bind()
             .<span class="kw">await
             </span>.unwrap();
         <span class="kw">let </span>my_addr = ep.node_addr().<span class="kw">await</span>.unwrap();
@@ -2993,7 +3035,7 @@
                         .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
                         .relay_mode(RelayMode::Custom(relay_map))
                         .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
-                        .bind(<span class="number">0</span>)
+                        .bind()
                         .<span class="kw">await
                         </span>.unwrap();
                     <span class="macro">info!</span>(<span class="string">"accepting connection"</span>);
@@ -3028,7 +3070,7 @@
                     .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
                     .relay_mode(RelayMode::Custom(relay_map))
                     .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
-                    .bind(<span class="number">0</span>)
+                    .bind()
                     .<span class="kw">await
                     </span>.unwrap();
                 <span class="macro">info!</span>(<span class="string">"client connecting"</span>);
@@ -3090,7 +3132,7 @@
             }
             builder
                 .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-                .bind(<span class="number">0</span>)
+                .bind()
                 .<span class="kw">await
                 </span>.unwrap()
         }
@@ -3147,7 +3189,7 @@
                         .secret_key(server_secret_key)
                         .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
                         .relay_mode(RelayMode::Custom(relay_map))
-                        .bind(<span class="number">0</span>)
+                        .bind()
                         .<span class="kw">await
                         </span>.unwrap();
                     <span class="kw">let </span>eps = ep.bound_sockets();
@@ -3193,7 +3235,7 @@
                     .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
                     .relay_mode(RelayMode::Custom(relay_map))
                     .secret_key(client_secret_key)
-                    .bind(<span class="number">0</span>)
+                    .bind()
                     .<span class="kw">await
                     </span>.unwrap();
                 <span class="kw">let </span>eps = ep.bound_sockets();
@@ -3238,13 +3280,13 @@
         <span class="kw">let </span>ep1 = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled)
-            .bind(<span class="number">0</span>)
+            .bind()
             .<span class="kw">await
             </span>.unwrap();
         <span class="kw">let </span>ep2 = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled)
-            .bind(<span class="number">0</span>)
+            .bind()
             .<span class="kw">await
             </span>.unwrap();
         <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().<span class="kw">await</span>.unwrap();
@@ -3335,7 +3377,7 @@
             .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .bind(<span class="number">0</span>)
+            .bind()
             .<span class="kw">await
             </span>.unwrap();
         <span class="kw">let </span>ep2 = Endpoint::builder()
@@ -3343,7 +3385,7 @@
             .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
-            .bind(<span class="number">0</span>)
+            .bind()
             .<span class="kw">await
             </span>.unwrap();
 

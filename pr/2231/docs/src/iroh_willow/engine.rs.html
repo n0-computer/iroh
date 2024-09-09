@@ -131,11 +131,38 @@
 <a href="#131" id="131">131</a>
 <a href="#132" id="132">132</a>
 <a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Engine for driving a willow store and synchronisation sessions.
 
 </span><span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>iroh_net::{endpoint::Connection, util::SharedAbortingJoinHandle, Endpoint, NodeId};
-<span class="kw">use </span>tokio::sync::{mpsc, oneshot};
+<span class="kw">use </span>futures_util::{
+    future::{MapErr, Shared},
+    FutureExt, TryFutureExt,
+};
+<span class="kw">use </span>iroh_net::{endpoint::Connection, Endpoint, NodeId};
+<span class="kw">use </span>tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinError,
+};
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error, error_span, Instrument};
 
 <span class="kw">use crate</span>::{
@@ -167,8 +194,16 @@
 </span><span class="kw">pub struct </span>Engine {
     actor_handle: ActorHandle,
     peer_manager_inbox: mpsc::Sender&lt;peer_manager::Input&gt;,
-    peer_manager_task: SharedAbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;(), String&gt;&gt;,
+    <span class="comment">// `Engine` needs to be `Clone + Send`, and we need to `task.await` in its `shutdown()` impl.
+    // So we need
+    // - `Shared` so we can `task.await` from all `Node` clones
+    // - `MapErr` to map the `JoinError` to a `String`, because `JoinError` is `!Clone`
+    // - `AbortOnDropHandle` to make sure that the `task` is cancelled when all `Node`s are dropped
+    //   (`Shared` acts like an `Arc` around its inner future).
+    </span>peer_manager_task: Shared&lt;MapErr&lt;AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;(), String&gt;&gt;, JoinErrToStr&gt;&gt;,
 }
+
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>JoinErrToStr = Box&lt;<span class="kw">dyn </span>Fn(JoinError) -&gt; String + Send + Sync + <span class="lifetime">'static</span>&gt;;
 
 <span class="kw">impl </span>Engine {
     <span class="doccomment">/// Start the Willow engine.
@@ -196,13 +231,16 @@
         <span class="kw">let </span>peer_manager =
             PeerManager::new(actor_handle.clone(), endpoint, pm_inbox_rx, accept_opts);
         <span class="kw">let </span>peer_manager_task = tokio::task::spawn(
-            <span class="kw">async move </span>{ peer_manager.run().<span class="kw">await</span>.map_err(|err| <span class="macro">format!</span>(<span class="string">"{err:?}"</span>)) }
+            <span class="kw">async move </span>{ peer_manager.run().<span class="kw">await</span>.map_err(|e| e.to_string()) }
                 .instrument(<span class="macro">error_span!</span>(<span class="string">"peer_manager"</span>, me=%me.fmt_short())),
         );
+        <span class="kw">let </span>peer_manager_task = AbortOnDropHandle::new(peer_manager_task)
+            .map_err(Box::new(|e: JoinError| e.to_string()) <span class="kw">as </span>JoinErrToStr)
+            .shared();
         Engine {
             actor_handle,
             peer_manager_inbox: pm_inbox_tx,
-            peer_manager_task: peer_manager_task.into(),
+            peer_manager_task,
         }
     }
 

@@ -698,6 +698,10 @@
 <a href="#698" id="698">698</a>
 <a href="#699" id="699">699</a>
 <a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
+<a href="#704" id="704">704</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Port mapping client and service.
 
 </span><span class="kw">use </span>std::{
@@ -709,6 +713,7 @@
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::StreamExt;
 <span class="kw">use </span>tokio::sync::{mpsc, oneshot, watch};
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, info_span, trace, Instrument};
 
 <span class="kw">use </span>iroh_metrics::inc;
@@ -809,7 +814,7 @@
     <span class="doccomment">/// Channel used to communicate with the port mapping service.
     </span>service_tx: mpsc::Sender&lt;Message&gt;,
     <span class="doccomment">/// A handle to the service that will cancel the spawned task once the client is dropped.
-    </span>_service_handle: std::sync::Arc&lt;util::CancelOnDrop&gt;,
+    </span>_service_handle: std::sync::Arc&lt;AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;&gt;,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Client {
@@ -825,13 +830,9 @@
 
         <span class="kw">let </span>(service, watcher) = Service::new(config, service_rx);
 
-        <span class="kw">let </span>handle = util::CancelOnDrop::new(
-            <span class="string">"portmap_service"</span>,
-            tokio::spawn(
-                <span class="kw">async move </span>{ service.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"portmapper.service"</span>)),
-            )
-            .abort_handle(),
-        );
+        <span class="kw">let </span>handle = AbortOnDropHandle::new(tokio::spawn(
+            <span class="kw">async move </span>{ service.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"portmapper.service"</span>)),
+        ));
 
         Client {
             port_mapping: watcher,
@@ -1095,15 +1096,12 @@
     ///
     /// This task will be cancelled if a request to set the local port arrives before it's
     /// finished.
-    </span>mapping_task: <span class="prelude-ty">Option</span>&lt;util::AbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;mapping::Mapping&gt;&gt;&gt;,
+    </span>mapping_task: <span class="prelude-ty">Option</span>&lt;AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;mapping::Mapping&gt;&gt;&gt;,
     <span class="doccomment">/// Task probing the necessary protocols.
     ///
     /// Requests for a probe that arrive while this task is still in progress will receive the same
     /// result.
-    </span>probing_task: <span class="prelude-ty">Option</span>&lt;(
-        util::AbortingJoinHandle&lt;Probe&gt;,
-        Vec&lt;oneshot::Sender&lt;ProbeResult&gt;&gt;,
-    )&gt;,
+    </span>probing_task: <span class="prelude-ty">Option</span>&lt;(AbortOnDropHandle&lt;Probe&gt;, Vec&lt;oneshot::Sender&lt;ProbeResult&gt;&gt;)&gt;,
 }
 
 <span class="kw">impl </span>Service {
@@ -1299,12 +1297,16 @@
             </span><span class="self">self</span>.mapping_task = <span class="kw">if </span>pcp {
                 <span class="comment">// try pcp if available first
                 </span><span class="kw">let </span>task = mapping::Mapping::new_pcp(local_ip, local_port, gateway, external_addr);
-                <span class="prelude-val">Some</span>(tokio::spawn(task.instrument(<span class="macro">info_span!</span>(<span class="string">"pcp"</span>))).into())
+                <span class="prelude-val">Some</span>(AbortOnDropHandle::new(tokio::spawn(
+                    task.instrument(<span class="macro">info_span!</span>(<span class="string">"pcp"</span>)),
+                )))
             } <span class="kw">else if </span>nat_pmp {
                 <span class="comment">// next nat_pmp if available
                 </span><span class="kw">let </span>task =
                     mapping::Mapping::new_nat_pmp(local_ip, local_port, gateway, external_addr);
-                <span class="prelude-val">Some</span>(tokio::spawn(task.instrument(<span class="macro">info_span!</span>(<span class="string">"pmp"</span>))).into())
+                <span class="prelude-val">Some</span>(AbortOnDropHandle::new(tokio::spawn(
+                    task.instrument(<span class="macro">info_span!</span>(<span class="string">"pmp"</span>)),
+                )))
             } <span class="kw">else if </span>upnp || <span class="self">self</span>.config.enable_upnp {
                 <span class="comment">// next upnp if available or enabled
                 </span><span class="kw">let </span>external_port = external_addr.map(|(_addr, port)| port);
@@ -1314,17 +1316,23 @@
                     .as_ref()
                     .map(|(gateway, _last_seen)| gateway.clone());
                 <span class="kw">let </span>task = mapping::Mapping::new_upnp(local_ip, local_port, gateway, external_port);
-                <span class="prelude-val">Some</span>(tokio::spawn(task.instrument(<span class="macro">info_span!</span>(<span class="string">"upnp"</span>))).into())
+                <span class="prelude-val">Some</span>(AbortOnDropHandle::new(tokio::spawn(
+                    task.instrument(<span class="macro">info_span!</span>(<span class="string">"upnp"</span>)),
+                )))
             } <span class="kw">else if </span>!recently_probed &amp;&amp; <span class="self">self</span>.config.enable_pcp {
                 <span class="comment">// if no service is available and the default fallback (upnp) is disabled, try pcp
                 // first
                 </span><span class="kw">let </span>task = mapping::Mapping::new_pcp(local_ip, local_port, gateway, external_addr);
-                <span class="prelude-val">Some</span>(tokio::spawn(task.instrument(<span class="macro">info_span!</span>(<span class="string">"pcp"</span>))).into())
+                <span class="prelude-val">Some</span>(AbortOnDropHandle::new(tokio::spawn(
+                    task.instrument(<span class="macro">info_span!</span>(<span class="string">"pcp"</span>)),
+                )))
             } <span class="kw">else if </span>!recently_probed &amp;&amp; <span class="self">self</span>.config.enable_nat_pmp {
                 <span class="comment">// finally try nat_pmp if enabled
                 </span><span class="kw">let </span>task =
                     mapping::Mapping::new_nat_pmp(local_ip, local_port, gateway, external_addr);
-                <span class="prelude-val">Some</span>(tokio::spawn(task.instrument(<span class="macro">info_span!</span>(<span class="string">"pmp"</span>))).into())
+                <span class="prelude-val">Some</span>(AbortOnDropHandle::new(tokio::spawn(
+                    task.instrument(<span class="macro">info_span!</span>(<span class="string">"pmp"</span>)),
+                )))
             } <span class="kw">else </span>{
                 <span class="comment">// give up
                 </span><span class="kw">return</span>;
@@ -1367,7 +1375,7 @@
                             .instrument(<span class="macro">info_span!</span>(<span class="string">"portmapper.probe"</span>)),
                         );
                     <span class="kw">let </span>receivers = <span class="macro">vec!</span>[result_tx];
-                    <span class="self">self</span>.probing_task = <span class="prelude-val">Some</span>((handle.into(), receivers));
+                    <span class="self">self</span>.probing_task = <span class="prelude-val">Some</span>((AbortOnDropHandle::new(handle), receivers));
                 }
             }
         }
