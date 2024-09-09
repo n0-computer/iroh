@@ -222,7 +222,7 @@ async fn spaces_subscription() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_regression_restricted_area_sync() -> testresult::TestResult {
+async fn test_restricted_area() -> testresult::TestResult {
     iroh_test::logging::setup_multithreaded();
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
     let (alfie_addr, alfie) = spawn_node().await;
@@ -239,7 +239,6 @@ async fn test_regression_restricted_area_sync() -> testresult::TestResult {
         .share(
             betty_user,
             AccessMode::Write,
-            // RestrictArea::None, // succeeds with this
             RestrictArea::Restrict(Area::new_subspace(betty_user)),
         )
         .await?;
