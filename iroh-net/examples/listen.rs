@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
         // If you want to experiment with relaying using your own relay server, you must pass in the same custom relay url to both the `listen` code AND the `connect` code
         .relay_mode(RelayMode::Default)
         // you can choose a port to bind to, but passing in `0` will bind the socket to a random available port
-        .bind(0)
+        .bind()
         .await?;
 
     let me = endpoint.node_id();

@@ -1,24 +1,19 @@
 //! Tool to get information about the current network environment of a node,
 //! and to test connectivity to specific other nodes.
-use std::{
-    collections::HashMap,
-    io,
-    net::SocketAddr,
-    num::NonZeroU16,
-    path::PathBuf,
-    str::FromStr,
-    sync::Arc,
-    time::{Duration, Instant},
-};
 
 use crate::config::{iroh_data_root, NodeConfig};
-
 use anyhow::Context;
 use clap::Subcommand;
 use console::style;
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
 use derive_more::Display;
 use futures_lite::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
+use iroh::net::metrics::MagicsockMetrics;
 use iroh::{
     base::ticket::{BlobTicket, Ticket},
     blobs::{
@@ -35,28 +30,31 @@ use iroh::{
         netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
         ticket::NodeTicket,
-        util::CancelOnDrop,
         Endpoint, NodeAddr, NodeId,
     },
     util::{path::IrohPaths, progress::ProgressWriter},
 };
+use iroh_metrics::core::Core;
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
-use serde::{Deserialize, Serialize};
-use tokio::{io::AsyncWriteExt, sync};
-
-use iroh::net::metrics::MagicsockMetrics;
-use iroh_metrics::core::Core;
-
-use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
 use rand::Rng;
 use ratatui::{prelude::*, widgets::*};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    io,
+    net::SocketAddr,
+    num::NonZeroU16,
+    path::PathBuf,
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tokio::{io::AsyncWriteExt, sync};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::warn;
 
+/// Options for the secret key usage.
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum SecretKeyOption {
     /// Generate random secret key
@@ -82,6 +80,7 @@ impl std::str::FromStr for SecretKeyOption {
     }
 }
 
+/// Subcommands for the iroh doctor.
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
     /// Report on the current network environment, using either an explicitly provided stun host
@@ -94,13 +93,13 @@ pub enum Commands {
         #[clap(long, default_value_t = DEFAULT_STUN_PORT)]
         stun_port: u16,
     },
-    /// Wait for incoming requests from iroh doctor connect
+    /// Wait for incoming requests from iroh doctor connect.
     Accept {
         /// Our own secret key, in hex. If not specified, the locally configured key will be used.
         #[clap(long, default_value_t = SecretKeyOption::Local)]
         secret_key: SecretKeyOption,
 
-        /// Number of bytes to send to the remote for each test
+        /// Number of bytes to send to the remote for each test.
         #[clap(long, default_value_t = 1024 * 1024 * 16)]
         size: u64,
 
@@ -108,7 +107,7 @@ pub enum Commands {
         #[clap(long)]
         iterations: Option<u64>,
 
-        /// Use a local relay
+        /// Use a local relay.
         #[clap(long)]
         local_relay_server: bool,
 
@@ -123,10 +122,10 @@ pub enum Commands {
     },
     /// Connect to an iroh doctor accept node.
     Connect {
-        /// hex node id of the node to connect to
+        /// Hexadecimal node id of the node to connect to.
         dial: PublicKey,
 
-        /// One or more remote endpoints to use when dialing
+        /// One or more remote endpoints to use when dialing.
         #[clap(long)]
         remote_endpoint: Vec<SocketAddr>,
 
@@ -134,7 +133,7 @@ pub enum Commands {
         #[clap(long, default_value_t = SecretKeyOption::Random)]
         secret_key: SecretKeyOption,
 
-        /// Use a local relay
+        /// Use a local relay:
         ///
         /// Overrides the `relay_url` field.
         #[clap(long)]
@@ -153,7 +152,7 @@ pub enum Commands {
         /// Do not allow the node to dial and be dialed by id only.
         ///
         /// This disables DNS discovery, which would allow the node to dial other nodes by id only.
-        /// And it disables Pkarr Publishing, which would allow the node to announce its address for dns discovery.
+        /// It also disables Pkarr Publishing, which would allow the node to announce its address for DNS discovery.
         ///
         /// Default is `false`
         #[clap(long, default_value_t = false)]
@@ -239,6 +238,7 @@ pub enum Commands {
     },
 }
 
+/// Possible streams that can be requested.
 #[derive(Debug, Serialize, Deserialize, MaxSize)]
 enum TestStreamRequest {
     Echo { bytes: u64 },
@@ -246,12 +246,14 @@ enum TestStreamRequest {
     Send { bytes: u64, block_size: u32 },
 }
 
+/// Configuration for testing.
 #[derive(Debug, Clone, Copy)]
 struct TestConfig {
     size: u64,
     iterations: Option<u64>,
 }
 
+/// Updates the progress bar.
 fn update_pb(
     task: &'static str,
     pb: Option<ProgressBar>,
@@ -272,7 +274,7 @@ fn update_pb(
     }
 }
 
-/// handle a test stream request
+/// Handles a test stream request.
 async fn handle_test_request(
     mut send: SendStream,
     mut recv: RecvStream,
@@ -321,12 +323,12 @@ async fn handle_test_request(
     Ok(())
 }
 
+/// Sends the requested number of bytes, in blocks of the requested size.
 async fn send_blocks(
     mut send: impl tokio::io::AsyncWrite + Unpin,
     total_bytes: u64,
     block_size: u32,
 ) -> anyhow::Result<()> {
-    // send the requested number of bytes, in blocks of the requested size
     let buf = vec![0u8; block_size as usize];
     let mut remaining = total_bytes;
     while remaining > 0 {
@@ -337,6 +339,7 @@ async fn send_blocks(
     Ok(())
 }
 
+/// Prints a client report.
 async fn report(
     stun_host: Option<String>,
     stun_port: u16,
@@ -361,7 +364,7 @@ async fn report(
     Ok(())
 }
 
-/// Contain all the gui state
+/// Contains all the GUI state.
 struct Gui {
     #[allow(dead_code)]
     mp: MultiProgress,
@@ -372,10 +375,11 @@ struct Gui {
     recv_pb: ProgressBar,
     echo_pb: ProgressBar,
     #[allow(dead_code)]
-    counter_task: Option<CancelOnDrop>,
+    counter_task: Option<AbortOnDropHandle<()>>,
 }
 
 impl Gui {
+    /// Create a new GUI struct.
     fn new(endpoint: Endpoint, node_id: NodeId) -> Self {
         let mp = MultiProgress::new();
         mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
@@ -412,13 +416,11 @@ impl Gui {
             send_pb,
             recv_pb,
             echo_pb,
-            counter_task: Some(CancelOnDrop::new(
-                "counter_task",
-                counter_task.abort_handle(),
-            )),
+            counter_task: Some(AbortOnDropHandle::new(counter_task)),
         }
     }
 
+    /// Updates the information of the target progress bar.
     fn update_remote_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &NodeId) {
         let format_latency = |x: Option<Duration>| {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
@@ -453,6 +455,7 @@ impl Gui {
         target.set_message(msg);
     }
 
+    /// Updates the counters for the target progress bar.
     fn update_counters(target: &ProgressBar) {
         if let Some(core) = Core::get() {
             let metrics = core.get_collector::<MagicsockMetrics>().unwrap();
@@ -480,31 +483,37 @@ Ipv6:
         }
     }
 
-    fn set_send(&self, b: u64, d: Duration) {
-        Self::set_bench_speed(&self.send_pb, "send", b, d);
+    /// Sets the "send" text and the speed for the progress bar.
+    fn set_send(&self, bytes: u64, duration: Duration) {
+        Self::set_bench_speed(&self.send_pb, "send", bytes, duration);
     }
 
-    fn set_recv(&self, b: u64, d: Duration) {
-        Self::set_bench_speed(&self.recv_pb, "recv", b, d);
+    /// Sets the "recv" text and the speed for the progress bar.
+    fn set_recv(&self, bytes: u64, duration: Duration) {
+        Self::set_bench_speed(&self.recv_pb, "recv", bytes, duration);
     }
 
-    fn set_echo(&self, b: u64, d: Duration) {
-        Self::set_bench_speed(&self.echo_pb, "echo", b, d);
+    /// Sets the "echo" text and the speed for the progress bar.
+    fn set_echo(&self, bytes: u64, duration: Duration) {
+        Self::set_bench_speed(&self.echo_pb, "echo", bytes, duration);
     }
 
-    fn set_bench_speed(pb: &ProgressBar, text: &str, b: u64, d: Duration) {
+    /// Sets a text and the speed for the progress bar.
+    fn set_bench_speed(pb: &ProgressBar, text: &str, bytes: u64, duration: Duration) {
         pb.set_message(format!(
             "{}: {}/s",
             text,
-            HumanBytes((b as f64 / d.as_secs_f64()) as u64)
+            HumanBytes((bytes as f64 / duration.as_secs_f64()) as u64)
         ));
     }
 
+    /// Clears the [`MultiProgress`] field.
     fn clear(&self) {
         self.mp.clear().ok();
     }
 }
 
+/// Sends, receives and echoes data in a connection.
 async fn active_side(
     connection: Connection,
     config: &TestConfig,
@@ -532,6 +541,7 @@ async fn active_side(
     Ok(())
 }
 
+/// Sends a test request in a connection.
 async fn send_test_request(
     send: &mut SendStream,
     request: &TestStreamRequest,
@@ -542,6 +552,7 @@ async fn send_test_request(
     Ok(())
 }
 
+/// Echoes test a connection.
 async fn echo_test(
     connection: &Connection,
     config: &TestConfig,
@@ -563,6 +574,7 @@ async fn echo_test(
     Ok(duration)
 }
 
+/// Sends test a connection.
 async fn send_test(
     connection: &Connection,
     config: &TestConfig,
@@ -587,6 +599,7 @@ async fn send_test(
     Ok(duration)
 }
 
+/// Receives test a connection.
 async fn recv_test(
     connection: &Connection,
     config: &TestConfig,
@@ -614,7 +627,7 @@ async fn recv_test(
     Ok(duration)
 }
 
-/// Passive side that just accepts connections and answers requests (echo, drain or send)
+/// Accepts connections and answers requests (echo, drain or send) as passive side.
 async fn passive_side(gui: Gui, connection: Connection) -> anyhow::Result<()> {
     loop {
         match connection.accept_bi().await {
@@ -631,14 +644,17 @@ async fn passive_side(gui: Gui, connection: Connection) -> anyhow::Result<()> {
     }
 }
 
+/// Configures a relay map with some default values.
 fn configure_local_relay_map() -> RelayMap {
     let stun_port = DEFAULT_STUN_PORT;
     let url = "http://localhost:3340".parse().unwrap();
     RelayMap::default_from_node(url, stun_port)
 }
 
+/// ALPN protocol address.
 const DR_RELAY_ALPN: [u8; 11] = *b"n0/drderp/1";
 
+/// Creates an iroh net [`Endpoint`] from a [SecreetKey`], a [`RelayMap`] and a [`Discovery`].
 async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
@@ -668,7 +684,7 @@ async fn make_endpoint(
         Some(relay_map) => endpoint.relay_mode(RelayMode::Custom(relay_map)),
         None => endpoint,
     };
-    let endpoint = endpoint.bind(0).await?;
+    let endpoint = endpoint.bind().await?;
 
     tokio::time::timeout(Duration::from_secs(10), endpoint.direct_addresses().next())
         .await
@@ -678,6 +694,7 @@ async fn make_endpoint(
     Ok(endpoint)
 }
 
+/// Connects to a [`NodeId`].
 async fn connect(
     node_id: NodeId,
     secret_key: SecretKey,
@@ -711,7 +728,7 @@ async fn connect(
     Ok(())
 }
 
-/// format a socket addr so that it does not have to be escaped on the console
+/// Formats a [`SocketAddr`] so that console doesn't escape it.
 fn format_addr(addr: SocketAddr) -> String {
     if addr.is_ipv6() {
         format!("'{addr}'")
@@ -720,6 +737,7 @@ fn format_addr(addr: SocketAddr) -> String {
     }
 }
 
+/// Accepts the connections.
 async fn accept(
     secret_key: SecretKey,
     config: TestConfig,
@@ -807,6 +825,7 @@ async fn accept(
     Ok(())
 }
 
+/// Logs the connection changes to the multiprogress.
 fn log_connection_changes(pb: MultiProgress, node_id: NodeId, mut stream: ConnectionTypeStream) {
     tokio::spawn(async move {
         let start = Instant::now();
@@ -820,8 +839,9 @@ fn log_connection_changes(pb: MultiProgress, node_id: NodeId, mut stream: Connec
     });
 }
 
+/// Checks if there's a port mapping in the local port, and if it's ready.
 async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<()> {
-    // create the config that enables exclusively the required protocol
+    // Create the config that enables exclusively the required protocol
     let mut enable_upnp = false;
     let mut enable_pcp = false;
     let mut enable_nat_pmp = false;
@@ -840,7 +860,7 @@ async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> 
     let mut watcher = port_mapper.watch_external_address();
     port_mapper.update_local_port(local_port);
 
-    // wait for the mapping to be ready, or timeout waiting for a change.
+    // Wait for the mapping to be ready, or timeout waiting for a change.
     match tokio::time::timeout(timeout, watcher.changed()).await {
         Ok(Ok(_)) => match *watcher.borrow() {
             Some(address) => {
@@ -856,6 +876,7 @@ async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> 
     }
 }
 
+/// Probes a port map.
 async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
     println!("probing port mapping protocols with {config:?}");
     let port_mapper = portmapper::Client::new(config);
@@ -865,6 +886,7 @@ async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Checks a certain amount (`count`) of the nodes given by the [`NodeConfig`].
 async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     let key = SecretKey::generate();
     if config.relay_nodes.is_empty() {
@@ -957,6 +979,7 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Information about a node and its connection.
 struct NodeDetails {
     connect: Option<Duration>,
     latency: Option<Duration>,
@@ -983,6 +1006,7 @@ impl std::fmt::Display for NodeDetails {
     }
 }
 
+/// Creates a [`SecretKey`] from a [`SecretKeyOption`].
 fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     Ok(match secret_key {
         SecretKeyOption::Random => SecretKey::generate(),
@@ -1006,6 +1030,7 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     })
 }
 
+/// Creates a [`Discovery`] service from a [`SecretKey`].
 fn create_discovery(disable_discovery: bool, secret_key: &SecretKey) -> Option<Box<dyn Discovery>> {
     if disable_discovery {
         None
@@ -1019,16 +1044,20 @@ fn create_discovery(disable_discovery: bool, secret_key: &SecretKey) -> Option<B
     }
 }
 
+/// Prints a string in bold.
 fn bold<T: Display>(x: T) -> String {
     style(x).bold().to_string()
 }
 
+/// Converts a [`NodeId`] public key to a [`zbase32`] string.
 fn to_z32(node_id: NodeId) -> String {
     pkarr::PublicKey::try_from(node_id.as_bytes())
         .unwrap()
         .to_z32()
 }
 
+/// Prints the node's address give a [`NodeAddr`], a prefix (`&str`),
+/// and whether or not it is zbase32.
 fn print_node_addr(prefix: &str, node_addr: &NodeAddr, zbase32: bool) {
     let node = if zbase32 {
         to_z32(node_addr.node_id)
@@ -1044,6 +1073,7 @@ fn print_node_addr(prefix: &str, node_addr: &NodeAddr, zbase32: bool) {
     }
 }
 
+/// Inspects the ticker by printing its information.
 fn inspect_ticket(ticket: &str, zbase32: bool) -> anyhow::Result<()> {
     if ticket.starts_with(BlobTicket::KIND) {
         let ticket = BlobTicket::from_str(ticket).context("failed parsing blob ticket")?;
@@ -1075,6 +1105,7 @@ fn inspect_ticket(ticket: &str, zbase32: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Runs the doctor commands.
 pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     let data_dir = iroh_data_root()?;
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
@@ -1219,6 +1250,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     cmd_res
 }
 
+/// Runs the [`PlotterApp`].
 async fn run_plotter<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app: PlotterApp,
@@ -1247,18 +1279,20 @@ async fn run_plotter<B: Backend>(
     }
 }
 
-fn area_into_chunks(area: Rect, n: usize, horizontal: bool) -> std::rc::Rc<[Rect]> {
+/// Converts an area into `n` chunks.
+fn area_into_chunks(area: Rect, n: usize, is_horizontal: bool) -> std::rc::Rc<[Rect]> {
     let mut constraints = vec![];
     for _ in 0..n {
         constraints.push(Constraint::Percentage(100 / n as u16));
     }
-    let layout = match horizontal {
+    let layout = match is_horizontal {
         true => Layout::horizontal(constraints),
         false => Layout::vertical(constraints),
     };
     layout.split(area)
 }
 
+/// Creates a collection of [`Rect`] by splitting an [`Rect`] area into `n` chunks.
 fn generate_layout_chunks(area: Rect, n: usize) -> Vec<Rect> {
     if n < 4 {
         let chunks = area_into_chunks(area, n, false);
@@ -1273,6 +1307,7 @@ fn generate_layout_chunks(area: Rect, n: usize) -> Vec<Rect> {
     chunks
 }
 
+/// Draws the [`Frame`] given a [`PlotterApp`].
 fn plotter_draw(f: &mut Frame, app: &mut PlotterApp) {
     let area = f.size();
 
@@ -1284,6 +1319,7 @@ fn plotter_draw(f: &mut Frame, app: &mut PlotterApp) {
     }
 }
 
+/// Draws the chart defined in the [`Frame`].
 fn plot_chart(frame: &mut Frame, area: Rect, app: &PlotterApp, metric: &str) {
     let elapsed = app.internal_ts.as_secs_f64();
     let data = app.data.get(metric).unwrap().clone();
@@ -1366,6 +1402,7 @@ fn plot_chart(frame: &mut Frame, area: Rect, app: &PlotterApp, metric: &str) {
     frame.render_widget(chart, area);
 }
 
+/// All the information about the plotter app.
 struct PlotterApp {
     should_quit: bool,
     metrics: Vec<String>,
@@ -1382,6 +1419,7 @@ struct PlotterApp {
 }
 
 impl PlotterApp {
+    /// Creates a new [`PlotterApp`].
     fn new(
         metrics: Vec<String>,
         timeframe: usize,
@@ -1438,6 +1476,7 @@ impl PlotterApp {
         }
     }
 
+    /// Chooses what to do when a key is pressed.
     fn on_key(&mut self, c: char) {
         match c {
             'q' => {
@@ -1450,6 +1489,7 @@ impl PlotterApp {
         }
     }
 
+    /// Chooses what to do on a tick.
     async fn on_tick(&mut self) {
         if self.freeze {
             return;
@@ -1510,6 +1550,7 @@ impl PlotterApp {
     }
 }
 
+/// Parses CSV metrics into a [`HashMap`] of `String` -> `f64`.
 fn parse_csv_metrics(header: &[String], data: &str) -> anyhow::Result<HashMap<String, f64>> {
     let mut metrics = HashMap::new();
     let data = data.split(',').collect::<Vec<&str>>();

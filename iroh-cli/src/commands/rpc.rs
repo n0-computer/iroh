@@ -1,18 +1,19 @@
-use anyhow::Result;
-use clap::Subcommand;
-use iroh::client::Iroh;
-
-use crate::config::ConsoleEnv;
+//! Define the subcommands to manage the iroh RPC.
 
 use super::{
     authors::AuthorCommands, blobs::BlobCommands, docs::DocCommands, gossip::GossipCommands,
     net::NetCommands, tags::TagCommands,
 };
+use crate::config::ConsoleEnv;
+use anyhow::Result;
+use clap::Subcommand;
+use iroh::client::Iroh;
 
+/// Commands to manage the iroh RPC.
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum RpcCommands {
-    /// Manage documents
+    /// Manage iroh's documents.
     ///
     /// Documents are mutable, syncable key-value stores.
     /// For more on docs see https://iroh.computer/docs/layers/documents
@@ -23,7 +24,7 @@ pub enum RpcCommands {
         command: DocCommands,
     },
 
-    /// Manage document authors
+    /// Manage iroh's document authors.
     ///
     /// Authors are keypairs that identify writers to documents.
     ///
@@ -88,6 +89,7 @@ pub enum RpcCommands {
 }
 
 impl RpcCommands {
+    /// Run the RPC command given the iroh client and the console environment.
     pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
             Self::Net { command } => command.run(iroh).await,

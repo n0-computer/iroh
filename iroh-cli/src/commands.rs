@@ -1,15 +1,16 @@
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-
+use self::{
+    blobs::{BlobAddOptions, BlobSource},
+    rpc::RpcCommands,
+    start::RunType,
+};
+use crate::config::{ConsoleEnv, NodeConfig};
 use anyhow::{ensure, Context, Result};
 use clap::Parser;
 use iroh::client::Iroh;
-
-use crate::config::{ConsoleEnv, NodeConfig};
-
-use self::blobs::{BlobAddOptions, BlobSource};
-use self::rpc::RpcCommands;
-use self::start::RunType;
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 
 pub(crate) mod authors;
 pub(crate) mod blobs;
@@ -22,8 +23,9 @@ pub(crate) mod rpc;
 pub(crate) mod start;
 pub(crate) mod tags;
 
-/// iroh is a tool for building distributed apps
-/// https://iroh.computer/docs
+/// iroh is a tool for building distributed apps.
+///
+/// For more information, visit: <https://iroh.computer/docs>.
 #[derive(Parser, Debug, Clone)]
 #[clap(version, verbatim_doc_comment)]
 pub(crate) struct Cli {
@@ -51,14 +53,15 @@ pub(crate) struct Cli {
     pub(crate) metrics_dump_path: Option<PathBuf>,
 }
 
+/// Possible commands to run with the iroh CLI.
 #[derive(Parser, Debug, Clone)]
 pub(crate) enum Commands {
-    /// Start an iroh node
+    /// Start an iroh node.
     ///
     /// A node is a long-running process that serves data and connects to other nodes.
     /// The console, doc, author, blob, node, and tag commands require a running node.
     ///
-    /// start optionally takes a `--add SOURCE` option, which can be a file or a folder
+    /// `start` optionally takes a `--add SOURCE` option, which can be a file or a folder
     /// to serve on startup. Data can also be added after startup with commands like
     /// `iroh blob add` or by adding content to documents.
     ///
@@ -77,14 +80,15 @@ pub(crate) enum Commands {
         add_options: BlobAddOptions,
     },
 
-    /// Open the iroh console
+    /// Open the iroh console.
     ///
     /// The console is a REPL for interacting with a running iroh node.
-    /// For more info on available commands, see https://iroh.computer/docs/api
+    /// For more info on available commands, see <https://iroh.computer/docs/api>.
     ///
     /// For general configuration options see <https://iroh.computer/docs/reference/config>.
     Console,
 
+    /// Manage the RPC.
     #[clap(flatten)]
     Rpc(#[clap(subcommand)] RpcCommands),
 
@@ -97,6 +101,7 @@ pub(crate) enum Commands {
 }
 
 impl Cli {
+    /// Run the CLI.
     pub(crate) async fn run(self, data_dir: &Path) -> Result<()> {
         // Initialize the metrics collection.
         //
@@ -190,7 +195,6 @@ impl Cli {
                 )
                 .await
             }
-
             Commands::Doctor { command } => {
                 let config = Self::load_config(self.config, self.metrics_addr).await?;
                 self::doctor::run(command, &config).await
@@ -198,6 +202,7 @@ impl Cli {
         }
     }
 
+    /// Loads the configuration file or creates the default one, and sets the given metrics address.
     async fn load_config(
         config: Option<PathBuf>,
         metrics_addr: Option<SocketAddr>,

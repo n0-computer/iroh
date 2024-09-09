@@ -19,7 +19,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     io,
-    net::{IpAddr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
@@ -57,7 +57,7 @@ use crate::{
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    net::{interfaces, ip::LocalAddresses, netmon, IpFamily},
+    net::{interfaces, ip::LocalAddresses, netmon},
     netcheck, portmapper,
     relay::{RelayMap, RelayUrl},
     stun, AddrInfo,
@@ -94,9 +94,14 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
 pub(crate) struct Options {
-    /// The port to listen on.
-    /// Zero means to pick one automatically.
-    pub(crate) port: u16,
+    /// The IPv4 address to listen on.
+    ///
+    /// If set to `None` it will choose a random port and listen on `0.0.0.0:0`.
+    pub(crate) addr_v4: Option<SocketAddrV4>,
+    /// The IPv6 address to listen on.
+    ///
+    /// If set to `None` it will choose a random port and listen on `[::]:0`.
+    pub(crate) addr_v6: Option<SocketAddrV6>,
 
     /// Secret key for this node.
     pub(crate) secret_key: SecretKey,
@@ -129,7 +134,8 @@ pub(crate) struct Options {
 impl Default for Options {
     fn default() -> Self {
         Options {
-            port: 0,
+            addr_v4: None,
+            addr_v6: None,
             secret_key: SecretKey::generate(),
             relay_map: RelayMap::empty(),
             node_map: None,
@@ -240,7 +246,7 @@ pub(crate) struct MagicSock {
 }
 
 impl MagicSock {
-    /// Creates a magic [`MagicSock`] listening on [`Options::port`].
+    /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     pub(crate) async fn spawn(opts: Options) -> Result<Handle> {
         Handle::new(opts).await
     }
@@ -1244,7 +1250,7 @@ impl MagicSock {
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
-    #[instrument(skip_all, fields(me = %self.me))]
+    #[instrument(skip_all)]
     fn re_stun(&self, why: &'static str) {
         debug!("re_stun: {}", why);
         inc!(MagicsockMetrics, re_stun_calls);
@@ -1362,7 +1368,7 @@ impl DirectAddrUpdateState {
 }
 
 impl Handle {
-    /// Creates a magic [`MagicSock`] listening on [`Options::port`].
+    /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     async fn new(opts: Options) -> Result<Self> {
         let me = opts.secret_key.public().fmt_short();
         if crate::util::relay_only_mode() {
@@ -1371,8 +1377,8 @@ impl Handle {
             );
         }
 
-        Self::with_name(me.clone(), opts)
-            .instrument(error_span!("magicsock", %me))
+        Self::with_name(me, opts)
+            .instrument(error_span!("magicsock"))
             .await
     }
 
@@ -1380,7 +1386,8 @@ impl Handle {
         let port_mapper = portmapper::Client::default();
 
         let Options {
-            port,
+            addr_v4,
+            addr_v6,
             secret_key,
             relay_map,
             node_map,
@@ -1393,7 +1400,7 @@ impl Handle {
 
         let (relay_recv_sender, relay_recv_receiver) = mpsc::channel(128);
 
-        let (pconn4, pconn6) = bind(port)?;
+        let (pconn4, pconn6) = bind(addr_v4, addr_v6)?;
         let port = pconn4.port();
 
         // NOTE: we can end up with a zero port if `std::net::UdpSocket::socket_addr` fails
@@ -2468,12 +2475,18 @@ fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
 }
 
 /// Initial connection setup.
-fn bind(port: u16) -> Result<(UdpConn, Option<UdpConn>)> {
-    let pconn4 = UdpConn::bind(port, IpFamily::V4).context("bind IPv4 failed")?;
+fn bind(
+    addr_v4: Option<SocketAddrV4>,
+    addr_v6: Option<SocketAddrV6>,
+) -> Result<(UdpConn, Option<UdpConn>)> {
+    let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
+    let pconn4 = UdpConn::bind(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?;
+
     let ip4_port = pconn4.local_addr()?.port();
     let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
-
-    let pconn6 = match UdpConn::bind(ip6_port, IpFamily::V6) {
+    let addr_v6 =
+        addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, 0, 0));
+    let pconn6 = match UdpConn::bind(SocketAddr::V6(addr_v6)) {
         Ok(conn) => Some(conn),
         Err(err) => {
             info!("bind ignoring IPv6 bind failure: {:?}", err);
@@ -2803,11 +2816,11 @@ mod tests {
     use anyhow::Context;
     use iroh_test::CallOnDrop;
     use rand::RngCore;
+    use tokio_util::task::AbortOnDropHandle;
 
     use crate::defaults::staging::EU_RELAY_HOSTNAME;
     use crate::relay::RelayMode;
     use crate::tls;
-    use crate::util::AbortingJoinHandle;
     use crate::Endpoint;
 
     use super::*;
@@ -2841,7 +2854,7 @@ mod tests {
                 .transport_config(transport_config)
                 .relay_mode(relay_mode)
                 .alpns(vec![ALPN.to_vec()])
-                .bind(0)
+                .bind()
                 .await?;
 
             Ok(Self {
@@ -3379,7 +3392,7 @@ mod tests {
 
         fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
             let key = SecretKey::generate();
-            let conn = UdpConn::bind(addr.port(), addr.ip().into())?;
+            let conn = UdpConn::bind(addr)?;
 
             let quic_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
             let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
@@ -3623,7 +3636,8 @@ mod tests {
     #[instrument(name = "ep", skip_all, fields(me = secret_key.public().fmt_short()))]
     async fn magicsock_ep(secret_key: SecretKey) -> anyhow::Result<(quinn::Endpoint, Handle)> {
         let opts = Options {
-            port: 0,
+            addr_v4: None,
+            addr_v6: None,
             secret_key: secret_key.clone(),
             relay_map: RelayMap::empty(),
             node_map: None,
@@ -3747,7 +3761,7 @@ mod tests {
             }
             .instrument(info_span!("ep2.accept, me = node_id_2.fmt_short()"))
         });
-        let _accept_task = AbortingJoinHandle::from(accept_task);
+        let _accept_task = AbortOnDropHandle::new(accept_task);
 
         let node_addr_2 = NodeAddr {
             node_id: node_id_2,
@@ -3812,7 +3826,7 @@ mod tests {
             }
             .instrument(info_span!("ep2.accept", me = node_id_2.fmt_short()))
         });
-        let _accept_task = AbortingJoinHandle::from(accept_task);
+        let _accept_task = AbortOnDropHandle::new(accept_task);
 
         // Add an empty entry in the NodeMap of ep_1
         msock_1.node_map.add_node_addr(

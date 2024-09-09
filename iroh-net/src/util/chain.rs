@@ -14,7 +14,7 @@ use tokio::io::{AsyncBufRead, AsyncRead, ReadBuf};
 /// Stream for the [`chain`] method.
 #[must_use = "streams do nothing unless polled"]
 #[pin_project]
-pub struct Chain<T, U> {
+pub(crate) struct Chain<T, U> {
     #[pin]
     first: T,
     #[pin]
@@ -23,7 +23,7 @@ pub struct Chain<T, U> {
 }
 
 /// Chain two `AsyncRead`s together.
-pub fn chain<T, U>(first: T, second: U) -> Chain<T, U>
+pub(crate) fn chain<T, U>(first: T, second: U) -> Chain<T, U>
 where
     T: AsyncRead,
     U: AsyncRead,
@@ -41,7 +41,7 @@ where
     U: AsyncRead,
 {
     /// Gets references to the underlying readers in this `Chain`.
-    pub fn get_ref(&self) -> (&T, &U) {
+    pub(crate) fn get_ref(&self) -> (&T, &U) {
         (&self.first, &self.second)
     }
 
@@ -50,23 +50,8 @@ where
     /// Care should be taken to avoid modifying the internal I/O state of the
     /// underlying readers as doing so may corrupt the internal state of this
     /// `Chain`.
-    pub fn get_mut(&mut self) -> (&mut T, &mut U) {
+    pub(crate) fn get_mut(&mut self) -> (&mut T, &mut U) {
         (&mut self.first, &mut self.second)
-    }
-
-    /// Gets pinned mutable references to the underlying readers in this `Chain`.
-    ///
-    /// Care should be taken to avoid modifying the internal I/O state of the
-    /// underlying readers as doing so may corrupt the internal state of this
-    /// `Chain`.
-    pub fn get_pin_mut(self: Pin<&mut Self>) -> (Pin<&mut T>, Pin<&mut U>) {
-        let me = self.project();
-        (me.first, me.second)
-    }
-
-    /// Consumes the `Chain`, returning the wrapped readers.
-    pub fn into_inner(self) -> (T, U) {
-        (self.first, self.second)
     }
 }
 

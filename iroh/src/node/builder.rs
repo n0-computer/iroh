@@ -1,5 +1,5 @@
 use std::{
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use futures_lite::StreamExt;
+use futures_util::{FutureExt as _, TryFutureExt as _};
 use iroh_base::key::SecretKey;
 use iroh_blobs::{
     downloader::Downloader,
@@ -28,7 +29,8 @@ use iroh_net::{
 
 use quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 use serde::{Deserialize, Serialize};
-use tokio_util::sync::CancellationToken;
+use tokio::task::JoinError;
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error_span, trace, Instrument};
 
 use crate::{
@@ -42,7 +44,9 @@ use crate::{
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-use super::{docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, Node, NodeInner};
+use super::{
+    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
+};
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
@@ -53,6 +57,14 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 
 /// Default interval between GC runs.
 const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
+
+/// The default bind address for the iroh IPv4 socket.
+pub const DEFAULT_BIND_ADDR_V4: SocketAddrV4 =
+    SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_BIND_PORT);
+
+/// The default bind address for the iroh IPv6 socket.
+pub const DEFAULT_BIND_ADDR_V6: SocketAddrV6 =
+    SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + 1, 0, 0);
 
 /// Storage backend for documents.
 #[derive(Debug, Clone)]
@@ -107,7 +119,8 @@ where
     D: Map,
 {
     storage: StorageConfig,
-    bind_port: Option<u16>,
+    addr_v4: SocketAddrV4,
+    addr_v6: SocketAddrV6,
     secret_key: SecretKey,
     rpc_endpoint: IrohServerEndpoint,
     rpc_addr: Option<SocketAddr>,
@@ -236,7 +249,8 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
 
         Self {
             storage: StorageConfig::Mem,
-            bind_port: None,
+            addr_v4: DEFAULT_BIND_ADDR_V4,
+            addr_v6: DEFAULT_BIND_ADDR_V6,
             secret_key: SecretKey::generate(),
             blobs_store: Default::default(),
             keylog: false,
@@ -271,7 +285,8 @@ impl<D: Map> Builder<D> {
 
         Self {
             storage,
-            bind_port: None,
+            addr_v4: SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_BIND_PORT),
+            addr_v6: SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + 1, 0, 0),
             secret_key: SecretKey::generate(),
             blobs_store,
             keylog: false,
@@ -326,7 +341,8 @@ where
 
         Ok(Builder {
             storage: StorageConfig::Persistent(root.into()),
-            bind_port: self.bind_port,
+            addr_v4: self.addr_v4,
+            addr_v6: self.addr_v6,
             secret_key,
             blobs_store,
             keylog: self.keylog,
@@ -446,11 +462,40 @@ where
         self
     }
 
-    /// Binds the node service to a different socket.
+    /// Binds the node service to a specific socket IPv4 address.
     ///
-    /// By default it binds to `127.0.0.1:11204`.
-    pub fn bind_port(mut self, port: u16) -> Self {
-        self.bind_port.replace(port);
+    /// By default this will be set to `0.0.0.0:11204`
+    ///
+    /// Setting the port to `0` will assign a random port.
+    /// If the port used is not free, a random different port will be used.
+    pub fn bind_addr_v4(mut self, addr: SocketAddrV4) -> Self {
+        self.addr_v4 = addr;
+        self
+    }
+
+    /// Binds the node service to a specific socket IPv6 address.
+    ///
+    /// By default this will be set to `[::]:11205`
+    ///
+    /// Setting the port to `0` will assign a random port.
+    /// If the port used is not free, a random different port will be used.
+    pub fn bind_addr_v6(mut self, addr: SocketAddrV6) -> Self {
+        self.addr_v6 = addr;
+        self
+    }
+
+    /// Use a random port for both IPv4 and IPv6.
+    ///
+    /// This is a convenience function useful when you do not need a specific port
+    /// and want to avoid conflicts when running multiple instances, e.g. in tests.
+    ///
+    /// This overrides the ports of the socket addresses provided by [`Builder::bind_addr_v4`]
+    /// and [`Builder::bind_addr_v6`].  By default both of those bind to the
+    /// unspecified address, which would result in `0.0.0.0:11204` and `[::]:11205` as bind
+    /// addresses unless they are changed.
+    pub fn bind_random_port(mut self) -> Self {
+        self.addr_v4.set_port(0);
+        self.addr_v6.set_port(0);
         self
     }
 
@@ -584,8 +629,15 @@ where
                 }
                 StorageConfig::Mem => None,
             };
-            let bind_port = self.bind_port.unwrap_or(DEFAULT_BIND_PORT);
-            (endpoint.bind(bind_port).await?, nodes_data_path)
+
+            (
+                endpoint
+                    .bind_addr_v4(self.addr_v4)
+                    .bind_addr_v6(self.addr_v6)
+                    .bind()
+                    .await?,
+                nodes_data_path,
+            )
         };
         trace!("created endpoint");
 
@@ -853,7 +905,9 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         let node = Node {
             inner,
             protocols,
-            task: task.into(),
+            task: AbortOnDropHandle::new(task)
+                .map_err(Box::new(|e: JoinError| e.to_string()) as JoinErrToStr)
+                .shared(),
         };
 
         // Wait for a single direct address update, to make sure

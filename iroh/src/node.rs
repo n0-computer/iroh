@@ -35,28 +35,31 @@
 //! well, without going through [`client`](crate::client::Iroh))
 //!
 //! To shut down the node, call [`Node::shutdown`].
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Debug;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::{collections::BTreeSet, net::SocketAddr};
-use std::{fmt::Debug, time::Duration};
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
+use futures_util::future::MapErr;
+use futures_util::future::Shared;
 use iroh_base::key::PublicKey;
-use iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store as BaoStore};
+use iroh_blobs::store::Store as BaoStore;
 use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
 use iroh_blobs::{downloader::Downloader, protocol::Closed};
 use iroh_blobs::{HashAndFormat, TempTag};
 use iroh_gossip::net::Gossip;
 use iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
 use iroh_net::key::SecretKey;
-use iroh_net::util::SharedAbortingJoinHandle;
 use iroh_net::{AddrInfo, Endpoint, NodeAddr};
 use quic_rpc::transport::ServerEndpoint as _;
 use quic_rpc::RpcServer;
-use tokio::task::JoinSet;
+use tokio::task::{JoinError, JoinSet};
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
 use crate::node::nodes_storage::store_node_addrs;
@@ -101,9 +104,17 @@ pub type IrohServerEndpoint = quic_rpc::transport::boxed::ServerEndpoint<
 #[derive(Debug, Clone)]
 pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
-    task: SharedAbortingJoinHandle<()>,
+    // `Node` needs to be `Clone + Send`, and we need to `task.await` in its `shutdown()` impl.
+    // So we need
+    // - `Shared` so we can `task.await` from all `Node` clones
+    // - `MapErr` to map the `JoinError` to a `String`, because `JoinError` is `!Clone`
+    // - `AbortOnDropHandle` to make sure that the `task` is cancelled when all `Node`s are dropped
+    //   (`Shared` acts like an `Arc` around its inner future).
+    task: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
     protocols: Arc<ProtocolMap>,
 }
+
+pub(crate) type JoinErrToStr = Box<dyn Fn(JoinError) -> String + Send + Sync + 'static>;
 
 #[derive(derive_more::Debug)]
 struct NodeInner<D> {
@@ -346,7 +357,44 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         // Spawn a task for the garbage collection.
         if let GcPolicy::Interval(gc_period) = gc_policy {
             let inner = self.clone();
-            let handle = local_pool.spawn(move || inner.run_gc_loop(gc_period, gc_done_callback));
+            let handle = local_pool.spawn(move || async move {
+                let inner2 = inner.clone();
+                inner
+                    .db
+                    .gc_run(
+                        iroh_blobs::store::GcConfig {
+                            period: gc_period,
+                            done_callback: gc_done_callback,
+                        },
+                        move || {
+                            let inner2 = inner2.clone();
+                            async move {
+                                let mut live = BTreeSet::default();
+                                if let Some(docs) = &inner2.docs {
+                                    let doc_hashes = match docs.sync.content_hashes().await {
+                                        Ok(hashes) => hashes,
+                                        Err(err) => {
+                                            tracing::warn!("Error getting doc hashes: {}", err);
+                                            return live;
+                                        }
+                                    };
+                                    for hash in doc_hashes {
+                                        match hash {
+                                            Ok(hash) => {
+                                                live.insert(hash);
+                                            }
+                                            Err(err) => {
+                                                tracing::error!("Error getting doc hash: {}", err);
+                                            }
+                                        }
+                                    }
+                                }
+                                live
+                            }
+                        },
+                    )
+                    .await;
+            });
             // We cannot spawn tasks that run on the local pool directly into the join set,
             // so instead we create a new task that supervises the local task.
             join_set.spawn({
@@ -529,87 +577,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             protocols.shutdown(),
         );
     }
-
-    async fn run_gc_loop(
-        self: Arc<Self>,
-        gc_period: Duration,
-        done_cb: Option<Box<dyn Fn() + Send>>,
-    ) {
-        tracing::info!("Starting GC task with interval {:?}", gc_period);
-        let db = &self.db;
-        let mut live = BTreeSet::new();
-        'outer: loop {
-            if let Err(cause) = db.gc_start().await {
-                tracing::debug!(
-                    "unable to notify the db of GC start: {cause}. Shutting down GC loop."
-                );
-                break;
-            }
-            // do delay before the two phases of GC
-            tokio::time::sleep(gc_period).await;
-            tracing::debug!("Starting GC");
-            live.clear();
-
-            if let Some(docs) = &self.docs {
-                let doc_hashes = match docs.sync.content_hashes().await {
-                    Ok(hashes) => hashes,
-                    Err(err) => {
-                        tracing::warn!("Error getting doc hashes: {}", err);
-                        continue 'outer;
-                    }
-                };
-                for hash in doc_hashes {
-                    match hash {
-                        Ok(hash) => {
-                            live.insert(hash);
-                        }
-                        Err(err) => {
-                            tracing::error!("Error getting doc hash: {}", err);
-                            continue 'outer;
-                        }
-                    }
-                }
-            }
-
-            tracing::debug!("Starting GC mark phase");
-            let mut stream = db.gc_mark(&mut live);
-            while let Some(item) = stream.next().await {
-                match item {
-                    GcMarkEvent::CustomDebug(text) => {
-                        tracing::debug!("{}", text);
-                    }
-                    GcMarkEvent::CustomWarning(text, _) => {
-                        tracing::warn!("{}", text);
-                    }
-                    GcMarkEvent::Error(err) => {
-                        tracing::error!("Fatal error during GC mark {}", err);
-                        continue 'outer;
-                    }
-                }
-            }
-            drop(stream);
-
-            tracing::debug!("Starting GC sweep phase");
-            let mut stream = db.gc_sweep(&live);
-            while let Some(item) = stream.next().await {
-                match item {
-                    GcSweepEvent::CustomDebug(text) => {
-                        tracing::debug!("{}", text);
-                    }
-                    GcSweepEvent::CustomWarning(text, _) => {
-                        tracing::warn!("{}", text);
-                    }
-                    GcSweepEvent::Error(err) => {
-                        tracing::error!("Fatal error during GC mark {}", err);
-                        continue 'outer;
-                    }
-                }
-            }
-            if let Some(ref cb) = done_cb {
-                cb();
-            }
-        }
-    }
 }
 
 async fn handle_connection(incoming: iroh_net::endpoint::Incoming, protocols: Arc<ProtocolMap>) {
@@ -718,7 +685,7 @@ mod tests {
         let _guard = iroh_test::logging::setup();
 
         use std::io::Cursor;
-        let node = Node::memory().bind_port(0).spawn().await?;
+        let node = Node::memory().bind_random_port().spawn().await?;
 
         let _drop_guard = node.cancel_token().drop_guard();
         let client = node.client();
@@ -739,7 +706,7 @@ mod tests {
     async fn test_node_add_tagged_blob_event() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let node = Node::memory().bind_port(0).spawn().await?;
+        let node = Node::memory().bind_random_port().spawn().await?;
 
         let _drop_guard = node.cancel_token().drop_guard();
 
@@ -799,13 +766,13 @@ mod tests {
         let (relay_map, relay_url, _guard) = iroh_net::test_utils::run_relay_server().await?;
 
         let node1 = Node::memory()
-            .bind_port(0)
+            .bind_random_port()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(true)
             .spawn()
             .await?;
         let node2 = Node::memory()
-            .bind_port(0)
+            .bind_random_port()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(true)
             .spawn()
@@ -837,7 +804,7 @@ mod tests {
         let secret1 = SecretKey::generate();
         let node1 = Node::memory()
             .secret_key(secret1.clone())
-            .bind_port(0)
+            .bind_random_port()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(true)
             .dns_resolver(dns_pkarr_server.dns_resolver())
@@ -847,7 +814,7 @@ mod tests {
         let secret2 = SecretKey::generate();
         let node2 = Node::memory()
             .secret_key(secret2.clone())
-            .bind_port(0)
+            .bind_random_port()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(true)
             .dns_resolver(dns_pkarr_server.dns_resolver())

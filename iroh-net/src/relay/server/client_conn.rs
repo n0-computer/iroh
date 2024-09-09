@@ -10,9 +10,9 @@ use futures_lite::StreamExt;
 use futures_util::SinkExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{trace, Instrument};
 
-use crate::util::AbortingJoinHandle;
 use crate::{disco::looks_like_disco_wrapper, key::PublicKey};
 
 use iroh_metrics::{inc, inc_by};
@@ -49,7 +49,7 @@ pub(crate) struct ClientConnManager {
     // TODO: replace with rate limiter, also, this should probably be on the ClientSets, not on
     // the client itself
     // replace_limiter: RateLimiter,
-    io_handle: AbortingJoinHandle<Result<()>>,
+    io_handle: AbortOnDropHandle<Result<()>>,
 
     /// Channels that allow the [`ClientConnManager`] (and the Server) to send
     /// the client messages. These `Senders` correspond to `Receivers` on the
@@ -161,7 +161,7 @@ impl ClientConnManager {
         ClientConnManager {
             conn_num,
             key,
-            io_handle: io_handle.into(),
+            io_handle: AbortOnDropHandle::new(io_handle),
             done,
             client_channels: ClientChannels {
                 send_queue: send_queue_s,

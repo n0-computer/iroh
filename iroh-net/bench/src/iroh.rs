@@ -30,12 +30,18 @@ pub fn server_endpoint(
         let relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
             RelayMode::Custom(RelayMap::from_url(url))
         });
-        let ep = Endpoint::builder()
+
+        #[allow(unused_mut)]
+        let mut builder = Endpoint::builder();
+        #[cfg(feature = "local-relay")]
+        {
+            builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some())
+        }
+        let ep = builder
             .alpns(vec![ALPN.to_vec()])
-            .insecure_skip_relay_cert_verify(relay_url.is_some())
             .relay_mode(relay_mode)
             .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
-            .bind(0)
+            .bind()
             .await
             .unwrap();
 
@@ -81,12 +87,17 @@ pub async fn connect_client(
     let relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
         RelayMode::Custom(RelayMap::from_url(url))
     });
-    let endpoint = Endpoint::builder()
+    #[allow(unused_mut)]
+    let mut builder = Endpoint::builder();
+    #[cfg(feature = "local-relay")]
+    {
+        builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some())
+    }
+    let endpoint = builder
         .alpns(vec![ALPN.to_vec()])
-        .insecure_skip_relay_cert_verify(relay_url.is_some())
         .relay_mode(relay_mode)
         .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
-        .bind(0)
+        .bind()
         .await
         .unwrap();
 
