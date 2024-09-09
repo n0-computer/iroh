@@ -737,7 +737,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     /// let handler = MyProtocol { client };
     ///
     /// let node = unspawned_node
-    ///     .accept(MY_ALPN, Arc::new(handler))
+    ///     .accept(MY_ALPN.to_vec(), Arc::new(handler))
     ///     .spawn()
     ///     .await?;
     /// # node.shutdown().await?;
