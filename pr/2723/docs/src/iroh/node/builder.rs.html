@@ -943,17 +943,6 @@
 <a href="#943" id="943">943</a>
 <a href="#944" id="944">944</a>
 <a href="#945" id="945">945</a>
-<a href="#946" id="946">946</a>
-<a href="#947" id="947">947</a>
-<a href="#948" id="948">948</a>
-<a href="#949" id="949">949</a>
-<a href="#950" id="950">950</a>
-<a href="#951" id="951">951</a>
-<a href="#952" id="952">952</a>
-<a href="#953" id="953">953</a>
-<a href="#954" id="954">954</a>
-<a href="#955" id="955">955</a>
-<a href="#956" id="956">956</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1603,7 +1592,7 @@
 
         <span class="kw">let </span>inner = Arc::new(NodeInner {
             rpc_addr: <span class="self">self</span>.rpc_addr,
-            db: <span class="self">self</span>.blobs_store,
+            db: Default::default(),
             endpoint,
             client,
             cancel_token: CancellationToken::new(),
@@ -1622,8 +1611,13 @@
             local_pool: lp,
         };
 
-        <span class="kw">let </span>protocol_builder =
-            protocol_builder.register_iroh_protocols(<span class="self">self</span>.blob_events, gossip, downloader, docs);
+        <span class="kw">let </span>protocol_builder = protocol_builder.register_iroh_protocols(
+            <span class="self">self</span>.blob_events,
+            <span class="self">self</span>.blobs_store,
+            gossip,
+            downloader,
+            docs,
+        );
 
         <span class="prelude-val">Ok</span>(protocol_builder)
     }
@@ -1717,26 +1711,9 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>.inner.endpoint
     }
 
-    <span class="doccomment">/// Returns the [`crate::blobs::store::Store`] used by the node.
-    </span><span class="kw">pub fn </span>blobs_db(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>D {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.inner.db
-    }
-
     <span class="doccomment">/// Returns a reference to the used [`LocalPoolHandle`].
     </span><span class="kw">pub fn </span>local_pool_handle(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>LocalPoolHandle {
         <span class="self">self</span>.local_pool.handle()
-    }
-
-    <span class="doccomment">/// Returns a reference to the [`Downloader`] used by the node.
-    </span><span class="comment">/*pub fn downloader(&amp;self) -&gt; &amp;Downloader {
-        &amp;self.inner.downloader
-    }*/
-
-    </span><span class="doccomment">/// Returns a reference to the [`Gossip`] handle used by the node.
-    </span><span class="kw">pub fn </span>gossip(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;Gossip&gt; {
-        <span class="self">self</span>.protocols
-            .get_typed::&lt;Gossip&gt;(GOSSIP_ALPN)
-            .expect(<span class="string">"missing gossip"</span>)
     }
 
     <span class="doccomment">/// Returns a protocol handler for an ALPN.
@@ -1751,13 +1728,14 @@
     </span><span class="kw">fn </span>register_iroh_protocols(
         <span class="kw-2">mut </span><span class="self">self</span>,
         blob_events: EventSender,
+        store: D,
         gossip: Gossip,
         downloader: Downloader,
         docs: <span class="prelude-ty">Option</span>&lt;DocsEngine&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="comment">// Register blobs.
         </span><span class="kw">let </span>blobs_proto = BlobsProtocol::new_with_events(
-            <span class="self">self</span>.blobs_db().clone(),
+            store,
             <span class="self">self</span>.local_pool_handle().clone(),
             blob_events,
             downloader,

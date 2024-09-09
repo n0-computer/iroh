@@ -1357,6 +1357,31 @@
 <a href="#1357" id="1357">1357</a>
 <a href="#1358" id="1358">1358</a>
 <a href="#1359" id="1359">1359</a>
+<a href="#1360" id="1360">1360</a>
+<a href="#1361" id="1361">1361</a>
+<a href="#1362" id="1362">1362</a>
+<a href="#1363" id="1363">1363</a>
+<a href="#1364" id="1364">1364</a>
+<a href="#1365" id="1365">1365</a>
+<a href="#1366" id="1366">1366</a>
+<a href="#1367" id="1367">1367</a>
+<a href="#1368" id="1368">1368</a>
+<a href="#1369" id="1369">1369</a>
+<a href="#1370" id="1370">1370</a>
+<a href="#1371" id="1371">1371</a>
+<a href="#1372" id="1372">1372</a>
+<a href="#1373" id="1373">1373</a>
+<a href="#1374" id="1374">1374</a>
+<a href="#1375" id="1375">1375</a>
+<a href="#1376" id="1376">1376</a>
+<a href="#1377" id="1377">1377</a>
+<a href="#1378" id="1378">1378</a>
+<a href="#1379" id="1379">1379</a>
+<a href="#1380" id="1380">1380</a>
+<a href="#1381" id="1381">1381</a>
+<a href="#1382" id="1382">1382</a>
+<a href="#1383" id="1383">1383</a>
+<a href="#1384" id="1384">1384</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::{Arc, Mutex};
@@ -1456,6 +1481,16 @@
 <span class="kw">impl</span>&lt;D: BaoStore&gt; Handler&lt;D&gt; {
     <span class="kw">fn </span>docs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;DocsEngine&gt;&gt; {
         <span class="self">self</span>.protocols.get_typed::&lt;DocsEngine&gt;(DOCS_ALPN)
+    }
+
+    <span class="kw">fn </span>blobs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;BlobsProtocol&lt;D&gt;&gt; {
+        <span class="self">self</span>.protocols
+            .get_typed::&lt;BlobsProtocol&lt;D&gt;&gt;(iroh_blobs::protocol::ALPN)
+            .expect(<span class="string">"missing blobs"</span>)
+    }
+
+    <span class="kw">fn </span>blobs_store(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; D {
+        <span class="self">self</span>.blobs().store().clone()
     }
 
     <span class="kw">async fn </span>with_docs&lt;T, F, Fut&gt;(<span class="self">self</span>, f: F) -&gt; RpcResult&lt;T&gt;
@@ -1722,7 +1757,7 @@
                 .<span class="kw">await
             </span>}
             Set(msg) =&gt; {
-                <span class="kw">let </span>blobs_store = <span class="self">self</span>.inner.db.clone();
+                <span class="kw">let </span>blobs_store = <span class="self">self</span>.blobs_store();
                 chan.rpc(msg, <span class="self">self</span>, |handler, req| {
                     handler.with_docs(|docs| <span class="kw">async move </span>{ docs.doc_set(<span class="kw-2">&amp;</span>blobs_store, req).<span class="kw">await </span>})
                 })
@@ -1830,7 +1865,8 @@
     }
 
     <span class="kw">async fn </span>blob_status(<span class="self">self</span>, msg: BlobStatusRequest) -&gt; RpcResult&lt;BlobStatusResponse&gt; {
-        <span class="kw">let </span>entry = <span class="self">self</span>.inner.db.get(<span class="kw-2">&amp;</span>msg.hash).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
+        <span class="kw">let </span>entry = blobs.store().get(<span class="kw-2">&amp;</span>msg.hash).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(BlobStatusResponse(<span class="kw">match </span>entry {
             <span class="prelude-val">Some</span>(entry) =&gt; {
                 <span class="kw">if </span>entry.is_complete() {
@@ -1848,7 +1884,8 @@
     <span class="kw">async fn </span>blob_list_impl(<span class="self">self</span>, co: <span class="kw-2">&amp;</span>Co&lt;RpcResult&lt;BlobInfo&gt;&gt;) -&gt; io::Result&lt;()&gt; {
         <span class="kw">use </span>bao_tree::io::fsm::Outboard;
 
-        <span class="kw">let </span>db = <span class="self">self</span>.inner.db.clone();
+        <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
+        <span class="kw">let </span>db = blobs.store();
         <span class="kw">for </span>blob <span class="kw">in </span>db.blobs().<span class="kw">await</span><span class="question-mark">? </span>{
             <span class="kw">let </span>blob = blob<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="prelude-val">Some</span>(entry) = db.get(<span class="kw-2">&amp;</span>blob).<span class="kw">await</span><span class="question-mark">? </span><span class="kw">else </span>{
@@ -1866,7 +1903,8 @@
         <span class="self">self</span>,
         co: <span class="kw-2">&amp;</span>Co&lt;RpcResult&lt;IncompleteBlobInfo&gt;&gt;,
     ) -&gt; io::Result&lt;()&gt; {
-        <span class="kw">let </span>db = <span class="self">self</span>.inner.db.clone();
+        <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
+        <span class="kw">let </span>db = blobs.store();
         <span class="kw">for </span>hash <span class="kw">in </span>db.partial_blobs().<span class="kw">await</span><span class="question-mark">? </span>{
             <span class="kw">let </span>hash = hash<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(entry)) = db.get_mut(<span class="kw-2">&amp;</span>hash).<span class="kw">await else </span>{
@@ -1910,19 +1948,20 @@
     }
 
     <span class="kw">async fn </span>blob_delete_tag(<span class="self">self</span>, msg: TagDeleteRequest) -&gt; RpcResult&lt;()&gt; {
-        <span class="self">self</span>.inner.db.set_tag(msg.name, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.blobs_store().set_tag(msg.name, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">async fn </span>blob_delete_blob(<span class="self">self</span>, msg: DeleteRequest) -&gt; RpcResult&lt;()&gt; {
-        <span class="self">self</span>.inner.db.delete(<span class="macro">vec!</span>[msg.hash]).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.blobs_store().delete(<span class="macro">vec!</span>[msg.hash]).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">fn </span>blob_list_tags(<span class="self">self</span>, msg: ListTagsRequest) -&gt; <span class="kw">impl </span>Stream&lt;Item = TagInfo&gt; + Send + <span class="lifetime">'static </span>{
         <span class="macro">tracing::info!</span>(<span class="string">"blob_list_tags"</span>);
+        <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
         Gen::new(|co| <span class="kw">async move </span>{
-            <span class="kw">let </span>tags = <span class="self">self</span>.inner.db.tags().<span class="kw">await</span>.unwrap();
+            <span class="kw">let </span>tags = blobs.store().tags().<span class="kw">await</span>.unwrap();
             <span class="attr">#[allow(clippy::manual_flatten)]
             </span><span class="kw">for </span>item <span class="kw">in </span>tags {
                 <span class="kw">if let </span><span class="prelude-val">Ok</span>((name, HashAndFormat { hash, format })) = item {
@@ -1941,9 +1980,10 @@
     ) -&gt; <span class="kw">impl </span>Stream&lt;Item = ValidateProgress&gt; + Send + <span class="lifetime">'static </span>{
         <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
         <span class="kw">let </span>tx2 = tx.clone();
-        <span class="kw">let </span>db = <span class="self">self</span>.inner.db.clone();
+        <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
         tokio::task::spawn(<span class="kw">async move </span>{
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = db
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = blobs
+                .store()
                 .validate(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
                 .<span class="kw">await
             </span>{
@@ -1960,9 +2000,10 @@
     ) -&gt; <span class="kw">impl </span>Stream&lt;Item = ConsistencyCheckProgress&gt; + Send + <span class="lifetime">'static </span>{
         <span class="kw">let </span>(tx, rx) = async_channel::bounded(<span class="number">1</span>);
         <span class="kw">let </span>tx2 = tx.clone();
-        <span class="kw">let </span>db = <span class="self">self</span>.inner.db.clone();
+        <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
         tokio::task::spawn(<span class="kw">async move </span>{
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = db
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = blobs
+                .store()
                 .consistency_check(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
                 .<span class="kw">await
             </span>{
@@ -2050,9 +2091,9 @@
             <span class="bool-val">false </span>=&gt; ImportMode::Copy,
         };
 
-        <span class="kw">let </span>(temp_tag, size) = <span class="self">self
-            </span>.inner
-            .db
+        <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
+        <span class="kw">let </span>(temp_tag, size) = blobs
+            .store()
             .import_file(root, import_mode, BlobFormat::Raw, import_progress)
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -2098,8 +2139,9 @@
             }
             x
         });
+        <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
         iroh_blobs::export::export(
-            <span class="kw-2">&amp;</span><span class="self">self</span>.inner.db,
+            blobs.store(),
             entry.content_hash(),
             path,
             ExportFormat::Blob,
@@ -2141,7 +2183,7 @@
         <span class="kw">let </span>progress = AsyncChannelProgressSender::new(tx);
         <span class="self">self</span>.local_pool_handle().spawn_detached(<span class="kw">move </span>|| <span class="kw">async move </span>{
             <span class="kw">let </span>res = iroh_blobs::export::export(
-                <span class="kw-2">&amp;</span><span class="self">self</span>.inner.db,
+                <span class="self">self</span>.blobs().store(),
                 msg.hash,
                 msg.path,
                 msg.format,
@@ -2165,6 +2207,7 @@
         <span class="kw">use </span>iroh_blobs::store::ImportMode;
         <span class="kw">use </span>std::collections::BTreeMap;
 
+        <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
         <span class="kw">let </span>progress = AsyncChannelProgressSender::new(progress);
         <span class="kw">let </span>names = Arc::new(Mutex::new(BTreeMap::new()));
         <span class="comment">// convert import progress to provide progress
@@ -2210,14 +2253,17 @@
         <span class="kw">let </span>temp_tag = <span class="kw">if </span>create_collection {
             <span class="comment">// import all files below root recursively
             </span><span class="kw">let </span>data_sources = <span class="kw">crate</span>::util::fs::scan_path(root, wrap)<span class="question-mark">?</span>;
+            <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
+
             <span class="kw">const </span>IO_PARALLELISM: usize = <span class="number">4</span>;
             <span class="kw">let </span>result: Vec&lt;<span class="kw">_</span>&gt; = futures_lite::stream::iter(data_sources)
                 .map(|source| {
                     <span class="kw">let </span>import_progress = import_progress.clone();
-                    <span class="kw">let </span>db = <span class="self">self</span>.inner.db.clone();
+                    <span class="kw">let </span>blobs = blobs.clone();
                     <span class="kw">async move </span>{
                         <span class="kw">let </span>name = source.name().to_string();
-                        <span class="kw">let </span>(tag, size) = db
+                        <span class="kw">let </span>(tag, size) = blobs
+                            .store()
                             .import_file(
                                 source.path().to_owned(),
                                 import_mode,
@@ -2239,12 +2285,11 @@
                 .map(|(name, hash, <span class="kw">_</span>, tag)| ((name, hash), tag))
                 .unzip();
 
-            collection.store(<span class="kw-2">&amp;</span><span class="self">self</span>.inner.db).<span class="kw">await</span><span class="question-mark">?
+            collection.store(blobs.store()).<span class="kw">await</span><span class="question-mark">?
         </span>} <span class="kw">else </span>{
             <span class="comment">// import a single file
-            </span><span class="kw">let </span>(tag, _size) = <span class="self">self
-                </span>.inner
-                .db
+            </span><span class="kw">let </span>(tag, _size) = blobs
+                .store()
                 .import_file(root, import_mode, BlobFormat::Raw, import_progress)
                 .<span class="kw">await</span><span class="question-mark">?</span>;
             tag
@@ -2254,13 +2299,13 @@
         <span class="kw">let </span>HashAndFormat { hash, format } = <span class="kw-2">*</span>hash_and_format;
         <span class="kw">let </span>tag = <span class="kw">match </span>tag {
             SetTagOption::Named(tag) =&gt; {
-                <span class="self">self</span>.inner
-                    .db
+                blobs
+                    .store()
                     .set_tag(tag.clone(), <span class="prelude-val">Some</span>(<span class="kw-2">*</span>hash_and_format))
                     .<span class="kw">await</span><span class="question-mark">?</span>;
                 tag
             }
-            SetTagOption::Auto =&gt; <span class="self">self</span>.inner.db.create_tag(<span class="kw-2">*</span>hash_and_format).<span class="kw">await</span><span class="question-mark">?</span>,
+            SetTagOption::Auto =&gt; blobs.store().create_tag(<span class="kw-2">*</span>hash_and_format).<span class="kw">await</span><span class="question-mark">?</span>,
         };
         progress
             .send(AddProgress::AllDone {
@@ -2326,9 +2371,10 @@
     }
 
     <span class="kw">async fn </span>tags_set(<span class="self">self</span>, msg: tags::SetRequest) -&gt; RpcResult&lt;()&gt; {
-        <span class="self">self</span>.inner.db.set_tag(msg.name, msg.value).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
+        blobs.store().set_tag(msg.name, msg.value).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">if let </span>SyncMode::Full = msg.sync {
-            <span class="self">self</span>.inner.db.sync().<span class="kw">await</span><span class="question-mark">?</span>;
+            blobs.store().sync().<span class="kw">await</span><span class="question-mark">?</span>;
         }
         <span class="kw">if let </span><span class="prelude-val">Some</span>(batch) = msg.batch {
             <span class="kw">if let </span><span class="prelude-val">Some</span>(content) = msg.value.as_ref() {
@@ -2343,9 +2389,10 @@
     }
 
     <span class="kw">async fn </span>tags_create(<span class="self">self</span>, msg: tags::CreateRequest) -&gt; RpcResult&lt;Tag&gt; {
-        <span class="kw">let </span>tag = <span class="self">self</span>.inner.db.create_tag(msg.value).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
+        <span class="kw">let </span>tag = blobs.store().create_tag(msg.value).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">if let </span>SyncMode::Full = msg.sync {
-            <span class="self">self</span>.inner.db.sync().<span class="kw">await</span><span class="question-mark">?</span>;
+            blobs.store().sync().<span class="kw">await</span><span class="question-mark">?</span>;
         }
         <span class="kw">if let </span><span class="prelude-val">Some</span>(batch) = msg.batch {
             <span class="self">self</span>.inner
@@ -2370,7 +2417,8 @@
     }
 
     <span class="kw">async fn </span>batch_create_temp_tag(<span class="self">self</span>, msg: BatchCreateTempTagRequest) -&gt; RpcResult&lt;()&gt; {
-        <span class="kw">let </span>tag = <span class="self">self</span>.inner.db.temp_tag(msg.content);
+        <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
+        <span class="kw">let </span>tag = blobs.store().temp_tag(msg.content);
         <span class="self">self</span>.inner.blob_batches.lock().<span class="kw">await</span>.store(msg.batch, tag);
         <span class="prelude-val">Ok</span>(())
     }
@@ -2414,6 +2462,7 @@
         stream: <span class="kw">impl </span>Stream&lt;Item = BatchAddStreamUpdate&gt; + Send + Unpin + <span class="lifetime">'static</span>,
         progress: async_channel::Sender&lt;BatchAddStreamResponse&gt;,
     ) -&gt; anyhow::Result&lt;()&gt; {
+        <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
         <span class="kw">let </span>progress = AsyncChannelProgressSender::new(progress);
 
         <span class="kw">let </span>stream = stream.map(|item| <span class="kw">match </span>item {
@@ -2429,9 +2478,8 @@
             }
             <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
         });
-        <span class="kw">let </span>(temp_tag, _len) = <span class="self">self
-            </span>.inner
-            .db
+        <span class="kw">let </span>(temp_tag, _len) = blobs
+            .store()
             .import_stream(stream, msg.format, import_progress)
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>hash = temp_tag.inner().hash;
@@ -2475,8 +2523,8 @@
             root.display()
         );
         <span class="kw">let </span>(tag, <span class="kw">_</span>) = <span class="self">self
-            </span>.inner
-            .db
+            </span>.blobs()
+            .store()
             .import_file(root, import_mode, format, import_progress)
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>hash = <span class="kw-2">*</span>tag.hash();
@@ -2534,22 +2582,22 @@
             ImportProgress::OutboardDone { hash, id } =&gt; <span class="prelude-val">Some</span>(AddProgress::Done { hash, id }),
             <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
         });
-        <span class="kw">let </span>(temp_tag, _len) = <span class="self">self
-            </span>.inner
-            .db
+        <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
+        <span class="kw">let </span>(temp_tag, _len) = blobs
+            .store()
             .import_stream(stream, BlobFormat::Raw, import_progress)
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>hash_and_format = <span class="kw-2">*</span>temp_tag.inner();
         <span class="kw">let </span>HashAndFormat { hash, format } = hash_and_format;
         <span class="kw">let </span>tag = <span class="kw">match </span>msg.tag {
             SetTagOption::Named(tag) =&gt; {
-                <span class="self">self</span>.inner
-                    .db
+                blobs
+                    .store()
                     .set_tag(tag.clone(), <span class="prelude-val">Some</span>(hash_and_format))
                     .<span class="kw">await</span><span class="question-mark">?</span>;
                 tag
             }
-            SetTagOption::Auto =&gt; <span class="self">self</span>.inner.db.create_tag(hash_and_format).<span class="kw">await</span><span class="question-mark">?</span>,
+            SetTagOption::Auto =&gt; blobs.store().create_tag(hash_and_format).<span class="kw">await</span><span class="question-mark">?</span>,
         };
         progress
             .send(AddProgress::AllDone { hash, tag, format })
@@ -2562,7 +2610,7 @@
         req: ReadAtRequest,
     ) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;ReadAtResponse&gt;&gt; + Send + <span class="lifetime">'static </span>{
         <span class="kw">let </span>(tx, rx) = async_channel::bounded(RPC_BLOB_GET_CHANNEL_CAP);
-        <span class="kw">let </span>db = <span class="self">self</span>.inner.db.clone();
+        <span class="kw">let </span>db = <span class="self">self</span>.blobs_store();
         <span class="self">self</span>.local_pool_handle().spawn_detached(<span class="kw">move </span>|| <span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = read_loop(req, db, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).<span class="kw">await </span>{
                 tx.send(RpcResult::Err(err.into())).<span class="kw">await</span>.ok();
@@ -2691,22 +2739,24 @@
             tags_to_delete,
         } = req;
 
-        <span class="kw">let </span>temp_tag = collection.store(<span class="kw-2">&amp;</span><span class="self">self</span>.inner.db).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
+
+        <span class="kw">let </span>temp_tag = collection.store(blobs.store()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>hash_and_format = temp_tag.inner();
         <span class="kw">let </span>HashAndFormat { hash, .. } = <span class="kw-2">*</span>hash_and_format;
         <span class="kw">let </span>tag = <span class="kw">match </span>tag {
             SetTagOption::Named(tag) =&gt; {
-                <span class="self">self</span>.inner
-                    .db
+                blobs
+                    .store()
                     .set_tag(tag.clone(), <span class="prelude-val">Some</span>(<span class="kw-2">*</span>hash_and_format))
                     .<span class="kw">await</span><span class="question-mark">?</span>;
                 tag
             }
-            SetTagOption::Auto =&gt; <span class="self">self</span>.inner.db.create_tag(<span class="kw-2">*</span>hash_and_format).<span class="kw">await</span><span class="question-mark">?</span>,
+            SetTagOption::Auto =&gt; blobs.store().create_tag(<span class="kw-2">*</span>hash_and_format).<span class="kw">await</span><span class="question-mark">?</span>,
         };
 
         <span class="kw">for </span>tag <span class="kw">in </span>tags_to_delete {
-            <span class="self">self</span>.inner.db.set_tag(tag, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            blobs.store().set_tag(tag, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         }
 
         <span class="prelude-val">Ok</span>(CreateCollectionResponse { hash, tag })
