@@ -82,6 +82,7 @@ impl willow_data_model::PayloadDigest for PayloadDigest {}
 pub type Path = willow_data_model::Path<MAX_COMPONENT_LENGTH, MAX_COMPONENT_COUNT, MAX_PATH_LENGTH>;
 
 /// Extension methods for [`Path`].
+// TODO: Upstream the methods to willow-rs and remove the extension trait.
 pub trait PathExt {
     /// Creates a new path from a slice of bytes.
     fn from_bytes(slices: &[&[u8]]) -> Result<Path, InvalidPathError2>;
@@ -106,7 +107,7 @@ impl PathExt for Path {
 }
 
 #[derive(Debug, thiserror::Error)]
-/// An error arising from trying to construct a invalid [`Path`] from valid components.
+/// An error arising from trying to construct a invalid [`Path`] from potentially invalid components.
 pub enum InvalidPathError2 {
     /// One of the path's component is too large.
     #[error("One of the path's component is too large.")]
@@ -143,6 +144,7 @@ pub type Entry = willow_data_model::Entry<
 >;
 
 /// Extension methods for [`Entry`].
+// TODO: Decide what to upstream to willow-rs.
 pub trait EntryExt {
     /// Encodes the entry into a bytestring.
     fn encode_to_vec(&self) -> Vec<u8>;
