@@ -53,7 +53,6 @@ use iroh_blobs::{downloader::Downloader, protocol::Closed};
 use iroh_blobs::{HashAndFormat, TempTag};
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
-use iroh_net::key::SecretKey;
 use iroh_net::{AddrInfo, Endpoint, NodeAddr};
 use quic_rpc::transport::ServerEndpoint as _;
 use quic_rpc::RpcServer;
@@ -122,7 +121,6 @@ struct NodeInner<D> {
     rpc_addr: Option<SocketAddr>,
     docs: Option<DocsEngine>,
     endpoint: Endpoint,
-    secret_key: SecretKey,
     cancel_token: CancellationToken,
     client: crate::client::Iroh,
     downloader: Downloader,
@@ -244,7 +242,7 @@ impl<D: BaoStore> Node<D> {
 
     /// Returns the [`PublicKey`] of the node.
     pub fn node_id(&self) -> PublicKey {
-        self.inner.secret_key.public()
+        self.inner.endpoint.secret_key().public()
     }
 
     /// Return a client to control this node over an in-memory channel.
@@ -639,7 +637,7 @@ mod tests {
     use bytes::Bytes;
     use iroh_base::node_addr::AddrInfoOptions;
     use iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
-    use iroh_net::{relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
+    use iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
     use crate::client::blobs::{AddOutcome, WrapOption};
 

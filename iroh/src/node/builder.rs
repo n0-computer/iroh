@@ -650,7 +650,6 @@ where
             db: self.blobs_store,
             docs,
             endpoint,
-            secret_key: self.secret_key,
             client,
             cancel_token: CancellationToken::new(),
             downloader,

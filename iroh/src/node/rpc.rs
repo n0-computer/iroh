@@ -942,7 +942,7 @@ impl<D: BaoStore> Handler<D> {
 
     #[allow(clippy::unused_async)]
     async fn node_id(self, _: IdRequest) -> RpcResult<NodeId> {
-        Ok(self.inner.secret_key.public())
+        Ok(self.inner.endpoint.secret_key().public())
     }
 
     async fn node_addr(self, _: AddrRequest) -> RpcResult<NodeAddr> {
