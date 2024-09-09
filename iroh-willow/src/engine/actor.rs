@@ -229,10 +229,8 @@ impl Drop for ActorHandle {
             let shutdown = move || {
                 if let Err(err) = inbox_tx.blocking_send(Input::Shutdown { reply: None }) {
                     warn!(?err, "Failed to send shutdown");
-                } else {
-                    if let Err(err) = handle.join() {
-                        warn!(?err, "Failed to join sync actor");
-                    }
+                } else if let Err(err) = handle.join() {
+                    warn!(?err, "Failed to join sync actor");
                 }
             };
 
