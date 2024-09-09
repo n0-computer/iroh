@@ -219,8 +219,8 @@ impl Client {
 
     /// Returns a new address to send messages to this actor.
     ///
-    /// Unlike the client itself this does own the actor task, only allows sending messages
-    /// to it.
+    /// Unlike the client itself the returned [`Addr`] does not own the actor task, it only
+    /// allows sending messages to the actor.
     pub(crate) fn addr(&self) -> Addr {
         self.addr.clone()
     }
