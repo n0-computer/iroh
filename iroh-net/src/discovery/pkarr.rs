@@ -1,10 +1,10 @@
 //! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
-//! The Public-Key Addressable Resource Records, [pkarr], is a system which allows
-//! publishing [DNS Resource Records] owned by a particular [`SecretKey`] under a name
-//! derived from its corresponding [`PublicKey`], also known as the [`NodeId`].
-//! Additionally this pkarr Resource Record is signed using the same [`SecretKey`], ensuring
-//! authenticity of the record.
+//! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
+//! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
+//! corresponding [`PublicKey`], also known as the [`NodeId`].  Additionally this pkarr
+//! Resource Record is signed using the same [`SecretKey`], ensuring authenticity of the
+//! record.
 //!
 //! Pkarr normally stores these records on the [Mainline DHT], but also provides two bridges
 //! that do not require clients to directly interact with the DHT:
