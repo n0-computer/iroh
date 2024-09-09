@@ -23,6 +23,7 @@ use iroh_blobs::{
     HashAndFormat,
 };
 use iroh_blobs::{BlobFormat, Tag};
+use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
 use iroh_net::relay::RelayUrl;
@@ -94,18 +95,17 @@ impl<D> Handler<D> {
 }
 
 impl<D: BaoStore> Handler<D> {
-    fn docs(&self) -> Option<&DocsEngine> {
-        self.inner.docs.as_ref()
+    fn docs(&self) -> Option<Arc<DocsEngine>> {
+        self.protocols.get_typed::<DocsEngine>(DOCS_ALPN)
     }
 
     async fn with_docs<T, F, Fut>(self, f: F) -> RpcResult<T>
     where
         T: Send + 'static,
-        F: FnOnce(DocsEngine) -> Fut,
+        F: FnOnce(Arc<DocsEngine>) -> Fut,
         Fut: std::future::Future<Output = RpcResult<T>>,
     {
         if let Some(docs) = self.docs() {
-            let docs = docs.clone();
             f(docs).await
         } else {
             Err(docs_disabled())
@@ -115,11 +115,10 @@ impl<D: BaoStore> Handler<D> {
     fn with_docs_stream<T, F, S>(self, f: F) -> impl Stream<Item = RpcResult<T>>
     where
         T: Send + 'static,
-        F: FnOnce(DocsEngine) -> S,
+        F: FnOnce(Arc<DocsEngine>) -> S,
         S: Stream<Item = RpcResult<T>>,
     {
         if let Some(docs) = self.docs() {
-            let docs = docs.clone();
             Either::Left(f(docs))
         } else {
             Either::Right(futures_lite::stream::once(Err(docs_disabled())))

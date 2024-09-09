@@ -51,6 +51,7 @@ use iroh_blobs::protocol::Closed;
 use iroh_blobs::store::Store as BaoStore;
 use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
 use iroh_blobs::{HashAndFormat, TempTag};
+use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
 use iroh_net::{AddrInfo, Endpoint, NodeAddr};
@@ -119,11 +120,9 @@ pub(crate) type JoinErrToStr = Box<dyn Fn(JoinError) -> String + Send + Sync + '
 struct NodeInner<D> {
     db: D,
     rpc_addr: Option<SocketAddr>,
-    docs: Option<DocsEngine>,
     endpoint: Endpoint,
     cancel_token: CancellationToken,
     client: crate::client::Iroh,
-    // downloader: Downloader,
     blob_batches: tokio::sync::Mutex<BlobBatches>,
     local_pool_handle: LocalPoolHandle,
 }
@@ -357,8 +356,8 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         // Spawn a task for the garbage collection.
         if let GcPolicy::Interval(gc_period) = gc_policy {
             let inner = self.clone();
+            let protocols = protocols.clone();
             let handle = local_pool.spawn(move || async move {
-                let inner2 = inner.clone();
                 inner
                     .db
                     .gc_run(
@@ -367,10 +366,10 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                             done_callback: gc_done_callback,
                         },
                         move || {
-                            let inner2 = inner2.clone();
+                            let protocols = protocols.clone();
                             async move {
                                 let mut live = BTreeSet::default();
-                                if let Some(docs) = &inner2.docs {
+                                if let Some(docs) = protocols.get_typed::<DocsEngine>(DOCS_ALPN) {
                                     let doc_hashes = match docs.sync.content_hashes().await {
                                         Ok(hashes) => hashes,
                                         Err(err) => {
@@ -536,12 +535,10 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
 
         // Shutdown future for the docs engine, if enabled.
         let docs_shutdown = {
-            let docs = self.docs.clone();
+            let docs = protocols.get_typed::<DocsEngine>(DOCS_ALPN);
             async move {
                 if let Some(docs) = docs {
                     docs.shutdown().await
-                } else {
-                    Ok(())
                 }
             }
         };

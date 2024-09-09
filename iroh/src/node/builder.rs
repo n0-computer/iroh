@@ -648,7 +648,6 @@ where
         let inner = Arc::new(NodeInner {
             rpc_addr: self.rpc_addr,
             db: self.blobs_store,
-            docs,
             endpoint,
             client,
             cancel_token: CancellationToken::new(),
@@ -668,7 +667,7 @@ where
         };
 
         let protocol_builder =
-            protocol_builder.register_iroh_protocols(self.blob_events, gossip, downloader);
+            protocol_builder.register_iroh_protocols(self.blob_events, gossip, downloader, docs);
 
         Ok(protocol_builder)
     }
@@ -798,6 +797,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         blob_events: EventSender,
         gossip: Gossip,
         downloader: Downloader,
+        docs: Option<DocsEngine>,
     ) -> Self {
         // Register blobs.
         let blobs_proto = BlobsProtocol::new_with_events(
@@ -812,7 +812,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         self = self.accept(GOSSIP_ALPN.to_vec(), Arc::new(gossip));
 
         // Register docs, if enabled.
-        if let Some(docs) = self.inner.docs.clone() {
+        if let Some(docs) = docs {
             self = self.accept(DOCS_ALPN.to_vec(), Arc::new(docs));
         }
 
