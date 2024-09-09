@@ -546,6 +546,8 @@ impl<S: Storage> Actor<S> {
             } => {
                 let store = self.store.clone();
                 self.tasks.spawn_local(async move {
+                    // TODO: We wouldn't need to manually forward in a loop here if subscribe_area took a sender
+                    // instead of returning a stream.
                     let mut stream = store.entries().subscribe_area(namespace, area, params);
                     while let Some(event) = stream.next().await {
                         if sender.send(event).await.is_err() {
