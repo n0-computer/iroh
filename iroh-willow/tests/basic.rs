@@ -379,7 +379,7 @@ mod util {
                 .secret_key(secret_key)
                 .relay_mode(iroh_net::relay::RelayMode::Disabled)
                 .alpns(vec![ALPN.to_vec()])
-                .bind(0)
+                .bind()
                 .await?;
             let blobs = iroh_blobs::store::mem::Store::default();
             let payloads = blobs.clone();

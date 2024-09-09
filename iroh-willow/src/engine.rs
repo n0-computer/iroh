@@ -1,8 +1,16 @@
 //! Engine for driving a willow store and synchronisation sessions.
 
 use anyhow::Result;
-use iroh_net::{endpoint::Connection, util::SharedAbortingJoinHandle, Endpoint, NodeId};
-use tokio::sync::{mpsc, oneshot};
+use futures_util::{
+    future::{MapErr, Shared},
+    FutureExt, TryFutureExt,
+};
+use iroh_net::{endpoint::Connection, Endpoint, NodeId};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinError,
+};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, error_span, Instrument};
 
 use crate::{
@@ -34,8 +42,16 @@ const PEER_MANAGER_INBOX_CAP: usize = 128;
 pub struct Engine {
     actor_handle: ActorHandle,
     peer_manager_inbox: mpsc::Sender<peer_manager::Input>,
-    peer_manager_task: SharedAbortingJoinHandle<Result<(), String>>,
+    // `Engine` needs to be `Clone + Send`, and we need to `task.await` in its `shutdown()` impl.
+    // So we need
+    // - `Shared` so we can `task.await` from all `Node` clones
+    // - `MapErr` to map the `JoinError` to a `String`, because `JoinError` is `!Clone`
+    // - `AbortOnDropHandle` to make sure that the `task` is cancelled when all `Node`s are dropped
+    //   (`Shared` acts like an `Arc` around its inner future).
+    peer_manager_task: Shared<MapErr<AbortOnDropHandle<Result<(), String>>, JoinErrToStr>>,
 }
+
+pub(crate) type JoinErrToStr = Box<dyn Fn(JoinError) -> String + Send + Sync + 'static>;
 
 impl Engine {
     /// Start the Willow engine.
@@ -63,13 +79,16 @@ impl Engine {
         let peer_manager =
             PeerManager::new(actor_handle.clone(), endpoint, pm_inbox_rx, accept_opts);
         let peer_manager_task = tokio::task::spawn(
-            async move { peer_manager.run().await.map_err(|err| format!("{err:?}")) }
+            async move { peer_manager.run().await.map_err(|e| e.to_string()) }
                 .instrument(error_span!("peer_manager", me=%me.fmt_short())),
         );
+        let peer_manager_task = AbortOnDropHandle::new(peer_manager_task)
+            .map_err(Box::new(|e: JoinError| e.to_string()) as JoinErrToStr)
+            .shared();
         Engine {
             actor_handle,
             peer_manager_inbox: pm_inbox_tx,
-            peer_manager_task: peer_manager_task.into(),
+            peer_manager_task,
         }
     }
 

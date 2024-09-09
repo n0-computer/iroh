@@ -1,6 +1,6 @@
 [package]
 name = "iroh-willow"
-version = "0.23.0"
+version = "0.24.0"
 edition = "2021"
 readme = "README.md"
 description = "willow protocol implementation for iroh"
@@ -26,11 +26,11 @@ futures-lite = "2.3.0"
 futures-util = "0.3.30"
 genawaiter = "0.99.1"
 hex = "0.4.3"
-iroh-base = { version = "0.23.0", path = "../iroh-base" }
-iroh-blobs = { version = "0.23.0", path = "../iroh-blobs" }
+iroh-base = { version = "0.24.0", path = "../iroh-base" }
+iroh-blobs = { version = "0.24.0", path = "../iroh-blobs" }
 iroh-io = { version = "0.6.0", features = ["stats"] }
-iroh-metrics = { version = "0.23.0", path = "../iroh-metrics", optional = true }
-iroh-net = { version = "0.23.0", path = "../iroh-net" }
+iroh-metrics = { version = "0.24.0", path = "../iroh-metrics", optional = true }
+iroh-net = { version = "0.24.0", path = "../iroh-net" }
 meadowcap = "0.1.0"
 postcard = { version = "1", default-features = false, features = [ "alloc", "use-std", "experimental-derive", ] }
 rand = "0.8.5"
