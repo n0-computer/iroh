@@ -354,8 +354,8 @@ impl ReconciliationSendFingerprint {
 pub struct ReconciliationAnnounceEntries {
     /// The 3dRange whose LengthyEntries to transmit.
     pub range: SerdeRange3d,
-    /// The number of Entries the sender has in the range.
-    pub count: u64,
+    /// True if and only if the the sender has zero Entries in the range.
+    pub is_empty: bool,
     /// A boolean flag to indicate whether the sender wishes to receive a ReconciliationAnnounceEntries message for the same 3dRange in return.
     pub want_response: bool,
     /// Whether the sender promises to send the Entries in the range sorted from oldest to newest.
@@ -397,7 +397,11 @@ pub struct ReconciliationSendPayload {
 
 /// Indicate that no more bytes will be transmitted for the currently transmitted Payload as part of set reconciliation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReconciliationTerminatePayload;
+pub struct ReconciliationTerminatePayload {
+    /// True if and only if no further ReconciliationSendEntry message will be sent as part of
+    /// reconciling the current 3dRange.
+    pub is_final: bool,
+}
 
 /// Transmit an AuthorisedEntry to the other peer, and optionally prepare transmission of its Payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
