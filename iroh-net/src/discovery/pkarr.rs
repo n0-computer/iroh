@@ -1,6 +1,48 @@
-//! A discovery service which publishes and resolves node information to a [pkarr] relay.
+//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+//!
+//! The Public-Key Addressable Resource Records, [pkarr], is a system which allows
+//! publishing [DNS Resource Records] owned by a particular [`SecretKey`] under a name
+//! derived from its corresponding [`PublicKey`], also known as the [`NodeId`].
+//! Additionally this pkarr Resource Record is signed using the same [`SecretKey`], ensuring
+//! authenticity of the record.
+//!
+//! Pkarr normally stores these records on the [Mainline DHT], but also provides two bridges
+//! that do not require clients to directly interact with the DHT:
+//!
+//! - Resolvers are servers which expose the pkarr Resource Record under a domain name,
+//!   e.g. `o3dks..6uyy.dns.iroh.link`.  This allows looking up the pkarr Resource Records
+//!   using normal DNS clients.  These resolvers would normally perform lookups on the
+//!   Mainline DHT augmented with a local cache to improve performance.
+//!
+//! - Relays are servers which allow both publishing and looking up of the pkarr Resource
+//!   Records using HTTP PUT and GET requests.  They will usually perform the publishing to
+//!   the Mainline DHT on behalf on the client as well as cache lookups performed on the DHT
+//!   to improve performance.
+//!
+//! For node discovery in iroh-net the pkarr Resource Records contain the [`AddrInfo`]
+//! information, providing nodes which retrieve the pkarr Resource Record with enough detail
+//! to contact the iroh-net node.
+//!
+//! There are several node discovery services built on top of pkarr, which can be composed
+//! to the application's needs:
+//!
+//! - [`PkarrPublisher`], which publishes to a pkarr relay server using HTTP.
+//!
+//! - [`PkarrResolver`], which resolves from a pkarr relay server using HTTP.
+//!
+//! - [`DnsDiscovery`], which resolves from a DNS server.
+//!
+//! - [`DhtDiscovery`], which resolves and publishes from both pkarr relay servers and well
+//!   as the Mainline DHT.
 //!
 //! [pkarr]: https://pkarr.org
+//! [DNS Resource Records]: https://en.wikipedia.org/wiki/Domain_Name_System#Resource_records
+//! [Mainline DHT]: https://en.wikipedia.org/wiki/Mainline_DHT
+//! [`SecretKey`]: crate::key::SecretKey
+//! [`PublicKey`]: crate::key::PublicKey
+//! [`NodeId`]: crate::key::NodeId
+//! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
+//! [`DhtDiscovery`]: dht::DhtDiscovery
 
 use std::sync::Arc;
 
@@ -21,27 +63,56 @@ use crate::{
     key::SecretKey,
     AddrInfo, Endpoint, NodeId,
 };
+
 #[cfg(feature = "discovery-pkarr-dht")]
 pub mod dht;
 
-/// The pkarr relay run by n0, for production.
+/// The production pkarr relay run by [number 0].
+///
+/// This server is both a pkarr relay server as well as a DNS resolver, see the [module
+/// documentation].  However it does not interact with the Mainline DHT, so is a more
+/// central service.  It is a reliable service to use for node discovery.
+///
+/// [number 0]: https://n0.computer
+/// [crate documentation]: crate::discovery::pkarr
 pub const N0_DNS_PKARR_RELAY_PROD: &str = "https://dns.iroh.link/pkarr";
-/// The pkarr relay run by n0, for testing.
+/// The testing pkarr relay run by [number 0].
+///
+/// This server operates similarly to [`N0_DNS_PKARR_RELAY_PROD`] but is not as reliable.
+/// It is meant for more experimental usages.
+///
+/// [number 0]: https://n0.computer
 pub const N0_DNS_PKARR_RELAY_STAGING: &str = "https://staging-dns.iroh.link/pkarr";
 
-/// Default TTL for the records in the pkarr signed packet. TTL tells DNS caches
-/// how long to store a record. It is ignored by the iroh-dns-server as the home
-/// server keeps the records for the domain. When using the pkarr relay no DNS is
-/// involved and the setting is ignored.
+/// Default TTL for the records in the pkarr signed packet.
+///
+/// The Time To Live (TTL) tells DNS caches how long to store a record. It is ignored by the
+/// `iroh-dns-server`, e.g. as running on [`N0_DNS_PKARR_RELAY_PROD`], as the home server
+/// keeps the records for the domain. When using the pkarr relay no DNS is involved and the
+/// setting is ignored.
+// TODO(flub): huh?
 pub const DEFAULT_PKARR_TTL: u32 = 30;
 
-/// Interval in which we will republish our node info even if unchanged: 5 minutes.
+/// Interval in which to republish the node info even if unchanged: 5 minutes.
 pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
-/// Publish node info to a pkarr relay.
+/// Publisher of node discovery information to a [pkarr] relay.
 ///
-/// Publishes either the relay url if the relay is enabled or the direct addresses
-/// if the relay is disabled.
+/// This publisher uses HTTP to publish to node discovery information to a pkarr relay
+/// server, see the [module docs] for details.
+///
+/// This implements the [`Discovery`] trait to be used as a node discovery service.  Note
+/// that it only publishes node discovery information, for the corresponding resolver use
+/// the [`PkarrResolver`] together with [`ConcurrentDiscovery`].
+///
+/// This publisher will **only** publish the [`RelayUrl`] if the [`AddrInfo`] contains a
+/// [`RelayUrl`].  If the [`AddrInfo`] does not contain a [`RelayUrl`] the *direct
+/// addresses* are published instead.
+///
+/// [pkarr]: https://pkarr.org
+/// [module docs]: crate::discovery::pkarr
+/// [`RelayUrl`]: crate::relay::RelayUrl
+/// [`ConcurrentDiscovery`]: super::ConcurrentDiscovery
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrPublisher {
     node_id: NodeId,
@@ -50,10 +121,14 @@ pub struct PkarrPublisher {
 }
 
 impl PkarrPublisher {
-    /// Create a new config with a secret key and a pkarr relay URL.
+    /// Creates a new publisher for the [`SecretKey`].
     ///
-    /// Will use [`DEFAULT_PKARR_TTL`] as the time-to-live value for the published packets.
-    /// Will republish info, even if unchanged, every [`DEFAULT_REPUBLISH_INTERVAL`].
+    /// This publisher will be able to publish [pkarr] records for [`SecretKey`].  It will
+    /// use [`DEFAULT_PKARR_TTL`] as the time-to-live value for the published packets.  Will
+    /// republish discovery information every [`DEFAULT_REPUBLISH_INTERVAL`], even if the
+    /// information is unchanged.
+    ///
+    /// [pkarr]: https://pkarr.org
     pub fn new(secret_key: SecretKey, pkarr_relay: Url) -> Self {
         Self::with_options(
             secret_key,
@@ -63,8 +138,10 @@ impl PkarrPublisher {
         )
     }
 
-    /// Create a new [`PkarrPublisher`] with a custom time-to-live (ttl) value for the published
-    /// [`pkarr::SignedPacket`]s.
+    /// Creates a new [`PkarrPublisher`] with a custom TTL and republish intervals.
+    ///
+    /// This allows creating the publisher with custom time-to-live values of the
+    /// [`pkarr::SignedPacket`]s and well as a custom republish interval.
     pub fn with_options(
         secret_key: SecretKey,
         pkarr_relay: Url,
@@ -94,8 +171,15 @@ impl PkarrPublisher {
         }
     }
 
-    /// Create a pkarr publisher which uses the [`N0_DNS_PKARR_RELAY_PROD`] pkarr relay and in testing
-    /// uses [`N0_DNS_PKARR_RELAY_STAGING`].
+    /// Creates a pkarr publisher which uses the [number 0] pkarr relay server.
+    ///
+    /// This uses the pkarr relay server operated by [number 0], at
+    /// [`N0_DNS_PKARR_RELAY_PROD`].
+    ///
+    /// When compiling for tests, i.e. when `cfg(test)` is true, or when the `test-utils`
+    /// crate feature is enabled the [`N0_DNS_PKARR_RELAY_STAGING`] server is used instead.
+    ///
+    /// [number 0]: https://n0.computer
     pub fn n0_dns(secret_key: SecretKey) -> Self {
         #[cfg(not(any(test, feature = "test-utils")))]
         let pkarr_relay = N0_DNS_PKARR_RELAY_PROD;
@@ -106,7 +190,7 @@ impl PkarrPublisher {
         Self::new(secret_key, pkarr_relay)
     }
 
-    /// Publish [`AddrInfo`] about this node to a pkarr relay.
+    /// Publishes [`AddrInfo`] about this node to a pkarr relay.
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_addr_info(&self, info: &AddrInfo) {
@@ -199,28 +283,41 @@ impl PublisherService {
     }
 }
 
-/// Resolve node info using a pkarr relay.
+/// Resolver of node discovery information from a [pkarr] relay.
 ///
-/// Pkarr stores signed DNS records in the mainline dht. These can be queried directly
-/// via the pkarr relay HTTP api or alternatively via a dns server that provides the
-/// pkarr records using `DnsDiscovery`. The main difference is that `DnsDiscovery` makes
-/// use of the system dns resolver and caching which can return stale records, while the
-/// `PkarrResolver` always gets recent data.
+/// The resolver uses HTTP to query node discovery information from a pkarr relay server,
+/// see the [module docs] for details.
+///
+/// This implements the [`Discovery`] trait to be used as a node discovery service.  Note
+/// that it only resolves node discovery information, for the corresponding publisher use
+/// the [`PkarrPublisher`] together with [`ConcurrentDiscovery`].
+///
+/// [pkarr]: https://pkarr.org
+/// [module docs]: crate::discovery::pkarr
+/// [`ConcurrentDiscovery`]: super::ConcurrentDiscovery
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrResolver {
     pkarr_client: PkarrRelayClient,
 }
 
 impl PkarrResolver {
-    /// Create a new config with a pkarr relay URL.
+    /// Creates a new publisher using the pkarr relay server at the URL.
     pub fn new(pkarr_relay: Url) -> Self {
         Self {
             pkarr_client: PkarrRelayClient::new(pkarr_relay),
         }
     }
 
-    /// Create a pkarr resolver which uses the [`N0_DNS_PKARR_RELAY_PROD`] pkarr relay and in testing
-    /// uses [`N0_DNS_PKARR_RELAY_STAGING`].
+    /// Creates a pkarr resolver which uses the [number 0] pkarr relay server.
+    ///
+    /// This uses the pkarr relay server operated by [number 0] at
+    /// [`N0_DNS_PKARR_RELAY_PROD`].
+    ///
+    /// When compiling for tests, i.e. when using `cfg(test)` is true, or when the
+    /// `test-utils` crate feature is enabled the [`N0_DNS_PKARR_RELAY_STAGING`] server is
+    /// used instead.
+    ///
+    /// [number 0]: https://n0.computer
     pub fn n0_dns() -> Self {
         #[cfg(not(any(test, feature = "test-utils")))]
         let pkarr_relay = N0_DNS_PKARR_RELAY_PROD;
@@ -253,7 +350,9 @@ impl Discovery for PkarrResolver {
     }
 }
 
-/// A pkarr client to publish [`pkarr::SignedPacket`]s to a pkarr relay.
+/// A [pkarr] client to publish [`pkarr::SignedPacket`]s to a pkarr relay.
+///
+/// [pkarr]: https://pkarr.org
 #[derive(Debug, Clone)]
 pub struct PkarrRelayClient {
     http_client: reqwest::Client,
@@ -261,7 +360,7 @@ pub struct PkarrRelayClient {
 }
 
 impl PkarrRelayClient {
-    /// Create a new client.
+    /// Creates a new client.
     pub fn new(pkarr_relay_url: Url) -> Self {
         Self {
             http_client: reqwest::Client::new(),
@@ -269,7 +368,7 @@ impl PkarrRelayClient {
         }
     }
 
-    /// Resolve a [`SignedPacket`]
+    /// Resolves a [`SignedPacket`] for the given [`NodeId`].
     pub async fn resolve(&self, node_id: NodeId) -> anyhow::Result<SignedPacket> {
         let public_key = pkarr::PublicKey::try_from(node_id.as_bytes())?;
         let mut url = self.pkarr_relay_url.clone();
@@ -290,7 +389,7 @@ impl PkarrRelayClient {
         Ok(SignedPacket::from_relay_payload(&public_key, &payload)?)
     }
 
-    /// Publish a [`SignedPacket`]
+    /// Publishes a [`SignedPacket`].
     pub async fn publish(&self, signed_packet: &SignedPacket) -> anyhow::Result<()> {
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()
