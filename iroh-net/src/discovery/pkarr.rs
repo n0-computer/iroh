@@ -74,12 +74,12 @@ pub mod dht;
 /// central service.  It is a reliable service to use for node discovery.
 ///
 /// [number 0]: https://n0.computer
-/// [crate documentation]: crate::discovery::pkarr
+/// [module documentation]: crate::discovery::pkarr
 pub const N0_DNS_PKARR_RELAY_PROD: &str = "https://dns.iroh.link/pkarr";
 /// The testing pkarr relay run by [number 0].
 ///
 /// This server operates similarly to [`N0_DNS_PKARR_RELAY_PROD`] but is not as reliable.
-/// It is meant for more experimental usages.
+/// It is meant for more experimental use and testing purposes.
 ///
 /// [number 0]: https://n0.computer
 pub const N0_DNS_PKARR_RELAY_STAGING: &str = "https://staging-dns.iroh.link/pkarr";
