@@ -110,7 +110,7 @@ jobs:
                 release-os: darwin
                 release-arch: x86_64
                 cargo_targets: "x86_64-apple-darwin"
-                runner: [self-hosted, macOS, X64]
+                runner: [self-hosted, macOS, ARM64]
               - name: macOS-arm-latest
                 os: macOS-latest
                 release-os: darwin
