@@ -12,16 +12,11 @@ use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_blobs::export::ExportProgress;
 use iroh_blobs::format::collection::Collection;
 use iroh_blobs::get::db::DownloadProgress;
-use iroh_blobs::get::Stats;
 use iroh_blobs::provider::BatchAddPathProgress;
 use iroh_blobs::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
 use iroh_blobs::util::local_pool::LocalPoolHandle;
 use iroh_blobs::util::progress::{AsyncChannelProgressSender, ProgressSender};
 use iroh_blobs::util::SetTagOption;
-use iroh_blobs::{
-    downloader::{DownloadRequest, Downloader},
-    get::db::GetState,
-};
 use iroh_blobs::{
     provider::AddProgress,
     store::{Store as BaoStore, ValidateProgress},
@@ -31,7 +26,7 @@ use iroh_blobs::{BlobFormat, Tag};
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
 use iroh_net::relay::RelayUrl;
-use iroh_net::{Endpoint, NodeAddr, NodeId};
+use iroh_net::{NodeAddr, NodeId};
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::task::JoinSet;
 use tokio_util::either::Either;
@@ -39,11 +34,11 @@ use tracing::{debug, info, warn};
 
 use crate::client::blobs::BlobStatus;
 use crate::client::{
-    blobs::{BlobInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
+    blobs::{BlobInfo, IncompleteBlobInfo, WrapOption},
     tags::TagInfo,
     NodeStatus,
 };
-use crate::node::{docs::DocsEngine, NodeInner};
+use crate::node::{docs::DocsEngine, protocol::BlobsProtocol, NodeInner};
 use crate::rpc_protocol::blobs::{
     BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest, BatchAddStreamResponse,
     BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse, BatchCreateTempTagRequest,
@@ -85,8 +80,6 @@ const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 const RPC_BLOB_GET_CHUNK_SIZE: usize = 1024 * 64;
 /// Channel cap for getting blobs over RPC
 const RPC_BLOB_GET_CHANNEL_CAP: usize = 2;
-/// Name used for logging when new node addresses are added from gossip.
-const BLOB_DOWNLOAD_SOURCE_NAME: &str = "blob_download";
 
 #[derive(Debug, Clone)]
 pub(crate) struct Handler<D> {
@@ -762,12 +755,19 @@ impl<D: BaoStore> Handler<D> {
 
     fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = DownloadResponse> {
         let (sender, receiver) = async_channel::bounded(1024);
-        let db = self.inner.db.clone();
-        let downloader = self.inner.downloader.clone();
         let endpoint = self.inner.endpoint.clone();
         let progress = AsyncChannelProgressSender::new(sender);
+
+        let blobs_protocol = self
+            .protocols
+            .get_typed::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
+            .expect("missing blobs");
+
         self.local_pool_handle().spawn_detached(move || async move {
-            if let Err(err) = download(&db, endpoint, &downloader, msg, progress.clone()).await {
+            if let Err(err) = blobs_protocol
+                .download(endpoint, msg, progress.clone())
+                .await
+            {
                 progress
                     .send(DownloadProgress::Abort(err.into()))
                     .await
@@ -1352,148 +1352,6 @@ impl<D: BaoStore> Handler<D> {
         }
 
         Ok(CreateCollectionResponse { hash, tag })
-    }
-}
-
-async fn download<D>(
-    db: &D,
-    endpoint: Endpoint,
-    downloader: &Downloader,
-    req: BlobDownloadRequest,
-    progress: AsyncChannelProgressSender<DownloadProgress>,
-) -> Result<()>
-where
-    D: iroh_blobs::store::Store,
-{
-    let BlobDownloadRequest {
-        hash,
-        format,
-        nodes,
-        tag,
-        mode,
-    } = req;
-    let hash_and_format = HashAndFormat { hash, format };
-    let temp_tag = db.temp_tag(hash_and_format);
-    let stats = match mode {
-        DownloadMode::Queued => {
-            download_queued(
-                endpoint,
-                downloader,
-                hash_and_format,
-                nodes,
-                progress.clone(),
-            )
-            .await?
-        }
-        DownloadMode::Direct => {
-            download_direct_from_nodes(db, endpoint, hash_and_format, nodes, progress.clone())
-                .await?
-        }
-    };
-
-    progress.send(DownloadProgress::AllDone(stats)).await.ok();
-    match tag {
-        SetTagOption::Named(tag) => {
-            db.set_tag(tag, Some(hash_and_format)).await?;
-        }
-        SetTagOption::Auto => {
-            db.create_tag(hash_and_format).await?;
-        }
-    }
-    drop(temp_tag);
-
-    Ok(())
-}
-
-async fn download_queued(
-    endpoint: Endpoint,
-    downloader: &Downloader,
-    hash_and_format: HashAndFormat,
-    nodes: Vec<NodeAddr>,
-    progress: AsyncChannelProgressSender<DownloadProgress>,
-) -> Result<Stats> {
-    let mut node_ids = Vec::with_capacity(nodes.len());
-    let mut any_added = false;
-    for node in nodes {
-        node_ids.push(node.node_id);
-        if !node.info.is_empty() {
-            endpoint.add_node_addr_with_source(node, BLOB_DOWNLOAD_SOURCE_NAME)?;
-            any_added = true;
-        }
-    }
-    let can_download = !node_ids.is_empty() && (any_added || endpoint.discovery().is_some());
-    anyhow::ensure!(can_download, "no way to reach a node for download");
-    let req = DownloadRequest::new(hash_and_format, node_ids).progress_sender(progress);
-    let handle = downloader.queue(req).await;
-    let stats = handle.await?;
-    Ok(stats)
-}
-
-#[tracing::instrument("download_direct", skip_all, fields(hash=%hash_and_format.hash.fmt_short()))]
-async fn download_direct_from_nodes<D>(
-    db: &D,
-    endpoint: Endpoint,
-    hash_and_format: HashAndFormat,
-    nodes: Vec<NodeAddr>,
-    progress: AsyncChannelProgressSender<DownloadProgress>,
-) -> Result<Stats>
-where
-    D: BaoStore,
-{
-    let mut last_err = None;
-    let mut remaining_nodes = nodes.len();
-    let mut nodes_iter = nodes.into_iter();
-    'outer: loop {
-        match iroh_blobs::get::db::get_to_db_in_steps(db.clone(), hash_and_format, progress.clone())
-            .await?
-        {
-            GetState::Complete(stats) => return Ok(stats),
-            GetState::NeedsConn(needs_conn) => {
-                let (conn, node_id) = 'inner: loop {
-                    match nodes_iter.next() {
-                        None => break 'outer,
-                        Some(node) => {
-                            remaining_nodes -= 1;
-                            let node_id = node.node_id;
-                            if node_id == endpoint.node_id() {
-                                debug!(
-                                    ?remaining_nodes,
-                                    "skip node {} (it is the node id of ourselves)",
-                                    node_id.fmt_short()
-                                );
-                                continue 'inner;
-                            }
-                            match endpoint.connect(node, iroh_blobs::protocol::ALPN).await {
-                                Ok(conn) => break 'inner (conn, node_id),
-                                Err(err) => {
-                                    debug!(
-                                        ?remaining_nodes,
-                                        "failed to connect to {}: {err}",
-                                        node_id.fmt_short()
-                                    );
-                                    continue 'inner;
-                                }
-                            }
-                        }
-                    }
-                };
-                match needs_conn.proceed(conn).await {
-                    Ok(stats) => return Ok(stats),
-                    Err(err) => {
-                        warn!(
-                            ?remaining_nodes,
-                            "failed to download from {}: {err}",
-                            node_id.fmt_short()
-                        );
-                        last_err = Some(err);
-                    }
-                }
-            }
-        }
-    }
-    match last_err {
-        Some(err) => Err(err.into()),
-        None => Err(anyhow!("No nodes to download from provided")),
     }
 }
 

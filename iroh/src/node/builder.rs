@@ -652,7 +652,6 @@ where
             endpoint,
             client,
             cancel_token: CancellationToken::new(),
-            downloader,
             local_pool_handle: lp.handle().clone(),
             blob_batches: Default::default(),
         });
@@ -668,7 +667,8 @@ where
             local_pool: lp,
         };
 
-        let protocol_builder = protocol_builder.register_iroh_protocols(self.blob_events, gossip);
+        let protocol_builder =
+            protocol_builder.register_iroh_protocols(self.blob_events, gossip, downloader);
 
         Ok(protocol_builder)
     }
@@ -773,9 +773,9 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     }
 
     /// Returns a reference to the [`Downloader`] used by the node.
-    pub fn downloader(&self) -> &Downloader {
+    /*pub fn downloader(&self) -> &Downloader {
         &self.inner.downloader
-    }
+    }*/
 
     /// Returns a reference to the [`Gossip`] handle used by the node.
     pub fn gossip(&self) -> Arc<Gossip> {
@@ -793,12 +793,18 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     }
 
     /// Registers the core iroh protocols (blobs, gossip, docs).
-    fn register_iroh_protocols(mut self, blob_events: EventSender, gossip: Gossip) -> Self {
+    fn register_iroh_protocols(
+        mut self,
+        blob_events: EventSender,
+        gossip: Gossip,
+        downloader: Downloader,
+    ) -> Self {
         // Register blobs.
         let blobs_proto = BlobsProtocol::new_with_events(
             self.blobs_db().clone(),
             self.local_pool_handle().clone(),
             blob_events,
+            downloader,
         );
         self = self.accept(iroh_blobs::protocol::ALPN.to_vec(), Arc::new(blobs_proto));
 

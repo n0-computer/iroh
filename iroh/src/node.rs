@@ -47,9 +47,9 @@ use futures_lite::StreamExt;
 use futures_util::future::MapErr;
 use futures_util::future::Shared;
 use iroh_base::key::PublicKey;
+use iroh_blobs::protocol::Closed;
 use iroh_blobs::store::Store as BaoStore;
 use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
-use iroh_blobs::{downloader::Downloader, protocol::Closed};
 use iroh_blobs::{HashAndFormat, TempTag};
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
@@ -123,7 +123,7 @@ struct NodeInner<D> {
     endpoint: Endpoint,
     cancel_token: CancellationToken,
     client: crate::client::Iroh,
-    downloader: Downloader,
+    // downloader: Downloader,
     blob_batches: tokio::sync::Mutex<BlobBatches>,
     local_pool_handle: LocalPoolHandle,
 }
