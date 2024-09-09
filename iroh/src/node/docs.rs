@@ -52,4 +52,13 @@ impl ProtocolHandler for DocsEngine {
     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move { self.handle_connection(conn).await })
     }
+
+    fn shutdown(self: Arc<Self>) -> BoxedFuture<()> {
+        Box::pin(async move {
+            let this: &Self = &self;
+            if let Err(err) = this.shutdown().await {
+                tracing::warn!("shutdown error: {:?}", err);
+            }
+        })
+    }
 }
