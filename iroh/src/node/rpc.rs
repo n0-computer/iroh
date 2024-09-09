@@ -99,6 +99,16 @@ impl<D: BaoStore> Handler<D> {
         self.protocols.get_typed::<DocsEngine>(DOCS_ALPN)
     }
 
+    fn blobs(&self) -> Arc<BlobsProtocol<D>> {
+        self.protocols
+            .get_typed::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
+            .expect("missing blobs")
+    }
+
+    fn blobs_store(&self) -> D {
+        self.blobs().store().clone()
+    }
+
     async fn with_docs<T, F, Fut>(self, f: F) -> RpcResult<T>
     where
         T: Send + 'static,
@@ -363,7 +373,7 @@ impl<D: BaoStore> Handler<D> {
                 .await
             }
             Set(msg) => {
-                let blobs_store = self.inner.db.clone();
+                let blobs_store = self.blobs_store();
                 chan.rpc(msg, self, |handler, req| {
                     handler.with_docs(|docs| async move { docs.doc_set(&blobs_store, req).await })
                 })
@@ -471,7 +481,8 @@ impl<D: BaoStore> Handler<D> {
     }
 
     async fn blob_status(self, msg: BlobStatusRequest) -> RpcResult<BlobStatusResponse> {
-        let entry = self.inner.db.get(&msg.hash).await?;
+        let blobs = self.blobs();
+        let entry = blobs.store().get(&msg.hash).await?;
         Ok(BlobStatusResponse(match entry {
             Some(entry) => {
                 if entry.is_complete() {
@@ -489,7 +500,8 @@ impl<D: BaoStore> Handler<D> {
     async fn blob_list_impl(self, co: &Co<RpcResult<BlobInfo>>) -> io::Result<()> {
         use bao_tree::io::fsm::Outboard;
 
-        let db = self.inner.db.clone();
+        let blobs = self.blobs();
+        let db = blobs.store();
         for blob in db.blobs().await? {
             let blob = blob?;
             let Some(entry) = db.get(&blob).await? else {
@@ -507,7 +519,8 @@ impl<D: BaoStore> Handler<D> {
         self,
         co: &Co<RpcResult<IncompleteBlobInfo>>,
     ) -> io::Result<()> {
-        let db = self.inner.db.clone();
+        let blobs = self.blobs();
+        let db = blobs.store();
         for hash in db.partial_blobs().await? {
             let hash = hash?;
             let Ok(Some(entry)) = db.get_mut(&hash).await else {
@@ -551,19 +564,20 @@ impl<D: BaoStore> Handler<D> {
     }
 
     async fn blob_delete_tag(self, msg: TagDeleteRequest) -> RpcResult<()> {
-        self.inner.db.set_tag(msg.name, None).await?;
+        self.blobs_store().set_tag(msg.name, None).await?;
         Ok(())
     }
 
     async fn blob_delete_blob(self, msg: DeleteRequest) -> RpcResult<()> {
-        self.inner.db.delete(vec![msg.hash]).await?;
+        self.blobs_store().delete(vec![msg.hash]).await?;
         Ok(())
     }
 
     fn blob_list_tags(self, msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
         tracing::info!("blob_list_tags");
+        let blobs = self.blobs();
         Gen::new(|co| async move {
-            let tags = self.inner.db.tags().await.unwrap();
+            let tags = blobs.store().tags().await.unwrap();
             #[allow(clippy::manual_flatten)]
             for item in tags {
                 if let Ok((name, HashAndFormat { hash, format })) = item {
@@ -582,9 +596,10 @@ impl<D: BaoStore> Handler<D> {
     ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
         let (tx, rx) = async_channel::bounded(1);
         let tx2 = tx.clone();
-        let db = self.inner.db.clone();
+        let blobs = self.blobs();
         tokio::task::spawn(async move {
-            if let Err(e) = db
+            if let Err(e) = blobs
+                .store()
                 .validate(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
                 .await
             {
@@ -601,9 +616,10 @@ impl<D: BaoStore> Handler<D> {
     ) -> impl Stream<Item = ConsistencyCheckProgress> + Send + 'static {
         let (tx, rx) = async_channel::bounded(1);
         let tx2 = tx.clone();
-        let db = self.inner.db.clone();
+        let blobs = self.blobs();
         tokio::task::spawn(async move {
-            if let Err(e) = db
+            if let Err(e) = blobs
+                .store()
                 .consistency_check(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
                 .await
             {
@@ -691,9 +707,9 @@ impl<D: BaoStore> Handler<D> {
             false => ImportMode::Copy,
         };
 
-        let (temp_tag, size) = self
-            .inner
-            .db
+        let blobs = self.blobs();
+        let (temp_tag, size) = blobs
+            .store()
             .import_file(root, import_mode, BlobFormat::Raw, import_progress)
             .await?;
 
@@ -739,8 +755,9 @@ impl<D: BaoStore> Handler<D> {
             }
             x
         });
+        let blobs = self.blobs();
         iroh_blobs::export::export(
-            &self.inner.db,
+            blobs.store(),
             entry.content_hash(),
             path,
             ExportFormat::Blob,
@@ -782,7 +799,7 @@ impl<D: BaoStore> Handler<D> {
         let progress = AsyncChannelProgressSender::new(tx);
         self.local_pool_handle().spawn_detached(move || async move {
             let res = iroh_blobs::export::export(
-                &self.inner.db,
+                self.blobs().store(),
                 msg.hash,
                 msg.path,
                 msg.format,
@@ -806,6 +823,7 @@ impl<D: BaoStore> Handler<D> {
         use iroh_blobs::store::ImportMode;
         use std::collections::BTreeMap;
 
+        let blobs = self.blobs();
         let progress = AsyncChannelProgressSender::new(progress);
         let names = Arc::new(Mutex::new(BTreeMap::new()));
         // convert import progress to provide progress
@@ -851,14 +869,17 @@ impl<D: BaoStore> Handler<D> {
         let temp_tag = if create_collection {
             // import all files below root recursively
             let data_sources = crate::util::fs::scan_path(root, wrap)?;
+            let blobs = self.blobs();
+
             const IO_PARALLELISM: usize = 4;
             let result: Vec<_> = futures_lite::stream::iter(data_sources)
                 .map(|source| {
                     let import_progress = import_progress.clone();
-                    let db = self.inner.db.clone();
+                    let blobs = blobs.clone();
                     async move {
                         let name = source.name().to_string();
-                        let (tag, size) = db
+                        let (tag, size) = blobs
+                            .store()
                             .import_file(
                                 source.path().to_owned(),
                                 import_mode,
@@ -880,12 +901,11 @@ impl<D: BaoStore> Handler<D> {
                 .map(|(name, hash, _, tag)| ((name, hash), tag))
                 .unzip();
 
-            collection.store(&self.inner.db).await?
+            collection.store(blobs.store()).await?
         } else {
             // import a single file
-            let (tag, _size) = self
-                .inner
-                .db
+            let (tag, _size) = blobs
+                .store()
                 .import_file(root, import_mode, BlobFormat::Raw, import_progress)
                 .await?;
             tag
@@ -895,13 +915,13 @@ impl<D: BaoStore> Handler<D> {
         let HashAndFormat { hash, format } = *hash_and_format;
         let tag = match tag {
             SetTagOption::Named(tag) => {
-                self.inner
-                    .db
+                blobs
+                    .store()
                     .set_tag(tag.clone(), Some(*hash_and_format))
                     .await?;
                 tag
             }
-            SetTagOption::Auto => self.inner.db.create_tag(*hash_and_format).await?,
+            SetTagOption::Auto => blobs.store().create_tag(*hash_and_format).await?,
         };
         progress
             .send(AddProgress::AllDone {
@@ -967,9 +987,10 @@ impl<D: BaoStore> Handler<D> {
     }
 
     async fn tags_set(self, msg: tags::SetRequest) -> RpcResult<()> {
-        self.inner.db.set_tag(msg.name, msg.value).await?;
+        let blobs = self.blobs();
+        blobs.store().set_tag(msg.name, msg.value).await?;
         if let SyncMode::Full = msg.sync {
-            self.inner.db.sync().await?;
+            blobs.store().sync().await?;
         }
         if let Some(batch) = msg.batch {
             if let Some(content) = msg.value.as_ref() {
@@ -984,9 +1005,10 @@ impl<D: BaoStore> Handler<D> {
     }
 
     async fn tags_create(self, msg: tags::CreateRequest) -> RpcResult<Tag> {
-        let tag = self.inner.db.create_tag(msg.value).await?;
+        let blobs = self.blobs();
+        let tag = blobs.store().create_tag(msg.value).await?;
         if let SyncMode::Full = msg.sync {
-            self.inner.db.sync().await?;
+            blobs.store().sync().await?;
         }
         if let Some(batch) = msg.batch {
             self.inner
@@ -1011,7 +1033,8 @@ impl<D: BaoStore> Handler<D> {
     }
 
     async fn batch_create_temp_tag(self, msg: BatchCreateTempTagRequest) -> RpcResult<()> {
-        let tag = self.inner.db.temp_tag(msg.content);
+        let blobs = self.blobs();
+        let tag = blobs.store().temp_tag(msg.content);
         self.inner.blob_batches.lock().await.store(msg.batch, tag);
         Ok(())
     }
@@ -1055,6 +1078,7 @@ impl<D: BaoStore> Handler<D> {
         stream: impl Stream<Item = BatchAddStreamUpdate> + Send + Unpin + 'static,
         progress: async_channel::Sender<BatchAddStreamResponse>,
     ) -> anyhow::Result<()> {
+        let blobs = self.blobs();
         let progress = AsyncChannelProgressSender::new(progress);
 
         let stream = stream.map(|item| match item {
@@ -1070,9 +1094,8 @@ impl<D: BaoStore> Handler<D> {
             }
             _ => None,
         });
-        let (temp_tag, _len) = self
-            .inner
-            .db
+        let (temp_tag, _len) = blobs
+            .store()
             .import_stream(stream, msg.format, import_progress)
             .await?;
         let hash = temp_tag.inner().hash;
@@ -1116,8 +1139,8 @@ impl<D: BaoStore> Handler<D> {
             root.display()
         );
         let (tag, _) = self
-            .inner
-            .db
+            .blobs()
+            .store()
             .import_file(root, import_mode, format, import_progress)
             .await?;
         let hash = *tag.hash();
@@ -1175,22 +1198,22 @@ impl<D: BaoStore> Handler<D> {
             ImportProgress::OutboardDone { hash, id } => Some(AddProgress::Done { hash, id }),
             _ => None,
         });
-        let (temp_tag, _len) = self
-            .inner
-            .db
+        let blobs = self.blobs();
+        let (temp_tag, _len) = blobs
+            .store()
             .import_stream(stream, BlobFormat::Raw, import_progress)
             .await?;
         let hash_and_format = *temp_tag.inner();
         let HashAndFormat { hash, format } = hash_and_format;
         let tag = match msg.tag {
             SetTagOption::Named(tag) => {
-                self.inner
-                    .db
+                blobs
+                    .store()
                     .set_tag(tag.clone(), Some(hash_and_format))
                     .await?;
                 tag
             }
-            SetTagOption::Auto => self.inner.db.create_tag(hash_and_format).await?,
+            SetTagOption::Auto => blobs.store().create_tag(hash_and_format).await?,
         };
         progress
             .send(AddProgress::AllDone { hash, tag, format })
@@ -1203,7 +1226,7 @@ impl<D: BaoStore> Handler<D> {
         req: ReadAtRequest,
     ) -> impl Stream<Item = RpcResult<ReadAtResponse>> + Send + 'static {
         let (tx, rx) = async_channel::bounded(RPC_BLOB_GET_CHANNEL_CAP);
-        let db = self.inner.db.clone();
+        let db = self.blobs_store();
         self.local_pool_handle().spawn_detached(move || async move {
             if let Err(err) = read_loop(req, db, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
                 tx.send(RpcResult::Err(err.into())).await.ok();
@@ -1332,22 +1355,24 @@ impl<D: BaoStore> Handler<D> {
             tags_to_delete,
         } = req;
 
-        let temp_tag = collection.store(&self.inner.db).await?;
+        let blobs = self.blobs();
+
+        let temp_tag = collection.store(blobs.store()).await?;
         let hash_and_format = temp_tag.inner();
         let HashAndFormat { hash, .. } = *hash_and_format;
         let tag = match tag {
             SetTagOption::Named(tag) => {
-                self.inner
-                    .db
+                blobs
+                    .store()
                     .set_tag(tag.clone(), Some(*hash_and_format))
                     .await?;
                 tag
             }
-            SetTagOption::Auto => self.inner.db.create_tag(*hash_and_format).await?,
+            SetTagOption::Auto => blobs.store().create_tag(*hash_and_format).await?,
         };
 
         for tag in tags_to_delete {
-            self.inner.db.set_tag(tag, None).await?;
+            blobs.store().set_tag(tag, None).await?;
         }
 
         Ok(CreateCollectionResponse { hash, tag })

@@ -37,6 +37,7 @@
 //! To shut down the node, call [`Node::shutdown`].
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -55,6 +56,7 @@ use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
 use iroh_net::{AddrInfo, Endpoint, NodeAddr};
+use protocol::BlobsProtocol;
 use quic_rpc::transport::ServerEndpoint as _;
 use quic_rpc::RpcServer;
 use tokio::task::{JoinError, JoinSet};
@@ -118,7 +120,7 @@ pub(crate) type JoinErrToStr = Box<dyn Fn(JoinError) -> String + Send + Sync + '
 
 #[derive(derive_more::Debug)]
 struct NodeInner<D> {
-    db: D,
+    db: PhantomData<D>,
     rpc_addr: Option<SocketAddr>,
     endpoint: Endpoint,
     cancel_token: CancellationToken,
@@ -355,21 +357,25 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
 
         // Spawn a task for the garbage collection.
         if let GcPolicy::Interval(gc_period) = gc_policy {
-            let inner = self.clone();
             let protocols = protocols.clone();
             let handle = local_pool.spawn(move || async move {
-                inner
-                    .db
+                let docs_engine = protocols.get_typed::<DocsEngine>(DOCS_ALPN);
+                let blobs = protocols
+                    .get_typed::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
+                    .expect("missing blobs");
+
+                blobs
+                    .store()
                     .gc_run(
                         iroh_blobs::store::GcConfig {
                             period: gc_period,
                             done_callback: gc_done_callback,
                         },
                         move || {
-                            let protocols = protocols.clone();
+                            let docs_engine = docs_engine.clone();
                             async move {
                                 let mut live = BTreeSet::default();
-                                if let Some(docs) = protocols.get_typed::<DocsEngine>(DOCS_ALPN) {
+                                if let Some(docs) = docs_engine {
                                     let doc_hashes = match docs.sync.content_hashes().await {
                                         Ok(hashes) => hashes,
                                         Err(err) => {
@@ -542,8 +548,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             self.endpoint
                 .clone()
                 .close(error_code.into(), error_code.reason()),
-            // Shutdown blobs store engine.
-            self.db.shutdown(),
             // Shutdown protocol handlers.
             protocols.shutdown(),
         );

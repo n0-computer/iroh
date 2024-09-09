@@ -647,7 +647,7 @@ where
 
         let inner = Arc::new(NodeInner {
             rpc_addr: self.rpc_addr,
-            db: self.blobs_store,
+            db: Default::default(),
             endpoint,
             client,
             cancel_token: CancellationToken::new(),
@@ -666,8 +666,13 @@ where
             local_pool: lp,
         };
 
-        let protocol_builder =
-            protocol_builder.register_iroh_protocols(self.blob_events, gossip, downloader, docs);
+        let protocol_builder = protocol_builder.register_iroh_protocols(
+            self.blob_events,
+            self.blobs_store,
+            gossip,
+            downloader,
+            docs,
+        );
 
         Ok(protocol_builder)
     }
@@ -761,26 +766,9 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         &self.inner.endpoint
     }
 
-    /// Returns the [`crate::blobs::store::Store`] used by the node.
-    pub fn blobs_db(&self) -> &D {
-        &self.inner.db
-    }
-
     /// Returns a reference to the used [`LocalPoolHandle`].
     pub fn local_pool_handle(&self) -> &LocalPoolHandle {
         self.local_pool.handle()
-    }
-
-    /// Returns a reference to the [`Downloader`] used by the node.
-    /*pub fn downloader(&self) -> &Downloader {
-        &self.inner.downloader
-    }*/
-
-    /// Returns a reference to the [`Gossip`] handle used by the node.
-    pub fn gossip(&self) -> Arc<Gossip> {
-        self.protocols
-            .get_typed::<Gossip>(GOSSIP_ALPN)
-            .expect("missing gossip")
     }
 
     /// Returns a protocol handler for an ALPN.
@@ -795,13 +783,14 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     fn register_iroh_protocols(
         mut self,
         blob_events: EventSender,
+        store: D,
         gossip: Gossip,
         downloader: Downloader,
         docs: Option<DocsEngine>,
     ) -> Self {
         // Register blobs.
         let blobs_proto = BlobsProtocol::new_with_events(
-            self.blobs_db().clone(),
+            store,
             self.local_pool_handle().clone(),
             blob_events,
             downloader,

@@ -121,6 +121,10 @@ impl<S: iroh_blobs::store::Store> BlobsProtocol<S> {
         }
     }
 
+    pub fn store(&self) -> &S {
+        &self.store
+    }
+
     pub async fn download(
         &self,
         endpoint: Endpoint,
@@ -266,6 +270,12 @@ impl<S: iroh_blobs::store::Store> ProtocolHandler for BlobsProtocol<S> {
             )
             .await;
             Ok(())
+        })
+    }
+
+    fn shutdown(self: Arc<Self>) -> BoxedFuture<()> {
+        Box::pin(async move {
+            self.store.shutdown().await;
         })
     }
 }
