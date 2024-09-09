@@ -746,7 +746,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     /// ```
     ///
     ///
-    pub fn accept(mut self, alpn: &'static [u8], handler: Arc<dyn ProtocolHandler>) -> Self {
+    pub fn accept(mut self, alpn: Vec<u8>, handler: Arc<dyn ProtocolHandler>) -> Self {
         self.protocols.insert(alpn, handler);
         self
     }
@@ -800,15 +800,15 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
             self.local_pool_handle().clone(),
             blob_events,
         );
-        self = self.accept(iroh_blobs::protocol::ALPN, Arc::new(blobs_proto));
+        self = self.accept(iroh_blobs::protocol::ALPN.to_vec(), Arc::new(blobs_proto));
 
         // Register gossip.
         let gossip = self.gossip().clone();
-        self = self.accept(GOSSIP_ALPN, Arc::new(gossip));
+        self = self.accept(GOSSIP_ALPN.to_vec(), Arc::new(gossip));
 
         // Register docs, if enabled.
         if let Some(docs) = self.inner.docs.clone() {
-            self = self.accept(DOCS_ALPN, Arc::new(docs));
+            self = self.accept(DOCS_ALPN.to_vec(), Arc::new(docs));
         }
 
         self

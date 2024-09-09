@@ -95,7 +95,7 @@ async fn main() -> Result<()> {
     let proto = BlobSearch::new(builder.client().blobs().clone(), builder.endpoint().clone());
 
     // Add our protocol, identified by our ALPN, to the node, and spawn the node.
-    let node = builder.accept(ALPN, proto.clone()).spawn().await?;
+    let node = builder.accept(ALPN.to_vec(), proto.clone()).spawn().await?;
 
     match args.command {
         Command::Listen { text } => {
