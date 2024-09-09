@@ -32,7 +32,7 @@ until the node is spawned.</p>
 <span class="kw">let </span>handler = MyProtocol { client };
 
 <span class="kw">let </span>node = unspawned_node
-    .accept(MY_ALPN, Arc::new(handler))
+    .accept(MY_ALPN.to_vec(), Arc::new(handler))
     .spawn()
     .<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.client" class="method"><a class="src rightside" href="../../src/iroh/node/builder.rs.html#758-760">source</a><h4 class="code-header">pub fn <a href="#method.client" class="fn">client</a>(&amp;self) -&gt; &amp;<a class="struct" href="../client/struct.Iroh.html" title="struct iroh::client::Iroh">Iroh</a></h4></section></summary><div class="docblock"><p>Returns a client to control this node over an in-memory channel.</p>
