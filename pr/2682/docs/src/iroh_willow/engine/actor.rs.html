@@ -861,10 +861,8 @@
             </span><span class="kw">let </span>shutdown = <span class="kw">move </span>|| {
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = inbox_tx.blocking_send(Input::Shutdown { reply: <span class="prelude-val">None </span>}) {
                     <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"Failed to send shutdown"</span>);
-                } <span class="kw">else </span>{
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = handle.join() {
-                        <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"Failed to join sync actor"</span>);
-                    }
+                } <span class="kw">else if let </span><span class="prelude-val">Err</span>(err) = handle.join() {
+                    <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"Failed to join sync actor"</span>);
                 }
             };
 
@@ -1142,7 +1140,9 @@
             } =&gt; {
                 <span class="kw">let </span>store = <span class="self">self</span>.store.clone();
                 <span class="self">self</span>.tasks.spawn_local(<span class="kw">async move </span>{
-                    <span class="kw">let </span><span class="kw-2">mut </span>stream = store.entries().subscribe_area(namespace, area, params);
+                    <span class="comment">// TODO: We wouldn't need to manually forward in a loop here if subscribe_area took a sender
+                    // instead of returning a stream.
+                    </span><span class="kw">let </span><span class="kw-2">mut </span>stream = store.entries().subscribe_area(namespace, area, params);
                     <span class="kw">while let </span><span class="prelude-val">Some</span>(event) = stream.next().<span class="kw">await </span>{
                         <span class="kw">if </span>sender.send(event).<span class="kw">await</span>.is_err() {
                             <span class="kw">break</span>;

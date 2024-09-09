@@ -319,6 +319,8 @@
 <a href="#319" id="319">319</a>
 <a href="#320" id="320">320</a>
 <a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Types for the basic data model of Willow.
 
 </span><span class="kw">use </span>iroh_base::hash::Hash;
@@ -403,6 +405,7 @@
 </span><span class="kw">pub type </span>Path = willow_data_model::Path&lt;MAX_COMPONENT_LENGTH, MAX_COMPONENT_COUNT, MAX_PATH_LENGTH&gt;;
 
 <span class="doccomment">/// Extension methods for [`Path`].
+</span><span class="comment">// TODO: Upstream the methods to willow-rs and remove the extension trait.
 </span><span class="kw">pub trait </span>PathExt {
     <span class="doccomment">/// Creates a new path from a slice of bytes.
     </span><span class="kw">fn </span>from_bytes(slices: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>[u8]]) -&gt; <span class="prelude-ty">Result</span>&lt;Path, InvalidPathError2&gt;;
@@ -427,7 +430,7 @@
 }
 
 <span class="attr">#[derive(Debug, thiserror::Error)]
-</span><span class="doccomment">/// An error arising from trying to construct a invalid [`Path`] from valid components.
+</span><span class="doccomment">/// An error arising from trying to construct a invalid [`Path`] from potentially invalid components.
 </span><span class="kw">pub enum </span>InvalidPathError2 {
     <span class="doccomment">/// One of the path's component is too large.
     </span><span class="attr">#[error(<span class="string">"One of the path's component is too large."</span>)]
@@ -464,6 +467,7 @@
 &gt;;
 
 <span class="doccomment">/// Extension methods for [`Entry`].
+</span><span class="comment">// TODO: Decide what to upstream to willow-rs.
 </span><span class="kw">pub trait </span>EntryExt {
     <span class="doccomment">/// Encodes the entry into a bytestring.
     </span><span class="kw">fn </span>encode_to_vec(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;u8&gt;;
