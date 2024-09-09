@@ -218,7 +218,7 @@ pub(crate) struct MagicSock {
     /// UDP IPv6 socket
     pconn6: Option<UdpConn>,
     /// Netcheck client
-    net_checker: netcheck::Client,
+    net_checker: netcheck::Addr,
     /// The state for an active DiscoKey.
     disco_secrets: DiscoSecrets,
 
@@ -1440,7 +1440,7 @@ impl Handle {
             my_relay: Default::default(),
             pconn4: pconn4.clone(),
             pconn6: pconn6.clone(),
-            net_checker: net_checker.clone(),
+            net_checker: net_checker.addr(),
             disco_secrets: DiscoSecrets::default(),
             node_map,
             relay_actor_sender: relay_actor_sender.clone(),

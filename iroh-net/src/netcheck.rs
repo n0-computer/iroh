@@ -165,8 +165,8 @@ impl RelayLatencies {
 /// If all [`Client`]s are dropped the actor stops running.
 ///
 /// While running the netcheck actor expects to be passed all received stun packets using
-/// [`Client::receive_stun_packet`].
-#[derive(Debug, Clone)]
+/// `Addr::receive_stun_packet`.
+#[derive(Debug)]
 pub struct Client {
     /// Channel to send message to the [`Actor`].
     ///
@@ -217,27 +217,12 @@ impl Client {
         })
     }
 
-    /// Pass a received STUN packet to the netchecker.
+    /// Returns a new address to send messages to this actor.
     ///
-    /// Normally the UDP sockets to send STUN messages from are passed in so that STUN
-    /// packets are sent from the sockets that carry the real traffic.  However because
-    /// these sockets carry real traffic they will also receive non-STUN traffic, thus the
-    /// netcheck actor does not read from the sockets directly.  If you receive a STUN
-    /// packet on the socket you should pass it to this method.
-    ///
-    /// It is safe to call this even when the netcheck actor does not currently have any
-    /// in-flight STUN probes.  The actor will simply ignore any stray STUN packets.
-    ///
-    /// There is an implicit queue here which may drop packets if the actor does not keep up
-    /// consuming them.
-    pub fn receive_stun_packet(&self, payload: Bytes, src: SocketAddr) {
-        if let Err(mpsc::error::TrySendError::Full(_)) = self.addr.try_send(Message::StunPacket {
-            payload,
-            from_addr: src,
-        }) {
-            inc!(NetcheckMetrics, stun_packets_dropped);
-            warn!("dropping stun packet from {}", src);
-        }
+    /// Unlike the client itself the returned [`Addr`] does not own the actor task, it only
+    /// allows sending messages to the actor.
+    pub(crate) fn addr(&self) -> Addr {
+        self.addr.clone()
     }
 
     /// Runs a netcheck, returning the report.
@@ -248,7 +233,7 @@ impl Client {
     /// STUN packets.  This function **will not read from the sockets**, as they may be
     /// receiving other traffic as well, normally they are the sockets carrying the real
     /// traffic. Thus all stun packets received on those sockets should be passed to
-    /// [`Client::receive_stun_packet`] in order for this function to receive the stun
+    /// `Addr::receive_stun_packet` in order for this function to receive the stun
     /// responses and function correctly.
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results
@@ -346,27 +331,37 @@ pub(crate) enum Message {
 /// Unlike [`Client`] this is the raw channel to send messages over.  Keeping this alive
 /// will not keep the actor alive, which makes this handy to pass to internal tasks.
 #[derive(Debug, Clone)]
-struct Addr {
+pub(crate) struct Addr {
     sender: mpsc::Sender<Message>,
 }
 
 impl Addr {
+    /// Pass a received STUN packet to the netchecker.
+    ///
+    /// Normally the UDP sockets to send STUN messages from are passed in so that STUN
+    /// packets are sent from the sockets that carry the real traffic.  However because
+    /// these sockets carry real traffic they will also receive non-STUN traffic, thus the
+    /// netcheck actor does not read from the sockets directly.  If you receive a STUN
+    /// packet on the socket you should pass it to this method.
+    ///
+    /// It is safe to call this even when the netcheck actor does not currently have any
+    /// in-flight STUN probes.  The actor will simply ignore any stray STUN packets.
+    ///
+    /// There is an implicit queue here which may drop packets if the actor does not keep up
+    /// consuming them.
+    pub fn receive_stun_packet(&self, payload: Bytes, src: SocketAddr) {
+        if let Err(mpsc::error::TrySendError::Full(_)) = self.sender.try_send(Message::StunPacket {
+            payload,
+            from_addr: src,
+        }) {
+            inc!(NetcheckMetrics, stun_packets_dropped);
+            warn!("dropping stun packet from {}", src);
+        }
+    }
+
     async fn send(&self, msg: Message) -> Result<(), mpsc::error::SendError<Message>> {
         self.sender.send(msg).await.inspect_err(|_| {
             error!("netcheck actor lost");
-        })
-    }
-
-    fn try_send(&self, msg: Message) -> Result<(), mpsc::error::TrySendError<Message>> {
-        self.sender.try_send(msg).inspect_err(|err| {
-            match err {
-                mpsc::error::TrySendError::Full(_) => {
-                    // TODO: metrics, though the only place that uses this already does its
-                    // own metrics.
-                    warn!("netcheck actor inbox full");
-                }
-                mpsc::error::TrySendError::Closed(_) => error!("netcheck actor lost"),
-            }
         })
     }
 }
@@ -1143,7 +1138,7 @@ mod tests {
         info!(addr=?sock.local_addr().unwrap(), "Using local addr");
         let task = {
             let sock = sock.clone();
-            let client = client.clone();
+            let addr = client.addr();
             tokio::spawn(
                 async move {
                     let mut buf = BytesMut::zeroed(64 << 10);
@@ -1155,7 +1150,7 @@ mod tests {
                             "Forwarding payload to netcheck client",
                         );
                         let payload = buf.split_to(count).freeze();
-                        client.receive_stun_packet(payload, src);
+                        addr.receive_stun_packet(payload, src);
                     }
                 }
                 .instrument(info_span!("pkt-fwd")),
