@@ -51,7 +51,7 @@ use iroh_blobs::store::Store as BaoStore;
 use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
 use iroh_blobs::{downloader::Downloader, protocol::Closed};
 use iroh_blobs::{HashAndFormat, TempTag};
-use iroh_gossip::net::Gossip;
+use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
 use iroh_net::key::SecretKey;
 use iroh_net::{AddrInfo, Endpoint, NodeAddr};
@@ -122,7 +122,6 @@ struct NodeInner<D> {
     rpc_addr: Option<SocketAddr>,
     docs: Option<DocsEngine>,
     endpoint: Endpoint,
-    gossip: Gossip,
     secret_key: SecretKey,
     cancel_token: CancellationToken,
     client: crate::client::Iroh,
@@ -344,13 +343,17 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         let external_rpc = RpcServer::new(external_rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
 
+        let gossip = protocols
+            .get_typed::<Gossip>(GOSSIP_ALPN)
+            .expect("missing gossip");
+
         // TODO(frando): I think this is not needed as we do the same in a task just below.
         // forward the initial endpoints to the gossip protocol.
         // it may happen the the first endpoint update callback is missed because the gossip cell
         // is only initialized once the endpoint is fully bound
         if let Some(direct_addresses) = self.endpoint.direct_addresses().next().await {
             debug!(me = ?self.endpoint.node_id(), "gossip initial update: {direct_addresses:?}");
-            self.gossip.update_direct_addresses(&direct_addresses).ok();
+            gossip.update_direct_addresses(&direct_addresses).ok();
         }
 
         // Spawn a task for the garbage collection.
@@ -449,7 +452,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         join_set.spawn(async move {
             let mut stream = inner.endpoint.direct_addresses();
             while let Some(eps) = stream.next().await {
-                if let Err(err) = inner.gossip.update_direct_addresses(&eps) {
+                if let Err(err) = gossip.update_direct_addresses(&eps) {
                     warn!("Failed to update direct addresses for gossip: {err:?}");
                 }
             }
@@ -468,7 +471,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 request = external_rpc.accept() => {
                     match request {
                         Ok(accepting) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting);
+                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting, protocols.clone());
                         }
                         Err(e) => {
                             info!("rpc request error: {:?}", e);
@@ -479,7 +482,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 request = internal_rpc.accept() => {
                     match request {
                         Ok(accepting) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting);
+                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting, protocols.clone());
                         }
                         Err(e) => {
                             info!("internal rpc request error: {:?}", e);

@@ -28,6 +28,7 @@ use iroh_blobs::{
     HashAndFormat,
 };
 use iroh_blobs::{BlobFormat, Tag};
+use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
 use iroh_net::relay::RelayUrl;
 use iroh_net::{Endpoint, NodeAddr, NodeId};
@@ -74,6 +75,7 @@ use crate::rpc_protocol::{
     Request, RpcService,
 };
 
+use super::protocol::ProtocolMap;
 use super::IrohServerEndpoint;
 
 mod docs;
@@ -89,11 +91,12 @@ const BLOB_DOWNLOAD_SOURCE_NAME: &str = "blob_download";
 #[derive(Debug, Clone)]
 pub(crate) struct Handler<D> {
     pub(crate) inner: Arc<NodeInner<D>>,
+    pub(crate) protocols: Arc<ProtocolMap>,
 }
 
 impl<D> Handler<D> {
-    pub fn new(inner: Arc<NodeInner<D>>) -> Self {
-        Self { inner }
+    pub fn new(inner: Arc<NodeInner<D>>, protocols: Arc<ProtocolMap>) -> Self {
+        Self { inner, protocols }
     }
 }
 
@@ -134,8 +137,9 @@ impl<D: BaoStore> Handler<D> {
         inner: Arc<NodeInner<D>>,
         join_set: &mut JoinSet<anyhow::Result<()>>,
         accepting: quic_rpc::server::Accepting<RpcService, IrohServerEndpoint>,
+        protocols: Arc<ProtocolMap>,
     ) {
-        let handler = Self::new(inner);
+        let handler = Self::new(inner, protocols);
         join_set.spawn(async move {
             let (msg, chan) = accepting.read_first().await?;
             if let Err(err) = handler.handle_rpc_request(msg, chan).await {
@@ -245,14 +249,18 @@ impl<D: BaoStore> Handler<D> {
         match msg {
             Subscribe(msg) => {
                 chan.bidi_streaming(msg, self, |handler, req, updates| {
-                    let stream = handler.inner.gossip.join_with_stream(
-                        req.topic,
-                        iroh_gossip::net::JoinOptions {
-                            bootstrap: req.bootstrap,
-                            subscription_capacity: req.subscription_capacity,
-                        },
-                        Box::pin(updates),
-                    );
+                    let stream = handler
+                        .protocols
+                        .get_typed::<Gossip>(GOSSIP_ALPN)
+                        .expect("missing gossip")
+                        .join_with_stream(
+                            req.topic,
+                            iroh_gossip::net::JoinOptions {
+                                bootstrap: req.bootstrap,
+                                subscription_capacity: req.subscription_capacity,
+                            },
+                            Box::pin(updates),
+                        );
                     futures_util::TryStreamExt::map_err(stream, RpcError::from)
                 })
                 .await

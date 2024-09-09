@@ -654,7 +654,6 @@ where
             client,
             cancel_token: CancellationToken::new(),
             downloader,
-            gossip,
             local_pool_handle: lp.handle().clone(),
             blob_batches: Default::default(),
         });
@@ -670,7 +669,7 @@ where
             local_pool: lp,
         };
 
-        let protocol_builder = protocol_builder.register_iroh_protocols(self.blob_events);
+        let protocol_builder = protocol_builder.register_iroh_protocols(self.blob_events, gossip);
 
         Ok(protocol_builder)
     }
@@ -780,8 +779,10 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     }
 
     /// Returns a reference to the [`Gossip`] handle used by the node.
-    pub fn gossip(&self) -> &Gossip {
-        &self.inner.gossip
+    pub fn gossip(&self) -> Arc<Gossip> {
+        self.protocols
+            .get_typed::<Gossip>(GOSSIP_ALPN)
+            .expect("missing gossip")
     }
 
     /// Returns a protocol handler for an ALPN.
@@ -793,7 +794,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     }
 
     /// Registers the core iroh protocols (blobs, gossip, docs).
-    fn register_iroh_protocols(mut self, blob_events: EventSender) -> Self {
+    fn register_iroh_protocols(mut self, blob_events: EventSender, gossip: Gossip) -> Self {
         // Register blobs.
         let blobs_proto = BlobsProtocol::new_with_events(
             self.blobs_db().clone(),
@@ -803,7 +804,6 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         self = self.accept(iroh_blobs::protocol::ALPN.to_vec(), Arc::new(blobs_proto));
 
         // Register gossip.
-        let gossip = self.gossip().clone();
         self = self.accept(GOSSIP_ALPN.to_vec(), Arc::new(gossip));
 
         // Register docs, if enabled.
