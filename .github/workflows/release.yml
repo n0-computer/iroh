@@ -15,6 +15,15 @@ on:
         description: "Upload artifacts"
         required: true
         default: "true"
+      upload_url:
+        description: "Upload URL"
+        required: false
+        default: ""
+      base_hash:
+          description: "Commit hash from which to build"
+          required: false
+          type: string
+          default: ""
   push:
     tags:
     - "v*"
@@ -101,7 +110,7 @@ jobs:
                 release-os: darwin
                 release-arch: x86_64
                 cargo_targets: "x86_64-apple-darwin"
-                runner: [self-hosted, macOS, X64]
+                runner: [self-hosted, macOS, ARM64]
               - name: macOS-arm-latest
                 os: macOS-latest
                 release-os: darwin
@@ -122,8 +131,16 @@ jobs:
           RUSTV: ${{ matrix.rust }}
         steps:
         - name: Checkout
+          if: inputs.base_hash == ''
           uses: actions/checkout@v4
           with:
+            submodules: recursive
+        
+        - name: Checkout specified commit
+          if: inputs.base_hash != ''
+          uses: actions/checkout@v4
+          with:
+            ref: ${{ inputs.base_hash }}
             submodules: recursive
     
         - name: Set build arch
@@ -261,7 +278,7 @@ jobs:
         - uses: n0-computer/actions-upload-release-asset@main
           if: (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push')
           with:
-            upload_url: ${{ needs.create-release.outputs.upload_url }}
+            upload_url: ${{ github.event.inputs.upload_url || needs.create-release.outputs.upload_url }}
             asset_path: ${{ env.ASSET }}
 
     docker:

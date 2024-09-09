@@ -7,7 +7,6 @@ use futures_lite::{future::Boxed, StreamExt};
 use futures_util::{FutureExt, TryFutureExt};
 use iroh_net::{
     endpoint::{get_remote_node_id, Connection, ConnectionError},
-    util::AbortingJoinHandle,
     Endpoint, NodeId,
 };
 use tokio::{
@@ -16,7 +15,7 @@ use tokio::{
 };
 use tokio_stream::{wrappers::ReceiverStream, StreamMap};
 
-use tokio_util::{either::Either, sync::CancellationToken};
+use tokio_util::{either::Either, sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error_span, instrument, trace, warn, Instrument, Span};
 
 use crate::{
@@ -708,7 +707,7 @@ impl AcceptHandlers {
 /// Runs a forwarding loop in a task. The task is aborted on drop.
 #[derive(Debug)]
 struct EventForwarder {
-    _join_handle: AbortingJoinHandle<()>,
+    _join_handle: AbortOnDropHandle<()>,
     stream_sender: mpsc::Sender<(NodeId, EventReceiver)>,
 }
 
@@ -732,7 +731,7 @@ impl EventForwarder {
             }
         });
         EventForwarder {
-            _join_handle: join_handle.into(),
+            _join_handle: AbortOnDropHandle::new(join_handle),
             stream_sender,
         }
     }

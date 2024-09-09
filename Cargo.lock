@@ -2484,7 +2484,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2540,7 +2540,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2584,7 +2584,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-blobs"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2636,7 +2636,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-cli"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2682,6 +2682,7 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
+ "tokio-util",
  "toml",
  "tracing",
  "tracing-appender",
@@ -2692,7 +2693,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2741,7 +2742,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-docs"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2782,7 +2783,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-gossip"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2798,7 +2799,6 @@ dependencies = [
  "iroh-blake3",
  "iroh-metrics",
  "iroh-net",
- "iroh-quinn",
  "iroh-test",
  "postcard",
  "rand",
@@ -2827,7 +2827,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "erased_set",
@@ -2846,7 +2846,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2899,7 +2899,6 @@ dependencies = [
  "proptest",
  "rand",
  "rand_chacha",
- "rand_core",
  "rcgen",
  "regex",
  "reqwest",
@@ -2943,7 +2942,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-bench"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3012,7 +3011,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-test"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "tokio",
@@ -3022,7 +3021,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-willow"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5925,13 +5924,15 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.7.11"
+version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cf6b47b3771c49ac75ad09a6162f53ad4b8088b76ac60e8ec1455b31a189fe1"
+checksum = "61e7c3654c13bcd040d4a03abee2c75b1d14a37b423cf5a813ceae1cc903ec6a"
 dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
+ "hashbrown 0.14.5",
  "pin-project-lite",
  "slab",
  "tokio",

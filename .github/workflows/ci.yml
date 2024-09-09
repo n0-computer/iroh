@@ -259,20 +259,6 @@ jobs:
     - name: clippy check (default features)
       run: cargo clippy --workspace --all-targets
 
-  check_typos:
-    timeout-minutes: 30
-    name: Checking typos
-    runs-on: ubuntu-latest
-    env:
-      RUSTC_WRAPPER: "sccache"
-      SCCACHE_GHA_ENABLED: "on"
-    steps:
-    - uses: actions/checkout@v4
-    - uses: taiki-e/install-action@v2
-      with:
-        tool: typos-cli
-    - run: typos
-
   msrv:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
@@ -466,8 +452,9 @@ jobs:
           target/x86_64-unknown-linux-musl/dev-ci/iroh --rpc-addr 127.0.0.1:4919 stats
 
   codespell:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@master
+    - uses: actions/checkout@v4
     - run: pip install --user codespell[toml]
     - run: codespell --ignore-words-list=ans,crate,inout,ratatui,ser,stayin,swarmin,worl --skip=CHANGELOG.md
