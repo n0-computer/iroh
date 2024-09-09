@@ -740,7 +740,6 @@
 <a href="#740" id="740">740</a>
 <a href="#741" id="741">741</a>
 <a href="#742" id="742">742</a>
-<a href="#743" id="743">743</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
@@ -750,7 +749,6 @@
 <span class="kw">use </span>futures_util::{FutureExt, TryFutureExt};
 <span class="kw">use </span>iroh_net::{
     endpoint::{get_remote_node_id, Connection, ConnectionError},
-    util::AbortingJoinHandle,
     Endpoint, NodeId,
 };
 <span class="kw">use </span>tokio::{
@@ -759,7 +757,7 @@
 };
 <span class="kw">use </span>tokio_stream::{wrappers::ReceiverStream, StreamMap};
 
-<span class="kw">use </span>tokio_util::{either::Either, sync::CancellationToken};
+<span class="kw">use </span>tokio_util::{either::Either, sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error_span, instrument, trace, warn, Instrument, Span};
 
 <span class="kw">use crate</span>::{
@@ -1451,7 +1449,7 @@
 /// Runs a forwarding loop in a task. The task is aborted on drop.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>EventForwarder {
-    _join_handle: AbortingJoinHandle&lt;()&gt;,
+    _join_handle: AbortOnDropHandle&lt;()&gt;,
     stream_sender: mpsc::Sender&lt;(NodeId, EventReceiver)&gt;,
 }
 
@@ -1475,7 +1473,7 @@
             }
         });
         EventForwarder {
-            _join_handle: join_handle.into(),
+            _join_handle: AbortOnDropHandle::new(join_handle),
             stream_sender,
         }
     }

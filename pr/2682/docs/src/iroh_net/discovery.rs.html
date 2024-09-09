@@ -781,6 +781,7 @@
 <a href="#781" id="781">781</a>
 <a href="#782" id="782">782</a>
 <a href="#783" id="783">783</a>
+<a href="#784" id="784">784</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh-net node a [`NodeAddr`] is needed, which needs to contain either a
@@ -1126,8 +1127,9 @@
 
     <span class="kw">use </span>parking_lot::Mutex;
     <span class="kw">use </span>rand::Rng;
+    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
-    <span class="kw">use crate</span>::{key::SecretKey, relay::RelayMode, util::AbortingJoinHandle};
+    <span class="kw">use crate</span>::{key::SecretKey, relay::RelayMode};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
@@ -1371,13 +1373,13 @@
     <span class="kw">async fn </span>new_endpoint(
         secret: SecretKey,
         disco: <span class="kw">impl </span>Discovery + <span class="lifetime">'static</span>,
-    ) -&gt; (Endpoint, AbortingJoinHandle&lt;anyhow::Result&lt;()&gt;&gt;) {
+    ) -&gt; (Endpoint, AbortOnDropHandle&lt;anyhow::Result&lt;()&gt;&gt;) {
         <span class="kw">let </span>ep = Endpoint::builder()
             .secret_key(secret)
             .discovery(Box::new(disco))
             .relay_mode(RelayMode::Disabled)
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-            .bind(<span class="number">0</span>)
+            .bind()
             .<span class="kw">await
             </span>.unwrap();
 
@@ -1394,7 +1396,7 @@
             }
         });
 
-        (ep, AbortingJoinHandle::from(handle))
+        (ep, AbortOnDropHandle::new(handle))
     }
 
     <span class="kw">fn </span>system_time_now() -&gt; u64 {
@@ -1415,6 +1417,7 @@
 
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>iroh_base::key::SecretKey;
+    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use crate</span>::{
         discovery::pkarr::PkarrPublisher,
@@ -1425,7 +1428,6 @@
             pkarr_dns_state::State,
             run_relay_server, DnsPkarrServer,
         },
-        util::AbortingJoinHandle,
         AddrInfo, Endpoint, NodeAddr,
     };
 
@@ -1536,7 +1538,7 @@
     <span class="kw">async fn </span>ep_with_discovery(
         relay_map: <span class="kw-2">&amp;</span>RelayMap,
         dns_pkarr_server: <span class="kw-2">&amp;</span>DnsPkarrServer,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, AbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;)&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;)&gt; {
         <span class="kw">let </span>secret_key = SecretKey::generate();
         <span class="kw">let </span>ep = Endpoint::builder()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -1545,7 +1547,7 @@
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .dns_resolver(dns_pkarr_server.dns_resolver())
             .discovery(dns_pkarr_server.discovery(secret_key))
-            .bind(<span class="number">0</span>)
+            .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>handle = tokio::spawn({
@@ -1561,7 +1563,7 @@
             }
         });
 
-        <span class="prelude-val">Ok</span>((ep, AbortingJoinHandle::from(handle)))
+        <span class="prelude-val">Ok</span>((ep, AbortOnDropHandle::new(handle)))
     }
 }
 </code></pre></div></section></main></body></html>

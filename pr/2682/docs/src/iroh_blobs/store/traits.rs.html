@@ -1004,8 +1004,66 @@
 <a href="#1004" id="1004">1004</a>
 <a href="#1005" id="1005">1005</a>
 <a href="#1006" id="1006">1006</a>
+<a href="#1007" id="1007">1007</a>
+<a href="#1008" id="1008">1008</a>
+<a href="#1009" id="1009">1009</a>
+<a href="#1010" id="1010">1010</a>
+<a href="#1011" id="1011">1011</a>
+<a href="#1012" id="1012">1012</a>
+<a href="#1013" id="1013">1013</a>
+<a href="#1014" id="1014">1014</a>
+<a href="#1015" id="1015">1015</a>
+<a href="#1016" id="1016">1016</a>
+<a href="#1017" id="1017">1017</a>
+<a href="#1018" id="1018">1018</a>
+<a href="#1019" id="1019">1019</a>
+<a href="#1020" id="1020">1020</a>
+<a href="#1021" id="1021">1021</a>
+<a href="#1022" id="1022">1022</a>
+<a href="#1023" id="1023">1023</a>
+<a href="#1024" id="1024">1024</a>
+<a href="#1025" id="1025">1025</a>
+<a href="#1026" id="1026">1026</a>
+<a href="#1027" id="1027">1027</a>
+<a href="#1028" id="1028">1028</a>
+<a href="#1029" id="1029">1029</a>
+<a href="#1030" id="1030">1030</a>
+<a href="#1031" id="1031">1031</a>
+<a href="#1032" id="1032">1032</a>
+<a href="#1033" id="1033">1033</a>
+<a href="#1034" id="1034">1034</a>
+<a href="#1035" id="1035">1035</a>
+<a href="#1036" id="1036">1036</a>
+<a href="#1037" id="1037">1037</a>
+<a href="#1038" id="1038">1038</a>
+<a href="#1039" id="1039">1039</a>
+<a href="#1040" id="1040">1040</a>
+<a href="#1041" id="1041">1041</a>
+<a href="#1042" id="1042">1042</a>
+<a href="#1043" id="1043">1043</a>
+<a href="#1044" id="1044">1044</a>
+<a href="#1045" id="1045">1045</a>
+<a href="#1046" id="1046">1046</a>
+<a href="#1047" id="1047">1047</a>
+<a href="#1048" id="1048">1048</a>
+<a href="#1049" id="1049">1049</a>
+<a href="#1050" id="1050">1050</a>
+<a href="#1051" id="1051">1051</a>
+<a href="#1052" id="1052">1052</a>
+<a href="#1053" id="1053">1053</a>
+<a href="#1054" id="1054">1054</a>
+<a href="#1055" id="1055">1055</a>
+<a href="#1056" id="1056">1056</a>
+<a href="#1057" id="1057">1057</a>
+<a href="#1058" id="1058">1058</a>
+<a href="#1059" id="1059">1059</a>
+<a href="#1060" id="1060">1060</a>
+<a href="#1061" id="1061">1061</a>
+<a href="#1062" id="1062">1062</a>
+<a href="#1063" id="1063">1063</a>
+<a href="#1064" id="1064">1064</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Traits for in-memory or persistent maps of blob with bao encoded outboards.
-</span><span class="kw">use </span>std::{collections::BTreeSet, future::Future, io, path::PathBuf};
+</span><span class="kw">use </span>std::{collections::BTreeSet, future::Future, io, path::PathBuf, time::Duration};
 
 <span class="kw">use </span>bao_tree::{
     io::{
@@ -1460,43 +1518,13 @@
     <span class="doccomment">/// Create a temporary pin for this store
     </span><span class="kw">fn </span>temp_tag(<span class="kw-2">&amp;</span><span class="self">self</span>, value: HashAndFormat) -&gt; TempTag;
 
-    <span class="doccomment">/// Notify the store that a new gc phase is about to start.
+    <span class="doccomment">/// Start the GC loop
     ///
-    /// This should not fail unless the store is shut down or otherwise in a
-    /// bad state. The gc task will shut itself down if this fails.
-    </span><span class="kw">fn </span>gc_start(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;()&gt;&gt; + Send;
-
-    <span class="doccomment">/// Traverse all roots recursively and mark them as live.
-    ///
-    /// Poll this stream to completion to perform a full gc mark phase.
-    ///
-    /// Not polling this stream to completion is dangerous, since it might lead
-    /// to some live data being missed.
-    ///
-    /// The implementation of this method should do the minimum amount of work
-    /// to determine the live set. Actual deletion of garbage should be done
-    /// in the gc_sweep phase.
-    </span><span class="kw">fn </span>gc_mark(<span class="kw-2">&amp;</span><span class="self">self</span>, live: <span class="kw-2">&amp;mut </span>BTreeSet&lt;Hash&gt;) -&gt; <span class="kw">impl </span>Stream&lt;Item = GcMarkEvent&gt; + Unpin {
-        Gen::new(|co| <span class="kw">async move </span>{
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = gc_mark_task(<span class="self">self</span>, live, <span class="kw-2">&amp;</span>co).<span class="kw">await </span>{
-                co.yield_(GcMarkEvent::Error(e)).<span class="kw">await</span>;
-            }
-        })
-    }
-
-    <span class="doccomment">/// Remove all blobs that are not marked as live.
-    ///
-    /// Poll this stream to completion to perform a full gc sweep. Not polling this stream
-    /// to completion just means that some garbage will remain in the database.
-    ///
-    /// Sweeping might take long, but it can safely be done in the background.
-    </span><span class="kw">fn </span>gc_sweep(<span class="kw-2">&amp;</span><span class="self">self</span>, live: <span class="kw-2">&amp;</span>BTreeSet&lt;Hash&gt;) -&gt; <span class="kw">impl </span>Stream&lt;Item = GcSweepEvent&gt; + Unpin {
-        Gen::new(|co| <span class="kw">async move </span>{
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = gc_sweep_task(<span class="self">self</span>, live, <span class="kw-2">&amp;</span>co).<span class="kw">await </span>{
-                co.yield_(GcSweepEvent::Error(e)).<span class="kw">await</span>;
-            }
-        })
-    }
+    /// The gc task will shut down, when dropping the returned future.
+    </span><span class="kw">fn </span>gc_run&lt;G, Gut&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, config: <span class="kw">super</span>::GcConfig, protected_cb: G) -&gt; <span class="kw">impl </span>Future&lt;Output = ()&gt;
+    <span class="kw">where
+        </span>G: Fn() -&gt; Gut,
+        Gut: Future&lt;Output = BTreeSet&lt;Hash&gt;&gt; + Send;
 
     <span class="doccomment">/// physically delete the given hashes from the store.
     </span><span class="kw">fn </span>delete(<span class="kw-2">&amp;</span><span class="self">self</span>, hashes: Vec&lt;Hash&gt;) -&gt; <span class="kw">impl </span>Future&lt;Output = io::Result&lt;()&gt;&gt; + Send;
@@ -1658,8 +1686,96 @@
     <span class="prelude-val">Ok</span>(())
 }
 
+<span class="doccomment">/// Configuration for the GC mark and sweep.
+</span><span class="attr">#[derive(derive_more::Debug)]
+</span><span class="kw">pub struct </span>GcConfig {
+    <span class="doccomment">/// The period at which to execute the GC.
+    </span><span class="kw">pub </span>period: Duration,
+    <span class="doccomment">/// An optional callback called every time a GC round finishes.
+    </span><span class="attr">#[debug(<span class="string">"done_callback"</span>)]
+    </span><span class="kw">pub </span>done_callback: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() + Send&gt;&gt;,
+}
+
+<span class="doccomment">/// Implementation of the gc loop.
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>gc_run_loop&lt;S, F, Fut, G, Gut&gt;(
+    store: <span class="kw-2">&amp;</span>S,
+    config: GcConfig,
+    start_cb: F,
+    protected_cb: G,
+) <span class="kw">where
+    </span>S: Store,
+    F: Fn() -&gt; Fut,
+    Fut: Future&lt;Output = io::Result&lt;()&gt;&gt; + Send,
+    G: Fn() -&gt; Gut,
+    Gut: Future&lt;Output = BTreeSet&lt;Hash&gt;&gt; + Send,
+{
+    <span class="macro">tracing::info!</span>(<span class="string">"Starting GC task with interval {:?}"</span>, config.period);
+    <span class="kw">let </span><span class="kw-2">mut </span>live = BTreeSet::new();
+    <span class="lifetime">'outer</span>: <span class="kw">loop </span>{
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(cause) = start_cb().<span class="kw">await </span>{
+            <span class="macro">tracing::debug!</span>(<span class="string">"unable to notify the db of GC start: {cause}. Shutting down GC loop."</span>);
+            <span class="kw">break</span>;
+        }
+        <span class="comment">// do delay before the two phases of GC
+        </span>tokio::time::sleep(config.period).<span class="kw">await</span>;
+        <span class="macro">tracing::debug!</span>(<span class="string">"Starting GC"</span>);
+        live.clear();
+
+        <span class="kw">let </span>p = protected_cb().<span class="kw">await</span>;
+        live.extend(p);
+
+        <span class="macro">tracing::debug!</span>(<span class="string">"Starting GC mark phase"</span>);
+        <span class="kw">let </span>live_ref = <span class="kw-2">&amp;mut </span>live;
+        <span class="kw">let </span><span class="kw-2">mut </span>stream = Gen::new(|co| <span class="kw">async move </span>{
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = gc_mark_task(store, live_ref, <span class="kw-2">&amp;</span>co).<span class="kw">await </span>{
+                co.yield_(GcMarkEvent::Error(e)).<span class="kw">await</span>;
+            }
+        });
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(item) = stream.next().<span class="kw">await </span>{
+            <span class="kw">match </span>item {
+                GcMarkEvent::CustomDebug(text) =&gt; {
+                    <span class="macro">tracing::debug!</span>(<span class="string">"{}"</span>, text);
+                }
+                GcMarkEvent::CustomWarning(text, <span class="kw">_</span>) =&gt; {
+                    <span class="macro">tracing::warn!</span>(<span class="string">"{}"</span>, text);
+                }
+                GcMarkEvent::Error(err) =&gt; {
+                    <span class="macro">tracing::error!</span>(<span class="string">"Fatal error during GC mark {}"</span>, err);
+                    <span class="kw">continue </span><span class="lifetime">'outer</span>;
+                }
+            }
+        }
+        drop(stream);
+
+        <span class="macro">tracing::debug!</span>(<span class="string">"Starting GC sweep phase"</span>);
+        <span class="kw">let </span>live_ref = <span class="kw-2">&amp;</span>live;
+        <span class="kw">let </span><span class="kw-2">mut </span>stream = Gen::new(|co| <span class="kw">async move </span>{
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = gc_sweep_task(store, live_ref, <span class="kw-2">&amp;</span>co).<span class="kw">await </span>{
+                co.yield_(GcSweepEvent::Error(e)).<span class="kw">await</span>;
+            }
+        });
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(item) = stream.next().<span class="kw">await </span>{
+            <span class="kw">match </span>item {
+                GcSweepEvent::CustomDebug(text) =&gt; {
+                    <span class="macro">tracing::debug!</span>(<span class="string">"{}"</span>, text);
+                }
+                GcSweepEvent::CustomWarning(text, <span class="kw">_</span>) =&gt; {
+                    <span class="macro">tracing::warn!</span>(<span class="string">"{}"</span>, text);
+                }
+                GcSweepEvent::Error(err) =&gt; {
+                    <span class="macro">tracing::error!</span>(<span class="string">"Fatal error during GC mark {}"</span>, err);
+                    <span class="kw">continue </span><span class="lifetime">'outer</span>;
+                }
+            }
+        }
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>cb) = config.done_callback {
+            cb();
+        }
+    }
+}
+
 <span class="doccomment">/// Implementation of the gc method.
-</span><span class="kw">async fn </span>gc_mark_task&lt;<span class="lifetime">'a</span>&gt;(
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>gc_mark_task&lt;<span class="lifetime">'a</span>&gt;(
     store: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw">impl </span>Store,
     live: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>BTreeSet&lt;Hash&gt;,
     co: <span class="kw-2">&amp;</span>Co&lt;GcMarkEvent&gt;,

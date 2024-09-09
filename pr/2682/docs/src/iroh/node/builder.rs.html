@@ -943,8 +943,62 @@
 <a href="#943" id="943">943</a>
 <a href="#944" id="944">944</a>
 <a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a>
+<a href="#951" id="951">951</a>
+<a href="#952" id="952">952</a>
+<a href="#953" id="953">953</a>
+<a href="#954" id="954">954</a>
+<a href="#955" id="955">955</a>
+<a href="#956" id="956">956</a>
+<a href="#957" id="957">957</a>
+<a href="#958" id="958">958</a>
+<a href="#959" id="959">959</a>
+<a href="#960" id="960">960</a>
+<a href="#961" id="961">961</a>
+<a href="#962" id="962">962</a>
+<a href="#963" id="963">963</a>
+<a href="#964" id="964">964</a>
+<a href="#965" id="965">965</a>
+<a href="#966" id="966">966</a>
+<a href="#967" id="967">967</a>
+<a href="#968" id="968">968</a>
+<a href="#969" id="969">969</a>
+<a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a>
+<a href="#972" id="972">972</a>
+<a href="#973" id="973">973</a>
+<a href="#974" id="974">974</a>
+<a href="#975" id="975">975</a>
+<a href="#976" id="976">976</a>
+<a href="#977" id="977">977</a>
+<a href="#978" id="978">978</a>
+<a href="#979" id="979">979</a>
+<a href="#980" id="980">980</a>
+<a href="#981" id="981">981</a>
+<a href="#982" id="982">982</a>
+<a href="#983" id="983">983</a>
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
+<a href="#997" id="997">997</a>
+<a href="#998" id="998">998</a>
+<a href="#999" id="999">999</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -952,6 +1006,7 @@
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::StreamExt;
+<span class="kw">use </span>futures_util::{FutureExt <span class="kw">as _</span>, TryFutureExt <span class="kw">as _</span>};
 <span class="kw">use </span>iroh_base::key::SecretKey;
 <span class="kw">use </span>iroh_blobs::{
     downloader::Downloader,
@@ -973,7 +1028,8 @@
 
 <span class="kw">use </span>quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
-<span class="kw">use </span>tokio_util::sync::CancellationToken;
+<span class="kw">use </span>tokio::task::JoinError;
+<span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error_span, trace, Instrument};
 
 <span class="kw">use crate</span>::{
@@ -987,7 +1043,9 @@
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-<span class="kw">use super</span>::{docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, Node, NodeInner};
+<span class="kw">use super</span>::{
+    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
+};
 
 <span class="doccomment">/// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak &lt;https://simple.wikipedia.org/wiki/Leet&gt;
@@ -998,6 +1056,14 @@
 
 <span class="doccomment">/// Default interval between GC runs.
 </span><span class="kw">const </span>DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(<span class="number">60 </span>* <span class="number">5</span>);
+
+<span class="doccomment">/// The default bind address for the iroh IPv4 socket.
+</span><span class="kw">pub const </span>DEFAULT_BIND_ADDR_V4: SocketAddrV4 =
+    SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_BIND_PORT);
+
+<span class="doccomment">/// The default bind address for the iroh IPv6 socket.
+</span><span class="kw">pub const </span>DEFAULT_BIND_ADDR_V6: SocketAddrV6 =
+    SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + <span class="number">1</span>, <span class="number">0</span>, <span class="number">0</span>);
 
 <span class="doccomment">/// Storage backend for documents.
 </span><span class="attr">#[derive(Debug, Clone)]
@@ -1052,7 +1118,8 @@
     </span>D: Map,
 {
     storage: StorageConfig,
-    bind_port: <span class="prelude-ty">Option</span>&lt;u16&gt;,
+    addr_v4: SocketAddrV4,
+    addr_v6: SocketAddrV6,
     secret_key: SecretKey,
     rpc_endpoint: IrohServerEndpoint,
     rpc_addr: <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;,
@@ -1181,7 +1248,8 @@
 
         <span class="self">Self </span>{
             storage: StorageConfig::Mem,
-            bind_port: <span class="prelude-val">None</span>,
+            addr_v4: DEFAULT_BIND_ADDR_V4,
+            addr_v6: DEFAULT_BIND_ADDR_V6,
             secret_key: SecretKey::generate(),
             blobs_store: Default::default(),
             keylog: <span class="bool-val">false</span>,
@@ -1216,7 +1284,8 @@
 
         <span class="self">Self </span>{
             storage,
-            bind_port: <span class="prelude-val">None</span>,
+            addr_v4: SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_BIND_PORT),
+            addr_v6: SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + <span class="number">1</span>, <span class="number">0</span>, <span class="number">0</span>),
             secret_key: SecretKey::generate(),
             blobs_store,
             keylog: <span class="bool-val">false</span>,
@@ -1271,7 +1340,8 @@
 
         <span class="prelude-val">Ok</span>(Builder {
             storage: StorageConfig::Persistent(root.into()),
-            bind_port: <span class="self">self</span>.bind_port,
+            addr_v4: <span class="self">self</span>.addr_v4,
+            addr_v6: <span class="self">self</span>.addr_v6,
             secret_key,
             blobs_store,
             keylog: <span class="self">self</span>.keylog,
@@ -1391,11 +1461,40 @@
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Binds the node service to a different socket.
+    <span class="doccomment">/// Binds the node service to a specific socket IPv4 address.
     ///
-    /// By default it binds to `127.0.0.1:11204`.
-    </span><span class="kw">pub fn </span>bind_port(<span class="kw-2">mut </span><span class="self">self</span>, port: u16) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.bind_port.replace(port);
+    /// By default this will be set to `0.0.0.0:11204`
+    ///
+    /// Setting the port to `0` will assign a random port.
+    /// If the port used is not free, a random different port will be used.
+    </span><span class="kw">pub fn </span>bind_addr_v4(<span class="kw-2">mut </span><span class="self">self</span>, addr: SocketAddrV4) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.addr_v4 = addr;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Binds the node service to a specific socket IPv6 address.
+    ///
+    /// By default this will be set to `[::]:11205`
+    ///
+    /// Setting the port to `0` will assign a random port.
+    /// If the port used is not free, a random different port will be used.
+    </span><span class="kw">pub fn </span>bind_addr_v6(<span class="kw-2">mut </span><span class="self">self</span>, addr: SocketAddrV6) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.addr_v6 = addr;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Use a random port for both IPv4 and IPv6.
+    ///
+    /// This is a convenience function useful when you do not need a specific port
+    /// and want to avoid conflicts when running multiple instances, e.g. in tests.
+    ///
+    /// This overrides the ports of the socket addresses provided by [`Builder::bind_addr_v4`]
+    /// and [`Builder::bind_addr_v6`].  By default both of those bind to the
+    /// unspecified address, which would result in `0.0.0.0:11204` and `[::]:11205` as bind
+    /// addresses unless they are changed.
+    </span><span class="kw">pub fn </span>bind_random_port(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.addr_v4.set_port(<span class="number">0</span>);
+        <span class="self">self</span>.addr_v6.set_port(<span class="number">0</span>);
         <span class="self">self
     </span>}
 
@@ -1529,8 +1628,15 @@
                 }
                 StorageConfig::Mem =&gt; <span class="prelude-val">None</span>,
             };
-            <span class="kw">let </span>bind_port = <span class="self">self</span>.bind_port.unwrap_or(DEFAULT_BIND_PORT);
-            (endpoint.bind(bind_port).<span class="kw">await</span><span class="question-mark">?</span>, nodes_data_path)
+
+            (
+                endpoint
+                    .bind_addr_v4(<span class="self">self</span>.addr_v4)
+                    .bind_addr_v6(<span class="self">self</span>.addr_v6)
+                    .bind()
+                    .<span class="kw">await</span><span class="question-mark">?</span>,
+                nodes_data_path,
+            )
         };
         <span class="macro">trace!</span>(<span class="string">"created endpoint"</span>);
 
@@ -1798,7 +1904,9 @@
         <span class="kw">let </span>node = Node {
             inner,
             protocols,
-            task: task.into(),
+            task: AbortOnDropHandle::new(task)
+                .map_err(Box::new(|e: JoinError| e.to_string()) <span class="kw">as </span>JoinErrToStr)
+                .shared(),
         };
 
         <span class="comment">// Wait for a single direct address update, to make sure

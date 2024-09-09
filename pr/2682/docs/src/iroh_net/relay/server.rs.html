@@ -1048,6 +1048,7 @@
 <a href="#1048" id="1048">1048</a>
 <a href="#1049" id="1049">1049</a>
 <a href="#1050" id="1050">1050</a>
+<a href="#1051" id="1051">1051</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1073,12 +1074,12 @@
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>tokio::net::{TcpListener, UdpSocket};
 <span class="kw">use </span>tokio::task::JoinSet;
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
 <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
 <span class="kw">use </span><span class="kw">crate</span>::relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH};
 <span class="kw">use </span><span class="kw">crate</span>::stun;
-<span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
 
 <span class="comment">// Module defined in this file.
 </span><span class="kw">use </span>stun_metrics::StunMetrics;
@@ -1232,7 +1233,7 @@
     <span class="doccomment">/// Handle to the relay server.
     </span>relay_handle: <span class="prelude-ty">Option</span>&lt;http_server::ServerHandle&gt;,
     <span class="doccomment">/// The main task running the server.
-    </span>supervisor: AbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
+    </span>supervisor: AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
 }
 
 <span class="kw">impl </span>Server {
@@ -1388,7 +1389,7 @@
             stun_addr,
             https_addr: http_addr.and(relay_addr),
             relay_handle,
-            supervisor: AbortingJoinHandle::from(task),
+            supervisor: AbortOnDropHandle::new(task),
         })
     }
 
@@ -1408,7 +1409,7 @@
     ///
     /// This allows waiting for the server's supervisor task to finish.  Can be useful in
     /// case there is an error in the server before it is shut down.
-    </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
+    </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
         <span class="kw-2">&amp;mut </span><span class="self">self</span>.supervisor
     }
 
@@ -1519,19 +1520,20 @@
 
 <span class="doccomment">/// Handles a single STUN request, doing all logging required.
 </span><span class="kw">async fn </span>handle_stun_request(src_addr: SocketAddr, pkt: Vec&lt;u8&gt;, sock: Arc&lt;UdpSocket&gt;) {
-    <span class="kw">let </span>handle = AbortingJoinHandle::from(tokio::task::spawn_blocking(<span class="kw">move </span>|| {
-        <span class="kw">match </span>stun::parse_binding_request(<span class="kw-2">&amp;</span>pkt) {
-            <span class="prelude-val">Ok</span>(txid) =&gt; {
-                <span class="macro">debug!</span>(%src_addr, %txid, <span class="string">"STUN: received binding request"</span>);
-                <span class="prelude-val">Some</span>((txid, stun::response(txid, src_addr)))
-            }
-            <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="macro">inc!</span>(StunMetrics, bad_requests);
-                <span class="macro">warn!</span>(%src_addr, <span class="string">"STUN: invalid binding request: {:?}"</span>, err);
-                <span class="prelude-val">None
-            </span>}
-        }
-    }));
+    <span class="kw">let </span>handle =
+        AbortOnDropHandle::new(tokio::task::spawn_blocking(
+            <span class="kw">move </span>|| <span class="kw">match </span>stun::parse_binding_request(<span class="kw-2">&amp;</span>pkt) {
+                <span class="prelude-val">Ok</span>(txid) =&gt; {
+                    <span class="macro">debug!</span>(%src_addr, %txid, <span class="string">"STUN: received binding request"</span>);
+                    <span class="prelude-val">Some</span>((txid, stun::response(txid, src_addr)))
+                }
+                <span class="prelude-val">Err</span>(err) =&gt; {
+                    <span class="macro">inc!</span>(StunMetrics, bad_requests);
+                    <span class="macro">warn!</span>(%src_addr, <span class="string">"STUN: invalid binding request: {:?}"</span>, err);
+                    <span class="prelude-val">None
+                </span>}
+            },
+        ));
     <span class="kw">let </span>(txid, response) = <span class="kw">match </span>handle.<span class="kw">await </span>{
         <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(val)) =&gt; val,
         <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; <span class="kw">return</span>,
