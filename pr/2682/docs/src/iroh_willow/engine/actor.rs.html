@@ -583,6 +583,15 @@
 <a href="#583" id="583">583</a>
 <a href="#584" id="584">584</a>
 <a href="#585" id="585">585</a>
+<a href="#586" id="586">586</a>
+<a href="#587" id="587">587</a>
+<a href="#588" id="588">588</a>
+<a href="#589" id="589">589</a>
+<a href="#590" id="590">590</a>
+<a href="#591" id="591">591</a>
+<a href="#592" id="592">592</a>
+<a href="#593" id="593">593</a>
+<a href="#594" id="594">594</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{sync::Arc, thread::JoinHandle};
 
 <span class="kw">use </span>anyhow::Result;
@@ -841,24 +850,33 @@
     <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="comment">// this means we're dropping the last reference
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(handle) = Arc::get_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>.join_handle) {
-            <span class="kw">let </span>handle = handle.take().expect(<span class="string">"can only drop once"</span>);
+            <span class="comment">// gain ownership of handle
+            </span><span class="kw">let </span>handle = handle.take().expect(<span class="string">"can only drop once"</span>);
+
+            <span class="comment">// gain ownership of inbox_tx
+            </span><span class="kw">let </span>(dumb, <span class="kw">_</span>) = tokio::sync::mpsc::channel(<span class="number">1</span>);
+            <span class="kw">let </span>inbox_tx = std::mem::replace(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inbox_tx, dumb);
+
+            <span class="comment">// shutdown
+            </span><span class="kw">let </span>shutdown = <span class="kw">move </span>|| {
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = inbox_tx.blocking_send(Input::Shutdown { reply: <span class="prelude-val">None </span>}) {
+                    <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"Failed to send shutdown"</span>);
+                } <span class="kw">else </span>{
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = handle.join() {
+                        <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"Failed to join sync actor"</span>);
+                    }
+                }
+            };
 
             <span class="kw">match </span>tokio::runtime::Handle::try_current() {
                 <span class="prelude-val">Ok</span>(runtime) =&gt; {
-                    <span class="kw">let </span>(dumb, <span class="kw">_</span>) = tokio::sync::mpsc::channel(<span class="number">1</span>);
-                    <span class="kw">let </span>inbox_tx = std::mem::replace(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inbox_tx, dumb);
-                    runtime
-                        .spawn(<span class="kw">async move </span>{ inbox_tx.send(Input::Shutdown { reply: <span class="prelude-val">None </span>}).<span class="kw">await </span>});
+                    <span class="comment">// We shouldn't block the runtime
+                    </span>runtime.spawn_blocking(shutdown);
                 }
                 <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
-                    <span class="self">self</span>.inbox_tx
-                        .blocking_send(Input::Shutdown { reply: <span class="prelude-val">None </span>})
-                        .ok();
+                    <span class="comment">// We can do everything sync
+                    </span>shutdown();
                 }
-            }
-
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = handle.join() {
-                <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"Failed to join sync actor"</span>);
             }
         }
     }
