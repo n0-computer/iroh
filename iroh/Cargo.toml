@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.23.0"
+version = "0.24.0"
 edition = "2021"
 readme = "README.md"
 description = "A toolkit for building distributed applications"
@@ -26,17 +26,17 @@ futures-lite = "2.3"
 futures-util = "0.3"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
 hex = { version = "0.4.3" }
-iroh-blobs = { version = "0.23.0", path = "../iroh-blobs", features = ["downloader"] }
-iroh-base = { version = "0.23.0", path = "../iroh-base", features = ["key"] }
+iroh-blobs = { version = "0.24.0", path = "../iroh-blobs", features = ["downloader"] }
+iroh-base = { version = "0.24.0", path = "../iroh-base", features = ["key"] }
 iroh-io = { version = "0.6.0", features = ["stats"] }
-iroh-metrics = { version = "0.23.0", path = "../iroh-metrics", optional = true }
-iroh-net = { version = "0.23.0", path = "../iroh-net", features = ["discovery-local-network"] }
-iroh-willow = { version = "0.23.0", path = "../iroh-willow" }
+iroh-metrics = { version = "0.24.0", path = "../iroh-metrics", optional = true }
+iroh-net = { version = "0.24.0", path = "../iroh-net", features = ["discovery-local-network"] }
+iroh-willow = { version = "0.24.0", path = "../iroh-willow" }
 nested_enum_utils = "0.1.0"
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
-iroh-docs = { version = "0.23.0", path = "../iroh-docs" }
-iroh-gossip = { version = "0.23.0", path = "../iroh-gossip" }
+iroh-docs = { version = "0.24.0", path = "../iroh-docs" }
+iroh-gossip = { version = "0.24.0", path = "../iroh-gossip" }
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.12", default-features = false, features = ["flume-transport", "quinn-transport"] }

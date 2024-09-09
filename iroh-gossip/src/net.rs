@@ -13,7 +13,6 @@ use iroh_net::{
     dialer::Dialer,
     endpoint::{get_remote_node_id, Connection},
     key::PublicKey,
-    util::SharedAbortingJoinHandle,
     AddrInfo, Endpoint, NodeAddr, NodeId,
 };
 use rand::rngs::StdRng;
@@ -21,10 +20,12 @@ use rand_core::SeedableRng;
 use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::Instant,
 };
 use tokio::{sync::mpsc, task::JoinSet};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error_span, trace, warn, Instrument};
 
 use self::util::{read_message, write_message, Timers};
@@ -90,7 +91,7 @@ type ProtoMessage = proto::Message<PublicKey>;
 pub struct Gossip {
     to_actor_tx: mpsc::Sender<ToActor>,
     on_direct_addrs_tx: mpsc::Sender<Vec<iroh_net::endpoint::DirectAddr>>,
-    _actor_handle: SharedAbortingJoinHandle<()>,
+    _actor_handle: Arc<AbortOnDropHandle<()>>,
     max_message_size: usize,
 }
 
@@ -138,7 +139,7 @@ impl Gossip {
         Self {
             to_actor_tx,
             on_direct_addrs_tx: on_endpoints_tx,
-            _actor_handle: actor_handle.into(),
+            _actor_handle: Arc::new(AbortOnDropHandle::new(actor_handle)),
             max_message_size,
         }
     }
@@ -845,7 +846,7 @@ mod test {
             .alpns(vec![GOSSIP_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .insecure_skip_relay_cert_verify(true)
-            .bind(0)
+            .bind()
             .await?;
 
         ep.watch_home_relay().next().await;

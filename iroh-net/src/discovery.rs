@@ -343,8 +343,9 @@ mod tests {
 
     use parking_lot::Mutex;
     use rand::Rng;
+    use tokio_util::task::AbortOnDropHandle;
 
-    use crate::{key::SecretKey, relay::RelayMode, util::AbortingJoinHandle};
+    use crate::{key::SecretKey, relay::RelayMode};
 
     use super::*;
 
@@ -588,13 +589,13 @@ mod tests {
     async fn new_endpoint(
         secret: SecretKey,
         disco: impl Discovery + 'static,
-    ) -> (Endpoint, AbortingJoinHandle<anyhow::Result<()>>) {
+    ) -> (Endpoint, AbortOnDropHandle<anyhow::Result<()>>) {
         let ep = Endpoint::builder()
             .secret_key(secret)
             .discovery(Box::new(disco))
             .relay_mode(RelayMode::Disabled)
             .alpns(vec![TEST_ALPN.to_vec()])
-            .bind(0)
+            .bind()
             .await
             .unwrap();
 
@@ -611,7 +612,7 @@ mod tests {
             }
         });
 
-        (ep, AbortingJoinHandle::from(handle))
+        (ep, AbortOnDropHandle::new(handle))
     }
 
     fn system_time_now() -> u64 {
@@ -632,6 +633,7 @@ mod test_dns_pkarr {
 
     use anyhow::Result;
     use iroh_base::key::SecretKey;
+    use tokio_util::task::AbortOnDropHandle;
 
     use crate::{
         discovery::pkarr::PkarrPublisher,
@@ -642,7 +644,6 @@ mod test_dns_pkarr {
             pkarr_dns_state::State,
             run_relay_server, DnsPkarrServer,
         },
-        util::AbortingJoinHandle,
         AddrInfo, Endpoint, NodeAddr,
     };
 
@@ -753,7 +754,7 @@ mod test_dns_pkarr {
     async fn ep_with_discovery(
         relay_map: &RelayMap,
         dns_pkarr_server: &DnsPkarrServer,
-    ) -> Result<(Endpoint, AbortingJoinHandle<Result<()>>)> {
+    ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
         let secret_key = SecretKey::generate();
         let ep = Endpoint::builder()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -762,7 +763,7 @@ mod test_dns_pkarr {
             .alpns(vec![TEST_ALPN.to_vec()])
             .dns_resolver(dns_pkarr_server.dns_resolver())
             .discovery(dns_pkarr_server.discovery(secret_key))
-            .bind(0)
+            .bind()
             .await?;
 
         let handle = tokio::spawn({
@@ -778,6 +779,6 @@ mod test_dns_pkarr {
             }
         });
 
-        Ok((ep, AbortingJoinHandle::from(handle)))
+        Ok((ep, AbortOnDropHandle::new(handle)))
     }
 }

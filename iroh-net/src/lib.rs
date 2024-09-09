@@ -133,7 +133,7 @@ pub mod relay;
 pub mod stun;
 pub mod ticket;
 pub mod tls;
-pub mod util;
+pub(crate) mod util;
 
 pub use endpoint::{AddrInfo, Endpoint, NodeAddr};
 

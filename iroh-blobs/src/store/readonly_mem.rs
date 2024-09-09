@@ -2,7 +2,8 @@
 //!
 //! Main entry point is [Store].
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
+    future::Future,
     io,
     path::PathBuf,
     sync::Arc,
@@ -324,8 +325,12 @@ impl super::Store for Store {
         TempTag::new(inner, None)
     }
 
-    async fn gc_start(&self) -> io::Result<()> {
-        Ok(())
+    async fn gc_run<G, Gut>(&self, config: super::GcConfig, protected_cb: G)
+    where
+        G: Fn() -> Gut,
+        Gut: Future<Output = BTreeSet<Hash>> + Send,
+    {
+        super::gc_run_loop(self, config, move || async { Ok(()) }, protected_cb).await
     }
 
     async fn delete(&self, _hashes: Vec<Hash>) -> io::Result<()> {

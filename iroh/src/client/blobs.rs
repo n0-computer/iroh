@@ -1559,4 +1559,50 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_blob_delete_mem() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let node = crate::node::Node::memory().spawn().await?;
+
+        let res = node.blobs().add_bytes(&b"hello world"[..]).await?;
+
+        let hashes: Vec<_> = node.blobs().list().await?.try_collect().await?;
+        assert_eq!(hashes.len(), 1);
+        assert_eq!(hashes[0].hash, res.hash);
+
+        // delete
+        node.blobs().delete_blob(res.hash).await?;
+
+        let hashes: Vec<_> = node.blobs().list().await?.try_collect().await?;
+        assert!(hashes.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_blob_delete_fs() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let dir = tempfile::tempdir()?;
+        let node = crate::node::Node::persistent(dir.path())
+            .await?
+            .spawn()
+            .await?;
+
+        let res = node.blobs().add_bytes(&b"hello world"[..]).await?;
+
+        let hashes: Vec<_> = node.blobs().list().await?.try_collect().await?;
+        assert_eq!(hashes.len(), 1);
+        assert_eq!(hashes[0].hash, res.hash);
+
+        // delete
+        node.blobs().delete_blob(res.hash).await?;
+
+        let hashes: Vec<_> = node.blobs().list().await?.try_collect().await?;
+        assert!(hashes.is_empty());
+
+        Ok(())
+    }
 }

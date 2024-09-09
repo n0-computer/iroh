@@ -17,10 +17,10 @@ use tracing::{debug, error, trace, warn};
 use iroh_base::key::PublicKey;
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::{sync::mpsc, task::JoinSet};
+use tokio_util::task::AbortOnDropHandle;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
-    util::AbortingJoinHandle,
     AddrInfo, Endpoint, NodeId,
 };
 
@@ -37,7 +37,7 @@ const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
 #[derive(Debug)]
 pub struct LocalSwarmDiscovery {
     #[allow(dead_code)]
-    handle: AbortingJoinHandle<()>,
+    handle: AbortOnDropHandle<()>,
     sender: mpsc::Sender<Message>,
 }
 
@@ -121,19 +121,28 @@ impl LocalSwarmDiscovery {
                             continue;
                         }
 
-                        if let Some(senders) = senders.get(&discovered_node_id) {
-                            for sender in senders.values() {
-                                let item: DiscoveryItem = (&peer_info).into();
-                                trace!(?item, "sending DiscoveryItem");
-                                sender.send(Ok(item)).await.ok();
+                        let entry = node_addrs.entry(discovered_node_id);
+                        if let std::collections::hash_map::Entry::Occupied(ref entry) = entry {
+                            if entry.get() == &peer_info {
+                                // this is a republish we already know about
+                                continue;
                             }
                         }
+
                         debug!(
                             ?discovered_node_id,
                             ?peer_info,
                             "adding node to LocalSwarmDiscovery address book"
                         );
-                        node_addrs.insert(discovered_node_id, peer_info);
+
+                        if let Some(senders) = senders.get(&discovered_node_id) {
+                            let item: DiscoveryItem = (&peer_info).into();
+                            trace!(?item, senders = senders.len(), "sending DiscoveryItem");
+                            for sender in senders.values() {
+                                sender.send(Ok(item.clone())).await.ok();
+                            }
+                        }
+                        entry.or_insert(peer_info);
                     }
                     Message::SendAddrs(node_id, sender) => {
                         let id = last_id + 1;
@@ -183,7 +192,7 @@ impl LocalSwarmDiscovery {
             }
         });
         Ok(Self {
-            handle: handle.into(),
+            handle: AbortOnDropHandle::new(handle),
             sender: send,
         })
     }
@@ -299,7 +308,7 @@ mod tests {
             };
 
             // pass in endpoint, this is never used
-            let ep = crate::endpoint::Builder::default().bind(0).await?;
+            let ep = crate::endpoint::Builder::default().bind().await?;
             // resolve twice to ensure we can create separate streams for the same node_id
             let mut s1 = discovery_a.resolve(ep.clone(), node_id_b).unwrap();
             let mut s2 = discovery_a.resolve(ep, node_id_b).unwrap();

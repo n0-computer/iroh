@@ -14,7 +14,6 @@ use quinn_udp::{Transmit, UdpSockRef};
 use tokio::io::Interest;
 use tracing::{debug, trace, warn};
 
-use crate::net::IpFamily;
 use crate::net::UdpSocket;
 
 /// A UDP socket implementing Quinn's [`AsyncUdpSocket`].
@@ -29,8 +28,8 @@ impl UdpConn {
         self.io.clone()
     }
 
-    pub(super) fn bind(port: u16, network: IpFamily) -> anyhow::Result<Self> {
-        let sock = bind(port, network)?;
+    pub(super) fn bind(addr: SocketAddr) -> anyhow::Result<Self> {
+        let sock = bind(addr)?;
         let state = quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(&sock))?;
         Ok(Self {
             io: Arc::new(sock),
@@ -111,8 +110,8 @@ impl AsyncUdpSocket for UdpConn {
     }
 }
 
-fn bind(port: u16, network: IpFamily) -> anyhow::Result<UdpSocket> {
-    debug!(?network, %port, "binding");
+fn bind(mut addr: SocketAddr) -> anyhow::Result<UdpSocket> {
+    debug!(%addr, "binding");
 
     // Build a list of preferred ports.
     // - Best is the port that the user requested.
@@ -120,8 +119,8 @@ fn bind(port: u16, network: IpFamily) -> anyhow::Result<UdpSocket> {
     // - If those fail, fall back to 0.
 
     let mut ports = Vec::new();
-    if port != 0 {
-        ports.push(port);
+    if addr.port() != 0 {
+        ports.push(addr.port());
     }
     // Backup port
     ports.push(0);
@@ -130,25 +129,22 @@ fn bind(port: u16, network: IpFamily) -> anyhow::Result<UdpSocket> {
     debug!(?ports, "candidate ports");
 
     for port in &ports {
-        match UdpSocket::bind(network, *port) {
+        addr.set_port(*port);
+        match UdpSocket::bind_full(addr) {
             Ok(pconn) => {
                 let local_addr = pconn.local_addr().context("UDP socket not bound")?;
-                debug!(?network, %local_addr, "successfully bound");
+                debug!(%addr, %local_addr, "successfully bound");
                 return Ok(pconn);
             }
             Err(err) => {
-                warn!(?network, %port, "failed to bind: {:#?}", err);
+                warn!(%addr, "failed to bind: {:#?}", err);
                 continue;
             }
         }
     }
 
     // Failed to bind, including on port 0 (!).
-    bail!(
-        "failed to bind any ports on {:?} (tried {:?})",
-        network,
-        ports
-    );
+    bail!("failed to bind any ports on {:?} (tried {:?})", addr, ports);
 }
 
 /// Poller for when the socket is writable.
@@ -200,7 +196,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{key, tls};
+    use crate::{key, net::IpFamily, tls};
 
     use super::*;
     use anyhow::Result;
@@ -242,10 +238,10 @@ mod tests {
     }
 
     async fn rebinding_conn_send_recv(network: IpFamily) -> Result<()> {
-        let m1 = UdpConn::bind(0, network)?;
+        let m1 = UdpConn::bind(SocketAddr::new(network.unspecified_addr(), 0))?;
         let (m1, _m1_key) = wrap_socket(m1)?;
 
-        let m2 = UdpConn::bind(0, network)?;
+        let m2 = UdpConn::bind(SocketAddr::new(network.unspecified_addr(), 0))?;
         let (m2, _m2_key) = wrap_socket(m2)?;
 
         let m1_addr = SocketAddr::new(network.local_addr(), m1.local_addr()?.port());

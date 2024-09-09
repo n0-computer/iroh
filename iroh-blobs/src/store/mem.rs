@@ -10,7 +10,8 @@ use futures_lite::{Stream, StreamExt};
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
     io,
     path::PathBuf,
     sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
@@ -228,8 +229,12 @@ impl super::Store for Store {
         self.inner.temp_tag(tag)
     }
 
-    async fn gc_start(&self) -> io::Result<()> {
-        Ok(())
+    async fn gc_run<G, Gut>(&self, config: super::GcConfig, protected_cb: G)
+    where
+        G: Fn() -> Gut,
+        Gut: Future<Output = BTreeSet<Hash>> + Send,
+    {
+        super::gc_run_loop(self, config, move || async { Ok(()) }, protected_cb).await
     }
 
     async fn delete(&self, hashes: Vec<Hash>) -> io::Result<()> {

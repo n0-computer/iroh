@@ -23,6 +23,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio_util::codec::{FramedRead, FramedWrite};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 use url::Url;
 
@@ -39,7 +40,6 @@ use crate::relay::codec::DerpCodec;
 use crate::relay::http::{Protocol, RELAY_PATH};
 use crate::relay::RelayUrl;
 use crate::util::chain;
-use crate::util::AbortingJoinHandle;
 
 pub(crate) mod conn;
 pub(crate) mod streams;
@@ -135,7 +135,7 @@ pub struct Client {
     inner: mpsc::Sender<ActorMessage>,
     public_key: PublicKey,
     #[allow(dead_code)]
-    recv_loop: Arc<AbortingJoinHandle<()>>,
+    recv_loop: Arc<AbortOnDropHandle<()>>,
 }
 
 #[derive(Debug)]
@@ -355,7 +355,7 @@ impl ClientBuilder {
             Client {
                 public_key,
                 inner: msg_sender,
-                recv_loop: Arc::new(recv_loop.into()),
+                recv_loop: Arc::new(AbortOnDropHandle::new(recv_loop)),
             },
             ClientReceiver { msg_receiver: r },
         )

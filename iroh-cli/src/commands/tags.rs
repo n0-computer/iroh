@@ -1,10 +1,12 @@
+//! Define the tags subcommand.
+
 use anyhow::Result;
 use bytes::Bytes;
 use clap::Subcommand;
 use futures_lite::StreamExt;
-use iroh::blobs::Tag;
-use iroh::client::Iroh;
+use iroh::{blobs::Tag, client::Iroh};
 
+/// Commands to manage tags.
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum TagCommands {
@@ -19,6 +21,7 @@ pub enum TagCommands {
 }
 
 impl TagCommands {
+    /// Runs the tag command given the iroh client.
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::List => {
