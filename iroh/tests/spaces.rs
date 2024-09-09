@@ -220,3 +220,37 @@ async fn spaces_subscription() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_regression_restricted_area_sync() -> testresult::TestResult {
+    iroh_test::logging::setup_multithreaded();
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+    let (alfie_addr, alfie) = spawn_node().await;
+    let (betty_addr, betty) = spawn_node().await;
+    info!("alfie is {}", alfie_addr.node_id.fmt_short());
+    info!("betty is {}", betty_addr.node_id.fmt_short());
+    let alfie_user = alfie.spaces().create_user().await?;
+    let betty_user = betty.spaces().create_user().await?;
+    let alfie_space = alfie
+        .spaces()
+        .create(NamespaceKind::Owned, alfie_user)
+        .await?;
+    let space_ticket = alfie_space
+        .share(
+            betty_user,
+            AccessMode::Write,
+            // RestrictArea::None, // succeeds with this
+            RestrictArea::Restrict(Area::new_subspace(betty_user)),
+        )
+        .await?;
+    let (betty_space, syncs) = betty
+        .spaces()
+        .import_and_sync(space_ticket, SessionMode::ReconcileOnce)
+        .await?;
+    let completion = tokio::time::timeout(TIMEOUT, syncs.complete_all()).await?;
+    println!("Completed syncs: {completion:#?}");
+    let stream = betty_space.get_many(Range3d::new_full()).await?;
+    let entries: Vec<_> = stream.try_collect().await?;
+    println!("{entries:#?}");
+    Ok(())
+}
