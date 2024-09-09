@@ -1,18 +1,19 @@
 [package]
 name = "iroh-net-bench"
-version = "0.23.0"
+version = "0.24.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
 anyhow = "1.0.22"
-bytes = "1"
+bytes = "1.7"
 hdrhistogram = { version = "7.2", default-features = false }
-iroh-net = { path = "..", features = ["test-utils"] }
+iroh-net = { path = ".." }
 iroh-metrics = { path = "../../iroh-metrics" }
-rcgen = "0.11.1"
-rustls = { version = "0.21.0", default-features = false, features = ["quic"] }
+quinn = { package = "iroh-quinn", version = "0.11" }
+rcgen = "0.12"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1.0.1", features = ["rt", "sync"] }
 tracing = "0.1"
@@ -20,5 +21,6 @@ tracing-subscriber = { version = "0.3.0", default-features = false, features = [
 socket2 = "0.5"
 futures-lite = "2.3.0"
 
-[target.'cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))'.dependencies]
-quinn = "0.10"
+[features]
+default = []
+local-relay = ["iroh-net/test-utils"]

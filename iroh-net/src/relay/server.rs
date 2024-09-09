@@ -23,12 +23,12 @@ use hyper::body::Incoming;
 use iroh_metrics::inc;
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::task::JoinSet;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
 use crate::key::SecretKey;
 use crate::relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH};
 use crate::stun;
-use crate::util::AbortingJoinHandle;
 
 // Module defined in this file.
 use stun_metrics::StunMetrics;
@@ -157,9 +157,9 @@ pub enum CertConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// Use a static TLS key and certificate chain.
     Manual {
         /// The TLS private key.
-        private_key: rustls::PrivateKey,
+        private_key: rustls::pki_types::PrivateKeyDer<'static>,
         /// The TLS certificate chain.
-        certs: Vec<rustls::Certificate>,
+        certs: Vec<rustls::pki_types::CertificateDer<'static>>,
     },
 }
 
@@ -182,7 +182,7 @@ pub struct Server {
     /// Handle to the relay server.
     relay_handle: Option<http_server::ServerHandle>,
     /// The main task running the server.
-    supervisor: AbortingJoinHandle<Result<()>>,
+    supervisor: AbortOnDropHandle<Result<()>>,
 }
 
 impl Server {
@@ -255,9 +255,12 @@ impl Server {
                     .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
                 let http_addr = match relay_config.tls {
                     Some(tls_config) => {
-                        let server_config = rustls::ServerConfig::builder()
-                            .with_safe_defaults()
-                            .with_no_client_auth();
+                        let server_config = rustls::ServerConfig::builder_with_provider(Arc::new(
+                            rustls::crypto::ring::default_provider(),
+                        ))
+                        .with_safe_default_protocol_versions()
+                        .expect("protocols supported by ring")
+                        .with_no_client_auth();
                         let server_tls_config = match tls_config.cert {
                             CertConfig::LetsEncrypt { config } => {
                                 let mut state = config.state();
@@ -283,8 +286,8 @@ impl Server {
                                 })
                             }
                             CertConfig::Manual { private_key, certs } => {
-                                let server_config = server_config
-                                    .with_single_cert(certs.clone(), private_key.clone())?;
+                                let server_config =
+                                    server_config.with_single_cert(certs.clone(), private_key)?;
                                 let server_config = Arc::new(server_config);
                                 let acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
@@ -335,7 +338,7 @@ impl Server {
             stun_addr,
             https_addr: http_addr.and(relay_addr),
             relay_handle,
-            supervisor: AbortingJoinHandle::from(task),
+            supervisor: AbortOnDropHandle::new(task),
         })
     }
 
@@ -355,7 +358,7 @@ impl Server {
     ///
     /// This allows waiting for the server's supervisor task to finish.  Can be useful in
     /// case there is an error in the server before it is shut down.
-    pub fn task_handle(&mut self) -> &mut AbortingJoinHandle<Result<()>> {
+    pub fn task_handle(&mut self) -> &mut AbortOnDropHandle<Result<()>> {
         &mut self.supervisor
     }
 
@@ -466,19 +469,20 @@ async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
 
 /// Handles a single STUN request, doing all logging required.
 async fn handle_stun_request(src_addr: SocketAddr, pkt: Vec<u8>, sock: Arc<UdpSocket>) {
-    let handle = AbortingJoinHandle::from(tokio::task::spawn_blocking(move || {
-        match stun::parse_binding_request(&pkt) {
-            Ok(txid) => {
-                debug!(%src_addr, %txid, "STUN: received binding request");
-                Some((txid, stun::response(txid, src_addr)))
-            }
-            Err(err) => {
-                inc!(StunMetrics, bad_requests);
-                warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
-                None
-            }
-        }
-    }));
+    let handle =
+        AbortOnDropHandle::new(tokio::task::spawn_blocking(
+            move || match stun::parse_binding_request(&pkt) {
+                Ok(txid) => {
+                    debug!(%src_addr, %txid, "STUN: received binding request");
+                    Some((txid, stun::response(txid, src_addr)))
+                }
+                Err(err) => {
+                    inc!(StunMetrics, bad_requests);
+                    warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
+                    None
+                }
+            },
+        ));
     let (txid, response) = match handle.await {
         Ok(Some(val)) => val,
         Ok(None) => return,

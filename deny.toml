@@ -2,6 +2,8 @@
 multiple-versions = "allow"
 deny = [
      "aws-lc",
+     "aws-lc-rs",
+     "aws-lc-sys",
      "native-tls",
      "openssl",
 ]
@@ -30,4 +32,5 @@ license-files = [
 
 [advisories]
 ignore = [
+      "RUSTSEC-2024-0370", # unmaintained, no upgrade available
 ]

@@ -1,33 +1,36 @@
+//! Define the commands to manage authors.
+
+use crate::config::ConsoleEnv;
 use anyhow::{bail, Result};
 use clap::Parser;
 use derive_more::FromStr;
 use futures_lite::StreamExt;
-use iroh::base::base32::fmt_short;
+use iroh::{
+    base::base32::fmt_short,
+    client::Iroh,
+    docs::{Author, AuthorId},
+};
 
-use iroh::client::Iroh;
-use iroh::docs::{Author, AuthorId};
-
-use crate::config::ConsoleEnv;
-
+/// Commands to manage authors.
 #[derive(Debug, Clone, Parser)]
 pub enum AuthorCommands {
-    /// Set the active author (only works within the Iroh console).
+    /// Set the active author (Note: only works within the Iroh console).
     Switch { author: AuthorId },
     /// Create a new author.
     Create {
-        /// Switch to the created author (only in the Iroh console).
+        /// Switch to the created author (Note: only works in the Iroh console).
         #[clap(long)]
         switch: bool,
     },
     /// Delete an author.
     Delete { author: AuthorId },
-    /// Export an author
+    /// Export an author.
     Export { author: AuthorId },
-    /// Import an author
+    /// Import an author.
     Import { author: String },
     /// Print the default author for this node.
     Default {
-        /// Switch to the default author (only in the Iroh console).
+        /// Switch to the default author (Note: only works in the Iroh console).
         #[clap(long)]
         switch: bool,
     },
@@ -37,6 +40,7 @@ pub enum AuthorCommands {
 }
 
 impl AuthorCommands {
+    /// Runs the author command given an iroh client and console environment.
     pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
             Self::Switch { author } => {

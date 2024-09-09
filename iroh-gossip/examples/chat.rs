@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fmt, str::FromStr};
+use std::{
+    collections::HashMap,
+    fmt,
+    net::{Ipv4Addr, SocketAddrV4},
+    str::FromStr,
+};
 
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
@@ -16,6 +21,7 @@ use iroh_net::{
     Endpoint, NodeAddr,
 };
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 /// Chat over iroh-gossip
 ///
@@ -105,7 +111,8 @@ async fn main() -> Result<()> {
         .secret_key(secret_key)
         .alpns(vec![GOSSIP_ALPN.to_vec()])
         .relay_mode(relay_mode)
-        .bind(args.bind_port)
+        .bind_addr_v4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, args.bind_port))
+        .bind()
         .await?;
     println!("> our node id: {}", endpoint.node_id());
 
@@ -189,7 +196,16 @@ async fn subscribe_loop(mut receiver: GossipReceiver) -> Result<()> {
 }
 
 async fn endpoint_loop(endpoint: Endpoint, gossip: Gossip) {
-    while let Some(conn) = endpoint.accept().await {
+    while let Some(incoming) = endpoint.accept().await {
+        let conn = match incoming.accept() {
+            Ok(conn) => conn,
+            Err(err) => {
+                warn!("incoming connection failed: {err:#}");
+                // we can carry on in these cases:
+                // this can be caused by retransmitted datagrams
+                continue;
+            }
+        };
         let gossip = gossip.clone();
         tokio::spawn(async move {
             if let Err(err) = handle_connection(conn, gossip).await {
@@ -198,7 +214,11 @@ async fn endpoint_loop(endpoint: Endpoint, gossip: Gossip) {
         });
     }
 }
-async fn handle_connection(mut conn: iroh_net::endpoint::Connecting, gossip: Gossip) -> Result<()> {
+
+async fn handle_connection(
+    mut conn: iroh_net::endpoint::Connecting,
+    gossip: Gossip,
+) -> anyhow::Result<()> {
     let alpn = conn.alpn().await?;
     let conn = conn.await?;
     let peer_id = iroh_net::endpoint::get_remote_node_id(&conn)?;

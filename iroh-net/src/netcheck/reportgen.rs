@@ -28,6 +28,7 @@ use rand::seq::IteratorRandom;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::{self, Instant};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 
 use super::NetcheckMetrics;
@@ -38,7 +39,7 @@ use crate::net::UdpSocket;
 use crate::netcheck::{self, Report};
 use crate::ping::{PingError, Pinger};
 use crate::relay::{RelayMap, RelayNode, RelayUrl};
-use crate::util::{CancelOnDrop, MaybeFuture};
+use crate::util::MaybeFuture;
 use crate::{portmapper, stun};
 
 mod hairpin;
@@ -62,7 +63,7 @@ const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 #[derive(Debug)]
 pub(super) struct Client {
     // Addr is currently only used by child actors, so not yet exposed here.
-    _drop_guard: CancelOnDrop,
+    _drop_guard: AbortOnDropHandle<()>,
 }
 
 impl Client {
@@ -101,7 +102,7 @@ impl Client {
             async move { actor.run().await }.instrument(info_span!("reportgen.actor")),
         );
         Self {
-            _drop_guard: CancelOnDrop::new("reportgen actor", task.abort_handle()),
+            _drop_guard: AbortOnDropHandle::new(task),
         }
     }
 }
@@ -242,6 +243,10 @@ impl Actor {
 
                 _ = &mut probe_timer => {
                     warn!("tick: probes timed out");
+                    // Set new timeout to not go into this branch multiple times.  We need
+                    // the abort to finish all probes normally.  PROBES_TIMEOUT is
+                    // sufficiently far in the future.
+                    probe_timer.as_mut().reset(Instant::now() + PROBES_TIMEOUT);
                     probes.abort_all();
                     self.handle_abort_probes();
                 }

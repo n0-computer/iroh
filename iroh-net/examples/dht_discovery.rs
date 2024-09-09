@@ -12,6 +12,7 @@ use std::str::FromStr;
 
 use clap::Parser;
 use iroh_net::{endpoint::get_remote_node_id, Endpoint, NodeId};
+use tracing::warn;
 use url::Url;
 
 const CHAT_ALPN: &[u8] = b"pkarr-discovery-demo-chat";
@@ -69,13 +70,22 @@ async fn chat_server(args: Args) -> anyhow::Result<()> {
         .alpns(vec![CHAT_ALPN.to_vec()])
         .secret_key(secret_key)
         .discovery(Box::new(discovery))
-        .bind(0)
+        .bind()
         .await?;
     let zid = pkarr::PublicKey::try_from(node_id.as_bytes())?.to_z32();
     println!("Listening on {}", node_id);
     println!("pkarr z32: {}", zid);
     println!("see https://app.pkarr.org/?pk={}", zid);
-    while let Some(connecting) = endpoint.accept().await {
+    while let Some(incoming) = endpoint.accept().await {
+        let connecting = match incoming.accept() {
+            Ok(connecting) => connecting,
+            Err(err) => {
+                warn!("incoming connection failed: {err:#}");
+                // we can carry on in these cases:
+                // this can be caused by retransmitted datagrams
+                continue;
+            }
+        };
         tokio::spawn(async move {
             let connection = connecting.await?;
             let remote_node_id = get_remote_node_id(&connection)?;
@@ -105,7 +115,7 @@ async fn chat_client(args: Args) -> anyhow::Result<()> {
     let endpoint = Endpoint::builder()
         .secret_key(secret_key)
         .discovery(Box::new(discovery))
-        .bind(0)
+        .bind()
         .await?;
     println!("We are {} and connecting to {}", node_id, remote_node_id);
     let connection = endpoint

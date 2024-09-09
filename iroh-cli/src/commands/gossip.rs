@@ -1,13 +1,17 @@
+//! Define the gossiping subcommands.
+
 use anyhow::{Context, Result};
 use bao_tree::blake3;
 use clap::{ArgGroup, Subcommand};
 use futures_lite::StreamExt;
 use futures_util::SinkExt;
-use iroh::client::gossip::SubscribeOpts;
-use iroh::client::Iroh;
-use iroh::net::NodeId;
+use iroh::{
+    client::{gossip::SubscribeOpts, Iroh},
+    net::NodeId,
+};
 use tokio::io::AsyncBufReadExt;
 
+/// Commands to manage gossiping.
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum GossipCommands {
@@ -33,6 +37,7 @@ pub enum GossipCommands {
 }
 
 impl GossipCommands {
+    /// Runs the gossip command given the iroh client.
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Subscribe {

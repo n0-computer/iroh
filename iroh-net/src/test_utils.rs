@@ -30,8 +30,10 @@ pub struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server)> {
     let secret_key = SecretKey::generate();
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
-    let rustls_cert = rustls::Certificate(cert.serialize_der().unwrap());
-    let private_key = rustls::PrivateKey(cert.get_key_pair().serialize_der());
+    let rustls_cert = rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
+    let private_key =
+        rustls::pki_types::PrivatePkcs8KeyDer::from(cert.get_key_pair().serialize_der());
+    let private_key = rustls::pki_types::PrivateKeyDer::from(private_key);
 
     let config = ServerConfig {
         relay: Some(RelayConfig {

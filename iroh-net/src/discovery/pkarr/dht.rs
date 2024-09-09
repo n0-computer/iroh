@@ -18,7 +18,6 @@ use crate::{
     },
     dns::node_info::NodeInfo,
     key::SecretKey,
-    util::AbortingJoinHandle,
     AddrInfo, Endpoint, NodeId,
 };
 use futures_lite::StreamExt;
@@ -27,6 +26,7 @@ use pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
     RelaySettings, SignedPacket,
 };
+use tokio_util::task::AbortOnDropHandle;
 use url::Url;
 
 /// Republish delay for the DHT. This is only for when the info does not change.
@@ -59,8 +59,9 @@ struct Inner {
     #[debug("Option<PkarrRelayClientAsync>")]
     pkarr_relay: Option<PkarrRelayClientAsync>,
     /// The background task that periodically publishes the node address.
-    /// Due to AbortingJoinHandle, this will be aborted when the discovery is dropped.
-    task: Mutex<Option<AbortingJoinHandle<()>>>,
+    ///
+    /// Due to [`AbortOnDropHandle`], this will be aborted when the discovery is dropped.
+    task: Mutex<Option<AbortOnDropHandle<()>>>,
     /// Optional keypair for signing the DNS packets.
     ///
     /// If this is None, the node will not publish its address to the DHT.
@@ -370,7 +371,7 @@ impl Discovery for DhtDiscovery {
         let this = self.clone();
         let curr = tokio::spawn(this.publish_loop(keypair.clone(), signed_packet));
         let mut task = self.0.task.lock().unwrap();
-        *task = Some(curr.into());
+        *task = Some(AbortOnDropHandle::new(curr));
     }
 
     fn resolve(
@@ -399,7 +400,7 @@ mod tests {
     #[ignore = "flaky"]
     async fn dht_discovery_smoke() -> TestResult {
         let _ = tracing_subscriber::fmt::try_init();
-        let ep = crate::Endpoint::builder().bind(0).await?;
+        let ep = crate::Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
         let testnet = mainline::dht::Testnet::new(2);
         let settings = pkarr::Settings {

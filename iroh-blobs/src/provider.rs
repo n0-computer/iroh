@@ -292,7 +292,7 @@ pub(crate) async fn transfer_hash_seq<D: Map>(
                 stats.send += tw.stats();
                 stats.read += blob_read_stats;
                 if SentStatus::NotFound == status {
-                    writer.inner.finish().await?;
+                    writer.inner.finish()?;
                     return Ok(status);
                 }
 
@@ -516,7 +516,7 @@ pub async fn handle_get<D: Map>(
         None => {
             debug!("not found {}", hash);
             writer.notify_transfer_aborted(None).await;
-            writer.inner.finish().await?;
+            writer.inner.finish()?;
         }
     };
 

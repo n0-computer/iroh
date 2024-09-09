@@ -11,7 +11,7 @@ use iroh_net::{
     relay::{RelayMap, RelayMode, RelayUrl},
     Endpoint, NodeAddr,
 };
-use tracing::trace;
+use tracing::{trace, warn};
 
 use crate::{
     client_handler, stats::TransferResult, ClientStats, ConnectionSelector, EndpointSelector, Opt,
@@ -30,12 +30,18 @@ pub fn server_endpoint(
         let relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
             RelayMode::Custom(RelayMap::from_url(url))
         });
-        let ep = Endpoint::builder()
+
+        #[allow(unused_mut)]
+        let mut builder = Endpoint::builder();
+        #[cfg(feature = "local-relay")]
+        {
+            builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some())
+        }
+        let ep = builder
             .alpns(vec![ALPN.to_vec()])
-            .insecure_skip_relay_cert_verify(relay_url.is_some())
             .relay_mode(relay_mode)
             .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
-            .bind(0)
+            .bind()
             .await
             .unwrap();
 
@@ -81,12 +87,17 @@ pub async fn connect_client(
     let relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
         RelayMode::Custom(RelayMap::from_url(url))
     });
-    let endpoint = Endpoint::builder()
+    #[allow(unused_mut)]
+    let mut builder = Endpoint::builder();
+    #[cfg(feature = "local-relay")]
+    {
+        builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some())
+    }
+    let endpoint = builder
         .alpns(vec![ALPN.to_vec()])
-        .insecure_skip_relay_cert_verify(relay_url.is_some())
         .relay_mode(relay_mode)
         .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
-        .bind(0)
+        .bind()
         .await
         .unwrap();
 
@@ -191,7 +202,11 @@ async fn send_data_on_stream(stream: &mut SendStream, stream_size: u64) -> Resul
             .context("failed sending data")?;
     }
 
-    stream.finish().await.context("failed finishing stream")?;
+    stream.finish().context("failed finishing stream")?;
+    stream
+        .stopped()
+        .await
+        .context("failed to wait for stream to be stopped")?;
 
     Ok(())
 }
@@ -225,8 +240,17 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
 
     // Handle only the expected amount of clients
     for _ in 0..opt.clients {
-        let handshake = endpoint.accept().await.unwrap();
-        let connection = handshake.await.context("handshake failed")?;
+        let incoming = endpoint.accept().await.unwrap();
+        let connecting = match incoming.accept() {
+            Ok(connecting) => connecting,
+            Err(err) => {
+                warn!("incoming connection failed: {err:#}");
+                // we can carry on in these cases:
+                // this can be caused by retransmitted datagrams
+                continue;
+            }
+        };
+        let connection = connecting.await.context("handshake failed")?;
 
         server_tasks.push(tokio::spawn(async move {
             loop {

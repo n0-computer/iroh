@@ -1,5 +1,5 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
-use std::{collections::BTreeSet, future::Future, io, path::PathBuf};
+use std::{collections::BTreeSet, future::Future, io, path::PathBuf, time::Duration};
 
 use bao_tree::{
     io::fsm::{BaoContentItem, Outboard},
@@ -356,43 +356,13 @@ pub trait Store: ReadableStore + MapMut + std::fmt::Debug {
     /// Create a temporary pin for this store
     fn temp_tag(&self, value: HashAndFormat) -> TempTag;
 
-    /// Notify the store that a new gc phase is about to start.
+    /// Start the GC loop
     ///
-    /// This should not fail unless the store is shut down or otherwise in a
-    /// bad state. The gc task will shut itself down if this fails.
-    fn gc_start(&self) -> impl Future<Output = io::Result<()>> + Send;
-
-    /// Traverse all roots recursively and mark them as live.
-    ///
-    /// Poll this stream to completion to perform a full gc mark phase.
-    ///
-    /// Not polling this stream to completion is dangerous, since it might lead
-    /// to some live data being missed.
-    ///
-    /// The implementation of this method should do the minimum amount of work
-    /// to determine the live set. Actual deletion of garbage should be done
-    /// in the gc_sweep phase.
-    fn gc_mark(&self, live: &mut BTreeSet<Hash>) -> impl Stream<Item = GcMarkEvent> + Unpin {
-        Gen::new(|co| async move {
-            if let Err(e) = gc_mark_task(self, live, &co).await {
-                co.yield_(GcMarkEvent::Error(e)).await;
-            }
-        })
-    }
-
-    /// Remove all blobs that are not marked as live.
-    ///
-    /// Poll this stream to completion to perform a full gc sweep. Not polling this stream
-    /// to completion just means that some garbage will remain in the database.
-    ///
-    /// Sweeping might take long, but it can safely be done in the background.
-    fn gc_sweep(&self, live: &BTreeSet<Hash>) -> impl Stream<Item = GcSweepEvent> + Unpin {
-        Gen::new(|co| async move {
-            if let Err(e) = gc_sweep_task(self, live, &co).await {
-                co.yield_(GcSweepEvent::Error(e)).await;
-            }
-        })
-    }
+    /// The gc task will shut down, when dropping the returned future.
+    fn gc_run<G, Gut>(&self, config: super::GcConfig, protected_cb: G) -> impl Future<Output = ()>
+    where
+        G: Fn() -> Gut,
+        Gut: Future<Output = BTreeSet<Hash>> + Send;
 
     /// physically delete the given hashes from the store.
     fn delete(&self, hashes: Vec<Hash>) -> impl Future<Output = io::Result<()>> + Send;
@@ -549,8 +519,96 @@ async fn validate_impl(
     Ok(())
 }
 
+/// Configuration for the GC mark and sweep.
+#[derive(derive_more::Debug)]
+pub struct GcConfig {
+    /// The period at which to execute the GC.
+    pub period: Duration,
+    /// An optional callback called every time a GC round finishes.
+    #[debug("done_callback")]
+    pub done_callback: Option<Box<dyn Fn() + Send>>,
+}
+
+/// Implementation of the gc loop.
+pub(super) async fn gc_run_loop<S, F, Fut, G, Gut>(
+    store: &S,
+    config: GcConfig,
+    start_cb: F,
+    protected_cb: G,
+) where
+    S: Store,
+    F: Fn() -> Fut,
+    Fut: Future<Output = io::Result<()>> + Send,
+    G: Fn() -> Gut,
+    Gut: Future<Output = BTreeSet<Hash>> + Send,
+{
+    tracing::info!("Starting GC task with interval {:?}", config.period);
+    let mut live = BTreeSet::new();
+    'outer: loop {
+        if let Err(cause) = start_cb().await {
+            tracing::debug!("unable to notify the db of GC start: {cause}. Shutting down GC loop.");
+            break;
+        }
+        // do delay before the two phases of GC
+        tokio::time::sleep(config.period).await;
+        tracing::debug!("Starting GC");
+        live.clear();
+
+        let p = protected_cb().await;
+        live.extend(p);
+
+        tracing::debug!("Starting GC mark phase");
+        let live_ref = &mut live;
+        let mut stream = Gen::new(|co| async move {
+            if let Err(e) = gc_mark_task(store, live_ref, &co).await {
+                co.yield_(GcMarkEvent::Error(e)).await;
+            }
+        });
+        while let Some(item) = stream.next().await {
+            match item {
+                GcMarkEvent::CustomDebug(text) => {
+                    tracing::debug!("{}", text);
+                }
+                GcMarkEvent::CustomWarning(text, _) => {
+                    tracing::warn!("{}", text);
+                }
+                GcMarkEvent::Error(err) => {
+                    tracing::error!("Fatal error during GC mark {}", err);
+                    continue 'outer;
+                }
+            }
+        }
+        drop(stream);
+
+        tracing::debug!("Starting GC sweep phase");
+        let live_ref = &live;
+        let mut stream = Gen::new(|co| async move {
+            if let Err(e) = gc_sweep_task(store, live_ref, &co).await {
+                co.yield_(GcSweepEvent::Error(e)).await;
+            }
+        });
+        while let Some(item) = stream.next().await {
+            match item {
+                GcSweepEvent::CustomDebug(text) => {
+                    tracing::debug!("{}", text);
+                }
+                GcSweepEvent::CustomWarning(text, _) => {
+                    tracing::warn!("{}", text);
+                }
+                GcSweepEvent::Error(err) => {
+                    tracing::error!("Fatal error during GC mark {}", err);
+                    continue 'outer;
+                }
+            }
+        }
+        if let Some(ref cb) = config.done_callback {
+            cb();
+        }
+    }
+}
+
 /// Implementation of the gc method.
-async fn gc_mark_task<'a>(
+pub(super) async fn gc_mark_task<'a>(
     store: &'a impl Store,
     live: &'a mut BTreeSet<Hash>,
     co: &Co<GcMarkEvent>,

@@ -1,11 +1,6 @@
-use std::{
-    cell::RefCell,
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-    rc::Rc,
-    time::{Duration, Instant},
-};
+//! Define commands for interacting with documents in Iroh.
 
+use crate::config::ConsoleEnv;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use colored::Colorize;
@@ -13,8 +8,6 @@ use dialoguer::Confirm;
 use futures_buffered::BufferedStreamExt;
 use futures_lite::{Stream, StreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
-use tokio::io::AsyncReadExt;
-
 use iroh::{
     base::{base32::fmt_short, node_addr::AddrInfoOptions},
     blobs::{provider::AddProgress, util::SetTagOption, Hash, Tag},
@@ -29,11 +22,19 @@ use iroh::{
     },
     util::fs::{path_content_info, path_to_key, PathContent},
 };
+use std::{
+    cell::RefCell,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    rc::Rc,
+    time::{Duration, Instant},
+};
+use tokio::io::AsyncReadExt;
 
-use crate::config::ConsoleEnv;
-
+/// The maximum length of content to display before truncating.
 const MAX_DISPLAY_CONTENT_LEN: u64 = 80;
 
+/// Different modes to display content.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum DisplayContentMode {
     /// Displays the content if small enough, otherwise it displays the content hash.
@@ -55,6 +56,7 @@ pub enum FetchKind {
     Nothing,
 }
 
+/// Subcommands for the download policy command.
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum DlPolicyCmd {
     Set {
@@ -85,6 +87,7 @@ pub enum DlPolicyCmd {
     },
 }
 
+/// Possible `Document` commands.
 #[derive(Debug, Clone, Parser)]
 pub enum DocCommands {
     /// Set the active document (only works within the Iroh console).
@@ -283,6 +286,7 @@ pub enum DocCommands {
     },
 }
 
+/// How to sort.
 #[derive(clap::ValueEnum, Clone, Debug, Default, strum::Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Sorting {
@@ -292,6 +296,7 @@ pub enum Sorting {
     /// Sort by key, then author
     Key,
 }
+
 impl From<Sorting> for iroh::docs::store::SortBy {
     fn from(value: Sorting) -> Self {
         match value {
@@ -302,6 +307,7 @@ impl From<Sorting> for iroh::docs::store::SortBy {
 }
 
 impl DocCommands {
+    /// Runs the document command given the iroh client and the console environment.
     pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
             Self::Switch { id: doc } => {
@@ -669,6 +675,7 @@ impl DocCommands {
     }
 }
 
+/// Gets the document given the client, the environment (and maybe the [`NamespaceID`]).
 async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyhow::Result<Doc> {
     iroh.docs()
         .open(env.doc(id)?)
@@ -676,7 +683,7 @@ async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyh
         .context("Document not found")
 }
 
-/// Format the content. If an error occurs it's returned in a formatted, friendly way.
+/// Formats the content. If an error occurs it's returned in a formatted, friendly way.
 async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Result<String, String> {
     let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
     let encode_hex = |err: std::string::FromUtf8Error| format!("0x{}", hex::encode(err.as_bytes()));
@@ -719,11 +726,12 @@ async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Resu
     }
 }
 
-/// Human bytes for the contents of this entry.
+/// Converts the [`Entry`] to human-readable bytes.
 fn human_len(entry: &Entry) -> HumanBytes {
     HumanBytes(entry.content_len())
 }
 
+/// Formats an entry for display as a `String`.
 #[must_use = "this won't be printed, you need to print it yourself"]
 async fn fmt_entry(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> String {
     let key = std::str::from_utf8(entry.key())
@@ -735,11 +743,13 @@ async fn fmt_entry(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> String
     format!("@{author}: {key} = {content} ({len})")
 }
 
+/// Converts a path to a canonical path.
 fn canonicalize_path(path: &str) -> anyhow::Result<PathBuf> {
     let path = PathBuf::from(shellexpand::tilde(&path).to_string());
     Ok(path)
 }
 
+/// Creates a [`Tag`] from a file name (given as a [`Path`]).
 fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
     match path.file_name() {
         Some(name) => name
@@ -752,8 +762,8 @@ fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
 }
 
 /// Takes the `BlobsClient::add_from_path` and coordinates adding blobs to a
-/// document via the hash of the blob.
-/// It also creates and powers the `ImportProgressBar`.
+/// document via the hash of the blob. It also creates and powers the
+/// `ImportProgressBar`.
 #[tracing::instrument(skip_all)]
 async fn import_coordinator(
     doc: Doc,
@@ -875,6 +885,7 @@ async fn import_coordinator(
     Ok(())
 }
 
+/// Progress bar for importing files.
 #[derive(Debug, Clone)]
 struct ImportProgressBar {
     mp: MultiProgress,
@@ -883,6 +894,7 @@ struct ImportProgressBar {
 }
 
 impl ImportProgressBar {
+    /// Creates a new import progress bar.
     fn new(source: &str, doc_id: NamespaceId, expected_size: u64, expected_entries: u64) -> Self {
         let mp = MultiProgress::new();
         let add = mp.add(ProgressBar::new(0));
@@ -911,18 +923,22 @@ impl ImportProgressBar {
 
     fn import_found(&self, _name: String) {}
 
+    /// Marks having made some progress to the progress bar.
     fn add_progress(&self, size: u64) {
         self.add.inc(size);
     }
 
+    /// Marks having made one unit of progress on the import progress bar.
     fn import_progress(&self) {
         self.import.inc(1);
     }
 
+    /// Sets the `add` progress bar as completed.
     fn add_done(&self) {
         self.add.set_position(self.add.length().unwrap_or_default());
     }
 
+    /// Sets the all progress bars as done.
     fn all_done(self) {
         self.mp.clear().ok();
     }
