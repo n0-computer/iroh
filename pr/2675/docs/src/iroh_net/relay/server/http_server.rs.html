@@ -907,6 +907,14 @@
 <a href="#907" id="907">907</a>
 <a href="#908" id="908">908</a>
 <a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::HashMap;
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::net::SocketAddr;
@@ -927,6 +935,7 @@
 <span class="kw">use </span>tokio::net::{TcpListener, TcpStream};
 <span class="kw">use </span>tokio_rustls_acme::AcmeAcceptor;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
 <span class="kw">use </span>tungstenite::handshake::derive_accept_key;
 
@@ -934,7 +943,6 @@
 <span class="kw">use </span><span class="kw">crate</span>::relay::http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION};
 <span class="kw">use </span><span class="kw">crate</span>::relay::server::actor::{ClientConnHandler, ServerActorTask};
 <span class="kw">use </span><span class="kw">crate</span>::relay::server::streams::MaybeTlsStream;
-<span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
 
 <span class="kw">type </span>BytesBody = http_body_util::Full&lt;hyper::body::Bytes&gt;;
 <span class="kw">type </span>HyperError = Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync&gt;;
@@ -992,7 +1000,7 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>Server {
     addr: SocketAddr,
-    http_server_task: AbortingJoinHandle&lt;()&gt;,
+    http_server_task: AbortOnDropHandle&lt;()&gt;,
     cancel_server_loop: CancellationToken,
 }
 
@@ -1012,12 +1020,12 @@
         <span class="self">self</span>.cancel_server_loop.cancel();
     }
 
-    <span class="doccomment">/// Returns the [`AbortingJoinHandle`] for the supervisor task managing the server.
+    <span class="doccomment">/// Returns the [`AbortOnDropHandle`] for the supervisor task managing the server.
     ///
     /// This is the root of all the tasks for the server.  Aborting it will abort all the
     /// other tasks for the server.  Awaiting it will complete when all the server tasks are
     /// completed.
-    </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortingJoinHandle&lt;()&gt; {
+    </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortOnDropHandle&lt;()&gt; {
         <span class="kw-2">&amp;mut </span><span class="self">self</span>.http_server_task
     }
 
@@ -1278,7 +1286,7 @@
 
         <span class="prelude-val">Ok</span>(Server {
             addr,
-            http_server_task: AbortingJoinHandle::from(task),
+            http_server_task: AbortOnDropHandle::new(task),
             cancel_server_loop,
         })
     }
@@ -1587,7 +1595,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span>std::sync::Arc;
 
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>bytes::Bytes;
@@ -1601,19 +1609,27 @@
     <span class="kw">use </span><span class="kw">crate</span>::relay::client::conn::ReceivedMessage;
     <span class="kw">use </span><span class="kw">crate</span>::relay::client::{Client, ClientBuilder};
 
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>make_tls_config() -&gt; TlsConfig {
         <span class="kw">let </span>subject_alt_names = <span class="macro">vec!</span>[<span class="string">"localhost"</span>.to_string()];
 
         <span class="kw">let </span>cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
-        <span class="kw">let </span>rustls_certificate = rustls::Certificate(cert.serialize_der().unwrap());
-        <span class="kw">let </span>rustls_key = rustls::PrivateKey(cert.get_key_pair().serialize_der());
-        <span class="kw">let </span>config = rustls::ServerConfig::builder()
-            .with_safe_defaults()
-            .with_no_client_auth()
-            .with_single_cert(<span class="macro">vec!</span>[(rustls_certificate)], rustls_key)
-            .unwrap();
+        <span class="kw">let </span>rustls_certificate =
+            rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
+        <span class="kw">let </span>rustls_key =
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.get_key_pair().serialize_der());
+        <span class="kw">let </span>rustls_key = rustls::pki_types::PrivateKeyDer::from(rustls_key);
+        <span class="kw">let </span>config = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect(<span class="string">"protocols supported by ring"</span>)
+        .with_no_client_auth()
+        .with_single_cert(<span class="macro">vec!</span>[(rustls_certificate)], rustls_key)
+        .expect(<span class="string">"cert is right"</span>);
 
-        <span class="kw">let </span>config = std::sync::Arc::new(config);
+        <span class="kw">let </span>config = Arc::new(config);
         <span class="kw">let </span>acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
 
         TlsConfig {

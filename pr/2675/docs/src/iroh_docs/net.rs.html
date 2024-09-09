@@ -363,6 +363,10 @@
 <a href="#363" id="363">363</a>
 <a href="#364" id="364">364</a>
 <a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Network implementation of the iroh-docs protocol
 
 </span><span class="kw">use </span>std::{
@@ -413,7 +417,8 @@
 
     <span class="kw">let </span>res = run_alice(<span class="kw-2">&amp;mut </span>send_stream, <span class="kw-2">&amp;mut </span>recv_stream, sync, namespace, peer_id).<span class="kw">await</span>;
 
-    send_stream.finish().<span class="kw">await</span>.map_err(ConnectError::close)<span class="question-mark">?</span>;
+    send_stream.finish().map_err(ConnectError::close)<span class="question-mark">?</span>;
+    send_stream.stopped().<span class="kw">await</span>.map_err(ConnectError::close)<span class="question-mark">?</span>;
     recv_stream
         .read_to_end(<span class="number">0</span>)
         .<span class="kw">await
@@ -510,6 +515,9 @@
 
     send_stream
         .finish()
+        .map_err(|error| AcceptError::close(peer, namespace, error))<span class="question-mark">?</span>;
+    send_stream
+        .stopped()
         .<span class="kw">await
         </span>.map_err(|error| AcceptError::close(peer, namespace, error))<span class="question-mark">?</span>;
     recv_stream

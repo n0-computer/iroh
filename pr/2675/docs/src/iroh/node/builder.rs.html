@@ -898,8 +898,59 @@
 <a href="#898" id="898">898</a>
 <a href="#899" id="899">899</a>
 <a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a>
+<a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a>
+<a href="#924" id="924">924</a>
+<a href="#925" id="925">925</a>
+<a href="#926" id="926">926</a>
+<a href="#927" id="927">927</a>
+<a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a>
+<a href="#951" id="951">951</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -907,6 +958,7 @@
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::StreamExt;
+<span class="kw">use </span>futures_util::{FutureExt <span class="kw">as _</span>, TryFutureExt <span class="kw">as _</span>};
 <span class="kw">use </span>iroh_base::key::SecretKey;
 <span class="kw">use </span>iroh_blobs::{
     downloader::Downloader,
@@ -928,7 +980,8 @@
 
 <span class="kw">use </span>quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
-<span class="kw">use </span>tokio_util::sync::CancellationToken;
+<span class="kw">use </span>tokio::task::JoinError;
+<span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error_span, trace, Instrument};
 
 <span class="kw">use crate</span>::{
@@ -942,7 +995,9 @@
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-<span class="kw">use super</span>::{docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, Node, NodeInner};
+<span class="kw">use super</span>::{
+    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
+};
 
 <span class="doccomment">/// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak &lt;https://simple.wikipedia.org/wiki/Leet&gt;
@@ -954,7 +1009,13 @@
 <span class="doccomment">/// Default interval between GC runs.
 </span><span class="kw">const </span>DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(<span class="number">60 </span>* <span class="number">5</span>);
 
-<span class="kw">const </span>MAX_CONNECTIONS: u32 = <span class="number">1024</span>;
+<span class="doccomment">/// The default bind address for the iroh IPv4 socket.
+</span><span class="kw">pub const </span>DEFAULT_BIND_ADDR_V4: SocketAddrV4 =
+    SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_BIND_PORT);
+
+<span class="doccomment">/// The default bind address for the iroh IPv6 socket.
+</span><span class="kw">pub const </span>DEFAULT_BIND_ADDR_V6: SocketAddrV6 =
+    SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + <span class="number">1</span>, <span class="number">0</span>, <span class="number">0</span>);
 
 <span class="doccomment">/// Storage backend for documents.
 </span><span class="attr">#[derive(Debug, Clone)]
@@ -997,7 +1058,8 @@
     </span>D: Map,
 {
     storage: StorageConfig,
-    bind_port: <span class="prelude-ty">Option</span>&lt;u16&gt;,
+    addr_v4: SocketAddrV4,
+    addr_v6: SocketAddrV6,
     secret_key: SecretKey,
     rpc_endpoint: IrohServerEndpoint,
     rpc_addr: <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;,
@@ -1125,7 +1187,8 @@
 
         <span class="self">Self </span>{
             storage: StorageConfig::Mem,
-            bind_port: <span class="prelude-val">None</span>,
+            addr_v4: DEFAULT_BIND_ADDR_V4,
+            addr_v6: DEFAULT_BIND_ADDR_V6,
             secret_key: SecretKey::generate(),
             blobs_store: Default::default(),
             keylog: <span class="bool-val">false</span>,
@@ -1159,7 +1222,8 @@
 
         <span class="self">Self </span>{
             storage,
-            bind_port: <span class="prelude-val">None</span>,
+            addr_v4: SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_BIND_PORT),
+            addr_v6: SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + <span class="number">1</span>, <span class="number">0</span>, <span class="number">0</span>),
             secret_key: SecretKey::generate(),
             blobs_store,
             keylog: <span class="bool-val">false</span>,
@@ -1212,7 +1276,8 @@
 
         <span class="prelude-val">Ok</span>(Builder {
             storage: StorageConfig::Persistent(root.into()),
-            bind_port: <span class="self">self</span>.bind_port,
+            addr_v4: <span class="self">self</span>.addr_v4,
+            addr_v6: <span class="self">self</span>.addr_v6,
             secret_key,
             blobs_store,
             keylog: <span class="self">self</span>.keylog,
@@ -1324,11 +1389,40 @@
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Binds the node service to a different socket.
+    <span class="doccomment">/// Binds the node service to a specific socket IPv4 address.
     ///
-    /// By default it binds to `127.0.0.1:11204`.
-    </span><span class="kw">pub fn </span>bind_port(<span class="kw-2">mut </span><span class="self">self</span>, port: u16) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.bind_port.replace(port);
+    /// By default this will be set to `0.0.0.0:11204`
+    ///
+    /// Setting the port to `0` will assign a random port.
+    /// If the port used is not free, a random different port will be used.
+    </span><span class="kw">pub fn </span>bind_addr_v4(<span class="kw-2">mut </span><span class="self">self</span>, addr: SocketAddrV4) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.addr_v4 = addr;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Binds the node service to a specific socket IPv6 address.
+    ///
+    /// By default this will be set to `[::]:11205`
+    ///
+    /// Setting the port to `0` will assign a random port.
+    /// If the port used is not free, a random different port will be used.
+    </span><span class="kw">pub fn </span>bind_addr_v6(<span class="kw-2">mut </span><span class="self">self</span>, addr: SocketAddrV6) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.addr_v6 = addr;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Use a random port for both IPv4 and IPv6.
+    ///
+    /// This is a convenience function useful when you do not need a specific port
+    /// and want to avoid conflicts when running multiple instances, e.g. in tests.
+    ///
+    /// This overrides the ports of the socket addresses provided by [`Builder::bind_addr_v4`]
+    /// and [`Builder::bind_addr_v6`].  By default both of those bind to the
+    /// unspecified address, which would result in `0.0.0.0:11204` and `[::]:11205` as bind
+    /// addresses unless they are changed.
+    </span><span class="kw">pub fn </span>bind_random_port(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.addr_v4.set_port(<span class="number">0</span>);
+        <span class="self">self</span>.addr_v6.set_port(<span class="number">0</span>);
         <span class="self">self
     </span>}
 
@@ -1435,7 +1529,6 @@
                 .secret_key(<span class="self">self</span>.secret_key.clone())
                 .proxy_from_env()
                 .keylog(<span class="self">self</span>.keylog)
-                .concurrent_connections(MAX_CONNECTIONS)
                 .relay_mode(<span class="self">self</span>.relay_mode);
             <span class="kw">let </span>endpoint = <span class="kw">match </span>discovery {
                 <span class="prelude-val">Some</span>(discovery) =&gt; endpoint.discovery(discovery),
@@ -1463,8 +1556,15 @@
                 }
                 StorageConfig::Mem =&gt; <span class="prelude-val">None</span>,
             };
-            <span class="kw">let </span>bind_port = <span class="self">self</span>.bind_port.unwrap_or(DEFAULT_BIND_PORT);
-            (endpoint.bind(bind_port).<span class="kw">await</span><span class="question-mark">?</span>, nodes_data_path)
+
+            (
+                endpoint
+                    .bind_addr_v4(<span class="self">self</span>.addr_v4)
+                    .bind_addr_v6(<span class="self">self</span>.addr_v6)
+                    .bind()
+                    .<span class="kw">await</span><span class="question-mark">?</span>,
+                nodes_data_path,
+            )
         };
         <span class="macro">trace!</span>(<span class="string">"created endpoint"</span>);
 
@@ -1708,7 +1808,9 @@
         <span class="kw">let </span>node = Node {
             inner,
             protocols,
-            task: task.into(),
+            task: AbortOnDropHandle::new(task)
+                .map_err(Box::new(|e: JoinError| e.to_string()) <span class="kw">as </span>JoinErrToStr)
+                .shared(),
         };
 
         <span class="comment">// Wait for a single direct address update, to make sure
@@ -1751,14 +1853,15 @@
 }
 
 <span class="kw">const </span>DEFAULT_RPC_PORT: u16 = <span class="number">0x1337</span>;
-<span class="kw">const </span>MAX_RPC_CONNECTIONS: u32 = <span class="number">16</span>;
 <span class="kw">const </span>MAX_RPC_STREAMS: u32 = <span class="number">1024</span>;
 
 <span class="doccomment">/// The default bind addr of the RPC .
 </span><span class="kw">pub const </span>DEFAULT_RPC_ADDR: SocketAddr =
     SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, DEFAULT_RPC_PORT));
 
-<span class="doccomment">/// Makes a an RPC endpoint that uses a QUIC transport
+<span class="doccomment">/// Makes a an RPC endpoint that uses a QUIC transport.
+///
+/// Note that this uses the Quinn version used by quic-rpc.
 </span><span class="kw">fn </span>make_rpc_endpoint(
     secret_key: <span class="kw-2">&amp;</span>SecretKey,
     <span class="kw-2">mut </span>rpc_addr: SocketAddr,
@@ -1767,13 +1870,12 @@
     transport_config
         .max_concurrent_bidi_streams(MAX_RPC_STREAMS.into())
         .max_concurrent_uni_streams(<span class="number">0u32</span>.into());
-    <span class="kw">let </span><span class="kw-2">mut </span>server_config = iroh_net::endpoint::make_server_config(
+    <span class="kw">let </span>server_config = iroh_net::endpoint::make_server_config(
         secret_key,
         <span class="macro">vec!</span>[RPC_ALPN.to_vec()],
         Arc::new(transport_config),
         <span class="bool-val">false</span>,
     )<span class="question-mark">?</span>;
-    server_config.concurrent_connections(MAX_RPC_CONNECTIONS);
 
     <span class="kw">let </span>rpc_quinn_endpoint = quinn::Endpoint::server(server_config.clone(), rpc_addr);
     <span class="kw">let </span>rpc_quinn_endpoint = <span class="kw">match </span>rpc_quinn_endpoint {

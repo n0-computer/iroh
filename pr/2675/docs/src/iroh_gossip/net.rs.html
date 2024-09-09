@@ -1001,6 +1001,18 @@
 <a href="#1001" id="1001">1001</a>
 <a href="#1002" id="1002">1002</a>
 <a href="#1003" id="1003">1003</a>
+<a href="#1004" id="1004">1004</a>
+<a href="#1005" id="1005">1005</a>
+<a href="#1006" id="1006">1006</a>
+<a href="#1007" id="1007">1007</a>
+<a href="#1008" id="1008">1008</a>
+<a href="#1009" id="1009">1009</a>
+<a href="#1010" id="1010">1010</a>
+<a href="#1011" id="1011">1011</a>
+<a href="#1012" id="1012">1012</a>
+<a href="#1013" id="1013">1013</a>
+<a href="#1014" id="1014">1014</a>
+<a href="#1015" id="1015">1015</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Networking for the `iroh-gossip` protocol
 
 </span><span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
@@ -1016,7 +1028,6 @@
     dialer::Dialer,
     endpoint::{get_remote_node_id, Connection},
     key::PublicKey,
-    util::SharedAbortingJoinHandle,
     AddrInfo, Endpoint, NodeAddr, NodeId,
 };
 <span class="kw">use </span>rand::rngs::StdRng;
@@ -1024,10 +1035,12 @@
 <span class="kw">use </span>std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::Instant,
 };
 <span class="kw">use </span>tokio::{sync::mpsc, task::JoinSet};
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error_span, trace, warn, Instrument};
 
 <span class="kw">use </span><span class="self">self</span>::util::{read_message, write_message, Timers};
@@ -1093,7 +1106,7 @@
 </span><span class="kw">pub struct </span>Gossip {
     to_actor_tx: mpsc::Sender&lt;ToActor&gt;,
     on_direct_addrs_tx: mpsc::Sender&lt;Vec&lt;iroh_net::endpoint::DirectAddr&gt;&gt;,
-    _actor_handle: SharedAbortingJoinHandle&lt;()&gt;,
+    _actor_handle: Arc&lt;AbortOnDropHandle&lt;()&gt;&gt;,
     max_message_size: usize,
 }
 
@@ -1141,7 +1154,7 @@
         <span class="self">Self </span>{
             to_actor_tx,
             on_direct_addrs_tx: on_endpoints_tx,
-            _actor_handle: actor_handle.into(),
+            _actor_handle: Arc::new(AbortOnDropHandle::new(actor_handle)),
             max_message_size,
         }
     }
@@ -1848,7 +1861,7 @@
             .alpns(<span class="macro">vec!</span>[GOSSIP_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
-            .bind(<span class="number">0</span>)
+            .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         ep.watch_home_relay().next().<span class="kw">await</span>;
@@ -1864,10 +1877,21 @@
             <span class="macro">tokio::select!</span> {
                 biased;
                 <span class="kw">_ </span>= cancel.cancelled() =&gt; <span class="kw">break</span>,
-                conn = endpoint.accept() =&gt; <span class="kw">match </span>conn {
+                incoming = endpoint.accept() =&gt; <span class="kw">match </span>incoming {
                     <span class="prelude-val">None </span>=&gt; <span class="kw">break</span>,
-                    <span class="prelude-val">Some</span>(conn) =&gt; gossip.handle_connection(conn.<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?
-                </span>}
+                    <span class="prelude-val">Some</span>(incoming) =&gt; {
+                        <span class="kw">let </span>connecting = <span class="kw">match </span>incoming.accept() {
+                            <span class="prelude-val">Ok</span>(connecting) =&gt; connecting,
+                            <span class="prelude-val">Err</span>(err) =&gt; {
+                                <span class="macro">warn!</span>(<span class="string">"incoming connection failed: {err:#}"</span>);
+                                <span class="comment">// we can carry on in these cases:
+                                // this can be caused by retransmitted datagrams
+                                </span><span class="kw">continue</span>;
+                            }
+                        };
+                        gossip.handle_connection(connecting.<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?
+                    </span>}
+                }
             }
         }
         <span class="prelude-val">Ok</span>(())

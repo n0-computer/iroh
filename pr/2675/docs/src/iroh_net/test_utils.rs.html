@@ -441,6 +441,8 @@
 <a href="#441" id="441">441</a>
 <a href="#442" id="442">442</a>
 <a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
@@ -473,8 +475,10 @@
 </span><span class="kw">pub async fn </span>run_relay_server() -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
     <span class="kw">let </span>secret_key = SecretKey::generate();
     <span class="kw">let </span>cert = rcgen::generate_simple_self_signed(<span class="macro">vec!</span>[<span class="string">"localhost"</span>.to_string()]).unwrap();
-    <span class="kw">let </span>rustls_cert = rustls::Certificate(cert.serialize_der().unwrap());
-    <span class="kw">let </span>private_key = rustls::PrivateKey(cert.get_key_pair().serialize_der());
+    <span class="kw">let </span>rustls_cert = rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
+    <span class="kw">let </span>private_key =
+        rustls::pki_types::PrivatePkcs8KeyDer::from(cert.get_key_pair().serialize_der());
+    <span class="kw">let </span>private_key = rustls::pki_types::PrivateKeyDer::from(private_key);
 
     <span class="kw">let </span>config = ServerConfig {
         relay: <span class="prelude-val">Some</span>(RelayConfig {

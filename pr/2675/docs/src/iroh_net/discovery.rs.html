@@ -748,6 +748,40 @@
 <a href="#748" id="748">748</a>
 <a href="#749" id="749">749</a>
 <a href="#750" id="750">750</a>
+<a href="#751" id="751">751</a>
+<a href="#752" id="752">752</a>
+<a href="#753" id="753">753</a>
+<a href="#754" id="754">754</a>
+<a href="#755" id="755">755</a>
+<a href="#756" id="756">756</a>
+<a href="#757" id="757">757</a>
+<a href="#758" id="758">758</a>
+<a href="#759" id="759">759</a>
+<a href="#760" id="760">760</a>
+<a href="#761" id="761">761</a>
+<a href="#762" id="762">762</a>
+<a href="#763" id="763">763</a>
+<a href="#764" id="764">764</a>
+<a href="#765" id="765">765</a>
+<a href="#766" id="766">766</a>
+<a href="#767" id="767">767</a>
+<a href="#768" id="768">768</a>
+<a href="#769" id="769">769</a>
+<a href="#770" id="770">770</a>
+<a href="#771" id="771">771</a>
+<a href="#772" id="772">772</a>
+<a href="#773" id="773">773</a>
+<a href="#774" id="774">774</a>
+<a href="#775" id="775">775</a>
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
+<a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
+<a href="#781" id="781">781</a>
+<a href="#782" id="782">782</a>
+<a href="#783" id="783">783</a>
+<a href="#784" id="784">784</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh-net node a [`NodeAddr`] is needed, which needs to contain either a
@@ -1093,6 +1127,7 @@
 
     <span class="kw">use </span>parking_lot::Mutex;
     <span class="kw">use </span>rand::Rng;
+    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use crate</span>::{key::SecretKey, relay::RelayMode};
 
@@ -1209,12 +1244,12 @@
     </span><span class="kw">async fn </span>endpoint_discovery_simple_shared() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
-        <span class="kw">let </span>ep1 = {
+        <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate();
             <span class="kw">let </span>disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).<span class="kw">await
         </span>};
-        <span class="kw">let </span>ep2 = {
+        <span class="kw">let </span>(ep2, _guard2) = {
             <span class="kw">let </span>secret = SecretKey::generate();
             <span class="kw">let </span>disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).<span class="kw">await
@@ -1231,12 +1266,12 @@
     </span><span class="kw">async fn </span>endpoint_discovery_combined_with_empty() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
-        <span class="kw">let </span>ep1 = {
+        <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate();
             <span class="kw">let </span>disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).<span class="kw">await
         </span>};
-        <span class="kw">let </span>ep2 = {
+        <span class="kw">let </span>(ep2, _guard2) = {
             <span class="kw">let </span>secret = SecretKey::generate();
             <span class="kw">let </span>disco1 = EmptyDiscovery;
             <span class="kw">let </span>disco2 = disco_shared.create_discovery(secret.public());
@@ -1259,12 +1294,12 @@
     </span><span class="kw">async fn </span>endpoint_discovery_combined_with_empty_and_wrong() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
-        <span class="kw">let </span>ep1 = {
+        <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate();
             <span class="kw">let </span>disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).<span class="kw">await
         </span>};
-        <span class="kw">let </span>ep2 = {
+        <span class="kw">let </span>(ep2, _guard2) = {
             <span class="kw">let </span>secret = SecretKey::generate();
             <span class="kw">let </span>disco1 = EmptyDiscovery;
             <span class="kw">let </span>disco2 = disco_shared.create_lying_discovery(secret.public());
@@ -1287,12 +1322,12 @@
     </span><span class="kw">async fn </span>endpoint_discovery_combined_wrong_only() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
-        <span class="kw">let </span>ep1 = {
+        <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate();
             <span class="kw">let </span>disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).<span class="kw">await
         </span>};
-        <span class="kw">let </span>ep2 = {
+        <span class="kw">let </span>(ep2, _guard2) = {
             <span class="kw">let </span>secret = SecretKey::generate();
             <span class="kw">let </span>disco1 = disco_shared.create_lying_discovery(secret.public());
             <span class="kw">let </span>disco = ConcurrentDiscovery::from_services(<span class="macro">vec!</span>[Box::new(disco1)]);
@@ -1312,12 +1347,12 @@
     </span><span class="kw">async fn </span>endpoint_discovery_with_wrong_existing_addr() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
-        <span class="kw">let </span>ep1 = {
+        <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate();
             <span class="kw">let </span>disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).<span class="kw">await
         </span>};
-        <span class="kw">let </span>ep2 = {
+        <span class="kw">let </span>(ep2, _guard2) = {
             <span class="kw">let </span>secret = SecretKey::generate();
             <span class="kw">let </span>disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).<span class="kw">await
@@ -1335,15 +1370,33 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>new_endpoint(secret: SecretKey, disco: <span class="kw">impl </span>Discovery + <span class="lifetime">'static</span>) -&gt; Endpoint {
-        Endpoint::builder()
+    <span class="kw">async fn </span>new_endpoint(
+        secret: SecretKey,
+        disco: <span class="kw">impl </span>Discovery + <span class="lifetime">'static</span>,
+    ) -&gt; (Endpoint, AbortOnDropHandle&lt;anyhow::Result&lt;()&gt;&gt;) {
+        <span class="kw">let </span>ep = Endpoint::builder()
             .secret_key(secret)
             .discovery(Box::new(disco))
             .relay_mode(RelayMode::Disabled)
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-            .bind(<span class="number">0</span>)
+            .bind()
             .<span class="kw">await
-            </span>.unwrap()
+            </span>.unwrap();
+
+        <span class="kw">let </span>handle = tokio::spawn({
+            <span class="kw">let </span>ep = ep.clone();
+            <span class="kw">async move </span>{
+                <span class="comment">// we skip accept() errors, they can be caused by retransmits
+                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
+                    <span class="kw">let </span>_conn = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
+                    <span class="comment">// Just accept incoming connections, but don't do anything with them.
+                </span>}
+
+                anyhow::Ok(())
+            }
+        });
+
+        (ep, AbortOnDropHandle::new(handle))
     }
 
     <span class="kw">fn </span>system_time_now() -&gt; u64 {
@@ -1364,6 +1417,7 @@
 
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>iroh_base::key::SecretKey;
+    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use crate</span>::{
         discovery::pkarr::PkarrPublisher,
@@ -1446,8 +1500,8 @@
         <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>ep1 = ep_with_discovery(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>ep2 = ep_with_discovery(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(ep1, _guard1) = ep_with_discovery(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(ep2, _guard2) = ep_with_discovery(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// wait until our shared state received the update from pkarr publishing
         </span>dns_pkarr_server
@@ -1467,8 +1521,8 @@
         <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>ep1 = ep_with_discovery(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>ep2 = ep_with_discovery(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(ep1, _guard1) = ep_with_discovery(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(ep2, _guard2) = ep_with_discovery(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// wait until our shared state received the update from pkarr publishing
         </span>dns_pkarr_server
@@ -1484,7 +1538,7 @@
     <span class="kw">async fn </span>ep_with_discovery(
         relay_map: <span class="kw-2">&amp;</span>RelayMap,
         dns_pkarr_server: <span class="kw-2">&amp;</span>DnsPkarrServer,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;)&gt; {
         <span class="kw">let </span>secret_key = SecretKey::generate();
         <span class="kw">let </span>ep = Endpoint::builder()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -1493,9 +1547,23 @@
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .dns_resolver(dns_pkarr_server.dns_resolver())
             .discovery(dns_pkarr_server.discovery(secret_key))
-            .bind(<span class="number">0</span>)
+            .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(ep)
+
+        <span class="kw">let </span>handle = tokio::spawn({
+            <span class="kw">let </span>ep = ep.clone();
+            <span class="kw">async move </span>{
+                <span class="comment">// we skip accept() errors, they can be caused by retransmits
+                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
+                    <span class="kw">let </span>_conn = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
+                    <span class="comment">// Just accept incoming connections, but don't do anything with them.
+                </span>}
+
+                anyhow::Ok(())
+            }
+        });
+
+        <span class="prelude-val">Ok</span>((ep, AbortOnDropHandle::new(handle)))
     }
 }
 </code></pre></div></section></main></body></html>

@@ -703,8 +703,6 @@
 <a href="#703" id="703">703</a>
 <a href="#704" id="704">704</a>
 <a href="#705" id="705">705</a>
-<a href="#706" id="706">706</a>
-<a href="#707" id="707">707</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Functions that use the iroh-blobs protocol in conjunction with a bao store.
 
 </span><span class="kw">use </span>std::future::Future;
@@ -1004,9 +1002,8 @@
         // in that case we want to abort the write_all_with_outboard.
         </span>sender2
             .try_send(DownloadProgress::Progress { id, offset })
-            .map_err(|e| {
+            .inspect_err(|<span class="kw">_</span>| {
                 <span class="macro">tracing::info!</span>(<span class="string">"aborting download of {}"</span>, hash);
-                e
             })<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     };
@@ -1055,9 +1052,8 @@
         // in that case we want to abort the write_all_with_outboard.
         </span>sender2
             .try_send(DownloadProgress::Progress { id, offset })
-            .map_err(|e| {
+            .inspect_err(|<span class="kw">_</span>| {
                 <span class="macro">tracing::info!</span>(<span class="string">"aborting download of {}"</span>, hash);
-                e
             })<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     };

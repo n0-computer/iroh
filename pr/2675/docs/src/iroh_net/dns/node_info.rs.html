@@ -765,7 +765,7 @@
     </span><span class="kw">pub fn </span>from_hickory_records(records: <span class="kw-2">&amp;</span>[hickory_proto::rr::Record]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">use </span>hickory_proto::rr;
         <span class="kw">let </span><span class="kw-2">mut </span>records = records.iter().filter_map(|rr| <span class="kw">match </span>rr.data() {
-            <span class="prelude-val">Some</span>(rr::RData::TXT(txt)) =&gt; {
+            rr::RData::TXT(txt) =&gt; {
                 node_id_from_hickory_name(rr.name()).map(|node_id| (node_id, txt))
             }
             <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,

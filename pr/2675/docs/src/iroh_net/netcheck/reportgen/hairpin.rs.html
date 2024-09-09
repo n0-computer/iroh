@@ -320,12 +320,12 @@
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>tokio::sync::oneshot;
 <span class="kw">use </span>tokio::time::Instant;
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
 <span class="kw">use </span><span class="kw">crate</span>::net::UdpSocket;
 <span class="kw">use </span><span class="kw">crate</span>::netcheck::{<span class="self">self</span>, reportgen, Inflight};
 <span class="kw">use </span><span class="kw">crate</span>::stun;
-<span class="kw">use </span><span class="kw">crate</span>::util::CancelOnDrop;
 
 <span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::HAIRPIN_CHECK_TIMEOUT;
 
@@ -335,7 +335,7 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Client {
     addr: <span class="prelude-ty">Option</span>&lt;oneshot::Sender&lt;Message&gt;&gt;,
-    _drop_guard: CancelOnDrop,
+    _drop_guard: AbortOnDropHandle&lt;()&gt;,
 }
 
 <span class="kw">impl </span>Client {
@@ -352,7 +352,7 @@
             tokio::spawn(<span class="kw">async move </span>{ actor.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"hairpin.actor"</span>)));
         <span class="self">Self </span>{
             addr: <span class="prelude-val">Some</span>(addr),
-            _drop_guard: CancelOnDrop::new(<span class="string">"hairpin actor"</span>, task.abort_handle()),
+            _drop_guard: AbortOnDropHandle::new(task),
         }
     }
 

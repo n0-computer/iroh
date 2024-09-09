@@ -487,6 +487,14 @@
 <a href="#487" id="487">487</a>
 <a href="#488" id="488">488</a>
 <a href="#489" id="489">489</a>
+<a href="#490" id="490">490</a>
+<a href="#491" id="491">491</a>
+<a href="#492" id="492">492</a>
+<a href="#493" id="493">493</a>
+<a href="#494" id="494">494</a>
+<a href="#495" id="495">495</a>
+<a href="#496" id="496">496</a>
+<a href="#497" id="497">497</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A simple relay server for iroh-net.
 //!
 //! This handles only the CLI and config file loading, the server implementation lives in
@@ -536,19 +544,21 @@
     LetsEncrypt,
 }
 
-<span class="kw">fn </span>load_certs(filename: <span class="kw">impl </span>AsRef&lt;Path&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;rustls::Certificate&gt;&gt; {
+<span class="kw">fn </span>load_certs(
+    filename: <span class="kw">impl </span>AsRef&lt;Path&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;&gt; {
     <span class="kw">let </span>certfile = std::fs::File::open(filename).context(<span class="string">"cannot open certificate file"</span>)<span class="question-mark">?</span>;
     <span class="kw">let </span><span class="kw-2">mut </span>reader = std::io::BufReader::new(certfile);
 
-    <span class="kw">let </span>certs = rustls_pemfile::certs(<span class="kw-2">&amp;mut </span>reader)<span class="question-mark">?
-        </span>.iter()
-        .map(|v| rustls::Certificate(v.clone()))
-        .collect();
+    <span class="kw">let </span>certs: <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, std::io::Error&gt; = rustls_pemfile::certs(<span class="kw-2">&amp;mut </span>reader).collect();
+    <span class="kw">let </span>certs = certs<span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>(certs)
 }
 
-<span class="kw">fn </span>load_secret_key(filename: <span class="kw">impl </span>AsRef&lt;Path&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;rustls::PrivateKey&gt; {
+<span class="kw">fn </span>load_secret_key(
+    filename: <span class="kw">impl </span>AsRef&lt;Path&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;rustls::pki_types::PrivateKeyDer&lt;<span class="lifetime">'static</span>&gt;&gt; {
     <span class="kw">let </span>filename = filename.as_ref();
     <span class="kw">let </span>keyfile = std::fs::File::open(filename)
         .with_context(|| <span class="macro">format!</span>(<span class="string">"cannot open secret key file {}"</span>, filename.display()))<span class="question-mark">?</span>;
@@ -556,9 +566,15 @@
 
     <span class="kw">loop </span>{
         <span class="kw">match </span>rustls_pemfile::read_one(<span class="kw-2">&amp;mut </span>reader).context(<span class="string">"cannot parse secret key .pem file"</span>)<span class="question-mark">? </span>{
-            <span class="prelude-val">Some</span>(rustls_pemfile::Item::RSAKey(key)) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(rustls::PrivateKey(key)),
-            <span class="prelude-val">Some</span>(rustls_pemfile::Item::PKCS8Key(key)) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(rustls::PrivateKey(key)),
-            <span class="prelude-val">Some</span>(rustls_pemfile::Item::ECKey(key)) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(rustls::PrivateKey(key)),
+            <span class="prelude-val">Some</span>(rustls_pemfile::Item::Pkcs1Key(key)) =&gt; {
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(rustls::pki_types::PrivateKeyDer::Pkcs1(key));
+            }
+            <span class="prelude-val">Some</span>(rustls_pemfile::Item::Pkcs8Key(key)) =&gt; {
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(rustls::pki_types::PrivateKeyDer::Pkcs8(key));
+            }
+            <span class="prelude-val">Some</span>(rustls_pemfile::Item::Sec1Key(key)) =&gt; {
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(rustls::pki_types::PrivateKeyDer::Sec1(key));
+            }
             <span class="prelude-val">None </span>=&gt; <span class="kw">break</span>,
             <span class="kw">_ </span>=&gt; {}
         }

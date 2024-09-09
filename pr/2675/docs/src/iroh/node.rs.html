@@ -947,35 +947,6 @@
 <a href="#947" id="947">947</a>
 <a href="#948" id="948">948</a>
 <a href="#949" id="949">949</a>
-<a href="#950" id="950">950</a>
-<a href="#951" id="951">951</a>
-<a href="#952" id="952">952</a>
-<a href="#953" id="953">953</a>
-<a href="#954" id="954">954</a>
-<a href="#955" id="955">955</a>
-<a href="#956" id="956">956</a>
-<a href="#957" id="957">957</a>
-<a href="#958" id="958">958</a>
-<a href="#959" id="959">959</a>
-<a href="#960" id="960">960</a>
-<a href="#961" id="961">961</a>
-<a href="#962" id="962">962</a>
-<a href="#963" id="963">963</a>
-<a href="#964" id="964">964</a>
-<a href="#965" id="965">965</a>
-<a href="#966" id="966">966</a>
-<a href="#967" id="967">967</a>
-<a href="#968" id="968">968</a>
-<a href="#969" id="969">969</a>
-<a href="#970" id="970">970</a>
-<a href="#971" id="971">971</a>
-<a href="#972" id="972">972</a>
-<a href="#973" id="973">973</a>
-<a href="#974" id="974">974</a>
-<a href="#975" id="975">975</a>
-<a href="#976" id="976">976</a>
-<a href="#977" id="977">977</a>
-<a href="#978" id="978">978</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node API
 //!
 //! An iroh node is a server that is identified by an Ed25519 keypair and is
@@ -1013,28 +984,31 @@
 //! well, without going through [`client`](crate::client::Iroh))
 //!
 //! To shut down the node, call [`Node::shutdown`].
-</span><span class="kw">use </span>std::collections::BTreeMap;
+</span><span class="kw">use </span>std::collections::{BTreeMap, BTreeSet};
+<span class="kw">use </span>std::fmt::Debug;
+<span class="kw">use </span>std::net::SocketAddr;
 <span class="kw">use </span>std::path::{Path, PathBuf};
 <span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr};
-<span class="kw">use </span>std::{fmt::Debug, time::Duration};
+<span class="kw">use </span>std::time::Duration;
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::StreamExt;
+<span class="kw">use </span>futures_util::future::MapErr;
+<span class="kw">use </span>futures_util::future::Shared;
 <span class="kw">use </span>iroh_base::key::PublicKey;
-<span class="kw">use </span>iroh_blobs::store::{GcMarkEvent, GcSweepEvent, Store <span class="kw">as </span>BaoStore};
+<span class="kw">use </span>iroh_blobs::store::Store <span class="kw">as </span>BaoStore;
 <span class="kw">use </span>iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
 <span class="kw">use </span>iroh_blobs::{downloader::Downloader, protocol::Closed};
 <span class="kw">use </span>iroh_blobs::{HashAndFormat, TempTag};
 <span class="kw">use </span>iroh_gossip::net::Gossip;
 <span class="kw">use </span>iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
 <span class="kw">use </span>iroh_net::key::SecretKey;
-<span class="kw">use </span>iroh_net::util::SharedAbortingJoinHandle;
 <span class="kw">use </span>iroh_net::{AddrInfo, Endpoint, NodeAddr};
 <span class="kw">use </span>quic_rpc::transport::ServerEndpoint <span class="kw">as _</span>;
 <span class="kw">use </span>quic_rpc::RpcServer;
-<span class="kw">use </span>tokio::task::JoinSet;
+<span class="kw">use </span>tokio::task::{JoinError, JoinSet};
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
 <span class="kw">use </span><span class="kw">crate</span>::node::nodes_storage::store_node_addrs;
@@ -1079,9 +1053,17 @@
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>Node&lt;D&gt; {
     inner: Arc&lt;NodeInner&lt;D&gt;&gt;,
-    task: SharedAbortingJoinHandle&lt;()&gt;,
+    <span class="comment">// `Node` needs to be `Clone + Send`, and we need to `task.await` in its `shutdown()` impl.
+    // So we need
+    // - `Shared` so we can `task.await` from all `Node` clones
+    // - `MapErr` to map the `JoinError` to a `String`, because `JoinError` is `!Clone`
+    // - `AbortOnDropHandle` to make sure that the `task` is cancelled when all `Node`s are dropped
+    //   (`Shared` acts like an `Arc` around its inner future).
+    </span>task: Shared&lt;MapErr&lt;AbortOnDropHandle&lt;()&gt;, JoinErrToStr&gt;&gt;,
     protocols: Arc&lt;ProtocolMap&gt;,
 }
+
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>JoinErrToStr = Box&lt;<span class="kw">dyn </span>Fn(JoinError) -&gt; String + Send + Sync + <span class="lifetime">'static</span>&gt;;
 
 <span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">struct </span>NodeInner&lt;D&gt; {
@@ -1323,7 +1305,44 @@
         <span class="comment">// Spawn a task for the garbage collection.
         </span><span class="kw">if let </span>GcPolicy::Interval(gc_period) = gc_policy {
             <span class="kw">let </span>inner = <span class="self">self</span>.clone();
-            <span class="kw">let </span>handle = local_pool.spawn(<span class="kw">move </span>|| inner.run_gc_loop(gc_period, gc_done_callback));
+            <span class="kw">let </span>handle = local_pool.spawn(<span class="kw">move </span>|| <span class="kw">async move </span>{
+                <span class="kw">let </span>inner2 = inner.clone();
+                inner
+                    .db
+                    .gc_run(
+                        iroh_blobs::store::GcConfig {
+                            period: gc_period,
+                            done_callback: gc_done_callback,
+                        },
+                        <span class="kw">move </span>|| {
+                            <span class="kw">let </span>inner2 = inner2.clone();
+                            <span class="kw">async move </span>{
+                                <span class="kw">let </span><span class="kw-2">mut </span>live = BTreeSet::default();
+                                <span class="kw">if let </span><span class="prelude-val">Some</span>(docs) = <span class="kw-2">&amp;</span>inner2.docs {
+                                    <span class="kw">let </span>doc_hashes = <span class="kw">match </span>docs.sync.content_hashes().<span class="kw">await </span>{
+                                        <span class="prelude-val">Ok</span>(hashes) =&gt; hashes,
+                                        <span class="prelude-val">Err</span>(err) =&gt; {
+                                            <span class="macro">tracing::warn!</span>(<span class="string">"Error getting doc hashes: {}"</span>, err);
+                                            <span class="kw">return </span>live;
+                                        }
+                                    };
+                                    <span class="kw">for </span>hash <span class="kw">in </span>doc_hashes {
+                                        <span class="kw">match </span>hash {
+                                            <span class="prelude-val">Ok</span>(hash) =&gt; {
+                                                live.insert(hash);
+                                            }
+                                            <span class="prelude-val">Err</span>(err) =&gt; {
+                                                <span class="macro">tracing::error!</span>(<span class="string">"Error getting doc hash: {}"</span>, err);
+                                            }
+                                        }
+                                    }
+                                }
+                                live
+                            }
+                        },
+                    )
+                    .<span class="kw">await</span>;
+            });
             <span class="comment">// We cannot spawn tasks that run on the local pool directly into the join set,
             // so instead we create a new task that supervises the local task.
             </span>join_set.spawn({
@@ -1417,10 +1436,10 @@
                     }
                 },
                 <span class="comment">// handle incoming p2p connections.
-                </span><span class="prelude-val">Some</span>(connecting) = <span class="self">self</span>.endpoint.accept() =&gt; {
+                </span><span class="prelude-val">Some</span>(incoming) = <span class="self">self</span>.endpoint.accept() =&gt; {
                     <span class="kw">let </span>protocols = protocols.clone();
                     join_set.spawn(<span class="kw">async move </span>{
-                        handle_connection(connecting, protocols).<span class="kw">await</span>;
+                        handle_connection(incoming, protocols).<span class="kw">await</span>;
                         <span class="prelude-val">Ok</span>(())
                     });
                 },
@@ -1492,97 +1511,20 @@
             </span>protocols.shutdown(),
         );
     }
-
-    <span class="kw">async fn </span>run_gc_loop(
-        <span class="self">self</span>: Arc&lt;<span class="self">Self</span>&gt;,
-        gc_period: Duration,
-        done_cb: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() + Send&gt;&gt;,
-    ) {
-        <span class="macro">tracing::info!</span>(<span class="string">"Starting GC task with interval {:?}"</span>, gc_period);
-        <span class="kw">let </span>db = <span class="kw-2">&amp;</span><span class="self">self</span>.db;
-        <span class="kw">let </span><span class="kw-2">mut </span>live = BTreeSet::new();
-        <span class="lifetime">'outer</span>: <span class="kw">loop </span>{
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(cause) = db.gc_start().<span class="kw">await </span>{
-                <span class="macro">tracing::debug!</span>(
-                    <span class="string">"unable to notify the db of GC start: {cause}. Shutting down GC loop."
-                </span>);
-                <span class="kw">break</span>;
-            }
-            <span class="comment">// do delay before the two phases of GC
-            </span>tokio::time::sleep(gc_period).<span class="kw">await</span>;
-            <span class="macro">tracing::debug!</span>(<span class="string">"Starting GC"</span>);
-            live.clear();
-
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(docs) = <span class="kw-2">&amp;</span><span class="self">self</span>.docs {
-                <span class="kw">let </span>doc_hashes = <span class="kw">match </span>docs.sync.content_hashes().<span class="kw">await </span>{
-                    <span class="prelude-val">Ok</span>(hashes) =&gt; hashes,
-                    <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="macro">tracing::warn!</span>(<span class="string">"Error getting doc hashes: {}"</span>, err);
-                        <span class="kw">continue </span><span class="lifetime">'outer</span>;
-                    }
-                };
-                <span class="kw">for </span>hash <span class="kw">in </span>doc_hashes {
-                    <span class="kw">match </span>hash {
-                        <span class="prelude-val">Ok</span>(hash) =&gt; {
-                            live.insert(hash);
-                        }
-                        <span class="prelude-val">Err</span>(err) =&gt; {
-                            <span class="macro">tracing::error!</span>(<span class="string">"Error getting doc hash: {}"</span>, err);
-                            <span class="kw">continue </span><span class="lifetime">'outer</span>;
-                        }
-                    }
-                }
-            }
-
-            <span class="macro">tracing::debug!</span>(<span class="string">"Starting GC mark phase"</span>);
-            <span class="kw">let </span><span class="kw-2">mut </span>stream = db.gc_mark(<span class="kw-2">&amp;mut </span>live);
-            <span class="kw">while let </span><span class="prelude-val">Some</span>(item) = stream.next().<span class="kw">await </span>{
-                <span class="kw">match </span>item {
-                    GcMarkEvent::CustomDebug(text) =&gt; {
-                        <span class="macro">tracing::debug!</span>(<span class="string">"{}"</span>, text);
-                    }
-                    GcMarkEvent::CustomWarning(text, <span class="kw">_</span>) =&gt; {
-                        <span class="macro">tracing::warn!</span>(<span class="string">"{}"</span>, text);
-                    }
-                    GcMarkEvent::Error(err) =&gt; {
-                        <span class="macro">tracing::error!</span>(<span class="string">"Fatal error during GC mark {}"</span>, err);
-                        <span class="kw">continue </span><span class="lifetime">'outer</span>;
-                    }
-                }
-            }
-            drop(stream);
-
-            <span class="macro">tracing::debug!</span>(<span class="string">"Starting GC sweep phase"</span>);
-            <span class="kw">let </span><span class="kw-2">mut </span>stream = db.gc_sweep(<span class="kw-2">&amp;</span>live);
-            <span class="kw">while let </span><span class="prelude-val">Some</span>(item) = stream.next().<span class="kw">await </span>{
-                <span class="kw">match </span>item {
-                    GcSweepEvent::CustomDebug(text) =&gt; {
-                        <span class="macro">tracing::debug!</span>(<span class="string">"{}"</span>, text);
-                    }
-                    GcSweepEvent::CustomWarning(text, <span class="kw">_</span>) =&gt; {
-                        <span class="macro">tracing::warn!</span>(<span class="string">"{}"</span>, text);
-                    }
-                    GcSweepEvent::Error(err) =&gt; {
-                        <span class="macro">tracing::error!</span>(<span class="string">"Fatal error during GC mark {}"</span>, err);
-                        <span class="kw">continue </span><span class="lifetime">'outer</span>;
-                    }
-                }
-            }
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>cb) = done_cb {
-                cb();
-            }
-        }
-    }
 }
 
-<span class="kw">async fn </span>handle_connection(
-    <span class="kw-2">mut </span>connecting: iroh_net::endpoint::Connecting,
-    protocols: Arc&lt;ProtocolMap&gt;,
-) {
+<span class="kw">async fn </span>handle_connection(incoming: iroh_net::endpoint::Incoming, protocols: Arc&lt;ProtocolMap&gt;) {
+    <span class="kw">let </span><span class="kw-2">mut </span>connecting = <span class="kw">match </span>incoming.accept() {
+        <span class="prelude-val">Ok</span>(conn) =&gt; conn,
+        <span class="prelude-val">Err</span>(err) =&gt; {
+            <span class="macro">warn!</span>(<span class="string">"Ignoring connection: accepting failed: {err:#}"</span>);
+            <span class="kw">return</span>;
+        }
+    };
     <span class="kw">let </span>alpn = <span class="kw">match </span>connecting.alpn().<span class="kw">await </span>{
         <span class="prelude-val">Ok</span>(alpn) =&gt; alpn,
         <span class="prelude-val">Err</span>(err) =&gt; {
-            <span class="macro">warn!</span>(<span class="string">"Ignoring connection: invalid handshake: {:?}"</span>, err);
+            <span class="macro">warn!</span>(<span class="string">"Ignoring connection: invalid handshake: {err:#}"</span>);
             <span class="kw">return</span>;
         }
     };
@@ -1677,7 +1619,7 @@
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
         <span class="kw">use </span>std::io::Cursor;
-        <span class="kw">let </span>node = Node::memory().bind_port(<span class="number">0</span>).spawn().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>node = Node::memory().bind_random_port().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>_drop_guard = node.cancel_token().drop_guard();
         <span class="kw">let </span>client = node.client();
@@ -1698,7 +1640,7 @@
     </span><span class="kw">async fn </span>test_node_add_tagged_blob_event() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
-        <span class="kw">let </span>node = Node::memory().bind_port(<span class="number">0</span>).spawn().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>node = Node::memory().bind_random_port().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>_drop_guard = node.cancel_token().drop_guard();
 
@@ -1758,13 +1700,13 @@
         <span class="kw">let </span>(relay_map, relay_url, _guard) = iroh_net::test_utils::run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>node1 = Node::memory()
-            .bind_port(<span class="number">0</span>)
+            .bind_random_port()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
             .spawn()
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>node2 = Node::memory()
-            .bind_port(<span class="number">0</span>)
+            .bind_random_port()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
             .spawn()
@@ -1796,7 +1738,7 @@
         <span class="kw">let </span>secret1 = SecretKey::generate();
         <span class="kw">let </span>node1 = Node::memory()
             .secret_key(secret1.clone())
-            .bind_port(<span class="number">0</span>)
+            .bind_random_port()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
             .dns_resolver(dns_pkarr_server.dns_resolver())
@@ -1806,7 +1748,7 @@
         <span class="kw">let </span>secret2 = SecretKey::generate();
         <span class="kw">let </span>node2 = Node::memory()
             .secret_key(secret2.clone())
-            .bind_port(<span class="number">0</span>)
+            .bind_random_port()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
             .dns_resolver(dns_pkarr_server.dns_resolver())
