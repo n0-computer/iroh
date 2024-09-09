@@ -1386,8 +1386,8 @@
 
     <span class="doccomment">/// Returns a new address to send messages to this actor.
     ///
-    /// Unlike the client itself this does own the actor task, only allows sending messages
-    /// to it.
+    /// Unlike the client itself the returned [`Addr`] does not own the actor task, it only
+    /// allows sending messages to the actor.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Addr {
         <span class="self">self</span>.addr.clone()
     }
