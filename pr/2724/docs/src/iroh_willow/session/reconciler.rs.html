@@ -628,14 +628,13 @@
 <a href="#628" id="628">628</a>
 <a href="#629" id="629">629</a>
 <a href="#630" id="630">630</a>
-<a href="#631" id="631">631</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{HashMap, HashSet};
 
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::StreamExt;
 <span class="kw">use </span>genawaiter::rc::Co;
 <span class="kw">use </span>iroh_blobs::store::Store <span class="kw">as </span>PayloadStore;
-<span class="kw">use </span>tracing::{debug, trace};
+<span class="kw">use </span>tracing::debug;
 
 <span class="kw">use crate</span>::{
     proto::{
@@ -684,7 +683,7 @@
 </span><span class="kw">pub struct </span>Reconciler&lt;S: Storage&gt; {
     shared: Shared&lt;S&gt;,
     recv: Cancelable&lt;MessageReceiver&lt;ReconciliationMessage&gt;&gt;,
-    targets: TargetMap&lt;S&gt;,
+    targets: TargetMap,
     entry_state: EntryState,
 }
 
@@ -850,30 +849,30 @@
 }
 
 <span class="attr">#[derive(Debug)]
-</span><span class="kw">struct </span>TargetMap&lt;S: Storage&gt; {
-    map: HashMap&lt;TargetId, Target&lt;S&gt;&gt;,
+</span><span class="kw">struct </span>TargetMap {
+    map: HashMap&lt;TargetId, Target&gt;,
     inbox: CancelableReceiver&lt;Input&gt;,
 }
 
-<span class="kw">impl</span>&lt;S: Storage&gt; TargetMap&lt;S&gt; {
+<span class="kw">impl </span>TargetMap {
     <span class="kw">pub fn </span>new(inbox: CancelableReceiver&lt;Input&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             map: Default::default(),
             inbox,
         }
     }
-    <span class="kw">pub async fn </span>get_eventually(
+    <span class="kw">pub async fn </span>get_eventually&lt;S: Storage&gt;(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;,
         requested_id: <span class="kw-2">&amp;</span>TargetId,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;mut </span>Target&lt;S&gt;, Error&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;mut </span>Target, Error&gt; {
         <span class="kw">if </span>!<span class="self">self</span>.map.contains_key(requested_id) {
             <span class="self">self</span>.wait_for_target(shared, requested_id).<span class="kw">await</span><span class="question-mark">?</span>;
         }
         <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="self">self</span>.map.get_mut(requested_id).unwrap());
     }
 
-    <span class="kw">async fn </span>wait_for_target(
+    <span class="kw">async fn </span>wait_for_target&lt;S: Storage&gt;(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;,
         requested_id: <span class="kw-2">&amp;</span>TargetId,
@@ -892,13 +891,12 @@
         </span><span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>init_target(
+    <span class="kw">async fn </span>init_target&lt;S: Storage&gt;(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;,
         intersection: AoiIntersection,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;TargetId, Error&gt; {
-        <span class="kw">let </span>snapshot = shared.store.entries().snapshot()<span class="question-mark">?</span>;
-        <span class="kw">let </span>target = Target::init(snapshot, shared, intersection).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>target = Target::init(shared, intersection).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>id = target.id();
         <span class="macro">debug!</span>(
             our_handle = id.<span class="number">0</span>.value(),
@@ -1006,29 +1004,23 @@
 }
 
 <span class="attr">#[derive(Debug)]
-</span><span class="kw">struct </span>Target&lt;S: Storage&gt; {
-    snapshot: &lt;S::Entries <span class="kw">as </span>EntryStorage&gt;::Snapshot,
-
+</span><span class="kw">struct </span>Target {
     intersection: AoiIntersection,
-
     our_uncovered_ranges: HashSet&lt;u64&gt;,
     started: bool,
-
     our_range_counter: u64,
     their_range_counter: u64,
 }
 
-<span class="kw">impl</span>&lt;S: Storage&gt; Target&lt;S&gt; {
+<span class="kw">impl </span>Target {
     <span class="kw">fn </span>id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; TargetId {
         <span class="self">self</span>.intersection.id()
     }
-    <span class="kw">async fn </span>init(
-        snapshot: &lt;S::Entries <span class="kw">as </span>EntryStorage&gt;::Snapshot,
+    <span class="kw">async fn </span>init&lt;S: Storage&gt;(
         shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;,
         intersection: AoiIntersection,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Error&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>this = Target {
-            snapshot,
             intersection,
             our_uncovered_ranges: Default::default(),
             started: <span class="bool-val">false</span>,
@@ -1045,9 +1037,12 @@
         <span class="self">self</span>.intersection.namespace
     }
 
-    <span class="kw">async fn </span>initiate(<span class="kw-2">&amp;mut </span><span class="self">self</span>, shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
+    <span class="kw">async fn </span>initiate&lt;S: Storage&gt;(<span class="kw-2">&amp;mut </span><span class="self">self</span>, shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="kw">let </span>range = <span class="self">self</span>.intersection.area().to_range();
-        <span class="kw">let </span>fingerprint = <span class="self">self</span>.snapshot.fingerprint(<span class="self">self</span>.namespace(), <span class="kw-2">&amp;</span>range)<span class="question-mark">?</span>;
+        <span class="kw">let </span>fingerprint = shared
+            .store
+            .entries()
+            .fingerprint(<span class="self">self</span>.namespace(), <span class="kw-2">&amp;</span>range)<span class="question-mark">?</span>;
         <span class="self">self</span>.send_fingerprint(shared, range, fingerprint, <span class="prelude-val">None</span>)
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
@@ -1057,7 +1052,7 @@
         <span class="self">self</span>.started &amp;&amp; <span class="self">self</span>.our_uncovered_ranges.is_empty()
     }
 
-    <span class="kw">async fn </span>received_send_fingerprint(
+    <span class="kw">async fn </span>received_send_fingerprint&lt;S: Storage&gt;(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;,
         message: ReconciliationSendFingerprint,
@@ -1068,22 +1063,15 @@
         }
         <span class="kw">let </span>range_count = <span class="self">self</span>.next_range_count_theirs();
 
-        <span class="kw">let </span>our_fingerprint = <span class="self">self
-            </span>.snapshot
+        <span class="kw">let </span>our_fingerprint = shared
+            .store
+            .entries()
             .fingerprint(<span class="self">self</span>.namespace(), <span class="kw-2">&amp;</span>message.range)<span class="question-mark">?</span>;
 
         <span class="comment">// case 1: fingerprint match.
         </span><span class="kw">if </span>our_fingerprint == message.fingerprint {
-            <span class="kw">let </span>reply = ReconciliationAnnounceEntries {
-                range: message.range.clone(),
-                is_empty: <span class="bool-val">true</span>,
-                want_response: <span class="bool-val">false</span>,
-                will_sort: <span class="bool-val">false</span>,
-                sender_handle: message.receiver_handle,
-                receiver_handle: message.sender_handle,
-                covers: <span class="prelude-val">Some</span>(range_count),
-            };
-            shared.send.send(reply).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="self">self</span>.announce_and_send_entries(shared, <span class="kw-2">&amp;</span>message.range, <span class="bool-val">false</span>, <span class="prelude-val">Some</span>(range_count), <span class="bool-val">true</span>)
+                .<span class="kw">await</span><span class="question-mark">?</span>;
         }
         <span class="comment">// case 2: fingerprint is empty
         </span><span class="kw">else if </span>message.fingerprint.is_empty() {
@@ -1093,10 +1081,10 @@
         <span class="comment">// case 3: fingerprint doesn't match and is non-empty
         </span><span class="kw">else </span>{
             <span class="comment">// reply by splitting the range into parts unless it is very short
-            // TODO: Expose
+            // TODO: Expose these options to a higher level.
             </span><span class="kw">let </span>split_opts = SplitOpts::default();
-            <span class="kw">let </span>snapshot = <span class="self">self</span>.snapshot.clone();
-            <span class="kw">let </span><span class="kw-2">mut </span>iter = snapshot
+            <span class="kw">let </span>store = shared.store.entries().clone();
+            <span class="kw">let </span><span class="kw-2">mut </span>iter = store
                 .split_range(<span class="self">self</span>.namespace(), <span class="kw-2">&amp;</span>message.range, <span class="kw-2">&amp;</span>split_opts)<span class="question-mark">?
                 </span>.peekable();
             <span class="kw">while let </span><span class="prelude-val">Some</span>(res) = iter.next() {
@@ -1105,7 +1093,7 @@
                 <span class="kw">let </span>covers = is_last.then_some(range_count);
                 <span class="kw">match </span>action {
                     SplitAction::SendEntries(count) =&gt; {
-                        <span class="self">self</span>.announce_and_send_entries(shared, <span class="kw-2">&amp;</span>subrange, <span class="bool-val">true</span>, covers, count &gt; <span class="number">0</span>)
+                        <span class="self">self</span>.announce_and_send_entries(shared, <span class="kw-2">&amp;</span>subrange, <span class="bool-val">true</span>, covers, count == <span class="number">0</span>)
                             .<span class="kw">await</span><span class="question-mark">?</span>;
                     }
                     SplitAction::SendFingerprint(fingerprint) =&gt; {
@@ -1119,12 +1107,11 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>received_announce_entries(
+    <span class="kw">async fn </span>received_announce_entries&lt;S: Storage&gt;(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;,
         message: ReconciliationAnnounceEntries,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
-        <span class="macro">trace!</span>(<span class="question-mark">?</span>message, <span class="string">"received_announce_entries start"</span>);
         <span class="self">self</span>.started = <span class="bool-val">true</span>;
         <span class="kw">if let </span><span class="prelude-val">Some</span>(range_count) = message.covers {
             <span class="self">self</span>.mark_our_range_covered(range_count)<span class="question-mark">?</span>;
@@ -1135,11 +1122,10 @@
             <span class="self">self</span>.announce_and_send_entries(shared, <span class="kw-2">&amp;</span>message.range, <span class="bool-val">false</span>, <span class="prelude-val">Some</span>(range_count), <span class="bool-val">false</span>)
                 .<span class="kw">await</span><span class="question-mark">?</span>;
         }
-        <span class="macro">trace!</span>(<span class="string">"received_announce_entries done"</span>);
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>send_fingerprint(
+    <span class="kw">async fn </span>send_fingerprint&lt;S: Storage&gt;(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;,
         range: Range3d,
@@ -1158,7 +1144,9 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>announce_and_send_entries(
+    <span class="doccomment">/// Send a [`ReconciliationAnnounceEntries`] message for a range, and all entries in the range unless
+    /// `is_empty` is set to true.
+    </span><span class="kw">async fn </span>announce_and_send_entries&lt;S: Storage&gt;(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         shared: <span class="kw-2">&amp;</span>Shared&lt;S&gt;,
         range: <span class="kw-2">&amp;</span>Range3d,
@@ -1170,18 +1158,26 @@
             <span class="self">self</span>.mark_our_next_range_pending();
         }
 
-        <span class="kw">let </span>(iter, is_empty) = <span class="kw">if </span>is_empty {
-            (<span class="prelude-val">None</span>, <span class="bool-val">true</span>)
-        } <span class="kw">else </span>{
-            <span class="kw">let </span><span class="kw-2">mut </span>iter = <span class="self">self
-                </span>.snapshot
-                .get_authorised_entries(<span class="self">self</span>.namespace(), range)
-                .peekable();
-            <span class="kw">let </span>is_empty = iter.peek().is_none();
-            (<span class="prelude-val">Some</span>(iter), is_empty)
+        <span class="comment">// If we know for sure that our range is empty, we can skip creating the entry iterator alltogether.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>iter = <span class="kw">if </span>is_empty {
+            <span class="prelude-val">None
+        </span>} <span class="kw">else </span>{
+            <span class="prelude-val">Some</span>(
+                shared
+                    .store
+                    .entries()
+                    .get_authorised_entries(<span class="self">self</span>.namespace(), range)
+                    .peekable(),
+            )
         };
+        <span class="comment">// Find out if we will send any entries at all.
+        </span><span class="kw">let </span>is_empty = iter
+            .as_mut()
+            .map(|iter| iter.peek().is_none())
+            .unwrap_or(<span class="bool-val">true</span>);
 
-        <span class="kw">let </span>msg = ReconciliationAnnounceEntries {
+        <span class="comment">// Send the announce message
+        </span><span class="kw">let </span>msg = ReconciliationAnnounceEntries {
             range: range.clone().into(),
             is_empty,
             want_response,
@@ -1192,11 +1188,13 @@
         };
         shared.send.send(msg).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>iter) = iter <span class="kw">else </span>{
+        <span class="comment">// If our range is empty, we're done!
+        </span><span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>iter) = iter <span class="kw">else </span>{
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         };
 
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(authorised_entry) = iter.next() {
+        <span class="comment">// Otherwise send all the entries in our iterator, and payloads if applicable.
+        </span><span class="kw">while let </span><span class="prelude-val">Some</span>(authorised_entry) = iter.next() {
             <span class="kw">let </span>authorised_entry = authorised_entry<span class="question-mark">?</span>;
             <span class="kw">let </span>(entry, token) = authorised_entry.into_parts();
 
