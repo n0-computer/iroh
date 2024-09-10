@@ -4120,7 +4120,7 @@
     <span class="doccomment">/// UDP IPv6 socket
     </span>pconn6: <span class="prelude-ty">Option</span>&lt;UdpConn&gt;,
     <span class="doccomment">/// Netcheck client
-    </span>net_checker: netcheck::Client,
+    </span>net_checker: netcheck::Addr,
     <span class="doccomment">/// The state for an active DiscoKey.
     </span>disco_secrets: DiscoSecrets,
 
@@ -5342,7 +5342,7 @@
             my_relay: Default::default(),
             pconn4: pconn4.clone(),
             pconn6: pconn6.clone(),
-            net_checker: net_checker.clone(),
+            net_checker: net_checker.addr(),
             disco_secrets: DiscoSecrets::default(),
             node_map,
             relay_actor_sender: relay_actor_sender.clone(),

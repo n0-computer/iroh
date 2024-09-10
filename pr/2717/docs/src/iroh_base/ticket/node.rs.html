@@ -164,6 +164,11 @@
 <a href="#164" id="164">164</a>
 <a href="#165" id="165">165</a>
 <a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Tickets for nodes.
 
 </span><span class="kw">use </span>std::str::FromStr;
@@ -176,12 +181,17 @@
     ticket::{<span class="self">self</span>, Ticket},
 };
 
-<span class="doccomment">/// A token containing information for dialing a node.
+<span class="doccomment">/// A token containing information for establishing a connection to a node.
 ///
 /// Contains
-/// - The [`NodeId`] of the node to connect to (a 32-byte ed25519 public key)
+/// - The [`NodeId`] of the node to connect to (a 32-byte ed25519 public key).
+/// - If used, the ['RelayUrl`] of on which the node can be reached.
+/// - Any *direct addresses* on which the node might be reachable.
 ///
-/// It is a single item which can be easily serialized and deserialized.
+/// This allows establishing a connection to the node in most circumstances where it is
+/// possible to do so.
+///
+/// This [`NodeTicket`] is a single item which can be easily serialized and deserialized.
 ///
 /// [`NodeId`]: crate::key::NodeId
 </span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
