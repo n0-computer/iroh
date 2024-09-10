@@ -10,12 +10,17 @@ use crate::{
     ticket::{self, Ticket},
 };
 
-/// A token containing information for dialing a node.
+/// A token containing information for establishing a connection to a node.
 ///
 /// Contains
-/// - The [`NodeId`] of the node to connect to (a 32-byte ed25519 public key)
+/// - The [`NodeId`] of the node to connect to (a 32-byte ed25519 public key).
+/// - If used, the ['RelayUrl`] of on which the node can be reached.
+/// - Any *direct addresses* on which the node might be reachable.
 ///
-/// It is a single item which can be easily serialized and deserialized.
+/// This allows establishing a connection to the node in most circumstances where it is
+/// possible to do so.
+///
+/// This [`NodeTicket`] is a single item which can be easily serialized and deserialized.
 ///
 /// [`NodeId`]: crate::key::NodeId
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
