@@ -6,13 +6,15 @@ use futures_concurrency::{
     future::TryJoin,
     stream::{stream_group, StreamGroup},
 };
+use futures_lite::future::Boxed as BoxedFuture;
 use futures_lite::{stream::Stream, StreamExt};
 use futures_util::TryFutureExt;
 use iroh_metrics::inc;
 use iroh_net::{
     dialer::Dialer,
-    endpoint::{get_remote_node_id, Connection, DirectAddr},
+    endpoint::{get_remote_node_id, Connecting, Connection, DirectAddr},
     key::PublicKey,
+    protocol::ProtocolHandler,
     AddrInfo, Endpoint, NodeAddr, NodeId,
 };
 use rand::rngs::StdRng;
@@ -811,6 +813,12 @@ fn our_peer_data(endpoint: &Endpoint, direct_addresses: &[DirectAddr]) -> Result
         direct_addresses.iter().map(|x| x.addr).collect(),
     );
     encode_peer_data(&addr.info)
+}
+
+impl ProtocolHandler for Gossip {
+    fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
+        Box::pin(async move { self.handle_connection(conn.await?).await })
+    }
 }
 
 #[cfg(test)]

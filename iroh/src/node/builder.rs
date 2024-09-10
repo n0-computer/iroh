@@ -23,6 +23,7 @@ use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
+    protocol::{ProtocolHandler, ProtocolMap},
     relay::RelayMode,
     Endpoint,
 };
@@ -35,11 +36,7 @@ use tracing::{debug, error_span, trace, Instrument};
 
 use crate::{
     client::RPC_ALPN,
-    node::{
-        nodes_storage::load_node_addrs,
-        protocol::{BlobsProtocol, ProtocolMap},
-        ProtocolHandler,
-    },
+    node::{nodes_storage::load_node_addrs, protocol::BlobsProtocol},
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
 };
@@ -685,14 +682,13 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         self
     }
 
-    /*
     /// Returns a client to control this node over an in-memory channel.
     ///
     /// Note that RPC calls performed with the client will not complete until the node is
     /// spawned.
     pub fn client(&self) -> &crate::client::Iroh {
         &self.inner.client
-    }*/
+    }
 
     /// Returns the [`Endpoint`] of the node.
     pub fn endpoint(&self) -> &Endpoint {

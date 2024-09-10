@@ -26,6 +26,7 @@ use iroh_blobs::{BlobFormat, Tag};
 use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
+use iroh_net::protocol::ProtocolMap;
 use iroh_net::relay::RelayUrl;
 use iroh_net::{NodeAddr, NodeId};
 use quic_rpc::server::{RpcChannel, RpcServerError};
@@ -71,7 +72,6 @@ use crate::rpc_protocol::{
     Request, RpcService,
 };
 
-use super::protocol::ProtocolMap;
 use super::IrohServerEndpoint;
 
 mod docs;

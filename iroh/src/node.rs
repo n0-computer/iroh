@@ -53,6 +53,7 @@ use iroh_blobs::store::Store as BaoStore;
 use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
 use iroh_docs::net::DOCS_ALPN;
 use iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
+use iroh_net::protocol::{ProtocolHandler, ProtocolMap};
 use iroh_net::{AddrInfo, Endpoint, NodeAddr};
 use protocol::BlobsProtocol;
 use quic_rpc::transport::ServerEndpoint as _;
@@ -62,8 +63,8 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
+use crate::node::docs::DocsEngine;
 use crate::node::nodes_storage::store_node_addrs;
-use crate::node::{docs::DocsEngine, protocol::ProtocolMap};
 
 mod builder;
 mod docs;
@@ -77,7 +78,6 @@ pub use self::builder::{
     DEFAULT_RPC_ADDR,
 };
 pub use self::rpc_status::RpcStatus;
-pub use protocol::ProtocolHandler;
 
 /// How often to save node data.
 const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);

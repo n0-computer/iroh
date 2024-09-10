@@ -134,6 +134,7 @@ pub mod netcheck;
 pub mod node;
 pub mod ping;
 pub mod portmapper;
+pub mod protocol;
 pub mod relay;
 pub mod stun;
 pub mod ticket;

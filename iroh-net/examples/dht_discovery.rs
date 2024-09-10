@@ -69,7 +69,7 @@ async fn chat_server(args: Args) -> anyhow::Result<()> {
     let endpoint = Endpoint::builder()
         .alpns(vec![CHAT_ALPN.to_vec()])
         .secret_key(secret_key)
-        .discovery(Box::new(discovery))
+        .discovery(Some(Box::new(discovery)))
         .bind()
         .await?;
     let zid = pkarr::PublicKey::try_from(node_id.as_bytes())?.to_z32();
@@ -114,7 +114,7 @@ async fn chat_client(args: Args) -> anyhow::Result<()> {
     // we do not need to specify the alpn here, because we are not going to accept connections
     let endpoint = Endpoint::builder()
         .secret_key(secret_key)
-        .discovery(Box::new(discovery))
+        .discovery(Some(Box::new(discovery)))
         .bind()
         .await?;
     println!("We are {} and connecting to {}", node_id, remote_node_id);
