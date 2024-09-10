@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Fragment","FragmentKind","FragmentKit","FragmentSet"],"struct":["InvalidPsiGroup","PaiScheme","PsiGroup","PsiScalar"],"type":["FragmentPair","FragmentTriple"]};
