@@ -647,16 +647,11 @@ where
 
         let inner = Arc::new(NodeInner {
             rpc_addr: self.rpc_addr,
-            db: self.blobs_store,
-            docs,
+            db: Default::default(),
             endpoint,
-            secret_key: self.secret_key,
             client,
             cancel_token: CancellationToken::new(),
-            downloader,
-            gossip,
             local_pool_handle: lp.handle().clone(),
-            blob_batches: Default::default(),
         });
 
         let protocol_builder = ProtocolBuilder {
@@ -670,7 +665,13 @@ where
             local_pool: lp,
         };
 
-        let protocol_builder = protocol_builder.register_iroh_protocols(self.blob_events);
+        let protocol_builder = protocol_builder.register_iroh_protocols(
+            self.blob_events,
+            self.blobs_store,
+            gossip,
+            downloader,
+            docs,
+        );
 
         Ok(protocol_builder)
     }
@@ -764,24 +765,9 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         &self.inner.endpoint
     }
 
-    /// Returns the [`crate::blobs::store::Store`] used by the node.
-    pub fn blobs_db(&self) -> &D {
-        &self.inner.db
-    }
-
     /// Returns a reference to the used [`LocalPoolHandle`].
     pub fn local_pool_handle(&self) -> &LocalPoolHandle {
         self.local_pool.handle()
-    }
-
-    /// Returns a reference to the [`Downloader`] used by the node.
-    pub fn downloader(&self) -> &Downloader {
-        &self.inner.downloader
-    }
-
-    /// Returns a reference to the [`Gossip`] handle used by the node.
-    pub fn gossip(&self) -> &Gossip {
-        &self.inner.gossip
     }
 
     /// Returns a protocol handler for an ALPN.
@@ -793,21 +779,28 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     }
 
     /// Registers the core iroh protocols (blobs, gossip, docs).
-    fn register_iroh_protocols(mut self, blob_events: EventSender) -> Self {
+    fn register_iroh_protocols(
+        mut self,
+        blob_events: EventSender,
+        store: D,
+        gossip: Gossip,
+        downloader: Downloader,
+        docs: Option<DocsEngine>,
+    ) -> Self {
         // Register blobs.
         let blobs_proto = BlobsProtocol::new_with_events(
-            self.blobs_db().clone(),
+            store,
             self.local_pool_handle().clone(),
             blob_events,
+            downloader,
         );
         self = self.accept(iroh_blobs::protocol::ALPN.to_vec(), Arc::new(blobs_proto));
 
         // Register gossip.
-        let gossip = self.gossip().clone();
         self = self.accept(GOSSIP_ALPN.to_vec(), Arc::new(gossip));
 
         // Register docs, if enabled.
-        if let Some(docs) = self.inner.docs.clone() {
+        if let Some(docs) = docs {
             self = self.accept(DOCS_ALPN.to_vec(), Arc::new(docs));
         }
 

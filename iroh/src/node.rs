@@ -35,8 +35,9 @@
 //! well, without going through [`client`](crate::client::Iroh))
 //!
 //! To shut down the node, call [`Node::shutdown`].
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -47,14 +48,14 @@ use futures_lite::StreamExt;
 use futures_util::future::MapErr;
 use futures_util::future::Shared;
 use iroh_base::key::PublicKey;
+use iroh_blobs::protocol::Closed;
 use iroh_blobs::store::Store as BaoStore;
 use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
-use iroh_blobs::{downloader::Downloader, protocol::Closed};
-use iroh_blobs::{HashAndFormat, TempTag};
-use iroh_gossip::net::Gossip;
+use iroh_docs::net::DOCS_ALPN;
+use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
-use iroh_net::key::SecretKey;
 use iroh_net::{AddrInfo, Endpoint, NodeAddr};
+use protocol::BlobsProtocol;
 use quic_rpc::transport::ServerEndpoint as _;
 use quic_rpc::RpcServer;
 use tokio::task::{JoinError, JoinSet};
@@ -64,7 +65,6 @@ use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
 use crate::node::nodes_storage::store_node_addrs;
 use crate::node::{docs::DocsEngine, protocol::ProtocolMap};
-use crate::rpc_protocol::blobs::BatchId;
 
 mod builder;
 mod docs;
@@ -118,68 +118,12 @@ pub(crate) type JoinErrToStr = Box<dyn Fn(JoinError) -> String + Send + Sync + '
 
 #[derive(derive_more::Debug)]
 struct NodeInner<D> {
-    db: D,
+    db: PhantomData<D>,
     rpc_addr: Option<SocketAddr>,
-    docs: Option<DocsEngine>,
     endpoint: Endpoint,
-    gossip: Gossip,
-    secret_key: SecretKey,
     cancel_token: CancellationToken,
     client: crate::client::Iroh,
-    downloader: Downloader,
-    blob_batches: tokio::sync::Mutex<BlobBatches>,
     local_pool_handle: LocalPoolHandle,
-}
-
-/// Keeps track of all the currently active batch operations of the blobs api.
-#[derive(Debug, Default)]
-struct BlobBatches {
-    /// Currently active batches
-    batches: BTreeMap<BatchId, BlobBatch>,
-    /// Used to generate new batch ids.
-    max: u64,
-}
-
-/// A single batch of blob operations
-#[derive(Debug, Default)]
-struct BlobBatch {
-    /// The tags in this batch.
-    tags: BTreeMap<HashAndFormat, Vec<TempTag>>,
-}
-
-impl BlobBatches {
-    /// Create a new unique batch id.
-    fn create(&mut self) -> BatchId {
-        let id = self.max;
-        self.max += 1;
-        BatchId(id)
-    }
-
-    /// Store a temp tag in a batch identified by a batch id.
-    fn store(&mut self, batch: BatchId, tt: TempTag) {
-        let entry = self.batches.entry(batch).or_default();
-        entry.tags.entry(tt.hash_and_format()).or_default().push(tt);
-    }
-
-    /// Remove a tag from a batch.
-    fn remove_one(&mut self, batch: BatchId, content: &HashAndFormat) -> Result<()> {
-        if let Some(batch) = self.batches.get_mut(&batch) {
-            if let Some(tags) = batch.tags.get_mut(content) {
-                tags.pop();
-                if tags.is_empty() {
-                    batch.tags.remove(content);
-                }
-                return Ok(());
-            }
-        }
-        // this can happen if we try to upgrade a tag from an expired batch
-        anyhow::bail!("tag not found in batch");
-    }
-
-    /// Remove an entire batch.
-    fn remove(&mut self, batch: BatchId) {
-        self.batches.remove(&batch);
-    }
 }
 
 /// In memory node.
@@ -245,7 +189,7 @@ impl<D: BaoStore> Node<D> {
 
     /// Returns the [`PublicKey`] of the node.
     pub fn node_id(&self) -> PublicKey {
-        self.inner.secret_key.public()
+        self.inner.endpoint.secret_key().public()
     }
 
     /// Return a client to control this node over an in-memory channel.
@@ -344,32 +288,40 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         let external_rpc = RpcServer::new(external_rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
 
+        let gossip = protocols
+            .get_typed::<Gossip>(GOSSIP_ALPN)
+            .expect("missing gossip");
+
         // TODO(frando): I think this is not needed as we do the same in a task just below.
         // forward the initial endpoints to the gossip protocol.
         // it may happen the the first endpoint update callback is missed because the gossip cell
         // is only initialized once the endpoint is fully bound
         if let Some(direct_addresses) = self.endpoint.direct_addresses().next().await {
             debug!(me = ?self.endpoint.node_id(), "gossip initial update: {direct_addresses:?}");
-            self.gossip.update_direct_addresses(&direct_addresses).ok();
+            gossip.update_direct_addresses(&direct_addresses).ok();
         }
 
         // Spawn a task for the garbage collection.
         if let GcPolicy::Interval(gc_period) = gc_policy {
-            let inner = self.clone();
+            let protocols = protocols.clone();
             let handle = local_pool.spawn(move || async move {
-                let inner2 = inner.clone();
-                inner
-                    .db
+                let docs_engine = protocols.get_typed::<DocsEngine>(DOCS_ALPN);
+                let blobs = protocols
+                    .get_typed::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
+                    .expect("missing blobs");
+
+                blobs
+                    .store()
                     .gc_run(
                         iroh_blobs::store::GcConfig {
                             period: gc_period,
                             done_callback: gc_done_callback,
                         },
                         move || {
-                            let inner2 = inner2.clone();
+                            let docs_engine = docs_engine.clone();
                             async move {
                                 let mut live = BTreeSet::default();
-                                if let Some(docs) = &inner2.docs {
+                                if let Some(docs) = docs_engine {
                                     let doc_hashes = match docs.sync.content_hashes().await {
                                         Ok(hashes) => hashes,
                                         Err(err) => {
@@ -449,7 +401,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         join_set.spawn(async move {
             let mut stream = inner.endpoint.direct_addresses();
             while let Some(eps) = stream.next().await {
-                if let Err(err) = inner.gossip.update_direct_addresses(&eps) {
+                if let Err(err) = gossip.update_direct_addresses(&eps) {
                     warn!("Failed to update direct addresses for gossip: {err:?}");
                 }
             }
@@ -468,7 +420,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 request = external_rpc.accept() => {
                     match request {
                         Ok(accepting) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting);
+                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting, protocols.clone());
                         }
                         Err(e) => {
                             info!("rpc request error: {:?}", e);
@@ -479,7 +431,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 request = internal_rpc.accept() => {
                     match request {
                         Ok(accepting) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting);
+                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting, protocols.clone());
                         }
                         Err(e) => {
                             info!("internal rpc request error: {:?}", e);
@@ -533,18 +485,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
     async fn shutdown(&self, protocols: Arc<ProtocolMap>) {
         let error_code = Closed::ProviderTerminating;
 
-        // Shutdown future for the docs engine, if enabled.
-        let docs_shutdown = {
-            let docs = self.docs.clone();
-            async move {
-                if let Some(docs) = docs {
-                    docs.shutdown().await
-                } else {
-                    Ok(())
-                }
-            }
-        };
-
         // We ignore all errors during shutdown.
         let _ = tokio::join!(
             // Close the endpoint.
@@ -554,10 +494,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             self.endpoint
                 .clone()
                 .close(error_code.into(), error_code.reason()),
-            // Shutdown docs engine.
-            docs_shutdown,
-            // Shutdown blobs store engine.
-            self.db.shutdown(),
             // Shutdown protocol handlers.
             protocols.shutdown(),
         );
@@ -636,7 +572,7 @@ mod tests {
     use bytes::Bytes;
     use iroh_base::node_addr::AddrInfoOptions;
     use iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
-    use iroh_net::{relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
+    use iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
     use crate::client::blobs::{AddOutcome, WrapOption};
 
