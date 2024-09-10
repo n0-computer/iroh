@@ -1682,7 +1682,7 @@
     /// let handler = MyProtocol { client };
     ///
     /// let node = unspawned_node
-    ///     .accept(MY_ALPN, Arc::new(handler))
+    ///     .accept(MY_ALPN.to_vec(), Arc::new(handler))
     ///     .spawn()
     ///     .await?;
     /// # node.shutdown().await?;
@@ -1691,7 +1691,7 @@
     /// ```
     ///
     ///
-    </span><span class="kw">pub fn </span>accept(<span class="kw-2">mut </span><span class="self">self</span>, alpn: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[u8], handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>accept(<span class="kw-2">mut </span><span class="self">self</span>, alpn: Vec&lt;u8&gt;, handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.protocols.insert(alpn, handler);
         <span class="self">self
     </span>}
@@ -1738,14 +1738,14 @@
             blob_events,
             downloader,
         );
-        <span class="self">self </span>= <span class="self">self</span>.accept(iroh_blobs::protocol::ALPN, Arc::new(blobs_proto));
+        <span class="self">self </span>= <span class="self">self</span>.accept(iroh_blobs::protocol::ALPN.to_vec(), Arc::new(blobs_proto));
 
         <span class="comment">// Register gossip.
-        </span><span class="self">self </span>= <span class="self">self</span>.accept(GOSSIP_ALPN, Arc::new(gossip));
+        </span><span class="self">self </span>= <span class="self">self</span>.accept(GOSSIP_ALPN.to_vec(), Arc::new(gossip));
 
         <span class="comment">// Register docs, if enabled.
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(docs) = docs {
-            <span class="self">self </span>= <span class="self">self</span>.accept(DOCS_ALPN, Arc::new(docs));
+            <span class="self">self </span>= <span class="self">self</span>.accept(DOCS_ALPN.to_vec(), Arc::new(docs));
         }
 
         <span class="self">self
