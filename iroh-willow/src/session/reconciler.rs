@@ -4,11 +4,11 @@ use bytes::Bytes;
 use futures_lite::StreamExt;
 use genawaiter::rc::Co;
 use iroh_blobs::store::Store as PayloadStore;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{
     proto::{
-        data_model::PayloadDigest,
+        data_model::{PathExt, PayloadDigest},
         grouping::{AreaExt, AreaOfInterest, Range3d},
         keys::NamespaceId,
         wgps::{
@@ -98,11 +98,10 @@ impl<S: Storage> Reconciler<S> {
         loop {
             tokio::select! {
                 Some(message) = self.recv.next() => {
-                    tracing::trace!(?message, "tick: recv");
                     self.received_message(message?).await?;
                 }
                 Some(input) = self.targets.inbox.next() => {
-                    tracing::trace!(?input, "tick: input");
+                    trace!(?input, "tick: input");
                     match input {
                         Input::AoiIntersection(intersection) => {
                             self.targets.init_target(&self.shared, intersection).await?;
@@ -118,6 +117,7 @@ impl<S: Storage> Reconciler<S> {
     async fn received_message(&mut self, message: ReconciliationMessage) -> Result<(), Error> {
         match message {
             ReconciliationMessage::SendFingerprint(message) => {
+                trace!(range=?message.range, "recv SendFingerprint");
                 let target_id = message.handles();
                 let target = self
                     .targets
@@ -131,6 +131,7 @@ impl<S: Storage> Reconciler<S> {
                 }
             }
             ReconciliationMessage::AnnounceEntries(message) => {
+                trace!(is_empty=?message.is_empty, range=?message.range, "recv AnnounceEntries");
                 let target_id = message.handles();
                 self.entry_state
                     .received_announce_entries(target_id, message.is_empty)?;
@@ -146,6 +147,13 @@ impl<S: Storage> Reconciler<S> {
                 }
             }
             ReconciliationMessage::SendEntry(message) => {
+                trace!(
+                    subspace = %message.entry.entry.subspace_id().fmt_short(),
+                    path = %message.entry.entry.path().fmt_utf8(),
+                    // payload_digest = %message.entry.entry.payload_digest().0.fmt_short(),
+                    // payload_len = message.entry.entry.payload_length(),
+                    "recv SendEntry"
+                );
                 let authorised_entry = self
                     .shared
                     .static_tokens
@@ -166,14 +174,18 @@ impl<S: Storage> Reconciler<S> {
                 )?;
             }
             ReconciliationMessage::SendPayload(message) => {
+                trace!("recv SendPayload");
                 self.entry_state
                     .received_send_payload(self.shared.store.payloads(), message.bytes)
                     .await?;
             }
-            ReconciliationMessage::TerminatePayload(message) => {
+            ReconciliationMessage::TerminatePayload(ReconciliationTerminatePayload {
+                is_final,
+            }) => {
+                trace!(?is_final, "recv TerminatePayloade");
                 if let Some(completed_target) = self
                     .entry_state
-                    .received_terminate_payload(message.is_final)
+                    .received_terminate_payload(is_final)
                     .await?
                 {
                     let target = self
@@ -199,6 +211,7 @@ impl<S: Storage> Reconciler<S> {
         debug!(
             our_handle = id.0.value(),
             their_handle = id.1.value(),
+            // area=?target.intersection.intersection.area,
             "reconciled area"
         );
         self.out(Output::ReconciledArea {
@@ -273,6 +286,12 @@ impl TargetMap {
             their_handle = id.1.value(),
             "init area"
         );
+        // tracing::info!(
+        //     our_handle = id.0.value(),
+        //     their_handle = id.1.value(),
+        //     intersection=?target.intersection.intersection.area,
+        //     "init area"
+        // );
         self.map.insert(id, target);
         Ok(id)
     }
