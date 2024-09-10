@@ -994,11 +994,7 @@ impl<D: BaoStore> Handler<D> {
         }
         if let Some(batch) = msg.batch {
             if let Some(content) = msg.value.as_ref() {
-                self.inner
-                    .blob_batches
-                    .lock()
-                    .await
-                    .remove_one(batch, content)?;
+                blobs.batches().await.remove_one(batch, content)?;
             }
         }
         Ok(())
@@ -1011,11 +1007,7 @@ impl<D: BaoStore> Handler<D> {
             blobs.store().sync().await?;
         }
         if let Some(batch) = msg.batch {
-            self.inner
-                .blob_batches
-                .lock()
-                .await
-                .remove_one(batch, &msg.value)?;
+            blobs.batches().await.remove_one(batch, &msg.value)?;
         }
         Ok(tag)
     }
@@ -1035,7 +1027,7 @@ impl<D: BaoStore> Handler<D> {
     async fn batch_create_temp_tag(self, msg: BatchCreateTempTagRequest) -> RpcResult<()> {
         let blobs = self.blobs();
         let tag = blobs.store().temp_tag(msg.content);
-        self.inner.blob_batches.lock().await.store(msg.batch, tag);
+        blobs.batches().await.store(msg.batch, tag);
         Ok(())
     }
 
@@ -1099,11 +1091,7 @@ impl<D: BaoStore> Handler<D> {
             .import_stream(stream, msg.format, import_progress)
             .await?;
         let hash = temp_tag.inner().hash;
-        self.inner
-            .blob_batches
-            .lock()
-            .await
-            .store(msg.batch, temp_tag);
+        blobs.batches().await.store(msg.batch, temp_tag);
         progress
             .send(BatchAddStreamResponse::Result { hash })
             .await?;
@@ -1138,13 +1126,13 @@ impl<D: BaoStore> Handler<D> {
             "trying to add missing path: {}",
             root.display()
         );
-        let (tag, _) = self
-            .blobs()
+        let blobs = self.blobs();
+        let (tag, _) = blobs
             .store()
             .import_file(root, import_mode, format, import_progress)
             .await?;
         let hash = *tag.hash();
-        self.inner.blob_batches.lock().await.store(batch, tag);
+        blobs.batches().await.store(batch, tag);
 
         progress.send(BatchAddPathProgress::Done { hash }).await?;
         Ok(())
@@ -1288,25 +1276,21 @@ impl<D: BaoStore> Handler<D> {
         _: BatchCreateRequest,
         mut updates: impl Stream<Item = BatchUpdate> + Send + Unpin + 'static,
     ) -> impl Stream<Item = BatchCreateResponse> {
+        let blobs = self.blobs();
         async move {
-            let batch = self.inner.blob_batches.lock().await.create();
+            let batch = blobs.batches().await.create();
             tokio::spawn(async move {
                 while let Some(item) = updates.next().await {
                     match item {
                         BatchUpdate::Drop(content) => {
                             // this can not fail, since we keep the batch alive.
                             // therefore it is safe to ignore the result.
-                            let _ = self
-                                .inner
-                                .blob_batches
-                                .lock()
-                                .await
-                                .remove_one(batch, &content);
+                            let _ = blobs.batches().await.remove_one(batch, &content);
                         }
                         BatchUpdate::Ping => {}
                     }
                 }
-                self.inner.blob_batches.lock().await.remove(batch);
+                blobs.batches().await.remove(batch);
             });
             BatchCreateResponse::Id(batch)
         }

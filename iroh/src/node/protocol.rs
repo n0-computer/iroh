@@ -15,13 +15,14 @@ use iroh_blobs::{
         progress::{AsyncChannelProgressSender, ProgressSender},
         SetTagOption,
     },
-    HashAndFormat,
+    HashAndFormat, TempTag,
 };
 use iroh_net::{endpoint::Connecting, Endpoint, NodeAddr};
 use tracing::{debug, warn};
 
 use crate::{
-    client::blobs::DownloadMode, rpc_protocol::blobs::DownloadRequest as BlobDownloadRequest,
+    client::blobs::DownloadMode,
+    rpc_protocol::blobs::{BatchId, DownloadRequest as BlobDownloadRequest},
 };
 
 /// Handler for incoming connections.
@@ -101,13 +102,65 @@ pub(crate) struct BlobsProtocol<S> {
     store: S,
     events: EventSender,
     downloader: Downloader,
+    batches: tokio::sync::Mutex<BlobBatches>,
 }
 
 /// Name used for logging when new node addresses are added from gossip.
 const BLOB_DOWNLOAD_SOURCE_NAME: &str = "blob_download";
 
+/// Keeps track of all the currently active batch operations of the blobs api.
+#[derive(Debug, Default)]
+pub(crate) struct BlobBatches {
+    /// Currently active batches
+    batches: BTreeMap<BatchId, BlobBatch>,
+    /// Used to generate new batch ids.
+    max: u64,
+}
+
+/// A single batch of blob operations
+#[derive(Debug, Default)]
+struct BlobBatch {
+    /// The tags in this batch.
+    tags: BTreeMap<HashAndFormat, Vec<TempTag>>,
+}
+
+impl BlobBatches {
+    /// Create a new unique batch id.
+    pub(crate) fn create(&mut self) -> BatchId {
+        let id = self.max;
+        self.max += 1;
+        BatchId(id)
+    }
+
+    /// Store a temp tag in a batch identified by a batch id.
+    pub(crate) fn store(&mut self, batch: BatchId, tt: TempTag) {
+        let entry = self.batches.entry(batch).or_default();
+        entry.tags.entry(tt.hash_and_format()).or_default().push(tt);
+    }
+
+    /// Remove a tag from a batch.
+    pub(crate) fn remove_one(&mut self, batch: BatchId, content: &HashAndFormat) -> Result<()> {
+        if let Some(batch) = self.batches.get_mut(&batch) {
+            if let Some(tags) = batch.tags.get_mut(content) {
+                tags.pop();
+                if tags.is_empty() {
+                    batch.tags.remove(content);
+                }
+                return Ok(());
+            }
+        }
+        // this can happen if we try to upgrade a tag from an expired batch
+        anyhow::bail!("tag not found in batch");
+    }
+
+    /// Remove an entire batch.
+    pub(crate) fn remove(&mut self, batch: BatchId) {
+        self.batches.remove(&batch);
+    }
+}
+
 impl<S: iroh_blobs::store::Store> BlobsProtocol<S> {
-    pub fn new_with_events(
+    pub(crate) fn new_with_events(
         store: S,
         rt: LocalPoolHandle,
         events: EventSender,
@@ -118,14 +171,19 @@ impl<S: iroh_blobs::store::Store> BlobsProtocol<S> {
             store,
             events,
             downloader,
+            batches: Default::default(),
         }
     }
 
-    pub fn store(&self) -> &S {
+    pub(crate) fn store(&self) -> &S {
         &self.store
     }
 
-    pub async fn download(
+    pub(crate) async fn batches(&self) -> tokio::sync::MutexGuard<'_, BlobBatches> {
+        self.batches.lock().await
+    }
+
+    pub(crate) async fn download(
         &self,
         endpoint: Endpoint,
         req: BlobDownloadRequest,
