@@ -42,7 +42,7 @@ impl<T: Send + Sync + 'static> IntoArcAny for T {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(super) struct ProtocolMap(BTreeMap<&'static [u8], Arc<dyn ProtocolHandler>>);
+pub(super) struct ProtocolMap(BTreeMap<Vec<u8>, Arc<dyn ProtocolHandler>>);
 
 impl ProtocolMap {
     /// Returns the registered protocol handler for an ALPN as a concrete type.
@@ -59,12 +59,12 @@ impl ProtocolMap {
     }
 
     /// Inserts a protocol handler.
-    pub(super) fn insert(&mut self, alpn: &'static [u8], handler: Arc<dyn ProtocolHandler>) {
+    pub(super) fn insert(&mut self, alpn: Vec<u8>, handler: Arc<dyn ProtocolHandler>) {
         self.0.insert(alpn, handler);
     }
 
     /// Returns an iterator of all registered ALPN protocol identifiers.
-    pub(super) fn alpns(&self) -> impl Iterator<Item = &&[u8]> {
+    pub(super) fn alpns(&self) -> impl Iterator<Item = &Vec<u8>> {
         self.0.keys()
     }
 
