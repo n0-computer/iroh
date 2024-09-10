@@ -13,7 +13,7 @@
 
 use std::any::Any;
 use std::future::{Future, IntoFuture};
-use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
@@ -61,6 +61,18 @@ const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 #[cfg(not(any(test, feature = "test-utils")))]
 const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
+/// The default bind address for the iroh IPv4 socket.
+pub const DEFAULT_BIND_ADDR_V4: SocketAddrV4 =
+    SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_BIND_PORT);
+
+/// The default bind address for the iroh IPv6 socket.
+pub const DEFAULT_BIND_ADDR_V6: SocketAddrV6 =
+    SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + 1, 0, 0);
+
+/// Default bind address for the node.
+/// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
+pub const DEFAULT_BIND_PORT: u16 = 11204;
+
 /// Builder for [`Endpoint`].
 ///
 /// By default the endpoint will generate a new random [`SecretKey`], which will result in a
@@ -69,7 +81,7 @@ const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 /// To create the [`Endpoint`] call [`Builder::bind`].
 #[derive(Debug)]
 pub struct Builder {
-    secret_key: Option<SecretKey>,
+    pub(super) secret_key: SecretKey,
     relay_mode: RelayMode,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
@@ -81,14 +93,14 @@ pub struct Builder {
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
-    addr_v4: Option<SocketAddrV4>,
-    addr_v6: Option<SocketAddrV6>,
+    addr_v4: SocketAddrV4,
+    addr_v6: SocketAddrV6,
 }
 
 impl Default for Builder {
     fn default() -> Self {
         Self {
-            secret_key: Default::default(),
+            secret_key: SecretKey::generate(),
             relay_mode: default_relay_mode(),
             alpn_protocols: Default::default(),
             transport_config: Default::default(),
@@ -99,8 +111,8 @@ impl Default for Builder {
             dns_resolver: None,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
-            addr_v4: None,
-            addr_v6: None,
+            addr_v4: DEFAULT_BIND_ADDR_V4,
+            addr_v6: DEFAULT_BIND_ADDR_V6,
         }
     }
 }
@@ -114,7 +126,7 @@ impl Builder {
     /// Binds the magic endpoint.
     pub async fn bind(self) -> Result<Endpoint> {
         let relay_map = self.relay_mode.relay_map();
-        let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
+        let secret_key = self.secret_key;
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config.unwrap_or_default()),
             keylog: self.keylog,
@@ -125,8 +137,8 @@ impl Builder {
             .unwrap_or_else(|| default_resolver().clone());
 
         let msock_opts = magicsock::Options {
-            addr_v4: self.addr_v4,
-            addr_v6: self.addr_v6,
+            addr_v4: Some(self.addr_v4),
+            addr_v6: Some(self.addr_v6),
             secret_key,
             relay_map,
             node_map: self.node_map,
@@ -148,7 +160,7 @@ impl Builder {
     ///
     /// By default will use `0.0.0.0:0` to bind to.
     pub fn bind_addr_v4(mut self, addr: SocketAddrV4) -> Self {
-        self.addr_v4.replace(addr);
+        self.addr_v4 = addr;
         self
     }
 
@@ -159,7 +171,14 @@ impl Builder {
     ///
     /// By default will use `[::]:0` to bind to.
     pub fn bind_addr_v6(mut self, addr: SocketAddrV6) -> Self {
-        self.addr_v6.replace(addr);
+        self.addr_v6 = addr;
+        self
+    }
+
+    /// Bind random port
+    pub fn bind_random_port(mut self) -> Self {
+        self.addr_v4.set_port(0);
+        self.addr_v6.set_port(0);
         self
     }
 
@@ -170,7 +189,7 @@ impl Builder {
     ///
     /// If not set, a new secret key will be generated.
     pub fn secret_key(mut self, secret_key: SecretKey) -> Self {
-        self.secret_key = Some(secret_key);
+        self.secret_key = secret_key;
         self
     }
 
@@ -216,8 +235,8 @@ impl Builder {
     /// direct addresses or relay URLs will fail.
     ///
     /// See the documentation of the [`Discovery`] trait for details.
-    pub fn discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
-        self.discovery = Some(discovery);
+    pub fn discovery(mut self, discovery: Option<Box<dyn Discovery>>) -> Self {
+        self.discovery = discovery;
         self
     }
 

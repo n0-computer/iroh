@@ -131,6 +131,7 @@ mod magicsock;
 pub mod metrics;
 pub mod net;
 pub mod netcheck;
+pub mod node;
 pub mod ping;
 pub mod portmapper;
 pub mod relay;

@@ -119,7 +119,7 @@ pub(crate) type JoinErrToStr = Box<dyn Fn(JoinError) -> String + Send + Sync + '
 struct NodeInner<D> {
     db: PhantomData<D>,
     rpc_addr: Option<SocketAddr>,
-    endpoint: Endpoint,
+    endpoint: iroh_net::node::Node,
     cancel_token: CancellationToken,
     client: crate::client::Iroh,
     local_pool_handle: LocalPoolHandle,
@@ -159,7 +159,7 @@ impl<D: BaoStore> Node<D> {
     /// ALPNs other than the iroh internal ones. This is useful for some advanced
     /// use cases.
     pub fn endpoint(&self) -> &Endpoint {
-        &self.inner.endpoint
+        self.inner.endpoint.endpoint()
     }
 
     /// The address on which the node socket is bound.
@@ -168,7 +168,7 @@ impl<D: BaoStore> Node<D> {
     /// can contact the node consider using [`Node::local_endpoint_addresses`].  However the
     /// port will always be the concrete port.
     pub fn local_address(&self) -> Vec<SocketAddr> {
-        let (v4, v6) = self.inner.endpoint.bound_sockets();
+        let (v4, v6) = self.endpoint().bound_sockets();
         let mut addrs = vec![v4];
         if let Some(v6) = v6 {
             addrs.push(v6);
@@ -178,7 +178,7 @@ impl<D: BaoStore> Node<D> {
 
     /// Lists the local endpoint of this node.
     pub fn local_endpoints(&self) -> DirectAddrsStream {
-        self.inner.endpoint.direct_addresses()
+        self.endpoint().direct_addresses()
     }
 
     /// Convenience method to get just the addr part of [`Node::local_endpoints`].
@@ -188,7 +188,7 @@ impl<D: BaoStore> Node<D> {
 
     /// Returns the [`PublicKey`] of the node.
     pub fn node_id(&self) -> PublicKey {
-        self.inner.endpoint.secret_key().public()
+        self.endpoint().secret_key().public()
     }
 
     /// Return a client to control this node over an in-memory channel.
@@ -203,7 +203,7 @@ impl<D: BaoStore> Node<D> {
 
     /// Get the relay server we are connected to.
     pub fn home_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
-        self.inner.endpoint.home_relay()
+        self.endpoint().home_relay()
     }
 
     /// Returns `Some(addr)` if an RPC endpoint is running, `None` otherwise.
@@ -255,6 +255,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
     async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
         let endpoints = self
             .endpoint
+            .endpoint()
             .direct_addresses()
             .next()
             .await
@@ -273,7 +274,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         nodes_data_path: Option<PathBuf>,
         local_pool: LocalPool,
     ) {
-        let (ipv4, ipv6) = self.endpoint.bound_sockets();
+        let (ipv4, ipv6) = self.endpoint.endpoint().bound_sockets();
         debug!(
             "listening at: {}{}",
             ipv4,
@@ -345,7 +346,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         }
 
         if let Some(nodes_data_path) = nodes_data_path {
-            let ep = self.endpoint.clone();
+            let ep = self.endpoint.endpoint().clone();
             let token = self.cancel_token.clone();
 
             join_set.spawn(
@@ -412,7 +413,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                     }
                 },
                 // handle incoming p2p connections.
-                Some(incoming) = self.endpoint.accept() => {
+                Some(incoming) = self.endpoint.endpoint().accept() => {
                     let protocols = protocols.clone();
                     join_set.spawn(async move {
                         handle_connection(incoming, protocols).await;
@@ -465,6 +466,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             // connections: Operations will immediately fail with ConnectionError::LocallyClosed.
             // All streams are interrupted, this is not graceful.
             self.endpoint
+                .endpoint()
                 .clone()
                 .close(error_code.into(), error_code.reason()),
             // Shutdown protocol handlers.

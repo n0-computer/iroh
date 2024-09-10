@@ -771,7 +771,7 @@ impl<D: BaoStore> Handler<D> {
 
     fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = DownloadResponse> {
         let (sender, receiver) = async_channel::bounded(1024);
-        let endpoint = self.inner.endpoint.clone();
+        let endpoint = self.inner.endpoint.endpoint().clone();
         let progress = AsyncChannelProgressSender::new(sender);
 
         let blobs_protocol = self
@@ -948,7 +948,7 @@ impl<D: BaoStore> Handler<D> {
 
     async fn node_status(self, _: StatusRequest) -> RpcResult<NodeStatus> {
         Ok(NodeStatus {
-            addr: self.inner.endpoint.node_addr().await?,
+            addr: self.inner.endpoint.endpoint().node_addr().await?,
             listen_addrs: self
                 .inner
                 .local_endpoint_addresses()
@@ -961,17 +961,17 @@ impl<D: BaoStore> Handler<D> {
 
     #[allow(clippy::unused_async)]
     async fn node_id(self, _: IdRequest) -> RpcResult<NodeId> {
-        Ok(self.inner.endpoint.secret_key().public())
+        Ok(self.inner.endpoint.endpoint().secret_key().public())
     }
 
     async fn node_addr(self, _: AddrRequest) -> RpcResult<NodeAddr> {
-        let addr = self.inner.endpoint.node_addr().await?;
+        let addr = self.inner.endpoint.endpoint().node_addr().await?;
         Ok(addr)
     }
 
     #[allow(clippy::unused_async)]
     async fn node_relay(self, _: RelayRequest) -> RpcResult<Option<RelayUrl>> {
-        Ok(self.inner.endpoint.home_relay())
+        Ok(self.inner.endpoint.endpoint().home_relay())
     }
 
     #[allow(clippy::unused_async)]
@@ -1319,7 +1319,7 @@ impl<D: BaoStore> Handler<D> {
     ) -> impl Stream<Item = RpcResult<RemoteInfosIterResponse>> + Send + 'static {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = async_channel::bounded(32);
-        let mut infos: Vec<_> = self.inner.endpoint.remote_info_iter().collect();
+        let mut infos: Vec<_> = self.inner.endpoint.endpoint().remote_info_iter().collect();
         infos.sort_by_key(|n| n.node_id.to_string());
         self.local_pool_handle().spawn_detached(|| async move {
             for info in infos {
@@ -1333,7 +1333,7 @@ impl<D: BaoStore> Handler<D> {
     #[allow(clippy::unused_async)]
     async fn remote_info(self, req: RemoteInfoRequest) -> RpcResult<RemoteInfoResponse> {
         let RemoteInfoRequest { node_id } = req;
-        let info = self.inner.endpoint.remote_info(node_id);
+        let info = self.inner.endpoint.endpoint().remote_info(node_id);
         Ok(RemoteInfoResponse { info })
     }
 
@@ -1341,7 +1341,7 @@ impl<D: BaoStore> Handler<D> {
     #[allow(clippy::unused_async)]
     async fn node_add_addr(self, req: AddAddrRequest) -> RpcResult<()> {
         let AddAddrRequest { addr } = req;
-        self.inner.endpoint.add_node_addr(addr)?;
+        self.inner.endpoint.endpoint().add_node_addr(addr)?;
         Ok(())
     }
 

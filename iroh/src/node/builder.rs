@@ -1,5 +1,5 @@
 use std::{
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -48,23 +48,11 @@ use super::{
     docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
 };
 
-/// Default bind address for the node.
-/// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
-pub const DEFAULT_BIND_PORT: u16 = 11204;
-
 /// How long we wait at most for some endpoints to be discovered.
 const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 
 /// Default interval between GC runs.
 const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
-
-/// The default bind address for the iroh IPv4 socket.
-pub const DEFAULT_BIND_ADDR_V4: SocketAddrV4 =
-    SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_BIND_PORT);
-
-/// The default bind address for the iroh IPv6 socket.
-pub const DEFAULT_BIND_ADDR_V6: SocketAddrV6 =
-    SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + 1, 0, 0);
 
 /// Storage backend for documents.
 #[derive(Debug, Clone)]
@@ -106,25 +94,23 @@ pub struct Builder<D>
 where
     D: Map,
 {
-    storage: StorageConfig,
-    addr_v4: SocketAddrV4,
-    addr_v6: SocketAddrV6,
-    secret_key: SecretKey,
+    net_builder: iroh_net::node::Builder,
+
+    // RPC
     rpc_endpoint: IrohServerEndpoint,
     rpc_addr: Option<SocketAddr>,
+
+    // Blobs
+    storage: StorageConfig,
     blobs_store: D,
-    keylog: bool,
-    relay_mode: RelayMode,
     gc_policy: GcPolicy,
-    dns_resolver: Option<DnsResolver>,
-    node_discovery: DiscoveryConfig,
-    docs_storage: DocsStorage,
-    #[cfg(any(test, feature = "test-utils"))]
-    insecure_skip_relay_cert_verify: bool,
     /// Callback to register when a gc loop is done
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
     blob_events: EventSender,
+
+    // Docs
+    docs_storage: DocsStorage,
 }
 
 /// Configuration for storage.
@@ -228,28 +214,14 @@ fn mk_external_rpc() -> IrohServerEndpoint {
 
 impl Default for Builder<iroh_blobs::store::mem::Store> {
     fn default() -> Self {
-        // Use staging in testing
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let relay_mode = RelayMode::Default;
-        #[cfg(any(test, feature = "test-utils"))]
-        let relay_mode = RelayMode::Staging;
-
         Self {
+            net_builder: Default::default(),
             storage: StorageConfig::Mem,
-            addr_v4: DEFAULT_BIND_ADDR_V4,
-            addr_v6: DEFAULT_BIND_ADDR_V6,
-            secret_key: SecretKey::generate(),
             blobs_store: Default::default(),
-            keylog: false,
-            relay_mode,
-            dns_resolver: None,
             rpc_endpoint: mk_external_rpc(),
             rpc_addr: None,
             gc_policy: GcPolicy::Disabled,
             docs_storage: DocsStorage::Memory,
-            node_discovery: Default::default(),
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
             blob_events: Default::default(),
         }
@@ -263,28 +235,14 @@ impl<D: Map> Builder<D> {
         docs_storage: DocsStorage,
         storage: StorageConfig,
     ) -> Self {
-        // Use staging in testing
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let relay_mode = RelayMode::Default;
-        #[cfg(any(test, feature = "test-utils"))]
-        let relay_mode = RelayMode::Staging;
-
         Self {
+            net_builder: Default::default(),
             storage,
-            addr_v4: SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_BIND_PORT),
-            addr_v6: SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + 1, 0, 0),
-            secret_key: SecretKey::generate(),
             blobs_store,
-            keylog: false,
-            relay_mode,
-            dns_resolver: None,
             rpc_endpoint: mk_external_rpc(),
             rpc_addr: None,
             gc_policy: GcPolicy::Disabled,
             docs_storage,
-            node_discovery: Default::default(),
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
             blob_events: Default::default(),
         }
@@ -306,7 +264,7 @@ where
 
     /// Persist all node data in the provided directory.
     pub async fn persist(
-        self,
+        mut self,
         root: impl AsRef<Path>,
     ) -> Result<Builder<iroh_blobs::store::fs::Store>> {
         let root = root.as_ref();
@@ -322,24 +280,17 @@ where
 
         let secret_key_path = IrohPaths::SecretKey.with_root(root);
         let secret_key = load_secret_key(secret_key_path).await?;
+        self.net_builder = self.net_builder.secret_key(secret_key);
 
         Ok(Builder {
+            net_builder: self.net_builder,
             storage: StorageConfig::Persistent(root.into()),
-            addr_v4: self.addr_v4,
-            addr_v6: self.addr_v6,
-            secret_key,
             blobs_store,
-            keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
             rpc_addr: self.rpc_addr,
-            relay_mode: self.relay_mode,
-            dns_resolver: self.dns_resolver,
-            gc_policy: self.gc_policy,
             docs_storage,
-            node_discovery: self.node_discovery,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: false,
             gc_done_callback: self.gc_done_callback,
+            gc_policy: self.gc_policy,
             blob_events: self.blob_events,
         })
     }
@@ -360,7 +311,7 @@ where
 
     /// Configure the default iroh rpc endpoint.
     pub async fn enable_rpc_with_addr(self, mut rpc_addr: SocketAddr) -> Result<Builder<D>> {
-        let (ep, actual_rpc_port) = make_rpc_endpoint(&self.secret_key, rpc_addr)?;
+        let (ep, actual_rpc_port) = make_rpc_endpoint(self.net_builder.get_secret_key(), rpc_addr)?;
         rpc_addr.set_port(actual_rpc_port);
 
         let ep = quic_rpc::transport::boxed::ServerEndpoint::new(ep);
@@ -405,7 +356,7 @@ where
     /// Note that while the default is [`RelayMode::Default`], when using `cfg(test)` or
     /// when the `test-utils` cargo feature [`RelayMode::Staging`] is the default.
     pub fn relay_mode(mut self, relay_mode: RelayMode) -> Self {
-        self.relay_mode = relay_mode;
+        self.net_builder = self.net_builder.relay_mode(relay_mode);
         self
     }
 
@@ -421,7 +372,42 @@ where
     /// [`NodeId`]: crate::base::key::NodeId
     /// [`RelayUrl`]: crate::base::node_addr::RelayUrl
     pub fn node_discovery(mut self, config: DiscoveryConfig) -> Self {
-        self.node_discovery = config;
+        let cfg = match config {
+            DiscoveryConfig::None => None,
+            DiscoveryConfig::Default => {
+                let secret_key = self.net_builder.get_secret_key();
+
+                #[cfg(not(test))]
+                let discovery = {
+                    let mut discovery_services: Vec<Box<dyn Discovery>> = vec![
+                        // Enable DNS discovery by default
+                        Box::new(DnsDiscovery::n0_dns()),
+                        // Enable pkarr publishing by default
+                        Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
+                    ];
+                    // Enable local swarm discovery by default, but fail silently if it errors
+                    match LocalSwarmDiscovery::new(secret_key.public()) {
+                        Err(e) => {
+                            tracing::error!("unable to start LocalSwarmDiscoveryService: {e:?}")
+                        }
+                        Ok(service) => {
+                            discovery_services.push(Box::new(service));
+                        }
+                    }
+                    ConcurrentDiscovery::from_services(discovery_services)
+                };
+                #[cfg(test)]
+                let discovery = ConcurrentDiscovery::from_services(vec![
+                    // Enable DNS discovery by default
+                    Box::new(DnsDiscovery::n0_dns()),
+                    // Enable pkarr publishing by default
+                    Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
+                ]);
+                Some(Box::new(discovery) as Box<dyn Discovery>)
+            }
+            DiscoveryConfig::Custom(cfg) => Some(cfg),
+        };
+        self.net_builder = self.net_builder.discovery(cfg);
         self
     }
 
@@ -434,7 +420,7 @@ where
     /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
     /// here to use a differently configured DNS resolver for this endpoint.
     pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
-        self.dns_resolver = Some(dns_resolver);
+        self.net_builder = self.net_builder.dns_resolver(dns_resolver);
         self
     }
 
@@ -445,7 +431,7 @@ where
     /// Setting the port to `0` will assign a random port.
     /// If the port used is not free, a random different port will be used.
     pub fn bind_addr_v4(mut self, addr: SocketAddrV4) -> Self {
-        self.addr_v4 = addr;
+        self.net_builder = self.net_builder.bind_addr_v4(addr);
         self
     }
 
@@ -456,7 +442,7 @@ where
     /// Setting the port to `0` will assign a random port.
     /// If the port used is not free, a random different port will be used.
     pub fn bind_addr_v6(mut self, addr: SocketAddrV6) -> Self {
-        self.addr_v6 = addr;
+        self.net_builder = self.net_builder.bind_addr_v6(addr);
         self
     }
 
@@ -470,14 +456,13 @@ where
     /// unspecified address, which would result in `0.0.0.0:11204` and `[::]:11205` as bind
     /// addresses unless they are changed.
     pub fn bind_random_port(mut self) -> Self {
-        self.addr_v4.set_port(0);
-        self.addr_v6.set_port(0);
+        self.net_builder = self.net_builder.bind_random_port();
         self
     }
 
     /// Uses the given [`SecretKey`] for the `PublicKey` instead of a newly generated one.
     pub fn secret_key(mut self, secret_key: SecretKey) -> Self {
-        self.secret_key = secret_key;
+        self.net_builder = self.net_builder.secret_key(secret_key);
         self
     }
 
@@ -486,7 +471,9 @@ where
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
-        self.insecure_skip_relay_cert_verify = skip_verify;
+        self.net_builder = self
+            .net_builder
+            .insecure_skip_relay_cert_verify(skip_verify);
         self
     }
 
@@ -503,7 +490,7 @@ where
     /// file will be used to log the SSL pre-master key.  This is useful to inspect captured
     /// traffic.
     pub fn keylog(mut self, keylog: bool) -> Self {
-        self.keylog = keylog;
+        self.net_builder = self.net_builder.keylog(keylog);
         self
     }
 
@@ -533,97 +520,43 @@ where
         }
     }
 
-    async fn build_inner(self) -> Result<ProtocolBuilder<D>> {
+    async fn build_inner(mut self) -> Result<ProtocolBuilder<D>> {
         trace!("building node");
         let lp = LocalPool::new(local_pool::Config {
             panic_mode: PanicMode::LogAndContinue,
             ..Default::default()
         });
         let (endpoint, nodes_data_path) = {
-            let discovery: Option<Box<dyn Discovery>> = match self.node_discovery {
-                DiscoveryConfig::None => None,
-                DiscoveryConfig::Custom(discovery) => Some(discovery),
-                DiscoveryConfig::Default => {
-                    #[cfg(not(test))]
-                    let discovery = {
-                        let mut discovery_services: Vec<Box<dyn Discovery>> = vec![
-                            // Enable DNS discovery by default
-                            Box::new(DnsDiscovery::n0_dns()),
-                            // Enable pkarr publishing by default
-                            Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
-                        ];
-                        // Enable local swarm discovery by default, but fail silently if it errors
-                        match LocalSwarmDiscovery::new(self.secret_key.public()) {
-                            Err(e) => {
-                                tracing::error!("unable to start LocalSwarmDiscoveryService: {e:?}")
-                            }
-                            Ok(service) => {
-                                discovery_services.push(Box::new(service));
-                            }
-                        }
-                        ConcurrentDiscovery::from_services(discovery_services)
-                    };
-                    #[cfg(test)]
-                    let discovery = ConcurrentDiscovery::from_services(vec![
-                        // Enable DNS discovery by default
-                        Box::new(DnsDiscovery::n0_dns()),
-                        // Enable pkarr publishing by default
-                        Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
-                    ]);
-                    Some(Box::new(discovery))
-                }
-            };
-
-            let endpoint = Endpoint::builder()
-                .secret_key(self.secret_key.clone())
-                .proxy_from_env()
-                .keylog(self.keylog)
-                .relay_mode(self.relay_mode);
-            let endpoint = match discovery {
-                Some(discovery) => endpoint.discovery(discovery),
-                None => endpoint,
-            };
-            let mut endpoint = match self.dns_resolver {
-                Some(resolver) => endpoint.dns_resolver(resolver),
-                None => endpoint,
-            };
-
-            #[cfg(any(test, feature = "test-utils"))]
-            {
-                endpoint =
-                    endpoint.insecure_skip_relay_cert_verify(self.insecure_skip_relay_cert_verify);
-            }
-
             let nodes_data_path = match self.storage {
                 StorageConfig::Persistent(ref root) => {
                     let nodes_data_path = IrohPaths::PeerData.with_root(root);
                     let node_addrs = load_node_addrs(&nodes_data_path)
                         .await
                         .context("loading known node addresses")?;
-                    endpoint = endpoint.known_nodes(node_addrs);
+                    self.net_builder = self.net_builder.known_nodes(node_addrs);
                     Some(nodes_data_path)
                 }
                 StorageConfig::Mem => None,
             };
 
-            (
-                endpoint
-                    .bind_addr_v4(self.addr_v4)
-                    .bind_addr_v6(self.addr_v6)
-                    .bind()
-                    .await?,
-                nodes_data_path,
-            )
+            let endpoint = self.net_builder.build().await?;
+
+            (endpoint, nodes_data_path)
         };
         trace!("created endpoint");
 
-        let addr = endpoint.node_addr().await?;
+        let addr = endpoint.endpoint().node_addr().await?;
         trace!("endpoint address: {addr:?}");
 
         // Initialize the gossip protocol.
-        let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
+        let gossip =
+            Gossip::from_endpoint(endpoint.endpoint().clone(), Default::default(), &addr.info);
         // Initialize the downloader.
-        let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
+        let downloader = Downloader::new(
+            self.blobs_store.clone(),
+            endpoint.endpoint().clone(),
+            lp.clone(),
+        );
 
         // Spawn the docs engine, if enabled.
         // This returns None for DocsStorage::Disabled, otherwise Some(DocsEngine).
@@ -631,7 +564,7 @@ where
             self.docs_storage,
             self.blobs_store.clone(),
             self.storage.default_author_storage(),
-            endpoint.clone(),
+            endpoint.endpoint().clone(),
             gossip.clone(),
             downloader.clone(),
         )
@@ -752,17 +685,18 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         self
     }
 
+    /*
     /// Returns a client to control this node over an in-memory channel.
     ///
     /// Note that RPC calls performed with the client will not complete until the node is
     /// spawned.
     pub fn client(&self) -> &crate::client::Iroh {
         &self.inner.client
-    }
+    }*/
 
     /// Returns the [`Endpoint`] of the node.
     pub fn endpoint(&self) -> &Endpoint {
-        &self.inner.endpoint
+        self.inner.endpoint.endpoint()
     }
 
     /// Returns a reference to the used [`LocalPoolHandle`].
@@ -820,14 +754,14 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
             local_pool: rt,
         } = self;
         let protocols = Arc::new(protocols);
-        let node_id = inner.endpoint.node_id();
+        let node_id = inner.endpoint.endpoint().node_id();
 
         // Update the endpoint with our alpns.
         let alpns = protocols
             .alpns()
             .map(|alpn| alpn.to_vec())
             .collect::<Vec<_>>();
-        if let Err(err) = inner.endpoint.set_alpns(alpns) {
+        if let Err(err) = inner.endpoint.endpoint().set_alpns(alpns) {
             inner.shutdown(protocols).await;
             return Err(err);
         }
