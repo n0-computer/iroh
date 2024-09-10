@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 
 use anyhow::ensure;
 use futures_lite::StreamExt;
@@ -15,7 +15,7 @@ use iroh_willow::{
         keys::{NamespaceKind, UserId},
         meadowcap::AccessMode,
     },
-    session::{intents::Completion, Role, SessionMode},
+    session::{intents::Completion, SessionMode},
     store::traits::{EntryOrigin, StoreEvent},
 };
 use proptest::{collection::vec, prelude::Strategy, sample::select};
@@ -54,21 +54,31 @@ enum Operation {
     Write(String, String),
 }
 
-fn simple_str() -> impl Strategy<Value = String> {
+fn simple_key() -> impl Strategy<Value = String> {
     select(&["alpha", "beta", "gamma"]).prop_map(str::to_string)
 }
 
-fn simple_op() -> impl Strategy<Value = Operation> {
-    (simple_str(), simple_str()).prop_map(|(key, value)| Operation::Write(key, value))
+fn simple_value() -> impl Strategy<Value = String> {
+    select(&["red", "blue", "green"]).prop_map(str::to_string)
 }
 
-fn role() -> impl Strategy<Value = Role> {
-    select(&[Role::Alfie, Role::Betty])
+fn simple_op() -> impl Strategy<Value = Operation> {
+    (simple_key(), simple_value()).prop_map(|(key, value)| Operation::Write(key, value))
+}
+
+fn role() -> impl Strategy<Value = Peer> {
+    select(&[Peer::X, Peer::Y])
+}
+
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Ord, PartialOrd)]
+enum Peer {
+    X,
+    Y,
 }
 
 #[proptest]
 fn test_get_many_weird_result(
-    #[strategy(vec((role(), vec(simple_op(), 0..20)), 0..20))] rounds: Vec<(Role, Vec<Operation>)>,
+    #[strategy(vec((role(), vec(simple_op(), 0..20)), 0..20))] rounds: Vec<(Peer, Vec<Operation>)>,
 ) {
     iroh_test::logging::setup_multithreaded();
 
@@ -77,77 +87,114 @@ fn test_get_many_weird_result(
         .build()
         .unwrap()
         .block_on(async {
-            let mut simulated_entries: BTreeMap<(Role, String), String> = BTreeMap::new();
+            let mut simulated_entries: BTreeMap<(Peer, String), String> = BTreeMap::new();
 
-            let (alfie_addr, alfie) = spawn_node().await;
-            let (betty_addr, betty) = spawn_node().await;
-            info!("alfie is {}", alfie_addr.node_id.fmt_short());
-            info!("betty is {}", betty_addr.node_id.fmt_short());
-            alfie.net().add_node_addr(betty_addr.clone()).await?;
-            betty.net().add_node_addr(alfie_addr.clone()).await?;
-            let betty_user = betty.spaces().create_user().await?;
-            let alfie_user = alfie.spaces().create_user().await?;
-            let alfie_space = alfie
-                .spaces()
-                .create(NamespaceKind::Owned, alfie_user)
-                .await?;
+            let (addr_x, iroh_x) = spawn_node().await;
+            let (addr_y, iroh_y) = spawn_node().await;
+            let node_id_x = addr_x.node_id;
+            let node_id_y = addr_y.node_id;
+            iroh_x.net().add_node_addr(addr_y.clone()).await?;
+            iroh_y.net().add_node_addr(addr_x.clone()).await?;
+            let user_x = iroh_x.spaces().create_user().await?;
+            let user_y = iroh_y.spaces().create_user().await?;
+            info!(
+                "X is node {} user {}",
+                node_id_x.fmt_short(),
+                user_x.fmt_short()
+            );
+            info!(
+                "Y is node {} user {}",
+                node_id_y.fmt_short(),
+                user_y.fmt_short()
+            );
+            let space_x = iroh_x.spaces().create(NamespaceKind::Owned, user_x).await?;
 
-            let ticket = alfie_space
-                .share(betty_user, AccessMode::Write, RestrictArea::None)
+            let ticket = space_x
+                .share(user_y, AccessMode::Write, RestrictArea::None)
                 .await?;
 
             // give betty access
-            let (betty_space, syncs) = betty
+            let (space_y, syncs) = iroh_y
                 .spaces()
                 .import_and_sync(ticket, SessionMode::ReconcileOnce)
                 .await?;
 
-            syncs.complete_all().await;
+            let mut completions = syncs.complete_all().await;
+            assert_eq!(completions.len(), 1);
+            let completion = completions.remove(&node_id_x).unwrap();
+            assert!(completion.is_ok());
+            assert_eq!(completion.unwrap(), Completion::Complete);
 
-            for (role, round) in rounds {
-                let (space, user, other_node_id) = match role {
-                    Role::Alfie => (&alfie_space, alfie_user, betty_addr.node_id),
-                    Role::Betty => (&betty_space, betty_user, alfie_addr.node_id),
+            let count = rounds.len();
+            for (i, (peer, round)) in rounds.into_iter().enumerate() {
+                let i = i + 1;
+                let (space, user) = match peer {
+                    Peer::X => (&space_x, user_x),
+                    Peer::Y => (&space_y, user_y),
                 };
+                info!(active=?peer, "[{i}/{count}] round start");
 
                 for Operation::Write(key, value) in round {
+                    info!(?key, ?value, "[{i}/{count}] write");
                     space
                         .insert_bytes(
                             EntryForm::new(user, Path::from_bytes(&[key.as_bytes()])?),
                             value.clone().into_bytes(),
                         )
                         .await?;
-                    simulated_entries.insert((role, key), value);
+                    simulated_entries.insert((peer, key), value);
                 }
 
-                tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    space
-                        .sync_once(other_node_id, AreaOfInterestSelector::Widest)
+                // We sync in both directions. This will only create a single session under the hood.
+                // Awaiting both intents ensures that the sync completed on both sides.
+                // Alernatively, we could sync from one side only, the result must be the same, however we miss
+                // an event in the client currently to know when the betty peer (accepting peer) has finished.
+                let fut_x = async {
+                    space_x
+                        .sync_once(node_id_y, AreaOfInterestSelector::Widest)
                         .await?
-                        .complete(),
-                )
-                .await??;
+                        .complete()
+                        .await?;
+                    anyhow::Ok(())
+                };
+                let fut_y = async {
+                    space_y
+                        .sync_once(node_id_x, AreaOfInterestSelector::Widest)
+                        .await?
+                        .complete()
+                        .await?;
+                    anyhow::Ok(())
+                };
+                let fut = async { tokio::try_join!(fut_x, fut_y) };
+                tokio::time::timeout(Duration::from_secs(5), fut).await??;
+
+                info!("[{i}/{count}] sync complete");
+
+                let map_x = space_to_map(&space_x, &iroh_x, user_x, user_y).await?;
+                let map_y = space_to_map(&space_y, &iroh_y, user_x, user_y).await?;
+                ensure!(
+                    map_x == map_y,
+                    "states out of sync:\n{map_x:#?}\n !=\n{map_y:#?}"
+                );
+
+                ensure!(
+                    map_x == map_y,
+                    "states out of sync:\n{map_x:#?}\n !=\n{map_y:#?}"
+                );
+                ensure!(
+                    simulated_entries == map_x,
+                    "alfie in unexpected state:\n{simulated_entries:#?}\n !=\n{map_x:#?}"
+                );
+                // follows transitively, but still
+                ensure!(
+                    simulated_entries == map_y,
+                    "betty in unexpected state:\n{simulated_entries:#?}\n !=\n{map_y:#?}"
+                );
             }
 
-            let alfie_map = space_to_map(&alfie_space, &alfie, alfie_user, betty_user).await?;
-            let betty_map = space_to_map(&betty_space, &betty, alfie_user, betty_user).await?;
+            info!("completed {count} rounds successfully");
 
-            ensure!(
-                alfie_map == betty_map,
-                "states out of sync:\n{alfie_map:#?}\n !=\n{betty_map:#?}"
-            );
-            ensure!(
-                simulated_entries == alfie_map,
-                "alfie in unexpected state:\n{simulated_entries:#?}\n !=\n{alfie_map:#?}"
-            );
-            // follows transitively, but still
-            ensure!(
-                simulated_entries == betty_map,
-                "betty in unexpected state:\n{simulated_entries:#?}\n !=\n{betty_map:#?}"
-            );
-
-            println!("Success!");
+            tokio::try_join!(iroh_x.shutdown(false), iroh_y.shutdown(false))?;
 
             Ok(())
         })
@@ -157,16 +204,16 @@ fn test_get_many_weird_result(
 async fn space_to_map(
     space: &Space,
     node: &Iroh,
-    alfie_user: UserId,
-    betty_user: UserId,
-) -> anyhow::Result<BTreeMap<(Role, String), String>> {
-    let role_lookup = BTreeMap::from([(alfie_user, Role::Alfie), (betty_user, Role::Betty)]);
+    user_x: UserId,
+    user_y: UserId,
+) -> anyhow::Result<BTreeMap<(Peer, String), String>> {
+    let role_lookup = BTreeMap::from([(user_x, Peer::X), (user_y, Peer::Y)]);
     let entries = space
         .get_many(Range3d::new_full())
         .await?
         .try_collect::<_, _, Vec<_>>()
         .await?;
-    let mut map: BTreeMap<(Role, String), String> = BTreeMap::new();
+    let mut map: BTreeMap<(Peer, String), String> = BTreeMap::new();
     for auth_entry in entries {
         let (entry, auth) = auth_entry.into_parts();
         let key_component = entry
@@ -178,11 +225,11 @@ async fn space_to_map(
         let value = node.blobs().read_to_bytes(entry.payload_digest().0).await?;
 
         let user = auth.capability.receiver();
-        let role = role_lookup
+        let peer = role_lookup
             .get(user)
             .ok_or_else(|| anyhow::anyhow!("foreign write?"))?;
 
-        map.insert((*role, key), String::from_utf8_lossy(&value).to_string());
+        map.insert((*peer, key), String::from_utf8_lossy(&value).to_string());
     }
 
     Ok(map)
@@ -193,6 +240,7 @@ struct AnyhowStdErr(anyhow::Error);
 
 impl std::fmt::Display for AnyhowStdErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        println!("FAIL: {self:?}");
         self.0.fmt(f)
     }
 }
@@ -394,7 +442,7 @@ async fn spaces_subscription() -> TestResult {
 #[tokio::test]
 async fn test_restricted_area() -> testresult::TestResult {
     iroh_test::logging::setup_multithreaded();
-    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+    const TIMEOUT: Duration = Duration::from_secs(2);
     let (alfie_addr, alfie) = spawn_node().await;
     let (betty_addr, betty) = spawn_node().await;
     info!("alfie is {}", alfie_addr.node_id.fmt_short());
