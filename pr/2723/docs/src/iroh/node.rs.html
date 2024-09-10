@@ -883,60 +883,6 @@
 <a href="#883" id="883">883</a>
 <a href="#884" id="884">884</a>
 <a href="#885" id="885">885</a>
-<a href="#886" id="886">886</a>
-<a href="#887" id="887">887</a>
-<a href="#888" id="888">888</a>
-<a href="#889" id="889">889</a>
-<a href="#890" id="890">890</a>
-<a href="#891" id="891">891</a>
-<a href="#892" id="892">892</a>
-<a href="#893" id="893">893</a>
-<a href="#894" id="894">894</a>
-<a href="#895" id="895">895</a>
-<a href="#896" id="896">896</a>
-<a href="#897" id="897">897</a>
-<a href="#898" id="898">898</a>
-<a href="#899" id="899">899</a>
-<a href="#900" id="900">900</a>
-<a href="#901" id="901">901</a>
-<a href="#902" id="902">902</a>
-<a href="#903" id="903">903</a>
-<a href="#904" id="904">904</a>
-<a href="#905" id="905">905</a>
-<a href="#906" id="906">906</a>
-<a href="#907" id="907">907</a>
-<a href="#908" id="908">908</a>
-<a href="#909" id="909">909</a>
-<a href="#910" id="910">910</a>
-<a href="#911" id="911">911</a>
-<a href="#912" id="912">912</a>
-<a href="#913" id="913">913</a>
-<a href="#914" id="914">914</a>
-<a href="#915" id="915">915</a>
-<a href="#916" id="916">916</a>
-<a href="#917" id="917">917</a>
-<a href="#918" id="918">918</a>
-<a href="#919" id="919">919</a>
-<a href="#920" id="920">920</a>
-<a href="#921" id="921">921</a>
-<a href="#922" id="922">922</a>
-<a href="#923" id="923">923</a>
-<a href="#924" id="924">924</a>
-<a href="#925" id="925">925</a>
-<a href="#926" id="926">926</a>
-<a href="#927" id="927">927</a>
-<a href="#928" id="928">928</a>
-<a href="#929" id="929">929</a>
-<a href="#930" id="930">930</a>
-<a href="#931" id="931">931</a>
-<a href="#932" id="932">932</a>
-<a href="#933" id="933">933</a>
-<a href="#934" id="934">934</a>
-<a href="#935" id="935">935</a>
-<a href="#936" id="936">936</a>
-<a href="#937" id="937">937</a>
-<a href="#938" id="938">938</a>
-<a href="#939" id="939">939</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node API
 //!
 //! An iroh node is a server that is identified by an Ed25519 keypair and is
@@ -974,7 +920,7 @@
 //! well, without going through [`client`](crate::client::Iroh))
 //!
 //! To shut down the node, call [`Node::shutdown`].
-</span><span class="kw">use </span>std::collections::{BTreeMap, BTreeSet};
+</span><span class="kw">use </span>std::collections::BTreeSet;
 <span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::net::SocketAddr;
@@ -990,7 +936,6 @@
 <span class="kw">use </span>iroh_blobs::protocol::Closed;
 <span class="kw">use </span>iroh_blobs::store::Store <span class="kw">as </span>BaoStore;
 <span class="kw">use </span>iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
-<span class="kw">use </span>iroh_blobs::{HashAndFormat, TempTag};
 <span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
 <span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 <span class="kw">use </span>iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
@@ -1005,7 +950,6 @@
 
 <span class="kw">use </span><span class="kw">crate</span>::node::nodes_storage::store_node_addrs;
 <span class="kw">use </span><span class="kw">crate</span>::node::{docs::DocsEngine, protocol::ProtocolMap};
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::blobs::BatchId;
 
 <span class="kw">mod </span>builder;
 <span class="kw">mod </span>docs;
@@ -1064,59 +1008,7 @@
     endpoint: Endpoint,
     cancel_token: CancellationToken,
     client: <span class="kw">crate</span>::client::Iroh,
-    blob_batches: tokio::sync::Mutex&lt;BlobBatches&gt;,
     local_pool_handle: LocalPoolHandle,
-}
-
-<span class="doccomment">/// Keeps track of all the currently active batch operations of the blobs api.
-</span><span class="attr">#[derive(Debug, Default)]
-</span><span class="kw">struct </span>BlobBatches {
-    <span class="doccomment">/// Currently active batches
-    </span>batches: BTreeMap&lt;BatchId, BlobBatch&gt;,
-    <span class="doccomment">/// Used to generate new batch ids.
-    </span>max: u64,
-}
-
-<span class="doccomment">/// A single batch of blob operations
-</span><span class="attr">#[derive(Debug, Default)]
-</span><span class="kw">struct </span>BlobBatch {
-    <span class="doccomment">/// The tags in this batch.
-    </span>tags: BTreeMap&lt;HashAndFormat, Vec&lt;TempTag&gt;&gt;,
-}
-
-<span class="kw">impl </span>BlobBatches {
-    <span class="doccomment">/// Create a new unique batch id.
-    </span><span class="kw">fn </span>create(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; BatchId {
-        <span class="kw">let </span>id = <span class="self">self</span>.max;
-        <span class="self">self</span>.max += <span class="number">1</span>;
-        BatchId(id)
-    }
-
-    <span class="doccomment">/// Store a temp tag in a batch identified by a batch id.
-    </span><span class="kw">fn </span>store(<span class="kw-2">&amp;mut </span><span class="self">self</span>, batch: BatchId, tt: TempTag) {
-        <span class="kw">let </span>entry = <span class="self">self</span>.batches.entry(batch).or_default();
-        entry.tags.entry(tt.hash_and_format()).or_default().push(tt);
-    }
-
-    <span class="doccomment">/// Remove a tag from a batch.
-    </span><span class="kw">fn </span>remove_one(<span class="kw-2">&amp;mut </span><span class="self">self</span>, batch: BatchId, content: <span class="kw-2">&amp;</span>HashAndFormat) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(batch) = <span class="self">self</span>.batches.get_mut(<span class="kw-2">&amp;</span>batch) {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(tags) = batch.tags.get_mut(content) {
-                tags.pop();
-                <span class="kw">if </span>tags.is_empty() {
-                    batch.tags.remove(content);
-                }
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-            }
-        }
-        <span class="comment">// this can happen if we try to upgrade a tag from an expired batch
-        </span><span class="macro">anyhow::bail!</span>(<span class="string">"tag not found in batch"</span>);
-    }
-
-    <span class="doccomment">/// Remove an entire batch.
-    </span><span class="kw">fn </span>remove(<span class="kw-2">&amp;mut </span><span class="self">self</span>, batch: BatchId) {
-        <span class="self">self</span>.batches.remove(<span class="kw-2">&amp;</span>batch);
-    }
 }
 
 <span class="doccomment">/// In memory node.

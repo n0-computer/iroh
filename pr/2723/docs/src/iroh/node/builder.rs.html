@@ -942,7 +942,6 @@
 <a href="#942" id="942">942</a>
 <a href="#943" id="943">943</a>
 <a href="#944" id="944">944</a>
-<a href="#945" id="945">945</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1597,7 +1596,6 @@
             client,
             cancel_token: CancellationToken::new(),
             local_pool_handle: lp.handle().clone(),
-            blob_batches: Default::default(),
         });
 
         <span class="kw">let </span>protocol_builder = ProtocolBuilder {
