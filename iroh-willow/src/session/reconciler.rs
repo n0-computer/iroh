@@ -547,7 +547,7 @@ impl Target {
             self.mark_our_next_range_pending();
         }
 
-        // If we know for sure that our range is empty, we can skip creating the entry iterator alltogether.
+        // If we know for sure that our range is empty, we can skip creating the entry iterator.
         let mut iter = if is_empty {
             None
         } else {

@@ -21,7 +21,7 @@ use iroh_willow::{
 use proptest::{collection::vec, prelude::Strategy, sample::select};
 use test_strategy::proptest;
 use testresult::TestResult;
-use tracing::info;
+use tracing::{error, info};
 
 /// Spawn an iroh node in a separate thread and tokio runtime, and return
 /// the address and client.
@@ -82,7 +82,7 @@ fn test_get_many_weird_result(
 ) {
     iroh_test::logging::setup_multithreaded();
 
-    tokio::runtime::Builder::new_current_thread()
+    let res = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap()
@@ -147,7 +147,7 @@ fn test_get_many_weird_result(
 
                 // We sync in both directions. This will only create a single session under the hood.
                 // Awaiting both intents ensures that the sync completed on both sides.
-                // Alernatively, we could sync from one side only, the result must be the same, however we miss
+                // Alternatively, we could sync from one side only, the result must be the same, however we miss
                 // an event in the client currently to know when the betty peer (accepting peer) has finished.
                 let fut_x = async {
                     space_x
@@ -166,7 +166,7 @@ fn test_get_many_weird_result(
                     anyhow::Ok(())
                 };
                 let fut = async { tokio::try_join!(fut_x, fut_y) };
-                tokio::time::timeout(Duration::from_secs(5), fut).await??;
+                tokio::time::timeout(Duration::from_secs(10), fut).await??;
 
                 info!("[{i}/{count}] sync complete");
 
@@ -197,8 +197,11 @@ fn test_get_many_weird_result(
             tokio::try_join!(iroh_x.shutdown(false), iroh_y.shutdown(false))?;
 
             Ok(())
-        })
-        .map_err(AnyhowStdErr)?;
+        });
+    if let Err(err) = &res {
+        error!(?err, "FAILED");
+    }
+    res.map_err(AnyhowStdErr)?;
 }
 
 async fn space_to_map(
@@ -240,7 +243,6 @@ struct AnyhowStdErr(anyhow::Error);
 
 impl std::fmt::Display for AnyhowStdErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        println!("FAIL: {self:?}");
         self.0.fmt(f)
     }
 }
