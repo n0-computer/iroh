@@ -415,7 +415,7 @@ impl PeerManager {
             .context("got conn task output for unknown peer")?;
         match out {
             Err(err) => {
-                trace!(?our_role, current_state=%peer_info.state, "conn task failed: {err:#?}");
+                debug!(?our_role, current_state=%peer_info.state, "conn task failed: {err:#?}");
                 match err.downcast_ref() {
                     Some(ConnectionError::LocallyClosed) => {
                         // We cancelled the connection, nothing to do.
@@ -436,9 +436,9 @@ impl PeerManager {
                         let peer = self.peers.remove(&peer).expect("just checked");
                         match peer.state {
                             PeerState::Pending { intents, .. } => {
-                                warn!(?err, "connection failed while pending");
+                                warn!(?err, "connection failed while still pending");
                                 // If we were still in pending state, terminate all pending intents.
-                                let err = Arc::new(Error::Net(err));
+                                let err = Arc::new(Error::Net(err.context("failed while pending")));
                                 join_all(
                                     intents
                                         .into_iter()
@@ -447,11 +447,11 @@ impl PeerManager {
                                 .await;
                             }
                             PeerState::Closing { intents } => {
-                                debug!(?err, "connection failed to close gracefully");
+                                warn!(?err, "connection failed to close gracefully");
                                 // If we were are in closing state, we still forward the connection error to the intents.
                                 // This would be the place where we'd implement retries: instead of aborting the intents, resubmit them.
                                 // Right now, we only resubmit intents that were submitted while terminating a session, and only if the session closed gracefully.
-                                let err = Arc::new(Error::Net(err));
+                                let err = Arc::new(Error::Net(err.context("failed while closing")));
                                 join_all(
                                     intents
                                         .into_iter()
@@ -542,9 +542,7 @@ impl PeerManager {
             Ok(ConnStep::Done { conn }) => {
                 trace!("connection loop finished");
                 let fut = async move {
-                    terminate_gracefully(&conn).await?;
-                    // The connection is fully closed.
-                    drop(conn);
+                    terminate_gracefully(conn).await?;
                     Ok(ConnStep::Closed)
                 };
                 let abort_handle = spawn_conn_task(&mut self.conn_tasks, peer_info, fut);
