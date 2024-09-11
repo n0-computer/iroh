@@ -122,12 +122,12 @@ impl Source {
         false
     }
 
-    /// Returns true if the [`Source::Discovery`] service is the same as the given string.
-    pub fn is_discovery(&self, s: &str) -> bool {
-        if let Source::Discovery { service } = self {
-            return service == s;
+    /// Returns true if the source is a [`Source::Discovery`]
+    pub fn is_discovery(&self) -> bool {
+        match self {
+            Source::Discovery { .. } => true,
+            _ => false,
         }
-        false
     }
 }
 

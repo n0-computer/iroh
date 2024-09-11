@@ -30,7 +30,7 @@ use crate::{
 const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
 
 /// Provenance string
-pub const SERVICE_NAME: &str = "local";
+const PROVENANCE: &str = "local";
 
 /// How long we will wait before we stop sending discovery items
 const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
@@ -271,7 +271,7 @@ impl From<&Peer> for DiscoveryItem {
             .map(|(ip, port)| SocketAddr::new(*ip, *port))
             .collect();
         DiscoveryItem {
-            provenance: SERVICE_NAME,
+            provenance: PROVENANCE,
             last_updated: None,
             addr_info: AddrInfo {
                 relay_url: None,
