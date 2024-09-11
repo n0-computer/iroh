@@ -411,8 +411,8 @@ mod tests {
                 assert_eq!(got_ids, node_ids);
                 anyhow::Ok(())
             };
-            let res = tokio::time::timeout(Duration::from_secs(5), test).await??;
-            Ok(res)
+            tokio::time::timeout(Duration::from_secs(5), test).await??;
+            Ok(())
         }
 
         fn make_discoverer() -> Result<(PublicKey, LocalSwarmDiscovery)> {

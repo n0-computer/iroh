@@ -121,14 +121,6 @@ impl Source {
         }
         false
     }
-
-    /// Returns true if the source is a [`Source::Discovery`]
-    pub fn is_discovery(&self) -> bool {
-        match self {
-            Source::Discovery { .. } => true,
-            _ => false,
-        }
-    }
 }
 
 impl NodeMap {

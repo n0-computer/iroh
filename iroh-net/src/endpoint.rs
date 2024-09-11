@@ -773,10 +773,9 @@ impl Endpoint {
             .list_remote_infos()
             .into_iter()
             .filter(move |remote| {
-                remote
-                    .sources
-                    .iter()
-                    .any(|(source, elapsed)| source.is_discovery() && elapsed <= &duration)
+                remote.sources.iter().any(|(source, elapsed)| {
+                    matches!(source, Source::Discovery { .. }) && elapsed <= &duration
+                })
             })
     }
 
