@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
+use async_trait::async_trait;
 use futures_util::stream::BoxStream;
 use pkarr::SignedPacket;
 use tokio::{
@@ -120,6 +121,7 @@ impl PkarrPublisher {
     }
 }
 
+#[async_trait]
 impl Discovery for PkarrPublisher {
     fn publish(&self, info: &AddrInfo) {
         self.update_addr_info(info);
@@ -234,6 +236,7 @@ impl PkarrResolver {
     }
 }
 
+#[async_trait]
 impl Discovery for PkarrResolver {
     fn resolve(
         &self,
@@ -257,8 +260,8 @@ impl Discovery for PkarrResolver {
         Some(Box::pin(stream))
     }
 
-    fn subscribe(&self) -> Option<BoxStream<'static, (NodeId, DiscoveryItem)>> {
-        let stream = self.events.subscribe();
+    async fn subscribe(&self) -> Option<BoxStream<'static, (NodeId, DiscoveryItem)>> {
+        let stream = self.events.subscribe().await;
         Some(stream)
     }
 }

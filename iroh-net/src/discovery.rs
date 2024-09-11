@@ -41,8 +41,9 @@
 
 use std::{sync::Arc, time::Duration};
 
-use crate::{util::AbortingJoinHandle, AddrInfo, Endpoint, NodeId};
+use crate::{AddrInfo, Endpoint, NodeId};
 use anyhow::{anyhow, ensure, Result};
+use async_trait::async_trait;
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
 use tokio::{
@@ -52,6 +53,7 @@ use tokio::{
     },
     task::JoinHandle,
 };
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error_span, trace, warn, Instrument};
 
 pub mod dns;
@@ -79,6 +81,7 @@ pub const SOURCE_NAME: &str = "discovery";
 /// refresh, it should start its own task.
 ///
 /// [`RelayUrl`]: crate::relay::RelayUrl
+#[async_trait]
 pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// Publishes the given [`AddrInfo`] to the discovery mechanism.
     ///
@@ -102,7 +105,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     }
 
     /// Subscribe to all addresses that get discovered.
-    fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
+    async fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
         None
     }
 }
@@ -116,7 +119,7 @@ pub(crate) struct DiscoveryEvents(std::sync::Arc<Inner>);
 #[derive(derive_more::Debug)]
 struct Inner {
     #[allow(dead_code)]
-    handle: AbortingJoinHandle<()>,
+    handle: AbortOnDropHandle<()>,
     sender: tokio::sync::mpsc::Sender<Message>,
 }
 
@@ -157,7 +160,7 @@ impl DiscoveryEvents {
 
         let handle = tokio::spawn(event_loop);
         Self(Arc::new(Inner {
-            handle: handle.into(),
+            handle: AbortOnDropHandle::new(handle),
             sender,
         }))
     }
@@ -177,12 +180,9 @@ impl DiscoveryEvents {
     ///
     /// If a stream is dropped, the `DiscoveryEvent` struct will clean
     /// up the dangling subscription, even if you do not unsubscribe.
-    pub(crate) fn subscribe(&self) -> BoxStream<(NodeId, DiscoveryItem)> {
+    pub(crate) async fn subscribe(&self) -> BoxStream<(NodeId, DiscoveryItem)> {
         let (send, recv) = channel(20);
-        let subscribe_sender = self.0.sender.clone();
-        tokio::spawn(async move {
-            subscribe_sender.send(Message::Subscribe(send)).await.ok();
-        });
+        self.0.sender.send(Message::Subscribe(send)).await.ok();
         let stream = tokio_stream::wrappers::ReceiverStream::new(recv);
         Box::pin(stream)
     }
@@ -239,6 +239,7 @@ where
     }
 }
 
+#[async_trait]
 impl Discovery for ConcurrentDiscovery {
     fn publish(&self, info: &AddrInfo) {
         for service in &self.services {
@@ -260,11 +261,13 @@ impl Discovery for ConcurrentDiscovery {
         Some(Box::pin(streams))
     }
 
-    fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
-        let streams = self
-            .services
-            .iter()
-            .filter_map(|service| service.subscribe());
+    async fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
+        let mut streams = vec![];
+        for service in self.services.iter() {
+            if let Some(stream) = service.subscribe().await {
+                streams.push(stream)
+            }
+        }
 
         let streams = futures_buffered::MergeBounded::from_iter(streams);
         Some(Box::pin(streams))
@@ -487,6 +490,7 @@ mod tests {
         events: DiscoveryEvents,
     }
 
+    #[async_trait]
     impl Discovery for TestDiscovery {
         fn publish(&self, info: &AddrInfo) {
             if !self.publish {
@@ -544,14 +548,15 @@ mod tests {
             Some(stream)
         }
 
-        fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
-            let stream = self.events.subscribe();
+        async fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
+            let stream = self.events.subscribe().await;
             Some(stream)
         }
     }
 
     #[derive(Debug)]
     struct EmptyDiscovery;
+    #[async_trait]
     impl Discovery for EmptyDiscovery {
         fn publish(&self, _info: &AddrInfo) {}
 
@@ -563,7 +568,7 @@ mod tests {
             Some(futures_lite::stream::empty().boxed())
         }
 
-        fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
+        async fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
             Some(futures_lite::stream::empty().boxed())
         }
     }

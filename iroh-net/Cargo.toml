@@ -16,6 +16,7 @@ rust-version = "1.76"
 workspace = true
 
 [dependencies]
+async-trait = "0.1.77"
 anyhow = { version = "1" }
 base64 = "0.22.1"
 backoff = "0.4.0"

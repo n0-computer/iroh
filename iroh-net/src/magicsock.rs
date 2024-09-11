@@ -1841,7 +1841,7 @@ impl Actor {
         let mut discovery_events: BoxStream<(NodeId, DiscoveryItem)> =
             Box::pin(futures_lite::stream::empty());
         if let Some(d) = self.msock.discovery() {
-            if let Some(events) = d.subscribe() {
+            if let Some(events) = d.subscribe().await {
                 discovery_events = events;
             }
         }

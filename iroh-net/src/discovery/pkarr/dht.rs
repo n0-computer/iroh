@@ -22,6 +22,7 @@ use crate::{
 };
 use futures_lite::{stream::Boxed, StreamExt};
 
+use async_trait::async_trait;
 use genawaiter::sync::{Co, Gen};
 use pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
@@ -356,6 +357,7 @@ impl DhtDiscovery {
     }
 }
 
+#[async_trait]
 impl Discovery for DhtDiscovery {
     fn publish(&self, info: &AddrInfo) {
         let Some(keypair) = &self.0.secret_key else {
@@ -394,8 +396,8 @@ impl Discovery for DhtDiscovery {
         Some(Gen::new(|co| async move { this.gen_resolve(node_id, co).await }).boxed())
     }
 
-    fn subscribe(&self) -> Option<Boxed<(NodeId, DiscoveryItem)>> {
-        let stream = self.0.events.subscribe();
+    async fn subscribe(&self) -> Option<Boxed<(NodeId, DiscoveryItem)>> {
+        let stream = self.0.events.subscribe().await;
         Some(stream)
     }
 }
@@ -430,6 +432,10 @@ mod tests {
             .client(client)
             .build()?;
         let relay_url: RelayUrl = Url::parse("https://example.com")?.into();
+
+        // subscribe to discovery events
+        let mut events = discovery.subscribe().await.unwrap();
+
         discovery.publish(&AddrInfo {
             relay_url: Some(relay_url.clone()),
             direct_addresses: Default::default(),
@@ -447,6 +453,14 @@ mod tests {
                 found_relay_urls.insert(url);
             }
         }
+        let mut event_got_url = None;
+        while let Some((_, item)) = events.next().await {
+            if let Some(url) = item.addr_info.relay_url {
+                event_got_url = Some(url);
+                break;
+            }
+        }
+        assert_eq!(&event_got_url.unwrap(), &relay_url);
         assert!(found_relay_urls.contains(&relay_url));
         Ok(())
     }

@@ -12,8 +12,10 @@ use std::{
 use anyhow::Result;
 use derive_more::FromStr;
 use futures_lite::stream::Boxed as BoxStream;
+use futures_util::FutureExt;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
+use async_trait::async_trait;
 use iroh_base::key::PublicKey;
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::{sync::mpsc, task::JoinSet};
@@ -279,18 +281,19 @@ impl From<&Peer> for DiscoveryItem {
     }
 }
 
+#[async_trait]
 impl Discovery for LocalSwarmDiscovery {
     fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let (send, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
-        tokio::spawn(async move {
+        let stream = async move {
             discovery_sender
                 .send(Message::SendAddrs(node_id, send))
                 .await
                 .ok();
-        });
-        let stream = tokio_stream::wrappers::ReceiverStream::new(recv);
-        Some(Box::pin(stream))
+            tokio_stream::wrappers::ReceiverStream::new(recv)
+        };
+        Some(Box::pin(stream.flatten_stream()))
     }
 
     fn publish(&self, info: &AddrInfo) {
@@ -304,14 +307,11 @@ impl Discovery for LocalSwarmDiscovery {
         });
     }
 
-    fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
+    async fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
         let (sender, recv) = mpsc::channel(20);
-        let discovery_sender = self.sender.clone();
-        tokio::spawn(async move {
-            discovery_sender.send(Message::Subscribe(sender)).await.ok();
-        });
-
+        self.sender.send(Message::Subscribe(sender)).await.ok();
         let stream = tokio_stream::wrappers::ReceiverStream::new(recv);
+
         Some(Box::pin(stream))
     }
 }
@@ -327,7 +327,7 @@ mod tests {
         use testresult::TestResult;
 
         #[tokio::test]
-        async fn test_local_swarm_discovery() -> TestResult {
+        async fn local_swarm_discovery_smoke() -> TestResult {
             let _guard = iroh_test::logging::setup();
             let (_, discovery_a) = make_discoverer()?;
             let (node_id_b, discovery_b) = make_discoverer()?;
@@ -343,6 +343,10 @@ mod tests {
             // resolve twice to ensure we can create separate streams for the same node_id
             let mut s1 = discovery_a.resolve(ep.clone(), node_id_b).unwrap();
             let mut s2 = discovery_a.resolve(ep, node_id_b).unwrap();
+
+            tracing::debug!("Subscribe to node a's discovery events");
+            let mut events = discovery_a.subscribe().await.unwrap();
+
             tracing::debug!(?node_id_b, "Discovering node id b");
             // publish discovery_b's address
             discovery_b.publish(&addr_info);
@@ -354,7 +358,55 @@ mod tests {
                 .unwrap()?;
             assert_eq!(s1_res.addr_info, addr_info);
             assert_eq!(s2_res.addr_info, addr_info);
+
+            if let Some((id, item)) = events.next().await {
+                assert_eq!(node_id_b, id);
+                assert_eq!(addr_info, item.addr_info);
+            }
+
             Ok(())
+        }
+
+        #[tokio::test]
+        async fn test_subscribe() -> TestResult {
+            // number of nodes
+            let num_nodes = 5;
+            let mut node_ids = BTreeSet::new();
+            let mut discoverers = vec![];
+            let (_, discovery) = make_discoverer()?;
+            let addr_info = AddrInfo {
+                relay_url: None,
+                direct_addresses: BTreeSet::from(["0.0.0.0:11111".parse()?]),
+            };
+
+            for _ in 0..num_nodes {
+                let (node_id, discovery) = make_discoverer()?;
+                node_ids.insert(node_id);
+                discovery.publish(&addr_info);
+                discoverers.push(discovery);
+            }
+
+            let mut events = discovery.subscribe().await.unwrap();
+
+            let test = async move {
+                let mut got_ids = BTreeSet::new();
+                while got_ids.len() != num_nodes {
+                    if let Some((id, _)) = events.next().await {
+                        if node_ids.contains(&id) {
+                            got_ids.insert(id);
+                        }
+                    } else {
+                        anyhow::bail!(
+                            "no more events, only got {} ids, expected {num_nodes}\n",
+                            got_ids.len()
+                        );
+                    }
+                }
+                assert_eq!(got_ids, node_ids);
+                anyhow::Ok(())
+            };
+            let res = tokio::time::timeout(Duration::from_secs(5), test).await??;
+            Ok(res)
         }
 
         fn make_discoverer() -> Result<(PublicKey, LocalSwarmDiscovery)> {

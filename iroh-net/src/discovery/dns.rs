@@ -1,6 +1,7 @@
 //! DNS node discovery for iroh-net
 
 use anyhow::Result;
+use async_trait::async_trait;
 use futures_lite::stream::Boxed as BoxStream;
 
 use crate::{
@@ -83,6 +84,7 @@ impl DnsDiscovery {
     }
 }
 
+#[async_trait]
 impl Discovery for DnsDiscovery {
     fn resolve(&self, ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let resolver = ep.dns_resolver().clone();
@@ -104,8 +106,8 @@ impl Discovery for DnsDiscovery {
         Some(Box::pin(stream))
     }
 
-    fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
-        let stream = self.events.subscribe();
+    async fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
+        let stream = self.events.subscribe().await;
         Some(stream)
     }
 }
