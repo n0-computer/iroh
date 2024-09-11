@@ -774,7 +774,8 @@ impl Endpoint {
             .into_iter()
             .filter(move |remote| {
                 remote.sources.iter().any(|(source, elapsed)| {
-                    source.is_named(crate::discovery::SOURCE_NAME) && elapsed <= &duration
+                    source.is_discovery(crate::discovery::local_swarm_discovery::SERVICE_NAME)
+                        && elapsed <= &duration
                 })
             })
     }

@@ -99,6 +99,12 @@ pub enum Source {
     Relay,
     /// Application layer added the node directly.
     App,
+    /// The node was discovered by a discovery service.
+    #[strum(serialize = "{service}")]
+    Discovery {
+        /// The name of the discovery service that discovered the node.
+        service: String,
+    },
     /// Application layer with a specific name added the node directly.
     #[strum(serialize = "{name}")]
     NamedApp {
@@ -112,6 +118,14 @@ impl Source {
     pub fn is_named(&self, named_app: &str) -> bool {
         if let Source::NamedApp { name } = self {
             return name == named_app;
+        }
+        false
+    }
+
+    /// Returns true if the [`Source::Discovery`] service is the same as the given string.
+    pub fn is_discovery(&self, s: &str) -> bool {
+        if let Source::Discovery { service } = self {
+            return service == s;
         }
         false
     }

@@ -30,7 +30,7 @@ use crate::{
 const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
 
 /// Provenance string
-const PROVENANCE: &str = "local.swarm.discovery";
+pub const SERVICE_NAME: &str = "local";
 
 /// How long we will wait before we stop sending discovery items
 const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
@@ -271,7 +271,7 @@ impl From<&Peer> for DiscoveryItem {
             .map(|(ip, port)| SocketAddr::new(*ip, *port))
             .collect();
         DiscoveryItem {
-            provenance: PROVENANCE,
+            provenance: SERVICE_NAME,
             last_updated: None,
             addr_info: AddrInfo {
                 relay_url: None,
@@ -327,7 +327,14 @@ mod tests {
         use testresult::TestResult;
 
         #[tokio::test]
-        async fn local_swarm_discovery_smoke() -> TestResult {
+        async fn local_swarm_disovery_smoke() -> TestResult {
+            // need to ensure that these tests run one after the other, otherwise
+            // they interfer with each other
+            test_local_swarm_discovery().await?;
+            test_subscribe().await
+        }
+
+        async fn test_local_swarm_discovery() -> TestResult {
             let _guard = iroh_test::logging::setup();
             let (_, discovery_a) = make_discoverer()?;
             let (node_id_b, discovery_b) = make_discoverer()?;
@@ -367,7 +374,6 @@ mod tests {
             Ok(())
         }
 
-        #[tokio::test]
         async fn test_subscribe() -> TestResult {
             // number of nodes
             let num_nodes = 5;

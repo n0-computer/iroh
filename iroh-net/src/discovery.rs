@@ -62,9 +62,6 @@ pub mod dns;
 pub mod local_swarm_discovery;
 pub mod pkarr;
 
-/// Name used for logging when new node addresses are added from discovery.
-pub const SOURCE_NAME: &str = "discovery";
-
 /// Node discovery for [`super::Endpoint`].
 ///
 /// This trait defines publishing and resolving addressing information for a [`NodeId`].
@@ -418,7 +415,7 @@ impl DiscoveryTask {
                         info: r.addr_info,
                         node_id,
                     };
-                    ep.add_node_addr_with_source(addr, SOURCE_NAME).ok();
+                    ep.add_node_addr_with_source(addr, r.provenance).ok();
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
