@@ -2513,10 +2513,10 @@
             .list_remote_infos()
             .into_iter()
             .filter(<span class="kw">move </span>|remote| {
-                remote.sources.iter().any(|(source, elapsed)| {
-                    source.is_discovery(<span class="kw">crate</span>::discovery::local_swarm_discovery::SERVICE_NAME)
-                        &amp;&amp; elapsed &lt;= <span class="kw-2">&amp;</span>duration
-                })
+                remote
+                    .sources
+                    .iter()
+                    .any(|(source, elapsed)| source.is_discovery() &amp;&amp; elapsed &lt;= <span class="kw-2">&amp;</span>duration)
             })
     }
 

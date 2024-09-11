@@ -452,7 +452,7 @@
 </span><span class="kw">const </span>N0_LOCAL_SWARM: <span class="kw-2">&amp;</span>str = <span class="string">"iroh.local.swarm"</span>;
 
 <span class="doccomment">/// Provenance string
-</span><span class="kw">pub const </span>SERVICE_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"local"</span>;
+</span><span class="kw">const </span>PROVENANCE: <span class="kw-2">&amp;</span>str = <span class="string">"local"</span>;
 
 <span class="doccomment">/// How long we will wait before we stop sending discovery items
 </span><span class="kw">const </span>DISCOVERY_DURATION: Duration = Duration::from_secs(<span class="number">10</span>);
@@ -692,7 +692,7 @@
             .map(|(ip, port)| SocketAddr::new(<span class="kw-2">*</span>ip, <span class="kw-2">*</span>port))
             .collect();
         DiscoveryItem {
-            provenance: SERVICE_NAME,
+            provenance: PROVENANCE,
             last_updated: <span class="prelude-val">None</span>,
             addr_info: AddrInfo {
                 relay_url: <span class="prelude-val">None</span>,

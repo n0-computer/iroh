@@ -961,13 +961,13 @@
         <span class="bool-val">false
     </span>}
 
-    <span class="doccomment">/// Returns true if the [`Source::Discovery`] service is the same as the given string.
-    </span><span class="kw">pub fn </span>is_discovery(<span class="kw-2">&amp;</span><span class="self">self</span>, s: <span class="kw-2">&amp;</span>str) -&gt; bool {
-        <span class="kw">if let </span>Source::Discovery { service } = <span class="self">self </span>{
-            <span class="kw">return </span>service == s;
+    <span class="doccomment">/// Returns true if the source is a [`Source::Discovery`]
+    </span><span class="kw">pub fn </span>is_discovery(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="kw">match </span><span class="self">self </span>{
+            Source::Discovery { .. } =&gt; <span class="bool-val">true</span>,
+            <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
         }
-        <span class="bool-val">false
-    </span>}
+    }
 }
 
 <span class="kw">impl </span>NodeMap {
