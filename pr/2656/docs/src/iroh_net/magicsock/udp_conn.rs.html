@@ -286,10 +286,6 @@
 <a href="#286" id="286">286</a>
 <a href="#287" id="287">287</a>
 <a href="#288" id="288">288</a>
-<a href="#289" id="289">289</a>
-<a href="#290" id="290">290</a>
-<a href="#291" id="291">291</a>
-<a href="#292" id="292">292</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     fmt::Debug,
     future::Future,
@@ -306,7 +302,6 @@
 <span class="kw">use </span>tokio::io::Interest;
 <span class="kw">use </span>tracing::{debug, trace, warn};
 
-<span class="kw">use </span><span class="kw">crate</span>::net::IpFamily;
 <span class="kw">use </span><span class="kw">crate</span>::net::UdpSocket;
 
 <span class="doccomment">/// A UDP socket implementing Quinn's [`AsyncUdpSocket`].
@@ -321,8 +316,8 @@
         <span class="self">self</span>.io.clone()
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>bind(port: u16, network: IpFamily) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>sock = bind(port, network)<span class="question-mark">?</span>;
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>bind(addr: SocketAddr) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>sock = bind(addr)<span class="question-mark">?</span>;
         <span class="kw">let </span>state = quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(<span class="kw-2">&amp;</span>sock))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             io: Arc::new(sock),
@@ -403,8 +398,8 @@
     }
 }
 
-<span class="kw">fn </span>bind(port: u16, network: IpFamily) -&gt; anyhow::Result&lt;UdpSocket&gt; {
-    <span class="macro">debug!</span>(<span class="question-mark">?</span>network, %port, <span class="string">"binding"</span>);
+<span class="kw">fn </span>bind(<span class="kw-2">mut </span>addr: SocketAddr) -&gt; anyhow::Result&lt;UdpSocket&gt; {
+    <span class="macro">debug!</span>(%addr, <span class="string">"binding"</span>);
 
     <span class="comment">// Build a list of preferred ports.
     // - Best is the port that the user requested.
@@ -412,8 +407,8 @@
     // - If those fail, fall back to 0.
 
     </span><span class="kw">let </span><span class="kw-2">mut </span>ports = Vec::new();
-    <span class="kw">if </span>port != <span class="number">0 </span>{
-        ports.push(port);
+    <span class="kw">if </span>addr.port() != <span class="number">0 </span>{
+        ports.push(addr.port());
     }
     <span class="comment">// Backup port
     </span>ports.push(<span class="number">0</span>);
@@ -422,25 +417,22 @@
     <span class="macro">debug!</span>(<span class="question-mark">?</span>ports, <span class="string">"candidate ports"</span>);
 
     <span class="kw">for </span>port <span class="kw">in </span><span class="kw-2">&amp;</span>ports {
-        <span class="kw">match </span>UdpSocket::bind(network, <span class="kw-2">*</span>port) {
+        addr.set_port(<span class="kw-2">*</span>port);
+        <span class="kw">match </span>UdpSocket::bind_full(addr) {
             <span class="prelude-val">Ok</span>(pconn) =&gt; {
                 <span class="kw">let </span>local_addr = pconn.local_addr().context(<span class="string">"UDP socket not bound"</span>)<span class="question-mark">?</span>;
-                <span class="macro">debug!</span>(<span class="question-mark">?</span>network, %local_addr, <span class="string">"successfully bound"</span>);
+                <span class="macro">debug!</span>(%addr, %local_addr, <span class="string">"successfully bound"</span>);
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(pconn);
             }
             <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="macro">warn!</span>(<span class="question-mark">?</span>network, %port, <span class="string">"failed to bind: {:#?}"</span>, err);
+                <span class="macro">warn!</span>(%addr, <span class="string">"failed to bind: {:#?}"</span>, err);
                 <span class="kw">continue</span>;
             }
         }
     }
 
     <span class="comment">// Failed to bind, including on port 0 (!).
-    </span><span class="macro">bail!</span>(
-        <span class="string">"failed to bind any ports on {:?} (tried {:?})"</span>,
-        network,
-        ports
-    );
+    </span><span class="macro">bail!</span>(<span class="string">"failed to bind any ports on {:?} (tried {:?})"</span>, addr, ports);
 }
 
 <span class="doccomment">/// Poller for when the socket is writable.
@@ -492,7 +484,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use crate</span>::{key, tls};
+    <span class="kw">use crate</span>::{key, net::IpFamily, tls};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span>anyhow::Result;
@@ -534,10 +526,10 @@
     </span>}
 
     <span class="kw">async fn </span>rebinding_conn_send_recv(network: IpFamily) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>m1 = UdpConn::bind(<span class="number">0</span>, network)<span class="question-mark">?</span>;
+        <span class="kw">let </span>m1 = UdpConn::bind(SocketAddr::new(network.unspecified_addr(), <span class="number">0</span>))<span class="question-mark">?</span>;
         <span class="kw">let </span>(m1, _m1_key) = wrap_socket(m1)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>m2 = UdpConn::bind(<span class="number">0</span>, network)<span class="question-mark">?</span>;
+        <span class="kw">let </span>m2 = UdpConn::bind(SocketAddr::new(network.unspecified_addr(), <span class="number">0</span>))<span class="question-mark">?</span>;
         <span class="kw">let </span>(m2, _m2_key) = wrap_socket(m2)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>m1_addr = SocketAddr::new(network.local_addr(), m1.local_addr()<span class="question-mark">?</span>.port());

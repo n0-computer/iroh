@@ -1012,6 +1012,7 @@
 <a href="#1012" id="1012">1012</a>
 <a href="#1013" id="1013">1013</a>
 <a href="#1014" id="1014">1014</a>
+<a href="#1015" id="1015">1015</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Networking for the `iroh-gossip` protocol
 
 </span><span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
@@ -1027,7 +1028,6 @@
     dialer::Dialer,
     endpoint::{get_remote_node_id, Connection},
     key::PublicKey,
-    util::SharedAbortingJoinHandle,
     AddrInfo, Endpoint, NodeAddr, NodeId,
 };
 <span class="kw">use </span>rand::rngs::StdRng;
@@ -1035,10 +1035,12 @@
 <span class="kw">use </span>std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::Instant,
 };
 <span class="kw">use </span>tokio::{sync::mpsc, task::JoinSet};
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error_span, trace, warn, Instrument};
 
 <span class="kw">use </span><span class="self">self</span>::util::{read_message, write_message, Timers};
@@ -1104,7 +1106,7 @@
 </span><span class="kw">pub struct </span>Gossip {
     to_actor_tx: mpsc::Sender&lt;ToActor&gt;,
     on_direct_addrs_tx: mpsc::Sender&lt;Vec&lt;iroh_net::endpoint::DirectAddr&gt;&gt;,
-    _actor_handle: SharedAbortingJoinHandle&lt;()&gt;,
+    _actor_handle: Arc&lt;AbortOnDropHandle&lt;()&gt;&gt;,
     max_message_size: usize,
 }
 
@@ -1152,7 +1154,7 @@
         <span class="self">Self </span>{
             to_actor_tx,
             on_direct_addrs_tx: on_endpoints_tx,
-            _actor_handle: actor_handle.into(),
+            _actor_handle: Arc::new(AbortOnDropHandle::new(actor_handle)),
             max_message_size,
         }
     }
@@ -1859,7 +1861,7 @@
             .alpns(<span class="macro">vec!</span>[GOSSIP_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
-            .bind(<span class="number">0</span>)
+            .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         ep.watch_home_relay().next().<span class="kw">await</span>;

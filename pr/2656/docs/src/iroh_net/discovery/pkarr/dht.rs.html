@@ -450,6 +450,21 @@
 <a href="#450" id="450">450</a>
 <a href="#451" id="451">451</a>
 <a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
+<a href="#456" id="456">456</a>
+<a href="#457" id="457">457</a>
+<a href="#458" id="458">458</a>
+<a href="#459" id="459">459</a>
+<a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a>
+<a href="#465" id="465">465</a>
+<a href="#466" id="466">466</a>
+<a href="#467" id="467">467</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! # Pkarr based node discovery for iroh-net
 //!
 //! Node discovery is being able to find connecting information about an iroh node based on just its node id.
@@ -470,16 +485,17 @@
     },
     dns::node_info::NodeInfo,
     key::SecretKey,
-    util::AbortingJoinHandle,
     AddrInfo, Endpoint, NodeId,
 };
 <span class="kw">use </span>futures_lite::{stream::Boxed, StreamExt};
 
+<span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>genawaiter::sync::{Co, Gen};
 <span class="kw">use </span>pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
     RelaySettings, SignedPacket,
 };
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>url::Url;
 
 <span class="doccomment">/// Republish delay for the DHT. This is only for when the info does not change.
@@ -512,8 +528,9 @@
     </span><span class="attr">#[debug(<span class="string">"Option&lt;PkarrRelayClientAsync&gt;"</span>)]
     </span>pkarr_relay: <span class="prelude-ty">Option</span>&lt;PkarrRelayClientAsync&gt;,
     <span class="doccomment">/// The background task that periodically publishes the node address.
-    /// Due to AbortingJoinHandle, this will be aborted when the discovery is dropped.
-    </span>task: Mutex&lt;<span class="prelude-ty">Option</span>&lt;AbortingJoinHandle&lt;()&gt;&gt;&gt;,
+    ///
+    /// Due to [`AbortOnDropHandle`], this will be aborted when the discovery is dropped.
+    </span>task: Mutex&lt;<span class="prelude-ty">Option</span>&lt;AbortOnDropHandle&lt;()&gt;&gt;&gt;,
     <span class="doccomment">/// Optional keypair for signing the DNS packets.
     ///
     /// If this is None, the node will not publish its address to the DHT.
@@ -807,7 +824,8 @@
     }
 }
 
-<span class="kw">impl </span>Discovery <span class="kw">for </span>DhtDiscovery {
+<span class="attr">#[async_trait]
+</span><span class="kw">impl </span>Discovery <span class="kw">for </span>DhtDiscovery {
     <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
         <span class="kw">let </span><span class="prelude-val">Some</span>(keypair) = <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>.secret_key <span class="kw">else </span>{
             <span class="macro">tracing::debug!</span>(<span class="string">"no keypair set, not publishing"</span>);
@@ -830,7 +848,7 @@
         <span class="kw">let </span>this = <span class="self">self</span>.clone();
         <span class="kw">let </span>curr = tokio::spawn(this.publish_loop(keypair.clone(), signed_packet));
         <span class="kw">let </span><span class="kw-2">mut </span>task = <span class="self">self</span>.<span class="number">0</span>.task.lock().unwrap();
-        <span class="kw-2">*</span>task = <span class="prelude-val">Some</span>(curr.into());
+        <span class="kw-2">*</span>task = <span class="prelude-val">Some</span>(AbortOnDropHandle::new(curr));
     }
 
     <span class="kw">fn </span>resolve(
@@ -845,8 +863,8 @@
         <span class="prelude-val">Some</span>(Gen::new(|co| <span class="kw">async move </span>{ this.gen_resolve(node_id, co).<span class="kw">await </span>}).boxed())
     }
 
-    <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Boxed&lt;(NodeId, DiscoveryItem)&gt;&gt; {
-        <span class="kw">let </span>stream = <span class="self">self</span>.<span class="number">0</span>.events.subscribe();
+    <span class="kw">async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Boxed&lt;(NodeId, DiscoveryItem)&gt;&gt; {
+        <span class="kw">let </span>stream = <span class="self">self</span>.<span class="number">0</span>.events.subscribe().<span class="kw">await</span>;
         <span class="prelude-val">Some</span>(stream)
     }
 }
@@ -864,7 +882,7 @@
     #[ignore = <span class="string">"flaky"</span>]
     </span><span class="kw">async fn </span>dht_discovery_smoke() -&gt; TestResult {
         <span class="kw">let _ </span>= tracing_subscriber::fmt::try_init();
-        <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind(<span class="number">0</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>secret = ep.secret_key().clone();
         <span class="kw">let </span>testnet = mainline::dht::Testnet::new(<span class="number">2</span>);
         <span class="kw">let </span>settings = pkarr::Settings {
@@ -881,6 +899,10 @@
             .client(client)
             .build()<span class="question-mark">?</span>;
         <span class="kw">let </span>relay_url: RelayUrl = Url::parse(<span class="string">"https://example.com"</span>)<span class="question-mark">?</span>.into();
+
+        <span class="comment">// subscribe to discovery events
+        </span><span class="kw">let </span><span class="kw-2">mut </span>events = discovery.subscribe().<span class="kw">await</span>.unwrap();
+
         discovery.publish(<span class="kw-2">&amp;</span>AddrInfo {
             relay_url: <span class="prelude-val">Some</span>(relay_url.clone()),
             direct_addresses: Default::default(),
@@ -898,6 +920,14 @@
                 found_relay_urls.insert(url);
             }
         }
+        <span class="kw">let </span><span class="kw-2">mut </span>event_got_url = <span class="prelude-val">None</span>;
+        <span class="kw">while let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, item)) = events.next().<span class="kw">await </span>{
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = item.addr_info.relay_url {
+                event_got_url = <span class="prelude-val">Some</span>(url);
+                <span class="kw">break</span>;
+            }
+        }
+        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>event_got_url.unwrap(), <span class="kw-2">&amp;</span>relay_url);
         <span class="macro">assert!</span>(found_relay_urls.contains(<span class="kw-2">&amp;</span>relay_url));
         <span class="prelude-val">Ok</span>(())
     }

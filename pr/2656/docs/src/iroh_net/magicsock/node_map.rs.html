@@ -823,6 +823,20 @@
 <a href="#823" id="823">823</a>
 <a href="#824" id="824">824</a>
 <a href="#825" id="825">825</a>
+<a href="#826" id="826">826</a>
+<a href="#827" id="827">827</a>
+<a href="#828" id="828">828</a>
+<a href="#829" id="829">829</a>
+<a href="#830" id="830">830</a>
+<a href="#831" id="831">831</a>
+<a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a>
+<a href="#837" id="837">837</a>
+<a href="#838" id="838">838</a>
+<a href="#839" id="839">839</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, HashMap},
     hash::Hash,
@@ -924,6 +938,12 @@
     </span>Relay,
     <span class="doccomment">/// Application layer added the node directly.
     </span>App,
+    <span class="doccomment">/// The node was discovered by a discovery service.
+    </span><span class="attr">#[strum(serialize = <span class="string">"{service}"</span>)]
+    </span>Discovery {
+        <span class="doccomment">/// The name of the discovery service that discovered the node.
+        </span>service: String,
+    },
     <span class="doccomment">/// Application layer with a specific name added the node directly.
     </span><span class="attr">#[strum(serialize = <span class="string">"{name}"</span>)]
     </span>NamedApp {
@@ -937,6 +957,14 @@
     </span><span class="kw">pub fn </span>is_named(<span class="kw-2">&amp;</span><span class="self">self</span>, named_app: <span class="kw-2">&amp;</span>str) -&gt; bool {
         <span class="kw">if let </span>Source::NamedApp { name } = <span class="self">self </span>{
             <span class="kw">return </span>name == named_app;
+        }
+        <span class="bool-val">false
+    </span>}
+
+    <span class="doccomment">/// Returns true if the [`Source::Discovery`] service is the same as the given string.
+    </span><span class="kw">pub fn </span>is_discovery(<span class="kw-2">&amp;</span><span class="self">self</span>, s: <span class="kw-2">&amp;</span>str) -&gt; bool {
+        <span class="kw">if let </span>Source::Discovery { service } = <span class="self">self </span>{
+            <span class="kw">return </span>service == s;
         }
         <span class="bool-val">false
     </span>}

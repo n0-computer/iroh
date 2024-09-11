@@ -324,6 +324,9 @@
 <a href="#324" id="324">324</a>
 <a href="#325" id="325">325</a>
 <a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information to a [pkarr] relay.
 //!
 //! [pkarr]: https://pkarr.org
@@ -331,6 +334,7 @@
 </span><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>anyhow::{anyhow, bail, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>futures_util::stream::BoxStream;
 <span class="kw">use </span>pkarr::SignedPacket;
 <span class="kw">use </span>tokio::{
@@ -446,7 +450,8 @@
     }
 }
 
-<span class="kw">impl </span>Discovery <span class="kw">for </span>PkarrPublisher {
+<span class="attr">#[async_trait]
+</span><span class="kw">impl </span>Discovery <span class="kw">for </span>PkarrPublisher {
     <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
         <span class="self">self</span>.update_addr_info(info);
     }
@@ -560,7 +565,8 @@
     }
 }
 
-<span class="kw">impl </span>Discovery <span class="kw">for </span>PkarrResolver {
+<span class="attr">#[async_trait]
+</span><span class="kw">impl </span>Discovery <span class="kw">for </span>PkarrResolver {
     <span class="kw">fn </span>resolve(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         _ep: Endpoint,
@@ -583,8 +589,8 @@
         <span class="prelude-val">Some</span>(Box::pin(stream))
     }
 
-    <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="lifetime">'static</span>, (NodeId, DiscoveryItem)&gt;&gt; {
-        <span class="kw">let </span>stream = <span class="self">self</span>.events.subscribe();
+    <span class="kw">async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="lifetime">'static</span>, (NodeId, DiscoveryItem)&gt;&gt; {
+        <span class="kw">let </span>stream = <span class="self">self</span>.events.subscribe().<span class="kw">await</span>;
         <span class="prelude-val">Some</span>(stream)
     }
 }

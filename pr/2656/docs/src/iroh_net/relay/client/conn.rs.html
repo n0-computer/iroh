@@ -556,6 +556,7 @@
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tokio_tungstenite_wasm::WebSocketStream;
 <span class="kw">use </span>tokio_util::codec::{FramedRead, FramedWrite};
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, info_span, trace, Instrument};
 
 <span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::relay::CLIENT_RECV_TIMEOUT;
@@ -565,7 +566,6 @@
     write_frame, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
 };
 <span class="kw">use </span><span class="kw">crate</span>::relay::codec::{ClientInfo, PER_CLIENT_READ_QUEUE_DEPTH};
-<span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
 
 <span class="kw">impl </span>PartialEq <span class="kw">for </span>Conn {
     <span class="kw">fn </span>eq(<span class="kw-2">&amp;</span><span class="self">self</span>, other: <span class="kw-2">&amp;</span><span class="self">Self</span>) -&gt; bool {
@@ -614,8 +614,8 @@
     /// if there is ever an error writing to the server.
     </span>writer_channel: mpsc::Sender&lt;ConnWriterMessage&gt;,
     <span class="doccomment">/// JoinHandle for the [`ConnWriter`] task
-    </span>writer_task: AbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
-    reader_task: AbortingJoinHandle&lt;()&gt;,
+    </span>writer_task: AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
+    reader_task: AbortOnDropHandle&lt;()&gt;,
 }
 
 <span class="kw">impl </span>Conn {
@@ -956,8 +956,8 @@
             inner: Arc::new(ConnTasks {
                 local_addr: <span class="self">self</span>.local_addr,
                 writer_channel: writer_sender,
-                writer_task: writer_task.into(),
-                reader_task: reader_task.into(),
+                writer_task: AbortOnDropHandle::new(writer_task),
+                reader_task: AbortOnDropHandle::new(reader_task),
             }),
         };
 

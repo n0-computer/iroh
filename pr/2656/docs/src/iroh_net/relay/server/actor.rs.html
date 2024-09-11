@@ -756,8 +756,6 @@
 <a href="#756" id="756">756</a>
 <a href="#757" id="757">757</a>
 <a href="#758" id="758">758</a>
-<a href="#759" id="759">759</a>
-<a href="#760" id="760">760</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
 //!
 //! based on tailscale/derp/derp_server.go
@@ -776,6 +774,7 @@
 <span class="kw">use </span>tokio_tungstenite::WebSocketStream;
 <span class="kw">use </span>tokio_util::codec::Framed;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{info_span, trace, Instrument};
 <span class="kw">use </span>tungstenite::protocol::Role;
 
@@ -793,7 +792,6 @@
     server::clients::Clients,
     server::metrics::Metrics,
 };
-<span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
 
 <span class="comment">// TODO: skipping `verboseDropKeys` for now
 
@@ -822,7 +820,7 @@
     <span class="doccomment">/// When true, the server has been shutdown.
     </span>closed: bool,
     <span class="doccomment">/// Server loop handler
-    </span>loop_handler: AbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
+    </span>loop_handler: AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
     <span class="doccomment">/// Done token, forces a hard shutdown. To gracefully shutdown, use [`ServerActorTask::close`]
     </span>cancel: CancellationToken,
     <span class="comment">// TODO: stats collection
@@ -835,11 +833,10 @@
         <span class="kw">let </span>server_actor = ServerActor::new(key.public(), server_channel_r);
         <span class="kw">let </span>cancel_token = CancellationToken::new();
         <span class="kw">let </span>done = cancel_token.clone();
-        <span class="kw">let </span>server_task = tokio::spawn(
+        <span class="kw">let </span>server_task = AbortOnDropHandle::new(tokio::spawn(
             <span class="kw">async move </span>{ server_actor.run(done).<span class="kw">await </span>}
                 .instrument(<span class="macro">info_span!</span>(<span class="string">"relay.server"</span>, me = %key.public().fmt_short())),
-        )
-        .into();
+        ));
         <span class="kw">let </span>meta_cert = init_meta_cert(<span class="kw-2">&amp;</span>key.public());
         <span class="self">Self </span>{
             write_timeout: <span class="prelude-val">Some</span>(WRITE_TIMEOUT),
@@ -1287,7 +1284,7 @@
 
         <span class="comment">// start a task as if a client is doing the "accept" handshake
         </span><span class="kw">let </span>pub_client_key = client_key.public();
-        <span class="kw">let </span>client_task: AbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; = tokio::spawn(<span class="kw">async move </span>{
+        <span class="kw">let </span>client_task = AbortOnDropHandle::&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;::new(tokio::spawn(<span class="kw">async move </span>{
             <span class="comment">// send the client info
             </span><span class="kw">let </span>client_info = ClientInfo {
                 version: PROTOCOL_VERSION,
@@ -1296,8 +1293,7 @@
                 .<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="prelude-val">Ok</span>(())
-        })
-        .into();
+        }));
 
         <span class="comment">// attempt to add the connection to the server
         </span>handler

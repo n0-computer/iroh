@@ -896,6 +896,16 @@
 <a href="#896" id="896">896</a>
 <a href="#897" id="897">897</a>
 <a href="#898" id="898">898</a>
+<a href="#899" id="899">899</a>
+<a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh-net node a [`NodeAddr`] is needed, which needs to contain either a
@@ -939,8 +949,9 @@
 
 </span><span class="kw">use </span>std::{sync::Arc, time::Duration};
 
-<span class="kw">use crate</span>::{util::AbortingJoinHandle, AddrInfo, Endpoint, NodeId};
+<span class="kw">use crate</span>::{AddrInfo, Endpoint, NodeId};
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>futures_lite::stream::{Boxed <span class="kw">as </span>BoxStream, StreamExt};
 <span class="kw">use </span>iroh_base::node_addr::NodeAddr;
 <span class="kw">use </span>tokio::{
@@ -950,6 +961,7 @@
     },
     task::JoinHandle,
 };
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error_span, trace, warn, Instrument};
 
 <span class="kw">pub mod </span>dns;
@@ -957,9 +969,6 @@
 <span class="attr">#[cfg(feature = <span class="string">"discovery-local-network"</span>)]
 </span><span class="kw">pub mod </span>local_swarm_discovery;
 <span class="kw">pub mod </span>pkarr;
-
-<span class="doccomment">/// Name used for logging when new node addresses are added from discovery.
-</span><span class="kw">pub const </span>SOURCE_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"discovery"</span>;
 
 <span class="doccomment">/// Node discovery for [`super::Endpoint`].
 ///
@@ -977,6 +986,7 @@
 /// refresh, it should start its own task.
 ///
 /// [`RelayUrl`]: crate::relay::RelayUrl
+</span><span class="attr">#[async_trait]
 </span><span class="kw">pub trait </span>Discovery: std::fmt::Debug + Send + Sync {
     <span class="doccomment">/// Publishes the given [`AddrInfo`] to the discovery mechanism.
     ///
@@ -1000,7 +1010,7 @@
     </span>}
 
     <span class="doccomment">/// Subscribe to all addresses that get discovered.
-    </span><span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
+    </span><span class="kw">async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
         <span class="prelude-val">None
     </span>}
 }
@@ -1014,11 +1024,12 @@
 <span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">struct </span>Inner {
     <span class="attr">#[allow(dead_code)]
-    </span>handle: AbortingJoinHandle&lt;()&gt;,
-    sender: tokio::sync::mpsc::Sender&lt;Message&gt;,
+    </span>handle: AbortOnDropHandle&lt;()&gt;,
+    <span class="attr">#[debug(skip)]
+    </span>sender: tokio::sync::mpsc::Sender&lt;Message&gt;,
 }
 
-<span class="attr">#[derive(derive_more::Debug)]
+<span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>Message {
     Subscribe(Sender&lt;(NodeId, DiscoveryItem)&gt;),
     Event((NodeId, DiscoveryItem)),
@@ -1039,9 +1050,16 @@
                     <span class="prelude-val">Some</span>(Message::Event(discovery_item)) =&gt; {
                         <span class="kw">let </span><span class="kw-2">mut </span>bad_subscribers = <span class="macro">vec!</span>[];
                         <span class="kw">for </span>(i, subscriber) <span class="kw">in </span>subscribers.iter().enumerate() {
-                            <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = subscriber.send(discovery_item.clone()).<span class="kw">await </span>{
-                                <span class="macro">warn!</span>(<span class="string">"Message::Event - Subscriber {i} dropped: {e}"</span>);
-                                bad_subscribers.push(i);
+                            <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = subscriber.try_send(discovery_item.clone()) {
+                                <span class="kw">match </span>e {
+                                    tokio::sync::mpsc::error::TrySendError::Full(<span class="kw">_</span>) =&gt; {
+                                        <span class="macro">warn!</span>(<span class="string">"Message Event - Subscriber {i} full, dropping message."</span>);
+                                    }
+                                    tokio::sync::mpsc::error::TrySendError::Closed(<span class="kw">_</span>) =&gt; {
+                                        <span class="macro">warn!</span>(<span class="string">"Message::Event - Subscriber {i} closed, dropping subscriber."</span>);
+                                        bad_subscribers.push(i);
+                                    }
+                                }
                             }
                         }
                         <span class="kw">for </span>bad_subscriber <span class="kw">in </span>bad_subscribers {
@@ -1055,7 +1073,7 @@
 
         <span class="kw">let </span>handle = tokio::spawn(event_loop);
         <span class="self">Self</span>(Arc::new(Inner {
-            handle: handle.into(),
+            handle: AbortOnDropHandle::new(handle),
             sender,
         }))
     }
@@ -1070,17 +1088,13 @@
 
     <span class="doccomment">/// Allows you to subscribe to messages from the `DiscoveryEvent`
     ///
-    /// Returns a stream of `DiscoveryItems` and an optional unsubscribe
-    /// function.
+    /// Returns a stream of `DiscoveryItems`
     ///
     /// If a stream is dropped, the `DiscoveryEvent` struct will clean
-    /// up the dangling subscription, even if you do not unsubscribe.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxStream&lt;(NodeId, DiscoveryItem)&gt; {
+    /// up the dangling subscription.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxStream&lt;(NodeId, DiscoveryItem)&gt; {
         <span class="kw">let </span>(send, recv) = channel(<span class="number">20</span>);
-        <span class="kw">let </span>subscribe_sender = <span class="self">self</span>.<span class="number">0</span>.sender.clone();
-        tokio::spawn(<span class="kw">async move </span>{
-            subscribe_sender.send(Message::Subscribe(send)).<span class="kw">await</span>.ok();
-        });
+        <span class="self">self</span>.<span class="number">0</span>.sender.send(Message::Subscribe(send)).<span class="kw">await</span>.ok();
         <span class="kw">let </span>stream = tokio_stream::wrappers::ReceiverStream::new(recv);
         Box::pin(stream)
     }
@@ -1137,7 +1151,8 @@
     }
 }
 
-<span class="kw">impl </span>Discovery <span class="kw">for </span>ConcurrentDiscovery {
+<span class="attr">#[async_trait]
+</span><span class="kw">impl </span>Discovery <span class="kw">for </span>ConcurrentDiscovery {
     <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
         <span class="kw">for </span>service <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.services {
             service.publish(info);
@@ -1158,11 +1173,13 @@
         <span class="prelude-val">Some</span>(Box::pin(streams))
     }
 
-    <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
-        <span class="kw">let </span>streams = <span class="self">self
-            </span>.services
-            .iter()
-            .filter_map(|service| service.subscribe());
+    <span class="kw">async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>streams = <span class="macro">vec!</span>[];
+        <span class="kw">for </span>service <span class="kw">in </span><span class="self">self</span>.services.iter() {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(stream) = service.subscribe().<span class="kw">await </span>{
+                streams.push(stream)
+            }
+        }
 
         <span class="kw">let </span>streams = futures_buffered::MergeBounded::from_iter(streams);
         <span class="prelude-val">Some</span>(Box::pin(streams))
@@ -1306,7 +1323,7 @@
                         info: r.addr_info,
                         node_id,
                     };
-                    ep.add_node_addr_with_source(addr, SOURCE_NAME).ok();
+                    ep.add_node_addr_with_source(addr, r.provenance).ok();
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(tx) = on_first_tx.take() {
                         tx.send(<span class="prelude-val">Ok</span>(())).ok();
                     }
@@ -1342,8 +1359,9 @@
 
     <span class="kw">use </span>parking_lot::Mutex;
     <span class="kw">use </span>rand::Rng;
+    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
-    <span class="kw">use crate</span>::{key::SecretKey, relay::RelayMode, util::AbortingJoinHandle};
+    <span class="kw">use crate</span>::{key::SecretKey, relay::RelayMode};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
@@ -1384,7 +1402,8 @@
         events: DiscoveryEvents,
     }
 
-    <span class="kw">impl </span>Discovery <span class="kw">for </span>TestDiscovery {
+    <span class="attr">#[async_trait]
+    </span><span class="kw">impl </span>Discovery <span class="kw">for </span>TestDiscovery {
         <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
             <span class="kw">if </span>!<span class="self">self</span>.publish {
                 <span class="kw">return</span>;
@@ -1441,15 +1460,16 @@
             <span class="prelude-val">Some</span>(stream)
         }
 
-        <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
-            <span class="kw">let </span>stream = <span class="self">self</span>.events.subscribe();
+        <span class="kw">async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
+            <span class="kw">let </span>stream = <span class="self">self</span>.events.subscribe().<span class="kw">await</span>;
             <span class="prelude-val">Some</span>(stream)
         }
     }
 
     <span class="attr">#[derive(Debug)]
     </span><span class="kw">struct </span>EmptyDiscovery;
-    <span class="kw">impl </span>Discovery <span class="kw">for </span>EmptyDiscovery {
+    <span class="attr">#[async_trait]
+    </span><span class="kw">impl </span>Discovery <span class="kw">for </span>EmptyDiscovery {
         <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, _info: <span class="kw-2">&amp;</span>AddrInfo) {}
 
         <span class="kw">fn </span>resolve(
@@ -1460,7 +1480,7 @@
             <span class="prelude-val">Some</span>(futures_lite::stream::empty().boxed())
         }
 
-        <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
+        <span class="kw">async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
             <span class="prelude-val">Some</span>(futures_lite::stream::empty().boxed())
         }
     }
@@ -1601,13 +1621,13 @@
     <span class="kw">async fn </span>new_endpoint(
         secret: SecretKey,
         disco: <span class="kw">impl </span>Discovery + <span class="lifetime">'static</span>,
-    ) -&gt; (Endpoint, AbortingJoinHandle&lt;anyhow::Result&lt;()&gt;&gt;) {
+    ) -&gt; (Endpoint, AbortOnDropHandle&lt;anyhow::Result&lt;()&gt;&gt;) {
         <span class="kw">let </span>ep = Endpoint::builder()
             .secret_key(secret)
             .discovery(Box::new(disco))
             .relay_mode(RelayMode::Disabled)
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-            .bind(<span class="number">0</span>)
+            .bind()
             .<span class="kw">await
             </span>.unwrap();
 
@@ -1624,7 +1644,7 @@
             }
         });
 
-        (ep, AbortingJoinHandle::from(handle))
+        (ep, AbortOnDropHandle::new(handle))
     }
 
     <span class="kw">fn </span>system_time_now() -&gt; u64 {
@@ -1645,6 +1665,7 @@
 
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>iroh_base::key::SecretKey;
+    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use crate</span>::{
         discovery::pkarr::PkarrPublisher,
@@ -1655,7 +1676,6 @@
             pkarr_dns_state::State,
             run_relay_server, DnsPkarrServer,
         },
-        util::AbortingJoinHandle,
         AddrInfo, Endpoint, NodeAddr,
     };
 
@@ -1766,7 +1786,7 @@
     <span class="kw">async fn </span>ep_with_discovery(
         relay_map: <span class="kw-2">&amp;</span>RelayMap,
         dns_pkarr_server: <span class="kw-2">&amp;</span>DnsPkarrServer,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, AbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;)&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;)&gt; {
         <span class="kw">let </span>secret_key = SecretKey::generate();
         <span class="kw">let </span>ep = Endpoint::builder()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -1775,7 +1795,7 @@
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .dns_resolver(dns_pkarr_server.dns_resolver())
             .discovery(dns_pkarr_server.discovery(secret_key))
-            .bind(<span class="number">0</span>)
+            .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>handle = tokio::spawn({
@@ -1791,7 +1811,7 @@
             }
         });
 
-        <span class="prelude-val">Ok</span>((ep, AbortingJoinHandle::from(handle)))
+        <span class="prelude-val">Ok</span>((ep, AbortOnDropHandle::new(handle)))
     }
 }
 </code></pre></div></section></main></body></html>

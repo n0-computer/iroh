@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["LocalSwarmDiscovery"]};
+window.SIDEBAR_ITEMS = {"constant":["SERVICE_NAME"],"struct":["LocalSwarmDiscovery"]};

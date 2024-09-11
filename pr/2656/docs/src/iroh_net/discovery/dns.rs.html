@@ -109,9 +109,12 @@
 <a href="#109" id="109">109</a>
 <a href="#110" id="110">110</a>
 <a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh-net
 
 </span><span class="kw">use </span>anyhow::Result;
+<span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>futures_lite::stream::Boxed <span class="kw">as </span>BoxStream;
 
 <span class="kw">use crate</span>::{
@@ -194,7 +197,8 @@
     }
 }
 
-<span class="kw">impl </span>Discovery <span class="kw">for </span>DnsDiscovery {
+<span class="attr">#[async_trait]
+</span><span class="kw">impl </span>Discovery <span class="kw">for </span>DnsDiscovery {
     <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, ep: Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
         <span class="kw">let </span>resolver = ep.dns_resolver().clone();
         <span class="kw">let </span>origin_domain = <span class="self">self</span>.origin_domain.clone();
@@ -215,8 +219,8 @@
         <span class="prelude-val">Some</span>(Box::pin(stream))
     }
 
-    <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
-        <span class="kw">let </span>stream = <span class="self">self</span>.events.subscribe();
+    <span class="kw">async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
+        <span class="kw">let </span>stream = <span class="self">self</span>.events.subscribe().<span class="kw">await</span>;
         <span class="prelude-val">Some</span>(stream)
     }
 }

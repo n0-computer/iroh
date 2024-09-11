@@ -681,9 +681,9 @@
 <span class="kw">use </span>futures_util::SinkExt;
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{trace, Instrument};
 
-<span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
 <span class="kw">use crate</span>::{disco::looks_like_disco_wrapper, key::PublicKey};
 
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
@@ -720,7 +720,7 @@
     </span><span class="comment">// TODO: replace with rate limiter, also, this should probably be on the ClientSets, not on
     // the client itself
     // replace_limiter: RateLimiter,
-    </span>io_handle: AbortingJoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
+    </span>io_handle: AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
 
     <span class="doccomment">/// Channels that allow the [`ClientConnManager`] (and the Server) to send
     /// the client messages. These `Senders` correspond to `Receivers` on the
@@ -832,7 +832,7 @@
         ClientConnManager {
             conn_num,
             key,
-            io_handle: io_handle.into(),
+            io_handle: AbortOnDropHandle::new(io_handle),
             done,
             client_channels: ClientChannels {
                 send_queue: send_queue_s,

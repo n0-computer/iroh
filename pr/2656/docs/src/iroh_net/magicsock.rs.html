@@ -3916,6 +3916,19 @@
 <a href="#3916" id="3916">3916</a>
 <a href="#3917" id="3917">3917</a>
 <a href="#3918" id="3918">3918</a>
+<a href="#3919" id="3919">3919</a>
+<a href="#3920" id="3920">3920</a>
+<a href="#3921" id="3921">3921</a>
+<a href="#3922" id="3922">3922</a>
+<a href="#3923" id="3923">3923</a>
+<a href="#3924" id="3924">3924</a>
+<a href="#3925" id="3925">3925</a>
+<a href="#3926" id="3926">3926</a>
+<a href="#3927" id="3927">3927</a>
+<a href="#3928" id="3928">3928</a>
+<a href="#3929" id="3929">3929</a>
+<a href="#3930" id="3930">3930</a>
+<a href="#3931" id="3931">3931</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3937,7 +3950,7 @@
     collections::{BTreeMap, HashMap},
     fmt::Display,
     io,
-    net::{IpAddr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
@@ -3976,7 +3989,7 @@
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    net::{interfaces, ip::LocalAddresses, netmon, IpFamily},
+    net::{interfaces, ip::LocalAddresses, netmon},
     netcheck, portmapper,
     relay::{RelayMap, RelayUrl},
     stun, AddrInfo,
@@ -4013,9 +4026,14 @@
 <span class="doccomment">/// Contains options for `MagicSock::listen`.
 </span><span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Options {
-    <span class="doccomment">/// The port to listen on.
-    /// Zero means to pick one automatically.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) port: u16,
+    <span class="doccomment">/// The IPv4 address to listen on.
+    ///
+    /// If set to `None` it will choose a random port and listen on `0.0.0.0:0`.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
+    <span class="doccomment">/// The IPv6 address to listen on.
+    ///
+    /// If set to `None` it will choose a random port and listen on `[::]:0`.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
 
     <span class="doccomment">/// Secret key for this node.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) secret_key: SecretKey,
@@ -4048,7 +4066,8 @@
 <span class="kw">impl </span>Default <span class="kw">for </span>Options {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
         Options {
-            port: <span class="number">0</span>,
+            addr_v4: <span class="prelude-val">None</span>,
+            addr_v6: <span class="prelude-val">None</span>,
             secret_key: SecretKey::generate(),
             relay_map: RelayMap::empty(),
             node_map: <span class="prelude-val">None</span>,
@@ -4131,7 +4150,7 @@
     <span class="doccomment">/// UDP IPv6 socket
     </span>pconn6: <span class="prelude-ty">Option</span>&lt;UdpConn&gt;,
     <span class="doccomment">/// Netcheck client
-    </span>net_checker: netcheck::Client,
+    </span>net_checker: netcheck::Addr,
     <span class="doccomment">/// The state for an active DiscoKey.
     </span>disco_secrets: DiscoSecrets,
 
@@ -4159,7 +4178,7 @@
 }
 
 <span class="kw">impl </span>MagicSock {
-    <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::port`].
+    <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>spawn(opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;Handle&gt; {
         Handle::new(opts).<span class="kw">await
     </span>}
@@ -5281,7 +5300,7 @@
 }
 
 <span class="kw">impl </span>Handle {
-    <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::port`].
+    <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     </span><span class="kw">async fn </span>new(opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>me = opts.secret_key.public().fmt_short();
         <span class="kw">if </span><span class="kw">crate</span>::util::relay_only_mode() {
@@ -5299,7 +5318,8 @@
         <span class="kw">let </span>port_mapper = portmapper::Client::default();
 
         <span class="kw">let </span>Options {
-            port,
+            addr_v4,
+            addr_v6,
             secret_key,
             relay_map,
             node_map,
@@ -5312,7 +5332,7 @@
 
         <span class="kw">let </span>(relay_recv_sender, relay_recv_receiver) = mpsc::channel(<span class="number">128</span>);
 
-        <span class="kw">let </span>(pconn4, pconn6) = bind(port)<span class="question-mark">?</span>;
+        <span class="kw">let </span>(pconn4, pconn6) = bind(addr_v4, addr_v6)<span class="question-mark">?</span>;
         <span class="kw">let </span>port = pconn4.port();
 
         <span class="comment">// NOTE: we can end up with a zero port if `std::net::UdpSocket::socket_addr` fails
@@ -5352,7 +5372,7 @@
             my_relay: Default::default(),
             pconn4: pconn4.clone(),
             pconn6: pconn6.clone(),
-            net_checker: net_checker.clone(),
+            net_checker: net_checker.addr(),
             disco_secrets: DiscoSecrets::default(),
             node_map,
             relay_actor_sender: relay_actor_sender.clone(),
@@ -5748,11 +5768,10 @@
             <span class="self">self</span>.msock.direct_addr_update_state.running.subscribe();
         <span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher = <span class="self">self</span>.port_mapper.watch_external_address();
 
-        <span class="comment">// TODO: make thing that when poll and stream is none, we return poll pending, otherwise wait on stream
-        </span><span class="kw">let </span><span class="kw-2">mut </span>discovery_events: BoxStream&lt;(NodeId, DiscoveryItem)&gt; =
+        <span class="kw">let </span><span class="kw-2">mut </span>discovery_events: BoxStream&lt;(NodeId, DiscoveryItem)&gt; =
             Box::pin(futures_lite::stream::empty());
         <span class="kw">if let </span><span class="prelude-val">Some</span>(d) = <span class="self">self</span>.msock.discovery() {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(events) = d.subscribe() {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(events) = d.subscribe().<span class="kw">await </span>{
                 discovery_events = events;
             }
         }
@@ -5806,7 +5825,7 @@
                 <span class="prelude-val">Some</span>((node_id, discovery_item)) = discovery_events.next() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: discovery event, address discovered: {discovery_item:?}"</span>);
                     <span class="kw">let </span>node_addr = NodeAddr {node_id, info: discovery_item.addr_info};
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.msock.add_node_addr(node_addr.clone(), Source::NamedApp { name: discovery_item.provenance.into() }) {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.msock.add_node_addr(node_addr.clone(), Source::Discovery { service: discovery_item.provenance.into() }) {
                         <span class="macro">warn!</span>(<span class="question-mark">?</span>node_addr, <span class="string">"unable to add discovered node address to the node map: {e:?}"</span>);
                     }
                 }
@@ -6402,12 +6421,18 @@
 }
 
 <span class="doccomment">/// Initial connection setup.
-</span><span class="kw">fn </span>bind(port: u16) -&gt; <span class="prelude-ty">Result</span>&lt;(UdpConn, <span class="prelude-ty">Option</span>&lt;UdpConn&gt;)&gt; {
-    <span class="kw">let </span>pconn4 = UdpConn::bind(port, IpFamily::V4).context(<span class="string">"bind IPv4 failed"</span>)<span class="question-mark">?</span>;
+</span><span class="kw">fn </span>bind(
+    addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
+    addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(UdpConn, <span class="prelude-ty">Option</span>&lt;UdpConn&gt;)&gt; {
+    <span class="kw">let </span>addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, <span class="number">0</span>));
+    <span class="kw">let </span>pconn4 = UdpConn::bind(SocketAddr::V4(addr_v4)).context(<span class="string">"bind IPv4 failed"</span>)<span class="question-mark">?</span>;
+
     <span class="kw">let </span>ip4_port = pconn4.local_addr()<span class="question-mark">?</span>.port();
     <span class="kw">let </span>ip6_port = ip4_port.checked_add(<span class="number">1</span>).unwrap_or(ip4_port - <span class="number">1</span>);
-
-    <span class="kw">let </span>pconn6 = <span class="kw">match </span>UdpConn::bind(ip6_port, IpFamily::V6) {
+    <span class="kw">let </span>addr_v6 =
+        addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, <span class="number">0</span>, <span class="number">0</span>));
+    <span class="kw">let </span>pconn6 = <span class="kw">match </span>UdpConn::bind(SocketAddr::V6(addr_v6)) {
         <span class="prelude-val">Ok</span>(conn) =&gt; <span class="prelude-val">Some</span>(conn),
         <span class="prelude-val">Err</span>(err) =&gt; {
             <span class="macro">info!</span>(<span class="string">"bind ignoring IPv6 bind failure: {:?}"</span>, err);
@@ -6737,11 +6762,11 @@
     <span class="kw">use </span>anyhow::Context;
     <span class="kw">use </span>iroh_test::CallOnDrop;
     <span class="kw">use </span>rand::RngCore;
+    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use </span><span class="kw">crate</span>::defaults::staging::EU_RELAY_HOSTNAME;
     <span class="kw">use </span><span class="kw">crate</span>::relay::RelayMode;
     <span class="kw">use </span><span class="kw">crate</span>::tls;
-    <span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
     <span class="kw">use </span><span class="kw">crate</span>::Endpoint;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
@@ -6780,7 +6805,7 @@
                 .transport_config(transport_config)
                 .relay_mode(relay_mode)
                 .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
-                .bind(<span class="number">0</span>)
+                .bind()
                 .<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
@@ -7318,7 +7343,7 @@
 
         <span class="kw">fn </span>make_conn(addr: SocketAddr) -&gt; anyhow::Result&lt;quinn::Endpoint&gt; {
             <span class="kw">let </span>key = SecretKey::generate();
-            <span class="kw">let </span>conn = UdpConn::bind(addr.port(), addr.ip().into())<span class="question-mark">?</span>;
+            <span class="kw">let </span>conn = UdpConn::bind(addr)<span class="question-mark">?</span>;
 
             <span class="kw">let </span>quic_server_config = tls::make_server_config(<span class="kw-2">&amp;</span>key, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
@@ -7562,7 +7587,8 @@
     </span><span class="attr">#[instrument(name = <span class="string">"ep"</span>, skip_all, fields(me = secret_key.public().fmt_short()))]
     </span><span class="kw">async fn </span>magicsock_ep(secret_key: SecretKey) -&gt; anyhow::Result&lt;(quinn::Endpoint, Handle)&gt; {
         <span class="kw">let </span>opts = Options {
-            port: <span class="number">0</span>,
+            addr_v4: <span class="prelude-val">None</span>,
+            addr_v6: <span class="prelude-val">None</span>,
             secret_key: secret_key.clone(),
             relay_map: RelayMap::empty(),
             node_map: <span class="prelude-val">None</span>,
@@ -7686,7 +7712,7 @@
             }
             .instrument(<span class="macro">info_span!</span>(<span class="string">"ep2.accept, me = node_id_2.fmt_short()"</span>))
         });
-        <span class="kw">let </span>_accept_task = AbortingJoinHandle::from(accept_task);
+        <span class="kw">let </span>_accept_task = AbortOnDropHandle::new(accept_task);
 
         <span class="kw">let </span>node_addr_2 = NodeAddr {
             node_id: node_id_2,
@@ -7756,7 +7782,7 @@
             }
             .instrument(<span class="macro">info_span!</span>(<span class="string">"ep2.accept"</span>, me = node_id_2.fmt_short()))
         });
-        <span class="kw">let </span>_accept_task = AbortingJoinHandle::from(accept_task);
+        <span class="kw">let </span>_accept_task = AbortOnDropHandle::new(accept_task);
 
         <span class="comment">// Add an empty entry in the NodeMap of ep_1
         </span>msock_1.node_map.add_node_addr(

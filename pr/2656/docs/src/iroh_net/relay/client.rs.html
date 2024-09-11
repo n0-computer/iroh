@@ -1153,6 +1153,7 @@
 <span class="kw">use </span>tokio::task::JoinSet;
 <span class="kw">use </span>tokio::time::Instant;
 <span class="kw">use </span>tokio_util::codec::{FramedRead, FramedWrite};
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 <span class="kw">use </span>url::Url;
 
@@ -1169,7 +1170,6 @@
 <span class="kw">use </span><span class="kw">crate</span>::relay::http::{Protocol, RELAY_PATH};
 <span class="kw">use </span><span class="kw">crate</span>::relay::RelayUrl;
 <span class="kw">use </span><span class="kw">crate</span>::util::chain;
-<span class="kw">use </span><span class="kw">crate</span>::util::AbortingJoinHandle;
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>conn;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>streams;
@@ -1265,7 +1265,7 @@
     inner: mpsc::Sender&lt;ActorMessage&gt;,
     public_key: PublicKey,
     <span class="attr">#[allow(dead_code)]
-    </span>recv_loop: Arc&lt;AbortingJoinHandle&lt;()&gt;&gt;,
+    </span>recv_loop: Arc&lt;AbortOnDropHandle&lt;()&gt;&gt;,
 }
 
 <span class="attr">#[derive(Debug)]
@@ -1485,7 +1485,7 @@
             Client {
                 public_key,
                 inner: msg_sender,
-                recv_loop: Arc::new(recv_loop.into()),
+                recv_loop: Arc::new(AbortOnDropHandle::new(recv_loop)),
             },
             ClientReceiver { msg_receiver: r },
         )
