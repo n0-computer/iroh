@@ -1743,7 +1743,6 @@
 <a href="#1743" id="1743">1743</a>
 <a href="#1744" id="1744">1744</a>
 <a href="#1745" id="1745">1745</a>
-<a href="#1746" id="1746">1746</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -2513,10 +2512,9 @@
             .list_remote_infos()
             .into_iter()
             .filter(<span class="kw">move </span>|remote| {
-                remote
-                    .sources
-                    .iter()
-                    .any(|(source, elapsed)| source.is_discovery() &amp;&amp; elapsed &lt;= <span class="kw-2">&amp;</span>duration)
+                remote.sources.iter().any(|(source, elapsed)| {
+                    <span class="macro">matches!</span>(source, Source::Discovery { .. }) &amp;&amp; elapsed &lt;= <span class="kw-2">&amp;</span>duration
+                })
             })
     }
 

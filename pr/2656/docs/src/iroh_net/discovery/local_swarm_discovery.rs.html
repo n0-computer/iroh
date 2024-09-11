@@ -832,8 +832,8 @@
                 <span class="macro">assert_eq!</span>(got_ids, node_ids);
                 anyhow::Ok(())
             };
-            <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), test).<span class="kw">await</span><span class="question-mark">??</span>;
-            <span class="prelude-val">Ok</span>(res)
+            tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), test).<span class="kw">await</span><span class="question-mark">??</span>;
+            <span class="prelude-val">Ok</span>(())
         }
 
         <span class="kw">fn </span>make_discoverer() -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, LocalSwarmDiscovery)&gt; {
