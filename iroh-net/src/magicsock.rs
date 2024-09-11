@@ -1837,7 +1837,6 @@ impl Actor {
             self.msock.direct_addr_update_state.running.subscribe();
         let mut portmap_watcher = self.port_mapper.watch_external_address();
 
-        // TODO: make thing that when poll and stream is none, we return poll pending, otherwise wait on stream
         let mut discovery_events: BoxStream<(NodeId, DiscoveryItem)> =
             Box::pin(futures_lite::stream::empty());
         if let Some(d) = self.msock.discovery() {

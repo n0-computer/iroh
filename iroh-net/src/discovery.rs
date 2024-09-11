@@ -120,10 +120,11 @@ pub(crate) struct DiscoveryEvents(std::sync::Arc<Inner>);
 struct Inner {
     #[allow(dead_code)]
     handle: AbortOnDropHandle<()>,
+    #[debug(skip)]
     sender: tokio::sync::mpsc::Sender<Message>,
 }
 
-#[derive(derive_more::Debug)]
+#[derive(Debug)]
 enum Message {
     Subscribe(Sender<(NodeId, DiscoveryItem)>),
     Event((NodeId, DiscoveryItem)),
@@ -144,9 +145,16 @@ impl DiscoveryEvents {
                     Some(Message::Event(discovery_item)) => {
                         let mut bad_subscribers = vec![];
                         for (i, subscriber) in subscribers.iter().enumerate() {
-                            if let Err(e) = subscriber.send(discovery_item.clone()).await {
-                                warn!("Message::Event - Subscriber {i} dropped: {e}");
-                                bad_subscribers.push(i);
+                            if let Err(e) = subscriber.try_send(discovery_item.clone()) {
+                                match e {
+                                    tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                                        warn!("Message Event - Subscriber {i} full, dropping message.");
+                                    }
+                                    tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                                        warn!("Message::Event - Subscriber {i} closed, dropping subscriber.");
+                                        bad_subscribers.push(i);
+                                    }
+                                }
                             }
                         }
                         for bad_subscriber in bad_subscribers {
@@ -175,11 +183,10 @@ impl DiscoveryEvents {
 
     /// Allows you to subscribe to messages from the `DiscoveryEvent`
     ///
-    /// Returns a stream of `DiscoveryItems` and an optional unsubscribe
-    /// function.
+    /// Returns a stream of `DiscoveryItems`
     ///
     /// If a stream is dropped, the `DiscoveryEvent` struct will clean
-    /// up the dangling subscription, even if you do not unsubscribe.
+    /// up the dangling subscription.
     pub(crate) async fn subscribe(&self) -> BoxStream<(NodeId, DiscoveryItem)> {
         let (send, recv) = channel(20);
         self.0.sender.send(Message::Subscribe(send)).await.ok();

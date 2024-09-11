@@ -773,8 +773,8 @@ impl Endpoint {
             .list_remote_infos()
             .into_iter()
             .filter(move |remote| {
-                remote.sources.iter().any(|source| {
-                    source.0.is_named(crate::discovery::SOURCE_NAME) && source.1 <= duration
+                remote.sources.iter().any(|(source, elapsed)| {
+                    source.is_named(crate::discovery::SOURCE_NAME) && elapsed <= &duration
                 })
             })
     }

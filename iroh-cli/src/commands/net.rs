@@ -136,7 +136,7 @@ async fn fmt_remote_infos(
             .pop()
             .map(|sources| sources.0.to_string())
             .map(Cell::new)
-            .unwrap_or(Cell::new("none"));
+            .unwrap_or_else(|| Cell::new("none"));
         table.add_row([
             node_id,
             relay_url,
