@@ -329,7 +329,7 @@ mod tests {
         #[tokio::test]
         async fn local_swarm_disovery_smoke() -> TestResult {
             // need to ensure that these tests run one after the other, otherwise
-            // they interfer with each other
+            // they interfere with each other
             test_local_swarm_discovery().await?;
             test_subscribe().await
         }
