@@ -764,7 +764,7 @@ impl Endpoint {
         self.msock.list_remote_infos().into_iter()
     }
 
-    /// Return all nodes discovered in the last `duration`.
+    /// Returns all nodes discovered in the last `duration`.
     pub fn recently_discovered_nodes(
         &self,
         duration: Duration,

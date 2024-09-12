@@ -157,8 +157,8 @@ impl LocalSwarmDiscovery {
                                 clean_up.push(i);
                             }
                         }
-                        for i in &clean_up {
-                            subscribers.swap_remove(*i);
+                        for i in clean_up {
+                            subscribers.swap_remove(i);
                         }
                     }
                     Message::SendAddrs(node_id, sender) => {

@@ -47,10 +47,7 @@ use async_trait::async_trait;
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
 use tokio::{
-    sync::{
-        mpsc::{channel, Sender},
-        oneshot,
-    },
+    sync::{mpsc, oneshot},
     task::JoinHandle,
 };
 use tokio_util::task::AbortOnDropHandle;
@@ -115,22 +112,21 @@ pub(crate) struct DiscoveryEvents(std::sync::Arc<Inner>);
 
 #[derive(derive_more::Debug)]
 struct Inner {
-    #[allow(dead_code)]
-    handle: AbortOnDropHandle<()>,
-    #[debug(skip)]
-    sender: tokio::sync::mpsc::Sender<Message>,
+    _handle: AbortOnDropHandle<()>,
+    #[debug("mpsc::Sender(<Message>)")]
+    sender: mpsc::Sender<Message>,
 }
 
 #[derive(Debug)]
 enum Message {
-    Subscribe(Sender<(NodeId, DiscoveryItem)>),
+    Subscribe(mpsc::Sender<(NodeId, DiscoveryItem)>),
     Event((NodeId, DiscoveryItem)),
 }
 
 impl DiscoveryEvents {
     pub(crate) fn new() -> Self {
-        let (sender, mut recv) = channel(20);
-        let mut subscribers: Vec<Sender<(NodeId, DiscoveryItem)>> = Vec::new();
+        let (sender, mut recv) = mpsc::channel(20);
+        let mut subscribers: Vec<mpsc::Sender<(NodeId, DiscoveryItem)>> = Vec::new();
         let event_loop = async move {
             loop {
                 let msg = recv.recv().await;
@@ -148,7 +144,7 @@ impl DiscoveryEvents {
                                         warn!("Message Event - Subscriber {i} full, dropping message.");
                                     }
                                     tokio::sync::mpsc::error::TrySendError::Closed(_) => {
-                                        warn!("Message::Event - Subscriber {i} closed, dropping subscriber.");
+                                        debug!("Message::Event - Subscriber {i} closed, dropping subscriber.");
                                         bad_subscribers.push(i);
                                     }
                                 }
@@ -165,7 +161,7 @@ impl DiscoveryEvents {
 
         let handle = tokio::spawn(event_loop);
         Self(Arc::new(Inner {
-            handle: AbortOnDropHandle::new(handle),
+            _handle: AbortOnDropHandle::new(handle),
             sender,
         }))
     }
@@ -185,7 +181,7 @@ impl DiscoveryEvents {
     /// If a stream is dropped, the `DiscoveryEvent` struct will clean
     /// up the dangling subscription.
     pub(crate) async fn subscribe(&self) -> BoxStream<(NodeId, DiscoveryItem)> {
-        let (send, recv) = channel(20);
+        let (send, recv) = mpsc::channel(20);
         self.0.sender.send(Message::Subscribe(send)).await.ok();
         let stream = tokio_stream::wrappers::ReceiverStream::new(recv);
         Box::pin(stream)
