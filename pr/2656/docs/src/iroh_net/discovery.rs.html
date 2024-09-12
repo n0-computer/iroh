@@ -902,10 +902,6 @@
 <a href="#902" id="902">902</a>
 <a href="#903" id="903">903</a>
 <a href="#904" id="904">904</a>
-<a href="#905" id="905">905</a>
-<a href="#906" id="906">906</a>
-<a href="#907" id="907">907</a>
-<a href="#908" id="908">908</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh-net node a [`NodeAddr`] is needed, which needs to contain either a
@@ -955,10 +951,7 @@
 <span class="kw">use </span>futures_lite::stream::{Boxed <span class="kw">as </span>BoxStream, StreamExt};
 <span class="kw">use </span>iroh_base::node_addr::NodeAddr;
 <span class="kw">use </span>tokio::{
-    sync::{
-        mpsc::{channel, Sender},
-        oneshot,
-    },
+    sync::{mpsc, oneshot},
     task::JoinHandle,
 };
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
@@ -1023,22 +1016,21 @@
 
 <span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">struct </span>Inner {
-    <span class="attr">#[allow(dead_code)]
-    </span>handle: AbortOnDropHandle&lt;()&gt;,
-    <span class="attr">#[debug(skip)]
-    </span>sender: tokio::sync::mpsc::Sender&lt;Message&gt;,
+    _handle: AbortOnDropHandle&lt;()&gt;,
+    <span class="attr">#[debug(<span class="string">"mpsc::Sender(&lt;Message&gt;)"</span>)]
+    </span>sender: mpsc::Sender&lt;Message&gt;,
 }
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>Message {
-    Subscribe(Sender&lt;(NodeId, DiscoveryItem)&gt;),
+    Subscribe(mpsc::Sender&lt;(NodeId, DiscoveryItem)&gt;),
     Event((NodeId, DiscoveryItem)),
 }
 
 <span class="kw">impl </span>DiscoveryEvents {
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>(sender, <span class="kw-2">mut </span>recv) = channel(<span class="number">20</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>subscribers: Vec&lt;Sender&lt;(NodeId, DiscoveryItem)&gt;&gt; = Vec::new();
+        <span class="kw">let </span>(sender, <span class="kw-2">mut </span>recv) = mpsc::channel(<span class="number">20</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>subscribers: Vec&lt;mpsc::Sender&lt;(NodeId, DiscoveryItem)&gt;&gt; = Vec::new();
         <span class="kw">let </span>event_loop = <span class="kw">async move </span>{
             <span class="kw">loop </span>{
                 <span class="kw">let </span>msg = recv.recv().<span class="kw">await</span>;
@@ -1056,7 +1048,7 @@
                                         <span class="macro">warn!</span>(<span class="string">"Message Event - Subscriber {i} full, dropping message."</span>);
                                     }
                                     tokio::sync::mpsc::error::TrySendError::Closed(<span class="kw">_</span>) =&gt; {
-                                        <span class="macro">warn!</span>(<span class="string">"Message::Event - Subscriber {i} closed, dropping subscriber."</span>);
+                                        <span class="macro">debug!</span>(<span class="string">"Message::Event - Subscriber {i} closed, dropping subscriber."</span>);
                                         bad_subscribers.push(i);
                                     }
                                 }
@@ -1073,7 +1065,7 @@
 
         <span class="kw">let </span>handle = tokio::spawn(event_loop);
         <span class="self">Self</span>(Arc::new(Inner {
-            handle: AbortOnDropHandle::new(handle),
+            _handle: AbortOnDropHandle::new(handle),
             sender,
         }))
     }
@@ -1093,7 +1085,7 @@
     /// If a stream is dropped, the `DiscoveryEvent` struct will clean
     /// up the dangling subscription.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxStream&lt;(NodeId, DiscoveryItem)&gt; {
-        <span class="kw">let </span>(send, recv) = channel(<span class="number">20</span>);
+        <span class="kw">let </span>(send, recv) = mpsc::channel(<span class="number">20</span>);
         <span class="self">self</span>.<span class="number">0</span>.sender.send(Message::Subscribe(send)).<span class="kw">await</span>.ok();
         <span class="kw">let </span>stream = tokio_stream::wrappers::ReceiverStream::new(recv);
         Box::pin(stream)

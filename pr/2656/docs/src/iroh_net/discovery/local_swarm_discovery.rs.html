@@ -579,8 +579,8 @@
                                 clean_up.push(i);
                             }
                         }
-                        <span class="kw">for </span>i <span class="kw">in </span><span class="kw-2">&amp;</span>clean_up {
-                            subscribers.swap_remove(<span class="kw-2">*</span>i);
+                        <span class="kw">for </span>i <span class="kw">in </span>clean_up {
+                            subscribers.swap_remove(i);
                         }
                     }
                     Message::SendAddrs(node_id, sender) =&gt; {
