@@ -1168,6 +1168,21 @@ mod tests {
         assert_eq!(reader.size(), 1024 * 128);
         assert_eq!(reader.response_size, 20);
 
+        // out of bounds - too long
+        let res = client.blobs().read_at(hash, 0, Some(1024 * 128 + 1)).await;
+        let err = res.unwrap_err();
+        assert!(err.to_string().contains("out of bound"));
+
+        // out of bounds - offset larger than blob
+        let res = client.blobs().read_at(hash, 1024 * 128 + 1, None).await;
+        let err = res.unwrap_err();
+        assert!(err.to_string().contains("out of range"));
+
+        // out of bounds - offset + length too large
+        let res = client.blobs().read_at(hash, 1024 * 127, Some(1025)).await;
+        let err = res.unwrap_err();
+        assert!(err.to_string().contains("out of bound"));
+
         Ok(())
     }
 
