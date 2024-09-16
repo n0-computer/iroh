@@ -647,6 +647,23 @@ impl Endpoint {
         Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
     }
 
+    /// Watches for changes to the node address.
+    ///
+    /// This stream yields a [`NodeAddr`] whenever either the home relay changed, or when
+    /// the list of discovered direct addresses changed.
+    ///
+    /// When issuing the first call to this method the first direct address discovery might
+    /// still be underway, in this case the first item of the returned stream will become
+    /// ready once the discovery finishes. Later calls to this function return a stream where
+    /// the first item is ready immediately. Subsequent items will become ready whenever
+    /// either the node address or the discovered direct addresses change.
+    ///
+    /// See [`Self::watch_home_relay`] and [`Self::direct_addresses`] for functions to watch
+    /// for changes of only one part of the node address.
+    pub fn watch_node_addr(&self) -> impl Stream<Item = NodeAddr> {
+        self.msock.watch_node_addr()
+    }
+
     /// Returns the [`RelayUrl`] of the Relay server used as home relay.
     ///
     /// Every endpoint has a home Relay server which it chooses as the server with the

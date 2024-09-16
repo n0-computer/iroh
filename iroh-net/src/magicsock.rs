@@ -339,6 +339,47 @@ impl MagicSock {
         current.chain(changes)
     }
 
+    /// Watch for changes to the node address.
+    ///
+    /// Returns a new [`NodeAddr`] whenever either our direct addresses change
+    /// (see [`Self::direct_addresses]) or if our home relay changed
+    /// (see [`Self::watch_home_relay`]).
+    pub(crate) fn watch_node_addr(&self) -> impl Stream<Item = NodeAddr> {
+        enum Item {
+            DirectAddrs(Vec<DirectAddr>),
+            HomeRelay(RelayUrl),
+        }
+        let node_id = self.secret_key.public();
+        let mut current_addrs = self.direct_addrs.get().addrs;
+        let mut home_relay = self.my_relay.get();
+        let addr_stream = self
+            .direct_addrs
+            .watch()
+            .into_stream()
+            .map(|addrs| Item::DirectAddrs(addrs.addrs));
+        let home_relay_stream = self
+            .my_relay
+            .watch()
+            .into_stream()
+            .filter_map(|maybe_relay| maybe_relay)
+            .map(Item::HomeRelay);
+        addr_stream.or(home_relay_stream).map(move |item| {
+            match item {
+                Item::DirectAddrs(addrs) => {
+                    current_addrs = addrs;
+                }
+                Item::HomeRelay(relay_url) => {
+                    home_relay = Some(relay_url);
+                }
+            }
+            NodeAddr::from_parts(
+                node_id,
+                home_relay.clone(),
+                current_addrs.iter().map(|x| x.addr).collect(),
+            )
+        })
+    }
+
     /// Returns a stream that reports the [`ConnectionType`] we have to the
     /// given `node_id`.
     ///
