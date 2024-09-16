@@ -1257,12 +1257,12 @@
 
 <span class="kw">impl </span>Actor {
     <span class="kw">pub async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
+        <span class="comment">// With each gossip message we provide addressing information to reach our node.
+        // We wait until we discovered at least one direct addrss.
+        </span><span class="kw">let _ </span>= <span class="self">self</span>.endpoint.direct_addresses().next().<span class="kw">await</span>;
         <span class="comment">// Watch for changes in direct addresses to update our peer data.
         </span><span class="kw">let </span><span class="kw-2">mut </span>node_addr_stream = <span class="self">self</span>.endpoint.watch_node_addr();
-
-        <span class="comment">// With each gossip message we provide addressing information to reach our node.
-        // We wait until the initial address is ready.
-        </span><span class="kw">let </span>node_addr = node_addr_stream
+        <span class="kw">let </span>node_addr = node_addr_stream
             .next()
             .<span class="kw">await
             </span>.ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"Failed to discover node addresses"</span>))<span class="question-mark">?</span>;
