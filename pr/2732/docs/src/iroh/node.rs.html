@@ -856,33 +856,6 @@
 <a href="#856" id="856">856</a>
 <a href="#857" id="857">857</a>
 <a href="#858" id="858">858</a>
-<a href="#859" id="859">859</a>
-<a href="#860" id="860">860</a>
-<a href="#861" id="861">861</a>
-<a href="#862" id="862">862</a>
-<a href="#863" id="863">863</a>
-<a href="#864" id="864">864</a>
-<a href="#865" id="865">865</a>
-<a href="#866" id="866">866</a>
-<a href="#867" id="867">867</a>
-<a href="#868" id="868">868</a>
-<a href="#869" id="869">869</a>
-<a href="#870" id="870">870</a>
-<a href="#871" id="871">871</a>
-<a href="#872" id="872">872</a>
-<a href="#873" id="873">873</a>
-<a href="#874" id="874">874</a>
-<a href="#875" id="875">875</a>
-<a href="#876" id="876">876</a>
-<a href="#877" id="877">877</a>
-<a href="#878" id="878">878</a>
-<a href="#879" id="879">879</a>
-<a href="#880" id="880">880</a>
-<a href="#881" id="881">881</a>
-<a href="#882" id="882">882</a>
-<a href="#883" id="883">883</a>
-<a href="#884" id="884">884</a>
-<a href="#885" id="885">885</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node API
 //!
 //! An iroh node is a server that is identified by an Ed25519 keypair and is
@@ -937,7 +910,6 @@
 <span class="kw">use </span>iroh_blobs::store::Store <span class="kw">as </span>BaoStore;
 <span class="kw">use </span>iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
 <span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
-<span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 <span class="kw">use </span>iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
 <span class="kw">use </span>iroh_net::{AddrInfo, Endpoint, NodeAddr};
 <span class="kw">use </span>protocol::BlobsProtocol;
@@ -1173,19 +1145,6 @@
         </span><span class="kw">let </span>external_rpc = RpcServer::new(external_rpc);
         <span class="kw">let </span>internal_rpc = RpcServer::new(internal_rpc);
 
-        <span class="kw">let </span>gossip = protocols
-            .get_typed::&lt;Gossip&gt;(GOSSIP_ALPN)
-            .expect(<span class="string">"missing gossip"</span>);
-
-        <span class="comment">// TODO(frando): I think this is not needed as we do the same in a task just below.
-        // forward the initial endpoints to the gossip protocol.
-        // it may happen the the first endpoint update callback is missed because the gossip cell
-        // is only initialized once the endpoint is fully bound
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(direct_addresses) = <span class="self">self</span>.endpoint.direct_addresses().next().<span class="kw">await </span>{
-            <span class="macro">debug!</span>(me = <span class="question-mark">?</span><span class="self">self</span>.endpoint.node_id(), <span class="string">"gossip initial update: {direct_addresses:?}"</span>);
-            gossip.update_direct_addresses(<span class="kw-2">&amp;</span>direct_addresses).ok();
-        }
-
         <span class="comment">// Spawn a task for the garbage collection.
         </span><span class="kw">if let </span>GcPolicy::Interval(gc_period) = gc_policy {
             <span class="kw">let </span>protocols = protocols.clone();
@@ -1280,19 +1239,6 @@
                 .instrument(<span class="macro">info_span!</span>(<span class="string">"known-addrs"</span>)),
             );
         }
-
-        <span class="comment">// Spawn a task that updates the gossip endpoints.
-        </span><span class="kw">let </span>inner = <span class="self">self</span>.clone();
-        join_set.spawn(<span class="kw">async move </span>{
-            <span class="kw">let </span><span class="kw-2">mut </span>stream = inner.endpoint.direct_addresses();
-            <span class="kw">while let </span><span class="prelude-val">Some</span>(eps) = stream.next().<span class="kw">await </span>{
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = gossip.update_direct_addresses(<span class="kw-2">&amp;</span>eps) {
-                    <span class="macro">warn!</span>(<span class="string">"Failed to update direct addresses for gossip: {err:?}"</span>);
-                }
-            }
-            <span class="macro">warn!</span>(<span class="string">"failed to retrieve local endpoints"</span>);
-            <span class="prelude-val">Ok</span>(())
-        });
 
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
