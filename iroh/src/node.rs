@@ -52,7 +52,6 @@ use iroh_blobs::protocol::Closed;
 use iroh_blobs::store::Store as BaoStore;
 use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
 use iroh_docs::net::DOCS_ALPN;
-use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
 use iroh_net::{AddrInfo, Endpoint, NodeAddr};
 use protocol::BlobsProtocol;
@@ -288,19 +287,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         let external_rpc = RpcServer::new(external_rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
 
-        let gossip = protocols
-            .get_typed::<Gossip>(GOSSIP_ALPN)
-            .expect("missing gossip");
-
-        // TODO(frando): I think this is not needed as we do the same in a task just below.
-        // forward the initial endpoints to the gossip protocol.
-        // it may happen the the first endpoint update callback is missed because the gossip cell
-        // is only initialized once the endpoint is fully bound
-        if let Some(direct_addresses) = self.endpoint.direct_addresses().next().await {
-            debug!(me = ?self.endpoint.node_id(), "gossip initial update: {direct_addresses:?}");
-            gossip.update_direct_addresses(&direct_addresses).ok();
-        }
-
         // Spawn a task for the garbage collection.
         if let GcPolicy::Interval(gc_period) = gc_policy {
             let protocols = protocols.clone();
@@ -395,19 +381,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 .instrument(info_span!("known-addrs")),
             );
         }
-
-        // Spawn a task that updates the gossip endpoints.
-        let inner = self.clone();
-        join_set.spawn(async move {
-            let mut stream = inner.endpoint.direct_addresses();
-            while let Some(eps) = stream.next().await {
-                if let Err(err) = gossip.update_direct_addresses(&eps) {
-                    warn!("Failed to update direct addresses for gossip: {err:?}");
-                }
-            }
-            warn!("failed to retrieve local endpoints");
-            Ok(())
-        });
 
         loop {
             tokio::select! {
