@@ -11,7 +11,7 @@ use futures_util::TryFutureExt;
 use iroh_metrics::inc;
 use iroh_net::{
     dialer::Dialer,
-    endpoint::{get_remote_node_id, Connection, DirectAddr},
+    endpoint::{get_remote_node_id, Connection},
     key::PublicKey,
     AddrInfo, Endpoint, NodeAddr, NodeId,
 };
@@ -268,17 +268,15 @@ struct Actor {
 impl Actor {
     pub async fn run(mut self) -> anyhow::Result<()> {
         // Watch for changes in direct addresses to update our peer data.
-        let mut direct_addresses_stream = self.endpoint.direct_addresses();
-        // Watch for changes of our home relay to update our peer data.
-        let mut home_relay_stream = self.endpoint.watch_home_relay();
+        let mut node_addr_stream = self.endpoint.watch_node_addr();
 
         // With each gossip message we provide addressing information to reach our node.
-        // We wait until at least one direct address is discovered.
-        let mut current_addresses = direct_addresses_stream
+        // We wait until the initial address is ready.
+        let node_addr = node_addr_stream
             .next()
             .await
-            .ok_or_else(|| anyhow!("Failed to discover direct addresses"))?;
-        let peer_data = our_peer_data(&self.endpoint, &current_addresses)?;
+            .ok_or_else(|| anyhow!("Failed to discover node addresses"))?;
+        let peer_data = encode_peer_data(&node_addr.info)?;
         self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now())
             .await?;
 
@@ -304,15 +302,10 @@ impl Actor {
                     trace!(?i, "tick: command_rx");
                     self.handle_command(topic, key, command).await?;
                 },
-                Some(new_addresses) = direct_addresses_stream.next() => {
+                Some(node_addr) = node_addr_stream.next() => {
                     trace!(?i, "tick: new_endpoints");
                     inc!(Metrics, actor_tick_endpoint);
-                    current_addresses = new_addresses;
-                    let peer_data = our_peer_data(&self.endpoint, &current_addresses)?;
-                    self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
-                }
-                Some(_relay_url) = home_relay_stream.next() => {
-                    let peer_data = our_peer_data(&self.endpoint, &current_addresses)?;
+                    let peer_data = encode_peer_data(&node_addr.info)?;
                     self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
                 }
                 (peer_id, res) = self.dialer.next_conn() => {
@@ -802,15 +795,6 @@ impl Stream for TopicCommandStream {
             Poll::Pending => Poll::Pending,
         }
     }
-}
-
-fn our_peer_data(endpoint: &Endpoint, direct_addresses: &[DirectAddr]) -> Result<PeerData> {
-    let addr = NodeAddr::from_parts(
-        endpoint.node_id(),
-        endpoint.home_relay(),
-        direct_addresses.iter().map(|x| x.addr).collect(),
-    );
-    encode_peer_data(&addr.info)
 }
 
 #[cfg(test)]
