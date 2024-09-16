@@ -2617,7 +2617,7 @@
             <span class="kw">let </span>entry = entry.ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"Blob not found"</span>))<span class="question-mark">?</span>;
             <span class="kw">let </span>size = entry.size();
 
-            <span class="kw">if </span>req.offset <span class="kw">as </span>u64 &gt; size.value() {
+            <span class="kw">if </span>req.offset &gt; size.value() {
                 <span class="macro">anyhow::bail!</span>(
                     <span class="string">"requested offset is out of range: {} &gt; {:?}"</span>,
                     req.offset,
@@ -2627,7 +2627,7 @@
 
             <span class="kw">let </span>len = req.len.unwrap_or((size.value() - req.offset) <span class="kw">as </span>usize);
 
-            <span class="kw">if </span>req.offset <span class="kw">as </span>u64 + len <span class="kw">as </span>u64 &gt; size.value() {
+            <span class="kw">if </span>req.offset + len <span class="kw">as </span>u64 &gt; size.value() {
                 <span class="macro">anyhow::bail!</span>(
                     <span class="string">"requested range is out of bounds: offset: {}, len: {} &gt; {:?}"</span>,
                     req.offset,
