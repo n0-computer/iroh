@@ -1231,24 +1231,22 @@ impl<D: BaoStore> Handler<D> {
             let entry = entry.ok_or_else(|| anyhow!("Blob not found"))?;
             let size = entry.size();
 
-            if req.offset > size.value() {
-                anyhow::bail!(
-                    "requested offset is out of range: {} > {:?}",
-                    req.offset,
-                    size
-                );
-            }
+            anyhow::ensure!(
+                req.offset <= size.value(),
+                "requested offset is out of range: {} > {:?}",
+                req.offset,
+                size
+            );
 
             let len = req.len.unwrap_or((size.value() - req.offset) as usize);
 
-            if req.offset + len as u64 > size.value() {
-                anyhow::bail!(
-                    "requested range is out of bounds: offset: {}, len: {} > {:?}",
-                    req.offset,
-                    len,
-                    size
-                );
-            }
+            anyhow::ensure!(
+                req.offset + len as u64 <= size.value(),
+                "requested range is out of bounds: offset: {}, len: {} > {:?}",
+                req.offset,
+                len,
+                size
+            );
 
             tx.send(Ok(ReadAtResponse::Entry {
                 size,
