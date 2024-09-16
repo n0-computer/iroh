@@ -1230,14 +1230,32 @@ impl<D: BaoStore> Handler<D> {
             let entry = db.get(&req.hash).await?;
             let entry = entry.ok_or_else(|| anyhow!("Blob not found"))?;
             let size = entry.size();
+
+            if req.offset as u64 > size.value() {
+                anyhow::bail!(
+                    "requested offset is out of range: {} > {:?}",
+                    req.offset,
+                    size
+                );
+            }
+
+            let len = req.len.unwrap_or((size.value() - req.offset) as usize);
+
+            if req.offset as u64 + len as u64 > size.value() {
+                anyhow::bail!(
+                    "requested range is out of bounds: offset: {}, len: {} > {:?}",
+                    req.offset,
+                    len,
+                    size
+                );
+            }
+
             tx.send(Ok(ReadAtResponse::Entry {
                 size,
                 is_complete: entry.is_complete(),
             }))
             .await?;
             let mut reader = entry.data_reader().await?;
-
-            let len = req.len.unwrap_or((size.value() - req.offset) as usize);
 
             let (num_chunks, chunk_size) = if len <= max_chunk_size {
                 (1, len)
