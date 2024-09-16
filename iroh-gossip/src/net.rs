@@ -267,11 +267,11 @@ struct Actor {
 
 impl Actor {
     pub async fn run(mut self) -> anyhow::Result<()> {
+        // With each gossip message we provide addressing information to reach our node.
+        // We wait until we discovered at least one direct addrss.
+        let _ = self.endpoint.direct_addresses().next().await;
         // Watch for changes in direct addresses to update our peer data.
         let mut node_addr_stream = self.endpoint.watch_node_addr();
-
-        // With each gossip message we provide addressing information to reach our node.
-        // We wait until the initial address is ready.
         let node_addr = node_addr_stream
             .next()
             .await
