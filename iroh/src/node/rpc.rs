@@ -1231,7 +1231,7 @@ impl<D: BaoStore> Handler<D> {
             let entry = entry.ok_or_else(|| anyhow!("Blob not found"))?;
             let size = entry.size();
 
-            if req.offset as u64 > size.value() {
+            if req.offset > size.value() {
                 anyhow::bail!(
                     "requested offset is out of range: {} > {:?}",
                     req.offset,
@@ -1241,7 +1241,7 @@ impl<D: BaoStore> Handler<D> {
 
             let len = req.len.unwrap_or((size.value() - req.offset) as usize);
 
-            if req.offset as u64 + len as u64 > size.value() {
+            if req.offset + len as u64 > size.value() {
                 anyhow::bail!(
                     "requested range is out of bounds: offset: {}, len: {} > {:?}",
                     req.offset,
