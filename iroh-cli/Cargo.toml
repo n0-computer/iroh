@@ -31,7 +31,7 @@ colored = "2.0.4"
 comfy-table = "7.0.1"
 console = "0.15.5"
 crossterm = "0.27.0"
-derive_more = { version = "=1.0.0-beta.7", features = ["display"] }
+derive_more = { version = "1.0.0", features = ["display"] }
 dialoguer = { version = "0.11.0", default-features = false }
 dirs-next = "2.0.0"
 futures-buffered = "0.2.4"
