@@ -678,6 +678,7 @@
 <a href="#678" id="678">678</a>
 <a href="#679" id="679">679</a>
 <a href="#680" id="680">680</a>
+<a href="#681" id="681">681</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A local task pool with proper shutdown
 </span><span class="kw">use </span>futures_lite::FutureExt;
 <span class="kw">use </span>std::{
@@ -1273,6 +1274,7 @@
         // just always pass, to really see the test run it with:
         //
         // cargo nextest run -p iroh-blobs local_pool::tests::test_tracing --success-output final
+        //
         // and eyeball the output.  yolo
         </span><span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="macro">info!</span>(<span class="string">"hello from the test"</span>);
