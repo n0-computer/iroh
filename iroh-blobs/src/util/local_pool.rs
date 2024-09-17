@@ -41,6 +41,9 @@ enum Message {
 /// and then wait for all threads to finish executing their loops before
 /// returning. This means that all currently executing tasks will be allowed to
 /// run to completion.
+///
+/// The pool will install the [`tracing::Subscriber`] which was set on the current thread of
+/// where it was created as the default subscriber in all spawned threads.
 #[derive(Debug)]
 pub struct LocalPool {
     threads: Vec<std::thread::JoinHandle<()>>,
