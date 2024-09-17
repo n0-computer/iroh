@@ -679,6 +679,9 @@
 <a href="#679" id="679">679</a>
 <a href="#680" id="680">680</a>
 <a href="#681" id="681">681</a>
+<a href="#682" id="682">682</a>
+<a href="#683" id="683">683</a>
+<a href="#684" id="684">684</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A local task pool with proper shutdown
 </span><span class="kw">use </span>futures_lite::FutureExt;
 <span class="kw">use </span>std::{
@@ -722,6 +725,9 @@
 /// and then wait for all threads to finish executing their loops before
 /// returning. This means that all currently executing tasks will be allowed to
 /// run to completion.
+///
+/// The pool will install the [`tracing::Subscriber`] which was set on the current thread of
+/// where it was created as the default subscriber in all spawned threads.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>LocalPool {
     threads: Vec&lt;std::thread::JoinHandle&lt;()&gt;&gt;,
