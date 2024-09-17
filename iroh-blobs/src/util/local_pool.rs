@@ -593,6 +593,7 @@ mod tests {
         // just always pass, to really see the test run it with:
         //
         // cargo nextest run -p iroh-blobs local_pool::tests::test_tracing --success-output final
+        //
         // and eyeball the output.  yolo
         let _guard = iroh_test::logging::setup();
         info!("hello from the test");
