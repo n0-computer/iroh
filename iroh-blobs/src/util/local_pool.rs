@@ -41,6 +41,9 @@ enum Message {
 /// and then wait for all threads to finish executing their loops before
 /// returning. This means that all currently executing tasks will be allowed to
 /// run to completion.
+///
+/// The pool will install the [`tracing::Subscriber`] which was set on the current thread of
+/// where it was created as the default subscriber in all spawned threads.
 #[derive(Debug)]
 pub struct LocalPool {
     threads: Vec<std::thread::JoinHandle<()>>,
@@ -165,9 +168,11 @@ impl LocalPool {
         shutdown_sem: Arc<Semaphore>,
         handle: tokio::runtime::Handle,
     ) -> std::io::Result<std::thread::JoinHandle<()>> {
+        let tracing_dispatcher = tracing::dispatcher::get_default(|dispatcher| dispatcher.clone());
         std::thread::Builder::new()
             .name(thread_name)
             .spawn(move || {
+                let _tracing_guard = tracing::dispatcher::set_default(&tracing_dispatcher);
                 let mut s = JoinSet::new();
                 let mut last_panic = None;
                 let mut handle_join = |res: Option<std::result::Result<(), JoinError>>| -> bool {
@@ -536,6 +541,8 @@ impl CancellationToken {
 mod tests {
     use std::{sync::atomic::AtomicU64, time::Duration};
 
+    use tracing::info;
+
     use super::*;
 
     /// A struct that simulates a long running drop operation
@@ -575,6 +582,30 @@ mod tests {
     async fn delay_then_forget(x: TestDrop, delay: Duration) {
         tokio::time::sleep(delay).await;
         x.forget();
+    }
+
+    #[tokio::test]
+    async fn test_tracing() {
+        // This test wants to make sure that logging inside the pool propagates to the
+        // tracing subscriber that was set for the current thread at the time the pool was
+        // created.
+        //
+        // Look, there should be a custom tracing subscriber here that allows us to inspect
+        // the messages sent to it so we can verify it received all the messages.  But have
+        // you ever tried to implement a tracing subscriber?  In the mean time this test will
+        // just always pass, to really see the test run it with:
+        //
+        // cargo nextest run -p iroh-blobs local_pool::tests::test_tracing --success-output final
+        //
+        // and eyeball the output.  yolo
+        let _guard = iroh_test::logging::setup();
+        info!("hello from the test");
+        let pool = LocalPool::single();
+        pool.spawn(|| async move {
+            info!("hello from the pool");
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
