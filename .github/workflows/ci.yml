@@ -293,7 +293,7 @@ jobs:
 
   netsim-integration-tests:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    uses: '.github/workflows/netsim_runner.yaml'
+    uses: './.github/workflows/netsim_runner.yaml'
     secrets: inherit
     with:
       branch: ${{ github.ref }}
