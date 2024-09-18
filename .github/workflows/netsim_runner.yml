@@ -83,9 +83,6 @@ on:
         required: false
         type: boolean
         default: false
-    secrets:
-      GITHUB_TOKEN:
-          required: true
 
 env:
   RUST_BACKTRACE: 1
