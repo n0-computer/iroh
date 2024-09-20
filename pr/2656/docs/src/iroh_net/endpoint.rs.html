@@ -1728,21 +1728,6 @@
 <a href="#1728" id="1728">1728</a>
 <a href="#1729" id="1729">1729</a>
 <a href="#1730" id="1730">1730</a>
-<a href="#1731" id="1731">1731</a>
-<a href="#1732" id="1732">1732</a>
-<a href="#1733" id="1733">1733</a>
-<a href="#1734" id="1734">1734</a>
-<a href="#1735" id="1735">1735</a>
-<a href="#1736" id="1736">1736</a>
-<a href="#1737" id="1737">1737</a>
-<a href="#1738" id="1738">1738</a>
-<a href="#1739" id="1739">1739</a>
-<a href="#1740" id="1740">1740</a>
-<a href="#1741" id="1741">1741</a>
-<a href="#1742" id="1742">1742</a>
-<a href="#1743" id="1743">1743</a>
-<a href="#1744" id="1744">1744</a>
-<a href="#1745" id="1745">1745</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -2501,21 +2486,6 @@
     /// See also [`Endpoint::remote_info`] to only retrieve information about a single node.
     </span><span class="kw">pub fn </span>remote_info_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = RemoteInfo&gt; {
         <span class="self">self</span>.msock.list_remote_infos().into_iter()
-    }
-
-    <span class="doccomment">/// Returns all nodes discovered in the last `duration`.
-    </span><span class="kw">pub fn </span>recently_discovered_nodes(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        duration: Duration,
-    ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = RemoteInfo&gt; {
-        <span class="self">self</span>.msock
-            .list_remote_infos()
-            .into_iter()
-            .filter(<span class="kw">move </span>|remote| {
-                remote.sources.iter().any(|(source, elapsed)| {
-                    <span class="macro">matches!</span>(source, Source::Discovery { .. }) &amp;&amp; elapsed &lt;= <span class="kw-2">&amp;</span>duration
-                })
-            })
     }
 
     <span class="comment">// # Methods for less common getters.

@@ -97,28 +97,13 @@
 <a href="#97" id="97">97</a>
 <a href="#98" id="98">98</a>
 <a href="#99" id="99">99</a>
-<a href="#100" id="100">100</a>
-<a href="#101" id="101">101</a>
-<a href="#102" id="102">102</a>
-<a href="#103" id="103">103</a>
-<a href="#104" id="104">104</a>
-<a href="#105" id="105">105</a>
-<a href="#106" id="106">106</a>
-<a href="#107" id="107">107</a>
-<a href="#108" id="108">108</a>
-<a href="#109" id="109">109</a>
-<a href="#110" id="110">110</a>
-<a href="#111" id="111">111</a>
-<a href="#112" id="112">112</a>
-<a href="#113" id="113">113</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh-net
 
 </span><span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>futures_lite::stream::Boxed <span class="kw">as </span>BoxStream;
 
 <span class="kw">use crate</span>::{
-    discovery::{Discovery, DiscoveryEvents, DiscoveryItem},
+    discovery::{Discovery, DiscoveryItem},
     dns::ResolverExt,
     Endpoint, NodeId,
 };
@@ -156,16 +141,12 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>DnsDiscovery {
     origin_domain: String,
-    events: DiscoveryEvents,
 }
 
 <span class="kw">impl </span>DnsDiscovery {
     <span class="doccomment">/// Creates a new DNS discovery.
     </span><span class="kw">pub fn </span>new(origin_domain: String) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            origin_domain,
-            events: DiscoveryEvents::new(),
-        }
+        <span class="self">Self </span>{ origin_domain }
     }
 
     <span class="doccomment">/// Creates a new DNS discovery using the `iroh.link` domain.
@@ -197,31 +178,22 @@
     }
 }
 
-<span class="attr">#[async_trait]
-</span><span class="kw">impl </span>Discovery <span class="kw">for </span>DnsDiscovery {
+<span class="kw">impl </span>Discovery <span class="kw">for </span>DnsDiscovery {
     <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, ep: Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
         <span class="kw">let </span>resolver = ep.dns_resolver().clone();
         <span class="kw">let </span>origin_domain = <span class="self">self</span>.origin_domain.clone();
-        <span class="kw">let </span>events = <span class="self">self</span>.events.clone();
         <span class="kw">let </span>fut = <span class="kw">async move </span>{
             <span class="kw">let </span>node_addr = resolver
                 .lookup_by_id_staggered(<span class="kw-2">&amp;</span>node_id, <span class="kw-2">&amp;</span>origin_domain, DNS_STAGGERING_MS)
                 .<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="kw">let </span>item = DiscoveryItem {
+            <span class="prelude-val">Ok</span>(DiscoveryItem {
                 provenance: <span class="string">"dns"</span>,
                 last_updated: <span class="prelude-val">None</span>,
                 addr_info: node_addr.info,
-            };
-            events.send_event(node_id, item.clone()).<span class="kw">await</span>;
-            <span class="prelude-val">Ok</span>(item)
+            })
         };
         <span class="kw">let </span>stream = futures_lite::stream::once_future(fut);
         <span class="prelude-val">Some</span>(Box::pin(stream))
-    }
-
-    <span class="kw">async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
-        <span class="kw">let </span>stream = <span class="self">self</span>.events.subscribe().<span class="kw">await</span>;
-        <span class="prelude-val">Some</span>(stream)
     }
 }
 </code></pre></div></section></main></body></html>

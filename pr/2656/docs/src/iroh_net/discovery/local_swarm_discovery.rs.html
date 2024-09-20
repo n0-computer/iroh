@@ -420,11 +420,56 @@
 <a href="#420" id="420">420</a>
 <a href="#421" id="421">421</a>
 <a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
-
+//!
+//! If you have [`LocalSwarmDiscovery`] enabled, you can get a list of the locally discovered nodes by filtering a list of `RemoteInfo`s.
+//!
+//! ```
+//! let recent = Duration::from_secs(600); // 10 minutes in seconds
+//! let remotes = endpoint.remote_info_iter();
+//! let locally_discovered: Vec&lt;_&gt; = remotes
+//!    .filter(|remote| {
+//!        remote
+//!            .sources()
+//!            .iter()
+//!            .any(|(source, duration)| {
+//!                if let Source::Discovery { service } = source {
+//!                    service == "local" &amp;&amp; *duration &gt;= recent
+//!                } else {
+//!                    false
+//!                }
+//!            })
+//!  })
+//!     .collect();
+//! ```
 </span><span class="kw">use </span>std::{
     collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
@@ -436,6 +481,7 @@
 <span class="kw">use </span>futures_lite::stream::Boxed <span class="kw">as </span>BoxStream;
 <span class="kw">use </span>futures_util::FutureExt;
 <span class="kw">use </span>tracing::{debug, error, trace, warn};
+<span class="kw">use </span>watchable::Watchable;
 
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>iroh_base::key::PublicKey;
@@ -463,13 +509,13 @@
     <span class="attr">#[allow(dead_code)]
     </span>handle: AbortOnDropHandle&lt;()&gt;,
     sender: mpsc::Sender&lt;Message&gt;,
+    addrs: Watchable&lt;<span class="prelude-ty">Option</span>&lt;AddrInfo&gt;&gt;,
 }
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>Message {
     Discovery(String, Peer),
     SendAddrs(NodeId, mpsc::Sender&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;),
-    ChangeLocalAddrs(AddrInfo),
     Timeout(NodeId, usize),
     Subscribe(mpsc::Sender&lt;(NodeId, DiscoveryItem)&gt;),
 }
@@ -496,6 +542,9 @@
             <span class="kw-2">&amp;</span>rt,
         )<span class="question-mark">?</span>;
 
+        <span class="kw">let </span>addrs: Watchable&lt;<span class="prelude-ty">Option</span>&lt;AddrInfo&gt;&gt; = Watchable::new(<span class="prelude-val">None</span>);
+        <span class="kw">let </span>addrs_change = addrs.watch();
+
         <span class="kw">let </span>handle = tokio::spawn(<span class="kw">async move </span>{
             <span class="kw">let </span><span class="kw-2">mut </span>node_addrs: HashMap&lt;PublicKey, Peer&gt; = HashMap::default();
             <span class="kw">let </span><span class="kw-2">mut </span>subscribers: Vec&lt;mpsc::Sender&lt;(NodeId, DiscoveryItem)&gt;&gt; = <span class="macro">vec!</span>[];
@@ -507,7 +556,22 @@
             <span class="kw">let </span><span class="kw-2">mut </span>timeouts = JoinSet::new();
             <span class="kw">loop </span>{
                 <span class="macro">trace!</span>(<span class="question-mark">?</span>node_addrs, <span class="string">"LocalSwarmDiscovery Service loop tick"</span>);
-                <span class="kw">let </span>msg = <span class="kw">match </span>recv.recv().<span class="kw">await </span>{
+                <span class="kw">let </span>msg = <span class="macro">tokio::select!</span> {
+                    msg = recv.recv() =&gt; {
+                        msg
+                    }
+                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(addrs))= addrs_change.next_value_async() =&gt; {
+                        <span class="macro">tracing::info!</span>(<span class="question-mark">?</span>addrs, <span class="string">"LocalSwarmDiscovery address changed"</span>);
+                        discovery.remove_all();
+                        <span class="kw">let </span>addrs =
+                            LocalSwarmDiscovery::socketaddrs_to_addrs(addrs.direct_addresses);
+                        <span class="kw">for </span>addr <span class="kw">in </span>addrs {
+                            discovery.add(addr.<span class="number">0</span>, addr.<span class="number">1</span>)
+                        }
+                        <span class="kw">continue</span>;
+                    }
+                };
+                <span class="kw">let </span>msg = <span class="kw">match </span>msg {
                     <span class="prelude-val">None </span>=&gt; {
                         <span class="macro">error!</span>(<span class="string">"LocalSwarmDiscovery channel closed"</span>);
                         <span class="macro">error!</span>(<span class="string">"closing LocalSwarmDiscovery"</span>);
@@ -618,15 +682,6 @@
                             }
                         }
                     }
-                    Message::ChangeLocalAddrs(addrs) =&gt; {
-                        <span class="macro">trace!</span>(<span class="question-mark">?</span>addrs, <span class="string">"LocalSwarmDiscovery Message::ChangeLocalAddrs"</span>);
-                        discovery.remove_all();
-                        <span class="kw">let </span>addrs =
-                            LocalSwarmDiscovery::socketaddrs_to_addrs(addrs.direct_addresses);
-                        <span class="kw">for </span>addr <span class="kw">in </span>addrs {
-                            discovery.add(addr.<span class="number">0</span>, addr.<span class="number">1</span>)
-                        }
-                    }
                     Message::Subscribe(subscriber) =&gt; {
                         <span class="macro">trace!</span>(<span class="string">"LocalSwarmDiscovery Message::Subscribe"</span>);
                         subscribers.push(subscriber);
@@ -637,6 +692,7 @@
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             handle: AbortOnDropHandle::new(handle),
             sender: send,
+            addrs,
         })
     }
 
@@ -718,14 +774,8 @@
     }
 
     <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
-        <span class="kw">let </span>discovery_sender = <span class="self">self</span>.sender.clone();
-        <span class="kw">let </span>info = info.clone();
-        tokio::spawn(<span class="kw">async move </span>{
-            discovery_sender
-                .send(Message::ChangeLocalAddrs(info))
-                .<span class="kw">await
-                </span>.ok();
-        });
+        <span class="macro">tracing::info!</span>(<span class="string">"PUBLISHING aka replacing `addrs`"</span>);
+        <span class="self">self</span>.addrs.replace(<span class="prelude-val">Some</span>(info.clone()));
     }
 
     <span class="kw">async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
@@ -748,7 +798,7 @@
         <span class="kw">use </span>testresult::TestResult;
 
         <span class="attr">#[tokio::test]
-        </span><span class="kw">async fn </span>local_swarm_disovery_smoke() -&gt; TestResult {
+        </span><span class="kw">async fn </span>local_swarm_discovery_smoke() -&gt; TestResult {
             <span class="comment">// need to ensure that these tests run one after the other, otherwise
             // they interfere with each other
             </span>test_local_swarm_discovery().<span class="kw">await</span><span class="question-mark">?</span>;

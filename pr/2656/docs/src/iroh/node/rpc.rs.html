@@ -1366,6 +1366,22 @@
 <a href="#1366" id="1366">1366</a>
 <a href="#1367" id="1367">1367</a>
 <a href="#1368" id="1368">1368</a>
+<a href="#1369" id="1369">1369</a>
+<a href="#1370" id="1370">1370</a>
+<a href="#1371" id="1371">1371</a>
+<a href="#1372" id="1372">1372</a>
+<a href="#1373" id="1373">1373</a>
+<a href="#1374" id="1374">1374</a>
+<a href="#1375" id="1375">1375</a>
+<a href="#1376" id="1376">1376</a>
+<a href="#1377" id="1377">1377</a>
+<a href="#1378" id="1378">1378</a>
+<a href="#1379" id="1379">1379</a>
+<a href="#1380" id="1380">1380</a>
+<a href="#1381" id="1381">1381</a>
+<a href="#1382" id="1382">1382</a>
+<a href="#1383" id="1383">1383</a>
+<a href="#1384" id="1384">1384</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::{Arc, Mutex};
@@ -2598,14 +2614,30 @@
             <span class="kw">let </span>entry = db.get(<span class="kw-2">&amp;</span>req.hash).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span>entry = entry.ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"Blob not found"</span>))<span class="question-mark">?</span>;
             <span class="kw">let </span>size = entry.size();
+
+            <span class="macro">anyhow::ensure!</span>(
+                req.offset &lt;= size.value(),
+                <span class="string">"requested offset is out of range: {} &gt; {:?}"</span>,
+                req.offset,
+                size
+            );
+
+            <span class="kw">let </span>len = req.len.unwrap_or((size.value() - req.offset) <span class="kw">as </span>usize);
+
+            <span class="macro">anyhow::ensure!</span>(
+                req.offset + len <span class="kw">as </span>u64 &lt;= size.value(),
+                <span class="string">"requested range is out of bounds: offset: {}, len: {} &gt; {:?}"</span>,
+                req.offset,
+                len,
+                size
+            );
+
             tx.send(<span class="prelude-val">Ok</span>(ReadAtResponse::Entry {
                 size,
                 is_complete: entry.is_complete(),
             }))
             .<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>reader = entry.data_reader().<span class="kw">await</span><span class="question-mark">?</span>;
-
-            <span class="kw">let </span>len = req.len.unwrap_or((size.value() - req.offset) <span class="kw">as </span>usize);
 
             <span class="kw">let </span>(num_chunks, chunk_size) = <span class="kw">if </span>len &lt;= max_chunk_size {
                 (<span class="number">1</span>, len)

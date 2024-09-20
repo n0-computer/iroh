@@ -1635,6 +1635,62 @@
 <a href="#1635" id="1635">1635</a>
 <a href="#1636" id="1636">1636</a>
 <a href="#1637" id="1637">1637</a>
+<a href="#1638" id="1638">1638</a>
+<a href="#1639" id="1639">1639</a>
+<a href="#1640" id="1640">1640</a>
+<a href="#1641" id="1641">1641</a>
+<a href="#1642" id="1642">1642</a>
+<a href="#1643" id="1643">1643</a>
+<a href="#1644" id="1644">1644</a>
+<a href="#1645" id="1645">1645</a>
+<a href="#1646" id="1646">1646</a>
+<a href="#1647" id="1647">1647</a>
+<a href="#1648" id="1648">1648</a>
+<a href="#1649" id="1649">1649</a>
+<a href="#1650" id="1650">1650</a>
+<a href="#1651" id="1651">1651</a>
+<a href="#1652" id="1652">1652</a>
+<a href="#1653" id="1653">1653</a>
+<a href="#1654" id="1654">1654</a>
+<a href="#1655" id="1655">1655</a>
+<a href="#1656" id="1656">1656</a>
+<a href="#1657" id="1657">1657</a>
+<a href="#1658" id="1658">1658</a>
+<a href="#1659" id="1659">1659</a>
+<a href="#1660" id="1660">1660</a>
+<a href="#1661" id="1661">1661</a>
+<a href="#1662" id="1662">1662</a>
+<a href="#1663" id="1663">1663</a>
+<a href="#1664" id="1664">1664</a>
+<a href="#1665" id="1665">1665</a>
+<a href="#1666" id="1666">1666</a>
+<a href="#1667" id="1667">1667</a>
+<a href="#1668" id="1668">1668</a>
+<a href="#1669" id="1669">1669</a>
+<a href="#1670" id="1670">1670</a>
+<a href="#1671" id="1671">1671</a>
+<a href="#1672" id="1672">1672</a>
+<a href="#1673" id="1673">1673</a>
+<a href="#1674" id="1674">1674</a>
+<a href="#1675" id="1675">1675</a>
+<a href="#1676" id="1676">1676</a>
+<a href="#1677" id="1677">1677</a>
+<a href="#1678" id="1678">1678</a>
+<a href="#1679" id="1679">1679</a>
+<a href="#1680" id="1680">1680</a>
+<a href="#1681" id="1681">1681</a>
+<a href="#1682" id="1682">1682</a>
+<a href="#1683" id="1683">1683</a>
+<a href="#1684" id="1684">1684</a>
+<a href="#1685" id="1685">1685</a>
+<a href="#1686" id="1686">1686</a>
+<a href="#1687" id="1687">1687</a>
+<a href="#1688" id="1688">1688</a>
+<a href="#1689" id="1689">1689</a>
+<a href="#1690" id="1690">1690</a>
+<a href="#1691" id="1691">1691</a>
+<a href="#1692" id="1692">1692</a>
+<a href="#1693" id="1693">1693</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{btree_map::Entry, BTreeSet, HashMap};
 <span class="kw">use </span>std::hash::Hash;
 <span class="kw">use </span>std::net::{IpAddr, SocketAddr};
@@ -1655,10 +1711,10 @@
 <span class="kw">use </span><span class="kw">crate</span>::util::relay_only_mode;
 <span class="kw">use crate</span>::{stun, NodeAddr, NodeId};
 
-<span class="kw">use </span><span class="kw">super</span>::best_addr::{<span class="self">self</span>, ClearReason, Source};
+<span class="kw">use </span><span class="kw">super</span>::best_addr::{<span class="self">self</span>, ClearReason, Source <span class="kw">as </span>BestAddrSource};
 <span class="kw">use </span><span class="kw">super</span>::path_state::{summarize_node_paths, PathState};
 <span class="kw">use </span><span class="kw">super</span>::udp_paths::{NodeUdpPaths, UdpSendAddr};
-<span class="kw">use </span><span class="kw">super</span>::IpPort;
+<span class="kw">use super</span>::{IpPort, Source};
 
 <span class="doccomment">/// Number of addresses that are not active that we keep around per node.
 ///
@@ -1765,9 +1821,6 @@
     </span>last_call_me_maybe: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
     <span class="doccomment">/// The type of connection we have to the node, either direct, relay, mixed, or none.
     </span>conn_type: Watchable&lt;ConnectionType&gt;,
-    <span class="doccomment">/// How we learned about this node. We can have learned about this node from multiple stores.
-    /// Sources later in the list were sources we learned from more recently.
-    </span>sources: Vec&lt;(<span class="kw">super</span>::Source, Instant)&gt;,
 }
 
 <span class="doccomment">/// Options for creating a new [`NodeState`].
@@ -1789,6 +1842,8 @@
             </span><span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
         }
 
+        <span class="kw">let </span>now = Instant::now();
+
         NodeState {
             id,
             quic_mapped_addr,
@@ -1797,7 +1852,7 @@
             relay_url: options.relay_url.map(|url| {
                 (
                     url.clone(),
-                    PathState::new(options.node_id, SendAddr::Relay(url)),
+                    PathState::new(options.node_id, SendAddr::Relay(url), options.source, now),
                 )
             }),
             udp_paths: NodeUdpPaths::new(),
@@ -1805,7 +1860,6 @@
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: <span class="prelude-val">None</span>,
             conn_type: Watchable::new(ConnectionType::None),
-            sources: <span class="macro">vec!</span>[(options.source, Instant::now())],
         }
     }
 
@@ -1863,17 +1917,26 @@
             </span>.udp_paths
             .paths
             .iter()
-            .map(|(addr, endpoint_state)| DirectAddrInfo {
-                addr: SocketAddr::from(<span class="kw-2">*</span>addr),
-                latency: endpoint_state.recent_pong().map(|pong| pong.latency),
-                last_control: endpoint_state.last_control_msg(now),
-                last_payload: endpoint_state
-                    .last_payload_msg
-                    .as_ref()
-                    .map(|instant| now.duration_since(<span class="kw-2">*</span>instant)),
-                last_alive: endpoint_state
-                    .last_alive()
-                    .map(|instant| now.duration_since(instant)),
+            .map(|(addr, endpoint_state)| {
+                <span class="kw">let </span><span class="kw-2">mut </span>sources: Vec&lt;(Source, Duration)&gt; = endpoint_state
+                    .sources
+                    .iter()
+                    .map(|(source, instant)| (source.clone(), now.duration_since(<span class="kw-2">*</span>instant)))
+                    .collect();
+                sources.sort_by(|a, b| b.<span class="number">1</span>.cmp(<span class="kw-2">&amp;</span>a.<span class="number">1</span>));
+                DirectAddrInfo {
+                    addr: SocketAddr::from(<span class="kw-2">*</span>addr),
+                    latency: endpoint_state.recent_pong().map(|pong| pong.latency),
+                    last_control: endpoint_state.last_control_msg(now),
+                    last_payload: endpoint_state
+                        .last_payload_msg
+                        .as_ref()
+                        .map(|instant| now.duration_since(<span class="kw-2">*</span>instant)),
+                    last_alive: endpoint_state
+                        .last_alive()
+                        .map(|instant| now.duration_since(instant)),
+                    sources,
+                }
             })
             .collect();
 
@@ -1884,11 +1947,6 @@
             conn_type,
             latency,
             last_used: <span class="self">self</span>.last_used.map(|instant| now.duration_since(instant)),
-            sources: <span class="self">self
-                </span>.sources
-                .iter()
-                .map(|(source, instant)| (source.clone(), now.duration_since(<span class="kw-2">*</span>instant)))
-                .collect(),
         }
     }
 
@@ -2259,7 +2317,7 @@
         ping_msgs
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>update_from_node_addr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, n: <span class="kw-2">&amp;</span>AddrInfo) {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>update_from_node_addr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, n: <span class="kw-2">&amp;</span>AddrInfo, source: <span class="kw">super</span>::Source) {
         <span class="kw">if </span><span class="self">self</span>.udp_paths.best_addr.is_empty() {
             <span class="comment">// we do not have a direct connection, so changing the relay information may
             // have an effect on our connection status
@@ -2272,6 +2330,8 @@
             }
         }
 
+        <span class="kw">let </span>now = Instant::now();
+
         <span class="kw">if </span>n.relay_url.is_some() &amp;&amp; n.relay_url != <span class="self">self</span>.relay_url() {
             <span class="macro">debug!</span>(
                 <span class="string">"Changing relay node from {:?} to {:?}"</span>,
@@ -2280,7 +2340,7 @@
             <span class="self">self</span>.relay_url = n.relay_url.as_ref().map(|url| {
                 (
                     url.clone(),
-                    PathState::new(<span class="self">self</span>.node_id, url.clone().into()),
+                    PathState::new(<span class="self">self</span>.node_id, url.clone().into(), source.clone(), now),
                 )
             });
         }
@@ -2289,7 +2349,12 @@
             <span class="self">self</span>.udp_paths
                 .paths
                 .entry(addr.into())
-                .or_insert_with(|| PathState::new(<span class="self">self</span>.node_id, SendAddr::from(addr)));
+                .and_modify(|path_state| {
+                    path_state.add_source(source.clone(), now);
+                })
+                .or_insert_with(|| {
+                    PathState::new(<span class="self">self</span>.node_id, SendAddr::from(addr), source.clone(), now)
+                });
         }
         <span class="kw">let </span>paths = summarize_node_paths(<span class="kw-2">&amp;</span><span class="self">self</span>.udp_paths.paths);
         <span class="macro">debug!</span>(new = <span class="question-mark">?</span>n.direct_addresses , %paths, <span class="string">"added new direct paths for endpoint"</span>);
@@ -2329,7 +2394,13 @@
                 Entry::Occupied(<span class="kw-2">mut </span>occupied) =&gt; occupied.get_mut().handle_ping(tx_id, now),
                 Entry::Vacant(vacant) =&gt; {
                     <span class="macro">info!</span>(%addr, <span class="string">"new direct addr for node"</span>);
-                    vacant.insert(PathState::with_ping(<span class="self">self</span>.node_id, path.clone(), tx_id, now));
+                    vacant.insert(PathState::with_ping(
+                        <span class="self">self</span>.node_id,
+                        path.clone(),
+                        tx_id,
+                        Source::Udp,
+                        now,
+                    ));
                     PingRole::NewPath
                 }
             },
@@ -2341,7 +2412,13 @@
                         </span><span class="macro">info!</span>(%url, <span class="string">"new relay addr for node"</span>);
                         <span class="self">self</span>.relay_url = <span class="prelude-val">Some</span>((
                             url.clone(),
-                            PathState::with_ping(<span class="self">self</span>.node_id, path.clone(), tx_id, now),
+                            PathState::with_ping(
+                                <span class="self">self</span>.node_id,
+                                path.clone(),
+                                tx_id,
+                                Source::Relay,
+                                now,
+                            ),
                         ));
                         PingRole::NewPath
                     }
@@ -2350,7 +2427,13 @@
                         <span class="macro">info!</span>(%url, <span class="string">"new relay addr for node"</span>);
                         <span class="self">self</span>.relay_url = <span class="prelude-val">Some</span>((
                             url.clone(),
-                            PathState::with_ping(<span class="self">self</span>.node_id, path.clone(), tx_id, now),
+                            PathState::with_ping(
+                                <span class="self">self</span>.node_id,
+                                path.clone(),
+                                tx_id,
+                                Source::Relay,
+                                now,
+                            ),
                         ));
                         PingRole::NewPath
                     }
@@ -2581,7 +2664,14 @@
             <span class="self">self</span>.udp_paths
                 .paths
                 .entry(ipp)
-                .or_insert_with(|| PathState::new(<span class="self">self</span>.node_id, SendAddr::from(<span class="kw-2">*</span>peer_sockaddr)))
+                .or_insert_with(|| {
+                    PathState::new(
+                        <span class="self">self</span>.node_id,
+                        SendAddr::from(<span class="kw-2">*</span>peer_sockaddr),
+                        Source::Relay,
+                        now,
+                    )
+                })
                 .call_me_maybe_time
                 .replace(now);
         }
@@ -2628,7 +2718,7 @@
         <span class="self">self</span>.last_used = <span class="prelude-val">Some</span>(now);
         <span class="self">self</span>.udp_paths
             .best_addr
-            .reconfirm_if_used(addr.into(), Source::Udp, now);
+            .reconfirm_if_used(addr.into(), BestAddrSource::Udp, now);
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, src: NodeId, now: Instant) {
@@ -2643,7 +2733,12 @@
             <span class="prelude-val">None </span>=&gt; {
                 <span class="self">self</span>.relay_url = <span class="prelude-val">Some</span>((
                     url.clone(),
-                    PathState::with_last_payload(src, SendAddr::from(url.clone()), now),
+                    PathState::with_last_payload(
+                        src,
+                        SendAddr::from(url.clone()),
+                        Source::Relay,
+                        now,
+                    ),
                 ));
             }
         }
@@ -2876,6 +2971,10 @@
     ///
     /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
     </span><span class="kw">pub </span>last_alive: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
+    <span class="doccomment">/// Sources is a list of [`Source`] and [`Duration`]s, keeping track of all the ways we have learned about this path
+    /// We keep track of only the latest [`Duration`] for each [`Source`], keeping the size of the list of sources down to one entry per type of source.
+    /// The sources are sorted from oldest to most recent.
+    </span><span class="kw">pub </span>sources: Vec&lt;(Source, Duration)&gt;,
 }
 
 <span class="doccomment">/// Information about the network path to a remote node via a relay server.
@@ -2934,10 +3033,6 @@
     /// from the remote node. Note that sending to the remote node does not imply
     /// the remote node received anything.
     </span><span class="kw">pub </span>last_used: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
-    <span class="doccomment">/// List of places we have learned about this remote as well as [`Duration`] since we learned about it.
-    ///
-    /// Sources are sorted from least recent to most recent.
-    </span><span class="kw">pub </span>sources: Vec&lt;(<span class="kw">super</span>::Source, Duration)&gt;,
 }
 
 <span class="kw">impl </span>RemoteInfo {
@@ -2956,6 +3051,24 @@
     /// usable.
     </span><span class="kw">pub fn </span>has_send_address(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="self">self</span>.relay_url.is_some() || !<span class="self">self</span>.addrs.is_empty()
+    }
+
+    <span class="doccomment">/// Merges and deduplicates the [`Source`] and the [`Duration`] since they were discovered for each direct address, returning a list of the most recent [`Source`]s.
+    ///
+    /// Deduplication is on the (`Source`, `Duration`) tuple, so you may get multiple [`Source`]s for each `Source` varient.
+    ///
+    /// The list is sorted from least to most recent [`Source`]
+    </span><span class="kw">pub fn </span>sources(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;(Source, Duration)&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>sources = <span class="macro">vec!</span>[];
+        <span class="kw">for </span>addr <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.addrs {
+            <span class="kw">for </span>source <span class="kw">in </span><span class="kw-2">&amp;</span>addr.sources {
+                <span class="kw">if </span>!sources.contains(source) {
+                    sources.push(source.clone())
+                }
+            }
+        }
+        sources.sort_by(|a, b| b.<span class="number">1</span>.cmp(<span class="kw-2">&amp;</span>a.<span class="number">1</span>));
+        sources
     }
 }
 
@@ -2991,7 +3104,7 @@
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[test]
-    </span><span class="kw">fn </span>test_endpoint_infos() {
+    </span><span class="kw">fn </span>test_remote_infos() {
         <span class="kw">let </span>now = Instant::now();
         <span class="kw">let </span>elapsed = Duration::from_secs(<span class="number">3</span>);
         <span class="kw">let </span>later = now + elapsed;
@@ -3052,7 +3165,6 @@
                     last_used: <span class="prelude-val">Some</span>(now),
                     last_call_me_maybe: <span class="prelude-val">None</span>,
                     conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
-                    sources: Vec::new(),
                 },
                 ip_port.into(),
             )
@@ -3072,7 +3184,6 @@
                 last_used: <span class="prelude-val">Some</span>(now),
                 last_call_me_maybe: <span class="prelude-val">None</span>,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
-                sources: Vec::new(),
             }
         };
 
@@ -3087,14 +3198,18 @@
                 last_full_ping: <span class="prelude-val">None</span>,
                 relay_url: <span class="prelude-val">Some</span>((
                     send_addr.clone(),
-                    PathState::new(key.public(), SendAddr::from(send_addr.clone())),
+                    PathState::new(
+                        key.public(),
+                        SendAddr::from(send_addr.clone()),
+                        Source::App,
+                        now,
+                    ),
                 )),
                 udp_paths: NodeUdpPaths::new(),
                 sent_pings: HashMap::new(),
                 last_used: <span class="prelude-val">Some</span>(now),
                 last_call_me_maybe: <span class="prelude-val">None</span>,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
-                sources: Vec::new(),
             }
         };
 
@@ -3134,7 +3249,6 @@
                         socket_addr,
                         send_addr.clone(),
                     )),
-                    sources: Vec::new(),
                 },
                 socket_addr,
             )
@@ -3150,11 +3264,11 @@
                     last_control: <span class="prelude-val">Some</span>((elapsed, ControlMsg::Pong)),
                     last_payload: <span class="prelude-val">None</span>,
                     last_alive: <span class="prelude-val">Some</span>(elapsed),
+                    sources: Vec::new(),
                 }]),
                 conn_type: ConnectionType::Direct(a_socket_addr),
                 latency: <span class="prelude-val">Some</span>(latency),
                 last_used: <span class="prelude-val">Some</span>(elapsed),
-                sources: Vec::new(),
             },
             RemoteInfo {
                 node_id: b_endpoint.node_id,
@@ -3167,7 +3281,6 @@
                 conn_type: ConnectionType::Relay(send_addr.clone()),
                 latency: <span class="prelude-val">Some</span>(latency),
                 last_used: <span class="prelude-val">Some</span>(elapsed),
-                sources: Vec::new(),
             },
             RemoteInfo {
                 node_id: c_endpoint.node_id,
@@ -3180,7 +3293,6 @@
                 conn_type: ConnectionType::Relay(send_addr.clone()),
                 latency: <span class="prelude-val">None</span>,
                 last_used: <span class="prelude-val">Some</span>(elapsed),
-                sources: Vec::new(),
             },
             RemoteInfo {
                 node_id: d_endpoint.node_id,
@@ -3195,11 +3307,11 @@
                     last_control: <span class="prelude-val">Some</span>((elapsed, ControlMsg::Pong)),
                     last_payload: <span class="prelude-val">None</span>,
                     last_alive: <span class="prelude-val">Some</span>(elapsed),
+                    sources: Vec::new(),
                 }]),
                 conn_type: ConnectionType::Mixed(d_socket_addr, send_addr.clone()),
                 latency: <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">50</span>)),
                 last_used: <span class="prelude-val">Some</span>(elapsed),
-                sources: Vec::new(),
             },
         ]);
 
