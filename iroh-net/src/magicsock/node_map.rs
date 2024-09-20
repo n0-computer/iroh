@@ -86,9 +86,7 @@ enum NodeStateKey {
 }
 
 /// Source for a new node.
-///
-/// This is used for debugging purposes.
-#[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq, Hash)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Source {
     /// Node was loaded from the fs.
@@ -302,13 +300,14 @@ impl NodeMapInner {
     fn add_node_addr(&mut self, node_addr: NodeAddr, source: Source) {
         let NodeAddr { node_id, info } = node_addr;
 
+        let source0 = source.clone();
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
             node_id,
             relay_url: info.relay_url.clone(),
             active: false,
             source,
         });
-        node_state.update_from_node_addr(&info);
+        node_state.update_from_node_addr(&info, source0);
         let id = node_state.id();
         for addr in &info.direct_addresses {
             self.set_node_state_for_ip_port(*addr, id);

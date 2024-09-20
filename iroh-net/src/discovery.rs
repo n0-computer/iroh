@@ -480,10 +480,6 @@ mod tests {
         ) -> Option<BoxStream<Result<DiscoveryItem>>> {
             Some(futures_lite::stream::empty().boxed())
         }
-
-        async fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
-            Some(futures_lite::stream::empty().boxed())
-        }
     }
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";

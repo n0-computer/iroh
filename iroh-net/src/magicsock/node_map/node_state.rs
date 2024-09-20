@@ -18,10 +18,10 @@ use crate::relay::RelayUrl;
 use crate::util::relay_only_mode;
 use crate::{stun, NodeAddr, NodeId};
 
-use super::best_addr::{self, ClearReason, Source};
+use super::best_addr::{self, ClearReason, Source as BestAddrSource};
 use super::path_state::{summarize_node_paths, PathState};
 use super::udp_paths::{NodeUdpPaths, UdpSendAddr};
-use super::IpPort;
+use super::{IpPort, Source};
 
 /// Number of addresses that are not active that we keep around per node.
 ///
@@ -128,9 +128,6 @@ pub(super) struct NodeState {
     last_call_me_maybe: Option<Instant>,
     /// The type of connection we have to the node, either direct, relay, mixed, or none.
     conn_type: Watchable<ConnectionType>,
-    /// How we learned about this node. We can have learned about this node from multiple stores.
-    /// Sources later in the list were sources we learned from more recently.
-    sources: Vec<(super::Source, Instant)>,
 }
 
 /// Options for creating a new [`NodeState`].
@@ -152,6 +149,8 @@ impl NodeState {
             inc!(MagicsockMetrics, num_relay_conns_added);
         }
 
+        let now = Instant::now();
+
         NodeState {
             id,
             quic_mapped_addr,
@@ -160,7 +159,7 @@ impl NodeState {
             relay_url: options.relay_url.map(|url| {
                 (
                     url.clone(),
-                    PathState::new(options.node_id, SendAddr::Relay(url)),
+                    PathState::new(options.node_id, SendAddr::Relay(url), options.source, now),
                 )
             }),
             udp_paths: NodeUdpPaths::new(),
@@ -168,7 +167,6 @@ impl NodeState {
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: None,
             conn_type: Watchable::new(ConnectionType::None),
-            sources: vec![(options.source, Instant::now())],
         }
     }
 
@@ -226,17 +224,26 @@ impl NodeState {
             .udp_paths
             .paths
             .iter()
-            .map(|(addr, path_state)| DirectAddrInfo {
-                addr: SocketAddr::from(*addr),
-                latency: path_state.recent_pong.as_ref().map(|pong| pong.latency),
-                last_control: path_state.last_control_msg(now),
-                last_payload: path_state
-                    .last_payload_msg
-                    .as_ref()
-                    .map(|instant| now.duration_since(*instant)),
-                last_alive: path_state
-                    .last_alive()
-                    .map(|instant| now.duration_since(instant)),
+            .map(|(addr, path_state)| {
+                let mut sources: Vec<(Source, Duration)> = path_state
+                    .sources
+                    .iter()
+                    .map(|(source, instant)| (source.clone(), now.duration_since(*instant)))
+                    .collect();
+                sources.sort_by(|a, b| b.1.cmp(&a.1));
+                DirectAddrInfo {
+                    addr: SocketAddr::from(*addr),
+                    latency: path_state.recent_pong.as_ref().map(|pong| pong.latency),
+                    last_control: path_state.last_control_msg(now),
+                    last_payload: path_state
+                        .last_payload_msg
+                        .as_ref()
+                        .map(|instant| now.duration_since(*instant)),
+                    last_alive: path_state
+                        .last_alive()
+                        .map(|instant| now.duration_since(instant)),
+                    sources,
+                }
             })
             .collect();
 
@@ -247,11 +254,6 @@ impl NodeState {
             conn_type,
             latency,
             last_used: self.last_used.map(|instant| now.duration_since(instant)),
-            sources: self
-                .sources
-                .iter()
-                .map(|(source, instant)| (source.clone(), now.duration_since(*instant)))
-                .collect(),
         }
     }
 
@@ -625,7 +627,7 @@ impl NodeState {
         ping_msgs
     }
 
-    pub(super) fn update_from_node_addr(&mut self, n: &AddrInfo) {
+    pub(super) fn update_from_node_addr(&mut self, n: &AddrInfo, source: super::Source) {
         if self.udp_paths.best_addr.is_empty() {
             // we do not have a direct connection, so changing the relay information may
             // have an effect on our connection status
@@ -638,6 +640,8 @@ impl NodeState {
             }
         }
 
+        let now = Instant::now();
+
         if n.relay_url.is_some() && n.relay_url != self.relay_url() {
             debug!(
                 "Changing relay node from {:?} to {:?}",
@@ -646,7 +650,7 @@ impl NodeState {
             self.relay_url = n.relay_url.as_ref().map(|url| {
                 (
                     url.clone(),
-                    PathState::new(self.node_id, url.clone().into()),
+                    PathState::new(self.node_id, url.clone().into(), source.clone(), now),
                 )
             });
         }
@@ -655,7 +659,12 @@ impl NodeState {
             self.udp_paths
                 .paths
                 .entry(addr.into())
-                .or_insert_with(|| PathState::new(self.node_id, SendAddr::from(addr)));
+                .and_modify(|path_state| {
+                    path_state.add_source(source.clone(), now);
+                })
+                .or_insert_with(|| {
+                    PathState::new(self.node_id, SendAddr::from(addr), source.clone(), now)
+                });
         }
         let paths = summarize_node_paths(&self.udp_paths.paths);
         debug!(new = ?n.direct_addresses , %paths, "added new direct paths for endpoint");
@@ -695,7 +704,13 @@ impl NodeState {
                 Entry::Occupied(mut occupied) => occupied.get_mut().handle_ping(tx_id, now),
                 Entry::Vacant(vacant) => {
                     info!(%addr, "new direct addr for node");
-                    vacant.insert(PathState::with_ping(self.node_id, path.clone(), tx_id, now));
+                    vacant.insert(PathState::with_ping(
+                        self.node_id,
+                        path.clone(),
+                        tx_id,
+                        Source::Udp,
+                        now,
+                    ));
                     PingRole::NewPath
                 }
             },
@@ -707,7 +722,13 @@ impl NodeState {
                         info!(%url, "new relay addr for node");
                         self.relay_url = Some((
                             url.clone(),
-                            PathState::with_ping(self.node_id, path.clone(), tx_id, now),
+                            PathState::with_ping(
+                                self.node_id,
+                                path.clone(),
+                                tx_id,
+                                Source::Relay,
+                                now,
+                            ),
                         ));
                         PingRole::NewPath
                     }
@@ -716,7 +737,13 @@ impl NodeState {
                         info!(%url, "new relay addr for node");
                         self.relay_url = Some((
                             url.clone(),
-                            PathState::with_ping(self.node_id, path.clone(), tx_id, now),
+                            PathState::with_ping(
+                                self.node_id,
+                                path.clone(),
+                                tx_id,
+                                Source::Relay,
+                                now,
+                            ),
                         ));
                         PingRole::NewPath
                     }
@@ -947,7 +974,14 @@ impl NodeState {
             self.udp_paths
                 .paths
                 .entry(ipp)
-                .or_insert_with(|| PathState::new(self.node_id, SendAddr::from(*peer_sockaddr)))
+                .or_insert_with(|| {
+                    PathState::new(
+                        self.node_id,
+                        SendAddr::from(*peer_sockaddr),
+                        Source::Relay,
+                        now,
+                    )
+                })
                 .call_me_maybe_time
                 .replace(now);
         }
@@ -994,7 +1028,7 @@ impl NodeState {
         self.last_used = Some(now);
         self.udp_paths
             .best_addr
-            .reconfirm_if_used(addr.into(), Source::Udp, now);
+            .reconfirm_if_used(addr.into(), BestAddrSource::Udp, now);
     }
 
     pub(super) fn receive_relay(&mut self, url: &RelayUrl, src: NodeId, now: Instant) {
@@ -1009,7 +1043,12 @@ impl NodeState {
             None => {
                 self.relay_url = Some((
                     url.clone(),
-                    PathState::with_last_payload(src, SendAddr::from(url.clone()), now),
+                    PathState::with_last_payload(
+                        src,
+                        SendAddr::from(url.clone()),
+                        Source::Relay,
+                        now,
+                    ),
                 ));
             }
         }
@@ -1242,6 +1281,10 @@ pub struct DirectAddrInfo {
     ///
     /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
     pub last_alive: Option<Duration>,
+    /// Sources is a list of [`Source`] and [`Duration`]s, keeping track of all the ways we have learned about this path
+    /// We keep track of only the latest [`Duration`] for each [`Source`], keeping the size of the list of sources down to one entry per type of source.
+    /// The sources are sorted from oldest to most recent.
+    pub sources: Vec<(Source, Duration)>,
 }
 
 /// Information about the network path to a remote node via a relay server.
@@ -1300,10 +1343,6 @@ pub struct RemoteInfo {
     /// from the remote node. Note that sending to the remote node does not imply
     /// the remote node received anything.
     pub last_used: Option<Duration>,
-    /// List of places we have learned about this remote as well as [`Duration`] since we learned about it.
-    ///
-    /// Sources are sorted from least recent to most recent.
-    pub sources: Vec<(super::Source, Duration)>,
 }
 
 impl RemoteInfo {
@@ -1322,6 +1361,24 @@ impl RemoteInfo {
     /// usable.
     pub fn has_send_address(&self) -> bool {
         self.relay_url.is_some() || !self.addrs.is_empty()
+    }
+
+    /// Merges and deduplicates the [`Source`] and the [`Duration`] since they were discovered for each direct address, returning a list of the most recent [`Source`]s.
+    ///
+    /// Deduplication is on the (`Source`, `Duration`) tuple, so you may get multiple [`Source`]s for each `Source` varient.
+    ///
+    /// The list is sorted from least to most recent [`Source`]
+    pub fn sources(&self) -> Vec<(Source, Duration)> {
+        let mut sources = vec![];
+        for addr in &self.addrs {
+            for source in &addr.sources {
+                if !sources.contains(source) {
+                    sources.push(source.clone())
+                }
+            }
+        }
+        sources.sort_by(|a, b| b.1.cmp(&a.1));
+        sources
     }
 }
 
@@ -1357,7 +1414,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_endpoint_infos() {
+    fn test_remote_infos() {
         let now = Instant::now();
         let elapsed = Duration::from_secs(3);
         let later = now + elapsed;
@@ -1418,7 +1475,6 @@ mod tests {
                     last_used: Some(now),
                     last_call_me_maybe: None,
                     conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
-                    sources: Vec::new(),
                 },
                 ip_port.into(),
             )
@@ -1438,7 +1494,6 @@ mod tests {
                 last_used: Some(now),
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
-                sources: Vec::new(),
             }
         };
 
@@ -1453,14 +1508,18 @@ mod tests {
                 last_full_ping: None,
                 relay_url: Some((
                     send_addr.clone(),
-                    PathState::new(key.public(), SendAddr::from(send_addr.clone())),
+                    PathState::new(
+                        key.public(),
+                        SendAddr::from(send_addr.clone()),
+                        Source::App,
+                        now,
+                    ),
                 )),
                 udp_paths: NodeUdpPaths::new(),
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
-                sources: Vec::new(),
             }
         };
 
@@ -1500,7 +1559,6 @@ mod tests {
                         socket_addr,
                         send_addr.clone(),
                     )),
-                    sources: Vec::new(),
                 },
                 socket_addr,
             )
@@ -1516,11 +1574,11 @@ mod tests {
                     last_control: Some((elapsed, ControlMsg::Pong)),
                     last_payload: None,
                     last_alive: Some(elapsed),
+                    sources: Vec::new(),
                 }]),
                 conn_type: ConnectionType::Direct(a_socket_addr),
                 latency: Some(latency),
                 last_used: Some(elapsed),
-                sources: Vec::new(),
             },
             RemoteInfo {
                 node_id: b_endpoint.node_id,
@@ -1533,7 +1591,6 @@ mod tests {
                 conn_type: ConnectionType::Relay(send_addr.clone()),
                 latency: Some(latency),
                 last_used: Some(elapsed),
-                sources: Vec::new(),
             },
             RemoteInfo {
                 node_id: c_endpoint.node_id,
@@ -1546,7 +1603,6 @@ mod tests {
                 conn_type: ConnectionType::Relay(send_addr.clone()),
                 latency: None,
                 last_used: Some(elapsed),
-                sources: Vec::new(),
             },
             RemoteInfo {
                 node_id: d_endpoint.node_id,
@@ -1561,11 +1617,11 @@ mod tests {
                     last_control: Some((elapsed, ControlMsg::Pong)),
                     last_payload: None,
                     last_alive: Some(elapsed),
+                    sources: Vec::new(),
                 }]),
                 conn_type: ConnectionType::Mixed(d_socket_addr, send_addr.clone()),
                 latency: Some(Duration::from_millis(50)),
                 last_used: Some(elapsed),
-                sources: Vec::new(),
             },
         ]);
 

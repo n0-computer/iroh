@@ -2,7 +2,27 @@
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
-
+//!
+//! If you have [`LocalSwarmDiscovery`] enabled, you can get a list of the locally discovered nodes by filtering a list of `RemoteInfo`s.
+//!
+//! ```
+//! let recent = Duration::from_secs(600); // 10 minutes in seconds
+//! let remotes = endpoint.remote_info_iter();
+//! let locally_discovered: Vec<_> = remotes
+//!    .filter(|remote| {
+//!        remote
+//!            .sources()
+//!            .iter()
+//!            .any(|(source, duration)| {
+//!                if let Source::Discovery { service } = source {
+//!                    service == "local" && *duration >= recent
+//!                } else {
+//!                    false
+//!                }
+//!            })
+//!  })
+//!     .collect();
+//! ```
 use std::{
     collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},

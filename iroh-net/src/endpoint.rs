@@ -764,21 +764,6 @@ impl Endpoint {
         self.msock.list_remote_infos().into_iter()
     }
 
-    /// Returns all nodes discovered in the last `duration`.
-    pub fn recently_discovered_nodes(
-        &self,
-        duration: Duration,
-    ) -> impl Iterator<Item = RemoteInfo> {
-        self.msock
-            .list_remote_infos()
-            .into_iter()
-            .filter(move |remote| {
-                remote.sources.iter().any(|(source, elapsed)| {
-                    matches!(source, Source::Discovery { .. }) && elapsed <= &duration
-                })
-            })
-    }
-
     // # Methods for less common getters.
     //
     // Partially they return things passed into the builder.
