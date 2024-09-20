@@ -14,6 +14,7 @@ use derive_more::FromStr;
 use futures_lite::stream::Boxed as BoxStream;
 use futures_util::FutureExt;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
+use watchable::Watchable;
 
 use async_trait::async_trait;
 use iroh_base::key::PublicKey;
@@ -41,13 +42,13 @@ pub struct LocalSwarmDiscovery {
     #[allow(dead_code)]
     handle: AbortOnDropHandle<()>,
     sender: mpsc::Sender<Message>,
+    addrs: Watchable<Option<AddrInfo>>,
 }
 
 #[derive(Debug)]
 enum Message {
     Discovery(String, Peer),
     SendAddrs(NodeId, mpsc::Sender<Result<DiscoveryItem>>),
-    ChangeLocalAddrs(AddrInfo),
     Timeout(NodeId, usize),
     Subscribe(mpsc::Sender<(NodeId, DiscoveryItem)>),
 }
@@ -74,6 +75,8 @@ impl LocalSwarmDiscovery {
             &rt,
         )?;
 
+        let addrs: Watchable<Option<AddrInfo>> = Watchable::new(None);
+        let addrs_change = addrs.watch();
         let discovery_fut = async move {
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
             let mut subscribers: Vec<mpsc::Sender<(NodeId, DiscoveryItem)>> = vec![];
@@ -85,7 +88,22 @@ impl LocalSwarmDiscovery {
             let mut timeouts = JoinSet::new();
             loop {
                 trace!(?node_addrs, "LocalSwarmDiscovery Service loop tick");
-                let msg = match recv.recv().await {
+                let msg = tokio::select! {
+                    msg = recv.recv() => {
+                        msg
+                    }
+                    Ok(Some(addrs))= addrs_change.next_value_async() => {
+                        tracing::info!(?addrs, "LocalSwarmDiscovery address changed");
+                        discovery.remove_all();
+                        let addrs =
+                            LocalSwarmDiscovery::socketaddrs_to_addrs(addrs.direct_addresses);
+                        for addr in addrs {
+                            discovery.add(addr.0, addr.1)
+                        }
+                        continue;
+                    }
+                };
+                let msg = match msg {
                     None => {
                         error!("LocalSwarmDiscovery channel closed");
                         error!("closing LocalSwarmDiscovery");
@@ -196,15 +214,6 @@ impl LocalSwarmDiscovery {
                             }
                         }
                     }
-                    Message::ChangeLocalAddrs(addrs) => {
-                        trace!(?addrs, "LocalSwarmDiscovery Message::ChangeLocalAddrs");
-                        discovery.remove_all();
-                        let addrs =
-                            LocalSwarmDiscovery::socketaddrs_to_addrs(addrs.direct_addresses);
-                        for addr in addrs {
-                            discovery.add(addr.0, addr.1)
-                        }
-                    }
                     Message::Subscribe(subscriber) => {
                         trace!("LocalSwarmDiscovery Message::Subscribe");
                         subscribers.push(subscriber);
@@ -216,6 +225,7 @@ impl LocalSwarmDiscovery {
         Ok(Self {
             handle: AbortOnDropHandle::new(handle),
             sender: send,
+            addrs,
         })
     }
 
@@ -297,14 +307,8 @@ impl Discovery for LocalSwarmDiscovery {
     }
 
     fn publish(&self, info: &AddrInfo) {
-        let discovery_sender = self.sender.clone();
-        let info = info.clone();
-        tokio::spawn(async move {
-            discovery_sender
-                .send(Message::ChangeLocalAddrs(info))
-                .await
-                .ok();
-        });
+        tracing::info!("PUBLISHING aka replacing `addrs`");
+        self.addrs.replace(Some(info.clone()));
     }
 
     async fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
@@ -327,7 +331,7 @@ mod tests {
         use testresult::TestResult;
 
         #[tokio::test]
-        async fn local_swarm_disovery_smoke() -> TestResult {
+        async fn local_swarm_discovery_smoke() -> TestResult {
             // need to ensure that these tests run one after the other, otherwise
             // they interfere with each other
             test_local_swarm_discovery().await?;

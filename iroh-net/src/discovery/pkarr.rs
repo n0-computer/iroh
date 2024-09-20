@@ -5,7 +5,6 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
-use async_trait::async_trait;
 use futures_util::stream::BoxStream;
 use pkarr::SignedPacket;
 use tokio::{
@@ -17,7 +16,7 @@ use url::Url;
 use watchable::{Watchable, Watcher};
 
 use crate::{
-    discovery::{Discovery, DiscoveryEvents, DiscoveryItem},
+    discovery::{Discovery, DiscoveryItem},
     dns::node_info::NodeInfo,
     key::SecretKey,
     AddrInfo, Endpoint, NodeId,
@@ -121,7 +120,6 @@ impl PkarrPublisher {
     }
 }
 
-#[async_trait]
 impl Discovery for PkarrPublisher {
     fn publish(&self, info: &AddrInfo) {
         self.update_addr_info(info);
@@ -211,7 +209,6 @@ impl PublisherService {
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrResolver {
     pkarr_client: PkarrRelayClient,
-    events: DiscoveryEvents,
 }
 
 impl PkarrResolver {
@@ -219,7 +216,6 @@ impl PkarrResolver {
     pub fn new(pkarr_relay: Url) -> Self {
         Self {
             pkarr_client: PkarrRelayClient::new(pkarr_relay),
-            events: DiscoveryEvents::new(),
         }
     }
 
@@ -236,7 +232,6 @@ impl PkarrResolver {
     }
 }
 
-#[async_trait]
 impl Discovery for PkarrResolver {
     fn resolve(
         &self,
@@ -244,7 +239,6 @@ impl Discovery for PkarrResolver {
         node_id: NodeId,
     ) -> Option<BoxStream<'static, Result<DiscoveryItem>>> {
         let pkarr_client = self.pkarr_client.clone();
-        let events = self.events.clone();
         let fut = async move {
             let signed_packet = pkarr_client.resolve(node_id).await?;
             let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)?;
@@ -253,16 +247,10 @@ impl Discovery for PkarrResolver {
                 last_updated: None,
                 addr_info: info.into(),
             };
-            events.send_event(node_id, item.clone()).await;
             Ok(item)
         };
         let stream = futures_lite::stream::once_future(fut);
         Some(Box::pin(stream))
-    }
-
-    async fn subscribe(&self) -> Option<BoxStream<'static, (NodeId, DiscoveryItem)>> {
-        let stream = self.events.subscribe().await;
-        Some(stream)
     }
 }
 

@@ -39,19 +39,15 @@
 //! [`PkarrResolver`]: pkarr::PkarrResolver
 //! [pkarr relay servers]: https://pkarr.org/#servers
 
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use crate::{AddrInfo, Endpoint, NodeId};
 use anyhow::{anyhow, ensure, Result};
 use async_trait::async_trait;
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::JoinHandle,
-};
-use tokio_util::task::AbortOnDropHandle;
-use tracing::{debug, error_span, trace, warn, Instrument};
+use tokio::{sync::oneshot, task::JoinHandle};
+use tracing::{debug, error_span, warn, Instrument};
 
 pub mod dns;
 
@@ -98,93 +94,22 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
         None
     }
 
-    /// Subscribe to all addresses that get discovered.
+    /// Subscribe to all addresses that get *passively* discovered.
+    ///
+    /// Any discovery systems that only discover when explicitly resolving a
+    /// specific [`NodeId`] do not need to implement this method, and in fact,
+    /// and actively discovered nodes (ones discovered used by calling `resolve`)
+    /// should NOT end up on this stream.
+    ///
+    /// Discovery systems that are capable of receiving information about [`NodeId`]s
+    /// and their [`AddrInfo`]s without explicitly calling `resolve`, i.e.,
+    /// systems that do "passive" discovery, should implement this method.
+    ///
+    /// The [`crate::endpoint::Endpoint`] will `subscribe` to the discovery system
+    /// and add the discovered addresses to the internal address book as they arrive
+    /// on this stream.
     async fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
         None
-    }
-}
-
-/// A loop that handles discovery event
-///
-/// When dropped, the inner task is cleaned up.
-#[derive(derive_more::Debug, Clone)]
-pub(crate) struct DiscoveryEvents(std::sync::Arc<Inner>);
-
-#[derive(derive_more::Debug)]
-struct Inner {
-    _handle: AbortOnDropHandle<()>,
-    #[debug("mpsc::Sender(<Message>)")]
-    sender: mpsc::Sender<Message>,
-}
-
-#[derive(Debug)]
-enum Message {
-    Subscribe(mpsc::Sender<(NodeId, DiscoveryItem)>),
-    Event((NodeId, DiscoveryItem)),
-}
-
-impl DiscoveryEvents {
-    pub(crate) fn new() -> Self {
-        let (sender, mut recv) = mpsc::channel(20);
-        let mut subscribers: Vec<mpsc::Sender<(NodeId, DiscoveryItem)>> = Vec::new();
-        let event_loop = async move {
-            loop {
-                let msg = recv.recv().await;
-                match msg {
-                    Some(Message::Subscribe(subscriber)) => {
-                        trace!("Message::Subscribe - Adding new subscriber to discovery events");
-                        subscribers.push(subscriber);
-                    }
-                    Some(Message::Event(discovery_item)) => {
-                        let mut bad_subscribers = vec![];
-                        for (i, subscriber) in subscribers.iter().enumerate() {
-                            if let Err(e) = subscriber.try_send(discovery_item.clone()) {
-                                match e {
-                                    tokio::sync::mpsc::error::TrySendError::Full(_) => {
-                                        warn!("Message Event - Subscriber {i} full, dropping message.");
-                                    }
-                                    tokio::sync::mpsc::error::TrySendError::Closed(_) => {
-                                        debug!("Message::Event - Subscriber {i} closed, dropping subscriber.");
-                                        bad_subscribers.push(i);
-                                    }
-                                }
-                            }
-                        }
-                        for bad_subscriber in bad_subscribers {
-                            subscribers.swap_remove(bad_subscriber);
-                        }
-                    }
-                    None => {}
-                }
-            }
-        };
-
-        let handle = tokio::spawn(event_loop);
-        Self(Arc::new(Inner {
-            _handle: AbortOnDropHandle::new(handle),
-            sender,
-        }))
-    }
-
-    pub(crate) async fn send_event(&self, node_id: NodeId, discovery_item: DiscoveryItem) {
-        self.0
-            .sender
-            .send(Message::Event((node_id, discovery_item)))
-            .await
-            .ok();
-    }
-
-    /// Allows you to subscribe to messages from the `DiscoveryEvent`
-    ///
-    /// Returns a stream of `DiscoveryItems`
-    ///
-    /// If a stream is dropped, the `DiscoveryEvent` struct will clean
-    /// up the dangling subscription.
-    pub(crate) async fn subscribe(&self) -> BoxStream<(NodeId, DiscoveryItem)> {
-        let (send, recv) = mpsc::channel(20);
-        self.0.sender.send(Message::Subscribe(send)).await.ok();
-        let stream = tokio_stream::wrappers::ReceiverStream::new(recv);
-        Box::pin(stream)
     }
 }
 
@@ -465,7 +390,6 @@ mod tests {
                 publish: true,
                 resolve_wrong: false,
                 delay: Duration::from_millis(200),
-                events: DiscoveryEvents::new(),
             }
         }
 
@@ -476,7 +400,6 @@ mod tests {
                 publish: false,
                 resolve_wrong: true,
                 delay: Duration::from_millis(100),
-                events: DiscoveryEvents::new(),
             }
         }
     }
@@ -487,10 +410,8 @@ mod tests {
         publish: bool,
         resolve_wrong: bool,
         delay: Duration,
-        events: DiscoveryEvents,
     }
 
-    #[async_trait]
     impl Discovery for TestDiscovery {
         fn publish(&self, info: &AddrInfo) {
             if !self.publish {
@@ -530,7 +451,6 @@ mod tests {
                         addr_info,
                     };
                     let delay = self.delay;
-                    let events = self.events.clone();
                     let fut = async move {
                         tokio::time::sleep(delay).await;
                         tracing::debug!(
@@ -538,7 +458,6 @@ mod tests {
                             endpoint.node_id().fmt_short(),
                             node_id.fmt_short()
                         );
-                        events.send_event(node_id, item.clone()).await;
                         Ok(item)
                     };
                     futures_lite::stream::once_future(fut).boxed()
@@ -547,16 +466,10 @@ mod tests {
             };
             Some(stream)
         }
-
-        async fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
-            let stream = self.events.subscribe().await;
-            Some(stream)
-        }
     }
 
     #[derive(Debug)]
     struct EmptyDiscovery;
-    #[async_trait]
     impl Discovery for EmptyDiscovery {
         fn publish(&self, _info: &AddrInfo) {}
 

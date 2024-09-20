@@ -1,11 +1,10 @@
 //! DNS node discovery for iroh-net
 
 use anyhow::Result;
-use async_trait::async_trait;
 use futures_lite::stream::Boxed as BoxStream;
 
 use crate::{
-    discovery::{Discovery, DiscoveryEvents, DiscoveryItem},
+    discovery::{Discovery, DiscoveryItem},
     dns::ResolverExt,
     Endpoint, NodeId,
 };
@@ -43,16 +42,12 @@ const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 #[derive(Debug)]
 pub struct DnsDiscovery {
     origin_domain: String,
-    events: DiscoveryEvents,
 }
 
 impl DnsDiscovery {
     /// Creates a new DNS discovery.
     pub fn new(origin_domain: String) -> Self {
-        Self {
-            origin_domain,
-            events: DiscoveryEvents::new(),
-        }
+        Self { origin_domain }
     }
 
     /// Creates a new DNS discovery using the `iroh.link` domain.
@@ -84,30 +79,21 @@ impl DnsDiscovery {
     }
 }
 
-#[async_trait]
 impl Discovery for DnsDiscovery {
     fn resolve(&self, ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let resolver = ep.dns_resolver().clone();
         let origin_domain = self.origin_domain.clone();
-        let events = self.events.clone();
         let fut = async move {
             let node_addr = resolver
                 .lookup_by_id_staggered(&node_id, &origin_domain, DNS_STAGGERING_MS)
                 .await?;
-            let item = DiscoveryItem {
+            Ok(DiscoveryItem {
                 provenance: "dns",
                 last_updated: None,
                 addr_info: node_addr.info,
-            };
-            events.send_event(node_id, item.clone()).await;
-            Ok(item)
+            })
         };
         let stream = futures_lite::stream::once_future(fut);
         Some(Box::pin(stream))
-    }
-
-    async fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
-        let stream = self.events.subscribe().await;
-        Some(stream)
     }
 }
