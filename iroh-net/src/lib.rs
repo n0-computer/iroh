@@ -58,6 +58,8 @@
 //! nodes understand their own network situation.  This includes offering a [STUN] server,
 //! but also a few HTTP extra endpoints as well as responding to ICMP echo requests.
 //!
+//! By default the [number 0] relay servers are used, see [`RelayMode::Default`].
+//!
 //!
 //! # Connections and Streams
 //!
@@ -113,6 +115,8 @@
 //! [`RelayUrl`]: crate::relay::RelayUrl
 //! [`discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
+//! [number 0]: https://n0.computer
+//! [`RelayMode::Default`]: crate::relay::RelayMode::Default
 
 #![recursion_limit = "256"]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
