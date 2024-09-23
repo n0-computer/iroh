@@ -445,6 +445,20 @@
 <a href="#445" id="445">445</a>
 <a href="#446" id="446">446</a>
 <a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
+<a href="#456" id="456">456</a>
+<a href="#457" id="457">457</a>
+<a href="#458" id="458">458</a>
+<a href="#459" id="459">459</a>
+<a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
@@ -483,7 +497,6 @@
 <span class="kw">use </span>tracing::{debug, error, trace, warn};
 <span class="kw">use </span>watchable::Watchable;
 
-<span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>iroh_base::key::PublicKey;
 <span class="kw">use </span>swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 <span class="kw">use </span>tokio::{sync::mpsc, task::JoinSet};
@@ -515,7 +528,7 @@
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>Message {
     Discovery(String, Peer),
-    SendAddrs(NodeId, mpsc::Sender&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;),
+    Resolve(NodeId, mpsc::Sender&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;),
     Timeout(NodeId, usize),
     Subscribe(mpsc::Sender&lt;(NodeId, DiscoveryItem)&gt;),
 }
@@ -625,29 +638,37 @@
                             <span class="string">"adding node to LocalSwarmDiscovery address book"
                         </span>);
 
+                        <span class="kw">let </span><span class="kw-2">mut </span>resolved = <span class="bool-val">false</span>;
                         <span class="kw">let </span>item: DiscoveryItem = (<span class="kw-2">&amp;</span>peer_info).into();
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(senders) = senders.get(<span class="kw-2">&amp;</span>discovered_node_id) {
                             <span class="macro">trace!</span>(<span class="question-mark">?</span>item, senders = senders.len(), <span class="string">"sending DiscoveryItem"</span>);
+                            resolved = <span class="bool-val">true</span>;
                             <span class="kw">for </span>sender <span class="kw">in </span>senders.values() {
                                 sender.send(<span class="prelude-val">Ok</span>(item.clone())).<span class="kw">await</span>.ok();
                             }
                         }
                         entry.or_insert(peer_info);
 
-                        <span class="comment">// update and clean up subscribers
-                        </span><span class="kw">let </span><span class="kw-2">mut </span>clean_up = <span class="macro">vec!</span>[];
-                        <span class="kw">for </span>(i, subscriber) <span class="kw">in </span>subscribers.iter().enumerate() {
-                            <span class="comment">// assume subscriber was dropped
-                            </span><span class="kw">if </span>(subscriber.send((discovered_node_id, item.clone())).<span class="kw">await</span>).is_err()
-                            {
-                                clean_up.push(i);
+                        <span class="comment">// only send nodes to the `subscriber` if they weren't explicitly resolved
+                        // in other words, nodes sent to the `subscribers` should only be the ones that
+                        // have been "passively" discovered
+                        </span><span class="kw">if </span>!resolved {
+                            <span class="comment">// update and clean up subscribers
+                            </span><span class="kw">let </span><span class="kw-2">mut </span>clean_up = <span class="macro">vec!</span>[];
+                            <span class="kw">for </span>(i, subscriber) <span class="kw">in </span>subscribers.iter().enumerate() {
+                                <span class="comment">// assume subscriber was dropped
+                                </span><span class="kw">if </span>(subscriber.send((discovered_node_id, item.clone())).<span class="kw">await</span>)
+                                    .is_err()
+                                {
+                                    clean_up.push(i);
+                                }
+                            }
+                            <span class="kw">for </span>i <span class="kw">in </span>clean_up {
+                                subscribers.swap_remove(i);
                             }
                         }
-                        <span class="kw">for </span>i <span class="kw">in </span>clean_up {
-                            subscribers.swap_remove(i);
-                        }
                     }
-                    Message::SendAddrs(node_id, sender) =&gt; {
+                    Message::Resolve(node_id, sender) =&gt; {
                         <span class="kw">let </span>id = last_id + <span class="number">1</span>;
                         last_id = id;
                         <span class="macro">trace!</span>(<span class="question-mark">?</span>node_id, <span class="string">"LocalSwarmDiscovery Message::SendAddrs"</span>);
@@ -758,14 +779,13 @@
     }
 }
 
-<span class="attr">#[async_trait]
-</span><span class="kw">impl </span>Discovery <span class="kw">for </span>LocalSwarmDiscovery {
+<span class="kw">impl </span>Discovery <span class="kw">for </span>LocalSwarmDiscovery {
     <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, _ep: Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
         <span class="kw">let </span>(send, recv) = mpsc::channel(<span class="number">20</span>);
         <span class="kw">let </span>discovery_sender = <span class="self">self</span>.sender.clone();
         <span class="kw">let </span>stream = <span class="kw">async move </span>{
             discovery_sender
-                .send(Message::SendAddrs(node_id, send))
+                .send(Message::Resolve(node_id, send))
                 .<span class="kw">await
                 </span>.ok();
             tokio_stream::wrappers::ReceiverStream::new(recv)
@@ -778,12 +798,14 @@
         <span class="self">self</span>.addrs.replace(<span class="prelude-val">Some</span>(info.clone()));
     }
 
-    <span class="kw">async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
+    <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
         <span class="kw">let </span>(sender, recv) = mpsc::channel(<span class="number">20</span>);
-        <span class="self">self</span>.sender.send(Message::Subscribe(sender)).<span class="kw">await</span>.ok();
-        <span class="kw">let </span>stream = tokio_stream::wrappers::ReceiverStream::new(recv);
-
-        <span class="prelude-val">Some</span>(Box::pin(stream))
+        <span class="kw">let </span>discovery_sender = <span class="self">self</span>.sender.clone();
+        <span class="kw">let </span>stream = <span class="kw">async move </span>{
+            discovery_sender.send(Message::Subscribe(sender)).<span class="kw">await</span>.ok();
+            tokio_stream::wrappers::ReceiverStream::new(recv)
+        };
+        <span class="prelude-val">Some</span>(Box::pin(stream.flatten_stream()))
     }
 }
 
@@ -823,24 +845,30 @@
             <span class="kw">let </span><span class="kw-2">mut </span>s2 = discovery_a.resolve(ep, node_id_b).unwrap();
 
             <span class="macro">tracing::debug!</span>(<span class="string">"Subscribe to node a's discovery events"</span>);
-            <span class="kw">let </span><span class="kw-2">mut </span>events = discovery_a.subscribe().<span class="kw">await</span>.unwrap();
+            <span class="kw">let </span><span class="kw-2">mut </span>events = discovery_a.subscribe().unwrap();
 
-            <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>node_id_b, <span class="string">"Discovering node id b"</span>);
-            <span class="comment">// publish discovery_b's address
-            </span>discovery_b.publish(<span class="kw-2">&amp;</span>addr_info);
-            <span class="kw">let </span>s1_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
-                .<span class="kw">await</span><span class="question-mark">?
-                </span>.unwrap()<span class="question-mark">?</span>;
-            <span class="kw">let </span>s2_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s2.next())
-                .<span class="kw">await</span><span class="question-mark">?
-                </span>.unwrap()<span class="question-mark">?</span>;
-            <span class="macro">assert_eq!</span>(s1_res.addr_info, addr_info);
-            <span class="macro">assert_eq!</span>(s2_res.addr_info, addr_info);
+            <span class="kw">let </span>info = addr_info.clone();
+            <span class="kw">let </span>handle = tokio::spawn(<span class="kw">async move </span>{
+                <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>node_id_b, <span class="string">"Discovering node id b"</span>);
+                <span class="comment">// publish discovery_b's address
+                </span>discovery_b.publish(<span class="kw-2">&amp;</span>addr_info);
+                <span class="kw">let </span>s1_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
+                    .<span class="kw">await</span><span class="question-mark">?
+                    </span>.unwrap()<span class="question-mark">?</span>;
+                <span class="kw">let </span>s2_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s2.next())
+                    .<span class="kw">await</span><span class="question-mark">?
+                    </span>.unwrap()<span class="question-mark">?</span>;
+                <span class="macro">assert_eq!</span>(s1_res.addr_info, addr_info);
+                <span class="macro">assert_eq!</span>(s2_res.addr_info, addr_info);
+                anyhow::Ok(())
+            });
 
             <span class="kw">if let </span><span class="prelude-val">Some</span>((id, item)) = events.next().<span class="kw">await </span>{
                 <span class="macro">assert_eq!</span>(node_id_b, id);
-                <span class="macro">assert_eq!</span>(addr_info, item.addr_info);
+                <span class="macro">assert_eq!</span>(info, item.addr_info);
             }
+
+            handle.<span class="kw">await</span><span class="question-mark">??</span>;
 
             <span class="prelude-val">Ok</span>(())
         }
@@ -863,7 +891,7 @@
                 discoverers.push(discovery);
             }
 
-            <span class="kw">let </span><span class="kw-2">mut </span>events = discovery.subscribe().<span class="kw">await</span>.unwrap();
+            <span class="kw">let </span><span class="kw-2">mut </span>events = discovery.subscribe().unwrap();
 
             <span class="kw">let </span>test = <span class="kw">async move </span>{
                 <span class="kw">let </span><span class="kw-2">mut </span>got_ids = BTreeSet::new();

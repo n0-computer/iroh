@@ -143,6 +143,10 @@
 <a href="#143" id="143">143</a>
 <a href="#144" id="144">144</a>
 <a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer connectivity based on QUIC.
 //!
 //! iroh-net is a library to establish direct connectivity between peers.  It exposes an
@@ -203,6 +207,8 @@
 //! nodes understand their own network situation.  This includes offering a [STUN] server,
 //! but also a few HTTP extra endpoints as well as responding to ICMP echo requests.
 //!
+//! By default the [number 0] relay servers are used, see [`RelayMode::Default`].
+//!
 //!
 //! # Connections and Streams
 //!
@@ -258,6 +264,8 @@
 //! [`RelayUrl`]: crate::relay::RelayUrl
 //! [`discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
+//! [number 0]: https://n0.computer
+//! [`RelayMode::Default`]: crate::relay::RelayMode::Default
 
 </span><span class="attr">#![recursion_limit = <span class="string">"256"</span>]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]

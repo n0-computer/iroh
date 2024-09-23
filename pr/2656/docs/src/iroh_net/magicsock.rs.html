@@ -5771,7 +5771,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>discovery_events: BoxStream&lt;(NodeId, DiscoveryItem)&gt; =
             Box::pin(futures_lite::stream::empty());
         <span class="kw">if let </span><span class="prelude-val">Some</span>(d) = <span class="self">self</span>.msock.discovery() {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(events) = d.subscribe().<span class="kw">await </span>{
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(events) = d.subscribe() {
                 discovery_events = events;
             }
         }

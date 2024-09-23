@@ -811,6 +811,7 @@
 <a href="#811" id="811">811</a>
 <a href="#812" id="812">812</a>
 <a href="#813" id="813">813</a>
+<a href="#814" id="814">814</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh-net node a [`NodeAddr`] is needed, which needs to contain either a
@@ -856,7 +857,6 @@
 
 <span class="kw">use crate</span>::{AddrInfo, Endpoint, NodeId};
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>futures_lite::stream::{Boxed <span class="kw">as </span>BoxStream, StreamExt};
 <span class="kw">use </span>iroh_base::node_addr::NodeAddr;
 <span class="kw">use </span>tokio::{sync::oneshot, task::JoinHandle};
@@ -884,7 +884,6 @@
 /// refresh, it should start its own task.
 ///
 /// [`RelayUrl`]: crate::relay::RelayUrl
-</span><span class="attr">#[async_trait]
 </span><span class="kw">pub trait </span>Discovery: std::fmt::Debug + Send + Sync {
     <span class="doccomment">/// Publishes the given [`AddrInfo`] to the discovery mechanism.
     ///
@@ -909,6 +908,10 @@
 
     <span class="doccomment">/// Subscribe to all addresses that get *passively* discovered.
     ///
+    /// An implimentation may choose to defer subscribing to the stream until the
+    /// stream is actually polled. To avoid missing discovered nodes, poll the
+    /// stream as soon as possible.
+    ///
     /// Any discovery systems that only discover when explicitly resolving a
     /// specific [`NodeId`] do not need to implement this method, and in fact,
     /// and actively discovered nodes (ones discovered used by calling `resolve`)
@@ -921,7 +924,7 @@
     /// The [`crate::endpoint::Endpoint`] will `subscribe` to the discovery system
     /// and add the discovered addresses to the internal address book as they arrive
     /// on this stream.
-    </span><span class="kw">async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
+    </span><span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
         <span class="prelude-val">None
     </span>}
 }
@@ -977,8 +980,7 @@
     }
 }
 
-<span class="attr">#[async_trait]
-</span><span class="kw">impl </span>Discovery <span class="kw">for </span>ConcurrentDiscovery {
+<span class="kw">impl </span>Discovery <span class="kw">for </span>ConcurrentDiscovery {
     <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
         <span class="kw">for </span>service <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.services {
             service.publish(info);
@@ -999,10 +1001,10 @@
         <span class="prelude-val">Some</span>(Box::pin(streams))
     }
 
-    <span class="kw">async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
+    <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>streams = <span class="macro">vec!</span>[];
         <span class="kw">for </span>service <span class="kw">in </span><span class="self">self</span>.services.iter() {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(stream) = service.subscribe().<span class="kw">await </span>{
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(stream) = service.subscribe() {
                 streams.push(stream)
             }
         }
