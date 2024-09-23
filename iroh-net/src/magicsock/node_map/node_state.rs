@@ -400,13 +400,16 @@ impl NodeState {
                 SendAddr::Udp(addr) => {
                     if let Some(path_state) = self.udp_paths.paths.get_mut(&addr.into()) {
                         path_state.last_ping = None;
-                        // only clear the best address if there was no sign of life from this path
-                        // within the time the pong should have arrived
                         let consider_alive = path_state
                             .last_alive()
                             .map(|last_alive| last_alive.elapsed() <= PING_TIMEOUT_DURATION)
                             .unwrap_or(false);
                         if !consider_alive {
+                            // If there was no sign of life from this path during the time
+                            // which we should have received the pong, clear best addr and
+                            // pong.  Both are used to select this path again, but we know
+                            // it's not a usable path now.
+                            path_state.recent_pong = None;
                             self.udp_paths.best_addr.clear_if_equals(
                                 addr,
                                 ClearReason::PongTimeout,
