@@ -151,10 +151,10 @@ impl NodeUdpPaths {
             let best_latency = best_pong
                 .map(|p: &PongReply| p.latency)
                 .unwrap_or(MAX_LATENCY);
-            match state.recent_pong() {
+            match state.recent_pong {
                 // This pong is better if it has a lower latency, or if it has the same
                 // latency but on an IPv6 path.
-                Some(pong)
+                Some(ref pong)
                     if pong.latency < best_latency
                         || (pong.latency == best_latency && ipp.ip().is_ipv6()) =>
                 {

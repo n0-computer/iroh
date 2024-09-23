@@ -222,15 +222,15 @@ impl NodeState {
             .udp_paths
             .paths
             .iter()
-            .map(|(addr, endpoint_state)| DirectAddrInfo {
+            .map(|(addr, path_state)| DirectAddrInfo {
                 addr: SocketAddr::from(*addr),
-                latency: endpoint_state.recent_pong().map(|pong| pong.latency),
-                last_control: endpoint_state.last_control_msg(now),
-                last_payload: endpoint_state
+                latency: path_state.recent_pong.as_ref().map(|pong| pong.latency),
+                last_control: path_state.last_control_msg(now),
+                last_payload: path_state
                     .last_payload_msg
                     .as_ref()
                     .map(|instant| now.duration_since(*instant)),
-                last_alive: endpoint_state
+                last_alive: path_state
                     .last_alive()
                     .map(|instant| now.duration_since(instant)),
             })
