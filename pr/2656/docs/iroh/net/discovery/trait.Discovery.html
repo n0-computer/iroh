@@ -35,7 +35,7 @@ work.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.subscribe" class="method"><a class="src rightside" href="../../../src/iroh_net/discovery.rs.html#113">source</a><h4 class="code-header">fn <a href="#method.subscribe" class="fn">subscribe</a>(
     &amp;self
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html" title="struct core::pin::Pin">Pin</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;dyn Stream&lt;Item = (<a class="struct" href="../key/struct.PublicKey.html" title="struct iroh::net::key::PublicKey">PublicKey</a>, <a class="struct" href="struct.DiscoveryItem.html" title="struct iroh::net::discovery::DiscoveryItem">DiscoveryItem</a>)&gt; + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Send.html" title="trait core::marker::Send">Send</a>&gt;&gt;&gt;</h4></section></summary><div class="docblock"><p>Subscribe to all addresses that get <em>passively</em> discovered.</p>
-<p>An implimentation may choose to defer subscribing to the stream until the
+<p>An implementation may choose to defer subscribing to the stream until the
 stream is actually polled. To avoid missing discovered nodes, poll the
 stream as soon as possible.</p>
 <p>Any discovery systems that only discover when explicitly resolving a
