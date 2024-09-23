@@ -891,7 +891,7 @@ impl MagicSock {
                         event!(
                             target: "events.net.call-me-maybe.recv",
                             Level::DEBUG,
-                            src_node = sender.fmt_short(),
+                            remote_node = sender.fmt_short(),
                             via = ?url,
                             their_addrs = ?cm.my_numbers,
                         );
@@ -947,7 +947,7 @@ impl MagicSock {
         event!(
             target: "events.net.pong.sent",
             Level::DEBUG,
-            dst_node = %sender.fmt_short(),
+            remote_node = %sender.fmt_short(),
             dst = ?addr,
             txn = ?dm.tx_id,
         );
@@ -1225,7 +1225,7 @@ impl MagicSock {
             event!(
                 target: "events.net.call-me-maybe.sent",
                 Level::DEBUG,
-                dst_node = %dst_node.fmt_short(),
+                remote_node = %dst_node.fmt_short(),
                 via = ?url,
                 ?addrs,
             );

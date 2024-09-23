@@ -296,7 +296,7 @@ impl NodeState {
             event!(
                 target: "events.net.conn_type.changed",
                 Level::DEBUG,
-                node = %self.node_id.fmt_short(),
+                remote_node = %self.node_id.fmt_short(),
                 conn_type = ?typ,
             );
             info!(%typ, "new connection type");
@@ -384,7 +384,7 @@ impl NodeState {
                     );
                     true
                 } else {
-                    trace!(?now, "not needed");
+                    trace!(?now, "best_addr valid: not needed");
                     false
                 }
             }
@@ -448,7 +448,7 @@ impl NodeState {
         event!(
             target: "events.net.ping.sent",
             Level::DEBUG,
-            dst_node = %self.node_id.fmt_short(),
+            remote_node = %self.node_id.fmt_short(),
             ?dst,
             txn = ?tx_id,
             ?purpose,
@@ -714,7 +714,7 @@ impl NodeState {
         event!(
             target: "events.net.ping.recv",
             Level::DEBUG,
-            src_node = %self.node_id.fmt_short(),
+            remote_node = %self.node_id.fmt_short(),
             src = ?path,
             txn = ?tx_id,
             ?role,
@@ -816,7 +816,7 @@ impl NodeState {
         event!(
             target: "events.net.pong.recv",
             Level::DEBUG,
-            src_node = self.node_id.fmt_short(),
+            remote_node = self.node_id.fmt_short(),
             ?src,
             txn = ?m.tx_id,
         );

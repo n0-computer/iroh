@@ -507,12 +507,17 @@ impl Endpoint {
         self.connect(addr, alpn).await
     }
 
+    #[instrument(
+        skip_all,
+        fields(remote_node = node_id.fmt_short(), alpn = %String::from_utf8_lossy(alpn))
+    )]
     async fn connect_quinn(
         &self,
         node_id: NodeId,
         alpn: &[u8],
         addr: QuicMappedAddr,
     ) -> Result<quinn::Connection> {
+        debug!("Attempting connection...");
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
             let quic_client_config = tls::make_client_config(
@@ -546,7 +551,7 @@ impl Endpoint {
             // If this actor is dead, that's not great but we can still function.
             warn!("rtt-actor not reachable: {err:#}");
         }
-
+        debug!("Connection established");
         Ok(connection)
     }
 
