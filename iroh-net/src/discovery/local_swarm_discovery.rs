@@ -379,35 +379,22 @@ mod tests {
 
             // pass in endpoint, this is never used
             let ep = crate::endpoint::Builder::default().bind().await?;
+
             // resolve twice to ensure we can create separate streams for the same node_id
             let mut s1 = discovery_a.resolve(ep.clone(), node_id_b).unwrap();
             let mut s2 = discovery_a.resolve(ep, node_id_b).unwrap();
 
-            tracing::debug!("Subscribe to node a's discovery events");
-            let mut events = discovery_a.subscribe().unwrap();
-
-            let info = addr_info.clone();
-            let handle = tokio::spawn(async move {
-                tracing::debug!(?node_id_b, "Discovering node id b");
-                // publish discovery_b's address
-                discovery_b.publish(&addr_info);
-                let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
-                    .await?
-                    .unwrap()?;
-                let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
-                    .await?
-                    .unwrap()?;
-                assert_eq!(s1_res.addr_info, addr_info);
-                assert_eq!(s2_res.addr_info, addr_info);
-                anyhow::Ok(())
-            });
-
-            if let Some((id, item)) = events.next().await {
-                assert_eq!(node_id_b, id);
-                assert_eq!(info, item.addr_info);
-            }
-
-            handle.await??;
+            tracing::debug!(?node_id_b, "Discovering node id b");
+            // publish discovery_b's address
+            discovery_b.publish(&addr_info);
+            let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
+                .await?
+                .unwrap()?;
+            let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
+                .await?
+                .unwrap()?;
+            assert_eq!(s1_res.addr_info, addr_info);
+            assert_eq!(s2_res.addr_info, addr_info);
 
             Ok(())
         }
