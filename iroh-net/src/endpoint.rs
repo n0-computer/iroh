@@ -193,7 +193,7 @@ impl Builder {
     /// They also perform various functions related to hole punching, see the [crate docs]
     /// for more details.
     ///
-    /// By default the Number0 relay servers are used.
+    /// By default the [number 0] relay servers are used, see [`RelayMode::Default`].
     ///
     /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
     /// configured relay node.  If an invalid RelayMap is provided [`bind`]
@@ -201,6 +201,7 @@ impl Builder {
     ///
     /// [`bind`]: Builder::bind
     /// [crate docs]: crate
+    /// [number 0]: https://n0.computer
     pub fn relay_mode(mut self, relay_mode: RelayMode) -> Self {
         self.relay_mode = relay_mode;
         self
