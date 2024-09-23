@@ -1,5 +1,5 @@
 (function() {var implementors = {
-"iroh":[["impl Metric for <a class=\"struct\" href=\"iroh/metrics/struct.Metrics.html\" title=\"struct iroh::metrics::Metrics\">Metrics</a>"]],
+"iroh":[["impl <a class=\"trait\" href=\"iroh_metrics/core/trait.Metric.html\" title=\"trait iroh_metrics::core::Metric\">Metric</a> for <a class=\"struct\" href=\"iroh/metrics/struct.Metrics.html\" title=\"struct iroh::metrics::Metrics\">Metrics</a>"]],
 "iroh_blobs":[["impl Metric for <a class=\"struct\" href=\"iroh_blobs/metrics/struct.Metrics.html\" title=\"struct iroh_blobs::metrics::Metrics\">Metrics</a>"]],
 "iroh_dns_server":[["impl Metric for <a class=\"struct\" href=\"iroh_dns_server/metrics/struct.Metrics.html\" title=\"struct iroh_dns_server::metrics::Metrics\">Metrics</a>"]],
 "iroh_docs":[["impl Metric for <a class=\"struct\" href=\"iroh_docs/metrics/struct.Metrics.html\" title=\"struct iroh_docs::metrics::Metrics\">Metrics</a>"]],
