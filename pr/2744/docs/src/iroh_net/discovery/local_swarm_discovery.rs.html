@@ -333,9 +333,6 @@
 <a href="#333" id="333">333</a>
 <a href="#334" id="334">334</a>
 <a href="#335" id="335">335</a>
-<a href="#336" id="336">336</a>
-<a href="#337" id="337">337</a>
-<a href="#338" id="338">338</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
@@ -409,130 +406,127 @@
             <span class="kw-2">&amp;</span>rt,
         )<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>handle = tokio::spawn(
-            <span class="kw">async move </span>{
-                <span class="kw">let </span><span class="kw-2">mut </span>node_addrs: HashMap&lt;PublicKey, Peer&gt; = HashMap::default();
-                <span class="kw">let </span><span class="kw-2">mut </span>last_id = <span class="number">0</span>;
-                <span class="kw">let </span><span class="kw-2">mut </span>senders: HashMap&lt;
-                    PublicKey,
-                    HashMap&lt;usize, mpsc::Sender&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt;,
-                &gt; = HashMap::default();
-                <span class="kw">let </span><span class="kw-2">mut </span>timeouts = JoinSet::new();
-                <span class="kw">loop </span>{
-                    <span class="macro">trace!</span>(<span class="question-mark">?</span>node_addrs, <span class="string">"LocalSwarmDiscovery Service loop tick"</span>);
-                    <span class="kw">let </span>msg = <span class="kw">match </span>recv.recv().<span class="kw">await </span>{
-                        <span class="prelude-val">None </span>=&gt; {
-                            <span class="macro">error!</span>(<span class="string">"LocalSwarmDiscovery channel closed"</span>);
-                            <span class="macro">error!</span>(<span class="string">"closing LocalSwarmDiscovery"</span>);
-                            timeouts.abort_all();
-                            <span class="kw">return</span>;
+        <span class="kw">let </span>discovery_fut = <span class="kw">async move </span>{
+            <span class="kw">let </span><span class="kw-2">mut </span>node_addrs: HashMap&lt;PublicKey, Peer&gt; = HashMap::default();
+            <span class="kw">let </span><span class="kw-2">mut </span>last_id = <span class="number">0</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>senders: HashMap&lt;
+                PublicKey,
+                HashMap&lt;usize, mpsc::Sender&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt;,
+            &gt; = HashMap::default();
+            <span class="kw">let </span><span class="kw-2">mut </span>timeouts = JoinSet::new();
+            <span class="kw">loop </span>{
+                <span class="macro">trace!</span>(<span class="question-mark">?</span>node_addrs, <span class="string">"LocalSwarmDiscovery Service loop tick"</span>);
+                <span class="kw">let </span>msg = <span class="kw">match </span>recv.recv().<span class="kw">await </span>{
+                    <span class="prelude-val">None </span>=&gt; {
+                        <span class="macro">error!</span>(<span class="string">"LocalSwarmDiscovery channel closed"</span>);
+                        <span class="macro">error!</span>(<span class="string">"closing LocalSwarmDiscovery"</span>);
+                        timeouts.abort_all();
+                        <span class="kw">return</span>;
+                    }
+                    <span class="prelude-val">Some</span>(msg) =&gt; msg,
+                };
+                <span class="kw">match </span>msg {
+                    Message::Discovery(discovered_node_id, peer_info) =&gt; {
+                        <span class="macro">trace!</span>(
+                            <span class="question-mark">?</span>discovered_node_id,
+                            <span class="question-mark">?</span>peer_info,
+                            <span class="string">"LocalSwarmDiscovery Message::Discovery"
+                        </span>);
+                        <span class="kw">let </span>discovered_node_id = <span class="kw">match </span>PublicKey::from_str(<span class="kw-2">&amp;</span>discovered_node_id) {
+                            <span class="prelude-val">Ok</span>(node_id) =&gt; node_id,
+                            <span class="prelude-val">Err</span>(e) =&gt; {
+                                <span class="macro">warn!</span>(
+                                    discovered_node_id,
+                                    <span class="string">"couldn't parse node_id from mdns discovery service: {e:?}"
+                                </span>);
+                                <span class="kw">continue</span>;
+                            }
+                        };
+
+                        <span class="kw">if </span>discovered_node_id == node_id {
+                            <span class="kw">continue</span>;
                         }
-                        <span class="prelude-val">Some</span>(msg) =&gt; msg,
-                    };
-                    <span class="kw">match </span>msg {
-                        Message::Discovery(discovered_node_id, peer_info) =&gt; {
+
+                        <span class="kw">if </span>peer_info.is_expiry() {
                             <span class="macro">trace!</span>(
                                 <span class="question-mark">?</span>discovered_node_id,
-                                <span class="question-mark">?</span>peer_info,
-                                <span class="string">"LocalSwarmDiscovery Message::Discovery"
+                                <span class="string">"removing node from LocalSwarmDiscovery address book"
                             </span>);
-                            <span class="kw">let </span>discovered_node_id = <span class="kw">match </span>PublicKey::from_str(<span class="kw-2">&amp;</span>discovered_node_id)
-                            {
-                                <span class="prelude-val">Ok</span>(node_id) =&gt; node_id,
-                                <span class="prelude-val">Err</span>(e) =&gt; {
-                                    <span class="macro">warn!</span>(
-                                        discovered_node_id,
-                                        <span class="string">"couldn't parse node_id from mdns discovery service: {e:?}"
-                                    </span>);
-                                    <span class="kw">continue</span>;
-                                }
-                            };
-
-                            <span class="kw">if </span>discovered_node_id == node_id {
-                                <span class="kw">continue</span>;
-                            }
-
-                            <span class="kw">if </span>peer_info.is_expiry() {
-                                <span class="macro">trace!</span>(
-                                    <span class="question-mark">?</span>discovered_node_id,
-                                    <span class="string">"removing node from LocalSwarmDiscovery address book"
-                                </span>);
-                                node_addrs.remove(<span class="kw-2">&amp;</span>discovered_node_id);
-                                <span class="kw">continue</span>;
-                            }
-
-                            <span class="kw">let </span>entry = node_addrs.entry(discovered_node_id);
-                            <span class="kw">if let </span>std::collections::hash_map::Entry::Occupied(<span class="kw-2">ref </span>entry) = entry {
-                                <span class="kw">if </span>entry.get() == <span class="kw-2">&amp;</span>peer_info {
-                                    <span class="comment">// this is a republish we already know about
-                                    </span><span class="kw">continue</span>;
-                                }
-                            }
-
-                            <span class="macro">debug!</span>(
-                                <span class="question-mark">?</span>discovered_node_id,
-                                <span class="question-mark">?</span>peer_info,
-                                <span class="string">"adding node to LocalSwarmDiscovery address book"
-                            </span>);
-
-                            <span class="kw">if let </span><span class="prelude-val">Some</span>(senders) = senders.get(<span class="kw-2">&amp;</span>discovered_node_id) {
-                                <span class="kw">let </span>item: DiscoveryItem = (<span class="kw-2">&amp;</span>peer_info).into();
-                                <span class="macro">trace!</span>(<span class="question-mark">?</span>item, senders = senders.len(), <span class="string">"sending DiscoveryItem"</span>);
-                                <span class="kw">for </span>sender <span class="kw">in </span>senders.values() {
-                                    sender.send(<span class="prelude-val">Ok</span>(item.clone())).<span class="kw">await</span>.ok();
-                                }
-                            }
-                            entry.or_insert(peer_info);
+                            node_addrs.remove(<span class="kw-2">&amp;</span>discovered_node_id);
+                            <span class="kw">continue</span>;
                         }
-                        Message::SendAddrs(node_id, sender) =&gt; {
-                            <span class="kw">let </span>id = last_id + <span class="number">1</span>;
-                            last_id = id;
-                            <span class="macro">trace!</span>(<span class="question-mark">?</span>node_id, <span class="string">"LocalSwarmDiscovery Message::SendAddrs"</span>);
-                            <span class="kw">if let </span><span class="prelude-val">Some</span>(peer_info) = node_addrs.get(<span class="kw-2">&amp;</span>node_id) {
-                                <span class="kw">let </span>item: DiscoveryItem = peer_info.into();
-                                <span class="macro">debug!</span>(<span class="question-mark">?</span>item, <span class="string">"sending DiscoveryItem"</span>);
-                                sender.send(<span class="prelude-val">Ok</span>(item)).<span class="kw">await</span>.ok();
-                            }
-                            <span class="kw">if let </span><span class="prelude-val">Some</span>(senders_for_node_id) = senders.get_mut(<span class="kw-2">&amp;</span>node_id) {
-                                senders_for_node_id.insert(id, sender);
-                            } <span class="kw">else </span>{
-                                <span class="kw">let </span><span class="kw-2">mut </span>senders_for_node_id = HashMap::new();
-                                senders_for_node_id.insert(id, sender);
-                                senders.insert(node_id, senders_for_node_id);
-                            }
-                            <span class="kw">let </span>timeout_sender = task_sender.clone();
-                            timeouts.spawn(<span class="kw">async move </span>{
-                                tokio::time::sleep(DISCOVERY_DURATION).<span class="kw">await</span>;
-                                <span class="macro">trace!</span>(<span class="question-mark">?</span>node_id, <span class="string">"discovery timeout"</span>);
-                                timeout_sender
-                                    .send(Message::Timeout(node_id, id))
-                                    .<span class="kw">await
-                                    </span>.ok();
-                            });
-                        }
-                        Message::Timeout(node_id, id) =&gt; {
-                            <span class="macro">trace!</span>(<span class="question-mark">?</span>node_id, <span class="string">"LocalSwarmDiscovery Message::Timeout"</span>);
-                            <span class="kw">if let </span><span class="prelude-val">Some</span>(senders_for_node_id) = senders.get_mut(<span class="kw-2">&amp;</span>node_id) {
-                                senders_for_node_id.remove(<span class="kw-2">&amp;</span>id);
-                                <span class="kw">if </span>senders_for_node_id.is_empty() {
-                                    senders.remove(<span class="kw-2">&amp;</span>node_id);
-                                }
+
+                        <span class="kw">let </span>entry = node_addrs.entry(discovered_node_id);
+                        <span class="kw">if let </span>std::collections::hash_map::Entry::Occupied(<span class="kw-2">ref </span>entry) = entry {
+                            <span class="kw">if </span>entry.get() == <span class="kw-2">&amp;</span>peer_info {
+                                <span class="comment">// this is a republish we already know about
+                                </span><span class="kw">continue</span>;
                             }
                         }
-                        Message::ChangeLocalAddrs(addrs) =&gt; {
-                            <span class="macro">trace!</span>(<span class="question-mark">?</span>addrs, <span class="string">"LocalSwarmDiscovery Message::ChangeLocalAddrs"</span>);
-                            discovery.remove_all();
-                            <span class="kw">let </span>addrs =
-                                LocalSwarmDiscovery::socketaddrs_to_addrs(addrs.direct_addresses);
-                            <span class="kw">for </span>addr <span class="kw">in </span>addrs {
-                                discovery.add(addr.<span class="number">0</span>, addr.<span class="number">1</span>)
+
+                        <span class="macro">debug!</span>(
+                            <span class="question-mark">?</span>discovered_node_id,
+                            <span class="question-mark">?</span>peer_info,
+                            <span class="string">"adding node to LocalSwarmDiscovery address book"
+                        </span>);
+
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(senders) = senders.get(<span class="kw-2">&amp;</span>discovered_node_id) {
+                            <span class="kw">let </span>item: DiscoveryItem = (<span class="kw-2">&amp;</span>peer_info).into();
+                            <span class="macro">trace!</span>(<span class="question-mark">?</span>item, senders = senders.len(), <span class="string">"sending DiscoveryItem"</span>);
+                            <span class="kw">for </span>sender <span class="kw">in </span>senders.values() {
+                                sender.send(<span class="prelude-val">Ok</span>(item.clone())).<span class="kw">await</span>.ok();
                             }
+                        }
+                        entry.or_insert(peer_info);
+                    }
+                    Message::SendAddrs(node_id, sender) =&gt; {
+                        <span class="kw">let </span>id = last_id + <span class="number">1</span>;
+                        last_id = id;
+                        <span class="macro">trace!</span>(<span class="question-mark">?</span>node_id, <span class="string">"LocalSwarmDiscovery Message::SendAddrs"</span>);
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(peer_info) = node_addrs.get(<span class="kw-2">&amp;</span>node_id) {
+                            <span class="kw">let </span>item: DiscoveryItem = peer_info.into();
+                            <span class="macro">debug!</span>(<span class="question-mark">?</span>item, <span class="string">"sending DiscoveryItem"</span>);
+                            sender.send(<span class="prelude-val">Ok</span>(item)).<span class="kw">await</span>.ok();
+                        }
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(senders_for_node_id) = senders.get_mut(<span class="kw-2">&amp;</span>node_id) {
+                            senders_for_node_id.insert(id, sender);
+                        } <span class="kw">else </span>{
+                            <span class="kw">let </span><span class="kw-2">mut </span>senders_for_node_id = HashMap::new();
+                            senders_for_node_id.insert(id, sender);
+                            senders.insert(node_id, senders_for_node_id);
+                        }
+                        <span class="kw">let </span>timeout_sender = task_sender.clone();
+                        timeouts.spawn(<span class="kw">async move </span>{
+                            tokio::time::sleep(DISCOVERY_DURATION).<span class="kw">await</span>;
+                            <span class="macro">trace!</span>(<span class="question-mark">?</span>node_id, <span class="string">"discovery timeout"</span>);
+                            timeout_sender
+                                .send(Message::Timeout(node_id, id))
+                                .<span class="kw">await
+                                </span>.ok();
+                        });
+                    }
+                    Message::Timeout(node_id, id) =&gt; {
+                        <span class="macro">trace!</span>(<span class="question-mark">?</span>node_id, <span class="string">"LocalSwarmDiscovery Message::Timeout"</span>);
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(senders_for_node_id) = senders.get_mut(<span class="kw-2">&amp;</span>node_id) {
+                            senders_for_node_id.remove(<span class="kw-2">&amp;</span>id);
+                            <span class="kw">if </span>senders_for_node_id.is_empty() {
+                                senders.remove(<span class="kw-2">&amp;</span>node_id);
+                            }
+                        }
+                    }
+                    Message::ChangeLocalAddrs(addrs) =&gt; {
+                        <span class="macro">trace!</span>(<span class="question-mark">?</span>addrs, <span class="string">"LocalSwarmDiscovery Message::ChangeLocalAddrs"</span>);
+                        discovery.remove_all();
+                        <span class="kw">let </span>addrs =
+                            LocalSwarmDiscovery::socketaddrs_to_addrs(addrs.direct_addresses);
+                        <span class="kw">for </span>addr <span class="kw">in </span>addrs {
+                            discovery.add(addr.<span class="number">0</span>, addr.<span class="number">1</span>)
                         }
                     }
                 }
             }
-            .instrument(<span class="macro">info_span!</span>(<span class="string">"swarm-discovery.actor"</span>)),
-        );
+        };
+        <span class="kw">let </span>handle = tokio::spawn(discovery_fut.instrument(<span class="macro">info_span!</span>(<span class="string">"swarm-discovery.actor"</span>)));
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             handle: AbortOnDropHandle::new(handle),
             sender: send,
