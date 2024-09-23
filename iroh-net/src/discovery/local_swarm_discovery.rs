@@ -12,7 +12,7 @@ use std::{
 use anyhow::Result;
 use derive_more::FromStr;
 use futures_lite::stream::Boxed as BoxStream;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use iroh_base::key::PublicKey;
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
@@ -71,7 +71,7 @@ impl LocalSwarmDiscovery {
             &rt,
         )?;
 
-        let handle = tokio::spawn(async move {
+        let discovery_fut = async move {
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
             let mut last_id = 0;
             let mut senders: HashMap<
@@ -190,7 +190,8 @@ impl LocalSwarmDiscovery {
                     }
                 }
             }
-        });
+        };
+        let handle = tokio::spawn(discovery_fut.instrument(info_span!("swarm-discovery.actor")));
         Ok(Self {
             handle: AbortOnDropHandle::new(handle),
             sender: send,

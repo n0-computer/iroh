@@ -99,7 +99,7 @@ impl PathState {
                 event!(
                     target: "events.net.holepunched",
                     Level::DEBUG,
-                    node = %self.node_id.fmt_short(),
+                    remote_node = %self.node_id.fmt_short(),
                     path = ?path,
                     direction = "outgoing",
                 );
@@ -240,7 +240,7 @@ impl PathState {
                         event!(
                             target: "events.net.holepunched",
                             Level::DEBUG,
-                            node = %self.node_id.fmt_short(),
+                            remote_node = %self.node_id.fmt_short(),
                             path = ?addr,
                             direction = "incoming",
                         );
