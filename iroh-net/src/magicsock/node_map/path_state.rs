@@ -152,7 +152,8 @@ impl PathState {
     /// - When the last payload transmission occurred.
     /// - when the last ping from them was received.
     pub(super) fn last_alive(&self) -> Option<Instant> {
-        self.recent_pong()
+        self.recent_pong
+            .as_ref()
             .map(|pong| &pong.pong_at)
             .into_iter()
             .chain(self.last_payload_msg.as_ref())
@@ -173,7 +174,8 @@ impl PathState {
     pub(super) fn last_control_msg(&self, now: Instant) -> Option<(Duration, ControlMsg)> {
         // get every control message and assign it its kind
         let last_pong = self
-            .recent_pong()
+            .recent_pong
+            .as_ref()
             .map(|pong| (pong.pong_at, ControlMsg::Pong));
         let last_call_me_maybe = self
             .call_me_maybe_time
@@ -189,11 +191,6 @@ impl PathState {
             .chain(last_ping)
             .max_by_key(|(instant, _kind)| *instant)
             .map(|(instant, kind)| (now.duration_since(instant), kind))
-    }
-
-    /// Returns the most recent pong if available.
-    pub(super) fn recent_pong(&self) -> Option<&PongReply> {
-        self.recent_pong.as_ref()
     }
 
     /// Returns the latency from the most recent pong, if available.
