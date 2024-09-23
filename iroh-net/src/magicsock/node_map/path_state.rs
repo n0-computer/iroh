@@ -51,7 +51,7 @@ pub(super) struct PathState {
     ///
     /// This excludes DISCO messages.
     pub(super) last_payload_msg: Option<Instant>,
-    /// Sources is a map of [`Sources`] to [`Instant`]s, keeping track of all the ways we have learned about this path
+    /// Sources is a map of [`Source`]s to [`Instant`]s, keeping track of all the ways we have learned about this path
     /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size of the map of sources down to one entry per type of source.
     pub(super) sources: HashMap<Source, Instant>,
 }
