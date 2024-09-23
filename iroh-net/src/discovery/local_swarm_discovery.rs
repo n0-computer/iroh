@@ -67,7 +67,7 @@ pub struct LocalSwarmDiscovery {
 #[derive(Debug)]
 enum Message {
     Discovery(String, Peer),
-    SendAddrs(NodeId, mpsc::Sender<Result<DiscoveryItem>>),
+    Resolve(NodeId, mpsc::Sender<Result<DiscoveryItem>>),
     Timeout(NodeId, usize),
     Subscribe(mpsc::Sender<(NodeId, DiscoveryItem)>),
 }
@@ -176,29 +176,37 @@ impl LocalSwarmDiscovery {
                             "adding node to LocalSwarmDiscovery address book"
                         );
 
+                        let mut resolved = false;
                         let item: DiscoveryItem = (&peer_info).into();
                         if let Some(senders) = senders.get(&discovered_node_id) {
                             trace!(?item, senders = senders.len(), "sending DiscoveryItem");
+                            resolved = true;
                             for sender in senders.values() {
                                 sender.send(Ok(item.clone())).await.ok();
                             }
                         }
                         entry.or_insert(peer_info);
 
-                        // update and clean up subscribers
-                        let mut clean_up = vec![];
-                        for (i, subscriber) in subscribers.iter().enumerate() {
-                            // assume subscriber was dropped
-                            if (subscriber.send((discovered_node_id, item.clone())).await).is_err()
-                            {
-                                clean_up.push(i);
+                        // only send nodes to the `subscriber` if they weren't explicitly resolved
+                        // in other words, nodes sent to the `subscribers` should only be the ones that
+                        // have been "passively" discovered
+                        if !resolved {
+                            // update and clean up subscribers
+                            let mut clean_up = vec![];
+                            for (i, subscriber) in subscribers.iter().enumerate() {
+                                // assume subscriber was dropped
+                                if (subscriber.send((discovered_node_id, item.clone())).await)
+                                    .is_err()
+                                {
+                                    clean_up.push(i);
+                                }
+                            }
+                            for i in clean_up {
+                                subscribers.swap_remove(i);
                             }
                         }
-                        for i in clean_up {
-                            subscribers.swap_remove(i);
-                        }
                     }
-                    Message::SendAddrs(node_id, sender) => {
+                    Message::Resolve(node_id, sender) => {
                         let id = last_id + 1;
                         last_id = id;
                         trace!(?node_id, "LocalSwarmDiscovery Message::SendAddrs");
@@ -316,7 +324,7 @@ impl Discovery for LocalSwarmDiscovery {
         let discovery_sender = self.sender.clone();
         let stream = async move {
             discovery_sender
-                .send(Message::SendAddrs(node_id, send))
+                .send(Message::Resolve(node_id, send))
                 .await
                 .ok();
             tokio_stream::wrappers::ReceiverStream::new(recv)
