@@ -71,130 +71,127 @@ impl LocalSwarmDiscovery {
             &rt,
         )?;
 
-        let handle = tokio::spawn(
-            async move {
-                let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
-                let mut last_id = 0;
-                let mut senders: HashMap<
-                    PublicKey,
-                    HashMap<usize, mpsc::Sender<Result<DiscoveryItem>>>,
-                > = HashMap::default();
-                let mut timeouts = JoinSet::new();
-                loop {
-                    trace!(?node_addrs, "LocalSwarmDiscovery Service loop tick");
-                    let msg = match recv.recv().await {
-                        None => {
-                            error!("LocalSwarmDiscovery channel closed");
-                            error!("closing LocalSwarmDiscovery");
-                            timeouts.abort_all();
-                            return;
+        let discovery_fut = async move {
+            let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
+            let mut last_id = 0;
+            let mut senders: HashMap<
+                PublicKey,
+                HashMap<usize, mpsc::Sender<Result<DiscoveryItem>>>,
+            > = HashMap::default();
+            let mut timeouts = JoinSet::new();
+            loop {
+                trace!(?node_addrs, "LocalSwarmDiscovery Service loop tick");
+                let msg = match recv.recv().await {
+                    None => {
+                        error!("LocalSwarmDiscovery channel closed");
+                        error!("closing LocalSwarmDiscovery");
+                        timeouts.abort_all();
+                        return;
+                    }
+                    Some(msg) => msg,
+                };
+                match msg {
+                    Message::Discovery(discovered_node_id, peer_info) => {
+                        trace!(
+                            ?discovered_node_id,
+                            ?peer_info,
+                            "LocalSwarmDiscovery Message::Discovery"
+                        );
+                        let discovered_node_id = match PublicKey::from_str(&discovered_node_id) {
+                            Ok(node_id) => node_id,
+                            Err(e) => {
+                                warn!(
+                                    discovered_node_id,
+                                    "couldn't parse node_id from mdns discovery service: {e:?}"
+                                );
+                                continue;
+                            }
+                        };
+
+                        if discovered_node_id == node_id {
+                            continue;
                         }
-                        Some(msg) => msg,
-                    };
-                    match msg {
-                        Message::Discovery(discovered_node_id, peer_info) => {
+
+                        if peer_info.is_expiry() {
                             trace!(
                                 ?discovered_node_id,
-                                ?peer_info,
-                                "LocalSwarmDiscovery Message::Discovery"
+                                "removing node from LocalSwarmDiscovery address book"
                             );
-                            let discovered_node_id = match PublicKey::from_str(&discovered_node_id)
-                            {
-                                Ok(node_id) => node_id,
-                                Err(e) => {
-                                    warn!(
-                                        discovered_node_id,
-                                        "couldn't parse node_id from mdns discovery service: {e:?}"
-                                    );
-                                    continue;
-                                }
-                            };
+                            node_addrs.remove(&discovered_node_id);
+                            continue;
+                        }
 
-                            if discovered_node_id == node_id {
+                        let entry = node_addrs.entry(discovered_node_id);
+                        if let std::collections::hash_map::Entry::Occupied(ref entry) = entry {
+                            if entry.get() == &peer_info {
+                                // this is a republish we already know about
                                 continue;
                             }
-
-                            if peer_info.is_expiry() {
-                                trace!(
-                                    ?discovered_node_id,
-                                    "removing node from LocalSwarmDiscovery address book"
-                                );
-                                node_addrs.remove(&discovered_node_id);
-                                continue;
-                            }
-
-                            let entry = node_addrs.entry(discovered_node_id);
-                            if let std::collections::hash_map::Entry::Occupied(ref entry) = entry {
-                                if entry.get() == &peer_info {
-                                    // this is a republish we already know about
-                                    continue;
-                                }
-                            }
-
-                            debug!(
-                                ?discovered_node_id,
-                                ?peer_info,
-                                "adding node to LocalSwarmDiscovery address book"
-                            );
-
-                            if let Some(senders) = senders.get(&discovered_node_id) {
-                                let item: DiscoveryItem = (&peer_info).into();
-                                trace!(?item, senders = senders.len(), "sending DiscoveryItem");
-                                for sender in senders.values() {
-                                    sender.send(Ok(item.clone())).await.ok();
-                                }
-                            }
-                            entry.or_insert(peer_info);
                         }
-                        Message::SendAddrs(node_id, sender) => {
-                            let id = last_id + 1;
-                            last_id = id;
-                            trace!(?node_id, "LocalSwarmDiscovery Message::SendAddrs");
-                            if let Some(peer_info) = node_addrs.get(&node_id) {
-                                let item: DiscoveryItem = peer_info.into();
-                                debug!(?item, "sending DiscoveryItem");
-                                sender.send(Ok(item)).await.ok();
-                            }
-                            if let Some(senders_for_node_id) = senders.get_mut(&node_id) {
-                                senders_for_node_id.insert(id, sender);
-                            } else {
-                                let mut senders_for_node_id = HashMap::new();
-                                senders_for_node_id.insert(id, sender);
-                                senders.insert(node_id, senders_for_node_id);
-                            }
-                            let timeout_sender = task_sender.clone();
-                            timeouts.spawn(async move {
-                                tokio::time::sleep(DISCOVERY_DURATION).await;
-                                trace!(?node_id, "discovery timeout");
-                                timeout_sender
-                                    .send(Message::Timeout(node_id, id))
-                                    .await
-                                    .ok();
-                            });
-                        }
-                        Message::Timeout(node_id, id) => {
-                            trace!(?node_id, "LocalSwarmDiscovery Message::Timeout");
-                            if let Some(senders_for_node_id) = senders.get_mut(&node_id) {
-                                senders_for_node_id.remove(&id);
-                                if senders_for_node_id.is_empty() {
-                                    senders.remove(&node_id);
-                                }
+
+                        debug!(
+                            ?discovered_node_id,
+                            ?peer_info,
+                            "adding node to LocalSwarmDiscovery address book"
+                        );
+
+                        if let Some(senders) = senders.get(&discovered_node_id) {
+                            let item: DiscoveryItem = (&peer_info).into();
+                            trace!(?item, senders = senders.len(), "sending DiscoveryItem");
+                            for sender in senders.values() {
+                                sender.send(Ok(item.clone())).await.ok();
                             }
                         }
-                        Message::ChangeLocalAddrs(addrs) => {
-                            trace!(?addrs, "LocalSwarmDiscovery Message::ChangeLocalAddrs");
-                            discovery.remove_all();
-                            let addrs =
-                                LocalSwarmDiscovery::socketaddrs_to_addrs(addrs.direct_addresses);
-                            for addr in addrs {
-                                discovery.add(addr.0, addr.1)
+                        entry.or_insert(peer_info);
+                    }
+                    Message::SendAddrs(node_id, sender) => {
+                        let id = last_id + 1;
+                        last_id = id;
+                        trace!(?node_id, "LocalSwarmDiscovery Message::SendAddrs");
+                        if let Some(peer_info) = node_addrs.get(&node_id) {
+                            let item: DiscoveryItem = peer_info.into();
+                            debug!(?item, "sending DiscoveryItem");
+                            sender.send(Ok(item)).await.ok();
+                        }
+                        if let Some(senders_for_node_id) = senders.get_mut(&node_id) {
+                            senders_for_node_id.insert(id, sender);
+                        } else {
+                            let mut senders_for_node_id = HashMap::new();
+                            senders_for_node_id.insert(id, sender);
+                            senders.insert(node_id, senders_for_node_id);
+                        }
+                        let timeout_sender = task_sender.clone();
+                        timeouts.spawn(async move {
+                            tokio::time::sleep(DISCOVERY_DURATION).await;
+                            trace!(?node_id, "discovery timeout");
+                            timeout_sender
+                                .send(Message::Timeout(node_id, id))
+                                .await
+                                .ok();
+                        });
+                    }
+                    Message::Timeout(node_id, id) => {
+                        trace!(?node_id, "LocalSwarmDiscovery Message::Timeout");
+                        if let Some(senders_for_node_id) = senders.get_mut(&node_id) {
+                            senders_for_node_id.remove(&id);
+                            if senders_for_node_id.is_empty() {
+                                senders.remove(&node_id);
                             }
+                        }
+                    }
+                    Message::ChangeLocalAddrs(addrs) => {
+                        trace!(?addrs, "LocalSwarmDiscovery Message::ChangeLocalAddrs");
+                        discovery.remove_all();
+                        let addrs =
+                            LocalSwarmDiscovery::socketaddrs_to_addrs(addrs.direct_addresses);
+                        for addr in addrs {
+                            discovery.add(addr.0, addr.1)
                         }
                     }
                 }
             }
-            .instrument(info_span!("swarm-discovery.actor")),
-        );
+        };
+        let handle = tokio::spawn(discovery_fut.instrument(info_span!("swarm-discovery.actor")));
         Ok(Self {
             handle: AbortOnDropHandle::new(handle),
             sender: send,
