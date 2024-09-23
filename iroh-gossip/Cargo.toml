@@ -19,7 +19,7 @@ anyhow = { version = "1" }
 async-channel = { version = "2.3.1", optional = true }
 blake3 = { package = "iroh-blake3", version = "1.4.5"}
 bytes = { version = "1.7", features = ["serde"] }
-derive_more = { version = "=1.0.0-beta.7", features = ["add", "debug", "deref", "display", "from", "try_into", "into"] }
+derive_more = { version = "1.0.0", features = ["add", "debug", "deref", "display", "from", "try_into", "into"] }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
 indexmap = "2.0"
 iroh-base = { version = "0.25.0", path = "../iroh-base" }
