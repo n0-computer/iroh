@@ -370,7 +370,7 @@
     ///
     /// This excludes DISCO messages.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) last_payload_msg: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
-    <span class="doccomment">/// Sources is a map of [`Sources`] to [`Instant`]s, keeping track of all the ways we have learned about this path
+    <span class="doccomment">/// Sources is a map of [`Source`]s to [`Instant`]s, keeping track of all the ways we have learned about this path
     /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size of the map of sources down to one entry per type of source.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) sources: HashMap&lt;Source, Instant&gt;,
 }
