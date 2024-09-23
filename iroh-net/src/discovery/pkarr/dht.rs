@@ -420,25 +420,29 @@ mod tests {
         let relay_url: RelayUrl = Url::parse("https://example.com")?.into();
 
         // subscribe to discovery events
-        let mut events = discovery.subscribe().await.unwrap();
+        let mut events = discovery.subscribe().unwrap();
 
-        discovery.publish(&AddrInfo {
-            relay_url: Some(relay_url.clone()),
-            direct_addresses: Default::default(),
-        });
-        // publish is fire and forget, so we have no way to wait until it is done.
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        let items = discovery
-            .resolve(ep, secret.public())
-            .unwrap()
-            .collect::<Vec<_>>()
-            .await;
-        let mut found_relay_urls = BTreeSet::new();
-        for item in items.into_iter().flatten() {
-            if let Some(url) = item.addr_info.relay_url {
-                found_relay_urls.insert(url);
+        let relay_url0 = relay_url.clone();
+        let handle = tokio::spawn(async move {
+            discovery.publish(&AddrInfo {
+                relay_url: Some(relay_url.clone()),
+                direct_addresses: Default::default(),
+            });
+            // publish is fire and forget, so we have no way to wait until it is done.
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let items = discovery
+                .resolve(ep, secret.public())
+                .unwrap()
+                .collect::<Vec<_>>()
+                .await;
+            let mut found_relay_urls = BTreeSet::new();
+            for item in items.into_iter().flatten() {
+                if let Some(url) = item.addr_info.relay_url {
+                    found_relay_urls.insert(url);
+                }
             }
-        }
+            assert!(found_relay_urls.contains(&relay_url));
+        });
         let mut event_got_url = None;
         while let Some((_, item)) = events.next().await {
             if let Some(url) = item.addr_info.relay_url {
@@ -446,8 +450,8 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(&event_got_url.unwrap(), &relay_url);
-        assert!(found_relay_urls.contains(&relay_url));
+        assert_eq!(&event_got_url.unwrap(), &relay_url0);
+        handle.await?;
         Ok(())
     }
 }

@@ -36,7 +36,6 @@ use futures_util::FutureExt;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 use watchable::Watchable;
 
-use async_trait::async_trait;
 use iroh_base::key::PublicKey;
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::{sync::mpsc, task::JoinSet};
@@ -311,7 +310,6 @@ impl From<&Peer> for DiscoveryItem {
     }
 }
 
-#[async_trait]
 impl Discovery for LocalSwarmDiscovery {
     fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let (send, recv) = mpsc::channel(20);
@@ -331,12 +329,14 @@ impl Discovery for LocalSwarmDiscovery {
         self.addrs.replace(Some(info.clone()));
     }
 
-    async fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
+    fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
         let (sender, recv) = mpsc::channel(20);
-        self.sender.send(Message::Subscribe(sender)).await.ok();
-        let stream = tokio_stream::wrappers::ReceiverStream::new(recv);
-
-        Some(Box::pin(stream))
+        let discovery_sender = self.sender.clone();
+        let stream = async move {
+            discovery_sender.send(Message::Subscribe(sender)).await.ok();
+            tokio_stream::wrappers::ReceiverStream::new(recv)
+        };
+        Some(Box::pin(stream.flatten_stream()))
     }
 }
 
@@ -376,24 +376,30 @@ mod tests {
             let mut s2 = discovery_a.resolve(ep, node_id_b).unwrap();
 
             tracing::debug!("Subscribe to node a's discovery events");
-            let mut events = discovery_a.subscribe().await.unwrap();
+            let mut events = discovery_a.subscribe().unwrap();
 
-            tracing::debug!(?node_id_b, "Discovering node id b");
-            // publish discovery_b's address
-            discovery_b.publish(&addr_info);
-            let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
-                .await?
-                .unwrap()?;
-            let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
-                .await?
-                .unwrap()?;
-            assert_eq!(s1_res.addr_info, addr_info);
-            assert_eq!(s2_res.addr_info, addr_info);
+            let info = addr_info.clone();
+            let handle = tokio::spawn(async move {
+                tracing::debug!(?node_id_b, "Discovering node id b");
+                // publish discovery_b's address
+                discovery_b.publish(&addr_info);
+                let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
+                    .await?
+                    .unwrap()?;
+                let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
+                    .await?
+                    .unwrap()?;
+                assert_eq!(s1_res.addr_info, addr_info);
+                assert_eq!(s2_res.addr_info, addr_info);
+                anyhow::Ok(())
+            });
 
             if let Some((id, item)) = events.next().await {
                 assert_eq!(node_id_b, id);
-                assert_eq!(addr_info, item.addr_info);
+                assert_eq!(info, item.addr_info);
             }
+
+            handle.await??;
 
             Ok(())
         }
@@ -416,7 +422,7 @@ mod tests {
                 discoverers.push(discovery);
             }
 
-            let mut events = discovery.subscribe().await.unwrap();
+            let mut events = discovery.subscribe().unwrap();
 
             let test = async move {
                 let mut got_ids = BTreeSet::new();

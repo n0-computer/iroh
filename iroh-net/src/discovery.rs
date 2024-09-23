@@ -43,7 +43,6 @@ use std::time::Duration;
 
 use crate::{AddrInfo, Endpoint, NodeId};
 use anyhow::{anyhow, ensure, Result};
-use async_trait::async_trait;
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
 use tokio::{sync::oneshot, task::JoinHandle};
@@ -71,7 +70,6 @@ pub mod pkarr;
 /// refresh, it should start its own task.
 ///
 /// [`RelayUrl`]: crate::relay::RelayUrl
-#[async_trait]
 pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// Publishes the given [`AddrInfo`] to the discovery mechanism.
     ///
@@ -108,7 +106,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// The [`crate::endpoint::Endpoint`] will `subscribe` to the discovery system
     /// and add the discovered addresses to the internal address book as they arrive
     /// on this stream.
-    async fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
+    fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
         None
     }
 }
@@ -164,7 +162,6 @@ where
     }
 }
 
-#[async_trait]
 impl Discovery for ConcurrentDiscovery {
     fn publish(&self, info: &AddrInfo) {
         for service in &self.services {
@@ -186,10 +183,10 @@ impl Discovery for ConcurrentDiscovery {
         Some(Box::pin(streams))
     }
 
-    async fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
+    fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
         let mut streams = vec![];
         for service in self.services.iter() {
-            if let Some(stream) = service.subscribe().await {
+            if let Some(stream) = service.subscribe() {
                 streams.push(stream)
             }
         }
