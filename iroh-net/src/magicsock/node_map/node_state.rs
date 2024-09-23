@@ -1365,7 +1365,7 @@ impl RemoteInfo {
 
     /// Merges and deduplicates the [`Source`] and the [`Duration`] since they were discovered for each direct address, returning a list of the most recent [`Source`]s.
     ///
-    /// Deduplication is on the (`Source`, `Duration`) tuple, so you may get multiple [`Source`]s for each `Source` varient.
+    /// Deduplication is on the (`Source`, `Duration`) tuple, so you may get multiple [`Source`]s for each `Source` variant.
     ///
     /// The list is sorted from least to most recent [`Source`]
     pub fn sources(&self) -> Vec<(Source, Duration)> {

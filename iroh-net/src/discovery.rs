@@ -94,7 +94,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
 
     /// Subscribe to all addresses that get *passively* discovered.
     ///
-    /// An implimentation may choose to defer subscribing to the stream until the
+    /// An implementation may choose to defer subscribing to the stream until the
     /// stream is actually polled. To avoid missing discovered nodes, poll the
     /// stream as soon as possible.
     ///
