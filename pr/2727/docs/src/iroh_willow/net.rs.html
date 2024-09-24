@@ -1195,12 +1195,12 @@
         }
         <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
             conn.close(ERROR_CODE_FAIL, <span class="string">b"failed-while-closing"</span>);
-            <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"connection failed while terminating"</span>);
+            <span class="macro">trace!</span>(<span class="question-mark">?</span>err, <span class="string">"connection failed while terminating"</span>);
             <span class="prelude-val">Err</span>(err)
         }
         <span class="prelude-val">Err</span>(err) =&gt; {
             conn.close(ERROR_CODE_FAIL, <span class="string">b"timeout-while-closing"</span>);
-            <span class="macro">warn!</span>(<span class="string">"connection timed out while terminating"</span>);
+            <span class="macro">trace!</span>(<span class="string">"connection timed out while terminating"</span>);
             <span class="prelude-val">Err</span>(err.into())
         }
     }

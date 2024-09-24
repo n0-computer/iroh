@@ -638,15 +638,6 @@
 <a href="#638" id="638">638</a>
 <a href="#639" id="639">639</a>
 <a href="#640" id="640">640</a>
-<a href="#641" id="641">641</a>
-<a href="#642" id="642">642</a>
-<a href="#643" id="643">643</a>
-<a href="#644" id="644">644</a>
-<a href="#645" id="645">645</a>
-<a href="#646" id="646">646</a>
-<a href="#647" id="647">647</a>
-<a href="#648" id="648">648</a>
-<a href="#649" id="649">649</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{HashMap, HashSet};
 
 <span class="kw">use </span>bytes::Bytes;
@@ -799,9 +790,7 @@
                 <span class="macro">trace!</span>(
                     subspace = %message.entry.entry.subspace_id().fmt_short(),
                     path = %message.entry.entry.path().fmt_utf8(),
-                    <span class="comment">// payload_digest = %message.entry.entry.payload_digest().0.fmt_short(),
-                    // payload_len = message.entry.entry.payload_length(),
-                    </span><span class="string">"recv SendEntry"
+                    <span class="string">"recv SendEntry"
                 </span>);
                 <span class="kw">let </span>authorised_entry = <span class="self">self
                     </span>.shared
@@ -860,8 +849,7 @@
         <span class="macro">debug!</span>(
             our_handle = id.<span class="number">0</span>.value(),
             their_handle = id.<span class="number">1</span>.value(),
-            <span class="comment">// area=?target.intersection.intersection.area,
-            </span><span class="string">"reconciled area"
+            <span class="string">"reconciled area"
         </span>);
         <span class="self">self</span>.out(Output::ReconciledArea {
             area: target.intersection.intersection.clone(),
@@ -935,13 +923,7 @@
             their_handle = id.<span class="number">1</span>.value(),
             <span class="string">"init area"
         </span>);
-        <span class="comment">// tracing::info!(
-        //     our_handle = id.0.value(),
-        //     their_handle = id.1.value(),
-        //     intersection=?target.intersection.intersection.area,
-        //     "init area"
-        // );
-        </span><span class="self">self</span>.map.insert(id, target);
+        <span class="self">self</span>.map.insert(id, target);
         <span class="prelude-val">Ok</span>(id)
     }
 }
