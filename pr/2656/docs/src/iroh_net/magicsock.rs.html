@@ -4823,7 +4823,7 @@
                         <span class="macro">event!</span>(
                             target: <span class="string">"events.net.call-me-maybe.recv"</span>,
                             Level::DEBUG,
-                            src_node = sender.fmt_short(),
+                            remote_node = sender.fmt_short(),
                             via = <span class="question-mark">?</span>url,
                             their_addrs = <span class="question-mark">?</span>cm.my_numbers,
                         );
@@ -4879,7 +4879,7 @@
         <span class="macro">event!</span>(
             target: <span class="string">"events.net.pong.sent"</span>,
             Level::DEBUG,
-            dst_node = %sender.fmt_short(),
+            remote_node = %sender.fmt_short(),
             dst = <span class="question-mark">?</span>addr,
             txn = <span class="question-mark">?</span>dm.tx_id,
         );
@@ -5157,7 +5157,7 @@
             <span class="macro">event!</span>(
                 target: <span class="string">"events.net.call-me-maybe.sent"</span>,
                 Level::DEBUG,
-                dst_node = %dst_node.fmt_short(),
+                remote_node = %dst_node.fmt_short(),
                 via = <span class="question-mark">?</span>url,
                 <span class="question-mark">?</span>addrs,
             );

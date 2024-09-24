@@ -317,9 +317,6 @@
 <a href="#317" id="317">317</a>
 <a href="#318" id="318">318</a>
 <a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
-<a href="#322" id="322">322</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The state kept for each network path to a remote node.
 
 </span><span class="kw">use </span>std::collections::{BTreeMap, HashMap};
@@ -436,7 +433,7 @@
                 <span class="macro">event!</span>(
                     target: <span class="string">"events.net.holepunched"</span>,
                     Level::DEBUG,
-                    node = %<span class="self">self</span>.node_id.fmt_short(),
+                    remote_node = %<span class="self">self</span>.node_id.fmt_short(),
                     path = <span class="question-mark">?</span>path,
                     direction = <span class="string">"outgoing"</span>,
                 );
@@ -490,7 +487,8 @@
     /// - When the last payload transmission occurred.
     /// - when the last ping from them was received.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>last_alive(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Instant&gt; {
-        <span class="self">self</span>.recent_pong()
+        <span class="self">self</span>.recent_pong
+            .as_ref()
             .map(|pong| <span class="kw-2">&amp;</span>pong.pong_at)
             .into_iter()
             .chain(<span class="self">self</span>.last_payload_msg.as_ref())
@@ -511,7 +509,8 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>last_control_msg(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; <span class="prelude-ty">Option</span>&lt;(Duration, ControlMsg)&gt; {
         <span class="comment">// get every control message and assign it its kind
         </span><span class="kw">let </span>last_pong = <span class="self">self
-            </span>.recent_pong()
+            </span>.recent_pong
+            .as_ref()
             .map(|pong| (pong.pong_at, ControlMsg::Pong));
         <span class="kw">let </span>last_call_me_maybe = <span class="self">self
             </span>.call_me_maybe_time
@@ -527,11 +526,6 @@
             .chain(last_ping)
             .max_by_key(|(instant, _kind)| <span class="kw-2">*</span>instant)
             .map(|(instant, kind)| (now.duration_since(instant), kind))
-    }
-
-    <span class="doccomment">/// Returns the most recent pong if available.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>recent_pong(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>PongReply&gt; {
-        <span class="self">self</span>.recent_pong.as_ref()
     }
 
     <span class="doccomment">/// Returns the latency from the most recent pong, if available.
@@ -578,7 +572,7 @@
                         <span class="macro">event!</span>(
                             target: <span class="string">"events.net.holepunched"</span>,
                             Level::DEBUG,
-                            node = %<span class="self">self</span>.node_id.fmt_short(),
+                            remote_node = %<span class="self">self</span>.node_id.fmt_short(),
                             path = <span class="question-mark">?</span>addr,
                             direction = <span class="string">"incoming"</span>,
                         );

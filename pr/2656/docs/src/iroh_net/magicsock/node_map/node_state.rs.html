@@ -1691,6 +1691,9 @@
 <a href="#1691" id="1691">1691</a>
 <a href="#1692" id="1692">1692</a>
 <a href="#1693" id="1693">1693</a>
+<a href="#1694" id="1694">1694</a>
+<a href="#1695" id="1695">1695</a>
+<a href="#1696" id="1696">1696</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{btree_map::Entry, BTreeSet, HashMap};
 <span class="kw">use </span>std::hash::Hash;
 <span class="kw">use </span>std::net::{IpAddr, SocketAddr};
@@ -1917,8 +1920,8 @@
             </span>.udp_paths
             .paths
             .iter()
-            .map(|(addr, endpoint_state)| {
-                <span class="kw">let </span><span class="kw-2">mut </span>sources: Vec&lt;(Source, Duration)&gt; = endpoint_state
+            .map(|(addr, path_state)| {
+                <span class="kw">let </span><span class="kw-2">mut </span>sources: Vec&lt;(Source, Duration)&gt; = path_state
                     .sources
                     .iter()
                     .map(|(source, instant)| (source.clone(), now.duration_since(<span class="kw-2">*</span>instant)))
@@ -1926,13 +1929,13 @@
                 sources.sort_by(|a, b| b.<span class="number">1</span>.cmp(<span class="kw-2">&amp;</span>a.<span class="number">1</span>));
                 DirectAddrInfo {
                     addr: SocketAddr::from(<span class="kw-2">*</span>addr),
-                    latency: endpoint_state.recent_pong().map(|pong| pong.latency),
-                    last_control: endpoint_state.last_control_msg(now),
-                    last_payload: endpoint_state
+                    latency: path_state.recent_pong.as_ref().map(|pong| pong.latency),
+                    last_control: path_state.last_control_msg(now),
+                    last_payload: path_state
                         .last_payload_msg
                         .as_ref()
                         .map(|instant| now.duration_since(<span class="kw-2">*</span>instant)),
-                    last_alive: endpoint_state
+                    last_alive: path_state
                         .last_alive()
                         .map(|instant| now.duration_since(instant)),
                     sources,
@@ -2000,7 +2003,7 @@
             </span><span class="macro">event!</span>(
                 target: <span class="string">"events.net.conn_type.changed"</span>,
                 Level::DEBUG,
-                node = %<span class="self">self</span>.node_id.fmt_short(),
+                remote_node = %<span class="self">self</span>.node_id.fmt_short(),
                 conn_type = <span class="question-mark">?</span>typ,
             );
             <span class="macro">info!</span>(%typ, <span class="string">"new connection type"</span>);
@@ -2088,7 +2091,7 @@
                     );
                     <span class="bool-val">true
                 </span>} <span class="kw">else </span>{
-                    <span class="macro">trace!</span>(<span class="question-mark">?</span>now, <span class="string">"not needed"</span>);
+                    <span class="macro">trace!</span>(<span class="question-mark">?</span>now, <span class="string">"best_addr valid: not needed"</span>);
                     <span class="bool-val">false
                 </span>}
             }
@@ -2104,13 +2107,16 @@
                 SendAddr::Udp(addr) =&gt; {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(path_state) = <span class="self">self</span>.udp_paths.paths.get_mut(<span class="kw-2">&amp;</span>addr.into()) {
                         path_state.last_ping = <span class="prelude-val">None</span>;
-                        <span class="comment">// only clear the best address if there was no sign of life from this path
-                        // within the time the pong should have arrived
-                        </span><span class="kw">let </span>consider_alive = path_state
+                        <span class="kw">let </span>consider_alive = path_state
                             .last_alive()
                             .map(|last_alive| last_alive.elapsed() &lt;= PING_TIMEOUT_DURATION)
                             .unwrap_or(<span class="bool-val">false</span>);
                         <span class="kw">if </span>!consider_alive {
+                            <span class="comment">// If there was no sign of life from this path during the time
+                            // which we should have received the pong, clear best addr and
+                            // pong.  Both are used to select this path again, but we know
+                            // it's not a usable path now.
+                            </span>path_state.recent_pong = <span class="prelude-val">None</span>;
                             <span class="self">self</span>.udp_paths.best_addr.clear_if_equals(
                                 addr,
                                 ClearReason::PongTimeout,
@@ -2152,7 +2158,7 @@
         <span class="macro">event!</span>(
             target: <span class="string">"events.net.ping.sent"</span>,
             Level::DEBUG,
-            dst_node = %<span class="self">self</span>.node_id.fmt_short(),
+            remote_node = %<span class="self">self</span>.node_id.fmt_short(),
             <span class="question-mark">?</span>dst,
             txn = <span class="question-mark">?</span>tx_id,
             <span class="question-mark">?</span>purpose,
@@ -2443,7 +2449,7 @@
         <span class="macro">event!</span>(
             target: <span class="string">"events.net.ping.recv"</span>,
             Level::DEBUG,
-            src_node = %<span class="self">self</span>.node_id.fmt_short(),
+            remote_node = %<span class="self">self</span>.node_id.fmt_short(),
             src = <span class="question-mark">?</span>path,
             txn = <span class="question-mark">?</span>tx_id,
             <span class="question-mark">?</span>role,
@@ -2545,7 +2551,7 @@
         <span class="macro">event!</span>(
             target: <span class="string">"events.net.pong.recv"</span>,
             Level::DEBUG,
-            src_node = <span class="self">self</span>.node_id.fmt_short(),
+            remote_node = <span class="self">self</span>.node_id.fmt_short(),
             <span class="question-mark">?</span>src,
             txn = <span class="question-mark">?</span>m.tx_id,
         );

@@ -1729,6 +1729,11 @@
 <a href="#1729" id="1729">1729</a>
 <a href="#1730" id="1730">1730</a>
 <a href="#1731" id="1731">1731</a>
+<a href="#1732" id="1732">1732</a>
+<a href="#1733" id="1733">1733</a>
+<a href="#1734" id="1734">1734</a>
+<a href="#1735" id="1735">1735</a>
+<a href="#1736" id="1736">1736</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -2239,12 +2244,17 @@
         <span class="self">self</span>.connect(addr, alpn).<span class="kw">await
     </span>}
 
-    <span class="kw">async fn </span>connect_quinn(
+    <span class="attr">#[instrument(
+        skip_all,
+        fields(remote_node = node_id.fmt_short(), alpn = %String::from_utf8_lossy(alpn))
+    )]
+    </span><span class="kw">async fn </span>connect_quinn(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_id: NodeId,
         alpn: <span class="kw-2">&amp;</span>[u8],
         addr: QuicMappedAddr,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
+        <span class="macro">debug!</span>(<span class="string">"Attempting connection..."</span>);
         <span class="kw">let </span>client_config = {
             <span class="kw">let </span>alpn_protocols = <span class="macro">vec!</span>[alpn.to_vec()];
             <span class="kw">let </span>quic_client_config = tls::make_client_config(
@@ -2278,7 +2288,7 @@
             <span class="comment">// If this actor is dead, that's not great but we can still function.
             </span><span class="macro">warn!</span>(<span class="string">"rtt-actor not reachable: {err:#}"</span>);
         }
-
+        <span class="macro">debug!</span>(<span class="string">"Connection established"</span>);
         <span class="prelude-val">Ok</span>(connection)
     }
 

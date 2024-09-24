@@ -446,6 +446,15 @@
 <a href="#446" id="446">446</a>
 <a href="#447" id="447">447</a>
 <a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
+<a href="#456" id="456">456</a>
+<a href="#457" id="457">457</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
@@ -454,22 +463,31 @@
 //! If you have [`LocalSwarmDiscovery`] enabled, you can get a list of the locally discovered nodes by filtering a list of `RemoteInfo`s.
 //!
 //! ```
-//! let recent = Duration::from_secs(600); // 10 minutes in seconds
-//! let remotes = endpoint.remote_info_iter();
-//! let locally_discovered: Vec&lt;_&gt; = remotes
-//!    .filter(|remote| {
-//!        remote
-//!            .sources()
-//!            .iter()
-//!            .any(|(source, duration)| {
-//!                if let Source::Discovery { service } = source {
-//!                    service == "local" &amp;&amp; *duration &gt;= recent
-//!                } else {
-//!                    false
-//!                }
-//!            })
-//!  })
-//!     .collect();
+//! use std::time::Duration;
+//! use iroh_net::endpoint::{Source, Endpoint};
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!   let recent = Duration::from_secs(600); // 10 minutes in seconds
+//!
+//!   let endpoint = Endpoint::builder().bind().await.unwrap();
+//!   let remotes = endpoint.remote_info_iter();
+//!   let locally_discovered: Vec&lt;_&gt; = remotes
+//!      .filter(|remote| {
+//!          remote
+//!              .sources()
+//!              .iter()
+//!              .any(|(source, duration)| {
+//!                  if let Source::Discovery { service } = source {
+//!                      service == "local" &amp;&amp; *duration &gt;= recent
+//!                  } else {
+//!                      false
+//!                  }
+//!              })
+//!    })
+//!       .collect();
+//!   println!("locally discovered nodes: {locally_discovered:?}");
+//! }
 //! ```
 </span><span class="kw">use </span>std::{
     collections::{BTreeSet, HashMap},
@@ -481,7 +499,7 @@
 <span class="kw">use </span>derive_more::FromStr;
 <span class="kw">use </span>futures_lite::stream::Boxed <span class="kw">as </span>BoxStream;
 <span class="kw">use </span>futures_util::FutureExt;
-<span class="kw">use </span>tracing::{debug, error, trace, warn};
+<span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 <span class="kw">use </span>watchable::Watchable;
 
 <span class="kw">use </span>iroh_base::key::PublicKey;
@@ -544,8 +562,7 @@
 
         <span class="kw">let </span>addrs: Watchable&lt;<span class="prelude-ty">Option</span>&lt;AddrInfo&gt;&gt; = Watchable::new(<span class="prelude-val">None</span>);
         <span class="kw">let </span>addrs_change = addrs.watch();
-
-        <span class="kw">let </span>handle = tokio::spawn(<span class="kw">async move </span>{
+        <span class="kw">let </span>discovery_fut = <span class="kw">async move </span>{
             <span class="kw">let </span><span class="kw-2">mut </span>node_addrs: HashMap&lt;PublicKey, Peer&gt; = HashMap::default();
             <span class="kw">let </span><span class="kw-2">mut </span>subscribers: Vec&lt;mpsc::Sender&lt;(NodeId, DiscoveryItem)&gt;&gt; = <span class="macro">vec!</span>[];
             <span class="kw">let </span><span class="kw-2">mut </span>last_id = <span class="number">0</span>;
@@ -696,7 +713,8 @@
                     }
                 }
             }
-        });
+        };
+        <span class="kw">let </span>handle = tokio::spawn(discovery_fut.instrument(<span class="macro">info_span!</span>(<span class="string">"swarm-discovery.actor"</span>)));
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             handle: AbortOnDropHandle::new(handle),
             sender: send,

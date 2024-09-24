@@ -3,20 +3,29 @@
 See the <a href="https://crates.io/crates/swarm-discovery"><code>swarm-discovery</code></a> crate for more details.</p>
 <p>If you have <a href="struct.LocalSwarmDiscovery.html" title="struct iroh::net::discovery::local_swarm_discovery::LocalSwarmDiscovery"><code>LocalSwarmDiscovery</code></a> enabled, you can get a list of the locally discovered nodes by filtering a list of <code>RemoteInfo</code>s.</p>
 
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>recent = Duration::from_secs(<span class="number">600</span>); <span class="comment">// 10 minutes in seconds
-</span><span class="kw">let </span>remotes = endpoint.remote_info_iter();
-<span class="kw">let </span>locally_discovered: Vec&lt;<span class="kw">_</span>&gt; = remotes
-   .filter(|remote| {
-       remote
-           .sources()
-           .iter()
-           .any(|(source, duration)| {
-               <span class="kw">if let </span>Source::Discovery { service } = source {
-                   service == <span class="string">"local" </span>&amp;&amp; <span class="kw-2">*</span>duration &gt;= recent
-               } <span class="kw">else </span>{
-                   <span class="bool-val">false
-               </span>}
-           })
- })
-    .collect();</code></pre></div>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>std::time::Duration;
+<span class="kw">use </span>iroh_net::endpoint::{Source, Endpoint};
+
+<span class="attr">#[tokio::main]
+</span><span class="kw">async fn </span>main() {
+  <span class="kw">let </span>recent = Duration::from_secs(<span class="number">600</span>); <span class="comment">// 10 minutes in seconds
+
+  </span><span class="kw">let </span>endpoint = Endpoint::builder().bind().<span class="kw">await</span>.unwrap();
+  <span class="kw">let </span>remotes = endpoint.remote_info_iter();
+  <span class="kw">let </span>locally_discovered: Vec&lt;<span class="kw">_</span>&gt; = remotes
+     .filter(|remote| {
+         remote
+             .sources()
+             .iter()
+             .any(|(source, duration)| {
+                 <span class="kw">if let </span>Source::Discovery { service } = source {
+                     service == <span class="string">"local" </span>&amp;&amp; <span class="kw-2">*</span>duration &gt;= recent
+                 } <span class="kw">else </span>{
+                     <span class="bool-val">false
+                 </span>}
+             })
+   })
+      .collect();
+  <span class="macro">println!</span>(<span class="string">"locally discovered nodes: {locally_discovered:?}"</span>);
+}</code></pre></div>
 </div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.LocalSwarmDiscovery.html" title="struct iroh::net::discovery::local_swarm_discovery::LocalSwarmDiscovery">LocalSwarmDiscovery</a></div><div class="desc docblock-short">Discovery using <code>swarm-discovery</code>, a variation on mdns</div></li></ul></section></div></main></body></html>
