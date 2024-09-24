@@ -6,22 +6,31 @@
 //! If you have [`LocalSwarmDiscovery`] enabled, you can get a list of the locally discovered nodes by filtering a list of `RemoteInfo`s.
 //!
 //! ```
-//! let recent = Duration::from_secs(600); // 10 minutes in seconds
-//! let remotes = endpoint.remote_info_iter();
-//! let locally_discovered: Vec<_> = remotes
-//!    .filter(|remote| {
-//!        remote
-//!            .sources()
-//!            .iter()
-//!            .any(|(source, duration)| {
-//!                if let Source::Discovery { service } = source {
-//!                    service == "local" && *duration >= recent
-//!                } else {
-//!                    false
-//!                }
-//!            })
-//!  })
-//!     .collect();
+//! use std::time::Duration;
+//! use iroh_net::endpoint::{Source, Endpoint};
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!   let recent = Duration::from_secs(600); // 10 minutes in seconds
+//!
+//!   let endpoint = Endpoint::builder().bind().await.unwrap();
+//!   let remotes = endpoint.remote_info_iter();
+//!   let locally_discovered: Vec<_> = remotes
+//!      .filter(|remote| {
+//!          remote
+//!              .sources()
+//!              .iter()
+//!              .any(|(source, duration)| {
+//!                  if let Source::Discovery { service } = source {
+//!                      service == "local" && *duration >= recent
+//!                  } else {
+//!                      false
+//!                  }
+//!              })
+//!    })
+//!       .collect();
+//!   println!("locally discovered nodes: {locally_discovered:?}");
+//! }
 //! ```
 use std::{
     collections::{BTreeSet, HashMap},
