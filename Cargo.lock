@@ -2852,7 +2852,6 @@ name = "iroh-net"
 version = "0.25.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "axum",
  "backoff",
  "base64 0.22.1",
