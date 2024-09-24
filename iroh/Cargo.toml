@@ -116,5 +116,5 @@ name = "custom-protocol"
 required-features = ["examples"]
 
 [[example]]
-name = "local_swarm_discovery"
+name = "local-swarm-discovery"
 required-features = ["discovery-local-network"]
