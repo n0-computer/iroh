@@ -1,6 +1,6 @@
 //! Networking implementation for iroh-willow.
 
-use std::{future::Future, time::Duration};
+use std::{future::Future, io, time::Duration};
 
 use anyhow::{anyhow, ensure, Context as _, Result};
 use futures_concurrency::future::TryJoin;
@@ -10,7 +10,7 @@ use iroh_net::endpoint::{
     Connection, ConnectionError, ReadError, ReadExactError, RecvStream, SendStream, VarInt,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::{
     proto::wgps::{
@@ -257,6 +257,11 @@ fn prepare_channel(
     (sender, receiver, fut)
 }
 
+/// Error code when stopping receive streams because we closed our session.
+///
+/// This is currently for debugging purposes only - the other end will still see this as a connection error.
+const ERROR_CODE_SESSION_CLOSED: VarInt = VarInt::from_u32(1);
+
 async fn recv_loop(
     channel: Channel,
     mut recv_stream: RecvStream,
@@ -269,9 +274,18 @@ async fn recv_loop(
         .await
         .context("failed to read from quic stream")?
     {
-        // trace!(len = buf.bytes.len(), "read");
-        channel_writer.write_all(&buf.bytes[..]).await?;
-        // trace!(len = buf.bytes.len(), "sent");
+        trace!(len = buf.bytes.len(), "read");
+        match channel_writer.write_all(&buf.bytes[..]).await {
+            Ok(()) => {
+                trace!(len = buf.bytes.len(), "sent");
+            }
+            Err(err) if err.kind() == io::ErrorKind::BrokenPipe => {
+                debug!("closing recv channel: session closed");
+                recv_stream.stop(ERROR_CODE_SESSION_CLOSED)?;
+                break;
+            }
+            Err(err) => return Err(err.into()),
+        }
     }
     trace!(?channel, "recv: stream close");
     channel_writer.close();
@@ -295,6 +309,7 @@ async fn send_loop(
     }
     trace!(?channel, "send: close writer");
     send_stream.finish()?;
+    send_stream.stopped().await?;
     // We don't await SendStream::stopped, because we rely on application level closing notifications,
     // and make sure that the connection is closed gracefully in any case.
     trace!(?channel, "send: done");
@@ -321,7 +336,7 @@ async fn send_loop(
 ///
 /// Returns an error if the termination flow was aborted prematurely or if the connection was not
 /// closed with the expected error code.
-pub(crate) async fn terminate_gracefully(conn: &Connection) -> Result<()> {
+pub(crate) async fn terminate_gracefully(conn: Connection) -> Result<()> {
     trace!("terminating connection");
     // Send a single byte on a newly opened uni stream.
     let mut send_stream = conn.open_uni().await?;
@@ -329,7 +344,7 @@ pub(crate) async fn terminate_gracefully(conn: &Connection) -> Result<()> {
     send_stream.finish()?;
     // Wait until we either receive the goodbye byte from the other peer, or for the other peer
     // to close the connection with the expected error code.
-    match tokio::time::timeout(SHUTDOWN_TIMEOUT, wait_for_goodbye_or_graceful_close(conn)).await {
+    match tokio::time::timeout(SHUTDOWN_TIMEOUT, wait_for_goodbye_or_graceful_close(&conn)).await {
         Ok(Ok(())) => {
             conn.close(ERROR_CODE_OK, b"bye");
             trace!("connection terminated gracefully");
@@ -574,8 +589,8 @@ mod tests {
         r2.unwrap();
 
         tokio::try_join!(
-            terminate_gracefully(&conn_alfie),
-            terminate_gracefully(&conn_betty),
+            terminate_gracefully(conn_alfie),
+            terminate_gracefully(conn_betty),
         )
         .expect("failed to close both connections gracefully");
 
@@ -747,8 +762,8 @@ mod tests {
         );
 
         tokio::try_join!(
-            terminate_gracefully(&conn_alfie),
-            terminate_gracefully(&conn_betty),
+            terminate_gracefully(conn_alfie),
+            terminate_gracefully(conn_betty),
         )
         .expect("failed to close both connections gracefully");
 

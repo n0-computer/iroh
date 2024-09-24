@@ -42,7 +42,7 @@ pub(crate) type SessionId = u64;
 
 /// To break symmetry, we refer to the peer that initiated the synchronisation session as Alfie,
 /// and the other peer as Betty.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Role {
     /// The peer that initiated the synchronisation session.
     Alfie,
