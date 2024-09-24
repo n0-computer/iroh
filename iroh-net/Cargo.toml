@@ -170,3 +170,7 @@ name = "connect-unreliable"
 [[example]]
 name = "dht_discovery"
 required-features = ["discovery-pkarr-dht"]
+
+[[example]]
+name = "locally-discovered-nodes"
+required-features = ["discovery-local-network"]
