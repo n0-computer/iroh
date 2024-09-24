@@ -352,12 +352,12 @@ pub(crate) async fn terminate_gracefully(conn: Connection) -> Result<()> {
         }
         Ok(Err(err)) => {
             conn.close(ERROR_CODE_FAIL, b"failed-while-closing");
-            warn!(?err, "connection failed while terminating");
+            trace!(?err, "connection failed while terminating");
             Err(err)
         }
         Err(err) => {
             conn.close(ERROR_CODE_FAIL, b"timeout-while-closing");
-            warn!("connection timed out while terminating");
+            trace!("connection timed out while terminating");
             Err(err.into())
         }
     }

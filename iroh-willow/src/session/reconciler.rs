@@ -150,8 +150,6 @@ impl<S: Storage> Reconciler<S> {
                 trace!(
                     subspace = %message.entry.entry.subspace_id().fmt_short(),
                     path = %message.entry.entry.path().fmt_utf8(),
-                    // payload_digest = %message.entry.entry.payload_digest().0.fmt_short(),
-                    // payload_len = message.entry.entry.payload_length(),
                     "recv SendEntry"
                 );
                 let authorised_entry = self
@@ -211,7 +209,6 @@ impl<S: Storage> Reconciler<S> {
         debug!(
             our_handle = id.0.value(),
             their_handle = id.1.value(),
-            // area=?target.intersection.intersection.area,
             "reconciled area"
         );
         self.out(Output::ReconciledArea {
@@ -286,12 +283,6 @@ impl TargetMap {
             their_handle = id.1.value(),
             "init area"
         );
-        // tracing::info!(
-        //     our_handle = id.0.value(),
-        //     their_handle = id.1.value(),
-        //     intersection=?target.intersection.intersection.area,
-        //     "init area"
-        // );
         self.map.insert(id, target);
         Ok(id)
     }
