@@ -86,6 +86,8 @@ pub type Path = willow_data_model::Path<MAX_COMPONENT_LENGTH, MAX_COMPONENT_COUN
 pub trait PathExt {
     /// Creates a new path from a slice of bytes.
     fn from_bytes(slices: &[&[u8]]) -> Result<Path, InvalidPathError2>;
+    /// Debug-format the path as a lossy UTF-8 string.
+    fn fmt_utf8(&self) -> String;
 }
 
 impl PathExt for Path {
@@ -103,6 +105,22 @@ impl PathExt for Path {
         } else {
             Ok(path)
         }
+    }
+
+    fn fmt_utf8(&self) -> String {
+        let mut s = String::new();
+        let mut iter = self.components().peekable();
+        while let Some(c) = iter.next() {
+            if let Ok(c) = std::str::from_utf8(c.as_ref()) {
+                s.push_str(c);
+            } else {
+                s.push_str(&format!("<{}>", hex::encode(c.as_ref())));
+            }
+            if iter.peek().is_some() {
+                s.push('/');
+            }
+        }
+        s
     }
 }
 

@@ -1,19 +1,27 @@
-use anyhow::Result;
+use std::{collections::BTreeMap, time::Duration};
+
+use anyhow::ensure;
 use futures_lite::StreamExt;
-use iroh::client::{spaces::EntryForm, Iroh};
+use iroh::client::{
+    spaces::{EntryForm, Space},
+    Iroh,
+};
 use iroh_net::{key::SecretKey, NodeAddr};
 use iroh_willow::{
-    interest::{CapSelector, DelegateTo, RestrictArea},
+    interest::{AreaOfInterestSelector, CapSelector, DelegateTo, RestrictArea},
     proto::{
         data_model::{Path, PathExt},
         grouping::{Area, Range3d},
-        keys::NamespaceKind,
+        keys::{NamespaceKind, UserId},
         meadowcap::AccessMode,
     },
     session::{intents::Completion, SessionMode},
     store::traits::{EntryOrigin, StoreEvent},
 };
-use tracing::info;
+use proptest::{collection::vec, prelude::Strategy, sample::select};
+use test_strategy::proptest;
+use testresult::TestResult;
+use tracing::{error, info};
 
 /// Spawn an iroh node in a separate thread and tokio runtime, and return
 /// the address and client.
@@ -41,8 +49,220 @@ async fn spawn_node() -> (NodeAddr, Iroh) {
     receiver.await.unwrap()
 }
 
+#[derive(Debug, Clone)]
+enum Operation {
+    Write(String, String),
+}
+
+fn simple_key() -> impl Strategy<Value = String> {
+    select(&["alpha", "beta", "gamma"]).prop_map(str::to_string)
+}
+
+fn simple_value() -> impl Strategy<Value = String> {
+    select(&["red", "blue", "green"]).prop_map(str::to_string)
+}
+
+fn simple_op() -> impl Strategy<Value = Operation> {
+    (simple_key(), simple_value()).prop_map(|(key, value)| Operation::Write(key, value))
+}
+
+fn role() -> impl Strategy<Value = Peer> {
+    select(&[Peer::X, Peer::Y])
+}
+
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Ord, PartialOrd)]
+enum Peer {
+    X,
+    Y,
+}
+
+#[proptest]
+fn test_get_many_weird_result(
+    #[strategy(vec((role(), vec(simple_op(), 0..20)), 0..20))] rounds: Vec<(Peer, Vec<Operation>)>,
+) {
+    iroh_test::logging::setup_multithreaded();
+
+    let res = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut simulated_entries: BTreeMap<(Peer, String), String> = BTreeMap::new();
+
+            let (addr_x, iroh_x) = spawn_node().await;
+            let (addr_y, iroh_y) = spawn_node().await;
+            let node_id_x = addr_x.node_id;
+            let node_id_y = addr_y.node_id;
+            iroh_x.net().add_node_addr(addr_y.clone()).await?;
+            iroh_y.net().add_node_addr(addr_x.clone()).await?;
+            let user_x = iroh_x.spaces().create_user().await?;
+            let user_y = iroh_y.spaces().create_user().await?;
+            info!(
+                "X is node {} user {}",
+                node_id_x.fmt_short(),
+                user_x.fmt_short()
+            );
+            info!(
+                "Y is node {} user {}",
+                node_id_y.fmt_short(),
+                user_y.fmt_short()
+            );
+            let space_x = iroh_x.spaces().create(NamespaceKind::Owned, user_x).await?;
+
+            let ticket = space_x
+                .share(user_y, AccessMode::Write, RestrictArea::None)
+                .await?;
+
+            // give betty access
+            let (space_y, syncs) = iroh_y
+                .spaces()
+                .import_and_sync(ticket, SessionMode::ReconcileOnce)
+                .await?;
+
+            let mut completions = syncs.complete_all().await;
+            assert_eq!(completions.len(), 1);
+            let completion = completions.remove(&node_id_x).unwrap();
+            assert!(completion.is_ok());
+            assert_eq!(completion.unwrap(), Completion::Complete);
+
+            let count = rounds.len();
+            for (i, (peer, round)) in rounds.into_iter().enumerate() {
+                let i = i + 1;
+                let (space, user) = match peer {
+                    Peer::X => (&space_x, user_x),
+                    Peer::Y => (&space_y, user_y),
+                };
+                info!(active=?peer, "[{i}/{count}] round start");
+
+                for Operation::Write(key, value) in round {
+                    info!(?key, ?value, "[{i}/{count}] write");
+                    space
+                        .insert_bytes(
+                            EntryForm::new(user, Path::from_bytes(&[key.as_bytes()])?),
+                            value.clone().into_bytes(),
+                        )
+                        .await?;
+                    simulated_entries.insert((peer, key), value);
+                }
+
+                // We sync in both directions. This will only create a single session under the hood.
+                // Awaiting both intents ensures that the sync completed on both sides.
+                // Alternatively, we could sync from one side only, the result must be the same, however we miss
+                // an event in the client currently to know when the betty peer (accepting peer) has finished.
+                let fut_x = async {
+                    space_x
+                        .sync_once(node_id_y, AreaOfInterestSelector::Widest)
+                        .await?
+                        .complete()
+                        .await?;
+                    anyhow::Ok(())
+                };
+                let fut_y = async {
+                    space_y
+                        .sync_once(node_id_x, AreaOfInterestSelector::Widest)
+                        .await?
+                        .complete()
+                        .await?;
+                    anyhow::Ok(())
+                };
+                let fut = async { tokio::try_join!(fut_x, fut_y) };
+                tokio::time::timeout(Duration::from_secs(10), fut).await??;
+
+                info!("[{i}/{count}] sync complete");
+
+                let map_x = space_to_map(&space_x, &iroh_x, user_x, user_y).await?;
+                let map_y = space_to_map(&space_y, &iroh_y, user_x, user_y).await?;
+                ensure!(
+                    map_x == map_y,
+                    "states out of sync:\n{map_x:#?}\n !=\n{map_y:#?}"
+                );
+
+                ensure!(
+                    map_x == map_y,
+                    "states out of sync:\n{map_x:#?}\n !=\n{map_y:#?}"
+                );
+                ensure!(
+                    simulated_entries == map_x,
+                    "alfie in unexpected state:\n{simulated_entries:#?}\n !=\n{map_x:#?}"
+                );
+                // follows transitively, but still
+                ensure!(
+                    simulated_entries == map_y,
+                    "betty in unexpected state:\n{simulated_entries:#?}\n !=\n{map_y:#?}"
+                );
+            }
+
+            info!("completed {count} rounds successfully");
+
+            tokio::try_join!(iroh_x.shutdown(false), iroh_y.shutdown(false))?;
+
+            Ok(())
+        });
+    if let Err(err) = &res {
+        error!(?err, "FAILED");
+    }
+    res.map_err(AnyhowStdErr)?;
+}
+
+async fn space_to_map(
+    space: &Space,
+    node: &Iroh,
+    user_x: UserId,
+    user_y: UserId,
+) -> anyhow::Result<BTreeMap<(Peer, String), String>> {
+    let role_lookup = BTreeMap::from([(user_x, Peer::X), (user_y, Peer::Y)]);
+    let entries = space
+        .get_many(Range3d::new_full())
+        .await?
+        .try_collect::<_, _, Vec<_>>()
+        .await?;
+    let mut map: BTreeMap<(Peer, String), String> = BTreeMap::new();
+    for auth_entry in entries {
+        let (entry, auth) = auth_entry.into_parts();
+        let key_component = entry
+            .path()
+            .get_component(0)
+            .ok_or_else(|| anyhow::anyhow!("path component missing"))?;
+        let key = String::from_utf8(key_component.to_vec())?;
+
+        let value = node.blobs().read_to_bytes(entry.payload_digest().0).await?;
+
+        let user = auth.capability.receiver();
+        let peer = role_lookup
+            .get(user)
+            .ok_or_else(|| anyhow::anyhow!("foreign write?"))?;
+
+        map.insert((*peer, key), String::from_utf8_lossy(&value).to_string());
+    }
+
+    Ok(map)
+}
+
+#[derive(Debug)]
+struct AnyhowStdErr(anyhow::Error);
+
+impl std::fmt::Display for AnyhowStdErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for AnyhowStdErr {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.0.source()
+    }
+
+    fn description(&self) -> &str {
+        "description() is deprecated; use Display"
+    }
+
+    fn cause(&self) -> Option<&dyn std::error::Error> {
+        self.source()
+    }
+}
+
 #[tokio::test]
-async fn spaces_smoke() -> Result<()> {
+async fn spaces_smoke() -> TestResult {
     iroh_test::logging::setup_multithreaded();
     let (alfie_addr, alfie) = spawn_node().await;
     let (betty_addr, betty) = spawn_node().await;
@@ -138,7 +358,7 @@ async fn spaces_smoke() -> Result<()> {
 }
 
 #[tokio::test]
-async fn spaces_subscription() -> Result<()> {
+async fn spaces_subscription() -> TestResult {
     iroh_test::logging::setup_multithreaded();
     let (alfie_addr, alfie) = spawn_node().await;
     let (betty_addr, betty) = spawn_node().await;
@@ -224,7 +444,7 @@ async fn spaces_subscription() -> Result<()> {
 #[tokio::test]
 async fn test_restricted_area() -> testresult::TestResult {
     iroh_test::logging::setup_multithreaded();
-    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+    const TIMEOUT: Duration = Duration::from_secs(2);
     let (alfie_addr, alfie) = spawn_node().await;
     let (betty_addr, betty) = spawn_node().await;
     info!("alfie is {}", alfie_addr.node_id.fmt_short());

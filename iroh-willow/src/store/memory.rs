@@ -13,7 +13,9 @@ use std::task::{ready, Context, Poll, Waker};
 
 use anyhow::Result;
 use futures_util::Stream;
+use tracing::debug;
 
+use crate::proto::data_model::PathExt;
 use crate::proto::grouping::Area;
 use crate::{
     interest::{CapSelector, CapabilityPack},
@@ -255,6 +257,7 @@ impl EntryStore {
                 && existing.is_newer_than(new)
             {
                 // we cannot insert the entry, a newer entry exists
+                debug!(subspace=%entry.entry().subspace_id().fmt_short(), path=%entry.entry().path().fmt_utf8(), "skip ingest, already pruned");
                 return Ok(false);
             }
             if new.subspace_id() == existing.subspace_id()
@@ -264,6 +267,7 @@ impl EntryStore {
                 to_prune.push(i);
             }
         }
+        let pruned_count = to_prune.len();
         for i in to_prune {
             let pruned = entries.remove(i);
             store.events.insert(move |id| {
@@ -277,6 +281,7 @@ impl EntryStore {
             });
         }
         entries.push(entry.clone());
+        debug!(subspace=%entry.entry().subspace_id().fmt_short(), path=%entry.entry().path().fmt_utf8(), pruned=pruned_count, total=entries.len(), "ingest entry");
         store
             .events
             .insert(|id| StoreEvent::Ingested(id, entry.clone(), origin));
