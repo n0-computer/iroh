@@ -652,7 +652,11 @@ mod tests {
             iroh.shutdown().await?;
         }
 
-        let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
+        let iroh = Node::persistent(iroh_root.path())
+            .await?
+            .enable_docs()
+            .spawn()
+            .await?;
         let _doc = iroh.docs().create().await?;
 
         Ok(())
@@ -796,6 +800,7 @@ mod tests {
             let iroh = Node::persistent(iroh_root)
                 .await
                 .unwrap()
+                .enable_docs()
                 .spawn()
                 .await
                 .unwrap();
@@ -816,8 +821,12 @@ mod tests {
             docs_store.delete_author(default_author).unwrap();
             docs_store.flush().unwrap();
             drop(docs_store);
-            let iroh = Node::persistent(iroh_root).await.unwrap().spawn().await;
-            dbg!(&iroh);
+            let iroh = Node::persistent(iroh_root)
+                .await
+                .unwrap()
+                .enable_docs()
+                .spawn()
+                .await;
             assert!(iroh.is_err());
 
             // somehow the blob store is not shutdown correctly (yet?) on macos.
@@ -829,7 +838,12 @@ mod tests {
                 .await
                 .unwrap();
             drop(iroh);
-            let iroh = Node::persistent(iroh_root).await.unwrap().spawn().await;
+            let iroh = Node::persistent(iroh_root)
+                .await
+                .unwrap()
+                .enable_docs()
+                .spawn()
+                .await;
             assert!(iroh.is_ok());
             iroh.unwrap().shutdown().await.unwrap();
         }
@@ -839,6 +853,7 @@ mod tests {
             let iroh = Node::persistent(iroh_root)
                 .await
                 .unwrap()
+                .enable_docs()
                 .spawn()
                 .await
                 .unwrap();
@@ -852,6 +867,7 @@ mod tests {
             let iroh = Node::persistent(iroh_root)
                 .await
                 .unwrap()
+                .enable_docs()
                 .spawn()
                 .await
                 .unwrap();
