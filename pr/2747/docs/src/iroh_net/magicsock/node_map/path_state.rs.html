@@ -291,6 +291,7 @@
 <a href="#291" id="291">291</a>
 <a href="#292" id="292">292</a>
 <a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The state kept for each network path to a remote node.
 
 </span><span class="kw">use </span>std::collections::BTreeMap;
@@ -337,7 +338,8 @@
 
     <span class="doccomment">/// The most recent [`PongReply`].
     ///
-    /// Previous replies are cleared when the path is no longer considered alive.
+    /// Previous replies are cleared when the remote node can no longer be reached on this
+    /// path.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) recent_pong: <span class="prelude-ty">Option</span>&lt;PongReply&gt;,
     <span class="doccomment">/// When the last payload data was **received** via this path.
     ///
