@@ -42,7 +42,10 @@ pub(super) struct PathState {
     /// The time this endpoint was last advertised via a call-me-maybe DISCO message.
     pub(super) call_me_maybe_time: Option<Instant>,
 
-    /// Last [`PongReply`] received.
+    /// The most recent [`PongReply`].
+    ///
+    /// Previous replies are cleared when they are no longer relevant to determine whether
+    /// this path can still be used to reach the remote node.
     pub(super) recent_pong: Option<PongReply>,
     /// When the last payload data was **received** via this path.
     ///
