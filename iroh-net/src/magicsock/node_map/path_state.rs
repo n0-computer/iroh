@@ -44,7 +44,8 @@ pub(super) struct PathState {
 
     /// The most recent [`PongReply`].
     ///
-    /// Previous replies are cleared when the path is no longer considered alive.
+    /// Previous replies are cleared when the remote node can no longer be reached on this
+    /// path.
     pub(super) recent_pong: Option<PongReply>,
     /// When the last payload data was **received** via this path.
     ///
