@@ -156,6 +156,7 @@ pub(crate) async fn start_node(
     Node::persistent(iroh_data_root)
         .await?
         .relay_mode(relay_mode)
+        .enable_docs()
         .enable_rpc_with_addr(rpc_addr)
         .await?
         .spawn()

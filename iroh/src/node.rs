@@ -642,7 +642,11 @@ mod tests {
 
         let iroh_root = tempfile::TempDir::new()?;
         {
-            let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
+            let iroh = Node::persistent(iroh_root.path())
+                .await?
+                .enable_docs()
+                .spawn()
+                .await?;
             let doc = iroh.docs().create().await?;
             drop(doc);
             iroh.shutdown().await?;
@@ -734,7 +738,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_author_memory() -> Result<()> {
-        let iroh = Node::memory().spawn().await?;
+        let iroh = Node::memory().enable_docs().spawn().await?;
         let author = iroh.authors().default().await?;
         assert!(iroh.authors().export(author).await?.is_some());
         assert!(iroh.authors().delete(author).await.is_err());
@@ -756,6 +760,7 @@ mod tests {
             let iroh = Node::persistent(iroh_root)
                 .await
                 .unwrap()
+                .enable_docs()
                 .spawn()
                 .await
                 .unwrap();
@@ -771,6 +776,7 @@ mod tests {
             let iroh = Node::persistent(iroh_root)
                 .await
                 .unwrap()
+                .enable_docs()
                 .spawn()
                 .await
                 .unwrap();

@@ -100,7 +100,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_authors() -> Result<()> {
-        let node = Node::memory().spawn().await?;
+        let node = Node::memory().enable_docs().spawn().await?;
 
         // default author always exists
         let authors: Vec<_> = node.authors().list().await?.try_collect().await?;

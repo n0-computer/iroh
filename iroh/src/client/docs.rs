@@ -757,7 +757,7 @@ mod tests {
     async fn test_drop_doc_client_sync() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let node = crate::node::Node::memory().spawn().await?;
+        let node = crate::node::Node::memory().enable_docs().spawn().await?;
 
         let client = node.client();
         let doc = client.docs().create().await?;
@@ -778,7 +778,7 @@ mod tests {
     async fn test_doc_close() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let node = crate::node::Node::memory().spawn().await?;
+        let node = crate::node::Node::memory().enable_docs().spawn().await?;
         let author = node.authors().default().await?;
         // open doc two times
         let doc1 = node.docs().create().await?;
@@ -801,7 +801,7 @@ mod tests {
     async fn test_doc_import_export() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let node = crate::node::Node::memory().spawn().await?;
+        let node = crate::node::Node::memory().enable_docs().spawn().await?;
 
         // create temp file
         let temp_dir = tempfile::tempdir().context("tempdir")?;
