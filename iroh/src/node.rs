@@ -268,12 +268,12 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         self: Arc<Self>,
         external_rpc: IrohServerEndpoint,
         internal_rpc: IrohServerEndpoint,
-        protocols: Arc<ProtocolMap>,
         gc_policy: GcPolicy,
         gc_done_callback: Option<Box<dyn Fn() + Send>>,
         nodes_data_path: Option<PathBuf>,
         local_pool: LocalPool,
     ) {
+        let protocols = self.endpoint.protocols();
         let (ipv4, ipv6) = self.endpoint.endpoint().bound_sockets();
         debug!(
             "listening at: {}{}",
@@ -412,14 +412,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                         }
                     }
                 },
-                // handle incoming p2p connections.
-                Some(incoming) = self.endpoint.endpoint().accept() => {
-                    let protocols = protocols.clone();
-                    join_set.spawn(async move {
-                        handle_connection(incoming, protocols).await;
-                        Ok(())
-                    });
-                },
                 // handle task terminations and quit on panics.
                 res = join_set.join_next(), if !join_set.is_empty() => {
                     match res {
@@ -444,7 +436,8 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             }
         }
 
-        self.shutdown(protocols).await;
+        // TODO: how to do this?
+        // self.endpoint.shutdown().await;
 
         // Abort remaining tasks.
         join_set.shutdown().await;
@@ -453,49 +446,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         // Abort remaining local tasks.
         tracing::info!("Shutting down local pool");
         local_pool.shutdown().await;
-    }
-
-    /// Shutdown the different parts of the node concurrently.
-    async fn shutdown(&self, protocols: Arc<ProtocolMap>) {
-        let error_code = Closed::ProviderTerminating;
-
-        // We ignore all errors during shutdown.
-        let _ = tokio::join!(
-            // Close the endpoint.
-            // Closing the Endpoint is the equivalent of calling Connection::close on all
-            // connections: Operations will immediately fail with ConnectionError::LocallyClosed.
-            // All streams are interrupted, this is not graceful.
-            self.endpoint
-                .endpoint()
-                .clone()
-                .close(error_code.into(), error_code.reason()),
-            // Shutdown protocol handlers.
-            protocols.shutdown(),
-        );
-    }
-}
-
-async fn handle_connection(incoming: iroh_net::endpoint::Incoming, protocols: Arc<ProtocolMap>) {
-    let mut connecting = match incoming.accept() {
-        Ok(conn) => conn,
-        Err(err) => {
-            warn!("Ignoring connection: accepting failed: {err:#}");
-            return;
-        }
-    };
-    let alpn = match connecting.alpn().await {
-        Ok(alpn) => alpn,
-        Err(err) => {
-            warn!("Ignoring connection: invalid handshake: {err:#}");
-            return;
-        }
-    };
-    let Some(handler) = protocols.get(&alpn) else {
-        warn!("Ignoring connection: unsupported ALPN protocol");
-        return;
-    };
-    if let Err(err) = handler.accept(connecting).await {
-        warn!("Handling incoming connection ended with error: {err}");
     }
 }
 

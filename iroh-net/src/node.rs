@@ -42,9 +42,14 @@ impl Node {
         &self.endpoint
     }
 
-    pub async fn shutdown(&self) {
+    pub fn protocols(&self) -> &Arc<ProtocolMap> {
+        &self.protocols
+    }
+
+    pub async fn shutdown(self) -> Result<()> {
         self.cancel_token.cancel();
-        shutdown(self.endpoint.clone(), &self.protocols).await;
+        self.task.await.map_err(|err| anyhow::anyhow!(err))?;
+        Ok(())
     }
 }
 
@@ -172,12 +177,15 @@ impl ProtocolBuilder {
             return Err(err);
         }
 
-        let mut join_set = JoinSet::new();
+        let mut join_set = JoinSet::<anyhow::Result<()>>::new();
         let cancel_token = CancellationToken::new();
 
         // Spawn the main task and store it in the node for structured termination in shutdown.
         let fut = {
             let endpoint = endpoint.clone();
+            let cancel_token = cancel_token.clone();
+            let protocols = protocols.clone();
+
             async move {
                 let (ipv4, ipv6) = endpoint.bound_sockets();
                 debug!(
@@ -255,7 +263,7 @@ impl ProtocolBuilder {
         };
 
         if let Err(err) = wait_for_endpoints.await {
-            node.shutdown().await;
+            node.shutdown().await?;
             return Err(err);
         }
 
