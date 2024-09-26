@@ -317,6 +317,9 @@
 <a href="#317" id="317">317</a>
 <a href="#318" id="318">318</a>
 <a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The state kept for each network path to a remote node.
 
 </span><span class="kw">use </span>std::collections::{BTreeMap, HashMap};
@@ -361,7 +364,10 @@
     <span class="doccomment">/// The time this endpoint was last advertised via a call-me-maybe DISCO message.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) call_me_maybe_time: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
 
-    <span class="doccomment">/// Last [`PongReply`] received.
+    <span class="doccomment">/// The most recent [`PongReply`].
+    ///
+    /// Previous replies are cleared when they are no longer relevant to determine whether
+    /// this path can still be used to reach the remote node.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) recent_pong: <span class="prelude-ty">Option</span>&lt;PongReply&gt;,
     <span class="doccomment">/// When the last payload data was **received** via this path.
     ///
