@@ -1723,6 +1723,12 @@
 <a href="#1723" id="1723">1723</a>
 <a href="#1724" id="1724">1724</a>
 <a href="#1725" id="1725">1725</a>
+<a href="#1726" id="1726">1726</a>
+<a href="#1727" id="1727">1727</a>
+<a href="#1728" id="1728">1728</a>
+<a href="#1729" id="1729">1729</a>
+<a href="#1730" id="1730">1730</a>
+<a href="#1731" id="1731">1731</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1918,7 +1924,7 @@
     /// They also perform various functions related to hole punching, see the [crate docs]
     /// for more details.
     ///
-    /// By default the Number0 relay servers are used.
+    /// By default the [number 0] relay servers are used, see [`RelayMode::Default`].
     ///
     /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
     /// configured relay node.  If an invalid RelayMap is provided [`bind`]
@@ -1926,6 +1932,7 @@
     ///
     /// [`bind`]: Builder::bind
     /// [crate docs]: crate
+    /// [number 0]: https://n0.computer
     </span><span class="kw">pub fn </span>relay_mode(<span class="kw-2">mut </span><span class="self">self</span>, relay_mode: RelayMode) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.relay_mode = relay_mode;
         <span class="self">self
@@ -2232,12 +2239,17 @@
         <span class="self">self</span>.connect(addr, alpn).<span class="kw">await
     </span>}
 
-    <span class="kw">async fn </span>connect_quinn(
+    <span class="attr">#[instrument(
+        skip_all,
+        fields(remote_node = node_id.fmt_short(), alpn = %String::from_utf8_lossy(alpn))
+    )]
+    </span><span class="kw">async fn </span>connect_quinn(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_id: NodeId,
         alpn: <span class="kw-2">&amp;</span>[u8],
         addr: QuicMappedAddr,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
+        <span class="macro">debug!</span>(<span class="string">"Attempting connection..."</span>);
         <span class="kw">let </span>client_config = {
             <span class="kw">let </span>alpn_protocols = <span class="macro">vec!</span>[alpn.to_vec()];
             <span class="kw">let </span>quic_client_config = tls::make_client_config(
@@ -2271,7 +2283,7 @@
             <span class="comment">// If this actor is dead, that's not great but we can still function.
             </span><span class="macro">warn!</span>(<span class="string">"rtt-actor not reachable: {err:#}"</span>);
         }
-
+        <span class="macro">debug!</span>(<span class="string">"Connection established"</span>);
         <span class="prelude-val">Ok</span>(connection)
     }
 

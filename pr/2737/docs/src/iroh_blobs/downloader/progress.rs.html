@@ -193,9 +193,6 @@
 <a href="#193" id="193">193</a>
 <a href="#194" id="194">194</a>
 <a href="#195" id="195">195</a>
-<a href="#196" id="196">196</a>
-<a href="#197" id="197">197</a>
-<a href="#198" id="198">198</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap,
     sync::{
@@ -301,7 +298,6 @@
 
 <span class="kw">impl </span>Inner {
     <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, subscriber: ProgressSubscriber) -&gt; DownloadProgress {
-        <span class="macro">tracing::warn!</span>(state=<span class="question-mark">?</span><span class="self">self</span>.state, <span class="string">"subscribe! emit initial"</span>);
         <span class="kw">let </span>msg = DownloadProgress::InitialState(<span class="self">self</span>.state.clone());
         <span class="self">self</span>.subscribers.push(subscriber);
         msg
@@ -335,9 +331,7 @@
         <span class="comment">// making sure that the lock is not held across an await point.
         </span><span class="kw">let </span>futs = {
             <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.shared.lock();
-            <span class="macro">tracing::trace!</span>(<span class="question-mark">?</span>msg, state_pre = <span class="question-mark">?</span>inner.state, <span class="string">"send to {}"</span>, inner.subscribers.len());
             inner.on_progress(msg.clone());
-            <span class="macro">tracing::trace!</span>(state_post = <span class="question-mark">?</span>inner.state, <span class="string">"send"</span>);
             <span class="kw">let </span>futs = inner
                 .subscribers
                 .iter_mut()

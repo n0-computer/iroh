@@ -1511,6 +1511,7 @@
 <a href="#1511" id="1511">1511</a>
 <a href="#1512" id="1512">1512</a>
 <a href="#1513" id="1513">1513</a>
+<a href="#1514" id="1514">1514</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Handle downloading blobs and collections concurrently and from nodes.
 //!
 //! The [`Downloader`] interacts with four main components to this end.
@@ -2230,7 +2231,6 @@
                 entry.get_mut().intents.insert(intent_id, intent_handlers);
             }
             hash_map::Entry::Vacant(entry) =&gt; {
-                <span class="macro">tracing::warn!</span>(<span class="string">"is new, queue"</span>);
                 <span class="kw">let </span>progress_sender = <span class="self">self</span>.progress_tracker.track(
                     kind,
                     intent_handlers
@@ -2241,7 +2241,9 @@
                 );
 
                 <span class="kw">let </span>get_state = <span class="kw">match </span><span class="self">self</span>.getter.get(kind, progress_sender.clone()).<span class="kw">await </span>{
-                    <span class="prelude-val">Err</span>(_err) =&gt; {
+                    <span class="prelude-val">Err</span>(err) =&gt; {
+                        <span class="comment">// This prints a "FailureAction" which is somewhat weird, but that's all we get here.
+                        </span><span class="macro">tracing::error!</span>(<span class="question-mark">?</span>err, <span class="string">"failed queuing new download"</span>);
                         <span class="self">self</span>.finalize_download(
                             kind,
                             [(intent_id, intent_handlers)].into(),

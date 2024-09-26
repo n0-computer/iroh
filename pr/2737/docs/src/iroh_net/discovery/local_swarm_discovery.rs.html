@@ -332,6 +332,7 @@
 <a href="#332" id="332">332</a>
 <a href="#333" id="333">333</a>
 <a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
@@ -346,7 +347,7 @@
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>derive_more::FromStr;
 <span class="kw">use </span>futures_lite::stream::Boxed <span class="kw">as </span>BoxStream;
-<span class="kw">use </span>tracing::{debug, error, trace, warn};
+<span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
 <span class="kw">use </span>iroh_base::key::PublicKey;
 <span class="kw">use </span>swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
@@ -405,7 +406,7 @@
             <span class="kw-2">&amp;</span>rt,
         )<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>handle = tokio::spawn(<span class="kw">async move </span>{
+        <span class="kw">let </span>discovery_fut = <span class="kw">async move </span>{
             <span class="kw">let </span><span class="kw-2">mut </span>node_addrs: HashMap&lt;PublicKey, Peer&gt; = HashMap::default();
             <span class="kw">let </span><span class="kw-2">mut </span>last_id = <span class="number">0</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>senders: HashMap&lt;
@@ -524,7 +525,8 @@
                     }
                 }
             }
-        });
+        };
+        <span class="kw">let </span>handle = tokio::spawn(discovery_fut.instrument(<span class="macro">info_span!</span>(<span class="string">"swarm-discovery.actor"</span>)));
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             handle: AbortOnDropHandle::new(handle),
             sender: send,
