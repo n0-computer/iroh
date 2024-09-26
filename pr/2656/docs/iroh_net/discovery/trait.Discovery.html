@@ -36,7 +36,7 @@ stream is actually polled. To avoid missing discovered nodes, poll the
 stream as soon as possible.</p>
 <p>Any discovery systems that only discover when explicitly resolving a
 specific <a href="../type.NodeId.html" title="type iroh_net::NodeId"><code>NodeId</code></a> do not need to implement this method. Any nodes or
-addressses that are discovered by calling <code>resolve</code> should NOT be added
+addresses that are discovered by calling <code>resolve</code> should NOT be added
 to the <code>subscribe</code> stream.</p>
 <p>Discovery systems that are capable of receiving information about <a href="../type.NodeId.html" title="type iroh_net::NodeId"><code>NodeId</code></a>s
 and their <a href="../struct.AddrInfo.html" title="struct iroh_net::AddrInfo"><code>AddrInfo</code></a>s without explicitly calling <code>resolve</code>, i.e.,

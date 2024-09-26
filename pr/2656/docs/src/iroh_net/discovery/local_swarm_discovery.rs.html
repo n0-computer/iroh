@@ -585,7 +585,7 @@
                 clean_up.push(i);
             }
         }
-        <span class="kw">for </span>i <span class="kw">in </span>clean_up {
+        <span class="kw">for </span>i <span class="kw">in </span>clean_up.into_iter().rev() {
             <span class="self">self</span>.<span class="number">0</span>.swap_remove(i);
         }
     }
