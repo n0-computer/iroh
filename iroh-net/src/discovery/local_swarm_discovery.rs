@@ -389,14 +389,6 @@ mod tests {
         use futures_lite::StreamExt;
         use testresult::TestResult;
 
-        // #[tokio::test]
-        // async fn local_swarm_discovery_smoke() -> TestResult {
-        //     // need to ensure that these tests run one after the other, otherwise
-        //     // they interfere with each other
-        //     test_local_swarm_discovery().await?;
-        //     test_subscribe().await
-        // }
-
         #[tokio::test]
         async fn local_swarm_discovery_publish_resolve() -> TestResult {
             let _guard = iroh_test::logging::setup();
@@ -433,19 +425,18 @@ mod tests {
 
         #[tokio::test]
         async fn local_swarm_discovery_subscribe() -> TestResult {
-            // number of nodes
+            let _guard = iroh_test::logging::setup();
+
             let num_nodes = 5;
             let mut node_ids = BTreeSet::new();
             let mut discoverers = vec![];
 
-            tracing::debug!("Creating a discovery service that will subscribe to updates...");
             let (_, discovery) = make_discoverer()?;
             let addr_info = AddrInfo {
                 relay_url: None,
                 direct_addresses: BTreeSet::from(["0.0.0.0:11111".parse()?]),
             };
 
-            tracing::debug!("Creating {num_nodes} discovery services that will publish their addresses to the local swarm.");
             for _ in 0..num_nodes {
                 let (node_id, discovery) = make_discoverer()?;
                 node_ids.insert(node_id);
@@ -453,7 +444,6 @@ mod tests {
                 discoverers.push(discovery);
             }
 
-            tracing::debug!("Subscribed to discovery events");
             let mut events = discovery.subscribe().unwrap();
 
             let test = async move {
@@ -461,7 +451,6 @@ mod tests {
                 while got_ids.len() != num_nodes {
                     if let Some((id, _)) = events.next().await {
                         if node_ids.contains(&id) {
-                            tracing::debug!("Got {id}");
                             got_ids.insert(id);
                         }
                     } else {
