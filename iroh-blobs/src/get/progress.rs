@@ -180,7 +180,7 @@ impl TransferState {
                     warn!(%id, "Received `Done` event for unknown progress id.")
                 }
             }
-            _ => {}
+            DownloadProgress::AllDone(_) | DownloadProgress::Abort(_) => {}
         }
     }
 }

@@ -663,7 +663,7 @@ pub enum DownloadProgress {
         /// The offset of the progress, in bytes.
         offset: u64,
     },
-    /// We are done with `id`, and the hash is `hash`.
+    /// We are done with `id`.
     Done {
         /// The unique id of the entry.
         id: u64,
