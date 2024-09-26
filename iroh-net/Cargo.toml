@@ -23,7 +23,7 @@ bytes = "1.7"
 netdev = "0.30.0"
 der = { version = "0.7", features = ["alloc", "derive"] }
 derive_more = { version = "1.0.0", features = ["debug", "display", "from", "try_into", "deref"] }
-futures-buffered = "0.2.4"
+futures-buffered = "0.2.8"
 futures-concurrency = "7.6.0"
 futures-lite = "2.3"
 futures-sink = "0.3.25"
