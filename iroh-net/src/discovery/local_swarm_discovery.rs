@@ -121,7 +121,7 @@ impl LocalSwarmDiscovery {
                         msg
                     }
                     Ok(Some(addrs))= addrs_change.next_value_async() => {
-                        tracing::info!(?addrs, "LocalSwarmDiscovery address changed");
+                        tracing::trace!(?addrs, "LocalSwarmDiscovery address changed");
                         discovery.remove_all();
                         let addrs =
                             LocalSwarmDiscovery::socketaddrs_to_addrs(addrs.direct_addresses);
@@ -342,7 +342,6 @@ impl Discovery for LocalSwarmDiscovery {
     }
 
     fn publish(&self, info: &AddrInfo) {
-        tracing::info!("PUBLISHING aka replacing `addrs`");
         self.addrs.replace(Some(info.clone()));
     }
 
