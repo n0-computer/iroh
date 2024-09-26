@@ -7,6 +7,7 @@
 //! run this example from the project root:
 //!     $ cargo run --example collection-provide
 use iroh::blobs::{format::collection::Collection, util::SetTagOption, BlobFormat};
+use iroh_base::node_addr::AddrInfoOptions;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -45,7 +46,11 @@ async fn main() -> anyhow::Result<()> {
     // tickets wrap all details needed to get a collection
     let ticket = node
         .blobs()
-        .share(hash, BlobFormat::HashSeq, Default::default())
+        .share(
+            hash,
+            BlobFormat::HashSeq,
+            AddrInfoOptions::RelayAndAddresses,
+        )
         .await?;
 
     // print some info about the node
@@ -66,8 +71,8 @@ async fn main() -> anyhow::Result<()> {
     // print the ticket, containing all the above information
     println!("\nin another terminal, run:");
     println!("\tcargo run --example collection-fetch {}", ticket);
-    // wait for the node to finish, this will block indefinitely
-    // stop with SIGINT (ctrl+c)
+    // block until SIGINT is received (ctrl+c)
+    tokio::signal::ctrl_c().await?;
     node.shutdown().await?;
     Ok(())
 }
