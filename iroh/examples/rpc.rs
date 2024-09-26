@@ -2,7 +2,7 @@
 //!
 //! Run this example with
 //!   $ cargo run --features=examples --example rpc
-//! This will print the rpc address of the node. Copy it to use it to connect on another node.
+//! This will print the rpc address of the node. Copy it to use it to connect from the CLI.
 //! Then in another terminal, run any of the normal iroh CLI commands supplying the rpc address,
 //! which you can run from cargo as well,
 //!   $ cargo run -- --rpc-addr <RPC_ADDR> net node-addr
