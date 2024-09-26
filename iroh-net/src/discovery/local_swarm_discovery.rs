@@ -110,7 +110,7 @@ impl Subscribers {
                 clean_up.push(i);
             }
         }
-        for i in clean_up {
+        for i in clean_up.into_iter().rev() {
             self.0.swap_remove(i);
         }
     }
