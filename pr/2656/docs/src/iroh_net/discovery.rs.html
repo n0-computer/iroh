@@ -913,9 +913,9 @@
     /// stream as soon as possible.
     ///
     /// Any discovery systems that only discover when explicitly resolving a
-    /// specific [`NodeId`] do not need to implement this method, and in fact,
-    /// and actively discovered nodes (ones discovered used by calling `resolve`)
-    /// should NOT end up on this stream.
+    /// specific [`NodeId`] do not need to implement this method. Any nodes or
+    /// addressses that are discovered by calling `resolve` should NOT be added
+    /// to the `subscribe` stream.
     ///
     /// Discovery systems that are capable of receiving information about [`NodeId`]s
     /// and their [`AddrInfo`]s without explicitly calling `resolve`, i.e.,

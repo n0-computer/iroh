@@ -1694,6 +1694,8 @@
 <a href="#1694" id="1694">1694</a>
 <a href="#1695" id="1695">1695</a>
 <a href="#1696" id="1696">1696</a>
+<a href="#1697" id="1697">1697</a>
+<a href="#1698" id="1698">1698</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{btree_map::Entry, BTreeSet, HashMap};
 <span class="kw">use </span>std::hash::Hash;
 <span class="kw">use </span>std::net::{IpAddr, SocketAddr};
@@ -1920,26 +1922,22 @@
             </span>.udp_paths
             .paths
             .iter()
-            .map(|(addr, path_state)| {
-                <span class="kw">let </span><span class="kw-2">mut </span>sources: Vec&lt;(Source, Duration)&gt; = path_state
+            .map(|(addr, path_state)| DirectAddrInfo {
+                addr: SocketAddr::from(<span class="kw-2">*</span>addr),
+                latency: path_state.recent_pong.as_ref().map(|pong| pong.latency),
+                last_control: path_state.last_control_msg(now),
+                last_payload: path_state
+                    .last_payload_msg
+                    .as_ref()
+                    .map(|instant| now.duration_since(<span class="kw-2">*</span>instant)),
+                last_alive: path_state
+                    .last_alive()
+                    .map(|instant| now.duration_since(instant)),
+                sources: path_state
                     .sources
                     .iter()
                     .map(|(source, instant)| (source.clone(), now.duration_since(<span class="kw-2">*</span>instant)))
-                    .collect();
-                sources.sort_by(|a, b| b.<span class="number">1</span>.cmp(<span class="kw-2">&amp;</span>a.<span class="number">1</span>));
-                DirectAddrInfo {
-                    addr: SocketAddr::from(<span class="kw-2">*</span>addr),
-                    latency: path_state.recent_pong.as_ref().map(|pong| pong.latency),
-                    last_control: path_state.last_control_msg(now),
-                    last_payload: path_state
-                        .last_payload_msg
-                        .as_ref()
-                        .map(|instant| now.duration_since(<span class="kw-2">*</span>instant)),
-                    last_alive: path_state
-                        .last_alive()
-                        .map(|instant| now.duration_since(instant)),
-                    sources,
-                }
+                    .collect(),
             })
             .collect();
 
@@ -2977,10 +2975,13 @@
     ///
     /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
     </span><span class="kw">pub </span>last_alive: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
-    <span class="doccomment">/// Sources is a list of [`Source`] and [`Duration`]s, keeping track of all the ways we have learned about this path
-    /// We keep track of only the latest [`Duration`] for each [`Source`], keeping the size of the list of sources down to one entry per type of source.
-    /// The sources are sorted from oldest to most recent.
-    </span><span class="kw">pub </span>sources: Vec&lt;(Source, Duration)&gt;,
+    <span class="doccomment">/// A [`HashMap`] of [`Source`]s to [`Duration`]s.
+    ///
+    /// Duration is calculated as the time passed from when this source was last recorded and
+    /// the instant this object was created.
+    ///
+    /// Only the smallest [`Duration`] for each [`Source`] is kept.
+    </span><span class="kw">pub </span>sources: HashMap&lt;Source, Duration&gt;,
 }
 
 <span class="doccomment">/// Information about the network path to a remote node via a relay server.
@@ -3059,17 +3060,20 @@
         <span class="self">self</span>.relay_url.is_some() || !<span class="self">self</span>.addrs.is_empty()
     }
 
-    <span class="doccomment">/// Merges and deduplicates the [`Source`] and the [`Duration`] since they were discovered for each direct address, returning a list of the most recent [`Source`]s.
+    <span class="doccomment">/// Returns a deduplicated list of [`Source`]s merged from all address in the [`RemoteInfo`].
     ///
-    /// Deduplication is on the (`Source`, `Duration`) tuple, so you may get multiple [`Source`]s for each `Source` variant.
+    /// Deduplication is on the (`Source`, `Duration`) tuple, so you will get multiple [`Source`]s
+    /// for each `Source` variant, if those addresses were discovered from the same [`Source`]
+    /// at different times.
     ///
-    /// The list is sorted from least to most recent [`Source`]
+    /// The list is sorted from least to most recent [`Source`].
     </span><span class="kw">pub fn </span>sources(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;(Source, Duration)&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>sources = <span class="macro">vec!</span>[];
         <span class="kw">for </span>addr <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.addrs {
             <span class="kw">for </span>source <span class="kw">in </span><span class="kw-2">&amp;</span>addr.sources {
-                <span class="kw">if </span>!sources.contains(source) {
-                    sources.push(source.clone())
+                <span class="kw">let </span>source = (source.<span class="number">0</span>.clone(), <span class="kw-2">*</span>source.<span class="number">1</span>);
+                <span class="kw">if </span>!sources.contains(<span class="kw-2">&amp;</span>source) {
+                    sources.push(source)
                 }
             }
         }
@@ -3270,7 +3274,7 @@
                     last_control: <span class="prelude-val">Some</span>((elapsed, ControlMsg::Pong)),
                     last_payload: <span class="prelude-val">None</span>,
                     last_alive: <span class="prelude-val">Some</span>(elapsed),
-                    sources: Vec::new(),
+                    sources: HashMap::new(),
                 }]),
                 conn_type: ConnectionType::Direct(a_socket_addr),
                 latency: <span class="prelude-val">Some</span>(latency),
@@ -3313,7 +3317,7 @@
                     last_control: <span class="prelude-val">Some</span>((elapsed, ControlMsg::Pong)),
                     last_payload: <span class="prelude-val">None</span>,
                     last_alive: <span class="prelude-val">Some</span>(elapsed),
-                    sources: Vec::new(),
+                    sources: HashMap::new(),
                 }]),
                 conn_type: ConnectionType::Mixed(d_socket_addr, send_addr.clone()),
                 latency: <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">50</span>)),

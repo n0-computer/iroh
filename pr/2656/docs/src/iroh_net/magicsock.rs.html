@@ -5825,7 +5825,7 @@
                 <span class="prelude-val">Some</span>((node_id, discovery_item)) = discovery_events.next() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: discovery event, address discovered: {discovery_item:?}"</span>);
                     <span class="kw">let </span>node_addr = NodeAddr {node_id, info: discovery_item.addr_info};
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.msock.add_node_addr(node_addr.clone(), Source::Discovery { service: discovery_item.provenance.into() }) {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.msock.add_node_addr(node_addr.clone(), Source::Discovery { name: discovery_item.provenance.into() }) {
                         <span class="macro">warn!</span>(<span class="question-mark">?</span>node_addr, <span class="string">"unable to add discovered node address to the node map: {e:?}"</span>);
                     }
                 }

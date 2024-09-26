@@ -828,6 +828,23 @@
 <a href="#828" id="828">828</a>
 <a href="#829" id="829">829</a>
 <a href="#830" id="830">830</a>
+<a href="#831" id="831">831</a>
+<a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a>
+<a href="#837" id="837">837</a>
+<a href="#838" id="838">838</a>
+<a href="#839" id="839">839</a>
+<a href="#840" id="840">840</a>
+<a href="#841" id="841">841</a>
+<a href="#842" id="842">842</a>
+<a href="#843" id="843">843</a>
+<a href="#844" id="844">844</a>
+<a href="#845" id="845">845</a>
+<a href="#846" id="846">846</a>
+<a href="#847" id="847">847</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, HashMap},
     hash::Hash,
@@ -915,23 +932,40 @@
     IpPort(IpPort),
 }
 
-<span class="doccomment">/// Source for a new node.
+<span class="doccomment">/// The origin or *source* through which an address associated with a remote node
+/// was discovered.
+///
+/// An aggregate of the [`Source`]s of all the addresses of a node describe the
+/// [`Source`]s of the node itself.
+///
+/// A [`Source`] helps track how and where an address was learned. Multiple
+/// sources can be associated with a single address, if we have discovered this
+/// address through multiple means.
+///
+/// Each time a [`NodeAddr`] is added to the node map, usually through
+/// [`crate::endpoint::Endpoint::add_node_addr_with_source`], a [`Source`] must be supplied to indicate
+/// how the address was obtained.
+///
+/// A [`Source`] can describe a variety of places that an address or node was
+/// discovered, such as a configured discovery service, the network itself
+/// (if another node has reached out to us), or as a user supplied [`NodeAddr`].
+
 </span><span class="attr">#[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq, Hash)]
 #[strum(serialize_all = <span class="string">"kebab-case"</span>)]
 </span><span class="kw">pub enum </span>Source {
-    <span class="doccomment">/// Node was loaded from the fs.
+    <span class="doccomment">/// Address was loaded from the fs.
     </span>Saved,
-    <span class="doccomment">/// Node communicated with us first via UDP.
+    <span class="doccomment">/// A node communicated with us first via UDP.
     </span>Udp,
-    <span class="doccomment">/// Node communicated with us first via relay.
+    <span class="doccomment">/// A node communicated with us first via relay.
     </span>Relay,
-    <span class="doccomment">/// Application layer added the node directly.
+    <span class="doccomment">/// Application layer added the address directly.
     </span>App,
-    <span class="doccomment">/// The node was discovered by a discovery service.
-    </span><span class="attr">#[strum(serialize = <span class="string">"{service}"</span>)]
+    <span class="doccomment">/// The address was discovered by a discovery service.
+    </span><span class="attr">#[strum(serialize = <span class="string">"{name}"</span>)]
     </span>Discovery {
-        <span class="doccomment">/// The name of the discovery service that discovered the node.
-        </span>service: String,
+        <span class="doccomment">/// The name of the discovery service that discovered the address.
+        </span>name: String,
     },
     <span class="doccomment">/// Application layer with a specific name added the node directly.
     </span><span class="attr">#[strum(serialize = <span class="string">"{name}"</span>)]

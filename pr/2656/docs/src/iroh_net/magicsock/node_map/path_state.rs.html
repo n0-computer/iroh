@@ -320,6 +320,9 @@
 <a href="#320" id="320">320</a>
 <a href="#321" id="321">321</a>
 <a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The state kept for each network path to a remote node.
 
 </span><span class="kw">use </span>std::collections::{BTreeMap, HashMap};
@@ -373,8 +376,11 @@
     ///
     /// This excludes DISCO messages.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) last_payload_msg: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
-    <span class="doccomment">/// Sources is a map of [`Source`]s to [`Instant`]s, keeping track of all the ways we have learned about this path
-    /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size of the map of sources down to one entry per type of source.
+    <span class="doccomment">/// Sources is a map of [`Source`]s to [`Instant`]s, keeping track of all the ways we have
+    /// learned about this path
+    ///
+    /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size of
+    /// the map of sources down to one entry per type of source.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) sources: HashMap&lt;Source, Instant&gt;,
 }
 
