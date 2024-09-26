@@ -5,13 +5,13 @@ To join the swarm for a topic, you have to know the [<code>PublicKey</code>] of 
 <p>Messages published on the swarm will be delivered to all peers that joined the swarm for that
 topic. You will also be relaying (gossiping) messages published by other peers.</p>
 <p>With the default settings, the protocol will maintain up to 5 peer connections per topic.</p>
-<p>Even though the <a href="struct.Gossip.html" title="struct iroh_gossip::net::Gossip"><code>Gossip</code></a> is created from a <a href="../../iroh_net/endpoint/struct.Endpoint.html" title="struct iroh_net::endpoint::Endpoint"><code>Endpoint</code></a>, it does not accept connections
-itself. You should run an accept loop on the <a href="../../iroh_net/endpoint/struct.Endpoint.html" title="struct iroh_net::endpoint::Endpoint"><code>Endpoint</code></a> yourself, check the ALPN protocol of incoming
+<p>Even though the <a href="struct.Gossip.html" title="struct iroh_gossip::net::Gossip"><code>Gossip</code></a> is created from a [<code>Endpoint</code>], it does not accept connections
+itself. You should run an accept loop on the [<code>Endpoint</code>] yourself, check the ALPN protocol of incoming
 connections, and if the ALPN protocol equals <a href="constant.GOSSIP_ALPN.html" title="constant iroh_gossip::net::GOSSIP_ALPN"><code>GOSSIP_ALPN</code></a>, forward the connection to the
 gossip actor through <a href="struct.Gossip.html#method.handle_connection" title="method iroh_gossip::net::Gossip::handle_connection">Self::handle_connection</a>.</p>
 <p>The gossip actor will, however, initiate new connections to other peers by itself.</p>
 </div></details><h2 id="implementations" class="section-header">Implementations<a href="#implementations" class="anchor">§</a></h2><div id="implementations-list"><details class="toggle implementors-toggle" open><summary><section id="impl-Gossip" class="impl"><a class="src rightside" href="../../src/iroh_gossip/net.rs.html#95-225">source</a><a href="#impl-Gossip" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.Gossip.html" title="struct iroh_gossip::net::Gossip">Gossip</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.from_endpoint" class="method"><a class="src rightside" href="../../src/iroh_gossip/net.rs.html#97-139">source</a><h4 class="code-header">pub fn <a href="#method.from_endpoint" class="fn">from_endpoint</a>(
-    endpoint: <a class="struct" href="../../iroh_net/endpoint/struct.Endpoint.html" title="struct iroh_net::endpoint::Endpoint">Endpoint</a>,
+    endpoint: Endpoint,
     config: <a class="struct" href="../proto/topic/struct.Config.html" title="struct iroh_gossip::proto::topic::Config">Config</a>,
     my_addr: &amp;AddrInfo
 ) -&gt; Self</h4></section></summary><div class="docblock"><p>Spawn a gossip actor and get a handle for it</p>
