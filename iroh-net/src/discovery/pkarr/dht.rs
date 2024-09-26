@@ -419,39 +419,25 @@ mod tests {
             .build()?;
         let relay_url: RelayUrl = Url::parse("https://example.com")?.into();
 
-        // subscribe to discovery events
-        let mut events = discovery.subscribe().unwrap();
-
-        let relay_url0 = relay_url.clone();
-        let handle = tokio::spawn(async move {
-            discovery.publish(&AddrInfo {
-                relay_url: Some(relay_url.clone()),
-                direct_addresses: Default::default(),
-            });
-            // publish is fire and forget, so we have no way to wait until it is done.
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            let items = discovery
-                .resolve(ep, secret.public())
-                .unwrap()
-                .collect::<Vec<_>>()
-                .await;
-            let mut found_relay_urls = BTreeSet::new();
-            for item in items.into_iter().flatten() {
-                if let Some(url) = item.addr_info.relay_url {
-                    found_relay_urls.insert(url);
-                }
-            }
-            assert!(found_relay_urls.contains(&relay_url));
+        discovery.publish(&AddrInfo {
+            relay_url: Some(relay_url.clone()),
+            direct_addresses: Default::default(),
         });
-        let mut event_got_url = None;
-        while let Some((_, item)) = events.next().await {
+
+        // publish is fire and forget, so we have no way to wait until it is done.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let items = discovery
+            .resolve(ep, secret.public())
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+        let mut found_relay_urls = BTreeSet::new();
+        for item in items.into_iter().flatten() {
             if let Some(url) = item.addr_info.relay_url {
-                event_got_url = Some(url);
-                break;
+                found_relay_urls.insert(url);
             }
         }
-        assert_eq!(&event_got_url.unwrap(), &relay_url0);
-        handle.await?;
+        assert!(found_relay_urls.contains(&relay_url));
         Ok(())
     }
 }

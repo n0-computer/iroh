@@ -21,8 +21,8 @@
 //!              .sources()
 //!              .iter()
 //!              .any(|(source, duration)| {
-//!                  if let Source::Discovery { service } = source {
-//!                      service == "local" && *duration >= recent
+//!                  if let Source::Discovery { name } = source {
+//!                      name == iroh_net::discovery::local_swarm_discovery::NAME && *duration >= recent
 //!                  } else {
 //!                      false
 //!                  }
@@ -58,8 +58,12 @@ use crate::{
 /// The n0 local swarm node discovery name
 const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
 
-/// Provenance string
-const PROVENANCE: &str = "local";
+/// Name of this discovery service.
+///
+/// Used as the `provenance` field in [`DiscoveryItem`]s.
+///
+/// Used in the [`iroh_net::endpoint::Source::Discovery`] enum variant as the `name`.
+pub const NAME: &str = "local.swarm.discovery";
 
 /// How long we will wait before we stop sending discovery items
 const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
@@ -70,7 +74,8 @@ pub struct LocalSwarmDiscovery {
     #[allow(dead_code)]
     handle: AbortOnDropHandle<()>,
     sender: mpsc::Sender<Message>,
-    addrs: Watchable<Option<AddrInfo>>,
+    /// When `local_addrs` changes, we re-publish our [`AddrInfo`]
+    local_addrs: Watchable<Option<AddrInfo>>,
 }
 
 #[derive(Debug)]
@@ -79,6 +84,36 @@ enum Message {
     Resolve(NodeId, mpsc::Sender<Result<DiscoveryItem>>),
     Timeout(NodeId, usize),
     Subscribe(mpsc::Sender<(NodeId, DiscoveryItem)>),
+}
+
+/// Manages the list of subscribers that are subscribed to this discovery service.
+struct Subscribers(Vec<mpsc::Sender<(NodeId, DiscoveryItem)>>);
+
+impl Subscribers {
+    fn new() -> Self {
+        Self(vec![])
+    }
+
+    /// Add the subscriber to the list of subscribers
+    fn push(&mut self, subscriber: mpsc::Sender<(NodeId, DiscoveryItem)>) {
+        self.0.push(subscriber);
+    }
+
+    /// Sends the `node_id` and `item` to each subscriber.
+    ///
+    /// Cleans up any subscribers that have been dropped.
+    async fn send(&mut self, node_id: NodeId, item: DiscoveryItem) {
+        let mut clean_up = vec![];
+        for (i, subscriber) in self.0.iter().enumerate() {
+            // assume subscriber was dropped
+            if (subscriber.send((node_id, item.clone())).await).is_err() {
+                clean_up.push(i);
+            }
+        }
+        for i in clean_up {
+            self.0.swap_remove(i);
+        }
+    }
 }
 
 impl LocalSwarmDiscovery {
@@ -103,11 +138,11 @@ impl LocalSwarmDiscovery {
             &rt,
         )?;
 
-        let addrs: Watchable<Option<AddrInfo>> = Watchable::new(None);
-        let addrs_change = addrs.watch();
+        let local_addrs: Watchable<Option<AddrInfo>> = Watchable::new(None);
+        let addrs_change = local_addrs.watch();
         let discovery_fut = async move {
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
-            let mut subscribers: Vec<mpsc::Sender<(NodeId, DiscoveryItem)>> = vec![];
+            let mut subscribers = Subscribers::new();
             let mut last_id = 0;
             let mut senders: HashMap<
                 PublicKey,
@@ -200,19 +235,7 @@ impl LocalSwarmDiscovery {
                         // in other words, nodes sent to the `subscribers` should only be the ones that
                         // have been "passively" discovered
                         if !resolved {
-                            // update and clean up subscribers
-                            let mut clean_up = vec![];
-                            for (i, subscriber) in subscribers.iter().enumerate() {
-                                // assume subscriber was dropped
-                                if (subscriber.send((discovered_node_id, item.clone())).await)
-                                    .is_err()
-                                {
-                                    clean_up.push(i);
-                                }
-                            }
-                            for i in clean_up {
-                                subscribers.swap_remove(i);
-                            }
+                            subscribers.send(discovered_node_id, item.clone()).await;
                         }
                     }
                     Message::Resolve(node_id, sender) => {
@@ -261,7 +284,7 @@ impl LocalSwarmDiscovery {
         Ok(Self {
             handle: AbortOnDropHandle::new(handle),
             sender: send,
-            addrs,
+            local_addrs,
         })
     }
 
@@ -317,7 +340,7 @@ impl From<&Peer> for DiscoveryItem {
             .map(|(ip, port)| SocketAddr::new(*ip, *port))
             .collect();
         DiscoveryItem {
-            provenance: PROVENANCE,
+            provenance: NAME,
             last_updated: None,
             addr_info: AddrInfo {
                 relay_url: None,
@@ -342,7 +365,7 @@ impl Discovery for LocalSwarmDiscovery {
     }
 
     fn publish(&self, info: &AddrInfo) {
-        self.addrs.replace(Some(info.clone()));
+        self.local_addrs.replace(Some(info.clone()));
     }
 
     fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
@@ -366,15 +389,16 @@ mod tests {
         use futures_lite::StreamExt;
         use testresult::TestResult;
 
-        #[tokio::test]
-        async fn local_swarm_discovery_smoke() -> TestResult {
-            // need to ensure that these tests run one after the other, otherwise
-            // they interfere with each other
-            test_local_swarm_discovery().await?;
-            test_subscribe().await
-        }
+        // #[tokio::test]
+        // async fn local_swarm_discovery_smoke() -> TestResult {
+        //     // need to ensure that these tests run one after the other, otherwise
+        //     // they interfere with each other
+        //     test_local_swarm_discovery().await?;
+        //     test_subscribe().await
+        // }
 
-        async fn test_local_swarm_discovery() -> TestResult {
+        #[tokio::test]
+        async fn local_swarm_discovery_publish_resolve() -> TestResult {
             let _guard = iroh_test::logging::setup();
             let (_, discovery_a) = make_discoverer()?;
             let (node_id_b, discovery_b) = make_discoverer()?;
@@ -407,17 +431,21 @@ mod tests {
             Ok(())
         }
 
-        async fn test_subscribe() -> TestResult {
+        #[tokio::test]
+        async fn local_swarm_discovery_subscribe() -> TestResult {
             // number of nodes
             let num_nodes = 5;
             let mut node_ids = BTreeSet::new();
             let mut discoverers = vec![];
+
+            tracing::debug!("Creating a discovery service that will subscribe to updates...");
             let (_, discovery) = make_discoverer()?;
             let addr_info = AddrInfo {
                 relay_url: None,
                 direct_addresses: BTreeSet::from(["0.0.0.0:11111".parse()?]),
             };
 
+            tracing::debug!("Creating {num_nodes} discovery services that will publish their addresses to the local swarm.");
             for _ in 0..num_nodes {
                 let (node_id, discovery) = make_discoverer()?;
                 node_ids.insert(node_id);
@@ -425,6 +453,7 @@ mod tests {
                 discoverers.push(discovery);
             }
 
+            tracing::debug!("Subscribed to discovery events");
             let mut events = discovery.subscribe().unwrap();
 
             let test = async move {
@@ -432,6 +461,7 @@ mod tests {
                 while got_ids.len() != num_nodes {
                     if let Some((id, _)) = events.next().await {
                         if node_ids.contains(&id) {
+                            tracing::debug!("Got {id}");
                             got_ids.insert(id);
                         }
                     } else {

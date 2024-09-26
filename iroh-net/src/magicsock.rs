@@ -1894,7 +1894,7 @@ impl Actor {
                 Some((node_id, discovery_item)) = discovery_events.next() => {
                     trace!("tick: discovery event, address discovered: {discovery_item:?}");
                     let node_addr = NodeAddr {node_id, info: discovery_item.addr_info};
-                    if let Err(e) = self.msock.add_node_addr(node_addr.clone(), Source::Discovery { service: discovery_item.provenance.into() }) {
+                    if let Err(e) = self.msock.add_node_addr(node_addr.clone(), Source::Discovery { name: discovery_item.provenance.into() }) {
                         warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
                     }
                 }

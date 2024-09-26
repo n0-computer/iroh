@@ -8,15 +8,14 @@ use iroh_net::{
     Endpoint,
 };
 use std::time::Duration;
-use tracing::info;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
-    info!("locally discovered nodes example!\n");
+    println!("locally discovered nodes example!\n");
     let key = SecretKey::generate();
     let id = key.public();
-    info!("creating endpoint {id:?}\n");
+    println!("creating endpoint {id:?}\n");
     let ep = Endpoint::builder()
         .secret_key(key)
         .discovery(Box::new(LocalSwarmDiscovery::new(id)?))
@@ -24,12 +23,12 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     let node_count = 5;
-    info!("creating {node_count} additional endpoints to discover locally:");
+    println!("creating {node_count} additional endpoints to discover locally:");
     let mut discoverable_eps = Vec::with_capacity(node_count);
     for _ in 0..node_count {
         let key = SecretKey::generate();
         let id = key.public();
-        info!("\t{id:?}");
+        println!("\t{id:?}");
         let ep = Endpoint::builder()
             .secret_key(key)
             .discovery(Box::new(LocalSwarmDiscovery::new(id)?))
@@ -39,18 +38,21 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let duration = Duration::from_secs(3);
-    info!("\nwaiting {duration:?} to allow discovery to occur...\n");
+    println!("\nwaiting {duration:?} to allow discovery to occur...\n");
     tokio::time::sleep(duration).await;
 
     // get a list of all the remote nodes this endpoint knows about
     let remotes = ep.remote_info_iter();
-    // filter that list down to the nodes that have a `Source::Discovery` with the `service` name "local"
-    // If you have a long running node and want to only get the nodes that were discovered recently, you can also filter on the `Duration` of the source, which indicates how long ago we got information from that source.
+    // filter that list down to the nodes that have a `Source::Discovery` with
+    // the `service` name [`iroh_net::discovery::local_swarm_discovery::NAME`]
+    // If you have a long running node and want to only get the nodes that were
+    // discovered recently, you can also filter on the `Duration` of the source,
+    // which indicates how long ago we got information from that source.
     let locally_discovered: Vec<_> = remotes
         .filter(|remote| {
             remote.sources().iter().any(|(source, _duration)| {
-                if let Source::Discovery { service } = source {
-                    service == "local"
+                if let Source::Discovery { name } = source {
+                    name == iroh_net::discovery::local_swarm_discovery::NAME
                 } else {
                     false
                 }
@@ -59,9 +61,9 @@ async fn main() -> anyhow::Result<()> {
         .map(|remote| remote.node_id)
         .collect();
 
-    info!("found:");
+    println!("found:");
     for id in locally_discovered {
-        info!("\t{id:?}");
+        println!("\t{id:?}");
     }
     Ok(())
 }

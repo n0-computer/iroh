@@ -98,10 +98,10 @@ pub enum Source {
     /// Application layer added the node directly.
     App,
     /// The node was discovered by a discovery service.
-    #[strum(serialize = "{service}")]
+    #[strum(serialize = "{name}")]
     Discovery {
         /// The name of the discovery service that discovered the node.
-        service: String,
+        name: String,
     },
     /// Application layer with a specific name added the node directly.
     #[strum(serialize = "{name}")]
