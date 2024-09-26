@@ -8,27 +8,28 @@ use iroh_net::{
     Endpoint,
 };
 use std::time::Duration;
+use tracing::info;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
-    println!("locally discovered nodes example!\n");
+    info!("locally discovered nodes example!\n");
     let key = SecretKey::generate();
     let id = key.public();
-    println!("creating endpoint {id:?}\n");
+    info!("creating endpoint {id:?}\n");
     let ep = Endpoint::builder()
         .secret_key(key)
         .discovery(Box::new(LocalSwarmDiscovery::new(id)?))
         .bind()
         .await?;
 
-    let num = 5;
-    println!("creating {num} additional endpoints to discover locally:");
-    let mut discoverable_eps = vec![];
-    for _ in 0..num {
+    let node_count = 5;
+    info!("creating {node_count} additional endpoints to discover locally:");
+    let mut discoverable_eps = Vec::with_capacity(node_count);
+    for _ in 0..node_count {
         let key = SecretKey::generate();
         let id = key.public();
-        println!("\t{id:?}");
+        info!("\t{id:?}");
         let ep = Endpoint::builder()
             .secret_key(key)
             .discovery(Box::new(LocalSwarmDiscovery::new(id)?))
@@ -38,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let duration = Duration::from_secs(3);
-    println!("\nwaiting {duration:?} to allow discovery to occur...\n");
+    info!("\nwaiting {duration:?} to allow discovery to occur...\n");
     tokio::time::sleep(duration).await;
 
     // get a list of all the remote nodes this endpoint knows about
@@ -58,9 +59,9 @@ async fn main() -> anyhow::Result<()> {
         .map(|remote| remote.node_id)
         .collect();
 
-    println!("found:");
+    info!("found:");
     for id in locally_discovered {
-        println!("\t{id:?}");
+        info!("\t{id:?}");
     }
     Ok(())
 }
