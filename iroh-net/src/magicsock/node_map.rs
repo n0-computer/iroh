@@ -85,22 +85,39 @@ enum NodeStateKey {
     IpPort(IpPort),
 }
 
-/// Source for a new node.
+/// The origin or *source* through which an address associated with a remote node
+/// was discovered.
+///
+/// An aggregate of the [`Source`]s of all the addresses of a node describe the
+/// [`Source`]s of the node itself.
+///
+/// A [`Source`] helps track how and where an address was learned. Multiple
+/// sources can be associated with a single address, if we have discovered this
+/// address through multiple means.
+///
+/// Each time a [`NodeAddr`] is added to the node map, usually through
+/// [`crate::endpoint::Endpoint::add_node_addr_with_source`], a [`Source`] must be supplied to indicate
+/// how the address was obtained.
+///
+/// A [`Source`] can describe a variety of places that an address or node was
+/// discovered, such as a configured discovery service, the network itself
+/// (if another node has reached out to us), or as a user supplied [`NodeAddr`].
+
 #[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq, Hash)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Source {
-    /// Node was loaded from the fs.
+    /// Address was loaded from the fs.
     Saved,
-    /// Node communicated with us first via UDP.
+    /// A node communicated with us first via UDP.
     Udp,
-    /// Node communicated with us first via relay.
+    /// A node communicated with us first via relay.
     Relay,
-    /// Application layer added the node directly.
+    /// Application layer added the address directly.
     App,
-    /// The node was discovered by a discovery service.
+    /// The address was discovered by a discovery service.
     #[strum(serialize = "{name}")]
     Discovery {
-        /// The name of the discovery service that discovered the node.
+        /// The name of the discovery service that discovered the address.
         name: String,
     },
     /// Application layer with a specific name added the node directly.

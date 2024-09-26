@@ -62,7 +62,7 @@ const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
 ///
 /// Used as the `provenance` field in [`DiscoveryItem`]s.
 ///
-/// Used in the [`iroh_net::endpoint::Source::Discovery`] enum variant as the `name`.
+/// Used in the [`crate::endpoint::Source::Discovery`] enum variant as the `name`.
 pub const NAME: &str = "local.swarm.discovery";
 
 /// How long we will wait before we stop sending discovery items

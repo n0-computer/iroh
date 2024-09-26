@@ -224,26 +224,22 @@ impl NodeState {
             .udp_paths
             .paths
             .iter()
-            .map(|(addr, path_state)| {
-                let mut sources: Vec<(Source, Duration)> = path_state
+            .map(|(addr, path_state)| DirectAddrInfo {
+                addr: SocketAddr::from(*addr),
+                latency: path_state.recent_pong.as_ref().map(|pong| pong.latency),
+                last_control: path_state.last_control_msg(now),
+                last_payload: path_state
+                    .last_payload_msg
+                    .as_ref()
+                    .map(|instant| now.duration_since(*instant)),
+                last_alive: path_state
+                    .last_alive()
+                    .map(|instant| now.duration_since(instant)),
+                sources: path_state
                     .sources
                     .iter()
                     .map(|(source, instant)| (source.clone(), now.duration_since(*instant)))
-                    .collect();
-                sources.sort_by(|a, b| b.1.cmp(&a.1));
-                DirectAddrInfo {
-                    addr: SocketAddr::from(*addr),
-                    latency: path_state.recent_pong.as_ref().map(|pong| pong.latency),
-                    last_control: path_state.last_control_msg(now),
-                    last_payload: path_state
-                        .last_payload_msg
-                        .as_ref()
-                        .map(|instant| now.duration_since(*instant)),
-                    last_alive: path_state
-                        .last_alive()
-                        .map(|instant| now.duration_since(instant)),
-                    sources,
-                }
+                    .collect(),
             })
             .collect();
 
@@ -1281,10 +1277,13 @@ pub struct DirectAddrInfo {
     ///
     /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
     pub last_alive: Option<Duration>,
-    /// Sources is a list of [`Source`] and [`Duration`]s, keeping track of all the ways we have learned about this path
-    /// We keep track of only the latest [`Duration`] for each [`Source`], keeping the size of the list of sources down to one entry per type of source.
-    /// The sources are sorted from oldest to most recent.
-    pub sources: Vec<(Source, Duration)>,
+    /// A [`HashMap`] of [`Source`]s to [`Duration`]s.
+    ///
+    /// Duration is calculated as the time passed from when this source was last recorded and
+    /// the instant this object was created.
+    ///
+    /// Only the smallest [`Duration`] for each [`Source`] is kept.
+    pub sources: HashMap<Source, Duration>,
 }
 
 /// Information about the network path to a remote node via a relay server.
@@ -1363,17 +1362,20 @@ impl RemoteInfo {
         self.relay_url.is_some() || !self.addrs.is_empty()
     }
 
-    /// Merges and deduplicates the [`Source`] and the [`Duration`] since they were discovered for each direct address, returning a list of the most recent [`Source`]s.
+    /// Returns a deduplicated list of [`Source`]s merged from all address in the [`RemoteInfo`].
     ///
-    /// Deduplication is on the (`Source`, `Duration`) tuple, so you may get multiple [`Source`]s for each `Source` variant.
+    /// Deduplication is on the (`Source`, `Duration`) tuple, so you will get multiple [`Source`]s
+    /// for each `Source` variant, if those addresses were discovered from the same [`Source`]
+    /// at different times.
     ///
-    /// The list is sorted from least to most recent [`Source`]
+    /// The list is sorted from least to most recent [`Source`].
     pub fn sources(&self) -> Vec<(Source, Duration)> {
         let mut sources = vec![];
         for addr in &self.addrs {
             for source in &addr.sources {
-                if !sources.contains(source) {
-                    sources.push(source.clone())
+                let source = (source.0.clone(), *source.1);
+                if !sources.contains(&source) {
+                    sources.push(source)
                 }
             }
         }
@@ -1574,7 +1576,7 @@ mod tests {
                     last_control: Some((elapsed, ControlMsg::Pong)),
                     last_payload: None,
                     last_alive: Some(elapsed),
-                    sources: Vec::new(),
+                    sources: HashMap::new(),
                 }]),
                 conn_type: ConnectionType::Direct(a_socket_addr),
                 latency: Some(latency),
@@ -1617,7 +1619,7 @@ mod tests {
                     last_control: Some((elapsed, ControlMsg::Pong)),
                     last_payload: None,
                     last_alive: Some(elapsed),
-                    sources: Vec::new(),
+                    sources: HashMap::new(),
                 }]),
                 conn_type: ConnectionType::Mixed(d_socket_addr, send_addr.clone()),
                 latency: Some(Duration::from_millis(50)),
