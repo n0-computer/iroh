@@ -180,6 +180,7 @@ jobs:
 
     - name: Upload report
       uses: actions/upload-artifact@v4
+      id: upload-report
       with:
         name: netsim-report-${{ env.LAST_COMMIT_SHA }}
         path: report.tar.gz
@@ -201,12 +202,13 @@ jobs:
         issue-number: ${{ github.event.pull_request.number }}
         comment-id: ${{ steps.fc.outputs.comment-id }}
         body: |
-          Netsim report for this PR has been generated and is available at: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/${{ env.PREVIEW_PATH }}/iroh/
+          Netsim report for this PR has been generated and is available at: [LOGS](${{steps.upload-report.outputs.artifact_url}})
+          This report will be available for 3 days.
           
           Last updated for commit: ${{ env.LAST_COMMIT_SHA }}
         edit-mode: replace
     
-    - name: Generate report
+    - name: Generate report table
       if: ${{ inputs.pr_number != '' && inputs.report_table}}
       id: generate_report_table
       run: |
@@ -226,7 +228,7 @@ jobs:
           Perf report:
           ${{ steps.generate_report_table.outputs.NETSIM_REPORT }}
 
-    - name: Post metrics
+    - name: Publish metrics
       if: ${{ inputs.publish_metrics }}
       run: |
         cd ../chuck/netsim
@@ -237,7 +239,7 @@ jobs:
         metro_data=$(printf "%s\n " "$d")
         curl -X POST -H  "Content-Type: application/json" -H "Authorization: Bearer ${{secrets.METRO_TOKEN}}" --data "$metro_data" ${{secrets.METRO_ENDPOINT}}
 
-    - name: Echo metrics
+    - name: Echo metrics (debug)
       run: |
         cd ../chuck/netsim
         d=$(cat report_metro.txt)

@@ -16,6 +16,10 @@ on:
           required: true
           type: string
           default: "main"
+      report_table:
+        required: false
+        type: boolean
+        default: false
 
 env:
   RUST_BACKTRACE: 1
@@ -26,7 +30,7 @@ env:
   IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
-  netsim:
+  netsim-release:
     if: ${{github.ref_name=='main' && github.event_name == 'push'}}
     uses: './.github/workflows/netsim_runner.yaml'
     secrets: inherit
@@ -51,3 +55,4 @@ jobs:
       pr_number: ${{inputs.pr_number}}
       publish_metrics: false
       build_profile: "optimized-release"
+      report_table: ${{inputs.report_table}}
