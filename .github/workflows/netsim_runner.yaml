@@ -202,7 +202,7 @@ jobs:
         issue-number: ${{ github.event.pull_request.number }}
         comment-id: ${{ steps.fc.outputs.comment-id }}
         body: |
-          Netsim report for this PR has been generated and is available at: [LOGS](${{steps.upload-report.outputs.artifact_url}})
+          Netsim report for this PR has been generated and is available at: [LOGS](${{steps.upload-report.outputs.artifact-url}})
           This report will be available for 3 days.
           
           Last updated for commit: ${{ env.LAST_COMMIT_SHA }}
