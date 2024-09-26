@@ -38,8 +38,10 @@ where
     for addr in addrs {
         println!("    {}", addr);
     }
+    println!("Started node with RPC enabled. Exit with Ctrl+C");
     // wait for the node to finish, this will block indefinitely
     // stop with SIGINT (ctrl+c)
+    tokio::signal::ctrl_c().await?;
     node.shutdown().await?;
 
     Ok(())
