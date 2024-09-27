@@ -13,9 +13,9 @@ on:
         required: true
         type: string
       netsim_branch:
-          required: true
-          type: string
-          default: "main"
+        required: true
+        type: string
+        default: "main"
       report_table:
         required: false
         type: boolean

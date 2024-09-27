@@ -171,7 +171,7 @@ jobs:
         cd ../chuck/netsim
 
         aws_fname=${{ env.LAST_COMMIT_SHA }}.tar.gz
-        tar cvzf report.tar.gz report_prom.txt report_table.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
+        tar -cvzf report.tar.gz report_prom.txt report_table.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
         aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/$aws_fname --no-progress
 
     - name: Move report
@@ -202,8 +202,8 @@ jobs:
         issue-number: ${{ github.event.pull_request.number }}
         comment-id: ${{ steps.fc.outputs.comment-id }}
         body: |
-          Netsim report for this PR has been generated and is available at: [LOGS](${{steps.upload-report.outputs.artifact-url}})
-          This report will be available for 3 days.
+          Netsim report & logs for this PR have been generated and is available at: [LOGS](${{steps.upload-report.outputs.artifact-url}})
+          This report will remain available for 3 days.
           
           Last updated for commit: ${{ env.LAST_COMMIT_SHA }}
         edit-mode: replace
