@@ -1,6 +1,6 @@
 //! The state kept for each network path to a remote node.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -12,7 +12,7 @@ use crate::magicsock::HEARTBEAT_INTERVAL;
 use crate::stun;
 
 use super::node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT};
-use super::{IpPort, PingRole};
+use super::{IpPort, PingRole, Source};
 
 /// The minimum time between pings to an endpoint.
 ///
@@ -25,7 +25,7 @@ const DISCO_PING_INTERVAL: Duration = Duration::from_secs(5);
 /// This state is used for both the relay path and any direct UDP paths.
 ///
 /// [`NodeState`]: super::node_state::NodeState
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PathState {
     /// The node for which this path exists.
     node_id: NodeId,
@@ -51,10 +51,18 @@ pub(super) struct PathState {
     ///
     /// This excludes DISCO messages.
     pub(super) last_payload_msg: Option<Instant>,
+    /// Sources is a map of [`Source`]s to [`Instant`]s, keeping track of all the ways we have
+    /// learned about this path
+    ///
+    /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size of
+    /// the map of sources down to one entry per type of source.
+    pub(super) sources: HashMap<Source, Instant>,
 }
 
 impl PathState {
-    pub(super) fn new(node_id: NodeId, path: SendAddr) -> Self {
+    pub(super) fn new(node_id: NodeId, path: SendAddr, source: Source, now: Instant) -> Self {
+        let mut sources = HashMap::new();
+        sources.insert(source, now);
         Self {
             node_id,
             path,
@@ -63,6 +71,7 @@ impl PathState {
             call_me_maybe_time: None,
             recent_pong: None,
             last_payload_msg: None,
+            sources,
         }
     }
 
@@ -73,7 +82,14 @@ impl PathState {
         }
     }
 
-    pub(super) fn with_last_payload(node_id: NodeId, path: SendAddr, now: Instant) -> Self {
+    pub(super) fn with_last_payload(
+        node_id: NodeId,
+        path: SendAddr,
+        source: Source,
+        now: Instant,
+    ) -> Self {
+        let mut sources = HashMap::new();
+        sources.insert(source, now);
         PathState {
             node_id,
             path,
@@ -82,6 +98,7 @@ impl PathState {
             call_me_maybe_time: None,
             recent_pong: None,
             last_payload_msg: Some(now),
+            sources,
         }
     }
 
@@ -89,9 +106,10 @@ impl PathState {
         node_id: NodeId,
         path: SendAddr,
         tx_id: stun::TransactionId,
+        source: Source,
         now: Instant,
     ) -> Self {
-        let mut new = PathState::new(node_id, path);
+        let mut new = PathState::new(node_id, path, source, now);
         new.handle_ping(tx_id, now);
         new
     }
@@ -121,6 +139,7 @@ impl PathState {
             call_me_maybe_time: None,
             recent_pong: Some(r),
             last_payload_msg: None,
+            sources: HashMap::new(),
         }
     }
 
@@ -251,6 +270,10 @@ impl PathState {
         }
     }
 
+    pub(super) fn add_source(&mut self, source: Source, now: Instant) {
+        self.sources.insert(source, now);
+    }
+
     pub(super) fn clear(&mut self) {
         self.last_ping = None;
         self.last_got_ping = None;
@@ -271,6 +294,14 @@ impl PathState {
         }
         if let Some(ref when) = self.last_ping {
             write!(w, "ping-sent({:?} ago) ", when.elapsed())?;
+        }
+        if let Some(last_source) = self.sources.iter().max_by_key(|&(_, instant)| instant) {
+            write!(
+                w,
+                "last-source: {}({:?} ago)",
+                last_source.0,
+                last_source.1.elapsed()
+            )?;
         }
         write!(w, "}}")
     }

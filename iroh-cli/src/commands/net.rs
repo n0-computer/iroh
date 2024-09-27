@@ -164,7 +164,8 @@ fn fmt_info(info: RemoteInfo) -> String {
     let general_info = table.to_string();
 
     let addrs_info = fmt_addrs(addrs);
-    format!("{general_info}\n\n{addrs_info}",)
+
+    format!("{general_info}\n\n{addrs_info}")
 }
 
 /// Formats the [`DirectAddrInfo`] into a [`Table`].
@@ -175,6 +176,7 @@ fn direct_addr_row(info: DirectAddrInfo) -> comfy_table::Row {
         last_control,
         last_payload,
         last_alive,
+        ..
     } = info;
 
     let last_control = match last_control {

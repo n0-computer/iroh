@@ -45,7 +45,7 @@ pub use quinn::{
 
 pub use super::magicsock::{
     ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
-    DirectAddrsStream, RemoteInfo,
+    DirectAddrsStream, RemoteInfo, Source,
 };
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
@@ -608,7 +608,12 @@ impl Endpoint {
         node_addr: NodeAddr,
         source: &'static str,
     ) -> Result<()> {
-        self.add_node_addr_inner(node_addr, magicsock::Source::NamedApp { name: source })
+        self.add_node_addr_inner(
+            node_addr,
+            magicsock::Source::NamedApp {
+                name: source.into(),
+            },
+        )
     }
 
     fn add_node_addr_inner(&self, node_addr: NodeAddr, source: magicsock::Source) -> Result<()> {

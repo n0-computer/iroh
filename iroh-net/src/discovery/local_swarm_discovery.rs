@@ -2,7 +2,36 @@
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
-
+//!
+//! When [`LocalSwarmDiscovery`] is enabled, it's possible to get a list of the locally discovered nodes by filtering a list of `RemoteInfo`s.
+//!
+//! ```
+//! use std::time::Duration;
+//! use iroh_net::endpoint::{Source, Endpoint};
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!   let recent = Duration::from_secs(600); // 10 minutes in seconds
+//!
+//!   let endpoint = Endpoint::builder().bind().await.unwrap();
+//!   let remotes = endpoint.remote_info_iter();
+//!   let locally_discovered: Vec<_> = remotes
+//!      .filter(|remote| {
+//!          remote
+//!              .sources()
+//!              .iter()
+//!              .any(|(source, duration)| {
+//!                  if let Source::Discovery { name } = source {
+//!                      name == iroh_net::discovery::local_swarm_discovery::NAME && *duration >= recent
+//!                  } else {
+//!                      false
+//!                  }
+//!              })
+//!    })
+//!       .collect();
+//!   println!("locally discovered nodes: {locally_discovered:?}");
+//! }
+//! ```
 use std::{
     collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
@@ -12,7 +41,9 @@ use std::{
 use anyhow::Result;
 use derive_more::FromStr;
 use futures_lite::stream::Boxed as BoxStream;
+use futures_util::FutureExt;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
+use watchable::Watchable;
 
 use iroh_base::key::PublicKey;
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
@@ -27,8 +58,12 @@ use crate::{
 /// The n0 local swarm node discovery name
 const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
 
-/// Provenance string
-const PROVENANCE: &str = "local.swarm.discovery";
+/// Name of this discovery service.
+///
+/// Used as the `provenance` field in [`DiscoveryItem`]s.
+///
+/// Used in the [`crate::endpoint::Source::Discovery`] enum variant as the `name`.
+pub const NAME: &str = "local.swarm.discovery";
 
 /// How long we will wait before we stop sending discovery items
 const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
@@ -39,14 +74,47 @@ pub struct LocalSwarmDiscovery {
     #[allow(dead_code)]
     handle: AbortOnDropHandle<()>,
     sender: mpsc::Sender<Message>,
+    /// When `local_addrs` changes, we re-publish our [`AddrInfo`]
+    local_addrs: Watchable<Option<AddrInfo>>,
 }
 
 #[derive(Debug)]
 enum Message {
     Discovery(String, Peer),
-    SendAddrs(NodeId, mpsc::Sender<Result<DiscoveryItem>>),
-    ChangeLocalAddrs(AddrInfo),
+    Resolve(NodeId, mpsc::Sender<Result<DiscoveryItem>>),
     Timeout(NodeId, usize),
+    Subscribe(mpsc::Sender<DiscoveryItem>),
+}
+
+/// Manages the list of subscribers that are subscribed to this discovery service.
+#[derive(Debug)]
+struct Subscribers(Vec<mpsc::Sender<DiscoveryItem>>);
+
+impl Subscribers {
+    fn new() -> Self {
+        Self(vec![])
+    }
+
+    /// Add the subscriber to the list of subscribers
+    fn push(&mut self, subscriber: mpsc::Sender<DiscoveryItem>) {
+        self.0.push(subscriber);
+    }
+
+    /// Sends the `node_id` and `item` to each subscriber.
+    ///
+    /// Cleans up any subscribers that have been dropped.
+    async fn send(&mut self, item: DiscoveryItem) {
+        let mut clean_up = vec![];
+        for (i, subscriber) in self.0.iter().enumerate() {
+            // assume subscriber was dropped
+            if (subscriber.send(item.clone()).await).is_err() {
+                clean_up.push(i);
+            }
+        }
+        for i in clean_up.into_iter().rev() {
+            self.0.swap_remove(i);
+        }
+    }
 }
 
 impl LocalSwarmDiscovery {
@@ -71,8 +139,11 @@ impl LocalSwarmDiscovery {
             &rt,
         )?;
 
+        let local_addrs: Watchable<Option<AddrInfo>> = Watchable::new(None);
+        let addrs_change = local_addrs.watch();
         let discovery_fut = async move {
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
+            let mut subscribers = Subscribers::new();
             let mut last_id = 0;
             let mut senders: HashMap<
                 PublicKey,
@@ -81,7 +152,22 @@ impl LocalSwarmDiscovery {
             let mut timeouts = JoinSet::new();
             loop {
                 trace!(?node_addrs, "LocalSwarmDiscovery Service loop tick");
-                let msg = match recv.recv().await {
+                let msg = tokio::select! {
+                    msg = recv.recv() => {
+                        msg
+                    }
+                    Ok(Some(addrs))= addrs_change.next_value_async() => {
+                        tracing::trace!(?addrs, "LocalSwarmDiscovery address changed");
+                        discovery.remove_all();
+                        let addrs =
+                            LocalSwarmDiscovery::socketaddrs_to_addrs(addrs.direct_addresses);
+                        for addr in addrs {
+                            discovery.add(addr.0, addr.1)
+                        }
+                        continue;
+                    }
+                };
+                let msg = match msg {
                     None => {
                         error!("LocalSwarmDiscovery channel closed");
                         error!("closing LocalSwarmDiscovery");
@@ -135,21 +221,30 @@ impl LocalSwarmDiscovery {
                             "adding node to LocalSwarmDiscovery address book"
                         );
 
+                        let mut resolved = false;
+                        let item = peer_to_discovery_item(&peer_info, &discovered_node_id);
                         if let Some(senders) = senders.get(&discovered_node_id) {
-                            let item: DiscoveryItem = (&peer_info).into();
                             trace!(?item, senders = senders.len(), "sending DiscoveryItem");
+                            resolved = true;
                             for sender in senders.values() {
                                 sender.send(Ok(item.clone())).await.ok();
                             }
                         }
                         entry.or_insert(peer_info);
+
+                        // only send nodes to the `subscriber` if they weren't explicitly resolved
+                        // in other words, nodes sent to the `subscribers` should only be the ones that
+                        // have been "passively" discovered
+                        if !resolved {
+                            subscribers.send(item).await;
+                        }
                     }
-                    Message::SendAddrs(node_id, sender) => {
+                    Message::Resolve(node_id, sender) => {
                         let id = last_id + 1;
                         last_id = id;
                         trace!(?node_id, "LocalSwarmDiscovery Message::SendAddrs");
                         if let Some(peer_info) = node_addrs.get(&node_id) {
-                            let item: DiscoveryItem = peer_info.into();
+                            let item = peer_to_discovery_item(peer_info, &node_id);
                             debug!(?item, "sending DiscoveryItem");
                             sender.send(Ok(item)).await.ok();
                         }
@@ -179,14 +274,9 @@ impl LocalSwarmDiscovery {
                             }
                         }
                     }
-                    Message::ChangeLocalAddrs(addrs) => {
-                        trace!(?addrs, "LocalSwarmDiscovery Message::ChangeLocalAddrs");
-                        discovery.remove_all();
-                        let addrs =
-                            LocalSwarmDiscovery::socketaddrs_to_addrs(addrs.direct_addresses);
-                        for addr in addrs {
-                            discovery.add(addr.0, addr.1)
-                        }
+                    Message::Subscribe(subscriber) => {
+                        trace!("LocalSwarmDiscovery Message::Subscribe");
+                        subscribers.push(subscriber);
                     }
                 }
             }
@@ -195,6 +285,7 @@ impl LocalSwarmDiscovery {
         Ok(Self {
             handle: AbortOnDropHandle::new(handle),
             sender: send,
+            local_addrs,
         })
     }
 
@@ -242,21 +333,20 @@ impl LocalSwarmDiscovery {
     }
 }
 
-impl From<&Peer> for DiscoveryItem {
-    fn from(peer_info: &Peer) -> Self {
-        let direct_addresses: BTreeSet<SocketAddr> = peer_info
-            .addrs()
-            .iter()
-            .map(|(ip, port)| SocketAddr::new(*ip, *port))
-            .collect();
-        DiscoveryItem {
-            provenance: PROVENANCE,
-            last_updated: None,
-            addr_info: AddrInfo {
-                relay_url: None,
-                direct_addresses,
-            },
-        }
+fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
+    let direct_addresses: BTreeSet<SocketAddr> = peer
+        .addrs()
+        .iter()
+        .map(|(ip, port)| SocketAddr::new(*ip, *port))
+        .collect();
+    DiscoveryItem {
+        node_id: *node_id,
+        provenance: NAME,
+        last_updated: None,
+        addr_info: AddrInfo {
+            relay_url: None,
+            direct_addresses,
+        },
     }
 }
 
@@ -264,25 +354,28 @@ impl Discovery for LocalSwarmDiscovery {
     fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let (send, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
-        tokio::spawn(async move {
+        let stream = async move {
             discovery_sender
-                .send(Message::SendAddrs(node_id, send))
+                .send(Message::Resolve(node_id, send))
                 .await
                 .ok();
-        });
-        let stream = tokio_stream::wrappers::ReceiverStream::new(recv);
-        Some(Box::pin(stream))
+            tokio_stream::wrappers::ReceiverStream::new(recv)
+        };
+        Some(Box::pin(stream.flatten_stream()))
     }
 
     fn publish(&self, info: &AddrInfo) {
+        self.local_addrs.replace(Some(info.clone()));
+    }
+
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+        let (sender, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
-        let info = info.clone();
-        tokio::spawn(async move {
-            discovery_sender
-                .send(Message::ChangeLocalAddrs(info))
-                .await
-                .ok();
-        });
+        let stream = async move {
+            discovery_sender.send(Message::Subscribe(sender)).await.ok();
+            tokio_stream::wrappers::ReceiverStream::new(recv)
+        };
+        Some(Box::pin(stream.flatten_stream()))
     }
 }
 
@@ -297,7 +390,7 @@ mod tests {
         use testresult::TestResult;
 
         #[tokio::test]
-        async fn test_local_swarm_discovery() -> TestResult {
+        async fn local_swarm_discovery_publish_resolve() -> TestResult {
             let _guard = iroh_test::logging::setup();
             let (_, discovery_a) = make_discoverer()?;
             let (node_id_b, discovery_b) = make_discoverer()?;
@@ -310,9 +403,11 @@ mod tests {
 
             // pass in endpoint, this is never used
             let ep = crate::endpoint::Builder::default().bind().await?;
+
             // resolve twice to ensure we can create separate streams for the same node_id
             let mut s1 = discovery_a.resolve(ep.clone(), node_id_b).unwrap();
             let mut s2 = discovery_a.resolve(ep, node_id_b).unwrap();
+
             tracing::debug!(?node_id_b, "Discovering node id b");
             // publish discovery_b's address
             discovery_b.publish(&addr_info);
@@ -324,6 +419,51 @@ mod tests {
                 .unwrap()?;
             assert_eq!(s1_res.addr_info, addr_info);
             assert_eq!(s2_res.addr_info, addr_info);
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn local_swarm_discovery_subscribe() -> TestResult {
+            let _guard = iroh_test::logging::setup();
+
+            let num_nodes = 5;
+            let mut node_ids = BTreeSet::new();
+            let mut discoverers = vec![];
+
+            let (_, discovery) = make_discoverer()?;
+            let addr_info = AddrInfo {
+                relay_url: None,
+                direct_addresses: BTreeSet::from(["0.0.0.0:11111".parse()?]),
+            };
+
+            for _ in 0..num_nodes {
+                let (node_id, discovery) = make_discoverer()?;
+                node_ids.insert(node_id);
+                discovery.publish(&addr_info);
+                discoverers.push(discovery);
+            }
+
+            let mut events = discovery.subscribe().unwrap();
+
+            let test = async move {
+                let mut got_ids = BTreeSet::new();
+                while got_ids.len() != num_nodes {
+                    if let Some(item) = events.next().await {
+                        if node_ids.contains(&item.node_id) {
+                            got_ids.insert(item.node_id);
+                        }
+                    } else {
+                        anyhow::bail!(
+                            "no more events, only got {} ids, expected {num_nodes}\n",
+                            got_ids.len()
+                        );
+                    }
+                }
+                assert_eq!(got_ids, node_ids);
+                anyhow::Ok(())
+            };
+            tokio::time::timeout(Duration::from_secs(5), test).await??;
             Ok(())
         }
 
