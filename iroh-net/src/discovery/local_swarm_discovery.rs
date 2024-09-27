@@ -449,9 +449,9 @@ mod tests {
             let test = async move {
                 let mut got_ids = BTreeSet::new();
                 while got_ids.len() != num_nodes {
-                    if let Some((id, _)) = events.next().await {
-                        if node_ids.contains(&id) {
-                            got_ids.insert(id);
+                    if let Some(item) = events.next().await {
+                        if node_ids.contains(&item.node_id) {
+                            got_ids.insert(item.node_id);
                         }
                     } else {
                         anyhow::bail!(
