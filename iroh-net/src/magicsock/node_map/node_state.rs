@@ -1279,8 +1279,8 @@ pub struct DirectAddrInfo {
     pub last_alive: Option<Duration>,
     /// A [`HashMap`] of [`Source`]s to [`Duration`]s.
     ///
-    /// Duration is calculated as the time passed from when this source was last recorded and
-    /// the instant this object was created.
+    /// The [`Duration`] indicates the elapsed time since this source last
+    /// recorded this address.
     ///
     /// Only the smallest [`Duration`] for each [`Source`] is kept.
     pub sources: HashMap<Source, Duration>,
