@@ -244,7 +244,7 @@ impl LocalSwarmDiscovery {
                         last_id = id;
                         trace!(?node_id, "LocalSwarmDiscovery Message::SendAddrs");
                         if let Some(peer_info) = node_addrs.get(&node_id) {
-                            let item = peer_to_discovery_item(&peer_info, &node_id);
+                            let item = peer_to_discovery_item(peer_info, &node_id);
                             debug!(?item, "sending DiscoveryItem");
                             sender.send(Ok(item)).await.ok();
                         }
@@ -340,7 +340,7 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
         .map(|(ip, port)| SocketAddr::new(*ip, *port))
         .collect();
     DiscoveryItem {
-        node_id: node_id.clone(),
+        node_id: *node_id,
         provenance: NAME,
         last_updated: None,
         addr_info: AddrInfo {

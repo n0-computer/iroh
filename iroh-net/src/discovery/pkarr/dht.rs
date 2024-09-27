@@ -282,7 +282,7 @@ impl DhtDiscovery {
         match response {
             Ok(Some(signed_packet)) => {
                 if let Ok(node_info) = NodeInfo::from_pkarr_signed_packet(&signed_packet) {
-                    let node_id = node_info.node_id.clone();
+                    let node_id = node_info.node_id;
                     let addr_info = node_info.into();
                     tracing::info!("discovered node info from relay {:?}", addr_info);
                     co.yield_(Ok(DiscoveryItem {
@@ -328,7 +328,7 @@ impl DhtDiscovery {
             return;
         };
         if let Ok(node_info) = NodeInfo::from_pkarr_signed_packet(&signed_packet) {
-            let node_id = node_info.node_id.clone();
+            let node_id = node_info.node_id;
             let addr_info = node_info.into();
             tracing::info!("discovered node info from DHT {:?}", addr_info);
             co.yield_(Ok(DiscoveryItem {
