@@ -1282,7 +1282,8 @@ pub struct DirectAddrInfo {
     /// The [`Duration`] indicates the elapsed time since this source last
     /// recorded this address.
     ///
-    /// Only the smallest [`Duration`] for each [`Source`] is kept.
+    /// The [`Duration`] will always indicate the most recent time the source
+    /// recorded this address.
     pub sources: HashMap<Source, Duration>,
 }
 
