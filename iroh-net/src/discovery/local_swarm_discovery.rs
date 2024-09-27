@@ -83,12 +83,12 @@ enum Message {
     Discovery(String, Peer),
     Resolve(NodeId, mpsc::Sender<Result<DiscoveryItem>>),
     Timeout(NodeId, usize),
-    Subscribe(mpsc::Sender<(NodeId, DiscoveryItem)>),
+    Subscribe(mpsc::Sender<DiscoveryItem>),
 }
 
 /// Manages the list of subscribers that are subscribed to this discovery service.
 #[derive(Debug)]
-struct Subscribers(Vec<mpsc::Sender<(NodeId, DiscoveryItem)>>);
+struct Subscribers(Vec<mpsc::Sender<DiscoveryItem>>);
 
 impl Subscribers {
     fn new() -> Self {
@@ -96,18 +96,18 @@ impl Subscribers {
     }
 
     /// Add the subscriber to the list of subscribers
-    fn push(&mut self, subscriber: mpsc::Sender<(NodeId, DiscoveryItem)>) {
+    fn push(&mut self, subscriber: mpsc::Sender<DiscoveryItem>) {
         self.0.push(subscriber);
     }
 
     /// Sends the `node_id` and `item` to each subscriber.
     ///
     /// Cleans up any subscribers that have been dropped.
-    async fn send(&mut self, node_id: NodeId, item: DiscoveryItem) {
+    async fn send(&mut self, item: DiscoveryItem) {
         let mut clean_up = vec![];
         for (i, subscriber) in self.0.iter().enumerate() {
             // assume subscriber was dropped
-            if (subscriber.send((node_id, item.clone())).await).is_err() {
+            if (subscriber.send(item.clone()).await).is_err() {
                 clean_up.push(i);
             }
         }
@@ -222,7 +222,7 @@ impl LocalSwarmDiscovery {
                         );
 
                         let mut resolved = false;
-                        let item: DiscoveryItem = (&peer_info).into();
+                        let item = peer_to_discovery_item(&peer_info, &discovered_node_id);
                         if let Some(senders) = senders.get(&discovered_node_id) {
                             trace!(?item, senders = senders.len(), "sending DiscoveryItem");
                             resolved = true;
@@ -236,7 +236,7 @@ impl LocalSwarmDiscovery {
                         // in other words, nodes sent to the `subscribers` should only be the ones that
                         // have been "passively" discovered
                         if !resolved {
-                            subscribers.send(discovered_node_id, item.clone()).await;
+                            subscribers.send(item).await;
                         }
                     }
                     Message::Resolve(node_id, sender) => {
@@ -244,7 +244,7 @@ impl LocalSwarmDiscovery {
                         last_id = id;
                         trace!(?node_id, "LocalSwarmDiscovery Message::SendAddrs");
                         if let Some(peer_info) = node_addrs.get(&node_id) {
-                            let item: DiscoveryItem = peer_info.into();
+                            let item = peer_to_discovery_item(&peer_info, &node_id);
                             debug!(?item, "sending DiscoveryItem");
                             sender.send(Ok(item)).await.ok();
                         }
@@ -333,21 +333,20 @@ impl LocalSwarmDiscovery {
     }
 }
 
-impl From<&Peer> for DiscoveryItem {
-    fn from(peer_info: &Peer) -> Self {
-        let direct_addresses: BTreeSet<SocketAddr> = peer_info
-            .addrs()
-            .iter()
-            .map(|(ip, port)| SocketAddr::new(*ip, *port))
-            .collect();
-        DiscoveryItem {
-            provenance: NAME,
-            last_updated: None,
-            addr_info: AddrInfo {
-                relay_url: None,
-                direct_addresses,
-            },
-        }
+fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
+    let direct_addresses: BTreeSet<SocketAddr> = peer
+        .addrs()
+        .iter()
+        .map(|(ip, port)| SocketAddr::new(*ip, *port))
+        .collect();
+    DiscoveryItem {
+        node_id: node_id.clone(),
+        provenance: NAME,
+        last_updated: None,
+        addr_info: AddrInfo {
+            relay_url: None,
+            direct_addresses,
+        },
     }
 }
 
@@ -369,7 +368,7 @@ impl Discovery for LocalSwarmDiscovery {
         self.local_addrs.replace(Some(info.clone()));
     }
 
-    fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
         let (sender, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
         let stream = async move {

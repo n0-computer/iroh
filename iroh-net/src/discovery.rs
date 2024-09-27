@@ -112,7 +112,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// The [`crate::endpoint::Endpoint`] will `subscribe` to the discovery system
     /// and add the discovered addresses to the internal address book as they arrive
     /// on this stream.
-    fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
         None
     }
 }
@@ -120,6 +120,8 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
 /// The results returned from [`Discovery::resolve`].
 #[derive(Debug, Clone)]
 pub struct DiscoveryItem {
+    /// The [`NodeId`] whose address we have discovered
+    pub node_id: NodeId,
     /// A static string to identify the discovery source.
     ///
     /// Should be uniform per discovery service.
@@ -189,7 +191,7 @@ impl Discovery for ConcurrentDiscovery {
         Some(Box::pin(streams))
     }
 
-    fn subscribe(&self) -> Option<BoxStream<(NodeId, DiscoveryItem)>> {
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
         let mut streams = vec![];
         for service in self.services.iter() {
             if let Some(stream) = service.subscribe() {
@@ -449,6 +451,7 @@ mod tests {
             let stream = match addr_info {
                 Some((addr_info, ts)) => {
                     let item = DiscoveryItem {
+                        node_id,
                         provenance: "test-disco",
                         last_updated: Some(ts),
                         addr_info,

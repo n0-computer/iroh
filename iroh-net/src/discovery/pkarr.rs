@@ -243,6 +243,7 @@ impl Discovery for PkarrResolver {
             let signed_packet = pkarr_client.resolve(node_id).await?;
             let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)?;
             let item = DiscoveryItem {
+                node_id,
                 provenance: "pkarr",
                 last_updated: None,
                 addr_info: info.into(),

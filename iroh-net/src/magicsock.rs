@@ -1837,7 +1837,7 @@ impl Actor {
             self.msock.direct_addr_update_state.running.subscribe();
         let mut portmap_watcher = self.port_mapper.watch_external_address();
 
-        let mut discovery_events: BoxStream<(NodeId, DiscoveryItem)> =
+        let mut discovery_events: BoxStream<DiscoveryItem> =
             Box::pin(futures_lite::stream::empty());
         if let Some(d) = self.msock.discovery() {
             if let Some(events) = d.subscribe() {
@@ -1891,9 +1891,9 @@ impl Actor {
                     inc!(Metrics, actor_link_change);
                     self.handle_network_change(is_major).await;
                 }
-                Some((node_id, discovery_item)) = discovery_events.next() => {
+                Some(discovery_item) = discovery_events.next() => {
                     trace!("tick: discovery event, address discovered: {discovery_item:?}");
-                    let node_addr = NodeAddr {node_id, info: discovery_item.addr_info};
+                    let node_addr = NodeAddr {node_id: discovery_item.node_id, info: discovery_item.addr_info};
                     if let Err(e) = self.msock.add_node_addr(node_addr.clone(), Source::Discovery { name: discovery_item.provenance.into() }) {
                         warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
                     }
