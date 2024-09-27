@@ -94,9 +94,9 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
 
     /// Subscribe to all addresses that get *passively* discovered.
     ///
-    /// An implementation may choose to defer subscribing to the stream until the
-    /// stream is actually polled. To avoid missing discovered nodes, poll the
-    /// stream as soon as possible.
+    /// An implementation may choose to defer emitting passively discovered nodes
+    /// until the stream is actually polled. To avoid missing discovered nodes,
+    /// poll the stream as soon as possible.
     ///
     /// Any discovery systems that only discover when explicitly resolving a
     /// specific [`NodeId`] do not need to implement this method. Any nodes or
