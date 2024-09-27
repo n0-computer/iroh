@@ -128,16 +128,6 @@ pub enum Source {
     },
 }
 
-impl Source {
-    /// Returns true if the [`Source::NamedApp`] is the same as the given string.
-    pub fn is_named(&self, named_app: &str) -> bool {
-        if let Source::NamedApp { name } = self {
-            return name == named_app;
-        }
-        false
-    }
-}
-
 impl NodeMap {
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
     pub(super) fn load_from_vec(nodes: Vec<NodeAddr>) -> Self {

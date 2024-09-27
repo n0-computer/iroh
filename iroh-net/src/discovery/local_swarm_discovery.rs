@@ -87,6 +87,7 @@ enum Message {
 }
 
 /// Manages the list of subscribers that are subscribed to this discovery service.
+#[derive(Debug)]
 struct Subscribers(Vec<mpsc::Sender<(NodeId, DiscoveryItem)>>);
 
 impl Subscribers {

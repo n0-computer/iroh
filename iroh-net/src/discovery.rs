@@ -105,7 +105,9 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     ///
     /// Discovery systems that are capable of receiving information about [`NodeId`]s
     /// and their [`AddrInfo`]s without explicitly calling `resolve`, i.e.,
-    /// systems that do "passive" discovery, should implement this method.
+    /// systems that do "passive" discovery, should implement this method. If
+    /// `subscribe` is called multiple times, the passively discovered addresses
+    /// should be sent on all streams.
     ///
     /// The [`crate::endpoint::Endpoint`] will `subscribe` to the discovery system
     /// and add the discovered addresses to the internal address book as they arrive

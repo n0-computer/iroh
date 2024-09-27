@@ -41,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
     println!("\nwaiting {duration:?} to allow discovery to occur...\n");
     tokio::time::sleep(duration).await;
 
-    // get a list of all the remote nodes this endpoint knows about
+    // get an iterator of all the remote nodes this endpoint knows about
     let remotes = ep.remote_info_iter();
     // filter that list down to the nodes that have a `Source::Discovery` with
     // the `service` name [`iroh_net::discovery::local_swarm_discovery::NAME`]
