@@ -1365,7 +1365,7 @@ impl RemoteInfo {
     /// Returns a deduplicated list of [`Source`]s merged from all address in the [`RemoteInfo`].
     ///
     /// Deduplication is on the (`Source`, `Duration`) tuple, so you will get multiple [`Source`]s
-    /// for each `Source` variant, if those addresses were discovered from the same [`Source`]
+    /// for each `Source` variant, if different addresses were discovered from the same [`Source`]
     /// at different times.
     ///
     /// The list is sorted from least to most recent [`Source`].
