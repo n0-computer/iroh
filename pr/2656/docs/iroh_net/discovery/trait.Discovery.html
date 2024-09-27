@@ -31,9 +31,9 @@ These tasks will be run on the runtime of the <a href="../endpoint/struct.Endpoi
 <p>Once the returned [<code>BoxStream</code>] is dropped, the service should stop any pending
 work.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.subscribe" class="method"><a class="src rightside" href="../../src/iroh_net/discovery.rs.html#113-115">source</a><h4 class="code-header">fn <a href="#method.subscribe" class="fn">subscribe</a>(&amp;self) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;BoxStream&lt;(<a class="type" href="../type.NodeId.html" title="type iroh_net::NodeId">NodeId</a>, <a class="struct" href="struct.DiscoveryItem.html" title="struct iroh_net::discovery::DiscoveryItem">DiscoveryItem</a>)&gt;&gt;</h4></section></summary><div class="docblock"><p>Subscribe to all addresses that get <em>passively</em> discovered.</p>
-<p>An implementation may choose to defer subscribing to the stream until the
-stream is actually polled. To avoid missing discovered nodes, poll the
-stream as soon as possible.</p>
+<p>An implementation may choose to defer emitting passively discovered nodes
+until the stream is actually polled. To avoid missing discovered nodes,
+poll the stream as soon as possible.</p>
 <p>Any discovery systems that only discover when explicitly resolving a
 specific <a href="../type.NodeId.html" title="type iroh_net::NodeId"><code>NodeId</code></a> do not need to implement this method. Any nodes or
 addresses that are discovered by calling <code>resolve</code> should NOT be added
