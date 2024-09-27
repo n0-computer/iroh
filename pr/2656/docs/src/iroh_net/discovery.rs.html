@@ -812,6 +812,11 @@
 <a href="#812" id="812">812</a>
 <a href="#813" id="813">813</a>
 <a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a>
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
+<a href="#819" id="819">819</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh-net node a [`NodeAddr`] is needed, which needs to contain either a
@@ -919,12 +924,14 @@
     ///
     /// Discovery systems that are capable of receiving information about [`NodeId`]s
     /// and their [`AddrInfo`]s without explicitly calling `resolve`, i.e.,
-    /// systems that do "passive" discovery, should implement this method.
+    /// systems that do "passive" discovery, should implement this method. If
+    /// `subscribe` is called multiple times, the passively discovered addresses
+    /// should be sent on all streams.
     ///
     /// The [`crate::endpoint::Endpoint`] will `subscribe` to the discovery system
     /// and add the discovered addresses to the internal address book as they arrive
     /// on this stream.
-    </span><span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
+    </span><span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;DiscoveryItem&gt;&gt; {
         <span class="prelude-val">None
     </span>}
 }
@@ -932,6 +939,8 @@
 <span class="doccomment">/// The results returned from [`Discovery::resolve`].
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>DiscoveryItem {
+    <span class="doccomment">/// The [`NodeId`] whose address we have discovered
+    </span><span class="kw">pub </span>node_id: NodeId,
     <span class="doccomment">/// A static string to identify the discovery source.
     ///
     /// Should be uniform per discovery service.
@@ -1001,7 +1010,7 @@
         <span class="prelude-val">Some</span>(Box::pin(streams))
     }
 
-    <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
+    <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;DiscoveryItem&gt;&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>streams = <span class="macro">vec!</span>[];
         <span class="kw">for </span>service <span class="kw">in </span><span class="self">self</span>.services.iter() {
             <span class="kw">if let </span><span class="prelude-val">Some</span>(stream) = service.subscribe() {
@@ -1261,6 +1270,7 @@
             <span class="kw">let </span>stream = <span class="kw">match </span>addr_info {
                 <span class="prelude-val">Some</span>((addr_info, ts)) =&gt; {
                     <span class="kw">let </span>item = DiscoveryItem {
+                        node_id,
                         provenance: <span class="string">"test-disco"</span>,
                         last_updated: <span class="prelude-val">Some</span>(ts),
                         addr_info,

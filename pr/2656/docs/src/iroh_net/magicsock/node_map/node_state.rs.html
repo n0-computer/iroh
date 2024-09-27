@@ -1696,6 +1696,7 @@
 <a href="#1696" id="1696">1696</a>
 <a href="#1697" id="1697">1697</a>
 <a href="#1698" id="1698">1698</a>
+<a href="#1699" id="1699">1699</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{btree_map::Entry, BTreeSet, HashMap};
 <span class="kw">use </span>std::hash::Hash;
 <span class="kw">use </span>std::net::{IpAddr, SocketAddr};
@@ -2980,7 +2981,8 @@
     /// The [`Duration`] indicates the elapsed time since this source last
     /// recorded this address.
     ///
-    /// Only the smallest [`Duration`] for each [`Source`] is kept.
+    /// The [`Duration`] will always indicate the most recent time the source
+    /// recorded this address.
     </span><span class="kw">pub </span>sources: HashMap&lt;Source, Duration&gt;,
 }
 

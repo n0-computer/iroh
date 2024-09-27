@@ -835,16 +835,6 @@
 <a href="#835" id="835">835</a>
 <a href="#836" id="836">836</a>
 <a href="#837" id="837">837</a>
-<a href="#838" id="838">838</a>
-<a href="#839" id="839">839</a>
-<a href="#840" id="840">840</a>
-<a href="#841" id="841">841</a>
-<a href="#842" id="842">842</a>
-<a href="#843" id="843">843</a>
-<a href="#844" id="844">844</a>
-<a href="#845" id="845">845</a>
-<a href="#846" id="846">846</a>
-<a href="#847" id="847">847</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, HashMap},
     hash::Hash,
@@ -973,16 +963,6 @@
         <span class="doccomment">/// The name of the application that added the node
         </span>name: String,
     },
-}
-
-<span class="kw">impl </span>Source {
-    <span class="doccomment">/// Returns true if the [`Source::NamedApp`] is the same as the given string.
-    </span><span class="kw">pub fn </span>is_named(<span class="kw-2">&amp;</span><span class="self">self</span>, named_app: <span class="kw-2">&amp;</span>str) -&gt; bool {
-        <span class="kw">if let </span>Source::NamedApp { name } = <span class="self">self </span>{
-            <span class="kw">return </span>name == named_app;
-        }
-        <span class="bool-val">false
-    </span>}
 }
 
 <span class="kw">impl </span>NodeMap {

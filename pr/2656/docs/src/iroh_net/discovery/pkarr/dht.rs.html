@@ -441,6 +441,10 @@
 <a href="#441" id="441">441</a>
 <a href="#442" id="442">442</a>
 <a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! # Pkarr based node discovery for iroh-net
 //!
 //! Node discovery is being able to find connecting information about an iroh node based on just its node id.
@@ -725,9 +729,11 @@
         <span class="kw">match </span>response {
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(signed_packet)) =&gt; {
                 <span class="kw">if let </span><span class="prelude-val">Ok</span>(node_info) = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
+                    <span class="kw">let </span>node_id = node_info.node_id.clone();
                     <span class="kw">let </span>addr_info = node_info.into();
                     <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from relay {:?}"</span>, addr_info);
                     co.yield_(<span class="prelude-val">Ok</span>(DiscoveryItem {
+                        node_id,
                         provenance: <span class="string">"relay"</span>,
                         last_updated: <span class="prelude-val">None</span>,
                         addr_info,
@@ -769,9 +775,11 @@
             <span class="kw">return</span>;
         };
         <span class="kw">if let </span><span class="prelude-val">Ok</span>(node_info) = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
+            <span class="kw">let </span>node_id = node_info.node_id.clone();
             <span class="kw">let </span>addr_info = node_info.into();
             <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from DHT {:?}"</span>, addr_info);
             co.yield_(<span class="prelude-val">Ok</span>(DiscoveryItem {
+                node_id,
                 provenance: <span class="string">"mainline"</span>,
                 last_updated: <span class="prelude-val">None</span>,
                 addr_info,

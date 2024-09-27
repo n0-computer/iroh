@@ -558,11 +558,12 @@
     Discovery(String, Peer),
     Resolve(NodeId, mpsc::Sender&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;),
     Timeout(NodeId, usize),
-    Subscribe(mpsc::Sender&lt;(NodeId, DiscoveryItem)&gt;),
+    Subscribe(mpsc::Sender&lt;DiscoveryItem&gt;),
 }
 
 <span class="doccomment">/// Manages the list of subscribers that are subscribed to this discovery service.
-</span><span class="kw">struct </span>Subscribers(Vec&lt;mpsc::Sender&lt;(NodeId, DiscoveryItem)&gt;&gt;);
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>Subscribers(Vec&lt;mpsc::Sender&lt;DiscoveryItem&gt;&gt;);
 
 <span class="kw">impl </span>Subscribers {
     <span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
@@ -570,18 +571,18 @@
     }
 
     <span class="doccomment">/// Add the subscriber to the list of subscribers
-    </span><span class="kw">fn </span>push(<span class="kw-2">&amp;mut </span><span class="self">self</span>, subscriber: mpsc::Sender&lt;(NodeId, DiscoveryItem)&gt;) {
+    </span><span class="kw">fn </span>push(<span class="kw-2">&amp;mut </span><span class="self">self</span>, subscriber: mpsc::Sender&lt;DiscoveryItem&gt;) {
         <span class="self">self</span>.<span class="number">0</span>.push(subscriber);
     }
 
     <span class="doccomment">/// Sends the `node_id` and `item` to each subscriber.
     ///
     /// Cleans up any subscribers that have been dropped.
-    </span><span class="kw">async fn </span>send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, node_id: NodeId, item: DiscoveryItem) {
+    </span><span class="kw">async fn </span>send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, item: DiscoveryItem) {
         <span class="kw">let </span><span class="kw-2">mut </span>clean_up = <span class="macro">vec!</span>[];
         <span class="kw">for </span>(i, subscriber) <span class="kw">in </span><span class="self">self</span>.<span class="number">0</span>.iter().enumerate() {
             <span class="comment">// assume subscriber was dropped
-            </span><span class="kw">if </span>(subscriber.send((node_id, item.clone())).<span class="kw">await</span>).is_err() {
+            </span><span class="kw">if </span>(subscriber.send(item.clone()).<span class="kw">await</span>).is_err() {
                 clean_up.push(i);
             }
         }
@@ -696,7 +697,7 @@
                         </span>);
 
                         <span class="kw">let </span><span class="kw-2">mut </span>resolved = <span class="bool-val">false</span>;
-                        <span class="kw">let </span>item: DiscoveryItem = (<span class="kw-2">&amp;</span>peer_info).into();
+                        <span class="kw">let </span>item = peer_to_discovery_item(<span class="kw-2">&amp;</span>peer_info, <span class="kw-2">&amp;</span>discovered_node_id);
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(senders) = senders.get(<span class="kw-2">&amp;</span>discovered_node_id) {
                             <span class="macro">trace!</span>(<span class="question-mark">?</span>item, senders = senders.len(), <span class="string">"sending DiscoveryItem"</span>);
                             resolved = <span class="bool-val">true</span>;
@@ -710,7 +711,7 @@
                         // in other words, nodes sent to the `subscribers` should only be the ones that
                         // have been "passively" discovered
                         </span><span class="kw">if </span>!resolved {
-                            subscribers.send(discovered_node_id, item.clone()).<span class="kw">await</span>;
+                            subscribers.send(item).<span class="kw">await</span>;
                         }
                     }
                     Message::Resolve(node_id, sender) =&gt; {
@@ -718,7 +719,7 @@
                         last_id = id;
                         <span class="macro">trace!</span>(<span class="question-mark">?</span>node_id, <span class="string">"LocalSwarmDiscovery Message::SendAddrs"</span>);
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(peer_info) = node_addrs.get(<span class="kw-2">&amp;</span>node_id) {
-                            <span class="kw">let </span>item: DiscoveryItem = peer_info.into();
+                            <span class="kw">let </span>item = peer_to_discovery_item(<span class="kw-2">&amp;</span>peer_info, <span class="kw-2">&amp;</span>node_id);
                             <span class="macro">debug!</span>(<span class="question-mark">?</span>item, <span class="string">"sending DiscoveryItem"</span>);
                             sender.send(<span class="prelude-val">Ok</span>(item)).<span class="kw">await</span>.ok();
                         }
@@ -807,21 +808,20 @@
     }
 }
 
-<span class="kw">impl </span>From&lt;<span class="kw-2">&amp;</span>Peer&gt; <span class="kw">for </span>DiscoveryItem {
-    <span class="kw">fn </span>from(peer_info: <span class="kw-2">&amp;</span>Peer) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>direct_addresses: BTreeSet&lt;SocketAddr&gt; = peer_info
-            .addrs()
-            .iter()
-            .map(|(ip, port)| SocketAddr::new(<span class="kw-2">*</span>ip, <span class="kw-2">*</span>port))
-            .collect();
-        DiscoveryItem {
-            provenance: NAME,
-            last_updated: <span class="prelude-val">None</span>,
-            addr_info: AddrInfo {
-                relay_url: <span class="prelude-val">None</span>,
-                direct_addresses,
-            },
-        }
+<span class="kw">fn </span>peer_to_discovery_item(peer: <span class="kw-2">&amp;</span>Peer, node_id: <span class="kw-2">&amp;</span>NodeId) -&gt; DiscoveryItem {
+    <span class="kw">let </span>direct_addresses: BTreeSet&lt;SocketAddr&gt; = peer
+        .addrs()
+        .iter()
+        .map(|(ip, port)| SocketAddr::new(<span class="kw-2">*</span>ip, <span class="kw-2">*</span>port))
+        .collect();
+    DiscoveryItem {
+        node_id: node_id.clone(),
+        provenance: NAME,
+        last_updated: <span class="prelude-val">None</span>,
+        addr_info: AddrInfo {
+            relay_url: <span class="prelude-val">None</span>,
+            direct_addresses,
+        },
     }
 }
 
@@ -843,7 +843,7 @@
         <span class="self">self</span>.local_addrs.replace(<span class="prelude-val">Some</span>(info.clone()));
     }
 
-    <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;(NodeId, DiscoveryItem)&gt;&gt; {
+    <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;DiscoveryItem&gt;&gt; {
         <span class="kw">let </span>(sender, recv) = mpsc::channel(<span class="number">20</span>);
         <span class="kw">let </span>discovery_sender = <span class="self">self</span>.sender.clone();
         <span class="kw">let </span>stream = <span class="kw">async move </span>{

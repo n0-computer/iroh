@@ -315,6 +315,7 @@
 <a href="#315" id="315">315</a>
 <a href="#316" id="316">316</a>
 <a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information to a [pkarr] relay.
 //!
 //! [pkarr]: https://pkarr.org
@@ -560,6 +561,7 @@
             <span class="kw">let </span>signed_packet = pkarr_client.resolve(node_id).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span>info = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet)<span class="question-mark">?</span>;
             <span class="kw">let </span>item = DiscoveryItem {
+                node_id,
                 provenance: <span class="string">"pkarr"</span>,
                 last_updated: <span class="prelude-val">None</span>,
                 addr_info: info.into(),

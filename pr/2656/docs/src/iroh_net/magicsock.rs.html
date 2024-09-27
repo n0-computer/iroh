@@ -5768,7 +5768,7 @@
             <span class="self">self</span>.msock.direct_addr_update_state.running.subscribe();
         <span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher = <span class="self">self</span>.port_mapper.watch_external_address();
 
-        <span class="kw">let </span><span class="kw-2">mut </span>discovery_events: BoxStream&lt;(NodeId, DiscoveryItem)&gt; =
+        <span class="kw">let </span><span class="kw-2">mut </span>discovery_events: BoxStream&lt;DiscoveryItem&gt; =
             Box::pin(futures_lite::stream::empty());
         <span class="kw">if let </span><span class="prelude-val">Some</span>(d) = <span class="self">self</span>.msock.discovery() {
             <span class="kw">if let </span><span class="prelude-val">Some</span>(events) = d.subscribe() {
@@ -5822,9 +5822,9 @@
                     <span class="macro">inc!</span>(Metrics, actor_link_change);
                     <span class="self">self</span>.handle_network_change(is_major).<span class="kw">await</span>;
                 }
-                <span class="prelude-val">Some</span>((node_id, discovery_item)) = discovery_events.next() =&gt; {
+                <span class="prelude-val">Some</span>(discovery_item) = discovery_events.next() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: discovery event, address discovered: {discovery_item:?}"</span>);
-                    <span class="kw">let </span>node_addr = NodeAddr {node_id, info: discovery_item.addr_info};
+                    <span class="kw">let </span>node_addr = NodeAddr {node_id: discovery_item.node_id, info: discovery_item.addr_info};
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.msock.add_node_addr(node_addr.clone(), Source::Discovery { name: discovery_item.provenance.into() }) {
                         <span class="macro">warn!</span>(<span class="question-mark">?</span>node_addr, <span class="string">"unable to add discovered node address to the node map: {e:?}"</span>);
                     }
