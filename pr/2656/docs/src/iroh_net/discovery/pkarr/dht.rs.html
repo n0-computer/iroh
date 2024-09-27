@@ -729,7 +729,7 @@
         <span class="kw">match </span>response {
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(signed_packet)) =&gt; {
                 <span class="kw">if let </span><span class="prelude-val">Ok</span>(node_info) = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
-                    <span class="kw">let </span>node_id = node_info.node_id.clone();
+                    <span class="kw">let </span>node_id = node_info.node_id;
                     <span class="kw">let </span>addr_info = node_info.into();
                     <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from relay {:?}"</span>, addr_info);
                     co.yield_(<span class="prelude-val">Ok</span>(DiscoveryItem {
@@ -775,7 +775,7 @@
             <span class="kw">return</span>;
         };
         <span class="kw">if let </span><span class="prelude-val">Ok</span>(node_info) = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
-            <span class="kw">let </span>node_id = node_info.node_id.clone();
+            <span class="kw">let </span>node_id = node_info.node_id;
             <span class="kw">let </span>addr_info = node_info.into();
             <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from DHT {:?}"</span>, addr_info);
             co.yield_(<span class="prelude-val">Ok</span>(DiscoveryItem {

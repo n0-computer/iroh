@@ -719,7 +719,7 @@
                         last_id = id;
                         <span class="macro">trace!</span>(<span class="question-mark">?</span>node_id, <span class="string">"LocalSwarmDiscovery Message::SendAddrs"</span>);
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(peer_info) = node_addrs.get(<span class="kw-2">&amp;</span>node_id) {
-                            <span class="kw">let </span>item = peer_to_discovery_item(<span class="kw-2">&amp;</span>peer_info, <span class="kw-2">&amp;</span>node_id);
+                            <span class="kw">let </span>item = peer_to_discovery_item(peer_info, <span class="kw-2">&amp;</span>node_id);
                             <span class="macro">debug!</span>(<span class="question-mark">?</span>item, <span class="string">"sending DiscoveryItem"</span>);
                             sender.send(<span class="prelude-val">Ok</span>(item)).<span class="kw">await</span>.ok();
                         }
@@ -815,7 +815,7 @@
         .map(|(ip, port)| SocketAddr::new(<span class="kw-2">*</span>ip, <span class="kw-2">*</span>port))
         .collect();
     DiscoveryItem {
-        node_id: node_id.clone(),
+        node_id: <span class="kw-2">*</span>node_id,
         provenance: NAME,
         last_updated: <span class="prelude-val">None</span>,
         addr_info: AddrInfo {
