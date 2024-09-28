@@ -53,6 +53,7 @@ use iroh_blobs::store::Store as BaoStore;
 use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
 use iroh_docs::net::DOCS_ALPN;
 use iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
+use iroh_net::protocol::{ProtocolHandler, ProtocolMap};
 use iroh_net::{AddrInfo, Endpoint, NodeAddr};
 use protocol::BlobsProtocol;
 use quic_rpc::transport::ServerEndpoint as _;
@@ -62,8 +63,8 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
+use crate::node::docs::DocsEngine;
 use crate::node::nodes_storage::store_node_addrs;
-use crate::node::{docs::DocsEngine, protocol::ProtocolMap};
 
 mod builder;
 mod docs;
@@ -77,7 +78,6 @@ pub use self::builder::{
     DEFAULT_RPC_ADDR,
 };
 pub use self::rpc_status::RpcStatus;
-pub use protocol::ProtocolHandler;
 
 /// How often to save node data.
 const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
@@ -119,7 +119,7 @@ pub(crate) type JoinErrToStr = Box<dyn Fn(JoinError) -> String + Send + Sync + '
 struct NodeInner<D> {
     db: PhantomData<D>,
     rpc_addr: Option<SocketAddr>,
-    endpoint: Endpoint,
+    endpoint: iroh_net::node::Node,
     cancel_token: CancellationToken,
     client: crate::client::Iroh,
     local_pool_handle: LocalPoolHandle,
@@ -159,7 +159,7 @@ impl<D: BaoStore> Node<D> {
     /// ALPNs other than the iroh internal ones. This is useful for some advanced
     /// use cases.
     pub fn endpoint(&self) -> &Endpoint {
-        &self.inner.endpoint
+        self.inner.endpoint.endpoint()
     }
 
     /// The address on which the node socket is bound.
@@ -168,7 +168,7 @@ impl<D: BaoStore> Node<D> {
     /// can contact the node consider using [`Node::local_endpoint_addresses`].  However the
     /// port will always be the concrete port.
     pub fn local_address(&self) -> Vec<SocketAddr> {
-        let (v4, v6) = self.inner.endpoint.bound_sockets();
+        let (v4, v6) = self.endpoint().bound_sockets();
         let mut addrs = vec![v4];
         if let Some(v6) = v6 {
             addrs.push(v6);
@@ -178,7 +178,7 @@ impl<D: BaoStore> Node<D> {
 
     /// Lists the local endpoint of this node.
     pub fn local_endpoints(&self) -> DirectAddrsStream {
-        self.inner.endpoint.direct_addresses()
+        self.endpoint().direct_addresses()
     }
 
     /// Convenience method to get just the addr part of [`Node::local_endpoints`].
@@ -188,7 +188,7 @@ impl<D: BaoStore> Node<D> {
 
     /// Returns the [`PublicKey`] of the node.
     pub fn node_id(&self) -> PublicKey {
-        self.inner.endpoint.secret_key().public()
+        self.endpoint().secret_key().public()
     }
 
     /// Return a client to control this node over an in-memory channel.
@@ -203,7 +203,7 @@ impl<D: BaoStore> Node<D> {
 
     /// Get the relay server we are connected to.
     pub fn home_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
-        self.inner.endpoint.home_relay()
+        self.endpoint().home_relay()
     }
 
     /// Returns `Some(addr)` if an RPC endpoint is running, `None` otherwise.
@@ -255,6 +255,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
     async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
         let endpoints = self
             .endpoint
+            .endpoint()
             .direct_addresses()
             .next()
             .await
@@ -267,13 +268,13 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         self: Arc<Self>,
         external_rpc: IrohServerEndpoint,
         internal_rpc: IrohServerEndpoint,
-        protocols: Arc<ProtocolMap>,
         gc_policy: GcPolicy,
         gc_done_callback: Option<Box<dyn Fn() + Send>>,
         nodes_data_path: Option<PathBuf>,
         local_pool: LocalPool,
     ) {
-        let (ipv4, ipv6) = self.endpoint.bound_sockets();
+        let protocols = self.endpoint.protocols();
+        let (ipv4, ipv6) = self.endpoint.endpoint().bound_sockets();
         debug!(
             "listening at: {}{}",
             ipv4,
@@ -345,7 +346,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         }
 
         if let Some(nodes_data_path) = nodes_data_path {
-            let ep = self.endpoint.clone();
+            let ep = self.endpoint.endpoint().clone();
             let token = self.cancel_token.clone();
 
             join_set.spawn(
@@ -411,14 +412,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                         }
                     }
                 },
-                // handle incoming p2p connections.
-                Some(incoming) = self.endpoint.accept() => {
-                    let protocols = protocols.clone();
-                    join_set.spawn(async move {
-                        handle_connection(incoming, protocols).await;
-                        Ok(())
-                    });
-                },
                 // handle task terminations and quit on panics.
                 res = join_set.join_next(), if !join_set.is_empty() => {
                     match res {
@@ -443,7 +436,8 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             }
         }
 
-        self.shutdown(protocols).await;
+        // TODO: how to do this?
+        // self.endpoint.shutdown().await;
 
         // Abort remaining tasks.
         join_set.shutdown().await;
@@ -452,48 +446,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         // Abort remaining local tasks.
         tracing::info!("Shutting down local pool");
         local_pool.shutdown().await;
-    }
-
-    /// Shutdown the different parts of the node concurrently.
-    async fn shutdown(&self, protocols: Arc<ProtocolMap>) {
-        let error_code = Closed::ProviderTerminating;
-
-        // We ignore all errors during shutdown.
-        let _ = tokio::join!(
-            // Close the endpoint.
-            // Closing the Endpoint is the equivalent of calling Connection::close on all
-            // connections: Operations will immediately fail with ConnectionError::LocallyClosed.
-            // All streams are interrupted, this is not graceful.
-            self.endpoint
-                .clone()
-                .close(error_code.into(), error_code.reason()),
-            // Shutdown protocol handlers.
-            protocols.shutdown(),
-        );
-    }
-}
-
-async fn handle_connection(incoming: iroh_net::endpoint::Incoming, protocols: Arc<ProtocolMap>) {
-    let mut connecting = match incoming.accept() {
-        Ok(conn) => conn,
-        Err(err) => {
-            warn!("Ignoring connection: accepting failed: {err:#}");
-            return;
-        }
-    };
-    let alpn = match connecting.alpn().await {
-        Ok(alpn) => alpn,
-        Err(err) => {
-            warn!("Ignoring connection: invalid handshake: {err:#}");
-            return;
-        }
-    };
-    let Some(handler) = protocols.get(&alpn) else {
-        warn!("Ignoring connection: unsupported ALPN protocol");
-        return;
-    };
-    if let Err(err) = handler.accept(connecting).await {
-        warn!("Handling incoming connection ended with error: {err}");
     }
 }
 

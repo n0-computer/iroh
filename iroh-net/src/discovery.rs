@@ -627,7 +627,7 @@ mod tests {
     ) -> (Endpoint, AbortOnDropHandle<anyhow::Result<()>>) {
         let ep = Endpoint::builder()
             .secret_key(secret)
-            .discovery(Box::new(disco))
+            .discovery(Some(Box::new(disco)))
             .relay_mode(RelayMode::Disabled)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -797,7 +797,7 @@ mod test_dns_pkarr {
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .dns_resolver(dns_pkarr_server.dns_resolver())
-            .discovery(dns_pkarr_server.discovery(secret_key))
+            .discovery(Some(dns_pkarr_server.discovery(secret_key)))
             .bind()
             .await?;
 

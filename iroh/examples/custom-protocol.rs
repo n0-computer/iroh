@@ -48,9 +48,9 @@ use iroh::{
     client::blobs,
     net::{
         endpoint::{get_remote_node_id, Connecting},
+        protocol::ProtocolHandler,
         Endpoint, NodeId,
     },
-    node::ProtocolHandler,
 };
 use tracing_subscriber::{prelude::*, EnvFilter};
 

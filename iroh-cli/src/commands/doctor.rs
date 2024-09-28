@@ -676,7 +676,7 @@ async fn make_endpoint(
         .transport_config(transport_config);
 
     let endpoint = match discovery {
-        Some(discovery) => endpoint.discovery(discovery),
+        Some(discovery) => endpoint.discovery(Some(discovery)),
         None => endpoint,
     };
 
