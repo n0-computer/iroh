@@ -293,110 +293,15 @@ jobs:
 
   netsim-integration-tests:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    timeout-minutes: 30
-    name: Run network simulations/benchmarks
-    runs-on: [self-hosted, linux, X64]
-    env:
-      # Using self-hosted runners so use local cache for sccache and
-      # not SCCACHE_GHA_ENABLED.
-      RUSTC_WRAPPER: "sccache"
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Install rust stable
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.5
-
-    - name: Build iroh
-      run: |
-        cargo build --release --workspace --all-features
-
-    - name: Fetch and build chuck
-      run: |
-        cd ..
-        rm -rf chuck
-        git clone https://github.com/n0-computer/chuck.git
-        cd chuck
-        cargo build --release
-
-    - name: Install netsim deps
-      run: |
-        cd ../chuck/netsim
-        sudo apt update
-        ./setup.sh
-
-    - name: Copy binaries to right location
-      run: |
-        cp target/release/iroh ../chuck/netsim/bins/iroh
-        cp target/release/iroh-relay ../chuck/netsim/bins/iroh-relay
-        cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
-
-    - name: Run tests
-      run: |
-        cd ../chuck/netsim
-        sudo kill -9 $(pgrep ovs) || true
-        sudo mn --clean || true
-        sudo python3 main.py ${{ runner.debug && '--debug' || ''}} --integration sims/iroh/iroh.json
-        sudo python3 main.py ${{ runner.debug && '--debug' || ''}} --integration sims/integration
-    - name: Cleanup
-      run: |
-        sudo kill -9 $(pgrep iroh-relay) || true
-        sudo kill -9 $(pgrep iroh) || true
-        sudo kill -9 $(pgrep ovs) || true
-        sudo mn --clean || true
-
-    - name: Setup Environment (PR)
-      if: ${{ github.event_name == 'pull_request' }}
-      shell: bash
-      run: |
-        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${{ github.event.pull_request.head.sha }})" >> ${GITHUB_ENV}
-        echo "HEAD_REF=${{ github.event.pull_request.head.ref }}" >> ${GITHUB_ENV}
-    - name: Setup Environment (Push)
-      if: ${{ github.event_name == 'push' || github.event_name == 'merge_group' }}
-      shell: bash
-      run: |
-        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${GITHUB_SHA})" >> ${GITHUB_ENV}
-        echo "HEAD_REF=${{ github.head_ref }}" >> ${GITHUB_ENV}
-
-    - name: Generate reports
-      run: |
-        cd ../chuck/netsim
-        python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
-        python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
-        python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
-
-    - name: Dump report
-      if: ${{ (github.event.pull_request && !github.event.pull_request.head.repo.fork) || !github.event.pull_request }}
-      run: |
-        export AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}
-        export AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}
-        export AWS_DEFAULT_REGION=us-west-2
-
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-        unzip -q awscliv2.zip
-        sudo ./aws/install --update
-
-        cd ../chuck/netsim
-
-        aws_fname=intg_${{ env.LAST_COMMIT_SHA }}.tar.gz
-        tar cvzf report.tar.gz report_prom.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
-        aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/$aws_fname --no-progress
-
-    - name: Echo metrics
-      run: |
-        cd ../chuck/netsim
-        d=$(cat report_metro.txt)
-        metro_data=$(printf "%s\n " "$d")
-        echo "$metro_data"
-        d=$(cat report_metro_integration.txt)
-        metro_data=$(printf "%s\n " "$d")
-        echo "$metro_data"
-
+    uses: './.github/workflows/netsim_runner.yaml'
+    secrets: inherit
+    with:
+      branch: ${{ github.ref }}
+      max_workers: 4
+      netsim_branch: "main"
+      sim_paths: "sims/iroh/iroh.json,sims/integration"
+      pr_number: ${{ github.event.pull_request.number || '' }}
+    
   docker_build_and_test:
     name: Docker Test
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
