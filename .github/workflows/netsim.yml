@@ -4,8 +4,22 @@ on:
   push:
     branches:
       - main
-  issue_comment:
-    types: [created, edited, deleted]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      branch:
+        required: true
+        type: string
+      netsim_branch:
+        required: true
+        type: string
+        default: "main"
+      report_table:
+        required: false
+        type: boolean
+        default: false
 
 env:
   RUST_BACKTRACE: 1
@@ -16,213 +30,29 @@ env:
   IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
-  netsim:
-    timeout-minutes: 60
-    name: Run network simulations/benchmarks
-    if: >-
-      (github.event_name == 'issue_comment' &&
-        github.event.issue.pull_request &&
-          startsWith(github.event.comment.body, '/netsim')) || github.event_name != 'issue_comment'
-    runs-on: [self-hosted, linux, X64]
-    permissions:
-      issues: write
-      pull-requests: write
-    steps:
-    - name: Checkout
-      if: github.event_name != 'issue_comment'
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
+  netsim-release:
+    if: ${{github.ref_name=='main' && github.event_name == 'push'}}
+    uses: './.github/workflows/netsim_runner.yaml'
+    secrets: inherit
+    with:
+      branch: "main"
+      max_workers: 1
+      netsim_branch: "main"
+      sim_paths: "sims/iroh,sims/integration"
+      pr_number: ""
+      publish_metrics: true
+      build_profile: "optimized-release"
 
-    - name: Resolve PR refs (Issue)
-      if: ${{ github.event_name == 'issue_comment' }}  
-      id: refs
-      uses: arqu/resolve-pr-refs@main
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Checkout
-      if: github.event_name == 'issue_comment'
-      uses: actions/checkout@v4
-      with:
-        repository: ${{ github.event.issue.repository.full_name }}
-        submodules: recursive
-        ref: ${{ steps.refs.outputs.head_ref }}
-
-    - name: Install rust stable
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Run sccache-cache
-      uses: mozilla-actions/sccache-action@v0.0.5
-
-    - name: Build iroh
-      run: |
-        cargo build --profile optimized-release --workspace --all-features
-
-    - name: Detect chuck branch
-      if: github.event_name == 'issue_comment'
-      id: detect_chuck_branch
-      shell: bash
-      run: |
-        a='${{ github.event.comment.body }}'
-        if [[ $a == '/netsim branch'* ]];
-        then
-          a=$(echo "$a" | tr '\n' ' ' | tr -s " " | cut -d ' ' -f3)
-          branch="$a"
-          echo "CHUCK_BRANCH=$branch" >> ${GITHUB_ENV}
-        else
-          echo "CHUCK_BRANCH=main" >> ${GITHUB_ENV}
-        fi
-
-    - name: Detect chuck branch if not comment
-      if: github.event_name != 'issue_comment'
-      shell: bash
-      run: |
-        echo "CHUCK_BRANCH=main" >> ${GITHUB_ENV}
- 
-    - name: Fetch and build chuck
-      shell: bash  
-      run: |
-        cd ..
-        rm -rf chuck
-        git clone --single-branch --branch ${{ env.CHUCK_BRANCH }} https://github.com/n0-computer/chuck.git
-        cd chuck
-        cargo build --release
-    
-    - name: Install netsim deps
-      run: |
-        cd ../chuck/netsim
-        sudo apt update
-        ./setup.sh
-
-    - name: Copy binaries to right location
-      run: |
-        cp target/optimized-release/iroh ../chuck/netsim/bins/iroh
-        cp target/optimized-release/iroh-relay ../chuck/netsim/bins/iroh-relay
-        cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
-    
-    - name: Detect comment commands
-      if: github.event_name == 'issue_comment'
-      id: detect_comment_config
-      run: |
-        a='${{ github.event.comment.body }}'
-        if [[ $a == '/netsim config'* ]];
-        then
-          a=$(echo "'$a'" | tr '\n' ' ' | tr -s " " | sed -e 's/.*```\(.*\)```.*/\1/')
-          export NETSIM_CONFIG="$a"
-          echo "NETSIM_CONFIG<<EOFMARKER" >> ${GITHUB_OUTPUT}
-          echo "${NETSIM_CONFIG}" >> ${GITHUB_OUTPUT}
-          echo "EOFMARKER" >> ${GITHUB_OUTPUT}
-        fi
-        echo "'$NETSIM_CONFIG'"
-
-    - name: Run tests
-      run: |
-        cd ../chuck/netsim
-        sudo kill -9 $(pgrep ovs) || true
-        sudo mn --clean || true
-        c='${{ steps.detect_comment_config.outputs.NETSIM_CONFIG }}'
-        if [ -z "${c}" ];
-        then
-          sudo python3 main.py --integration sims/iroh
-          sudo python3 main.py --integration sims/integration
-        else
-          echo $c >> custom_sim.json
-          sudo python3 main.py custom_sim.json
-        fi
-      
-    - name: Cleanup
-      run: |
-        sudo kill -9 $(pgrep iroh-relay) || true
-        sudo kill -9 $(pgrep iroh) || true
-        sudo kill -9 $(pgrep ovs) || true
-        sudo mn --clean || true
-
-    - name: Generate report
-      id: generate_report
-      run: |
-        cd ../chuck/netsim
-        python3 reports_csv.py --table > report.txt
-        export NETSIM_REPORT=$(cat report.txt)
-        echo "NETSIM_REPORT<<EOFMARKER" >> ${GITHUB_OUTPUT}
-        echo "${NETSIM_REPORT}" >> ${GITHUB_OUTPUT}
-        echo "EOFMARKER" >> ${GITHUB_OUTPUT}
-
-    - name: Setup Environment
-      shell: bash  
-      run: |  
-        echo "LAST_COMMIT_SHA=unknown" >> ${GITHUB_ENV}  
-        echo "HEAD_REF=unknown" >> ${GITHUB_ENV}  
-    
-    - name: Setup Environment (Issue)  
-      if: ${{ github.event_name == 'issue_comment' }}  
-      shell: bash  
-      run: |  
-        echo "LAST_COMMIT_SHA=${{ steps.refs.outputs.head_sha }}" >> ${GITHUB_ENV}  
-        echo "HEAD_REF=${{ steps.refs.outputs.head_ref }}" >> ${GITHUB_ENV}
-    - name: Setup Environment (PR)  
-      if: ${{ github.event_name == 'pull_request' }}  
-      shell: bash  
-      run: |  
-        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${{ github.event.pull_request.head.sha }})" >> ${GITHUB_ENV}
-        echo "HEAD_REF=${{ github.event.pull_request.head.ref }}" >> ${GITHUB_ENV}
-    - name: Setup Environment (Push)  
-      if: ${{ github.event_name == 'push' }}  
-      shell: bash  
-      run: |  
-        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${GITHUB_SHA})" >> ${GITHUB_ENV}
-        echo "HEAD_REF=${{ github.ref }}" >> ${GITHUB_ENV}
-
-    - name: Respond Issue
-      uses: peter-evans/create-or-update-comment@v4
-      if: github.event_name == 'issue_comment'
-      with:
-        issue-number: ${{ github.event.issue.number }}
-        body: |
-          `${{ env.HEAD_REF }}.${{ env.LAST_COMMIT_SHA }}`
-          Perf report:
-          ${{ steps.generate_report.outputs.NETSIM_REPORT }}
-
-    - name: Respond PR
-      uses: peter-evans/create-or-update-comment@v4
-      if: github.event.pull_request
-      with:
-        issue-number: ${{ github.event.pull_request.number }}
-        body: |
-          `${{ env.HEAD_REF }}.${{ env.LAST_COMMIT_SHA }}`
-          Perf report:
-          ${{ steps.generate_report.outputs.NETSIM_REPORT }}
-
-    - name: Generate reports
-      run: |
-        cd ../chuck/netsim
-        python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
-        python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
-        python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
-
-    - name: Dump report
-      run: |
-        export AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}
-        export AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}
-        export AWS_DEFAULT_REGION=us-west-2
-        
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-        unzip -q awscliv2.zip
-        sudo ./aws/install --update
-
-        cd ../chuck/netsim
-
-        aws_fname=${{ env.LAST_COMMIT_SHA }}.tar.gz
-        tar cvzf report.tar.gz report_prom.txt report.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
-        aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/$aws_fname --no-progress
-
-    - name: Post metrics
-      if: github.ref_name=='main' && github.event_name != 'issue_comment'
-      run: |
-        cd ../chuck/netsim
-        d=$(cat report_metro.txt)
-        metro_data=$(printf "%s\n " "$d")
-        curl -X POST -H  "Content-Type: application/json" -H "Authorization: Bearer ${{secrets.METRO_TOKEN}}" --data "$metro_data" ${{secrets.METRO_ENDPOINT}}
-        d=$(cat report_metro_integration.txt)
-        metro_data=$(printf "%s\n " "$d")
-        curl -X POST -H  "Content-Type: application/json" -H "Authorization: Bearer ${{secrets.METRO_TOKEN}}" --data "$metro_data" ${{secrets.METRO_ENDPOINT}}
+  netsim-perf:
+    if: ${{github.event_name != 'push'}}
+    uses: './.github/workflows/netsim_runner.yaml'
+    secrets: inherit
+    with:
+      branch: ${{inputs.branch}}
+      max_workers: 1
+      netsim_branch: ${{inputs.netsim_branch}}
+      sim_paths: "sims/iroh"
+      pr_number: ${{inputs.pr_number}}
+      publish_metrics: false
+      build_profile: "optimized-release"
+      report_table: ${{inputs.report_table}}
