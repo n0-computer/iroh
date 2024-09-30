@@ -2,7 +2,38 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.25.0](https://github.com/n0-computer/iroh/compare/v0.24.0..0.25.0) - 2024-09-16
+## [0.26.0](https://github.com/n0-computer/iroh/compare/v0.25.0..0.26.0) - 2024-09-30
+
+### ⛰️  Features
+
+- *(iroh)* Disable docs by default ([#2748](https://github.com/n0-computer/iroh/issues/2748)) - ([eb4c4a6](https://github.com/n0-computer/iroh/commit/eb4c4a6beb750c1b4a10b7df90d302e44b4f9375))
+- *(iroh)* [**breaking**] Make blobs::read_at more flexible ([#2756](https://github.com/n0-computer/iroh/issues/2756)) - ([33dc559](https://github.com/n0-computer/iroh/commit/33dc559a524f9cced551c01f3192579b07cf12d2))
+- *(iroh)* Allow setting a custom `quinn::TransportConfig` ([#2760](https://github.com/n0-computer/iroh/issues/2760)) - ([253f4f1](https://github.com/n0-computer/iroh/commit/253f4f1099baac690ea9854f541451a2936eb00d))
+- *(iroh-cli)* Improve ergonomics of `iroh gossip subscribe` CLI cmd ([#2751](https://github.com/n0-computer/iroh/issues/2751)) - ([90fd6f0](https://github.com/n0-computer/iroh/commit/90fd6f04ec62305a6507cb29bc388b1583f3c5f0))
+- Set derive_more to 1.0.0 (no beta!) ([#2736](https://github.com/n0-computer/iroh/issues/2736)) - ([2d863a9](https://github.com/n0-computer/iroh/commit/2d863a94cc19faab860e85b164abf47a8669cfa9))
+
+### 🐛 Bug Fixes
+
+- *(ci)* Make netsim work on forks ([#2757](https://github.com/n0-computer/iroh/issues/2757)) - ([0953263](https://github.com/n0-computer/iroh/commit/09532632b3d3b8f16b8ef175e84fe8e8821bb21a))
+- *(examples)* Make `collection-provide`, `hello-world-provide` and `rpc` work again ([#2749](https://github.com/n0-computer/iroh/issues/2749)) - ([25c8305](https://github.com/n0-computer/iroh/commit/25c830574d54652a772cffd7d29e3fb386d37c25))
+- *(iroh-blobs)* Preserve tracing subscriber in the LocalPool ([#2735](https://github.com/n0-computer/iroh/issues/2735)) - ([5dd8bd3](https://github.com/n0-computer/iroh/commit/5dd8bd394422c80b7737fa00d92be3347924d311))
+- *(iroh-blobs)* Remove debugging logs & more cleanup ([#2690](https://github.com/n0-computer/iroh/issues/2690)) - ([857e513](https://github.com/n0-computer/iroh/commit/857e51313499caceb0ad16663170cefe69f136a7))
+- *(iroh-net)* Clear the recent pong time when pong is lost ([#2743](https://github.com/n0-computer/iroh/issues/2743)) - ([8fb92f3](https://github.com/n0-computer/iroh/commit/8fb92f3e88a0e69fb631bc5ac297eb62ffa73c62))
+
+### 🚜 Refactor
+
+- *(ci)* Redo netsim CI ([#2737](https://github.com/n0-computer/iroh/issues/2737)) - ([443139d](https://github.com/n0-computer/iroh/commit/443139d4b6db87c35200e6db495da9a3a84e5cbf))
+- *(iroh-net)* Various logging improvements ([#2744](https://github.com/n0-computer/iroh/issues/2744)) - ([2262fd5](https://github.com/n0-computer/iroh/commit/2262fd57271e42efeb88badffdd208dadc387bb0))
+- *(iroh-net)* Remove PathState::recent_pong() ([#2745](https://github.com/n0-computer/iroh/issues/2745)) - ([cafdc08](https://github.com/n0-computer/iroh/commit/cafdc08354c4fea31376a116a5e5ff4b51e8ab9a))
+
+### 📚 Documentation
+
+- *(iroh-net)* Document default relay servers a bit more ([#2740](https://github.com/n0-computer/iroh/issues/2740)) - ([10025bd](https://github.com/n0-computer/iroh/commit/10025bd3e3dd6b7d22c17e22c60994e03571d14e))
+- *(iroh-net)* Improve last_pong field docs ([#2747](https://github.com/n0-computer/iroh/issues/2747)) - ([19c8fd3](https://github.com/n0-computer/iroh/commit/19c8fd327ff60ed4395cc3557f3dafa93a4a744c))
+- *(iroh-net)* Improve pkarr discovery docs ([#2722](https://github.com/n0-computer/iroh/issues/2722)) - ([a0a8d56](https://github.com/n0-computer/iroh/commit/a0a8d56963f965d7b73a880946dfc5a6daafa7f9))
+- *(iroh-net)* Document cargo features needed for APIs ([#2759](https://github.com/n0-computer/iroh/issues/2759)) - ([5d92f49](https://github.com/n0-computer/iroh/commit/5d92f49891c0c9ce52d5f64ed990655f85392b2b))
+
+## [0.25.0](https://github.com/n0-computer/iroh/compare/v0.24.0..v0.25.0) - 2024-09-16
 
 ### ⛰️  Features
 
@@ -45,6 +76,7 @@ All notable changes to iroh will be documented in this file.
 - *(iroh-net)* Remove direct dependency on rand_core ([#2719](https://github.com/n0-computer/iroh/issues/2719)) - ([b6a64e0](https://github.com/n0-computer/iroh/commit/b6a64e0764b2973497ee989910d2930ced3160f5))
 - Fix clippy@1.81.0 and cargo deny ([#2714](https://github.com/n0-computer/iroh/issues/2714)) - ([52422cd](https://github.com/n0-computer/iroh/commit/52422cdb228e060c136d87b350fa9cfd35961b76))
 - Remove double spellchecks ([#2720](https://github.com/n0-computer/iroh/issues/2720)) - ([a733143](https://github.com/n0-computer/iroh/commit/a73314385084ae4e72e15bc15469991e139763ec))
+- Release - ([285101e](https://github.com/n0-computer/iroh/commit/285101eec876fe48a1bda3fa43ff5c2c5c6ef568))
 
 ## [0.24.0](https://github.com/n0-computer/iroh/compare/v0.23.0..v0.24.0) - 2024-09-02
 
