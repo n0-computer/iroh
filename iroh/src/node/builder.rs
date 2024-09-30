@@ -498,7 +498,7 @@ where
     /// Sets a custom [`quinn::TransportConfig`] to be used by the [`Endpoint`].
     ///
     /// If not set, the [`Endpoint`] will use its default [`quinn::TransportConfig`]. See
-    /// [`iroh::net::endpoint::Builder::transport_config`] for details.
+    /// [`iroh_net::endpoint::Builder::transport_config`] for details.
     pub fn transport_config(mut self, config: quinn::TransportConfig) -> Self {
         self.transport_config = Some(config);
         self
