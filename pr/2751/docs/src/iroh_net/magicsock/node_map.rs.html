@@ -801,6 +801,40 @@
 <a href="#801" id="801">801</a>
 <a href="#802" id="802">802</a>
 <a href="#803" id="803">803</a>
+<a href="#804" id="804">804</a>
+<a href="#805" id="805">805</a>
+<a href="#806" id="806">806</a>
+<a href="#807" id="807">807</a>
+<a href="#808" id="808">808</a>
+<a href="#809" id="809">809</a>
+<a href="#810" id="810">810</a>
+<a href="#811" id="811">811</a>
+<a href="#812" id="812">812</a>
+<a href="#813" id="813">813</a>
+<a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a>
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
+<a href="#819" id="819">819</a>
+<a href="#820" id="820">820</a>
+<a href="#821" id="821">821</a>
+<a href="#822" id="822">822</a>
+<a href="#823" id="823">823</a>
+<a href="#824" id="824">824</a>
+<a href="#825" id="825">825</a>
+<a href="#826" id="826">826</a>
+<a href="#827" id="827">827</a>
+<a href="#828" id="828">828</a>
+<a href="#829" id="829">829</a>
+<a href="#830" id="830">830</a>
+<a href="#831" id="831">831</a>
+<a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a>
+<a href="#837" id="837">837</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, HashMap},
     hash::Hash,
@@ -814,6 +848,7 @@
 <span class="kw">use </span>iroh_base::key::NodeId;
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>parking_lot::Mutex;
+<span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>stun_rs::TransactionId;
 <span class="kw">use </span>tracing::{debug, info, instrument, trace, warn};
 
@@ -887,22 +922,47 @@
     IpPort(IpPort),
 }
 
-<span class="doccomment">/// Source for a new node.
+<span class="doccomment">/// The origin or *source* through which an address associated with a remote node
+/// was discovered.
 ///
-/// This is used for debugging purposes.
-</span><span class="attr">#[derive(strum::Display, Debug)]
+/// An aggregate of the [`Source`]s of all the addresses of a node describe the
+/// [`Source`]s of the node itself.
+///
+/// A [`Source`] helps track how and where an address was learned. Multiple
+/// sources can be associated with a single address, if we have discovered this
+/// address through multiple means.
+///
+/// Each time a [`NodeAddr`] is added to the node map, usually through
+/// [`crate::endpoint::Endpoint::add_node_addr_with_source`], a [`Source`] must be supplied to indicate
+/// how the address was obtained.
+///
+/// A [`Source`] can describe a variety of places that an address or node was
+/// discovered, such as a configured discovery service, the network itself
+/// (if another node has reached out to us), or as a user supplied [`NodeAddr`].
+
+</span><span class="attr">#[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq, Hash)]
 #[strum(serialize_all = <span class="string">"kebab-case"</span>)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>Source {
-    <span class="doccomment">/// Node was loaded from the fs.
+</span><span class="kw">pub enum </span>Source {
+    <span class="doccomment">/// Address was loaded from the fs.
     </span>Saved,
-    <span class="doccomment">/// Node communicated with us first via UDP.
+    <span class="doccomment">/// A node communicated with us first via UDP.
     </span>Udp,
-    <span class="doccomment">/// Node communicated with us first via relay.
+    <span class="doccomment">/// A node communicated with us first via relay.
     </span>Relay,
-    <span class="doccomment">/// Application layer added the node directly.
+    <span class="doccomment">/// Application layer added the address directly.
     </span>App,
-    <span class="attr">#[strum(serialize = <span class="string">"{name}"</span>)]
-    </span>NamedApp { name: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str },
+    <span class="doccomment">/// The address was discovered by a discovery service.
+    </span><span class="attr">#[strum(serialize = <span class="string">"{name}"</span>)]
+    </span>Discovery {
+        <span class="doccomment">/// The name of the discovery service that discovered the address.
+        </span>name: String,
+    },
+    <span class="doccomment">/// Application layer with a specific name added the node directly.
+    </span><span class="attr">#[strum(serialize = <span class="string">"{name}"</span>)]
+    </span>NamedApp {
+        <span class="doccomment">/// The name of the application that added the node
+        </span>name: String,
+    },
 }
 
 <span class="kw">impl </span>NodeMap {
@@ -1084,13 +1144,14 @@
     </span><span class="kw">fn </span>add_node_addr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, node_addr: NodeAddr, source: Source) {
         <span class="kw">let </span>NodeAddr { node_id, info } = node_addr;
 
+        <span class="kw">let </span>source0 = source.clone();
         <span class="kw">let </span>node_state = <span class="self">self</span>.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
             node_id,
             relay_url: info.relay_url.clone(),
             active: <span class="bool-val">false</span>,
             source,
         });
-        node_state.update_from_node_addr(<span class="kw-2">&amp;</span>info);
+        node_state.update_from_node_addr(<span class="kw-2">&amp;</span>info, source0);
         <span class="kw">let </span>id = node_state.id();
         <span class="kw">for </span>addr <span class="kw">in </span><span class="kw-2">&amp;</span>info.direct_addresses {
             <span class="self">self</span>.set_node_state_for_ip_port(<span class="kw-2">*</span>addr, id);
@@ -1439,7 +1500,12 @@
     <span class="kw">impl </span>NodeMap {
         <span class="attr">#[track_caller]
         </span><span class="kw">fn </span>add_test_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr) {
-            <span class="self">self</span>.add_node_addr(node_addr, Source::NamedApp { name: <span class="string">"test" </span>})
+            <span class="self">self</span>.add_node_addr(
+                node_addr,
+                Source::NamedApp {
+                    name: <span class="string">"test"</span>.into(),
+                },
+            )
         }
     }
 
@@ -1522,7 +1588,9 @@
                 node_id: public_key,
                 relay_url: <span class="prelude-val">None</span>,
                 active: <span class="bool-val">false</span>,
-                source: Source::NamedApp { name: <span class="string">"test" </span>},
+                source: Source::NamedApp {
+                    name: <span class="string">"test"</span>.into(),
+                },
             })
             .id();
 
