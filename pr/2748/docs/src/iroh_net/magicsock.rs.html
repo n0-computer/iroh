@@ -3900,6 +3900,35 @@
 <a href="#3900" id="3900">3900</a>
 <a href="#3901" id="3901">3901</a>
 <a href="#3902" id="3902">3902</a>
+<a href="#3903" id="3903">3903</a>
+<a href="#3904" id="3904">3904</a>
+<a href="#3905" id="3905">3905</a>
+<a href="#3906" id="3906">3906</a>
+<a href="#3907" id="3907">3907</a>
+<a href="#3908" id="3908">3908</a>
+<a href="#3909" id="3909">3909</a>
+<a href="#3910" id="3910">3910</a>
+<a href="#3911" id="3911">3911</a>
+<a href="#3912" id="3912">3912</a>
+<a href="#3913" id="3913">3913</a>
+<a href="#3914" id="3914">3914</a>
+<a href="#3915" id="3915">3915</a>
+<a href="#3916" id="3916">3916</a>
+<a href="#3917" id="3917">3917</a>
+<a href="#3918" id="3918">3918</a>
+<a href="#3919" id="3919">3919</a>
+<a href="#3920" id="3920">3920</a>
+<a href="#3921" id="3921">3921</a>
+<a href="#3922" id="3922">3922</a>
+<a href="#3923" id="3923">3923</a>
+<a href="#3924" id="3924">3924</a>
+<a href="#3925" id="3925">3925</a>
+<a href="#3926" id="3926">3926</a>
+<a href="#3927" id="3927">3927</a>
+<a href="#3928" id="3928">3928</a>
+<a href="#3929" id="3929">3929</a>
+<a href="#3930" id="3930">3930</a>
+<a href="#3931" id="3931">3931</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3934,6 +3963,7 @@
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::{FutureExt, Stream, StreamExt};
+<span class="kw">use </span>futures_util::stream::BoxStream;
 <span class="kw">use </span>iroh_base::key::NodeId;
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>quinn::AsyncUdpSocket;
@@ -3955,7 +3985,7 @@
 <span class="kw">use crate</span>::{
     defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
     disco::{<span class="self">self</span>, SendAddr},
-    discovery::Discovery,
+    discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
@@ -3978,7 +4008,7 @@
 <span class="kw">mod </span>timer;
 <span class="kw">mod </span>udp_conn;
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>node_map::Source;
+<span class="kw">pub use </span>node_map::Source;
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">use </span><span class="self">self</span>::timer::Timer;
 
@@ -5738,6 +5768,13 @@
             <span class="self">self</span>.msock.direct_addr_update_state.running.subscribe();
         <span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher = <span class="self">self</span>.port_mapper.watch_external_address();
 
+        <span class="kw">let </span><span class="kw-2">mut </span>discovery_events: BoxStream&lt;DiscoveryItem&gt; =
+            Box::pin(futures_lite::stream::empty());
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(d) = <span class="self">self</span>.msock.discovery() {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(events) = d.subscribe() {
+                discovery_events = events;
+            }
+        }
         <span class="kw">loop </span>{
             <span class="macro">inc!</span>(Metrics, actor_tick_main);
             <span class="macro">tokio::select!</span> {
@@ -5784,6 +5821,13 @@
                     <span class="macro">trace!</span>(<span class="string">"tick: link change {}"</span>, is_major);
                     <span class="macro">inc!</span>(Metrics, actor_link_change);
                     <span class="self">self</span>.handle_network_change(is_major).<span class="kw">await</span>;
+                }
+                <span class="prelude-val">Some</span>(discovery_item) = discovery_events.next() =&gt; {
+                    <span class="macro">trace!</span>(<span class="string">"tick: discovery event, address discovered: {discovery_item:?}"</span>);
+                    <span class="kw">let </span>node_addr = NodeAddr {node_id: discovery_item.node_id, info: discovery_item.addr_info};
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.msock.add_node_addr(node_addr.clone(), Source::Discovery { name: discovery_item.provenance.into() }) {
+                        <span class="macro">warn!</span>(<span class="question-mark">?</span>node_addr, <span class="string">"unable to add discovered node address to the node map: {e:?}"</span>);
+                    }
                 }
                 <span class="kw">else </span>=&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: other"</span>);
@@ -6732,8 +6776,13 @@
     <span class="kw">impl </span>MagicSock {
         <span class="attr">#[track_caller]
         </span><span class="kw">pub fn </span>add_test_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr) {
-            <span class="self">self</span>.add_node_addr(node_addr, Source::NamedApp { name: <span class="string">"test" </span>})
-                .unwrap()
+            <span class="self">self</span>.add_node_addr(
+                node_addr,
+                Source::NamedApp {
+                    name: <span class="string">"test"</span>.into(),
+                },
+            )
+            .unwrap()
         }
     }
 
@@ -7680,7 +7729,12 @@
             },
         };
         msock_1
-            .add_node_addr(node_addr_2, Source::NamedApp { name: <span class="string">"test" </span>})
+            .add_node_addr(
+                node_addr_2,
+                Source::NamedApp {
+                    name: <span class="string">"test"</span>.into(),
+                },
+            )
             .unwrap();
         <span class="kw">let </span>addr = msock_1.get_mapping_addr(node_id_2).unwrap();
         <span class="kw">let </span>res = tokio::time::timeout(
@@ -7736,7 +7790,9 @@
                 node_id: node_id_2,
                 info: AddrInfo::default(),
             },
-            Source::NamedApp { name: <span class="string">"test" </span>},
+            Source::NamedApp {
+                name: <span class="string">"test"</span>.into(),
+            },
         );
         <span class="kw">let </span>addr_2 = msock_1.get_mapping_addr(node_id_2).unwrap();
 
@@ -7779,7 +7835,9 @@
                         .collect(),
                 },
             },
-            Source::NamedApp { name: <span class="string">"test" </span>},
+            Source::NamedApp {
+                name: <span class="string">"test"</span>.into(),
+            },
         );
 
         <span class="comment">// We can now connect

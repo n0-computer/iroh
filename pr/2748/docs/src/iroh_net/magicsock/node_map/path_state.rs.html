@@ -292,9 +292,40 @@
 <a href="#292" id="292">292</a>
 <a href="#293" id="293">293</a>
 <a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The state kept for each network path to a remote node.
 
-</span><span class="kw">use </span>std::collections::BTreeMap;
+</span><span class="kw">use </span>std::collections::{BTreeMap, HashMap};
 <span class="kw">use </span>std::net::SocketAddr;
 <span class="kw">use </span>std::time::{Duration, Instant};
 
@@ -306,7 +337,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::stun;
 
 <span class="kw">use </span><span class="kw">super</span>::node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT};
-<span class="kw">use super</span>::{IpPort, PingRole};
+<span class="kw">use super</span>::{IpPort, PingRole, Source};
 
 <span class="doccomment">/// The minimum time between pings to an endpoint.
 ///
@@ -319,7 +350,7 @@
 /// This state is used for both the relay path and any direct UDP paths.
 ///
 /// [`NodeState`]: super::node_state::NodeState
-</span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+</span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PathState {
     <span class="doccomment">/// The node for which this path exists.
     </span>node_id: NodeId,
@@ -345,10 +376,18 @@
     ///
     /// This excludes DISCO messages.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) last_payload_msg: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
+    <span class="doccomment">/// Sources is a map of [`Source`]s to [`Instant`]s, keeping track of all the ways we have
+    /// learned about this path
+    ///
+    /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size of
+    /// the map of sources down to one entry per type of source.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) sources: HashMap&lt;Source, Instant&gt;,
 }
 
 <span class="kw">impl </span>PathState {
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(node_id: NodeId, path: SendAddr) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(node_id: NodeId, path: SendAddr, source: Source, now: Instant) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>sources = HashMap::new();
+        sources.insert(source, now);
         <span class="self">Self </span>{
             node_id,
             path,
@@ -357,6 +396,7 @@
             call_me_maybe_time: <span class="prelude-val">None</span>,
             recent_pong: <span class="prelude-val">None</span>,
             last_payload_msg: <span class="prelude-val">None</span>,
+            sources,
         }
     }
 
@@ -367,7 +407,14 @@
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>with_last_payload(node_id: NodeId, path: SendAddr, now: Instant) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>with_last_payload(
+        node_id: NodeId,
+        path: SendAddr,
+        source: Source,
+        now: Instant,
+    ) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>sources = HashMap::new();
+        sources.insert(source, now);
         PathState {
             node_id,
             path,
@@ -376,6 +423,7 @@
             call_me_maybe_time: <span class="prelude-val">None</span>,
             recent_pong: <span class="prelude-val">None</span>,
             last_payload_msg: <span class="prelude-val">Some</span>(now),
+            sources,
         }
     }
 
@@ -383,9 +431,10 @@
         node_id: NodeId,
         path: SendAddr,
         tx_id: stun::TransactionId,
+        source: Source,
         now: Instant,
     ) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span><span class="kw-2">mut </span>new = PathState::new(node_id, path);
+        <span class="kw">let </span><span class="kw-2">mut </span>new = PathState::new(node_id, path, source, now);
         new.handle_ping(tx_id, now);
         new
     }
@@ -415,6 +464,7 @@
             call_me_maybe_time: <span class="prelude-val">None</span>,
             recent_pong: <span class="prelude-val">Some</span>(r),
             last_payload_msg: <span class="prelude-val">None</span>,
+            sources: HashMap::new(),
         }
     }
 
@@ -545,6 +595,10 @@
         }
     }
 
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>add_source(<span class="kw-2">&amp;mut </span><span class="self">self</span>, source: Source, now: Instant) {
+        <span class="self">self</span>.sources.insert(source, now);
+    }
+
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>clear(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="self">self</span>.last_ping = <span class="prelude-val">None</span>;
         <span class="self">self</span>.last_got_ping = <span class="prelude-val">None</span>;
@@ -565,6 +619,14 @@
         }
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>when) = <span class="self">self</span>.last_ping {
             <span class="macro">write!</span>(w, <span class="string">"ping-sent({:?} ago) "</span>, when.elapsed())<span class="question-mark">?</span>;
+        }
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(last_source) = <span class="self">self</span>.sources.iter().max_by_key(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, instant)| instant) {
+            <span class="macro">write!</span>(
+                w,
+                <span class="string">"last-source: {}({:?} ago)"</span>,
+                last_source.<span class="number">0</span>,
+                last_source.<span class="number">1</span>.elapsed()
+            )<span class="question-mark">?</span>;
         }
         <span class="macro">write!</span>(w, <span class="string">"}}"</span>)
     }
