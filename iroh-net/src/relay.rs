@@ -15,6 +15,7 @@ pub(crate) mod codec;
 pub mod http;
 mod map;
 #[cfg(feature = "iroh-relay")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
 pub mod server;
 
 pub use self::client::conn::{Conn as RelayConn, ReceivedMessage};

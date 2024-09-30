@@ -15,6 +15,7 @@ pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
 pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
 /// Testing DNS node origin, must run server from [`crate::test_utils::DnsPkarrServer`].
 #[cfg(any(test, feature = "test-utils"))]
+#[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
 pub const TEST_DNS_NODE_ORIGIN: &str = "dns.iroh.test";
 
 const DNS_STAGGERING_MS: &[u64] = &[200, 300];

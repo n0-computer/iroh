@@ -24,9 +24,11 @@ const MAX_FRAME_SIZE: usize = 1024 * 1024;
 const MAGIC: &str = "RELAY🔑";
 
 #[cfg(feature = "iroh-relay")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
 pub(super) const KEEP_ALIVE: Duration = Duration::from_secs(60);
 // TODO: what should this be?
 #[cfg(feature = "iroh-relay")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
 pub(super) const SERVER_CHANNEL_SIZE: usize = 1024 * 100;
 /// The number of packets buffered for sending per client
 pub(super) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512; //32;
@@ -166,6 +168,7 @@ pub(crate) async fn send_client_key<S: Sink<Frame, Error = std::io::Error> + Unp
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
 #[cfg(feature = "iroh-relay")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
 pub(super) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     stream: S,
 ) -> anyhow::Result<(PublicKey, ClientInfo)> {
@@ -536,6 +539,7 @@ impl Encoder<Frame> for DerpCodec {
 /// Receives the next frame and matches the frame type. If the correct type is found returns the content,
 /// otherwise an error.
 #[cfg(feature = "iroh-relay")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
 pub(super) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     frame_type: FrameType,
     mut stream: S,

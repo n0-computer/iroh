@@ -59,6 +59,7 @@ const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 /// Environment variable to force the use of staging relays.
 #[cfg(not(any(test, feature = "test-utils")))]
+#[cfg_attr(iroh_docsrs, doc(cfg(not(any(test, feature = "test-utils")))))]
 const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
 /// Builder for [`Endpoint`].
@@ -80,6 +81,7 @@ pub struct Builder {
     node_map: Option<Vec<NodeAddr>>,
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
+    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     insecure_skip_relay_cert_verify: bool,
     addr_v4: Option<SocketAddrV4>,
     addr_v6: Option<SocketAddrV6>,
@@ -288,6 +290,7 @@ impl Builder {
     ///
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
+    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
         self

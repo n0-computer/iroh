@@ -82,6 +82,7 @@ pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     pub stun: Option<StunConfig>,
     /// Socket to serve metrics on.
     #[cfg(feature = "metrics")]
+    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "metrics")))]
     pub metrics_addr: Option<SocketAddr>,
 }
 

@@ -51,6 +51,7 @@ use tracing::{debug, error_span, warn, Instrument};
 pub mod dns;
 
 #[cfg(feature = "discovery-local-network")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-local-network")))]
 pub mod local_swarm_discovery;
 pub mod pkarr;
 

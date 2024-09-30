@@ -219,6 +219,7 @@ pub struct ClientBuilder {
     protocol: Protocol,
     /// Allow self-signed certificates from relay servers
     #[cfg(any(test, feature = "test-utils"))]
+    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     insecure_skip_cert_verify: bool,
     /// HTTP Proxy
     proxy_url: Option<Url>,
@@ -291,6 +292,7 @@ impl ClientBuilder {
     ///
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
+    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub fn insecure_skip_cert_verify(mut self, skip: bool) -> Self {
         self.insecure_skip_cert_verify = skip;
         self
@@ -1049,6 +1051,7 @@ async fn resolve_host(
 
 /// Used to allow self signed certificates in tests
 #[cfg(any(test, feature = "test-utils"))]
+#[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
 #[derive(Debug)]
 struct NoCertVerifier;
 
