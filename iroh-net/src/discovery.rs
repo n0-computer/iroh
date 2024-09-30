@@ -12,7 +12,7 @@
 //! Node discovery is an automated system for an [`Endpoint`] to retrieve this addressing
 //! information.  Each iroh-net node will automatically publish their own addressing
 //! information.  Usually this means publishing which [`RelayUrl`] to use for their
-//! [`NodeId`], but they could also publish direct addresses.
+//! [`NodeId`], but they could also publish their direct addresses.
 //!
 //! The [`Discovery`] trait is used to define node discovery.  This allows multiple
 //! implementations to co-exist because there are many possible ways to implement this.
