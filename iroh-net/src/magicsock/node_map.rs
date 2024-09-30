@@ -11,6 +11,7 @@ use futures_lite::stream::Stream;
 use iroh_base::key::NodeId;
 use iroh_metrics::inc;
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};
 
@@ -84,22 +85,47 @@ enum NodeStateKey {
     IpPort(IpPort),
 }
 
-/// Source for a new node.
+/// The origin or *source* through which an address associated with a remote node
+/// was discovered.
 ///
-/// This is used for debugging purposes.
-#[derive(strum::Display, Debug)]
+/// An aggregate of the [`Source`]s of all the addresses of a node describe the
+/// [`Source`]s of the node itself.
+///
+/// A [`Source`] helps track how and where an address was learned. Multiple
+/// sources can be associated with a single address, if we have discovered this
+/// address through multiple means.
+///
+/// Each time a [`NodeAddr`] is added to the node map, usually through
+/// [`crate::endpoint::Endpoint::add_node_addr_with_source`], a [`Source`] must be supplied to indicate
+/// how the address was obtained.
+///
+/// A [`Source`] can describe a variety of places that an address or node was
+/// discovered, such as a configured discovery service, the network itself
+/// (if another node has reached out to us), or as a user supplied [`NodeAddr`].
+
+#[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq, Hash)]
 #[strum(serialize_all = "kebab-case")]
-pub(crate) enum Source {
-    /// Node was loaded from the fs.
+pub enum Source {
+    /// Address was loaded from the fs.
     Saved,
-    /// Node communicated with us first via UDP.
+    /// A node communicated with us first via UDP.
     Udp,
-    /// Node communicated with us first via relay.
+    /// A node communicated with us first via relay.
     Relay,
-    /// Application layer added the node directly.
+    /// Application layer added the address directly.
     App,
+    /// The address was discovered by a discovery service.
     #[strum(serialize = "{name}")]
-    NamedApp { name: &'static str },
+    Discovery {
+        /// The name of the discovery service that discovered the address.
+        name: String,
+    },
+    /// Application layer with a specific name added the node directly.
+    #[strum(serialize = "{name}")]
+    NamedApp {
+        /// The name of the application that added the node
+        name: String,
+    },
 }
 
 impl NodeMap {
@@ -281,13 +307,14 @@ impl NodeMapInner {
     fn add_node_addr(&mut self, node_addr: NodeAddr, source: Source) {
         let NodeAddr { node_id, info } = node_addr;
 
+        let source0 = source.clone();
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
             node_id,
             relay_url: info.relay_url.clone(),
             active: false,
             source,
         });
-        node_state.update_from_node_addr(&info);
+        node_state.update_from_node_addr(&info, source0);
         let id = node_state.id();
         for addr in &info.direct_addresses {
             self.set_node_state_for_ip_port(*addr, id);
@@ -636,7 +663,12 @@ mod tests {
     impl NodeMap {
         #[track_caller]
         fn add_test_addr(&self, node_addr: NodeAddr) {
-            self.add_node_addr(node_addr, Source::NamedApp { name: "test" })
+            self.add_node_addr(
+                node_addr,
+                Source::NamedApp {
+                    name: "test".into(),
+                },
+            )
         }
     }
 
@@ -719,7 +751,9 @@ mod tests {
                 node_id: public_key,
                 relay_url: None,
                 active: false,
-                source: Source::NamedApp { name: "test" },
+                source: Source::NamedApp {
+                    name: "test".into(),
+                },
             })
             .id();
 

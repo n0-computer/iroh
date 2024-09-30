@@ -20,7 +20,8 @@ use crate::{
     key::SecretKey,
     AddrInfo, Endpoint, NodeId,
 };
-use futures_lite::StreamExt;
+use futures_lite::{stream::Boxed, StreamExt};
+
 use genawaiter::sync::{Co, Gen};
 use pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
@@ -281,9 +282,11 @@ impl DhtDiscovery {
         match response {
             Ok(Some(signed_packet)) => {
                 if let Ok(node_info) = NodeInfo::from_pkarr_signed_packet(&signed_packet) {
+                    let node_id = node_info.node_id;
                     let addr_info = node_info.into();
                     tracing::info!("discovered node info from relay {:?}", addr_info);
                     co.yield_(Ok(DiscoveryItem {
+                        node_id,
                         provenance: "relay",
                         last_updated: None,
                         addr_info,
@@ -325,9 +328,11 @@ impl DhtDiscovery {
             return;
         };
         if let Ok(node_info) = NodeInfo::from_pkarr_signed_packet(&signed_packet) {
+            let node_id = node_info.node_id;
             let addr_info = node_info.into();
             tracing::info!("discovered node info from DHT {:?}", addr_info);
             co.yield_(Ok(DiscoveryItem {
+                node_id,
                 provenance: "mainline",
                 last_updated: None,
                 addr_info,
@@ -378,7 +383,7 @@ impl Discovery for DhtDiscovery {
         &self,
         _endpoint: Endpoint,
         node_id: NodeId,
-    ) -> Option<futures_lite::stream::Boxed<anyhow::Result<DiscoveryItem>>> {
+    ) -> Option<Boxed<anyhow::Result<DiscoveryItem>>> {
         let this = self.clone();
         let pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
@@ -417,10 +422,12 @@ mod tests {
             .client(client)
             .build()?;
         let relay_url: RelayUrl = Url::parse("https://example.com")?.into();
+
         discovery.publish(&AddrInfo {
             relay_url: Some(relay_url.clone()),
             direct_addresses: Default::default(),
         });
+
         // publish is fire and forget, so we have no way to wait until it is done.
         tokio::time::sleep(Duration::from_secs(1)).await;
         let items = discovery

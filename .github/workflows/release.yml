@@ -289,4 +289,3 @@ jobs:
         release_version: ${{ needs.build_release.outputs.release_version }}
         base_hash: ${{ needs.build_release.outputs.base_hash }}
         publish: true
-        

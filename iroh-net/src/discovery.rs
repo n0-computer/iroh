@@ -41,22 +41,18 @@
 
 use std::time::Duration;
 
+use crate::{AddrInfo, Endpoint, NodeId};
 use anyhow::{anyhow, ensure, Result};
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error_span, warn, Instrument};
 
-use crate::{AddrInfo, Endpoint, NodeId};
-
 pub mod dns;
 
 #[cfg(feature = "discovery-local-network")]
 pub mod local_swarm_discovery;
 pub mod pkarr;
-
-/// Name used for logging when new node addresses are added from discovery.
-const SOURCE_NAME: &str = "discovery";
 
 /// Node discovery for [`super::Endpoint`].
 ///
@@ -95,11 +91,37 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     ) -> Option<BoxStream<Result<DiscoveryItem>>> {
         None
     }
+
+    /// Subscribe to all addresses that get *passively* discovered.
+    ///
+    /// An implementation may choose to defer emitting passively discovered nodes
+    /// until the stream is actually polled. To avoid missing discovered nodes,
+    /// poll the stream as soon as possible.
+    ///
+    /// Any discovery systems that only discover when explicitly resolving a
+    /// specific [`NodeId`] do not need to implement this method. Any nodes or
+    /// addresses that are discovered by calling `resolve` should NOT be added
+    /// to the `subscribe` stream.
+    ///
+    /// Discovery systems that are capable of receiving information about [`NodeId`]s
+    /// and their [`AddrInfo`]s without explicitly calling `resolve`, i.e.,
+    /// systems that do "passive" discovery, should implement this method. If
+    /// `subscribe` is called multiple times, the passively discovered addresses
+    /// should be sent on all streams.
+    ///
+    /// The [`crate::endpoint::Endpoint`] will `subscribe` to the discovery system
+    /// and add the discovered addresses to the internal address book as they arrive
+    /// on this stream.
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+        None
+    }
 }
 
 /// The results returned from [`Discovery::resolve`].
 #[derive(Debug, Clone)]
 pub struct DiscoveryItem {
+    /// The [`NodeId`] whose address we have discovered
+    pub node_id: NodeId,
     /// A static string to identify the discovery source.
     ///
     /// Should be uniform per discovery service.
@@ -165,7 +187,19 @@ impl Discovery for ConcurrentDiscovery {
             .iter()
             .filter_map(|service| service.resolve(endpoint.clone(), node_id));
 
-        let streams = futures_buffered::Merge::from_iter(streams);
+        let streams = futures_buffered::MergeBounded::from_iter(streams);
+        Some(Box::pin(streams))
+    }
+
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+        let mut streams = vec![];
+        for service in self.services.iter() {
+            if let Some(stream) = service.subscribe() {
+                streams.push(stream)
+            }
+        }
+
+        let streams = futures_buffered::MergeBounded::from_iter(streams);
         Some(Box::pin(streams))
     }
 }
@@ -307,7 +341,7 @@ impl DiscoveryTask {
                         info: r.addr_info,
                         node_id,
                     };
-                    ep.add_node_addr_with_source(addr, SOURCE_NAME).ok();
+                    ep.add_node_addr_with_source(addr, r.provenance).ok();
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
@@ -417,6 +451,7 @@ mod tests {
             let stream = match addr_info {
                 Some((addr_info, ts)) => {
                     let item = DiscoveryItem {
+                        node_id,
                         provenance: "test-disco",
                         last_updated: Some(ts),
                         addr_info,

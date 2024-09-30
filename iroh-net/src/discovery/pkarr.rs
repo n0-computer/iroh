@@ -242,11 +242,13 @@ impl Discovery for PkarrResolver {
         let fut = async move {
             let signed_packet = pkarr_client.resolve(node_id).await?;
             let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)?;
-            Ok(DiscoveryItem {
+            let item = DiscoveryItem {
+                node_id,
                 provenance: "pkarr",
                 last_updated: None,
                 addr_info: info.into(),
-            })
+            };
+            Ok(item)
         };
         let stream = futures_lite::stream::once_future(fut);
         Some(Box::pin(stream))
