@@ -2488,7 +2488,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2543,7 +2543,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2587,7 +2587,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-blobs"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2639,7 +2639,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-cli"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2696,7 +2696,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2745,7 +2745,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-docs"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2786,7 +2786,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-gossip"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2830,7 +2830,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "erased_set",
@@ -2849,7 +2849,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2945,7 +2945,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-bench"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3014,7 +3014,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-test"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "tokio",
