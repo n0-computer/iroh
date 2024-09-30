@@ -413,6 +413,8 @@
 <a href="#413" id="413">413</a>
 <a href="#414" id="414">414</a>
 <a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
@@ -513,7 +515,7 @@
 
 <span class="doccomment">/// Publisher of node discovery information to a [pkarr] relay.
 ///
-/// This publisher uses HTTP to publish to node discovery information to a pkarr relay
+/// This publisher uses HTTP to publish node discovery information to a pkarr relay
 /// server, see the [module docs] for details.
 ///
 /// This implements the [`Discovery`] trait to be used as a node discovery service.  Note
@@ -728,7 +730,7 @@
     /// This uses the pkarr relay server operated by [number 0] at
     /// [`N0_DNS_PKARR_RELAY_PROD`].
     ///
-    /// When compiling for tests, i.e. when using `cfg(test)` is true, or when the
+    /// When compiling for tests, i.e. when `cfg(test)` is true, or when the
     /// `test-utils` crate feature is enabled the [`N0_DNS_PKARR_RELAY_STAGING`] server is
     /// used instead.
     ///
@@ -754,11 +756,13 @@
         <span class="kw">let </span>fut = <span class="kw">async move </span>{
             <span class="kw">let </span>signed_packet = pkarr_client.resolve(node_id).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span>info = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet)<span class="question-mark">?</span>;
-            <span class="prelude-val">Ok</span>(DiscoveryItem {
+            <span class="kw">let </span>item = DiscoveryItem {
+                node_id,
                 provenance: <span class="string">"pkarr"</span>,
                 last_updated: <span class="prelude-val">None</span>,
                 addr_info: info.into(),
-            })
+            };
+            <span class="prelude-val">Ok</span>(item)
         };
         <span class="kw">let </span>stream = futures_lite::stream::once_future(fut);
         <span class="prelude-val">Some</span>(Box::pin(stream))

@@ -782,6 +782,41 @@
 <a href="#782" id="782">782</a>
 <a href="#783" id="783">783</a>
 <a href="#784" id="784">784</a>
+<a href="#785" id="785">785</a>
+<a href="#786" id="786">786</a>
+<a href="#787" id="787">787</a>
+<a href="#788" id="788">788</a>
+<a href="#789" id="789">789</a>
+<a href="#790" id="790">790</a>
+<a href="#791" id="791">791</a>
+<a href="#792" id="792">792</a>
+<a href="#793" id="793">793</a>
+<a href="#794" id="794">794</a>
+<a href="#795" id="795">795</a>
+<a href="#796" id="796">796</a>
+<a href="#797" id="797">797</a>
+<a href="#798" id="798">798</a>
+<a href="#799" id="799">799</a>
+<a href="#800" id="800">800</a>
+<a href="#801" id="801">801</a>
+<a href="#802" id="802">802</a>
+<a href="#803" id="803">803</a>
+<a href="#804" id="804">804</a>
+<a href="#805" id="805">805</a>
+<a href="#806" id="806">806</a>
+<a href="#807" id="807">807</a>
+<a href="#808" id="808">808</a>
+<a href="#809" id="809">809</a>
+<a href="#810" id="810">810</a>
+<a href="#811" id="811">811</a>
+<a href="#812" id="812">812</a>
+<a href="#813" id="813">813</a>
+<a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a>
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
+<a href="#819" id="819">819</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh-net node a [`NodeAddr`] is needed, which needs to contain either a
@@ -825,22 +860,18 @@
 
 </span><span class="kw">use </span>std::time::Duration;
 
+<span class="kw">use crate</span>::{AddrInfo, Endpoint, NodeId};
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::stream::{Boxed <span class="kw">as </span>BoxStream, StreamExt};
 <span class="kw">use </span>iroh_base::node_addr::NodeAddr;
 <span class="kw">use </span>tokio::{sync::oneshot, task::JoinHandle};
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 
-<span class="kw">use crate</span>::{AddrInfo, Endpoint, NodeId};
-
 <span class="kw">pub mod </span>dns;
 
 <span class="attr">#[cfg(feature = <span class="string">"discovery-local-network"</span>)]
 </span><span class="kw">pub mod </span>local_swarm_discovery;
 <span class="kw">pub mod </span>pkarr;
-
-<span class="doccomment">/// Name used for logging when new node addresses are added from discovery.
-</span><span class="kw">const </span>SOURCE_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"discovery"</span>;
 
 <span class="doccomment">/// Node discovery for [`super::Endpoint`].
 ///
@@ -879,11 +910,37 @@
     ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
         <span class="prelude-val">None
     </span>}
+
+    <span class="doccomment">/// Subscribe to all addresses that get *passively* discovered.
+    ///
+    /// An implementation may choose to defer emitting passively discovered nodes
+    /// until the stream is actually polled. To avoid missing discovered nodes,
+    /// poll the stream as soon as possible.
+    ///
+    /// Any discovery systems that only discover when explicitly resolving a
+    /// specific [`NodeId`] do not need to implement this method. Any nodes or
+    /// addresses that are discovered by calling `resolve` should NOT be added
+    /// to the `subscribe` stream.
+    ///
+    /// Discovery systems that are capable of receiving information about [`NodeId`]s
+    /// and their [`AddrInfo`]s without explicitly calling `resolve`, i.e.,
+    /// systems that do "passive" discovery, should implement this method. If
+    /// `subscribe` is called multiple times, the passively discovered addresses
+    /// should be sent on all streams.
+    ///
+    /// The [`crate::endpoint::Endpoint`] will `subscribe` to the discovery system
+    /// and add the discovered addresses to the internal address book as they arrive
+    /// on this stream.
+    </span><span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;DiscoveryItem&gt;&gt; {
+        <span class="prelude-val">None
+    </span>}
 }
 
 <span class="doccomment">/// The results returned from [`Discovery::resolve`].
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>DiscoveryItem {
+    <span class="doccomment">/// The [`NodeId`] whose address we have discovered
+    </span><span class="kw">pub </span>node_id: NodeId,
     <span class="doccomment">/// A static string to identify the discovery source.
     ///
     /// Should be uniform per discovery service.
@@ -949,7 +1006,19 @@
             .iter()
             .filter_map(|service| service.resolve(endpoint.clone(), node_id));
 
-        <span class="kw">let </span>streams = futures_buffered::Merge::from_iter(streams);
+        <span class="kw">let </span>streams = futures_buffered::MergeBounded::from_iter(streams);
+        <span class="prelude-val">Some</span>(Box::pin(streams))
+    }
+
+    <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;DiscoveryItem&gt;&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>streams = <span class="macro">vec!</span>[];
+        <span class="kw">for </span>service <span class="kw">in </span><span class="self">self</span>.services.iter() {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(stream) = service.subscribe() {
+                streams.push(stream)
+            }
+        }
+
+        <span class="kw">let </span>streams = futures_buffered::MergeBounded::from_iter(streams);
         <span class="prelude-val">Some</span>(Box::pin(streams))
     }
 }
@@ -1091,7 +1160,7 @@
                         info: r.addr_info,
                         node_id,
                     };
-                    ep.add_node_addr_with_source(addr, SOURCE_NAME).ok();
+                    ep.add_node_addr_with_source(addr, r.provenance).ok();
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(tx) = on_first_tx.take() {
                         tx.send(<span class="prelude-val">Ok</span>(())).ok();
                     }
@@ -1201,6 +1270,7 @@
             <span class="kw">let </span>stream = <span class="kw">match </span>addr_info {
                 <span class="prelude-val">Some</span>((addr_info, ts)) =&gt; {
                     <span class="kw">let </span>item = DiscoveryItem {
+                        node_id,
                         provenance: <span class="string">"test-disco"</span>,
                         last_updated: <span class="prelude-val">Some</span>(ts),
                         addr_info,

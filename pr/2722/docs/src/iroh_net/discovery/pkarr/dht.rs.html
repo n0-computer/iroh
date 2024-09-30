@@ -446,6 +446,13 @@
 <a href="#446" id="446">446</a>
 <a href="#447" id="447">447</a>
 <a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh-net, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh-net which can use both pkarr
@@ -467,7 +474,8 @@
     key::SecretKey,
     AddrInfo, Endpoint, NodeId,
 };
-<span class="kw">use </span>futures_lite::StreamExt;
+<span class="kw">use </span>futures_lite::{stream::Boxed, StreamExt};
+
 <span class="kw">use </span>genawaiter::sync::{Co, Gen};
 <span class="kw">use </span>pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
@@ -737,9 +745,11 @@
         <span class="kw">match </span>response {
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(signed_packet)) =&gt; {
                 <span class="kw">if let </span><span class="prelude-val">Ok</span>(node_info) = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
+                    <span class="kw">let </span>node_id = node_info.node_id;
                     <span class="kw">let </span>addr_info = node_info.into();
                     <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from relay {:?}"</span>, addr_info);
                     co.yield_(<span class="prelude-val">Ok</span>(DiscoveryItem {
+                        node_id,
                         provenance: <span class="string">"relay"</span>,
                         last_updated: <span class="prelude-val">None</span>,
                         addr_info,
@@ -781,9 +791,11 @@
             <span class="kw">return</span>;
         };
         <span class="kw">if let </span><span class="prelude-val">Ok</span>(node_info) = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
+            <span class="kw">let </span>node_id = node_info.node_id;
             <span class="kw">let </span>addr_info = node_info.into();
             <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from DHT {:?}"</span>, addr_info);
             co.yield_(<span class="prelude-val">Ok</span>(DiscoveryItem {
+                node_id,
                 provenance: <span class="string">"mainline"</span>,
                 last_updated: <span class="prelude-val">None</span>,
                 addr_info,
@@ -834,7 +846,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         _endpoint: Endpoint,
         node_id: NodeId,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;futures_lite::stream::Boxed&lt;anyhow::Result&lt;DiscoveryItem&gt;&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;Boxed&lt;anyhow::Result&lt;DiscoveryItem&gt;&gt;&gt; {
         <span class="kw">let </span>this = <span class="self">self</span>.clone();
         <span class="kw">let </span>pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect(<span class="string">"valid public key"</span>);
@@ -873,10 +885,12 @@
             .client(client)
             .build()<span class="question-mark">?</span>;
         <span class="kw">let </span>relay_url: RelayUrl = Url::parse(<span class="string">"https://example.com"</span>)<span class="question-mark">?</span>.into();
+
         discovery.publish(<span class="kw-2">&amp;</span>AddrInfo {
             relay_url: <span class="prelude-val">Some</span>(relay_url.clone()),
             direct_addresses: Default::default(),
         });
+
         <span class="comment">// publish is fire and forget, so we have no way to wait until it is done.
         </span>tokio::time::sleep(Duration::from_secs(<span class="number">1</span>)).<span class="kw">await</span>;
         <span class="kw">let </span>items = discovery

@@ -1165,11 +1165,6 @@
 <a href="#1165" id="1165">1165</a>
 <a href="#1166" id="1166">1166</a>
 <a href="#1167" id="1167">1167</a>
-<a href="#1168" id="1168">1168</a>
-<a href="#1169" id="1169">1169</a>
-<a href="#1170" id="1170">1170</a>
-<a href="#1171" id="1171">1171</a>
-<a href="#1172" id="1172">1172</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! Netcheck is responsible for finding out the network conditions of the current host, like
@@ -1337,8 +1332,8 @@
 /// If all [`Client`]s are dropped the actor stops running.
 ///
 /// While running the netcheck actor expects to be passed all received stun packets using
-/// [`Client::receive_stun_packet`].
-</span><span class="attr">#[derive(Debug, Clone)]
+/// `Addr::receive_stun_packet`.
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>Client {
     <span class="doccomment">/// Channel to send message to the [`Actor`].
     ///
@@ -1389,27 +1384,12 @@
         })
     }
 
-    <span class="doccomment">/// Pass a received STUN packet to the netchecker.
+    <span class="doccomment">/// Returns a new address to send messages to this actor.
     ///
-    /// Normally the UDP sockets to send STUN messages from are passed in so that STUN
-    /// packets are sent from the sockets that carry the real traffic.  However because
-    /// these sockets carry real traffic they will also receive non-STUN traffic, thus the
-    /// netcheck actor does not read from the sockets directly.  If you receive a STUN
-    /// packet on the socket you should pass it to this method.
-    ///
-    /// It is safe to call this even when the netcheck actor does not currently have any
-    /// in-flight STUN probes.  The actor will simply ignore any stray STUN packets.
-    ///
-    /// There is an implicit queue here which may drop packets if the actor does not keep up
-    /// consuming them.
-    </span><span class="kw">pub fn </span>receive_stun_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, payload: Bytes, src: SocketAddr) {
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(mpsc::error::TrySendError::Full(<span class="kw">_</span>)) = <span class="self">self</span>.addr.try_send(Message::StunPacket {
-            payload,
-            from_addr: src,
-        }) {
-            <span class="macro">inc!</span>(NetcheckMetrics, stun_packets_dropped);
-            <span class="macro">warn!</span>(<span class="string">"dropping stun packet from {}"</span>, src);
-        }
+    /// Unlike the client itself the returned [`Addr`] does not own the actor task, it only
+    /// allows sending messages to the actor.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Addr {
+        <span class="self">self</span>.addr.clone()
     }
 
     <span class="doccomment">/// Runs a netcheck, returning the report.
@@ -1420,7 +1400,7 @@
     /// STUN packets.  This function **will not read from the sockets**, as they may be
     /// receiving other traffic as well, normally they are the sockets carrying the real
     /// traffic. Thus all stun packets received on those sockets should be passed to
-    /// [`Client::receive_stun_packet`] in order for this function to receive the stun
+    /// `Addr::receive_stun_packet` in order for this function to receive the stun
     /// responses and function correctly.
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results
@@ -1518,27 +1498,37 @@
 /// Unlike [`Client`] this is the raw channel to send messages over.  Keeping this alive
 /// will not keep the actor alive, which makes this handy to pass to internal tasks.
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">struct </span>Addr {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Addr {
     sender: mpsc::Sender&lt;Message&gt;,
 }
 
 <span class="kw">impl </span>Addr {
+    <span class="doccomment">/// Pass a received STUN packet to the netchecker.
+    ///
+    /// Normally the UDP sockets to send STUN messages from are passed in so that STUN
+    /// packets are sent from the sockets that carry the real traffic.  However because
+    /// these sockets carry real traffic they will also receive non-STUN traffic, thus the
+    /// netcheck actor does not read from the sockets directly.  If you receive a STUN
+    /// packet on the socket you should pass it to this method.
+    ///
+    /// It is safe to call this even when the netcheck actor does not currently have any
+    /// in-flight STUN probes.  The actor will simply ignore any stray STUN packets.
+    ///
+    /// There is an implicit queue here which may drop packets if the actor does not keep up
+    /// consuming them.
+    </span><span class="kw">pub fn </span>receive_stun_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, payload: Bytes, src: SocketAddr) {
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(mpsc::error::TrySendError::Full(<span class="kw">_</span>)) = <span class="self">self</span>.sender.try_send(Message::StunPacket {
+            payload,
+            from_addr: src,
+        }) {
+            <span class="macro">inc!</span>(NetcheckMetrics, stun_packets_dropped);
+            <span class="macro">warn!</span>(<span class="string">"dropping stun packet from {}"</span>, src);
+        }
+    }
+
     <span class="kw">async fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, msg: Message) -&gt; <span class="prelude-ty">Result</span>&lt;(), mpsc::error::SendError&lt;Message&gt;&gt; {
         <span class="self">self</span>.sender.send(msg).<span class="kw">await</span>.inspect_err(|<span class="kw">_</span>| {
             <span class="macro">error!</span>(<span class="string">"netcheck actor lost"</span>);
-        })
-    }
-
-    <span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, msg: Message) -&gt; <span class="prelude-ty">Result</span>&lt;(), mpsc::error::TrySendError&lt;Message&gt;&gt; {
-        <span class="self">self</span>.sender.try_send(msg).inspect_err(|err| {
-            <span class="kw">match </span>err {
-                mpsc::error::TrySendError::Full(<span class="kw">_</span>) =&gt; {
-                    <span class="comment">// TODO: metrics, though the only place that uses this already does its
-                    // own metrics.
-                    </span><span class="macro">warn!</span>(<span class="string">"netcheck actor inbox full"</span>);
-                }
-                mpsc::error::TrySendError::Closed(<span class="kw">_</span>) =&gt; <span class="macro">error!</span>(<span class="string">"netcheck actor lost"</span>),
-            }
         })
     }
 }
@@ -2315,7 +2305,7 @@
         <span class="macro">info!</span>(addr=<span class="question-mark">?</span>sock.local_addr().unwrap(), <span class="string">"Using local addr"</span>);
         <span class="kw">let </span>task = {
             <span class="kw">let </span>sock = sock.clone();
-            <span class="kw">let </span>client = client.clone();
+            <span class="kw">let </span>addr = client.addr();
             tokio::spawn(
                 <span class="kw">async move </span>{
                     <span class="kw">let </span><span class="kw-2">mut </span>buf = BytesMut::zeroed(<span class="number">64 </span>&lt;&lt; <span class="number">10</span>);
@@ -2327,7 +2317,7 @@
                             <span class="string">"Forwarding payload to netcheck client"</span>,
                         );
                         <span class="kw">let </span>payload = buf.split_to(count).freeze();
-                        client.receive_stun_packet(payload, src);
+                        addr.receive_stun_packet(payload, src);
                     }
                 }
                 .instrument(<span class="macro">info_span!</span>(<span class="string">"pkt-fwd"</span>)),

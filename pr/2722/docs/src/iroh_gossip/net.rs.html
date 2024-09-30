@@ -1004,15 +1004,6 @@
 <a href="#1004" id="1004">1004</a>
 <a href="#1005" id="1005">1005</a>
 <a href="#1006" id="1006">1006</a>
-<a href="#1007" id="1007">1007</a>
-<a href="#1008" id="1008">1008</a>
-<a href="#1009" id="1009">1009</a>
-<a href="#1010" id="1010">1010</a>
-<a href="#1011" id="1011">1011</a>
-<a href="#1012" id="1012">1012</a>
-<a href="#1013" id="1013">1013</a>
-<a href="#1014" id="1014">1014</a>
-<a href="#1015" id="1015">1015</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Networking for the `iroh-gossip` protocol
 
 </span><span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
@@ -1026,7 +1017,7 @@
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>iroh_net::{
     dialer::Dialer,
-    endpoint::{get_remote_node_id, Connection},
+    endpoint::{get_remote_node_id, Connection, DirectAddr},
     key::PublicKey,
     AddrInfo, Endpoint, NodeAddr, NodeId,
 };
@@ -1069,8 +1060,6 @@
 </span><span class="kw">const </span>TO_ACTOR_CAP: usize = <span class="number">64</span>;
 <span class="doccomment">/// Channel capacity for the InEvent message queue (single)
 </span><span class="kw">const </span>IN_EVENT_CAP: usize = <span class="number">1024</span>;
-<span class="doccomment">/// Channel capacity for endpoint change message queue (single)
-</span><span class="kw">const </span>ON_ENDPOINTS_CAP: usize = <span class="number">64</span>;
 <span class="doccomment">/// Name used for logging when new node addresses are added from gossip.
 </span><span class="kw">const </span>SOURCE_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"gossip"</span>;
 
@@ -1105,7 +1094,6 @@
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>Gossip {
     to_actor_tx: mpsc::Sender&lt;ToActor&gt;,
-    on_direct_addrs_tx: mpsc::Sender&lt;Vec&lt;iroh_net::endpoint::DirectAddr&gt;&gt;,
     _actor_handle: Arc&lt;AbortOnDropHandle&lt;()&gt;&gt;,
     max_message_size: usize,
 }
@@ -1123,7 +1111,6 @@
         );
         <span class="kw">let </span>(to_actor_tx, to_actor_rx) = mpsc::channel(TO_ACTOR_CAP);
         <span class="kw">let </span>(in_event_tx, in_event_rx) = mpsc::channel(IN_EVENT_CAP);
-        <span class="kw">let </span>(on_endpoints_tx, on_endpoints_rx) = mpsc::channel(ON_ENDPOINTS_CAP);
 
         <span class="kw">let </span>me = endpoint.node_id().fmt_short();
         <span class="kw">let </span>max_message_size = state.max_message_size();
@@ -1134,7 +1121,6 @@
             to_actor_rx,
             in_event_rx,
             in_event_tx,
-            on_direct_addr_rx: on_endpoints_rx,
             timers: Timers::new(),
             command_rx: StreamGroup::new().keyed(),
             peers: Default::default(),
@@ -1153,7 +1139,6 @@
         );
         <span class="self">Self </span>{
             to_actor_tx,
-            on_direct_addrs_tx: on_endpoints_tx,
             _actor_handle: Arc::new(AbortOnDropHandle::new(actor_handle)),
             max_message_size,
         }
@@ -1237,23 +1222,6 @@
         .try_flatten_stream()
     }
 
-    <span class="doccomment">/// Set info on our direct addresses.
-    ///
-    /// This will be sent to peers on Neighbor and Join requests so that they can connect directly
-    /// to us.
-    ///
-    /// This is only best effort, and will drop new events if backed up.
-    </span><span class="kw">pub fn </span>update_direct_addresses(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        addrs: <span class="kw-2">&amp;</span>[iroh_net::endpoint::DirectAddr],
-    ) -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">let </span>addrs = addrs.to_vec();
-        <span class="self">self</span>.on_direct_addrs_tx
-            .try_send(addrs)
-            .map_err(|<span class="kw">_</span>| <span class="macro">anyhow!</span>(<span class="string">"endpoints channel dropped"</span>))<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
-
     <span class="kw">async fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, event: ToActor) -&gt; anyhow::Result&lt;()&gt; {
         <span class="self">self</span>.to_actor_tx
             .send(event)
@@ -1289,8 +1257,6 @@
     </span>in_event_tx: mpsc::Sender&lt;InEvent&gt;,
     <span class="doccomment">/// Input events to the state (emitted from the connection loops)
     </span>in_event_rx: mpsc::Receiver&lt;InEvent&gt;,
-    <span class="doccomment">/// Updates of discovered endpoint addresses
-    </span>on_direct_addr_rx: mpsc::Receiver&lt;Vec&lt;iroh_net::endpoint::DirectAddr&gt;&gt;,
     <span class="doccomment">/// Queued timers
     </span>timers: Timers&lt;Timer&gt;,
     <span class="doccomment">/// Map of topics to their state.
@@ -1307,6 +1273,21 @@
 
 <span class="kw">impl </span>Actor {
     <span class="kw">pub async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
+        <span class="comment">// Watch for changes in direct addresses to update our peer data.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>direct_addresses_stream = <span class="self">self</span>.endpoint.direct_addresses();
+        <span class="comment">// Watch for changes of our home relay to update our peer data.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>home_relay_stream = <span class="self">self</span>.endpoint.watch_home_relay();
+
+        <span class="comment">// With each gossip message we provide addressing information to reach our node.
+        // We wait until at least one direct address is discovered.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>current_addresses = direct_addresses_stream
+            .next()
+            .<span class="kw">await
+            </span>.ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"Failed to discover direct addresses"</span>))<span class="question-mark">?</span>;
+        <span class="kw">let </span>peer_data = our_peer_data(<span class="kw-2">&amp;</span><span class="self">self</span>.endpoint, <span class="kw-2">&amp;</span>current_addresses)<span class="question-mark">?</span>;
+        <span class="self">self</span>.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now())
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
         <span class="kw">let </span><span class="kw-2">mut </span>i = <span class="number">0</span>;
         <span class="kw">loop </span>{
             i += <span class="number">1</span>;
@@ -1329,24 +1310,16 @@
                     <span class="macro">trace!</span>(<span class="question-mark">?</span>i, <span class="string">"tick: command_rx"</span>);
                     <span class="self">self</span>.handle_command(topic, key, command).<span class="kw">await</span><span class="question-mark">?</span>;
                 },
-                new_endpoints = <span class="self">self</span>.on_direct_addr_rx.recv() =&gt; {
+                <span class="prelude-val">Some</span>(new_addresses) = direct_addresses_stream.next() =&gt; {
                     <span class="macro">trace!</span>(<span class="question-mark">?</span>i, <span class="string">"tick: new_endpoints"</span>);
-                    <span class="kw">match </span>new_endpoints {
-                        <span class="prelude-val">Some</span>(endpoints) =&gt; {
-                            <span class="macro">inc!</span>(Metrics, actor_tick_endpoint);
-                            <span class="kw">let </span>addr = NodeAddr::from_parts(
-                                <span class="self">self</span>.endpoint.node_id(),
-                                <span class="self">self</span>.endpoint.home_relay(),
-                                endpoints.into_iter().map(|x| x.addr).collect(),
-                            );
-                            <span class="kw">let </span>peer_data = encode_peer_data(<span class="kw-2">&amp;</span>addr.info)<span class="question-mark">?</span>;
-                            <span class="self">self</span>.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).<span class="kw">await</span><span class="question-mark">?</span>;
-                        }
-                        <span class="prelude-val">None </span>=&gt; {
-                            <span class="macro">debug!</span>(<span class="string">"endpoint change handle dropped, stopping gossip actor"</span>);
-                            <span class="kw">break</span>;
-                        }
-                    }
+                    <span class="macro">inc!</span>(Metrics, actor_tick_endpoint);
+                    current_addresses = new_addresses;
+                    <span class="kw">let </span>peer_data = our_peer_data(<span class="kw-2">&amp;</span><span class="self">self</span>.endpoint, <span class="kw-2">&amp;</span>current_addresses)<span class="question-mark">?</span>;
+                    <span class="self">self</span>.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).<span class="kw">await</span><span class="question-mark">?</span>;
+                }
+                <span class="prelude-val">Some</span>(_relay_url) = home_relay_stream.next() =&gt; {
+                    <span class="kw">let </span>peer_data = our_peer_data(<span class="kw-2">&amp;</span><span class="self">self</span>.endpoint, <span class="kw-2">&amp;</span>current_addresses)<span class="question-mark">?</span>;
+                    <span class="self">self</span>.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 (peer_id, res) = <span class="self">self</span>.dialer.next_conn() =&gt; {
                     <span class="macro">trace!</span>(<span class="question-mark">?</span>i, <span class="string">"tick: dialer"</span>);
@@ -1835,6 +1808,15 @@
             Poll::Pending =&gt; Poll::Pending,
         }
     }
+}
+
+<span class="kw">fn </span>our_peer_data(endpoint: <span class="kw-2">&amp;</span>Endpoint, direct_addresses: <span class="kw-2">&amp;</span>[DirectAddr]) -&gt; <span class="prelude-ty">Result</span>&lt;PeerData&gt; {
+    <span class="kw">let </span>addr = NodeAddr::from_parts(
+        endpoint.node_id(),
+        endpoint.home_relay(),
+        direct_addresses.iter().map(|x| x.addr).collect(),
+    );
+    encode_peer_data(<span class="kw-2">&amp;</span>addr.info)
 }
 
 <span class="attr">#[cfg(test)]

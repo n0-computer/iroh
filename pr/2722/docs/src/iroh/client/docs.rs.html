@@ -1628,7 +1628,7 @@
     </span><span class="kw">async fn </span>test_drop_doc_client_sync() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
-        <span class="kw">let </span>node = <span class="kw">crate</span>::node::Node::memory().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>node = <span class="kw">crate</span>::node::Node::memory().enable_docs().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>client = node.client();
         <span class="kw">let </span>doc = client.docs().create().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1649,7 +1649,7 @@
     </span><span class="kw">async fn </span>test_doc_close() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
-        <span class="kw">let </span>node = <span class="kw">crate</span>::node::Node::memory().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>node = <span class="kw">crate</span>::node::Node::memory().enable_docs().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>author = node.authors().default().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="comment">// open doc two times
         </span><span class="kw">let </span>doc1 = node.docs().create().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1672,7 +1672,7 @@
     </span><span class="kw">async fn </span>test_doc_import_export() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
-        <span class="kw">let </span>node = <span class="kw">crate</span>::node::Node::memory().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>node = <span class="kw">crate</span>::node::Node::memory().enable_docs().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// create temp file
         </span><span class="kw">let </span>temp_dir = tempfile::tempdir().context(<span class="string">"tempdir"</span>)<span class="question-mark">?</span>;

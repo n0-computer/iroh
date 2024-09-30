@@ -236,7 +236,7 @@
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_authors() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>node = Node::memory().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>node = Node::memory().enable_docs().spawn().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// default author always exists
         </span><span class="kw">let </span>authors: Vec&lt;<span class="kw">_</span>&gt; = node.authors().list().<span class="kw">await</span><span class="question-mark">?</span>.try_collect().<span class="kw">await</span><span class="question-mark">?</span>;

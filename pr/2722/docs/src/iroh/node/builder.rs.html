@@ -949,6 +949,9 @@
 <a href="#949" id="949">949</a>
 <a href="#950" id="950">950</a>
 <a href="#951" id="951">951</a>
+<a href="#952" id="952">952</a>
+<a href="#953" id="953">953</a>
+<a href="#954" id="954">954</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1197,7 +1200,7 @@
             rpc_endpoint: mk_external_rpc(),
             rpc_addr: <span class="prelude-val">None</span>,
             gc_policy: GcPolicy::Disabled,
-            docs_storage: DocsStorage::Memory,
+            docs_storage: DocsStorage::Disabled,
             node_discovery: Default::default(),
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
@@ -1269,7 +1272,12 @@
             </span>.with_context(|| {
                 <span class="macro">format!</span>(<span class="string">"Failed to load blobs database from {}"</span>, blob_dir.display())
             })<span class="question-mark">?</span>;
-        <span class="kw">let </span>docs_storage = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
+        <span class="kw">let </span>docs_storage = <span class="kw">match </span><span class="self">self</span>.docs_storage {
+            DocsStorage::Persistent(<span class="kw">_</span>) | DocsStorage::Memory =&gt; {
+                DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root))
+            }
+            DocsStorage::Disabled =&gt; DocsStorage::Disabled,
+        };
 
         <span class="kw">let </span>secret_key_path = IrohPaths::SecretKey.with_root(root);
         <span class="kw">let </span>secret_key = load_secret_key(secret_key_path).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1335,9 +1343,14 @@
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Disables documents support on this node completely.
-    </span><span class="kw">pub fn </span>disable_docs(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.docs_storage = DocsStorage::Disabled;
+    <span class="doccomment">/// Enables documents support on this node.
+    </span><span class="kw">pub fn </span>enable_docs(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.docs_storage = <span class="kw">match </span><span class="self">self</span>.storage {
+            StorageConfig::Mem =&gt; DocsStorage::Memory,
+            StorageConfig::Persistent(<span class="kw-2">ref </span>root) =&gt; {
+                DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root))
+            }
+        };
         <span class="self">self
     </span>}
 
@@ -1598,16 +1611,11 @@
 
         <span class="kw">let </span>inner = Arc::new(NodeInner {
             rpc_addr: <span class="self">self</span>.rpc_addr,
-            db: <span class="self">self</span>.blobs_store,
-            docs,
+            db: Default::default(),
             endpoint,
-            secret_key: <span class="self">self</span>.secret_key,
             client,
             cancel_token: CancellationToken::new(),
-            downloader,
-            gossip,
             local_pool_handle: lp.handle().clone(),
-            blob_batches: Default::default(),
         });
 
         <span class="kw">let </span>protocol_builder = ProtocolBuilder {
@@ -1621,7 +1629,13 @@
             local_pool: lp,
         };
 
-        <span class="kw">let </span>protocol_builder = protocol_builder.register_iroh_protocols(<span class="self">self</span>.blob_events);
+        <span class="kw">let </span>protocol_builder = protocol_builder.register_iroh_protocols(
+            <span class="self">self</span>.blob_events,
+            <span class="self">self</span>.blobs_store,
+            gossip,
+            downloader,
+            docs,
+        );
 
         <span class="prelude-val">Ok</span>(protocol_builder)
     }
@@ -1688,7 +1702,7 @@
     /// let handler = MyProtocol { client };
     ///
     /// let node = unspawned_node
-    ///     .accept(MY_ALPN, Arc::new(handler))
+    ///     .accept(MY_ALPN.to_vec(), Arc::new(handler))
     ///     .spawn()
     ///     .await?;
     /// # node.shutdown().await?;
@@ -1697,7 +1711,7 @@
     /// ```
     ///
     ///
-    </span><span class="kw">pub fn </span>accept(<span class="kw-2">mut </span><span class="self">self</span>, alpn: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[u8], handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>accept(<span class="kw-2">mut </span><span class="self">self</span>, alpn: Vec&lt;u8&gt;, handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.protocols.insert(alpn, handler);
         <span class="self">self
     </span>}
@@ -1715,24 +1729,9 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>.inner.endpoint
     }
 
-    <span class="doccomment">/// Returns the [`crate::blobs::store::Store`] used by the node.
-    </span><span class="kw">pub fn </span>blobs_db(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>D {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.inner.db
-    }
-
     <span class="doccomment">/// Returns a reference to the used [`LocalPoolHandle`].
     </span><span class="kw">pub fn </span>local_pool_handle(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>LocalPoolHandle {
         <span class="self">self</span>.local_pool.handle()
-    }
-
-    <span class="doccomment">/// Returns a reference to the [`Downloader`] used by the node.
-    </span><span class="kw">pub fn </span>downloader(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Downloader {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.inner.downloader
-    }
-
-    <span class="doccomment">/// Returns a reference to the [`Gossip`] handle used by the node.
-    </span><span class="kw">pub fn </span>gossip(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Gossip {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.inner.gossip
     }
 
     <span class="doccomment">/// Returns a protocol handler for an ALPN.
@@ -1744,22 +1743,29 @@
     }
 
     <span class="doccomment">/// Registers the core iroh protocols (blobs, gossip, docs).
-    </span><span class="kw">fn </span>register_iroh_protocols(<span class="kw-2">mut </span><span class="self">self</span>, blob_events: EventSender) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">fn </span>register_iroh_protocols(
+        <span class="kw-2">mut </span><span class="self">self</span>,
+        blob_events: EventSender,
+        store: D,
+        gossip: Gossip,
+        downloader: Downloader,
+        docs: <span class="prelude-ty">Option</span>&lt;DocsEngine&gt;,
+    ) -&gt; <span class="self">Self </span>{
         <span class="comment">// Register blobs.
         </span><span class="kw">let </span>blobs_proto = BlobsProtocol::new_with_events(
-            <span class="self">self</span>.blobs_db().clone(),
+            store,
             <span class="self">self</span>.local_pool_handle().clone(),
             blob_events,
+            downloader,
         );
-        <span class="self">self </span>= <span class="self">self</span>.accept(iroh_blobs::protocol::ALPN, Arc::new(blobs_proto));
+        <span class="self">self </span>= <span class="self">self</span>.accept(iroh_blobs::protocol::ALPN.to_vec(), Arc::new(blobs_proto));
 
         <span class="comment">// Register gossip.
-        </span><span class="kw">let </span>gossip = <span class="self">self</span>.gossip().clone();
-        <span class="self">self </span>= <span class="self">self</span>.accept(GOSSIP_ALPN, Arc::new(gossip));
+        </span><span class="self">self </span>= <span class="self">self</span>.accept(GOSSIP_ALPN.to_vec(), Arc::new(gossip));
 
         <span class="comment">// Register docs, if enabled.
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(docs) = <span class="self">self</span>.inner.docs.clone() {
-            <span class="self">self </span>= <span class="self">self</span>.accept(DOCS_ALPN, Arc::new(docs));
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(docs) = docs {
+            <span class="self">self </span>= <span class="self">self</span>.accept(DOCS_ALPN.to_vec(), Arc::new(docs));
         }
 
         <span class="self">self
