@@ -642,13 +642,21 @@ mod tests {
 
         let iroh_root = tempfile::TempDir::new()?;
         {
-            let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
+            let iroh = Node::persistent(iroh_root.path())
+                .await?
+                .enable_docs()
+                .spawn()
+                .await?;
             let doc = iroh.docs().create().await?;
             drop(doc);
             iroh.shutdown().await?;
         }
 
-        let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
+        let iroh = Node::persistent(iroh_root.path())
+            .await?
+            .enable_docs()
+            .spawn()
+            .await?;
         let _doc = iroh.docs().create().await?;
 
         Ok(())
@@ -734,7 +742,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_author_memory() -> Result<()> {
-        let iroh = Node::memory().spawn().await?;
+        let iroh = Node::memory().enable_docs().spawn().await?;
         let author = iroh.authors().default().await?;
         assert!(iroh.authors().export(author).await?.is_some());
         assert!(iroh.authors().delete(author).await.is_err());
@@ -756,6 +764,7 @@ mod tests {
             let iroh = Node::persistent(iroh_root)
                 .await
                 .unwrap()
+                .enable_docs()
                 .spawn()
                 .await
                 .unwrap();
@@ -771,6 +780,7 @@ mod tests {
             let iroh = Node::persistent(iroh_root)
                 .await
                 .unwrap()
+                .enable_docs()
                 .spawn()
                 .await
                 .unwrap();
@@ -790,6 +800,7 @@ mod tests {
             let iroh = Node::persistent(iroh_root)
                 .await
                 .unwrap()
+                .enable_docs()
                 .spawn()
                 .await
                 .unwrap();
@@ -810,8 +821,12 @@ mod tests {
             docs_store.delete_author(default_author).unwrap();
             docs_store.flush().unwrap();
             drop(docs_store);
-            let iroh = Node::persistent(iroh_root).await.unwrap().spawn().await;
-            dbg!(&iroh);
+            let iroh = Node::persistent(iroh_root)
+                .await
+                .unwrap()
+                .enable_docs()
+                .spawn()
+                .await;
             assert!(iroh.is_err());
 
             // somehow the blob store is not shutdown correctly (yet?) on macos.
@@ -823,7 +838,12 @@ mod tests {
                 .await
                 .unwrap();
             drop(iroh);
-            let iroh = Node::persistent(iroh_root).await.unwrap().spawn().await;
+            let iroh = Node::persistent(iroh_root)
+                .await
+                .unwrap()
+                .enable_docs()
+                .spawn()
+                .await;
             assert!(iroh.is_ok());
             iroh.unwrap().shutdown().await.unwrap();
         }
@@ -833,6 +853,7 @@ mod tests {
             let iroh = Node::persistent(iroh_root)
                 .await
                 .unwrap()
+                .enable_docs()
                 .spawn()
                 .await
                 .unwrap();
@@ -846,6 +867,7 @@ mod tests {
             let iroh = Node::persistent(iroh_root)
                 .await
                 .unwrap()
+                .enable_docs()
                 .spawn()
                 .await
                 .unwrap();

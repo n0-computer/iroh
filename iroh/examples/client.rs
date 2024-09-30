@@ -11,7 +11,7 @@ use tokio_stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let node = Node::memory().spawn().await?;
+    let node = Node::memory().enable_docs().spawn().await?;
 
     // Could also use `node` directly, as it derefs to the client.
     let client = node.client();

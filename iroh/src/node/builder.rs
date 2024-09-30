@@ -246,7 +246,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             rpc_endpoint: mk_external_rpc(),
             rpc_addr: None,
             gc_policy: GcPolicy::Disabled,
-            docs_storage: DocsStorage::Memory,
+            docs_storage: DocsStorage::Disabled,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -318,7 +318,12 @@ where
             .with_context(|| {
                 format!("Failed to load blobs database from {}", blob_dir.display())
             })?;
-        let docs_storage = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
+        let docs_storage = match self.docs_storage {
+            DocsStorage::Persistent(_) | DocsStorage::Memory => {
+                DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root))
+            }
+            DocsStorage::Disabled => DocsStorage::Disabled,
+        };
 
         let secret_key_path = IrohPaths::SecretKey.with_root(root);
         let secret_key = load_secret_key(secret_key_path).await?;
@@ -384,9 +389,14 @@ where
         self
     }
 
-    /// Disables documents support on this node completely.
-    pub fn disable_docs(mut self) -> Self {
-        self.docs_storage = DocsStorage::Disabled;
+    /// Enables documents support on this node.
+    pub fn enable_docs(mut self) -> Self {
+        self.docs_storage = match self.storage {
+            StorageConfig::Mem => DocsStorage::Memory,
+            StorageConfig::Persistent(ref root) => {
+                DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root))
+            }
+        };
         self
     }
 
