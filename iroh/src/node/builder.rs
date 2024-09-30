@@ -23,6 +23,7 @@ use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
+    endpoint::TransportConfig,
     relay::RelayMode,
     Endpoint,
 };
@@ -125,7 +126,7 @@ where
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
     blob_events: EventSender,
-    transport_config: Option<quinn::TransportConfig>,
+    transport_config: Option<TransportConfig>,
 }
 
 /// Configuration for storage.
@@ -495,11 +496,11 @@ where
         self
     }
 
-    /// Sets a custom [`quinn::TransportConfig`] to be used by the [`Endpoint`].
+    /// Sets a custom [`TransportConfig`] to be used by the [`Endpoint`].
     ///
-    /// If not set, the [`Endpoint`] will use its default [`quinn::TransportConfig`]. See
-    /// [`iroh_net::endpoint::Builder::transport_config`] for details.
-    pub fn transport_config(mut self, config: quinn::TransportConfig) -> Self {
+    /// If not set, the [`Endpoint`] will use its default [`TransportConfig`]. See
+    /// [`crate::net::endpoint::Builder::transport_config`] for details.
+    pub fn transport_config(mut self, config: TransportConfig) -> Self {
         self.transport_config = Some(config);
         self
     }
