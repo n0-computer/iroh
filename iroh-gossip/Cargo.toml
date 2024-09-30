@@ -64,3 +64,4 @@ required-features = ["net"]
 
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "iroh_docsrs"]

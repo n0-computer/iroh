@@ -63,3 +63,4 @@ engine = ["net", "dep:iroh-gossip", "dep:iroh-blobs"]
 
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "iroh_docsrs"]

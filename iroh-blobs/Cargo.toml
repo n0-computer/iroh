@@ -77,6 +77,7 @@ redb = ["dep:redb"]
 
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "iroh_docsrs"]
 
 [[example]]
 name = "provide-bytes"
