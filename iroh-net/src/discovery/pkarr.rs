@@ -22,6 +22,7 @@ use crate::{
     AddrInfo, Endpoint, NodeId,
 };
 #[cfg(feature = "discovery-pkarr-dht")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-pkarr-dht")))]
 pub mod dht;
 
 /// The pkarr relay run by n0, for production.
