@@ -98,7 +98,7 @@ pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 /// Publisher of node discovery information to a [pkarr] relay.
 ///
-/// This publisher uses HTTP to publish to node discovery information to a pkarr relay
+/// This publisher uses HTTP to publish node discovery information to a pkarr relay
 /// server, see the [module docs] for details.
 ///
 /// This implements the [`Discovery`] trait to be used as a node discovery service.  Note
@@ -313,7 +313,7 @@ impl PkarrResolver {
     /// This uses the pkarr relay server operated by [number 0] at
     /// [`N0_DNS_PKARR_RELAY_PROD`].
     ///
-    /// When compiling for tests, i.e. when using `cfg(test)` is true, or when the
+    /// When compiling for tests, i.e. when `cfg(test)` is true, or when the
     /// `test-utils` crate feature is enabled the [`N0_DNS_PKARR_RELAY_STAGING`] server is
     /// used instead.
     ///
