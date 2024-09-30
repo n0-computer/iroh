@@ -37,7 +37,7 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         publish_dir: ./target/doc/
         destination_dir: ${{ env.PREVIEW_PATH }}
-        publish_branch: generated-docs-preview
+        publish_branch: generated-docs-preview-${{ github.event.pull_request.number }}
 
     - name: Find Docs Comment
       uses: peter-evans/find-comment@v3
