@@ -1238,7 +1238,10 @@ impl<D: BaoStore> Handler<D> {
                 size
             );
 
-            let len = req.len.unwrap_or((size.value() - req.offset) as usize);
+            let len: usize = req
+                .len
+                .as_result_len(size.value() - req.offset)
+                .try_into()?;
 
             anyhow::ensure!(
                 req.offset + len as u64 <= size.value(),

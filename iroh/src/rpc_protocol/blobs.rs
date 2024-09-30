@@ -21,7 +21,9 @@ use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
-use crate::client::blobs::{BlobInfo, BlobStatus, DownloadMode, IncompleteBlobInfo, WrapOption};
+use crate::client::blobs::{
+    BlobInfo, BlobStatus, DownloadMode, IncompleteBlobInfo, ReadAtLen, WrapOption,
+};
 
 use super::RpcService;
 
@@ -190,7 +192,7 @@ pub struct ReadAtRequest {
     /// Offset to start reading at
     pub offset: u64,
     /// Length of the data to get
-    pub len: Option<usize>,
+    pub len: ReadAtLen,
 }
 
 /// Response to [`ReadAtRequest`]
