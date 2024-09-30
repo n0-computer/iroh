@@ -174,7 +174,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.6
 
       - name: Setup Environment (PR)
         if: ${{ github.event_name == 'pull_request' }}
@@ -209,7 +209,7 @@ jobs:
         components: rustfmt
 
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.5
+      uses: mozilla-actions/sccache-action@v0.0.6
 
     - name: fmt
       run: cargo fmt --all -- --check
@@ -227,7 +227,7 @@ jobs:
       with:
         toolchain: nightly-2024-05-02
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.5
+      uses: mozilla-actions/sccache-action@v0.0.6
 
     - name: Docs
       run: cargo doc --workspace --all-features --no-deps --document-private-items
@@ -246,7 +246,7 @@ jobs:
       with:
         components: clippy
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.5
+      uses: mozilla-actions/sccache-action@v0.0.6
 
     # TODO: We have a bunch of platform-dependent code so should
     #    probably run this job on the full platform matrix
@@ -273,7 +273,7 @@ jobs:
       with:
         toolchain: ${{ env.MSRV }}
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.5
+      uses: mozilla-actions/sccache-action@v0.0.6
 
     - name: Check MSRV all features
       run: |
@@ -317,7 +317,7 @@ jobs:
           toolchain: stable
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.6
 
       - name: Prep
         run: sudo apt-get install musl-tools -y
