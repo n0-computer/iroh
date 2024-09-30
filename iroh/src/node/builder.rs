@@ -23,6 +23,7 @@ use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
+    endpoint::TransportConfig,
     relay::RelayMode,
     Endpoint,
 };
@@ -125,6 +126,7 @@ where
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
     blob_events: EventSender,
+    transport_config: Option<TransportConfig>,
 }
 
 /// Configuration for storage.
@@ -252,6 +254,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
             blob_events: Default::default(),
+            transport_config: None,
         }
     }
 }
@@ -287,6 +290,7 @@ impl<D: Map> Builder<D> {
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
             blob_events: Default::default(),
+            transport_config: None,
         }
     }
 }
@@ -346,6 +350,7 @@ where
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: self.gc_done_callback,
             blob_events: self.blob_events,
+            transport_config: self.transport_config,
         })
     }
 
@@ -491,6 +496,15 @@ where
         self
     }
 
+    /// Sets a custom [`TransportConfig`] to be used by the [`Endpoint`].
+    ///
+    /// If not set, the [`Endpoint`] will use its default [`TransportConfig`]. See
+    /// [`crate::net::endpoint::Builder::transport_config`] for details.
+    pub fn transport_config(mut self, config: TransportConfig) -> Self {
+        self.transport_config = Some(config);
+        self
+    }
+
     /// Skip verification of SSL certificates from relay servers
     ///
     /// May only be used in tests.
@@ -589,6 +603,11 @@ where
                 .proxy_from_env()
                 .keylog(self.keylog)
                 .relay_mode(self.relay_mode);
+
+            let endpoint = match self.transport_config {
+                Some(config) => endpoint.transport_config(config),
+                None => endpoint,
+            };
             let endpoint = match discovery {
                 Some(discovery) => endpoint.discovery(discovery),
                 None => endpoint,
