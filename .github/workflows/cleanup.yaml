@@ -18,6 +18,7 @@ env:
 jobs:
   clean_docs_branch:
     permissions:
+      issues: write
       contents: write
     runs-on: ubuntu-latest
     steps:

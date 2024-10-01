@@ -18,6 +18,7 @@ env:
 jobs:
   preview_docs:
     permissions:
+      issues: write
       contents: write
     timeout-minutes: 30
     name: Docs preview
