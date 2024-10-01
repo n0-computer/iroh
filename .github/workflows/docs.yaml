@@ -2,21 +2,33 @@ name: Docs Preview
 
 on:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+
+# ensure job runs sequentially so pushing to the preview branch doesn't conflict
+concurrency:
+  group: ci-docs-preview
 
 env:
   IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
   preview_docs:
+    permissions:
+      issues: write
+      contents: write
     timeout-minutes: 30
     name: Docs preview
-    if: "github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork"
+    if: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' ) && !github.event.pull_request.head.repo.fork }}
     runs-on: ubuntu-latest
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
       SCCACHE_CACHE_SIZE: "50G"
-      PREVIEW_PATH: pr/${{ github.event.pull_request.number }}/docs
+      PREVIEW_PATH: pr/${{ github.event.pull_request.number || inputs.pr_number }}/docs
 
     steps:
     - uses: actions/checkout@v4
@@ -43,17 +55,21 @@ jobs:
       uses: peter-evans/find-comment@v3
       id: fc
       with:
-        issue-number: ${{ github.event.pull_request.number }}
+        issue-number: ${{ github.event.pull_request.number || inputs.pr_number }}
         comment-author: 'github-actions[bot]'
         body-includes: Documentation for this PR has been generated
+
+    - name: Get current timestamp
+      id: get_timestamp
+      run: echo "TIMESTAMP=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
 
     - name: Create or Update Docs Comment
       uses: peter-evans/create-or-update-comment@v4
       with:
-        issue-number: ${{ github.event.pull_request.number }}
+        issue-number: ${{ github.event.pull_request.number || inputs.pr_number }}
         comment-id: ${{ steps.fc.outputs.comment-id }}
         body: |
           Documentation for this PR has been generated and is available at: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/${{ env.PREVIEW_PATH }}/iroh/
           
-          Last updated: ${{ github.event.pull_request.updated_at }}
+          Last updated: ${{ env.TIMESTAMP }}
         edit-mode: replace
