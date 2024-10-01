@@ -276,6 +276,7 @@ impl PublisherService {
                 .relay_url
                 .as_ref()
                 .map(|s| s.as_str()),
+            pkarr_relay = %self.pkarr_client.pkarr_relay_url,
             "Publish node info to pkarr"
         );
         let signed_packet = info.to_pkarr_signed_packet(&self.secret_key, self.ttl)?;
