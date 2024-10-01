@@ -8,6 +8,7 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
+use crate::endpoint::Connection;
 use crate::{Endpoint, NodeId};
 
 /// Dials nodes and maintains a queue of pending dials.
@@ -19,7 +20,7 @@ use crate::{Endpoint, NodeId};
 #[derive(Debug)]
 pub struct Dialer {
     endpoint: Endpoint,
-    pending: JoinSet<(NodeId, anyhow::Result<quinn::Connection>)>,
+    pending: JoinSet<(NodeId, anyhow::Result<Connection>)>,
     pending_dials: HashMap<NodeId, CancellationToken>,
 }
 
@@ -70,7 +71,7 @@ impl Dialer {
     }
 
     /// Waits for the next dial operation to complete.
-    pub async fn next_conn(&mut self) -> (NodeId, anyhow::Result<quinn::Connection>) {
+    pub async fn next_conn(&mut self) -> (NodeId, anyhow::Result<Connection>) {
         match self.pending_dials.is_empty() {
             false => {
                 let (node_id, res) = loop {
@@ -107,7 +108,7 @@ impl Dialer {
 }
 
 impl Stream for Dialer {
-    type Item = (NodeId, anyhow::Result<quinn::Connection>);
+    type Item = (NodeId, anyhow::Result<Connection>);
 
     fn poll_next(
         mut self: Pin<&mut Self>,

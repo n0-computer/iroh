@@ -1,12 +1,10 @@
 //! An example how to download a single blob or collection from a node and write it to stdout using the `get` finite state machine directly.
 //!
-//! Since this example does not use [`iroh-net::Endpoint`], it does not do any holepunching, and so will only work locally or between two processes that have public IP addresses.
-//!
 //! Run the provide-bytes example first. It will give instructions on how to run this example properly.
-use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
 use iroh_io::ConcatenateSliceWriter;
+use iroh_net::ticket::NodeTicket;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_blobs::{
@@ -17,7 +15,7 @@ use iroh_blobs::{
 };
 
 mod connect;
-use connect::{load_certs, make_client_endpoint};
+use connect::{make_iroh_endpoint, EXAMPLE_ALPN};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
 pub fn setup_logging() {
@@ -34,10 +32,10 @@ async fn main() -> Result<()> {
     setup_logging();
     let args: Vec<_> = std::env::args().collect();
     if args.len() != 4 {
-        anyhow::bail!("usage: fetch-bytes [HASH] [SOCKET_ADDR] [FORMAT]");
+        anyhow::bail!("usage: fetch-bytes HASH NODE_TICKET FORMAT");
     }
-    let hash: Hash = args[1].parse().context("unable to parse [HASH]")?;
-    let addr: SocketAddr = args[2].parse().context("unable to parse [SOCKET_ADDR]")?;
+    let hash: Hash = args[1].parse().context("unable to parse HASH")?;
+    let ticket: NodeTicket = args[2].parse().context("unable to parse NODE_TICKET")?;
     let format = {
         if args[3] != "blob" && args[3] != "collection" {
             anyhow::bail!(
@@ -48,17 +46,15 @@ async fn main() -> Result<()> {
         args[3].clone()
     };
 
-    // load tls certificates
-    // This will error if you have not run the `provide-bytes` example
-    let roots = load_certs().await?;
-
     // create an endpoint to listen for incoming connections
-    let endpoint = make_client_endpoint(roots)?;
-    println!("\nlistening on {}", endpoint.local_addr()?);
-    println!("fetching hash {hash} from {addr}");
+    let endpoint = make_iroh_endpoint().await?;
+    println!("\nlistening as NodeId {}", endpoint.node_id());
+    println!("fetching hash {hash} from {ticket}");
 
     // connect
-    let connection = endpoint.connect(addr, "localhost")?.await?;
+    let connection = endpoint
+        .connect(ticket.node_addr().clone(), EXAMPLE_ALPN)
+        .await?;
 
     if format == "collection" {
         // create a request for a collection

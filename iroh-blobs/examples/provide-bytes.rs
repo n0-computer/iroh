@@ -3,20 +3,22 @@
 //! Since this example does not use [`iroh-net::Endpoint`], it does not do any holepunching, and so will only work locally or between two processes that have public IP addresses.
 //!
 //! Run this example with
-//!    cargo run --example provide-bytes blob
+//!    cargo run --all-features --example provide-bytes blob
 //! To provide a blob (single file)
 //!
 //! Run this example with
-//!    cargo run --example provide-bytes collection
+//!    cargo run --all-features --example provide-bytes collection
 //! To provide a collection (multiple blobs)
 use anyhow::Result;
+use iroh_net::ticket::NodeTicket;
 use tracing::warn;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_blobs::{format::collection::Collection, util::local_pool::LocalPool, Hash};
 
 mod connect;
-use connect::{make_and_write_certs, make_server_endpoint, CERT_PATH};
+
+use connect::make_iroh_endpoint;
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
 pub fn setup_logging() {
@@ -32,7 +34,7 @@ async fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
     if args.len() != 2 {
         anyhow::bail!(
-            "usage: provide-bytes [FORMAT], where [FORMAT] is either 'blob' or 'collection'\n\nThe 'blob' example demonstrates sending a single blob of bytes. The 'collection' example demonstrates sending multiple blobs of bytes, grouped together in a 'collection'."
+            "usage: provide-bytes FORMAT, where FORMAT is either 'blob' or 'collection'\n\nThe 'blob' example demonstrates sending a single blob of bytes. The 'collection' example demonstrates sending multiple blobs of bytes, grouped together in a 'collection'."
         );
     }
     let format = {
@@ -68,17 +70,14 @@ async fn main() -> Result<()> {
         (db, Hash::from(hash.as_bytes()))
     };
 
-    // create tls certs and save to CERT_PATH
-    let (key, cert) = make_and_write_certs().await?;
-
     // create an endpoint to listen for incoming connections
-    let endpoint = make_server_endpoint(key, cert)?;
-    let addr = endpoint.local_addr()?;
-    println!("\nlistening on {addr}");
+    let endpoint = make_iroh_endpoint().await?;
     println!("providing hash {hash}");
+    let node_ticket = NodeTicket::new(endpoint.node_addr().await?)?;
+    println!("Node ticket: {node_ticket}");
 
-    println!("\nfetch the content using a finite state machine by running the following example:\n\ncargo run --example fetch-fsm {hash} \"{addr}\" {format}");
-    println!("\nfetch the content using a stream by running the following example:\n\ncargo run --example fetch-stream {hash} \"{addr}\" {format}\n");
+    println!("\nfetch the content using a finite state machine by running the following example:\n\ncargo run --all-features --example fetch-fsm {hash} \"{node_ticket}\" {format}");
+    println!("\nfetch the content using a stream by running the following example:\n\ncargo run --all-features --example fetch-stream {hash} \"{node_ticket}\" {format}\n");
 
     // create a new local pool handle with 1 worker thread
     let lp = LocalPool::single();
@@ -116,7 +115,6 @@ async fn main() -> Result<()> {
 
     match tokio::signal::ctrl_c().await {
         Ok(()) => {
-            tokio::fs::remove_dir_all(std::path::PathBuf::from(CERT_PATH)).await?;
             accept_task.abort();
             Ok(())
         }

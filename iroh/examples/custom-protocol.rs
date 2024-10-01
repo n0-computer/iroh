@@ -46,10 +46,7 @@ use futures_lite::future::Boxed as BoxedFuture;
 use iroh::{
     blobs::Hash,
     client::blobs,
-    net::{
-        endpoint::{get_remote_node_id, Connecting},
-        Endpoint, NodeId,
-    },
+    net::{endpoint::Connecting, Endpoint, NodeId},
     node::ProtocolHandler,
 };
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -146,7 +143,7 @@ impl ProtocolHandler for BlobSearch {
             // Wait for the connection to be fully established.
             let connection = connecting.await?;
             // We can get the remote's node id from the connection.
-            let node_id = get_remote_node_id(&connection)?;
+            let node_id = connection.remote_node_id()?;
             println!("accepted connection from {node_id}");
 
             // Our protocol is a simple request-response protocol, so we expect the
