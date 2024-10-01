@@ -94,10 +94,7 @@ env:
 
 jobs:
   netsim:
-    permissions:
-      issues: write
-      contents: write
-      packages: write
+    permissions: write-all
     name: Netsim
     timeout-minutes: 45
     runs-on: [self-hosted, linux, X64]

@@ -31,9 +31,7 @@ env:
 
 jobs:
   netsim-release:
-    permissions:
-      issues: write
-      contents: write
+    permissions: write-all
     if: ${{github.ref_name=='main' && github.event_name == 'push'}}
     uses: './.github/workflows/netsim_runner.yaml'
     secrets: inherit
@@ -47,9 +45,7 @@ jobs:
       build_profile: "optimized-release"
 
   netsim-perf:
-    permissions:
-      issues: write
-      contents: write
+    permissions: write-all
     if: ${{github.event_name != 'push'}}
     uses: './.github/workflows/netsim_runner.yaml'
     secrets: inherit
