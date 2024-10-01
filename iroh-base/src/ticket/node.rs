@@ -22,7 +22,7 @@ use crate::{
 ///
 /// This [`NodeTicket`] is a single item which can be easily serialized and deserialized and
 /// implements the [`Ticket`] trait.  The [`Display`] and [`FromStr`] traits can also be
-/// used to round-trip the ticket to sting.
+/// used to round-trip the ticket to string.
 ///
 /// [`NodeId`]: crate::key::NodeId
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
