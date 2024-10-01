@@ -17,6 +17,8 @@ env:
 
 jobs:
   clean_docs_branch:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
