@@ -561,31 +561,34 @@ impl Actor {
 
             // Add the probe set to all futures of probe sets.  Handle aborting a probe set
             // if needed, only normal errors means the set continues.
-            probes.spawn(async move {
-                // Hack because ProbeSet is not it's own type yet.
-                let mut probe_proto = None;
-                while let Some(res) = set.join_next().await {
-                    match res {
-                        Ok(Ok(report)) => return Ok(report),
-                        Ok(Err(ProbeError::Error(err, probe))) => {
-                            probe_proto = Some(probe.proto());
-                            warn!(?probe, "probe failed: {:#}", err);
-                            continue;
-                        }
-                        Ok(Err(ProbeError::AbortSet(err, probe))) => {
-                            debug!(?probe, "probe set aborted: {:#}", err);
-                            set.abort_all();
-                            return Err(err);
-                        }
-                        Err(err) => {
-                            warn!("fatal probe set error, aborting: {:#}", err);
-                            continue;
+            probes.spawn(
+                async move {
+                    // Hack because ProbeSet is not it's own type yet.
+                    let mut probe_proto = None;
+                    while let Some(res) = set.join_next().await {
+                        match res {
+                            Ok(Ok(report)) => return Ok(report),
+                            Ok(Err(ProbeError::Error(err, probe))) => {
+                                probe_proto = Some(probe.proto());
+                                warn!(?probe, "probe failed: {:#}", err);
+                                continue;
+                            }
+                            Ok(Err(ProbeError::AbortSet(err, probe))) => {
+                                debug!(?probe, "probe set aborted: {:#}", err);
+                                set.abort_all();
+                                return Err(err);
+                            }
+                            Err(err) => {
+                                warn!("fatal probe set error, aborting: {:#}", err);
+                                continue;
+                            }
                         }
                     }
+                    warn!(?probe_proto, "no successful probes in ProbeSet");
+                    Err(anyhow!("All probes in ProbeSet failed"))
                 }
-                warn!(?probe_proto, "no successful probes in ProbeSet");
-                Err(anyhow!("All probes in ProbeSet failed"))
-            });
+                .instrument(info_span!("probe")),
+            );
         }
         self.outstanding_tasks.probes = true;
 
