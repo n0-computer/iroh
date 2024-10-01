@@ -25,6 +25,8 @@ use crate::{
 /// used to round-trip the ticket to string.
 ///
 /// [`NodeId`]: crate::key::NodeId
+/// [`Display`]: std::fmt::Display
+/// [`FromStr`]: std::str::FromStr
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 #[display("{}", Ticket::serialize(self))]
 pub struct NodeTicket {
@@ -104,7 +106,7 @@ impl<'de> Deserialize<'de> for NodeTicket {
             Self::from_str(&s).map_err(serde::de::Error::custom)
         } else {
             let peer = Deserialize::deserialize(deserializer)?;
-            Self::new(peer).map_err(serde::de::Error::custom)
+            Ok(Self::new(peer))
         }
     }
 }
