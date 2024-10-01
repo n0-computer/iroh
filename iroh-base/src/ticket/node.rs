@@ -62,8 +62,8 @@ impl FromStr for NodeTicket {
 
 impl NodeTicket {
     /// Creates a new ticket.
-    pub fn new(node: NodeAddr) -> Result<Self> {
-        Ok(Self { node })
+    pub fn new(node: NodeAddr) -> Self {
+        Self { node }
     }
 
     /// The [`NodeAddr`] of the provider for this ticket.
