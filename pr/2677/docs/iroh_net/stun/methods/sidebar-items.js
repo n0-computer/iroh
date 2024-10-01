@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["BINDING","RESERVED","SHARED_SECRET"]};

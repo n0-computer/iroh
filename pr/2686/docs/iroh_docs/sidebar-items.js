@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["actor","engine","metrics","net","store","sync"],"struct":["Author","AuthorHeads","AuthorId","AuthorPublicKey","DocTicket","NamespaceId","NamespacePublicKey","NamespaceSecret"]};

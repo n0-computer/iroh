@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["IROH_BLOCK_SIZE"],"enum":["BlobFormat"],"mod":["downloader","export","format","get","hashseq","metrics","protocol","provider","store","util"],"struct":["Hash","HashAndFormat"]};

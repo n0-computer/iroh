@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["parse_hash_seq"],"struct":["HashSeq","HashSeqIter","HashSeqStream"]};

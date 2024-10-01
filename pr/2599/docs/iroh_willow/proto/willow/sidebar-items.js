@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["DIGEST_LENGTH","MAX_COMPONENT_COUNT","MAX_COMPONENT_LENGTH","MAX_PATH_LENGTH"],"enum":["InvalidPath"],"mod":["encodings"],"struct":["AuthorisedEntry","Entry","Path","PossiblyAuthorisedEntry","Unauthorised"],"type":["AuthorisationToken","Component","NamespaceId","PayloadDigest","SubspaceId","Timestamp","WriteCapability"]};

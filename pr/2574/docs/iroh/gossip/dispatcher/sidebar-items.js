@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Command","Event","GossipEvent"],"struct":["GossipDispatcher","Message","SubscribeOptions"]};

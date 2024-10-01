@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["AreaSelector","AuthError","CapabilityPack","ReceiverSelector","RestrictArea"],"struct":["Auth","CapSelector","DelegateTo"],"type":["InterestMap"]};

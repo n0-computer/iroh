@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["increment_by_one"],"mod":["channel","codec","codec2","gen_stream","pipe","queue","stream","time"]};

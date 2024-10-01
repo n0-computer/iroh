@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["chunked_pipe"],"struct":["PipeReader","PipeWriter"]};

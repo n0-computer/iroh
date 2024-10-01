@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["DownloadError","FailureAction"],"struct":["ConcurrencyLimits","DownloadHandle","DownloadKind","DownloadRequest","Downloader","IntentId","RetryConfig"],"trait":["Dialer","Getter"]};

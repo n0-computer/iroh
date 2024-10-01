@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["SubscribeResponse","SubscribeUpdate"],"struct":["Client","SubscribeOpts","SubscribeRequest"]};

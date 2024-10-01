@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["send_blocking"],"mod":["chain"],"struct":["AbortingJoinHandle","CancelOnDrop","MaybeFuture","SharedAbortingJoinHandle"]};

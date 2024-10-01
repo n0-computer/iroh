@@ -1,3 +1,0 @@
-(function() {var implementors = {
-"iroh":[["impl BidiStreamingMsg&lt;<a class=\"struct\" href=\"iroh/client/struct.RpcService.html\" title=\"struct iroh::client::RpcService\">RpcService</a>&gt; for <a class=\"struct\" href=\"iroh/client/gossip/struct.SubscribeRequest.html\" title=\"struct iroh::client::gossip::SubscribeRequest\">SubscribeRequest</a>"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

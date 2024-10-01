@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["AtBlobHeaderNextError","BlobContentNext","ConnectedNext","ConnectedNextError","DecodeError","EndBlobNext"],"fn":["start"],"struct":["AtBlobContent","AtBlobHeader","AtClosing","AtConnected","AtEndBlob","AtInitial","AtStartChild","AtStartRoot"]};

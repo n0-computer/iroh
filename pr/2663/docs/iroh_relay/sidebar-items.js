@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["DEV_MODE_HTTP_PORT"],"enum":["CertMode"],"fn":["build_relay_config","load_certs","load_secret_key","main"],"mod":["cfg_defaults","metrics"],"struct":["Cli","Config","Limits","TlsConfig"]};

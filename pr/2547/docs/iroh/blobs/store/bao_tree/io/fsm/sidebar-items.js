@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["BaoContentItem","ResponseDecoderNext"],"fn":["copy","decode_ranges","encode_ranges","encode_ranges_validated","outboard","outboard_post_order","valid_outboard_ranges","valid_ranges"],"struct":["ResponseDecoder"],"trait":["AsyncSliceReader","AsyncSliceWriter","CreateOutboard","Outboard","OutboardMut"]};

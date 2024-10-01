@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["ProgressSendError"],"struct":["AsyncChannelProgressSender","BoxedProgressSender","FallibleProgressSliceWriter","IgnoreProgressSender","ProgressSliceWriter","WithFilterMap","WithMap"],"trait":["IdGenerator","ProgressSender"],"type":["ProgressSendResult"]};
