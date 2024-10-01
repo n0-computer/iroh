@@ -7,6 +7,7 @@ use std::{
 };
 
 pub(crate) mod chain;
+pub mod watchable;
 
 /// Resolves to pending if the inner is `None`.
 #[derive(Debug)]
