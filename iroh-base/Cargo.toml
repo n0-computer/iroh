@@ -56,3 +56,4 @@ wasm = ["getrandom?/js"]
 
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "iroh_docsrs"]
