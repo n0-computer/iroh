@@ -292,6 +292,7 @@ jobs:
           command-arguments: "-Dwarnings"
 
   netsim-integration-tests:
+    permissions: write-all
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     uses: './.github/workflows/netsim_runner.yaml'
     secrets: inherit

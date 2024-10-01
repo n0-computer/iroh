@@ -94,6 +94,7 @@ env:
 
 jobs:
   netsim:
+    permissions: write-all
     name: Netsim
     timeout-minutes: 45
     runs-on: [self-hosted, linux, X64]
@@ -112,7 +113,7 @@ jobs:
 
     - name: Build iroh
       run: |
-        cargo build --profile ${{ inputs.build_profile }} --workspace --all-features
+        cargo build --profile ${{ inputs.build_profile }} --workspace --all-features --examples --bins
 
     - name: Fetch and build chuck
       run: |
@@ -131,6 +132,7 @@ jobs:
 
     - name: Copy binaries to right location
       run: |
+        cp target/${{inputs.build_profile}}/examples/* ../chuck/netsim/bins/
         cp target/${{inputs.build_profile}}/iroh ../chuck/netsim/bins/iroh
         cp target/${{inputs.build_profile}}/iroh-relay ../chuck/netsim/bins/iroh-relay
         cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
@@ -196,13 +198,13 @@ jobs:
       with:
         issue-number: ${{ inputs.pr_number }}
         comment-author: 'github-actions[bot]'
-        body-includes: Netsim report for this PR has been generated
+        body-includes: Netsim report & logs for this PR have been generated
 
     - name: Create or Update Docs Comment
       if: ${{ inputs.pr_number != '' }}
       uses: peter-evans/create-or-update-comment@v4
       with:
-        issue-number: ${{ github.event.pull_request.number }}
+        issue-number: ${{ inputs.pr_number }}
         comment-id: ${{ steps.fc.outputs.comment-id }}
         body: |
           Netsim report & logs for this PR have been generated and is available at: [LOGS](${{steps.upload-report.outputs.artifact-url}})

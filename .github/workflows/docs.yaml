@@ -17,9 +17,7 @@ env:
 
 jobs:
   preview_docs:
-    permissions:
-      issues: write
-      contents: write
+    permissions: write-all
     timeout-minutes: 30
     name: Docs preview
     if: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' ) && !github.event.pull_request.head.repo.fork }}
