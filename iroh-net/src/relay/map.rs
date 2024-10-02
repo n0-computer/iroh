@@ -83,7 +83,7 @@ impl RelayMap {
         self.nodes.is_empty()
     }
 
-    /// Creates a new [`RelayMap] with a single relay server configured.
+    /// Creates a new [`RelayMap`] with a single relay server configured.
     ///
     /// Allows to set a custom STUN port and different IP addresses for IPv4 and IPv6.
     /// If IP addresses are provided, no DNS lookup will be performed.
@@ -104,15 +104,15 @@ impl RelayMap {
         }
     }
 
-    /// Returns a [`RelayMap] from a [`RelayUrl`].
+    /// Returns a [`RelayMap`] from a [`RelayUrl`].
     ///
     /// This will use the default STUN port and IP addresses resolved from the URL's host name via DNS.
-    /// relay nodes are specified at <../../../docs/relay_nodes.md>
+    /// relay nodes are specified at <../../docs/relay_nodes.md>
     pub fn from_url(url: RelayUrl) -> Self {
         Self::default_from_node(url, DEFAULT_STUN_PORT)
     }
 
-    /// Constructs the [`RelayMap] from an iterator of [`RelayNode`]s.
+    /// Constructs the [`RelayMap`] from an iterator of [`RelayNode`]s.
     pub fn from_nodes(value: impl IntoIterator<Item = RelayNode>) -> Result<Self> {
         let mut map = BTreeMap::new();
         for node in value.into_iter() {
