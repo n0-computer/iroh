@@ -14,11 +14,11 @@ pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
 /// The n0 testing DNS node origin, for testing.
 pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
 /// Testing DNS node origin, must run server from [`crate::test_utils::DnsPkarrServer`].
-#[cfg(all(test, feature = "test-utils"))]
-#[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
+#[cfg(test)]
 pub const TEST_DNS_NODE_ORIGIN: &str = "dns.iroh.test";
 
 /// Environment variable to force the use of staging relays.
+#[cfg(not(test))]
 #[cfg_attr(iroh_docsrs, doc(cfg(not(any(test, feature = "test-utils")))))]
 const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
@@ -73,18 +73,19 @@ impl DnsDiscovery {
     /// with [`DnsDiscovery::new`].  This would then use a hosted discovery service again,
     /// but for testing purposes.
     pub fn n0_dns() -> Self {
-        let force_staging_relays = match std::env::var(ENV_FORCE_STAGING_RELAYS) {
-            Ok(value) => value == "1",
-            Err(_) => false,
-        };
-        #[cfg(not(all(test, feature = "test-utils")))]
-        match force_staging_relays {
-            true => Self::new(N0_DNS_NODE_ORIGIN_STAGING.to_string()),
-            false => Self::new(N0_DNS_NODE_ORIGIN_PROD.to_string()),
+        #[cfg(not(test))]
+        {
+            let force_staging_relays = match std::env::var(ENV_FORCE_STAGING_RELAYS) {
+                Ok(value) => value == "1",
+                Err(_) => false,
+            };
+            match force_staging_relays {
+                true => Self::new(N0_DNS_NODE_ORIGIN_STAGING.to_string()),
+                false => Self::new(N0_DNS_NODE_ORIGIN_PROD.to_string()),
+            }
         }
-
-        #[cfg(all(test, feature = "test-utils"))]
-        Self::new(N0_DNS_NODE_ORIGIN_STAGING.to_string())
+        #[cfg(test)]
+        Self::new(TEST_DNS_NODE_ORIGIN.to_string())
     }
 }
 
