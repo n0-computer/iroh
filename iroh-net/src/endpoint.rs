@@ -512,7 +512,7 @@ impl Endpoint {
     /// uses the discovery service to establish a connection to a remote node.
     #[deprecated(
         since = "0.27.0",
-        note = "Please use `connect` directly with a `NodeAddr` or `NodeId`. This feature will be removed in 0.28.0."
+        note = "Please use `connect` directly with a NodeId. This fn will be removed in 0.28.0."
     )]
     pub async fn connect_by_node_id(
         &self,
