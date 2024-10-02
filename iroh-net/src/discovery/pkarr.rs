@@ -65,7 +65,6 @@ use crate::{
 };
 
 /// Environment variable to force the use of staging relays.
-#[cfg_attr(iroh_docsrs, doc(cfg(not(any(test, feature = "test-utils")))))]
 const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
 #[cfg(feature = "discovery-pkarr-dht")]
