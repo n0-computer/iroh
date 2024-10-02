@@ -1,13 +1,14 @@
 //! Node address discovery.
 //!
-//! To connect to an iroh-net node a [`NodeAddr`] is needed, which needs to contain either a
-//! [`RelayUrl`] or one or more *direct addresses*.  However it is often more desirable to
-//! be able to connect with only the [`NodeId`], as [`Endpoint::connect_by_node_id`] does.
+//! To connect to an iroh-net node a [`NodeAddr`] is needed, which may contain a
+//! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
 //!
-//! For connecting by [`NodeId`] to work however, the endpoint has to get the addressing
-//! information by other means.  This can be done by manually calling
-//! [`Endpoint::add_node_addr`], but that still requires knowing the other addressing
-//! information.
+//! Since there is a conversion from [`NodeId`] to [`NodeAddr`], you can also use
+//! connect directly with a [`NodeId`].
+//!
+//! For this to work however, the endpoint has to get the addressing  information by
+//! other means.  This can be done by manually calling [`Endpoint::add_node_addr`],
+//! but that still requires knowing the other addressing information.
 //!
 //! Node discovery is an automated system for an [`Endpoint`] to retrieve this addressing
 //! information.  Each iroh-net node will automatically publish their own addressing
@@ -761,7 +762,7 @@ mod test_dns_pkarr {
             .await?;
 
         // we connect only by node id!
-        let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
+        let res = ep2.connect(ep1.node_id(), TEST_ALPN).await;
         assert!(res.is_ok(), "connection established");
         Ok(())
     }
@@ -782,7 +783,7 @@ mod test_dns_pkarr {
             .await?;
 
         // we connect only by node id!
-        let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
+        let res = ep2.connect(ep1.node_id(), TEST_ALPN).await;
         assert!(res.is_ok(), "connection established");
         Ok(())
     }

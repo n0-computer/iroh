@@ -194,7 +194,7 @@ impl BlobSearch {
         // Establish a connection to our node.
         // We use the default node discovery in iroh, so we can connect by node id without
         // providing further information.
-        let conn = self.endpoint.connect_by_node_id(node_id, ALPN).await?;
+        let conn = self.endpoint.connect(node_id, ALPN).await?;
 
         // Open a bi-directional in our connection.
         let (mut send, mut recv) = conn.open_bi().await?;
