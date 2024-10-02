@@ -2210,7 +2210,7 @@
         alpn: <span class="kw-2">&amp;</span>[u8],
     ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
         <span class="kw">let </span>node_addr = node_addr.into();
-        tracing::Span::current().record(<span class="string">"remote"</span>, <span class="kw-2">&amp;</span>node_addr.node_id.fmt_short());
+        tracing::Span::current().record(<span class="string">"remote"</span>, node_addr.node_id.fmt_short());
         <span class="comment">// Connecting to ourselves is not supported.
         </span><span class="kw">if </span>node_addr.node_id == <span class="self">self</span>.node_id() {
             <span class="macro">bail!</span>(
