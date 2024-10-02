@@ -1812,10 +1812,6 @@
 <a href="#1812" id="1812">1812</a>
 <a href="#1813" id="1813">1813</a>
 <a href="#1814" id="1814">1814</a>
-<a href="#1815" id="1815">1815</a>
-<a href="#1816" id="1816">1816</a>
-<a href="#1817" id="1817">1817</a>
-<a href="#1818" id="1818">1818</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1883,6 +1879,8 @@
 #[cfg_attr(iroh_docsrs, doc(cfg(not(any(test, feature = <span class="string">"test-utils"</span>)))))]
 </span><span class="kw">const </span>ENV_FORCE_STAGING_RELAYS: <span class="kw-2">&amp;</span>str = <span class="string">"IROH_FORCE_STAGING_RELAYS"</span>;
 
+<span class="kw">type </span>DiscoveryBuilder = Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; + Send + Sync&gt;;
+
 <span class="doccomment">/// Builder for [`Endpoint`].
 ///
 /// By default the endpoint will generate a new random [`SecretKey`], which will result in a
@@ -1897,8 +1895,7 @@
     transport_config: <span class="prelude-ty">Option</span>&lt;quinn::TransportConfig&gt;,
     keylog: bool,
     <span class="attr">#[debug(skip)]
-    </span>discovery:
-        Vec&lt;Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; + Send + Sync + <span class="lifetime">'static</span>&gt;&gt;,
+    </span>discovery: Vec&lt;DiscoveryBuilder&gt;,
     proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
     <span class="doccomment">/// List of known nodes. See [`Builder::known_nodes`].
     </span>node_map: <span class="prelude-ty">Option</span>&lt;Vec&lt;NodeAddr&gt;&gt;,
@@ -2071,12 +2068,7 @@
     /// direct addresses or relay URLs will fail.
     ///
     /// See the documentation of the [`Discovery`] trait for details.
-    </span><span class="kw">pub fn </span>add_discovery(
-        <span class="kw-2">mut </span><span class="self">self</span>,
-        discovery: Box&lt;
-            <span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; + Send + Sync + <span class="lifetime">'static</span>,
-        &gt;,
-    ) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>add_discovery(<span class="kw-2">mut </span><span class="self">self</span>, discovery: DiscoveryBuilder) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.discovery.push(discovery);
         <span class="self">self
     </span>}
