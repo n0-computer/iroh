@@ -128,7 +128,7 @@ pub(crate) struct Options {
     /// Skip verification of SSL certificates from relay servers
     ///
     /// May only be used in tests.
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(all(test, feature = "test-utils"))]
     #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub(crate) insecure_skip_relay_cert_verify: bool,
 }
@@ -144,7 +144,7 @@ impl Default for Options {
             discovery: None,
             proxy_url: None,
             dns_resolver: crate::dns::default_resolver().clone(),
-            #[cfg(any(test, feature = "test-utils"))]
+            #[cfg(all(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
         }
     }
@@ -243,7 +243,7 @@ pub(crate) struct MagicSock {
     /// Skip verification of SSL certificates from relay servers
     ///
     /// May only be used in tests.
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(all(test, feature = "test-utils"))]
     #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     insecure_skip_relay_cert_verify: bool,
 }
@@ -1397,7 +1397,7 @@ impl Handle {
             discovery,
             dns_resolver,
             proxy_url,
-            #[cfg(any(test, feature = "test-utils"))]
+            #[cfg(all(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
         } = opts;
 
@@ -1453,7 +1453,7 @@ impl Handle {
             pending_call_me_maybes: Default::default(),
             direct_addr_update_state: DirectAddrUpdateState::new(),
             dns_resolver,
-            #[cfg(any(test, feature = "test-utils"))]
+            #[cfg(all(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
         });
 

@@ -64,6 +64,10 @@ use crate::{
     AddrInfo, Endpoint, NodeId,
 };
 
+/// Environment variable to force the use of staging relays.
+#[cfg_attr(iroh_docsrs, doc(cfg(not(any(test, feature = "test-utils")))))]
+const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
+
 #[cfg(feature = "discovery-pkarr-dht")]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-pkarr-dht")))]
 pub mod dht;
@@ -177,15 +181,20 @@ impl PkarrPublisher {
     /// This uses the pkarr relay server operated by [number 0], at
     /// [`N0_DNS_PKARR_RELAY_PROD`].
     ///
-    /// When compiling for tests, i.e. when `cfg(test)` is true, or when the `test-utils`
-    /// crate feature is enabled the [`N0_DNS_PKARR_RELAY_STAGING`] server is used instead.
+    /// When running with the environment variable
+    /// `IROH_FORCE_STAGING_RELAYS` set to `1` the [`N0_DNS_PKARR_RELAY_STAGING`]
+    /// server is used instead.
     ///
     /// [number 0]: https://n0.computer
     pub fn n0_dns(secret_key: SecretKey) -> Self {
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let pkarr_relay = N0_DNS_PKARR_RELAY_PROD;
-        #[cfg(any(test, feature = "test-utils"))]
-        let pkarr_relay = N0_DNS_PKARR_RELAY_STAGING;
+        let force_staging_relay = match std::env::var(ENV_FORCE_STAGING_RELAYS) {
+            Ok(value) => value == "1",
+            Err(_) => false,
+        };
+        let pkarr_relay = match force_staging_relay {
+            true => N0_DNS_PKARR_RELAY_STAGING,
+            false => N0_DNS_PKARR_RELAY_PROD,
+        };
 
         let pkarr_relay: Url = pkarr_relay.parse().expect("url is valid");
         Self::new(secret_key, pkarr_relay)
@@ -321,9 +330,9 @@ impl PkarrResolver {
     ///
     /// [number 0]: https://n0.computer
     pub fn n0_dns() -> Self {
-        #[cfg(not(any(test, feature = "test-utils")))]
+        #[cfg(not(all(test, feature = "test-utils")))]
         let pkarr_relay = N0_DNS_PKARR_RELAY_PROD;
-        #[cfg(any(test, feature = "test-utils"))]
+        #[cfg(all(test, feature = "test-utils"))]
         let pkarr_relay = N0_DNS_PKARR_RELAY_STAGING;
 
         let pkarr_relay: Url = pkarr_relay.parse().expect("url is valid");

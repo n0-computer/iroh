@@ -146,6 +146,6 @@ pub use iroh_base::key;
 
 pub use iroh_base::key::NodeId;
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(all(test, feature = "test-utils"))]
 #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
 pub mod test_utils;

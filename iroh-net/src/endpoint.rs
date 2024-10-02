@@ -58,7 +58,6 @@ pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 /// Environment variable to force the use of staging relays.
-#[cfg(not(any(test, feature = "test-utils")))]
 #[cfg_attr(iroh_docsrs, doc(cfg(not(any(test, feature = "test-utils")))))]
 const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
@@ -80,7 +79,7 @@ pub struct Builder {
     /// List of known nodes. See [`Builder::known_nodes`].
     node_map: Option<Vec<NodeAddr>>,
     dns_resolver: Option<DnsResolver>,
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(all(test, feature = "test-utils"))]
     #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     insecure_skip_relay_cert_verify: bool,
     addr_v4: Option<SocketAddrV4>,
@@ -99,7 +98,7 @@ impl Default for Builder {
             proxy_url: None,
             node_map: None,
             dns_resolver: None,
-            #[cfg(any(test, feature = "test-utils"))]
+            #[cfg(all(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             addr_v4: None,
             addr_v6: None,
@@ -135,7 +134,7 @@ impl Builder {
             discovery: self.discovery,
             proxy_url: self.proxy_url,
             dns_resolver,
-            #[cfg(any(test, feature = "test-utils"))]
+            #[cfg(all(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         };
         Endpoint::bind(static_config, msock_opts, self.alpn_protocols).await
@@ -289,7 +288,7 @@ impl Builder {
     /// Skip verification of SSL certificates from relay servers
     ///
     /// May only be used in tests.
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(all(test, feature = "test-utils"))]
     #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
@@ -1247,14 +1246,10 @@ fn proxy_url_from_env() -> Option<Url> {
 /// Otherwise, it will return `RelayMode::Default`.
 pub fn default_relay_mode() -> RelayMode {
     // Use staging in testing
-    #[cfg(not(any(test, feature = "test-utils")))]
     let force_staging_relays = match std::env::var(ENV_FORCE_STAGING_RELAYS) {
         Ok(value) => value == "1",
         Err(_) => false,
     };
-    #[cfg(any(test, feature = "test-utils"))]
-    let force_staging_relays = true;
-
     match force_staging_relays {
         true => RelayMode::Staging,
         false => RelayMode::Default,

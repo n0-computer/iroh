@@ -120,7 +120,7 @@ where
     dns_resolver: Option<DnsResolver>,
     node_discovery: DiscoveryConfig,
     docs_storage: DocsStorage,
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(all(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
     /// Callback to register when a gc loop is done
     #[debug("callback")]
@@ -231,9 +231,9 @@ fn mk_external_rpc() -> IrohServerEndpoint {
 impl Default for Builder<iroh_blobs::store::mem::Store> {
     fn default() -> Self {
         // Use staging in testing
-        #[cfg(not(any(test, feature = "test-utils")))]
+        #[cfg(not(all(test, feature = "test-utils")))]
         let relay_mode = RelayMode::Default;
-        #[cfg(any(test, feature = "test-utils"))]
+        #[cfg(all(test, feature = "test-utils"))]
         let relay_mode = RelayMode::Staging;
 
         Self {
@@ -250,7 +250,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             gc_policy: GcPolicy::Disabled,
             docs_storage: DocsStorage::Disabled,
             node_discovery: Default::default(),
-            #[cfg(any(test, feature = "test-utils"))]
+            #[cfg(all(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
             blob_events: Default::default(),
@@ -267,9 +267,9 @@ impl<D: Map> Builder<D> {
         storage: StorageConfig,
     ) -> Self {
         // Use staging in testing
-        #[cfg(not(any(test, feature = "test-utils")))]
+        #[cfg(not(all(test, feature = "test-utils")))]
         let relay_mode = RelayMode::Default;
-        #[cfg(any(test, feature = "test-utils"))]
+        #[cfg(all(test, feature = "test-utils"))]
         let relay_mode = RelayMode::Staging;
 
         Self {
@@ -286,7 +286,7 @@ impl<D: Map> Builder<D> {
             gc_policy: GcPolicy::Disabled,
             docs_storage,
             node_discovery: Default::default(),
-            #[cfg(any(test, feature = "test-utils"))]
+            #[cfg(all(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
             blob_events: Default::default(),
@@ -346,7 +346,7 @@ where
             gc_policy: self.gc_policy,
             docs_storage,
             node_discovery: self.node_discovery,
-            #[cfg(any(test, feature = "test-utils"))]
+            #[cfg(all(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: self.gc_done_callback,
             blob_events: self.blob_events,
@@ -508,14 +508,14 @@ where
     /// Skip verification of SSL certificates from relay servers
     ///
     /// May only be used in tests.
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(all(test, feature = "test-utils"))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
         self
     }
 
     /// Register a callback for when GC is done.
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(all(test, feature = "test-utils"))]
     pub fn register_gc_done_cb(mut self, cb: Box<dyn Fn() + Send>) -> Self {
         self.gc_done_callback.replace(cb);
         self
@@ -617,7 +617,7 @@ where
                 None => endpoint,
             };
 
-            #[cfg(any(test, feature = "test-utils"))]
+            #[cfg(all(test, feature = "test-utils"))]
             {
                 endpoint =
                     endpoint.insecure_skip_relay_cert_verify(self.insecure_skip_relay_cert_verify);
