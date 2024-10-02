@@ -1812,6 +1812,12 @@
 <a href="#1812" id="1812">1812</a>
 <a href="#1813" id="1813">1813</a>
 <a href="#1814" id="1814">1814</a>
+<a href="#1815" id="1815">1815</a>
+<a href="#1816" id="1816">1816</a>
+<a href="#1817" id="1817">1817</a>
+<a href="#1818" id="1818">1818</a>
+<a href="#1819" id="1819">1819</a>
+<a href="#1820" id="1820">1820</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1842,7 +1848,6 @@
 <span class="kw">use </span>url::Url;
 
 <span class="kw">use </span><span class="kw">crate</span>::discovery::dns::DnsDiscovery;
-<span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::dht::DhtDiscovery;
 <span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::PkarrPublisher;
 <span class="kw">use </span><span class="kw">crate</span>::discovery::{ConcurrentDiscovery, Discovery, DiscoveryTask};
 <span class="kw">use </span><span class="kw">crate</span>::dns::{default_resolver, DnsResolver};
@@ -2068,7 +2073,13 @@
     /// direct addresses or relay URLs will fail.
     ///
     /// See the documentation of the [`Discovery`] trait for details.
-    </span><span class="kw">pub fn </span>add_discovery(<span class="kw-2">mut </span><span class="self">self</span>, discovery: DiscoveryBuilder) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>add_discovery&lt;F, D&gt;(<span class="kw-2">mut </span><span class="self">self</span>, discovery: F) -&gt; <span class="self">Self
+    </span><span class="kw">where
+        </span>F: FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Option</span>&lt;D&gt; + Send + Sync + <span class="lifetime">'static</span>,
+        D: Discovery + <span class="lifetime">'static</span>,
+    {
+        <span class="kw">let </span>discovery: DiscoveryBuilder =
+            Box::new(<span class="kw">move </span>|secret_key| discovery(secret_key).map(|x| Box::new(x) <span class="kw">as _</span>));
         <span class="self">self</span>.discovery.push(discovery);
         <span class="self">self
     </span>}
@@ -2089,6 +2100,7 @@
     <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
     </span><span class="doccomment">/// Configure the endpoint to use the mainline DHT with default settings.
     </span><span class="kw">pub fn </span>discovery_dht(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::dht::DhtDiscovery;
         <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
             <span class="prelude-val">Some</span>(Box::new(
                 DhtDiscovery::builder()
