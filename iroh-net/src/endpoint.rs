@@ -78,7 +78,7 @@ pub struct Builder {
     transport_config: Option<quinn::TransportConfig>,
     keylog: bool,
     #[debug(skip)]
-    discovery: Vec<Box<dyn FnOnce(&SecretKey) -> Box<dyn Discovery> + Send + 'static>>,
+    discovery: Vec<Box<dyn FnOnce(&SecretKey) -> Box<dyn Discovery> + Send + Sync + 'static>>,
     proxy_url: Option<Url>,
     /// List of known nodes. See [`Builder::known_nodes`].
     node_map: Option<Vec<NodeAddr>>,
@@ -266,7 +266,7 @@ impl Builder {
     /// See the documentation of the [`Discovery`] trait for details.
     pub fn add_discovery(
         mut self,
-        discovery: Box<dyn FnOnce(&SecretKey) -> Box<dyn Discovery> + Send + 'static>,
+        discovery: Box<dyn FnOnce(&SecretKey) -> Box<dyn Discovery> + Send + Sync + 'static>,
     ) -> Self {
         self.discovery.push(discovery);
         self
