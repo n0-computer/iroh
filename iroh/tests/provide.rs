@@ -10,7 +10,10 @@ use bytes::Bytes;
 use futures_lite::FutureExt;
 use iroh::node::{Builder, DocsStorage};
 use iroh_base::node_addr::AddrInfoOptions;
-use iroh_net::{defaults::staging::default_relay_map, key::SecretKey, NodeAddr, NodeId};
+use iroh_net::defaults::staging::default_relay_map;
+use iroh_net::endpoint::Connection;
+use iroh_net::key::SecretKey;
+use iroh_net::{NodeAddr, NodeId};
 use rand::RngCore;
 
 use bao_tree::{blake3, ChunkNum, ChunkRanges};
@@ -27,7 +30,7 @@ use iroh_blobs::{
 };
 
 /// Create a new endpoint and dial a peer, returning the connection.
-async fn dial(secret_key: SecretKey, peer: NodeAddr) -> anyhow::Result<quinn::Connection> {
+async fn dial(secret_key: SecretKey, peer: NodeAddr) -> anyhow::Result<Connection> {
     let endpoint = iroh_net::Endpoint::builder()
         .secret_key(secret_key)
         .bind()

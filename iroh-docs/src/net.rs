@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use iroh_net::{endpoint::get_remote_node_id, key::PublicKey, Endpoint, NodeAddr};
+use iroh_net::{key::PublicKey, Endpoint, NodeAddr};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error_span, trace, Instrument};
 
@@ -116,7 +116,7 @@ where
 {
     let t_start = Instant::now();
     let connection = connecting.await.map_err(AcceptError::connect)?;
-    let peer = get_remote_node_id(&connection).map_err(AcceptError::connect)?;
+    let peer = connection.remote_node_id().map_err(AcceptError::connect)?;
     let (mut send_stream, mut recv_stream) = connection
         .accept_bi()
         .await

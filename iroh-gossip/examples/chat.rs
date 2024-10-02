@@ -221,7 +221,7 @@ async fn handle_connection(
 ) -> anyhow::Result<()> {
     let alpn = conn.alpn().await?;
     let conn = conn.await?;
-    let peer_id = iroh_net::endpoint::get_remote_node_id(&conn)?;
+    let peer_id = conn.remote_node_id()?;
     match alpn.as_ref() {
         GOSSIP_ALPN => gossip.handle_connection(conn).await.context(format!(
             "connection to {peer_id} with ALPN {} failed",
