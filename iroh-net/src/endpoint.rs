@@ -432,10 +432,12 @@ impl Endpoint {
 
     /// Connects to a remote [`Endpoint`].
     ///
-    /// A [`NodeAddr`] is required. It must contain the [`NodeId`] to dial and may also
-    /// contain a [`RelayUrl`] and direct addresses. If direct addresses are provided, they
-    /// will be used to try and establish a direct connection without involving a relay
-    /// server.
+    /// A value that can be converted into a [`NodeAddr`] is required. This can be either a
+    /// [`NodeAddr`], a [`NodeId`] or a [`iroh_base::ticket::NodeTicket`].
+    ///
+    /// The [`NodeAddr`] must contain the [`NodeId`] to dial and may also contain a [`RelayUrl`]
+    /// and direct addresses. If direct addresses are provided, they will be used to try and
+    /// establish a direct connection without involving a relay server.
     ///
     /// If neither a [`RelayUrl`] or direct addresses are configured in the [`NodeAddr`] it
     /// may still be possible a connection can be established.  This depends on other calls
@@ -457,6 +459,7 @@ impl Endpoint {
         alpn: &[u8],
     ) -> Result<quinn::Connection> {
         let node_addr = node_addr.into();
+        tracing::Span::current().record("remote", &node_addr.node_id.fmt_short());
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
             bail!(
