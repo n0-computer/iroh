@@ -220,7 +220,7 @@ pub struct ClientBuilder {
     /// Relay protocol
     protocol: Protocol,
     /// Allow self-signed certificates from relay servers
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(all(test, feature = "test-utils"))]
     #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     insecure_skip_cert_verify: bool,
     /// HTTP Proxy
@@ -238,7 +238,7 @@ impl ClientBuilder {
             server_public_key: None,
             url: url.into(),
             protocol: Protocol::Relay,
-            #[cfg(any(test, feature = "test-utils"))]
+            #[cfg(all(test, feature = "test-utils"))]
             insecure_skip_cert_verify: false,
             proxy_url: None,
         }
@@ -293,7 +293,7 @@ impl ClientBuilder {
     /// Skip the verification of the relay server's SSL certificates.
     ///
     /// May only be used in tests.
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(all(test, feature = "test-utils"))]
     #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub fn insecure_skip_cert_verify(mut self, skip: bool) -> Self {
         self.insecure_skip_cert_verify = skip;
@@ -319,7 +319,7 @@ impl ClientBuilder {
         .expect("protocols supported by ring")
         .with_root_certificates(roots)
         .with_no_client_auth();
-        #[cfg(any(test, feature = "test-utils"))]
+        #[cfg(all(test, feature = "test-utils"))]
         if self.insecure_skip_cert_verify {
             warn!("Insecure config: SSL certificates from relay servers will be trusted without verification");
             config
@@ -1040,12 +1040,12 @@ async fn resolve_host(
 }
 
 /// Used to allow self signed certificates in tests
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(all(test, feature = "test-utils"))]
 #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
 #[derive(Debug)]
 struct NoCertVerifier;
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(all(test, feature = "test-utils"))]
 impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
     fn verify_server_cert(
         &self,

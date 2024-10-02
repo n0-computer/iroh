@@ -254,6 +254,6 @@ pub(crate) mod util;
 pub use endpoint::{AddrInfo, Endpoint, NodeAddr};
 pub use iroh_base::{key, key::NodeId};
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(all(test, feature = "test-utils"))]
 #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
 pub mod test_utils;
