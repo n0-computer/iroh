@@ -27,7 +27,9 @@ use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
-use crate::discovery::{Discovery, DiscoveryTask};
+use crate::discovery::dns::DnsDiscovery;
+use crate::discovery::pkarr::PkarrPublisher;
+use crate::discovery::{ConcurrentDiscovery, Discovery, DiscoveryTask};
 use crate::dns::{default_resolver, DnsResolver};
 use crate::key::{PublicKey, SecretKey};
 use crate::magicsock::{self, Handle, QuicMappedAddr};
@@ -62,6 +64,14 @@ const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 #[cfg_attr(iroh_docsrs, doc(cfg(not(any(test, feature = "test-utils")))))]
 const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
+#[derive(Debug, Default)]
+enum DiscoveryConfig {
+    #[default]
+    Disabled,
+    N0,
+    Custom(Box<dyn Discovery>),
+}
+
 /// Builder for [`Endpoint`].
 ///
 /// By default the endpoint will generate a new random [`SecretKey`], which will result in a
@@ -75,7 +85,7 @@ pub struct Builder {
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
     keylog: bool,
-    discovery: Option<Box<dyn Discovery>>,
+    discovery: DiscoveryConfig,
     proxy_url: Option<Url>,
     /// List of known nodes. See [`Builder::known_nodes`].
     node_map: Option<Vec<NodeAddr>>,
@@ -125,6 +135,19 @@ impl Builder {
         let dns_resolver = self
             .dns_resolver
             .unwrap_or_else(|| default_resolver().clone());
+        let discovery = match self.discovery {
+            DiscoveryConfig::Disabled => None,
+            DiscoveryConfig::N0 => {
+                let discovery = ConcurrentDiscovery::from_services(vec![
+                    // Enable DNS discovery by default
+                    Box::new(DnsDiscovery::n0_dns()),
+                    // Enable pkarr publishing by default
+                    Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
+                ]);
+                Some(Box::new(discovery) as Box<dyn Discovery>)
+            }
+            DiscoveryConfig::Custom(discovery) => Some(discovery),
+        };
 
         let msock_opts = magicsock::Options {
             addr_v4: self.addr_v4,
@@ -132,7 +155,7 @@ impl Builder {
             secret_key,
             relay_map,
             node_map: self.node_map,
-            discovery: self.discovery,
+            discovery,
             proxy_url: self.proxy_url,
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
@@ -209,6 +232,15 @@ impl Builder {
         self
     }
 
+    /// Configure the endpoint to use the default n0 discovery service.
+    ///
+    /// The default discovery service publishes to and resolves from the
+    /// n0.computer dns server `iroh.link`.
+    pub fn discovery_n0(mut self) -> Self {
+        self.discovery = DiscoveryConfig::N0;
+        self
+    }
+
     /// Optionally sets a discovery mechanism for this endpoint.
     ///
     /// If you want to combine multiple discovery services, you can pass a
@@ -219,7 +251,7 @@ impl Builder {
     ///
     /// See the documentation of the [`Discovery`] trait for details.
     pub fn discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
-        self.discovery = Some(discovery);
+        self.discovery = DiscoveryConfig::Custom(discovery);
         self
     }
 
