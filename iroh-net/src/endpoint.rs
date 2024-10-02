@@ -459,7 +459,7 @@ impl Endpoint {
         alpn: &[u8],
     ) -> Result<quinn::Connection> {
         let node_addr = node_addr.into();
-        tracing::Span::current().record("remote", &node_addr.node_id.fmt_short());
+        tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
             bail!(
