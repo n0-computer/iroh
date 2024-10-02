@@ -1866,7 +1866,7 @@
     transport_config: <span class="prelude-ty">Option</span>&lt;quinn::TransportConfig&gt;,
     keylog: bool,
     <span class="attr">#[debug(skip)]
-    </span>discovery: Vec&lt;Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; Box&lt;<span class="kw">dyn </span>Discovery&gt; + Send + <span class="lifetime">'static</span>&gt;&gt;,
+    </span>discovery: Vec&lt;Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; Box&lt;<span class="kw">dyn </span>Discovery&gt; + Send + Sync + <span class="lifetime">'static</span>&gt;&gt;,
     proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
     <span class="doccomment">/// List of known nodes. See [`Builder::known_nodes`].
     </span>node_map: <span class="prelude-ty">Option</span>&lt;Vec&lt;NodeAddr&gt;&gt;,
@@ -2054,7 +2054,7 @@
     /// See the documentation of the [`Discovery`] trait for details.
     </span><span class="kw">pub fn </span>add_discovery(
         <span class="kw-2">mut </span><span class="self">self</span>,
-        discovery: Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; Box&lt;<span class="kw">dyn </span>Discovery&gt; + Send + <span class="lifetime">'static</span>&gt;,
+        discovery: Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; Box&lt;<span class="kw">dyn </span>Discovery&gt; + Send + Sync + <span class="lifetime">'static</span>&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.discovery.push(discovery);
         <span class="self">self
