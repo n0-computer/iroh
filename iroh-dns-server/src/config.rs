@@ -161,6 +161,7 @@ impl Default for Config {
             http: Some(HttpConfig {
                 port: 8080,
                 bind_addr: None,
+                rate_limit: None,
             }),
             https: Some(HttpsConfig {
                 port: 8443,
