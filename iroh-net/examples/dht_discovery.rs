@@ -118,9 +118,7 @@ async fn chat_client(args: Args) -> anyhow::Result<()> {
         .bind()
         .await?;
     println!("We are {} and connecting to {}", node_id, remote_node_id);
-    let connection = endpoint
-        .connect_by_node_id(remote_node_id, CHAT_ALPN)
-        .await?;
+    let connection = endpoint.connect(remote_node_id, CHAT_ALPN).await?;
     println!("connected to {}", remote_node_id);
     let (mut writer, mut reader) = connection.open_bi().await?;
     let _copy_to_stdout =

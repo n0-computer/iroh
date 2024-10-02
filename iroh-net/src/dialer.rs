@@ -51,7 +51,7 @@ impl Dialer {
             let res = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => Err(anyhow!("Cancelled")),
-                res = endpoint.connect_by_node_id(node_id, alpn) => res
+                res = endpoint.connect(node_id, alpn) => res
             };
             (node_id, res)
         });

@@ -450,8 +450,13 @@ impl Endpoint {
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
-    #[instrument(skip_all, fields(me = %self.node_id().fmt_short(), remote = %node_addr.node_id.fmt_short(), alpn = ?String::from_utf8_lossy(alpn)))]
-    pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
+    #[instrument(skip_all, fields(me = %self.node_id().fmt_short(), alpn = ?String::from_utf8_lossy(alpn)))]
+    pub async fn connect(
+        &self,
+        node_addr: impl Into<NodeAddr>,
+        alpn: &[u8],
+    ) -> Result<quinn::Connection> {
+        let node_addr = node_addr.into();
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
             bail!(
@@ -502,6 +507,10 @@ impl Endpoint {
     /// information being provided by either the discovery service or using
     /// [`Endpoint::add_node_addr`].  See [`Endpoint::connect`] for the details of how it
     /// uses the discovery service to establish a connection to a remote node.
+    #[deprecated(
+        since = "0.27.0",
+        note = "Please use `connect` directly with a `NodeAddr` or `NodeId`"
+    )]
     pub async fn connect_by_node_id(
         &self,
         node_id: NodeId,
