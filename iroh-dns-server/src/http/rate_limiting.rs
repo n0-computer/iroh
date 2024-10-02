@@ -2,20 +2,45 @@ use std::time::Duration;
 
 use governor::{clock::QuantaInstant, middleware::NoOpMiddleware};
 use tower_governor::{
-    governor::GovernorConfigBuilder, key_extractor::PeerIpKeyExtractor, GovernorLayer,
+    governor::GovernorConfigBuilder,
+    key_extractor::{PeerIpKeyExtractor, SmartIpKeyExtractor},
+    GovernorLayer,
 };
+
+use super::RateLimitConfig;
 
 /// Create the default rate-limiting layer.
 ///
 /// This spawns a background thread to clean up the rate limiting cache.
-pub fn create() -> GovernorLayer<'static, PeerIpKeyExtractor, NoOpMiddleware<QuantaInstant>> {
+pub fn create(
+    rate_limit_config: Option<RateLimitConfig>,
+) -> Option<GovernorLayer<'static, PeerIpKeyExtractor, NoOpMiddleware<QuantaInstant>>> {
+    let use_smart_extractor = match rate_limit_config {
+        Some(RateLimitConfig::Boolean(false)) => {
+            tracing::info!("Rate limiting disabled");
+            return None;
+        }
+        // By default apply rate limit
+        None | Some(RateLimitConfig::Boolean(true)) => false,
+        Some(RateLimitConfig::Smart) => true,
+    };
+
+    tracing::info!("Rate limiting enabled");
+
     // Configure rate limiting:
     // * allow bursts with up to five requests per IP address
     // * replenish one element every two seconds
-    let governor_conf = GovernorConfigBuilder::default()
-        // .use_headers()
-        .per_second(4)
-        .burst_size(2)
+    let mut governor_conf_builder = GovernorConfigBuilder::default();
+    // governor_conf_builder.use_headers()
+    governor_conf_builder.per_second(4);
+    governor_conf_builder.burst_size(2);
+
+    if use_smart_extractor {
+        tracing::info!("Rate limiting using smart extractor");
+        governor_conf_builder.key_extractor(SmartIpKeyExtractor);
+    }
+
+    let governor_conf = governor_conf_builder
         .finish()
         .expect("failed to build rate-limiting governor");
 
@@ -34,7 +59,7 @@ pub fn create() -> GovernorLayer<'static, PeerIpKeyExtractor, NoOpMiddleware<Qua
         governor_limiter.retain_recent();
     });
 
-    GovernorLayer {
+    Some(GovernorLayer {
         config: &*governor_conf,
-    }
+    })
 }
