@@ -1786,6 +1786,36 @@
 <a href="#1786" id="1786">1786</a>
 <a href="#1787" id="1787">1787</a>
 <a href="#1788" id="1788">1788</a>
+<a href="#1789" id="1789">1789</a>
+<a href="#1790" id="1790">1790</a>
+<a href="#1791" id="1791">1791</a>
+<a href="#1792" id="1792">1792</a>
+<a href="#1793" id="1793">1793</a>
+<a href="#1794" id="1794">1794</a>
+<a href="#1795" id="1795">1795</a>
+<a href="#1796" id="1796">1796</a>
+<a href="#1797" id="1797">1797</a>
+<a href="#1798" id="1798">1798</a>
+<a href="#1799" id="1799">1799</a>
+<a href="#1800" id="1800">1800</a>
+<a href="#1801" id="1801">1801</a>
+<a href="#1802" id="1802">1802</a>
+<a href="#1803" id="1803">1803</a>
+<a href="#1804" id="1804">1804</a>
+<a href="#1805" id="1805">1805</a>
+<a href="#1806" id="1806">1806</a>
+<a href="#1807" id="1807">1807</a>
+<a href="#1808" id="1808">1808</a>
+<a href="#1809" id="1809">1809</a>
+<a href="#1810" id="1810">1810</a>
+<a href="#1811" id="1811">1811</a>
+<a href="#1812" id="1812">1812</a>
+<a href="#1813" id="1813">1813</a>
+<a href="#1814" id="1814">1814</a>
+<a href="#1815" id="1815">1815</a>
+<a href="#1816" id="1816">1816</a>
+<a href="#1817" id="1817">1817</a>
+<a href="#1818" id="1818">1818</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1816,6 +1846,7 @@
 <span class="kw">use </span>url::Url;
 
 <span class="kw">use </span><span class="kw">crate</span>::discovery::dns::DnsDiscovery;
+<span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::dht::DhtDiscovery;
 <span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::PkarrPublisher;
 <span class="kw">use </span><span class="kw">crate</span>::discovery::{ConcurrentDiscovery, Discovery, DiscoveryTask};
 <span class="kw">use </span><span class="kw">crate</span>::dns::{default_resolver, DnsResolver};
@@ -1866,7 +1897,8 @@
     transport_config: <span class="prelude-ty">Option</span>&lt;quinn::TransportConfig&gt;,
     keylog: bool,
     <span class="attr">#[debug(skip)]
-    </span>discovery: Vec&lt;Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; Box&lt;<span class="kw">dyn </span>Discovery&gt; + Send + Sync + <span class="lifetime">'static</span>&gt;&gt;,
+    </span>discovery:
+        Vec&lt;Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; + Send + Sync + <span class="lifetime">'static</span>&gt;&gt;,
     proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
     <span class="doccomment">/// List of known nodes. See [`Builder::known_nodes`].
     </span>node_map: <span class="prelude-ty">Option</span>&lt;Vec&lt;NodeAddr&gt;&gt;,
@@ -1919,7 +1951,7 @@
         <span class="kw">let </span>discovery = <span class="self">self
             </span>.discovery
             .into_iter()
-            .map(|f| f(<span class="kw-2">&amp;</span>secret_key))
+            .filter_map(|f| f(<span class="kw-2">&amp;</span>secret_key))
             .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="kw">let </span>discovery: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; = <span class="kw">match </span>discovery.len() {
             <span class="number">0 </span>=&gt; <span class="prelude-val">None</span>,
@@ -2009,19 +2041,6 @@
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Configure the endpoint to use the default n0 discovery service.
-    ///
-    /// The default discovery service publishes to and resolves from the
-    /// n0.computer dns server `iroh.link`.
-    </span><span class="kw">pub fn </span>discovery_n0(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
-            Box::new(PkarrPublisher::n0_dns(secret_key.clone()))
-        }));
-        <span class="self">self</span>.discovery
-            .push(Box::new(|<span class="kw">_</span>| Box::new(DnsDiscovery::n0_dns())));
-        <span class="self">self
-    </span>}
-
     <span class="doccomment">/// Remove all discovery services.
     </span><span class="kw">pub fn </span>clear_discovery(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.discovery.clear();
@@ -2039,7 +2058,7 @@
     /// See the documentation of the [`Discovery`] trait for details.
     </span><span class="kw">pub fn </span>discovery(<span class="kw-2">mut </span><span class="self">self</span>, discovery: Box&lt;<span class="kw">dyn </span>Discovery&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.discovery.clear();
-        <span class="self">self</span>.discovery.push(Box::new(<span class="kw">move </span>|<span class="kw">_</span>| discovery));
+        <span class="self">self</span>.discovery.push(Box::new(<span class="kw">move </span>|<span class="kw">_</span>| <span class="prelude-val">Some</span>(discovery)));
         <span class="self">self
     </span>}
 
@@ -2054,9 +2073,50 @@
     /// See the documentation of the [`Discovery`] trait for details.
     </span><span class="kw">pub fn </span>add_discovery(
         <span class="kw-2">mut </span><span class="self">self</span>,
-        discovery: Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; Box&lt;<span class="kw">dyn </span>Discovery&gt; + Send + Sync + <span class="lifetime">'static</span>&gt;,
+        discovery: Box&lt;
+            <span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; + Send + Sync + <span class="lifetime">'static</span>,
+        &gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.discovery.push(discovery);
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Configure the endpoint to use the default n0 discovery service.
+    ///
+    /// The default discovery service publishes to and resolves from the
+    /// n0.computer dns server `iroh.link`.
+    </span><span class="kw">pub fn </span>discovery_n0(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
+            <span class="prelude-val">Some</span>(Box::new(PkarrPublisher::n0_dns(secret_key.clone())))
+        }));
+        <span class="self">self</span>.discovery
+            .push(Box::new(|<span class="kw">_</span>| <span class="prelude-val">Some</span>(Box::new(DnsDiscovery::n0_dns()))));
+        <span class="self">self
+    </span>}
+
+    <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
+    </span><span class="doccomment">/// Configure the endpoint to use the mainline DHT with default settings.
+    </span><span class="kw">pub fn </span>discovery_dht(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
+            <span class="prelude-val">Some</span>(Box::new(
+                DhtDiscovery::builder()
+                    .secret_key(secret_key.clone())
+                    .build()
+                    .unwrap(),
+            ))
+        }));
+        <span class="self">self
+    </span>}
+
+    <span class="attr">#[cfg(feature = <span class="string">"discovery-local-network"</span>)]
+    </span><span class="doccomment">/// Configure the endpoint to use local network discovery.
+    </span><span class="kw">pub fn </span>discovery_local_network(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="kw">use </span><span class="kw">crate</span>::discovery::local_swarm_discovery::LocalSwarmDiscovery;
+        <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
+            LocalSwarmDiscovery::new(secret_key.public())
+                .map(|x| Box::new(x) <span class="kw">as _</span>)
+                .ok()
+        }));
         <span class="self">self
     </span>}
 
