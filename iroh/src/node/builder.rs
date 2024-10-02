@@ -247,7 +247,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             gc_policy: GcPolicy::Disabled,
             docs_storage: DocsStorage::Disabled,
             node_discovery: Default::default(),
-            #[cfg(all(test, feature = "test-utils"))]
+            #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
             blob_events: Default::default(),
@@ -283,7 +283,7 @@ impl<D: Map> Builder<D> {
             gc_policy: GcPolicy::Disabled,
             docs_storage,
             node_discovery: Default::default(),
-            #[cfg(all(test, feature = "test-utils"))]
+            #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
             blob_events: Default::default(),
@@ -343,7 +343,7 @@ where
             gc_policy: self.gc_policy,
             docs_storage,
             node_discovery: self.node_discovery,
-            #[cfg(all(test, feature = "test-utils"))]
+            #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: self.gc_done_callback,
             blob_events: self.blob_events,
@@ -614,7 +614,7 @@ where
                 None => endpoint,
             };
 
-            #[cfg(all(test, feature = "test-utils"))]
+            #[cfg(any(test, feature = "test-utils"))]
             {
                 endpoint =
                     endpoint.insecure_skip_relay_cert_verify(self.insecure_skip_relay_cert_verify);
