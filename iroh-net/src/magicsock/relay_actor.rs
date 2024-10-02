@@ -490,7 +490,7 @@ impl RelayActor {
             .can_ack_pings(true)
             .is_preferred(my_relay.as_ref() == Some(&url1));
 
-        #[cfg(all(test, feature = "test-utils"))]
+        #[cfg(any(test, feature = "test-utils"))]
         let builder = builder.insecure_skip_cert_verify(self.msock.insecure_skip_relay_cert_verify);
 
         let (dc, dc_receiver) = builder.build(

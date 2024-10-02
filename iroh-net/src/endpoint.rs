@@ -149,7 +149,7 @@ impl Builder {
             discovery,
             proxy_url: self.proxy_url,
             dns_resolver,
-            #[cfg(all(test, feature = "test-utils"))]
+            #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         };
         Endpoint::bind(static_config, msock_opts, self.alpn_protocols).await
