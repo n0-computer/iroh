@@ -28,7 +28,6 @@ use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
 use crate::discovery::dns::DnsDiscovery;
-use crate::discovery::pkarr::dht::DhtDiscovery;
 use crate::discovery::pkarr::PkarrPublisher;
 use crate::discovery::{ConcurrentDiscovery, Discovery, DiscoveryTask};
 use crate::dns::{default_resolver, DnsResolver};
@@ -65,6 +64,8 @@ const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 #[cfg_attr(iroh_docsrs, doc(cfg(not(any(test, feature = "test-utils")))))]
 const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
+type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
+
 /// Builder for [`Endpoint`].
 ///
 /// By default the endpoint will generate a new random [`SecretKey`], which will result in a
@@ -79,8 +80,7 @@ pub struct Builder {
     transport_config: Option<quinn::TransportConfig>,
     keylog: bool,
     #[debug(skip)]
-    discovery:
-        Vec<Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync + 'static>>,
+    discovery: Vec<DiscoveryBuilder>,
     proxy_url: Option<Url>,
     /// List of known nodes. See [`Builder::known_nodes`].
     node_map: Option<Vec<NodeAddr>>,
@@ -253,12 +253,13 @@ impl Builder {
     /// direct addresses or relay URLs will fail.
     ///
     /// See the documentation of the [`Discovery`] trait for details.
-    pub fn add_discovery(
-        mut self,
-        discovery: Box<
-            dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync + 'static,
-        >,
-    ) -> Self {
+    pub fn add_discovery<F, D>(mut self, discovery: F) -> Self
+    where
+        F: FnOnce(&SecretKey) -> Option<D> + Send + Sync + 'static,
+        D: Discovery + 'static,
+    {
+        let discovery: DiscoveryBuilder =
+            Box::new(move |secret_key| discovery(secret_key).map(|x| Box::new(x) as _));
         self.discovery.push(discovery);
         self
     }
@@ -279,6 +280,7 @@ impl Builder {
     #[cfg(feature = "discovery-pkarr-dht")]
     /// Configure the endpoint to use the mainline DHT with default settings.
     pub fn discovery_dht(mut self) -> Self {
+        use crate::discovery::pkarr::dht::DhtDiscovery;
         self.discovery.push(Box::new(|secret_key| {
             Some(Box::new(
                 DhtDiscovery::builder()
