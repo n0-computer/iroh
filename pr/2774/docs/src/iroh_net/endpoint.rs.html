@@ -1746,6 +1746,9 @@
 <a href="#1746" id="1746">1746</a>
 <a href="#1747" id="1747">1747</a>
 <a href="#1748" id="1748">1748</a>
+<a href="#1749" id="1749">1749</a>
+<a href="#1750" id="1750">1750</a>
+<a href="#1751" id="1751">1751</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -2180,10 +2183,12 @@
 
     </span><span class="doccomment">/// Connects to a remote [`Endpoint`].
     ///
-    /// A [`NodeAddr`] is required. It must contain the [`NodeId`] to dial and may also
-    /// contain a [`RelayUrl`] and direct addresses. If direct addresses are provided, they
-    /// will be used to try and establish a direct connection without involving a relay
-    /// server.
+    /// A value that can be converted into a [`NodeAddr`] is required. This can be either a
+    /// [`NodeAddr`], a [`NodeId`] or a [`iroh_base::ticket::NodeTicket`].
+    ///
+    /// The [`NodeAddr`] must contain the [`NodeId`] to dial and may also contain a [`RelayUrl`]
+    /// and direct addresses. If direct addresses are provided, they will be used to try and
+    /// establish a direct connection without involving a relay server.
     ///
     /// If neither a [`RelayUrl`] or direct addresses are configured in the [`NodeAddr`] it
     /// may still be possible a connection can be established.  This depends on other calls
@@ -2205,6 +2210,7 @@
         alpn: <span class="kw-2">&amp;</span>[u8],
     ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
         <span class="kw">let </span>node_addr = node_addr.into();
+        tracing::Span::current().record(<span class="string">"remote"</span>, <span class="kw-2">&amp;</span>node_addr.node_id.fmt_short());
         <span class="comment">// Connecting to ourselves is not supported.
         </span><span class="kw">if </span>node_addr.node_id == <span class="self">self</span>.node_id() {
             <span class="macro">bail!</span>(

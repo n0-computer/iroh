@@ -239,7 +239,7 @@
         <span class="self">self</span>.nodes.is_empty()
     }
 
-    <span class="doccomment">/// Creates a new [`RelayMap] with a single relay server configured.
+    <span class="doccomment">/// Creates a new [`RelayMap`] with a single relay server configured.
     ///
     /// Allows to set a custom STUN port and different IP addresses for IPv4 and IPv6.
     /// If IP addresses are provided, no DNS lookup will be performed.
@@ -260,15 +260,15 @@
         }
     }
 
-    <span class="doccomment">/// Returns a [`RelayMap] from a [`RelayUrl`].
+    <span class="doccomment">/// Returns a [`RelayMap`] from a [`RelayUrl`].
     ///
     /// This will use the default STUN port and IP addresses resolved from the URL's host name via DNS.
-    /// relay nodes are specified at &lt;../../../docs/relay_nodes.md&gt;
+    /// relay nodes are specified at &lt;../../docs/relay_nodes.md&gt;
     </span><span class="kw">pub fn </span>from_url(url: RelayUrl) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::default_from_node(url, DEFAULT_STUN_PORT)
     }
 
-    <span class="doccomment">/// Constructs the [`RelayMap] from an iterator of [`RelayNode`]s.
+    <span class="doccomment">/// Constructs the [`RelayMap`] from an iterator of [`RelayNode`]s.
     </span><span class="kw">pub fn </span>from_nodes(value: <span class="kw">impl </span>IntoIterator&lt;Item = RelayNode&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>map = BTreeMap::new();
         <span class="kw">for </span>node <span class="kw">in </span>value.into_iter() {
