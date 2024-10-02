@@ -60,7 +60,6 @@ pub use super::magicsock::{
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 /// Environment variable to force the use of staging relays.
-#[cfg_attr(iroh_docsrs, doc(cfg(not(any(test, feature = "test-utils")))))]
 const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
 /// Builder for [`Endpoint`].
@@ -81,7 +80,7 @@ pub struct Builder {
     /// List of known nodes. See [`Builder::known_nodes`].
     node_map: Option<Vec<NodeAddr>>,
     dns_resolver: Option<DnsResolver>,
-    #[cfg(all(test, feature = "test-utils"))]
+    #[cfg(any(test, feature = "test-utils"))]
     #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     insecure_skip_relay_cert_verify: bool,
     addr_v4: Option<SocketAddrV4>,
@@ -100,7 +99,7 @@ impl Default for Builder {
             proxy_url: None,
             node_map: None,
             dns_resolver: None,
-            #[cfg(all(test, feature = "test-utils"))]
+            #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             addr_v4: None,
             addr_v6: None,
@@ -290,7 +289,7 @@ impl Builder {
     /// Skip verification of SSL certificates from relay servers
     ///
     /// May only be used in tests.
-    #[cfg(all(test, feature = "test-utils"))]
+    #[cfg(any(test, feature = "test-utils"))]
     #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
