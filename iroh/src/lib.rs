@@ -88,7 +88,7 @@
 //! - `metrics`: Enable metrics collection. Enabled by default.
 //! - `fs-store`: Enables the disk based storage backend for `iroh-blobs`. Enabled by default.
 //!
-#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 // re-export the iroh crates
@@ -111,5 +111,5 @@ mod rpc_protocol;
 
 /// Expose metrics module
 #[cfg(feature = "metrics")]
-#[cfg_attr(all(docsrs, feature = "metrics"), doc(cfg(feature = "metrics")))]
+#[cfg_attr(all(iroh_docsrs, feature = "metrics"), doc(cfg(feature = "metrics")))]
 pub mod metrics;
