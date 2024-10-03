@@ -46,6 +46,11 @@ pub struct Conn {
     inner: Arc<ConnTasks>,
 }
 
+/// The channel on which a relay connection sends received messages.
+///
+/// The [`Conn`] to a relay is easily clonable but can only send DISCO messages to a relay
+/// server.  This is the counterpart which receives DISCO messages from the relay server for
+/// a connection.  It is not clonable.
 #[derive(Debug)]
 pub struct ConnReceiver {
     /// The reader channel, receiving incoming messages.

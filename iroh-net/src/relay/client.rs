@@ -27,10 +27,7 @@ use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 use url::Url;
 
-use conn::{
-    Conn as RelayConn, ConnBuilder as RelayConnBuilder, ConnReader,
-    ConnReceiver as RelayConnReceiver, ConnWriter, ReceivedMessage,
-};
+use conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
 use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
 
 use crate::defaults::timeouts::relay::*;
@@ -140,7 +137,7 @@ pub struct Client {
 
 #[derive(Debug)]
 enum ActorMessage {
-    Connect(oneshot::Sender<Result<RelayConn, ClientError>>),
+    Connect(oneshot::Sender<Result<Conn, ClientError>>),
     NotePreferred(bool),
     LocalAddr(oneshot::Sender<Result<Option<SocketAddr>, ClientError>>),
     Ping(oneshot::Sender<Result<Duration, ClientError>>),
@@ -162,7 +159,7 @@ struct Actor {
     secret_key: SecretKey,
     can_ack_pings: bool,
     is_preferred: bool,
-    relay_conn: Option<(RelayConn, RelayConnReceiver)>,
+    relay_conn: Option<(Conn, ConnReceiver)>,
     is_closed: bool,
     #[debug("address family selector callback")]
     address_family_selector: Option<Box<dyn Fn() -> BoxFuture<bool> + Send + Sync + 'static>>,
@@ -402,7 +399,7 @@ impl Client {
     ///
     /// If there is already an active relay connection, returns the already
     /// connected [`crate::relay::RelayConn`].
-    pub async fn connect(&self) -> Result<RelayConn, ClientError> {
+    pub async fn connect(&self) -> Result<Conn, ClientError> {
         self.send_actor(ActorMessage::Connect).await
     }
 
@@ -557,7 +554,7 @@ impl Actor {
     async fn connect(
         &mut self,
         why: &'static str,
-    ) -> Result<(RelayConn, &'_ mut RelayConnReceiver), ClientError> {
+    ) -> Result<(Conn, &'_ mut ConnReceiver), ClientError> {
         debug!(
             "connect: {}, current client {}",
             why,
@@ -591,7 +588,7 @@ impl Actor {
         .await
     }
 
-    async fn connect_0(&self) -> Result<(RelayConn, RelayConnReceiver), ClientError> {
+    async fn connect_0(&self) -> Result<(Conn, ConnReceiver), ClientError> {
         let (reader, writer, local_addr) = match self.protocol {
             Protocol::Websocket => {
                 let (reader, writer) = self.connect_ws().await?;
@@ -605,7 +602,7 @@ impl Actor {
         };
 
         let (relay_client, receiver) =
-            RelayConnBuilder::new(self.secret_key.clone(), local_addr, reader, writer)
+            ConnBuilder::new(self.secret_key.clone(), local_addr, reader, writer)
                 .build()
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;
