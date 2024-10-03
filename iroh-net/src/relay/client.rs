@@ -32,7 +32,7 @@ use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
 
 use crate::defaults::timeouts::relay::*;
 use crate::dns::{DnsResolver, ResolverExt};
-use crate::key::{PublicKey, SecretKey};
+use crate::key::{NodeId, PublicKey, SecretKey};
 use crate::relay::codec::DerpCodec;
 use crate::relay::http::{Protocol, RELAY_PATH};
 use crate::relay::RelayUrl;
@@ -567,12 +567,11 @@ impl Actor {
         async move {
             if self.relay_conn.is_none() {
                 trace!("no connection, trying to connect");
-                let (relay_client, receiver) =
-                    tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
-                        .await
-                        .map_err(|_| ClientError::ConnectTimeout)??;
+                let (conn, receiver) = tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
+                    .await
+                    .map_err(|_| ClientError::ConnectTimeout)??;
 
-                self.relay_conn = Some((relay_client.clone(), receiver));
+                self.relay_conn = Some((conn, receiver));
             } else {
                 trace!("already had connection");
             }
@@ -601,14 +600,14 @@ impl Actor {
             }
         };
 
-        let (relay_client, receiver) =
+        let (conn, receiver) =
             ConnBuilder::new(self.secret_key.clone(), local_addr, reader, writer)
                 .build()
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;
 
-        if self.is_preferred && relay_client.note_preferred(true).await.is_err() {
-            relay_client.close().await;
+        if self.is_preferred && conn.note_preferred(true).await.is_err() {
+            conn.close().await;
             return Err(ClientError::Send);
         }
 
@@ -620,7 +619,7 @@ impl Actor {
         );
 
         trace!("connect_0 done");
-        Ok((relay_client, receiver))
+        Ok((conn, receiver))
     }
 
     async fn connect_ws(&self) -> Result<(ConnReader, ConnWriter), ClientError> {
@@ -732,8 +731,8 @@ impl Actor {
 
         // only send the preference if we already have a connection
         let res = {
-            if let Some((ref client, _)) = self.relay_conn {
-                client.note_preferred(is_preferred).await
+            if let Some((ref conn, _)) = self.relay_conn {
+                conn.note_preferred(is_preferred).await
             } else {
                 return;
             }
@@ -749,8 +748,8 @@ impl Actor {
         if self.is_closed {
             return None;
         }
-        if let Some((ref client, _)) = self.relay_conn {
-            client.local_addr()
+        if let Some((ref conn, _)) = self.relay_conn {
+            conn.local_addr()
         } else {
             None
         }
@@ -763,9 +762,9 @@ impl Actor {
 
         self.ping_tasks.spawn(async move {
             let res = match connect_res {
-                Ok(client) => {
+                Ok(conn) => {
                     let start = Instant::now();
-                    if let Err(err) = client.send_ping(ping).await {
+                    if let Err(err) = conn.send_ping(ping).await {
                         warn!("failed to send ping: {:?}", err);
                         Err(ClientError::Send)
                     } else {
@@ -782,10 +781,10 @@ impl Actor {
         });
     }
 
-    async fn send(&mut self, dst_key: PublicKey, b: Bytes) -> Result<(), ClientError> {
-        trace!(dst = %dst_key.fmt_short(), len = b.len(), "send");
-        let (client, _) = self.connect("send").await?;
-        if client.send(dst_key, b).await.is_err() {
+    async fn send(&mut self, remote_node: NodeId, payload: Bytes) -> Result<(), ClientError> {
+        trace!(remote_node = %remote_node.fmt_short(), len = payload.len(), "send");
+        let (conn, _) = self.connect("send").await?;
+        if conn.send(remote_node, payload).await.is_err() {
             self.close_for_reconnect().await;
             return Err(ClientError::Send);
         }
@@ -795,8 +794,8 @@ impl Actor {
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<(), ClientError> {
         debug!("send_pong");
         if self.can_ack_pings {
-            let (client, _) = self.connect("send_pong").await?;
-            if client.send_pong(data).await.is_err() {
+            let (conn, _) = self.connect("send_pong").await?;
+            if conn.send_pong(data).await.is_err() {
                 self.close_for_reconnect().await;
                 return Err(ClientError::Send);
             }
@@ -979,9 +978,9 @@ impl Actor {
     }
 
     async fn recv_detail(&mut self) -> Result<ReceivedMessage, ClientError> {
-        if let Some((_conn, client_receiver)) = self.relay_conn.as_mut() {
+        if let Some((_conn, conn_receiver)) = self.relay_conn.as_mut() {
             trace!("recv_detail tick");
-            match client_receiver.recv().await {
+            match conn_receiver.recv().await {
                 Ok(msg) => {
                     return Ok(msg);
                 }
