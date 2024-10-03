@@ -56,8 +56,8 @@ struct ActiveRelay {
     relay_client_receiver: relay::client::ClientReceiver,
     /// The set of remote nodes we know are present on this relay server.
     ///
-    /// If we receive messages from a remote node via this server it is added to this set,
-    /// if the server notifies us this node is gone it is removed from this set.
+    /// If we receive messages from a remote node via, this server it is added to this set.
+    /// If the server notifies us this node is gone, it is removed from this set.
     node_present: BTreeSet<NodeId>,
     backoff: backoff::exponential::ExponentialBackoff<backoff::SystemClock>,
     last_packet_time: Option<Instant>,
@@ -412,7 +412,7 @@ impl RelayActor {
         url: &RelayUrl,
         remote_node: Option<&NodeId>,
     ) -> relay::client::Client {
-        debug!("connect relay {} for peer {:?}", url, remote_node);
+        debug!(%url, ?remote_node, "connect relay");
         // See if we have a connection open to that relay node ID first. If so, might as
         // well use it. (It's a little arbitrary whether we use this one vs. the reverse route
         // below when we have both.)
