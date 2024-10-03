@@ -548,11 +548,11 @@ impl Actor {
 
     /// Returns a connection to the relay.
     ///
-    /// If the client is currently connected the existing connection is returned, otherwise
+    /// If the client is currently connected, the existing connection is returned; otherwise,
     /// a new connection is made.
     ///
     /// Returns:
-    /// - A clonable connection object which can send to DISCO messages to the relay.
+    /// - A clonable connection object which can send DISCO messages to the relay.
     /// - A reference to a channel receiving DISCO messages from the relay.
     async fn connect(
         &mut self,
@@ -982,7 +982,7 @@ impl Actor {
     }
 
     async fn recv_detail(&mut self) -> Result<ReceivedMessage, ClientError> {
-        if let Some((_client, client_receiver)) = self.relay_conn.as_mut() {
+        if let Some((_conn, client_receiver)) = self.relay_conn.as_mut() {
             trace!("recv_detail tick");
             match client_receiver.recv().await {
                 Ok(msg) => {
@@ -1005,7 +1005,7 @@ impl Actor {
     /// requires a connection, it will call `connect`.
     async fn close_for_reconnect(&mut self) {
         debug!("close for reconnect");
-        if let Some((client, _)) = self.relay_conn.take() {
+        if let Some((conn, _)) = self.relay_conn.take() {
             client.close().await
         }
     }
