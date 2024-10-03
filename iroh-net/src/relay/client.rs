@@ -1006,7 +1006,7 @@ impl Actor {
     async fn close_for_reconnect(&mut self) {
         debug!("close for reconnect");
         if let Some((conn, _)) = self.relay_conn.take() {
-            client.close().await
+            conn.close().await
         }
     }
 }
