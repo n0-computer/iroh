@@ -393,7 +393,7 @@ impl Client {
         }
     }
 
-    /// Connect to a relay Server and returns the underlying relay connection.
+    /// Connects to a relay Server and returns the underlying relay connection.
     ///
     /// Returns [`ClientError::Closed`] if the [`Client`] is closed.
     ///
