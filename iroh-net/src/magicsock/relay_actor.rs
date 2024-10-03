@@ -107,6 +107,13 @@ impl ActiveRelay {
             .context("initial connection")?;
 
         loop {
+            // If a read error occurred on the connection it might have been lost.  But we
+            // need this connection to stay alive so we can receive more messages sent by
+            // peers via the relay even if we don't start sending again first.
+            if !self.relay_client.is_connected().await? {
+                debug!("relay re-connecting");
+                self.relay_client.connect().await.context("keepalive")?;
+            }
             tokio::select! {
                 Some(msg) = inbox.recv() => {
                     trace!("tick: inbox: {:?}", msg);
@@ -136,7 +143,7 @@ impl ActiveRelay {
                             r.send(client).ok();
                         }
                         ActiveRelayMessage::Shutdown => {
-                            self.relay_client.close().await.ok();
+                            debug!("shutdown");
                             break;
                         }
                     }
@@ -146,17 +153,18 @@ impl ActiveRelay {
                     if let Some(msg) = msg {
                         if self.handle_relay_msg(msg).await == ReadResult::Break {
                             // fatal error
-                            self.relay_client.close().await.ok();
                             break;
                         }
                     }
                 }
                 else => {
+                    debug!("all clients closed");
                     break;
                 }
             }
         }
-
+        debug!("exiting");
+        self.relay_client.close().await?;
         Ok(())
     }
 
