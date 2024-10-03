@@ -821,7 +821,7 @@ mod tests {
                             info!("client {:?} `recv` error {e}", key.public());
                             return;
                         }
-                        Some(Ok((msg, _))) => {
+                        Some(Ok(msg)) => {
                             info!("got message on {:?}: {msg:?}", key.public());
                             if let ReceivedMessage::ReceivedPacket { source, data } = msg {
                                 received_msg_s

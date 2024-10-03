@@ -165,10 +165,7 @@ impl ActiveRelay {
         Ok(())
     }
 
-    async fn handle_relay_msg(
-        &mut self,
-        msg: Result<(ReceivedMessage, usize), ClientError>,
-    ) -> ReadResult {
+    async fn handle_relay_msg(&mut self, msg: Result<ReceivedMessage, ClientError>) -> ReadResult {
         match msg {
             Err(err) => {
                 warn!("recv error {:?}", err);
@@ -200,7 +197,7 @@ impl ActiveRelay {
                     None => ReadResult::Break,
                 }
             }
-            Ok((msg, _conn_gen)) => {
+            Ok(msg) => {
                 // reset
                 self.backoff.reset();
                 let now = Instant::now();

@@ -863,7 +863,7 @@ mod tests {
         let msg = Bytes::from("hello, b");
         client_a.send(b_key, msg.clone()).await.unwrap();
 
-        let (res, _) = client_b_receiver.recv().await.unwrap().unwrap();
+        let res = client_b_receiver.recv().await.unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket { source, data } = res {
             assert_eq!(a_key, source);
             assert_eq!(msg, data);
@@ -875,7 +875,7 @@ mod tests {
         let msg = Bytes::from("howdy, a");
         client_b.send(a_key, msg.clone()).await.unwrap();
 
-        let (res, _) = client_a_receiver.recv().await.unwrap().unwrap();
+        let res = client_a_receiver.recv().await.unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket { source, data } = res {
             assert_eq!(b_key, source);
             assert_eq!(msg, data);
@@ -931,7 +931,7 @@ mod tests {
         let msg = Bytes::from("hello, b");
         client_a.send(b_key, msg.clone()).await.unwrap();
 
-        let (res, _) = client_b_receiver.recv().await.unwrap().unwrap();
+        let res = client_b_receiver.recv().await.unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket { source, data } = res {
             assert_eq!(a_key, source);
             assert_eq!(msg, data);
@@ -943,7 +943,7 @@ mod tests {
         let msg = Bytes::from("howdy, a");
         client_b.send(a_key, msg.clone()).await.unwrap();
 
-        let (res, _) = client_a_receiver.recv().await.unwrap().unwrap();
+        let res = client_a_receiver.recv().await.unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket { source, data } = res {
             assert_eq!(b_key, source);
             assert_eq!(msg, data);
@@ -998,7 +998,7 @@ mod tests {
         let msg = Bytes::from("hello, b");
         client_a.send(b_key, msg.clone()).await.unwrap();
 
-        let (res, _) = client_b_receiver.recv().await.unwrap().unwrap();
+        let res = client_b_receiver.recv().await.unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket { source, data } = res {
             assert_eq!(a_key, source);
             assert_eq!(msg, data);
@@ -1010,7 +1010,7 @@ mod tests {
         let msg = Bytes::from("howdy, a");
         client_b.send(a_key, msg.clone()).await.unwrap();
 
-        let (res, _) = client_a_receiver.recv().await.unwrap().unwrap();
+        let res = client_a_receiver.recv().await.unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket { source, data } = res {
             assert_eq!(b_key, source);
             assert_eq!(msg, data);
