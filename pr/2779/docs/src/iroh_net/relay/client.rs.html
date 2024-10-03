@@ -1120,7 +1120,6 @@
 <a href="#1120" id="1120">1120</a>
 <a href="#1121" id="1121">1121</a>
 <a href="#1122" id="1122">1122</a>
-<a href="#1123" id="1123">1123</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Based on tailscale/derp/derphttp/derphttp_client.go
 
 </span><span class="kw">use </span>std::collections::HashMap;
@@ -1155,7 +1154,7 @@
 
 <span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::relay::<span class="kw-2">*</span>;
 <span class="kw">use </span><span class="kw">crate</span>::dns::{DnsResolver, ResolverExt};
-<span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
+<span class="kw">use </span><span class="kw">crate</span>::key::{NodeId, PublicKey, SecretKey};
 <span class="kw">use </span><span class="kw">crate</span>::relay::codec::DerpCodec;
 <span class="kw">use </span><span class="kw">crate</span>::relay::http::{Protocol, RELAY_PATH};
 <span class="kw">use </span><span class="kw">crate</span>::relay::RelayUrl;
@@ -1690,12 +1689,11 @@
         <span class="kw">async move </span>{
             <span class="kw">if </span><span class="self">self</span>.relay_conn.is_none() {
                 <span class="macro">trace!</span>(<span class="string">"no connection, trying to connect"</span>);
-                <span class="kw">let </span>(relay_client, receiver) =
-                    tokio::time::timeout(CONNECT_TIMEOUT, <span class="self">self</span>.connect_0())
-                        .<span class="kw">await
-                        </span>.map_err(|<span class="kw">_</span>| ClientError::ConnectTimeout)<span class="question-mark">??</span>;
+                <span class="kw">let </span>(conn, receiver) = tokio::time::timeout(CONNECT_TIMEOUT, <span class="self">self</span>.connect_0())
+                    .<span class="kw">await
+                    </span>.map_err(|<span class="kw">_</span>| ClientError::ConnectTimeout)<span class="question-mark">??</span>;
 
-                <span class="self">self</span>.relay_conn = <span class="prelude-val">Some</span>((relay_client.clone(), receiver));
+                <span class="self">self</span>.relay_conn = <span class="prelude-val">Some</span>((conn, receiver));
             } <span class="kw">else </span>{
                 <span class="macro">trace!</span>(<span class="string">"already had connection"</span>);
             }
@@ -1724,14 +1722,14 @@
             }
         };
 
-        <span class="kw">let </span>(relay_client, receiver) =
+        <span class="kw">let </span>(conn, receiver) =
             ConnBuilder::new(<span class="self">self</span>.secret_key.clone(), local_addr, reader, writer)
                 .build()
                 .<span class="kw">await
                 </span>.map_err(|e| ClientError::Build(e.to_string()))<span class="question-mark">?</span>;
 
-        <span class="kw">if </span><span class="self">self</span>.is_preferred &amp;&amp; relay_client.note_preferred(<span class="bool-val">true</span>).<span class="kw">await</span>.is_err() {
-            relay_client.close().<span class="kw">await</span>;
+        <span class="kw">if </span><span class="self">self</span>.is_preferred &amp;&amp; conn.note_preferred(<span class="bool-val">true</span>).<span class="kw">await</span>.is_err() {
+            conn.close().<span class="kw">await</span>;
             <span class="kw">return </span><span class="prelude-val">Err</span>(ClientError::Send);
         }
 
@@ -1743,7 +1741,7 @@
         );
 
         <span class="macro">trace!</span>(<span class="string">"connect_0 done"</span>);
-        <span class="prelude-val">Ok</span>((relay_client, receiver))
+        <span class="prelude-val">Ok</span>((conn, receiver))
     }
 
     <span class="kw">async fn </span>connect_ws(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(ConnReader, ConnWriter), ClientError&gt; {
@@ -1855,8 +1853,8 @@
 
         <span class="comment">// only send the preference if we already have a connection
         </span><span class="kw">let </span>res = {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw-2">ref </span>client, <span class="kw">_</span>)) = <span class="self">self</span>.relay_conn {
-                client.note_preferred(is_preferred).<span class="kw">await
+            <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw-2">ref </span>conn, <span class="kw">_</span>)) = <span class="self">self</span>.relay_conn {
+                conn.note_preferred(is_preferred).<span class="kw">await
             </span>} <span class="kw">else </span>{
                 <span class="kw">return</span>;
             }
@@ -1872,8 +1870,8 @@
         <span class="kw">if </span><span class="self">self</span>.is_closed {
             <span class="kw">return </span><span class="prelude-val">None</span>;
         }
-        <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw-2">ref </span>client, <span class="kw">_</span>)) = <span class="self">self</span>.relay_conn {
-            client.local_addr()
+        <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw-2">ref </span>conn, <span class="kw">_</span>)) = <span class="self">self</span>.relay_conn {
+            conn.local_addr()
         } <span class="kw">else </span>{
             <span class="prelude-val">None
         </span>}
@@ -1886,9 +1884,9 @@
 
         <span class="self">self</span>.ping_tasks.spawn(<span class="kw">async move </span>{
             <span class="kw">let </span>res = <span class="kw">match </span>connect_res {
-                <span class="prelude-val">Ok</span>(client) =&gt; {
+                <span class="prelude-val">Ok</span>(conn) =&gt; {
                     <span class="kw">let </span>start = Instant::now();
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = client.send_ping(ping).<span class="kw">await </span>{
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = conn.send_ping(ping).<span class="kw">await </span>{
                         <span class="macro">warn!</span>(<span class="string">"failed to send ping: {:?}"</span>, err);
                         <span class="prelude-val">Err</span>(ClientError::Send)
                     } <span class="kw">else </span>{
@@ -1905,10 +1903,10 @@
         });
     }
 
-    <span class="kw">async fn </span>send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, dst_key: PublicKey, b: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;(), ClientError&gt; {
-        <span class="macro">trace!</span>(dst = %dst_key.fmt_short(), len = b.len(), <span class="string">"send"</span>);
-        <span class="kw">let </span>(client, <span class="kw">_</span>) = <span class="self">self</span>.connect(<span class="string">"send"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">if </span>client.send(dst_key, b).<span class="kw">await</span>.is_err() {
+    <span class="kw">async fn </span>send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, remote_node: NodeId, payload: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;(), ClientError&gt; {
+        <span class="macro">trace!</span>(remote_node = %remote_node.fmt_short(), len = payload.len(), <span class="string">"send"</span>);
+        <span class="kw">let </span>(conn, <span class="kw">_</span>) = <span class="self">self</span>.connect(<span class="string">"send"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">if </span>conn.send(remote_node, payload).<span class="kw">await</span>.is_err() {
             <span class="self">self</span>.close_for_reconnect().<span class="kw">await</span>;
             <span class="kw">return </span><span class="prelude-val">Err</span>(ClientError::Send);
         }
@@ -1918,8 +1916,8 @@
     <span class="kw">async fn </span>send_pong(<span class="kw-2">&amp;mut </span><span class="self">self</span>, data: [u8; <span class="number">8</span>]) -&gt; <span class="prelude-ty">Result</span>&lt;(), ClientError&gt; {
         <span class="macro">debug!</span>(<span class="string">"send_pong"</span>);
         <span class="kw">if </span><span class="self">self</span>.can_ack_pings {
-            <span class="kw">let </span>(client, <span class="kw">_</span>) = <span class="self">self</span>.connect(<span class="string">"send_pong"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="kw">if </span>client.send_pong(data).<span class="kw">await</span>.is_err() {
+            <span class="kw">let </span>(conn, <span class="kw">_</span>) = <span class="self">self</span>.connect(<span class="string">"send_pong"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">if </span>conn.send_pong(data).<span class="kw">await</span>.is_err() {
                 <span class="self">self</span>.close_for_reconnect().<span class="kw">await</span>;
                 <span class="kw">return </span><span class="prelude-val">Err</span>(ClientError::Send);
             }
@@ -2102,9 +2100,9 @@
     }
 
     <span class="kw">async fn </span>recv_detail(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;ReceivedMessage, ClientError&gt; {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>((_conn, client_receiver)) = <span class="self">self</span>.relay_conn.as_mut() {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>((_conn, conn_receiver)) = <span class="self">self</span>.relay_conn.as_mut() {
             <span class="macro">trace!</span>(<span class="string">"recv_detail tick"</span>);
-            <span class="kw">match </span>client_receiver.recv().<span class="kw">await </span>{
+            <span class="kw">match </span>conn_receiver.recv().<span class="kw">await </span>{
                 <span class="prelude-val">Ok</span>(msg) =&gt; {
                     <span class="kw">return </span><span class="prelude-val">Ok</span>(msg);
                 }
