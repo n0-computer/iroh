@@ -1121,9 +1121,6 @@
 <a href="#1121" id="1121">1121</a>
 <a href="#1122" id="1122">1122</a>
 <a href="#1123" id="1123">1123</a>
-<a href="#1124" id="1124">1124</a>
-<a href="#1125" id="1125">1125</a>
-<a href="#1126" id="1126">1126</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Based on tailscale/derp/derphttp/derphttp_client.go
 
 </span><span class="kw">use </span>std::collections::HashMap;
@@ -1153,10 +1150,7 @@
 <span class="kw">use </span>tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 <span class="kw">use </span>url::Url;
 
-<span class="kw">use </span>conn::{
-    Conn <span class="kw">as </span>RelayConn, ConnBuilder <span class="kw">as </span>RelayConnBuilder, ConnReader,
-    ConnReceiver <span class="kw">as </span>RelayConnReceiver, ConnWriter, ReceivedMessage,
-};
+<span class="kw">use </span>conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
 <span class="kw">use </span>streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
 
 <span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::relay::<span class="kw-2">*</span>;
@@ -1266,7 +1260,7 @@
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>ActorMessage {
-    Connect(oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;RelayConn, ClientError&gt;&gt;),
+    Connect(oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Conn, ClientError&gt;&gt;),
     NotePreferred(bool),
     LocalAddr(oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;, ClientError&gt;&gt;),
     Ping(oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Duration, ClientError&gt;&gt;),
@@ -1288,7 +1282,7 @@
     secret_key: SecretKey,
     can_ack_pings: bool,
     is_preferred: bool,
-    relay_conn: <span class="prelude-ty">Option</span>&lt;(RelayConn, RelayConnReceiver)&gt;,
+    relay_conn: <span class="prelude-ty">Option</span>&lt;(Conn, ConnReceiver)&gt;,
     is_closed: bool,
     <span class="attr">#[debug(<span class="string">"address family selector callback"</span>)]
     </span>address_family_selector: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() -&gt; BoxFuture&lt;bool&gt; + Send + Sync + <span class="lifetime">'static</span>&gt;&gt;,
@@ -1522,13 +1516,13 @@
         }
     }
 
-    <span class="doccomment">/// Connect to a relay Server and returns the underlying relay connection.
+    <span class="doccomment">/// Connects to a relay Server and returns the underlying relay connection.
     ///
     /// Returns [`ClientError::Closed`] if the [`Client`] is closed.
     ///
     /// If there is already an active relay connection, returns the already
     /// connected [`crate::relay::RelayConn`].
-    </span><span class="kw">pub async fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;RelayConn, ClientError&gt; {
+    </span><span class="kw">pub async fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Conn, ClientError&gt; {
         <span class="self">self</span>.send_actor(ActorMessage::Connect).<span class="kw">await
     </span>}
 
@@ -1674,16 +1668,16 @@
 
     <span class="doccomment">/// Returns a connection to the relay.
     ///
-    /// If the client is currently connected the existing connection is returned, otherwise
+    /// If the client is currently connected, the existing connection is returned; otherwise,
     /// a new connection is made.
     ///
     /// Returns:
-    /// - A clonable connection object which can send to DISCO messages to the relay.
+    /// - A clonable connection object which can send DISCO messages to the relay.
     /// - A reference to a channel receiving DISCO messages from the relay.
     </span><span class="kw">async fn </span>connect(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(RelayConn, <span class="kw-2">&amp;</span><span class="lifetime">'_ </span><span class="kw-2">mut </span>RelayConnReceiver), ClientError&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, <span class="kw-2">&amp;</span><span class="lifetime">'_ </span><span class="kw-2">mut </span>ConnReceiver), ClientError&gt; {
         <span class="macro">debug!</span>(
             <span class="string">"connect: {}, current client {}"</span>,
             why,
@@ -1717,7 +1711,7 @@
         .<span class="kw">await
     </span>}
 
-    <span class="kw">async fn </span>connect_0(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(RelayConn, RelayConnReceiver), ClientError&gt; {
+    <span class="kw">async fn </span>connect_0(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, ConnReceiver), ClientError&gt; {
         <span class="kw">let </span>(reader, writer, local_addr) = <span class="kw">match </span><span class="self">self</span>.protocol {
             Protocol::Websocket =&gt; {
                 <span class="kw">let </span>(reader, writer) = <span class="self">self</span>.connect_ws().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1731,7 +1725,7 @@
         };
 
         <span class="kw">let </span>(relay_client, receiver) =
-            RelayConnBuilder::new(<span class="self">self</span>.secret_key.clone(), local_addr, reader, writer)
+            ConnBuilder::new(<span class="self">self</span>.secret_key.clone(), local_addr, reader, writer)
                 .build()
                 .<span class="kw">await
                 </span>.map_err(|e| ClientError::Build(e.to_string()))<span class="question-mark">?</span>;
@@ -2108,7 +2102,7 @@
     }
 
     <span class="kw">async fn </span>recv_detail(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;ReceivedMessage, ClientError&gt; {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>((_client, client_receiver)) = <span class="self">self</span>.relay_conn.as_mut() {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>((_conn, client_receiver)) = <span class="self">self</span>.relay_conn.as_mut() {
             <span class="macro">trace!</span>(<span class="string">"recv_detail tick"</span>);
             <span class="kw">match </span>client_receiver.recv().<span class="kw">await </span>{
                 <span class="prelude-val">Ok</span>(msg) =&gt; {
@@ -2131,8 +2125,8 @@
     /// requires a connection, it will call `connect`.
     </span><span class="kw">async fn </span>close_for_reconnect(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="macro">debug!</span>(<span class="string">"close for reconnect"</span>);
-        <span class="kw">if let </span><span class="prelude-val">Some</span>((client, <span class="kw">_</span>)) = <span class="self">self</span>.relay_conn.take() {
-            client.close().<span class="kw">await
+        <span class="kw">if let </span><span class="prelude-val">Some</span>((conn, <span class="kw">_</span>)) = <span class="self">self</span>.relay_conn.take() {
+            conn.close().<span class="kw">await
         </span>}
     }
 }

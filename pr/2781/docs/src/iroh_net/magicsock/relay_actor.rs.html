@@ -828,8 +828,8 @@
     relay_client_receiver: relay::client::ClientReceiver,
     <span class="doccomment">/// The set of remote nodes we know are present on this relay server.
     ///
-    /// If we receive messages from a remote node via this server it is added to this set,
-    /// if the server notifies us this node is gone it is removed from this set.
+    /// If we receive messages from a remote node via, this server it is added to this set.
+    /// If the server notifies us this node is gone, it is removed from this set.
     </span>node_present: BTreeSet&lt;NodeId&gt;,
     backoff: backoff::exponential::ExponentialBackoff&lt;backoff::SystemClock&gt;,
     last_packet_time: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
@@ -1184,7 +1184,7 @@
         url: <span class="kw-2">&amp;</span>RelayUrl,
         remote_node: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>NodeId&gt;,
     ) -&gt; relay::client::Client {
-        <span class="macro">debug!</span>(<span class="string">"connect relay {} for peer {:?}"</span>, url, remote_node);
+        <span class="macro">debug!</span>(%url, <span class="question-mark">?</span>remote_node, <span class="string">"connect relay"</span>);
         <span class="comment">// See if we have a connection open to that relay node ID first. If so, might as
         // well use it. (It's a little arbitrary whether we use this one vs. the reverse route
         // below when we have both.)
