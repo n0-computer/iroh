@@ -606,7 +606,7 @@ impl MagicSock {
         let msg = RelayActorMessage::Send {
             url: url.clone(),
             contents,
-            peer: node,
+            remote_node: node,
         };
         match self.relay_actor_sender.try_send(msg) {
             Ok(_) => {
@@ -1193,7 +1193,7 @@ impl MagicSock {
         let msg = RelayActorMessage::Send {
             url: url.clone(),
             contents,
-            peer: node,
+            remote_node: node,
         };
         match self.relay_actor_sender.try_send(msg) {
             Ok(_) => {
