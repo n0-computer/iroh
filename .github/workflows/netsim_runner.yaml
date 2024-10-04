@@ -201,7 +201,7 @@ jobs:
         body-includes: Netsim report & logs for this PR have been generated
 
     - name: Create or Update Docs Comment
-      if: ${{ inputs.pr_number != '' }}
+      if: ${{ inputs.pr_number != '' && !github.event.pull_request.head.repo.fork }}
       uses: peter-evans/create-or-update-comment@v4
       with:
         issue-number: ${{ inputs.pr_number }}
@@ -225,7 +225,7 @@ jobs:
 
     - name: Echo Report Table on PR
       uses: peter-evans/create-or-update-comment@v4
-      if: ${{ inputs.pr_number != '' && inputs.report_table }}
+      if: ${{ inputs.pr_number != '' && inputs.report_table && !github.event.pull_request.head.repo.fork }}
       with:
         issue-number: ${{ inputs.pr_number }}
         body: |
@@ -234,7 +234,7 @@ jobs:
           ${{ steps.generate_report_table.outputs.NETSIM_REPORT }}
 
     - name: Publish metrics
-      if: ${{ inputs.publish_metrics }}
+      if: ${{ inputs.publish_metrics && !github.event.pull_request.head.repo.fork }}
       run: |
         cd ../chuck/netsim
         d=$(cat report_metro.txt)
