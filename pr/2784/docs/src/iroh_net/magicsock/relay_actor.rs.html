@@ -770,6 +770,14 @@
 <a href="#770" id="770">770</a>
 <a href="#771" id="771">771</a>
 <a href="#772" id="772">772</a>
+<a href="#773" id="773">773</a>
+<a href="#774" id="774">774</a>
+<a href="#775" id="775">775</a>
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
+<a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
@@ -879,6 +887,13 @@
             </span>.context(<span class="string">"initial connection"</span>)<span class="question-mark">?</span>;
 
         <span class="kw">loop </span>{
+            <span class="comment">// If a read error occurred on the connection it might have been lost.  But we
+            // need this connection to stay alive so we can receive more messages sent by
+            // peers via the relay even if we don't start sending again first.
+            </span><span class="kw">if </span>!<span class="self">self</span>.relay_client.is_connected().<span class="kw">await</span><span class="question-mark">? </span>{
+                <span class="macro">debug!</span>(<span class="string">"relay re-connecting"</span>);
+                <span class="self">self</span>.relay_client.connect().<span class="kw">await</span>.context(<span class="string">"keepalive"</span>)<span class="question-mark">?</span>;
+            }
             <span class="macro">tokio::select!</span> {
                 <span class="prelude-val">Some</span>(msg) = inbox.recv() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: inbox: {:?}"</span>, msg);
@@ -908,7 +923,7 @@
                             r.send(client).ok();
                         }
                         ActiveRelayMessage::Shutdown =&gt; {
-                            <span class="self">self</span>.relay_client.close().<span class="kw">await</span>.ok();
+                            <span class="macro">debug!</span>(<span class="string">"shutdown"</span>);
                             <span class="kw">break</span>;
                         }
                     }
@@ -918,17 +933,18 @@
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(msg) = msg {
                         <span class="kw">if </span><span class="self">self</span>.handle_relay_msg(msg).<span class="kw">await </span>== ReadResult::Break {
                             <span class="comment">// fatal error
-                            </span><span class="self">self</span>.relay_client.close().<span class="kw">await</span>.ok();
-                            <span class="kw">break</span>;
+                            </span><span class="kw">break</span>;
                         }
                     }
                 }
                 <span class="kw">else </span>=&gt; {
+                    <span class="macro">debug!</span>(<span class="string">"all clients closed"</span>);
                     <span class="kw">break</span>;
                 }
             }
         }
-
+        <span class="macro">debug!</span>(<span class="string">"exiting"</span>);
+        <span class="self">self</span>.relay_client.close().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
