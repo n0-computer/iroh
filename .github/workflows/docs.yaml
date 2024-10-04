@@ -40,7 +40,6 @@ jobs:
       run: cargo doc --workspace --all-features --no-deps
       env:
         RUSTDOCFLAGS: --cfg iroh_docsrs
-        RUSTFLAGS: --cfg iroh_docsrs
 
     - name: Deploy Docs to Preview Branch
       uses: peaceiris/actions-gh-pages@v4
