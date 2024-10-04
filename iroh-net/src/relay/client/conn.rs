@@ -46,6 +46,11 @@ pub struct Conn {
     inner: Arc<ConnTasks>,
 }
 
+/// The channel on which a relay connection sends received messages.
+///
+/// The [`Conn`] to a relay is easily clonable but can only send DISCO messages to a relay
+/// server.  This is the counterpart which receives DISCO messages from the relay server for
+/// a connection.  It is not clonable.
 #[derive(Debug)]
 pub struct ConnReceiver {
     /// The reader channel, receiving incoming messages.
@@ -376,7 +381,7 @@ impl ConnBuilder {
                 recv_msgs: writer_recv,
             }
             .run()
-            .instrument(info_span!("client.writer")),
+            .instrument(info_span!("conn.writer")),
         );
 
         let (reader_sender, reader_recv) = mpsc::channel(PER_CLIENT_READ_QUEUE_DEPTH);
@@ -412,6 +417,7 @@ impl ConnBuilder {
                     }
                 }
             }
+            .instrument(info_span!("conn.reader"))
         });
 
         let conn = Conn {
