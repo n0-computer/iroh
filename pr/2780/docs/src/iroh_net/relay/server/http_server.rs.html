@@ -1738,7 +1738,7 @@
                             <span class="macro">info!</span>(<span class="string">"client {:?} `recv` error {e}"</span>, key.public());
                             <span class="kw">return</span>;
                         }
-                        <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>((msg, <span class="kw">_</span>))) =&gt; {
+                        <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg)) =&gt; {
                             <span class="macro">info!</span>(<span class="string">"got message on {:?}: {msg:?}"</span>, key.public());
                             <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = msg {
                                 received_msg_s

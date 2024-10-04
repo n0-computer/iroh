@@ -1684,6 +1684,7 @@
 <a href="#1684" id="1684">1684</a>
 <a href="#1685" id="1685">1685</a>
 <a href="#1686" id="1686">1686</a>
+<a href="#1687" id="1687">1687</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for blobs management.
 //!
 //! The main entry point is the [`Client`].
@@ -3325,6 +3326,7 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[cfg_attr(target_os = <span class="string">"windows"</span>, ignore = <span class="string">"flaky"</span>)]
     </span><span class="kw">async fn </span>test_blob_delete_mem() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 

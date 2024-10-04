@@ -2159,7 +2159,7 @@
             Arc::new(quinn::TokioRuntime),
         )<span class="question-mark">?</span>;
         <span class="macro">trace!</span>(<span class="string">"created quinn endpoint"</span>);
-
+        <span class="macro">debug!</span>(version = <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>), <span class="string">"iroh Endpoint created"</span>);
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             msock,
             endpoint,
