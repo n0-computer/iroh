@@ -23,21 +23,79 @@
 //!
 //! Some generally useful discovery implementations are provided:
 //!
-//! - The [`DnsDiscovery`] which supports publishing to a special DNS server and performs
-//!   lookups via the standard DNS systems.  [Number 0] runs a public instance of this which
-//!   is globally available and a reliable default choice.
+//! - The [`DnsDiscovery`] which performs lookups via the standard DNS systems.  To publish
+//!   to this DNS server a [`PkarrPublisher`] is needed.  [Number 0] runs a public instance
+//!   of a [`PkarrPublisher`] with attached DNS server which is globally available and a
+//!   reliable default choice.
 //!
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
 //!
+//! - The [`LocalSwarmDiscovery`] discovers iroh-net nodes present on the local network,
+//!   very similar to mdNS.
+//!
+//! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
+//!   records to/from the Mainline DHT.
+//!
 //! To use multiple discovery systems simultaneously use [`ConcurrentDiscovery`] which will
 //! perform lookups to all discovery systems at the same time.
+//!
+//! # Examples
+//!
+//! A very common setup is to enable DNS discovery, which needs to be done in two parts as a
+//! [`PkarrPublisher`] and [`DnsDiscovery`]:
+//!
+//! ```no_run
+//! use iroh_net::discovery::dns::DnsDiscovery;
+//! use iroh_net::discovery::pkarr::PkarrPublisher;
+//! use iroh_net::discovery::ConcurrentDiscovery;
+//! use iroh_net::key::SecretKey;
+//! use iroh_net::Endpoint;
+//!
+//! # async fn wrapper() -> anyhow::Result<()> {
+//! let secret_key = SecretKey::generate();
+//! let discovery = ConcurrentDiscovery::from_services(vec![
+//!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
+//!     Box::new(DnsDiscovery::n0_dns()),
+//! ]);
+//! let ep = Endpoint::builder()
+//!     .secret_key(secret_key)
+//!     .discovery(Box::new(discovery))
+//!     .bind()
+//!     .await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! To also enable [`LocalSwarmDiscovery`], it can be added as another service in the
+//! [`ConcurrentDiscovery`]:
+//!
+//! ```no_run
+//! # use iroh_net::discovery::dns::DnsDiscovery;
+//! # use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
+//! # use iroh_net::discovery::pkarr::PkarrPublisher;
+//! # use iroh_net::discovery::ConcurrentDiscovery;
+//! # use iroh_net::key::SecretKey;
+//! #
+//! # async fn wrapper() -> anyhow::Result<()> {
+//! # let secret_key = SecretKey::generate();
+//! let discovery = ConcurrentDiscovery::from_services(vec![
+//!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
+//!     Box::new(DnsDiscovery::n0_dns()),
+//!     Box::new(LocalSwarmDiscovery::new(secret_key.public())?),
+//! ]);
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! [`RelayUrl`]: crate::relay::RelayUrl
 //! [`Builder::discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: dns::DnsDiscovery
 //! [Number 0]: https://n0.computer
 //! [`PkarrResolver`]: pkarr::PkarrResolver
+//! [`PkarrPublisher`]: pkarr::PkarrPublisher
+//! [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
+//! [`DhtDiscovery`]: pkarr::dht::DhtDiscovery
 //! [pkarr relay servers]: https://pkarr.org/#servers
 
 use std::time::Duration;
