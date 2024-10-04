@@ -818,16 +818,18 @@
 <a href="#818" id="818">818</a>
 <a href="#819" id="819">819</a>
 <a href="#820" id="820">820</a>
+<a href="#821" id="821">821</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
-//! To connect to an iroh-net node a [`NodeAddr`] is needed, which needs to contain either a
-//! [`RelayUrl`] or one or more *direct addresses*.  However it is often more desirable to
-//! be able to connect with only the [`NodeId`], as [`Endpoint::connect_by_node_id`] does.
+//! To connect to an iroh-net node a [`NodeAddr`] is needed, which may contain a
+//! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
 //!
-//! For connecting by [`NodeId`] to work however, the endpoint has to get the addressing
-//! information by other means.  This can be done by manually calling
-//! [`Endpoint::add_node_addr`], but that still requires knowing the other addressing
-//! information.
+//! Since there is a conversion from [`NodeId`] to [`NodeAddr`], you can also use
+//! connect directly with a [`NodeId`].
+//!
+//! For this to work however, the endpoint has to get the addressing  information by
+//! other means.  This can be done by manually calling [`Endpoint::add_node_addr`],
+//! but that still requires knowing the other addressing information.
 //!
 //! Node discovery is an automated system for an [`Endpoint`] to retrieve this addressing
 //! information.  Each iroh-net node will automatically publish their own addressing
@@ -1581,7 +1583,7 @@
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// we connect only by node id!
-        </span><span class="kw">let </span>res = ep2.connect(ep1.node_id().into(), TEST_ALPN).<span class="kw">await</span>;
+        </span><span class="kw">let </span>res = ep2.connect(ep1.node_id(), TEST_ALPN).<span class="kw">await</span>;
         <span class="macro">assert!</span>(res.is_ok(), <span class="string">"connection established"</span>);
         <span class="prelude-val">Ok</span>(())
     }
@@ -1602,7 +1604,7 @@
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// we connect only by node id!
-        </span><span class="kw">let </span>res = ep2.connect(ep1.node_id().into(), TEST_ALPN).<span class="kw">await</span>;
+        </span><span class="kw">let </span>res = ep2.connect(ep1.node_id(), TEST_ALPN).<span class="kw">await</span>;
         <span class="macro">assert!</span>(res.is_ok(), <span class="string">"connection established"</span>);
         <span class="prelude-val">Ok</span>(())
     }

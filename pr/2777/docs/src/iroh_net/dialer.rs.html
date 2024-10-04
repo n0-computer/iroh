@@ -179,7 +179,7 @@
             <span class="kw">let </span>res = <span class="macro">tokio::select!</span> {
                 biased;
                 <span class="kw">_ </span>= cancel.cancelled() =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Cancelled"</span>)),
-                res = endpoint.connect_by_node_id(node_id, alpn) =&gt; res
+                res = endpoint.connect(node_id, alpn) =&gt; res
             };
             (node_id, res)
         });

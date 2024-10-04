@@ -536,6 +536,12 @@
 <a href="#536" id="536">536</a>
 <a href="#537" id="537">537</a>
 <a href="#538" id="538">538</a>
+<a href="#539" id="539">539</a>
+<a href="#540" id="540">540</a>
+<a href="#541" id="541">541</a>
+<a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
@@ -584,7 +590,12 @@
     inner: Arc&lt;ConnTasks&gt;,
 }
 
-<span class="attr">#[derive(Debug)]
+<span class="doccomment">/// The channel on which a relay connection sends received messages.
+///
+/// The [`Conn`] to a relay is easily clonable but can only send DISCO messages to a relay
+/// server.  This is the counterpart which receives DISCO messages from the relay server for
+/// a connection.  It is not clonable.
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>ConnReceiver {
     <span class="doccomment">/// The reader channel, receiving incoming messages.
     </span>reader_channel: mpsc::Receiver&lt;<span class="prelude-ty">Result</span>&lt;ReceivedMessage&gt;&gt;,
@@ -914,7 +925,7 @@
                 recv_msgs: writer_recv,
             }
             .run()
-            .instrument(<span class="macro">info_span!</span>(<span class="string">"client.writer"</span>)),
+            .instrument(<span class="macro">info_span!</span>(<span class="string">"conn.writer"</span>)),
         );
 
         <span class="kw">let </span>(reader_sender, reader_recv) = mpsc::channel(PER_CLIENT_READ_QUEUE_DEPTH);
@@ -950,6 +961,7 @@
                     }
                 }
             }
+            .instrument(<span class="macro">info_span!</span>(<span class="string">"conn.reader"</span>))
         });
 
         <span class="kw">let </span>conn = Conn {

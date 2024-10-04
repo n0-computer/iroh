@@ -1915,7 +1915,7 @@
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
         client_a.send(b_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
-        <span class="kw">let </span>(res, <span class="kw">_</span>) = client_b_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">let </span>res = client_b_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
         <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
             <span class="macro">assert_eq!</span>(a_key, source);
             <span class="macro">assert_eq!</span>(msg, data);
@@ -1927,7 +1927,7 @@
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"howdy, a"</span>);
         client_b.send(a_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
-        <span class="kw">let </span>(res, <span class="kw">_</span>) = client_a_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">let </span>res = client_a_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
         <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
             <span class="macro">assert_eq!</span>(b_key, source);
             <span class="macro">assert_eq!</span>(msg, data);
@@ -1983,7 +1983,7 @@
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
         client_a.send(b_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
-        <span class="kw">let </span>(res, <span class="kw">_</span>) = client_b_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">let </span>res = client_b_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
         <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
             <span class="macro">assert_eq!</span>(a_key, source);
             <span class="macro">assert_eq!</span>(msg, data);
@@ -1995,7 +1995,7 @@
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"howdy, a"</span>);
         client_b.send(a_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
-        <span class="kw">let </span>(res, <span class="kw">_</span>) = client_a_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">let </span>res = client_a_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
         <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
             <span class="macro">assert_eq!</span>(b_key, source);
             <span class="macro">assert_eq!</span>(msg, data);
@@ -2050,7 +2050,7 @@
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
         client_a.send(b_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
-        <span class="kw">let </span>(res, <span class="kw">_</span>) = client_b_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">let </span>res = client_b_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
         <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
             <span class="macro">assert_eq!</span>(a_key, source);
             <span class="macro">assert_eq!</span>(msg, data);
@@ -2062,7 +2062,7 @@
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"howdy, a"</span>);
         client_b.send(a_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
-        <span class="kw">let </span>(res, <span class="kw">_</span>) = client_a_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">let </span>res = client_a_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
         <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
             <span class="macro">assert_eq!</span>(b_key, source);
             <span class="macro">assert_eq!</span>(msg, data);
