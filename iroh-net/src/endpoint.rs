@@ -408,7 +408,7 @@ impl Endpoint {
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");
-
+        debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
         Ok(Self {
             msock,
             endpoint,
