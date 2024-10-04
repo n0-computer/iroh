@@ -58,8 +58,6 @@ pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 /// Environment variable to force the use of staging relays.
-#[cfg(not(any(test, feature = "test-utils")))]
-#[cfg_attr(iroh_docsrs, doc(cfg(not(any(test, feature = "test-utils")))))]
 const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
 /// Builder for [`Endpoint`].
@@ -1247,14 +1245,10 @@ fn proxy_url_from_env() -> Option<Url> {
 /// Otherwise, it will return `RelayMode::Default`.
 pub fn default_relay_mode() -> RelayMode {
     // Use staging in testing
-    #[cfg(not(any(test, feature = "test-utils")))]
     let force_staging_relays = match std::env::var(ENV_FORCE_STAGING_RELAYS) {
         Ok(value) => value == "1",
         Err(_) => false,
     };
-    #[cfg(any(test, feature = "test-utils"))]
-    let force_staging_relays = true;
-
     match force_staging_relays {
         true => RelayMode::Staging,
         false => RelayMode::Default,
