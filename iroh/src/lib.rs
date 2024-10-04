@@ -111,5 +111,5 @@ mod rpc_protocol;
 
 /// Expose metrics module
 #[cfg(feature = "metrics")]
-#[cfg_attr(all(iroh_docsrs, feature = "metrics"), doc(cfg(feature = "metrics")))]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "metrics")))]
 pub mod metrics;
