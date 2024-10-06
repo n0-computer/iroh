@@ -1,7 +1,7 @@
 [http]
 port = 8080
 bind_addr = "127.0.0.1"
-rate_limit = false
+rate_limit = "disabled"
 
 [https]
 port = 8443

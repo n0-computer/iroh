@@ -1,5 +1,5 @@
 [http]
-rate_limit = true
+rate_limit = "smart"
 
 [https]
 port = 443
