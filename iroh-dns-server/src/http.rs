@@ -1,7 +1,6 @@
 //! HTTP server part of iroh-dns-server
 
 use std::{
-    fmt,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     time::Instant,
 };
@@ -17,7 +16,7 @@ use axum::{
     Router,
 };
 use iroh_metrics::{inc, inc_by};
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, task::JoinSet};
 use tower_http::{
     cors::{self, CorsLayer},
@@ -34,53 +33,8 @@ mod tls;
 use crate::state::AppState;
 use crate::{config::Config, metrics::Metrics};
 
+pub use self::rate_limiting::RateLimitConfig;
 pub use self::tls::CertMode;
-
-/// Config for http rate limit
-#[derive(Debug, Serialize, Clone)]
-pub enum RateLimitConfig {
-    /// Enable or disable rate limiting
-    Boolean(bool),
-    /// Enable rate limiting with SmartIP key extractor, to support reverse proxies
-    Smart,
-}
-
-impl<'a> Deserialize<'a> for RateLimitConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'a>,
-    {
-        struct ModeVisitor;
-
-        impl<'de> de::Visitor<'de> for ModeVisitor {
-            type Value = RateLimitConfig;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a boolean or the string 'smart'")
-            }
-
-            fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(RateLimitConfig::Boolean(value))
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                if value == "smart" {
-                    Ok(RateLimitConfig::Smart)
-                } else {
-                    Err(de::Error::invalid_value(de::Unexpected::Str(value), &self))
-                }
-            }
-        }
-
-        deserializer.deserialize_any(ModeVisitor)
-    }
-}
 
 /// Config for the HTTP server
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -90,7 +44,8 @@ pub struct HttpConfig {
     /// Optionally set a custom bind address (will use 0.0.0.0 if unset)
     pub bind_addr: Option<IpAddr>,
     /// Config for http rate limit
-    pub rate_limit: Option<RateLimitConfig>,
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
 }
 
 /// Config for the HTTPS server
@@ -130,7 +85,10 @@ impl HttpServer {
 
         let app = create_app(
             state,
-            http_config.as_ref().and_then(|h| h.rate_limit.clone()),
+            http_config
+                .as_ref()
+                .map(|h| h.rate_limit.clone())
+                .unwrap_or_default(),
         );
 
         let mut tasks = JoinSet::new();
@@ -238,7 +196,7 @@ impl HttpServer {
     }
 }
 
-pub(crate) fn create_app(state: AppState, rate_limit_config: Option<RateLimitConfig>) -> Router {
+pub(crate) fn create_app(state: AppState, rate_limit_config: RateLimitConfig) -> Router {
     // configure cors middleware
     let cors = CorsLayer::new()
         // allow `GET` and `POST` when accessing the resource

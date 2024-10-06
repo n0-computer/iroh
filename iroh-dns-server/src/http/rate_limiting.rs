@@ -1,28 +1,42 @@
 use std::time::Duration;
 
 use governor::{clock::QuantaInstant, middleware::NoOpMiddleware};
+use serde::{Deserialize, Serialize};
 use tower_governor::{
     governor::GovernorConfigBuilder,
     key_extractor::{PeerIpKeyExtractor, SmartIpKeyExtractor},
     GovernorLayer,
 };
 
-use super::RateLimitConfig;
+/// Config for http rate limit.
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RateLimitConfig {
+    /// Disable rate limit for http server.
+    Disabled,
+    /// Enable rate limit for http server based on the connection peer IP address.
+    /// https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.PeerIpKeyExtractor.html
+    #[default]
+    Simple,
+    /// Enable rate limit for http server based on a smart logic for extracting the connection original IP address, useful for reverse proxies.
+    /// https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.SmartIpKeyExtractor.html
+    Smart,
+}
 
 /// Create the default rate-limiting layer.
 ///
 /// This spawns a background thread to clean up the rate limiting cache.
 pub fn create(
-    rate_limit_config: Option<RateLimitConfig>,
+    rate_limit_config: RateLimitConfig,
 ) -> Option<GovernorLayer<'static, PeerIpKeyExtractor, NoOpMiddleware<QuantaInstant>>> {
     let use_smart_extractor = match rate_limit_config {
-        Some(RateLimitConfig::Boolean(false)) => {
+        RateLimitConfig::Disabled => {
             tracing::info!("Rate limiting disabled");
             return None;
         }
         // By default apply rate limit
-        None | Some(RateLimitConfig::Boolean(true)) => false,
-        Some(RateLimitConfig::Smart) => true,
+        RateLimitConfig::Simple => false,
+        RateLimitConfig::Smart => true,
     };
 
     tracing::info!("Rate limiting enabled");
