@@ -6,6 +6,7 @@ use iroh_metrics::{
 /// Enum of metrics for the module
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Iterable)]
+#[non_exhaustive]
 pub struct Metrics {
     pub re_stun_calls: Counter,
     pub update_direct_addrs: Counter,
@@ -68,6 +69,11 @@ pub struct Metrics {
     pub actor_tick_direct_addr_update_receiver: Counter,
     pub actor_link_change: Counter,
     pub actor_tick_other: Counter,
+
+    /// Number of nodes we have attempted to contact.
+    pub nodes_contacted: Counter,
+    /// Number of nodes we have managed to contact directly.
+    pub nodes_contacted_directly: Counter,
 }
 
 impl Default for Metrics {
@@ -132,6 +138,9 @@ impl Default for Metrics {
             ),
             actor_link_change: Counter::new("actor_link_change"),
             actor_tick_other: Counter::new("actor_tick_other"),
+
+            nodes_contacted: Counter::new("nodes_contacted"),
+            nodes_contacted_directly: Counter::new("nodes_contacted_directly"),
         }
     }
 }
