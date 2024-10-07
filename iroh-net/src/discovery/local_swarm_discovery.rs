@@ -47,7 +47,10 @@ use watchable::Watchable;
 
 use iroh_base::key::PublicKey;
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
-use tokio::{sync::mpsc, task::JoinSet};
+use tokio::{
+    sync::mpsc::{self, error::TrySendError},
+    task::JoinSet,
+};
 use tokio_util::task::AbortOnDropHandle;
 
 use crate::{
@@ -107,8 +110,13 @@ impl Subscribers {
         let mut clean_up = vec![];
         for (i, subscriber) in self.0.iter().enumerate() {
             // assume subscriber was dropped
-            if (subscriber.send(item.clone()).await).is_err() {
-                clean_up.push(i);
+            if let Err(err) = subscriber.try_send(item.clone()) {
+                match err {
+                    TrySendError::Full(_) => {
+                        warn!("local swarm discovery subscriber {i} is blocked, dropping item {item:?}")
+                    }
+                    TrySendError::Closed(_) => clean_up.push(i),
+                }
             }
         }
         for i in clean_up.into_iter().rev() {
