@@ -1077,19 +1077,15 @@ impl MagicSock {
         inc!(MagicsockMetrics, send_disco_relay);
         match self.try_send_relay(url, dst_key, smallvec![pkt]) {
             Ok(()) => {
-                match &msg {
-                    disco::Message::Ping(_) => {}
-                    disco::Message::Pong(_) => {}
-                    disco::Message::CallMeMaybe(CallMeMaybe { ref my_numbers }) => {
-                        event!(
-                            target: "events.net.call-me-maybe.sent",
-                            Level::DEBUG,
-                            remote_node = %dst_key.fmt_short(),
-                            via = ?url,
-                            addrs = ?my_numbers,
-                        );
-                        inc!(MagicsockMetrics, call_me_maybe_sent);
-                    }
+                if let disco::Message::CallMeMaybe(CallMeMaybe { ref my_numbers }) = &msg {
+                    event!(
+                        target: "events.net.call-me-maybe.sent",
+                        Level::DEBUG,
+                        remote_node = %dst_key.fmt_short(),
+                        via = ?url,
+                        addrs = ?my_numbers,
+                    );
+                    inc!(MagicsockMetrics, call_me_maybe_sent);
                 }
                 inc!(MagicsockMetrics, sent_disco_relay);
                 disco_message_sent(&msg);
