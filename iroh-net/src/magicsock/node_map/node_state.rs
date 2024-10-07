@@ -128,10 +128,10 @@ pub(super) struct NodeState {
     last_call_me_maybe: Option<Instant>,
     /// The type of connection we have to the node, either direct, relay, mixed, or none.
     conn_type: Watchable<ConnectionType>,
-    /// Whether the conn_type was observed to be `Direct` before.
+    /// Whether the conn_type was ever observed to be `Direct` before.
     ///
     /// Used for metric reporting.
-    was_conn_direct_before: bool,
+    has_been_direct: bool,
 }
 
 /// Options for creating a new [`NodeState`].
@@ -171,7 +171,7 @@ impl NodeState {
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: None,
             conn_type: Watchable::new(ConnectionType::None),
-            was_conn_direct_before: false,
+            has_been_direct: false,
         }
     }
 
@@ -303,8 +303,8 @@ impl NodeState {
             (None, Some(relay_url)) => ConnectionType::Relay(relay_url),
             (None, None) => ConnectionType::None,
         };
-        if !self.was_conn_direct_before && matches!(&typ, ConnectionType::Direct(_)) {
-            self.was_conn_direct_before = true;
+        if !self.has_been_direct && matches!(&typ, ConnectionType::Direct(_)) {
+            self.has_been_direct = true;
             inc!(MagicsockMetrics, connection_became_direct);
         }
         if let Ok(prev_typ) = self.conn_type.update(typ.clone()) {
@@ -1487,7 +1487,7 @@ mod tests {
                     last_used: Some(now),
                     last_call_me_maybe: None,
                     conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
-                    was_conn_direct_before: true,
+                    has_been_direct: true,
                 },
                 ip_port.into(),
             )
@@ -1507,7 +1507,7 @@ mod tests {
                 last_used: Some(now),
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
-                was_conn_direct_before: false,
+                has_been_direct: false,
             }
         };
 
@@ -1534,7 +1534,7 @@ mod tests {
                 last_used: Some(now),
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
-                was_conn_direct_before: false,
+                has_been_direct: false,
             }
         };
 
@@ -1574,7 +1574,7 @@ mod tests {
                         socket_addr,
                         send_addr.clone(),
                     )),
-                    was_conn_direct_before: false,
+                    has_been_direct: false,
                 },
                 socket_addr,
             )

@@ -70,9 +70,9 @@ pub struct Metrics {
     pub actor_link_change: Counter,
     pub actor_tick_other: Counter,
 
-    /// number of successfully handshaked connections
+    /// Number of successfully handshaked connections.
     pub connection_handshake_success: Counter,
-    /// number of connections that switched to direct connections at least once
+    /// Number of connections that switched to direct connections at least once.
     pub connection_became_direct: Counter,
 }
 
