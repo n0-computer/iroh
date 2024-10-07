@@ -16,6 +16,7 @@ use iroh::{
     client::Iroh,
     docs::{AuthorId, NamespaceId},
 };
+use iroh_metrics::PushMetricsConfig;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -61,6 +62,8 @@ pub(crate) struct NodeConfig {
     pub(crate) file_logs: super::logging::FileLogging,
     /// Path to dump metrics to in CSV format.
     pub(crate) metrics_dump_path: Option<PathBuf>,
+    /// Configuration for the metrics exporter.
+    pub(crate) metrics_exporter_config: Option<PushMetricsConfig>,
 }
 
 impl Default for NodeConfig {
@@ -76,6 +79,7 @@ impl Default for NodeConfig {
             metrics_addr: None,
             file_logs: Default::default(),
             metrics_dump_path: None,
+            metrics_exporter_config: None,
         }
     }
 }

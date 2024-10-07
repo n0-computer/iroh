@@ -8,6 +8,7 @@ use iroh::{
     net::relay::{RelayMap, RelayMode},
     node::{Node, RpcStatus, DEFAULT_RPC_ADDR},
 };
+use iroh_metrics::PushMetricsConfig;
 use std::{
     future::Future,
     net::SocketAddr,
@@ -48,6 +49,7 @@ where
     let metrics_fut = start_metrics_server(config.metrics_addr);
     let metrics_dumper_fut =
         start_metrics_dumper(config.metrics_dump_path.clone(), Duration::from_millis(100));
+    let metrics_exporter_fut = start_metrics_exporter(config.metrics_exporter_config.clone());
 
     let res = run_with_command_inner(config, iroh_data_root, rpc_addr, run_type, command).await;
 
@@ -58,6 +60,9 @@ where
     // If `Some`thing is returned, it means the starting has failed and the tasks should be aborted.
     if let Some(metrics_dumper_fut) = metrics_dumper_fut {
         metrics_dumper_fut.abort();
+    }
+    if let Some(metrics_exporter_fut) = metrics_exporter_fut {
+        metrics_exporter_fut.abort();
     }
 
     let (clear_rpc, res) = match res {
@@ -221,6 +226,19 @@ pub fn start_metrics_dumper(
             if let Err(e) = iroh_metrics::metrics::start_metrics_dumper(path, interval).await {
                 eprintln!("Failed to start metrics dumper: {e}");
             }
+        }
+    }))
+}
+
+/// Starts an iroh metrics exporter service.
+///
+/// Returns `None` if succeeded; otherwise, returns the `JoinHandle` with which the task can be aborted.
+pub fn start_metrics_exporter(
+    cfg: Option<PushMetricsConfig>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    Some(tokio::task::spawn(async move {
+        if let Some(cfg) = cfg {
+            iroh_metrics::metrics::start_metrics_exporter(cfg).await;
         }
     }))
 }
