@@ -62,3 +62,27 @@ pub async fn start_metrics_dumper(
 ) -> anyhow::Result<()> {
     crate::service::dumper(&path, interval).await
 }
+
+/// Start a metrics exporter service.
+#[cfg(feature = "metrics")]
+pub async fn start_metrics_exporter(
+    interval: std::time::Duration,
+) -> anyhow::Result<()> {
+    // parse env vars
+    let enabled = std::env::var("IROH_TELEMETRY_ENABLED")
+        .unwrap_or_else(|_| "false".to_string())
+        .parse::<bool>()
+        .unwrap_or(false);
+    if enabled == false {
+        return Ok(());
+    }
+    let gateway_endpoint = std::env::var("IROH_TELEMETRY_GATEWAY_ENDPOINT").unwrap();
+    let service_name = std::env::var("IROH_TELEMETRY_SERVICE_NAME").unwrap();
+    let instance_name = std::env::var("IROH_TELEMETRY_INSTANCE_NAME").unwrap();
+    let username = std::env::var("IROH_TELEMETRY_USERNAME").unwrap();
+    let password = std::env::var("IROH_TELEMETRY_PASSWORD").unwrap();
+    if enabled {
+        crate::service::exporter(gateway_endpoint, service_name, instance_name, Some(username), password, interval).await?
+    }
+    Ok(())
+}
