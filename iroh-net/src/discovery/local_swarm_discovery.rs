@@ -22,7 +22,7 @@
 //!              .iter()
 //!              .any(|(source, duration)| {
 //!                  if let Source::Discovery { name } = source {
-//!                      name == iroh_net::discovery::local_swarm_discovery::NAME && *duration >= recent
+//!                      name == iroh_net::discovery::local_swarm_discovery::NAME && *duration <= recent
 //!                  } else {
 //!                      false
 //!                  }
