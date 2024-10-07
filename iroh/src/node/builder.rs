@@ -657,28 +657,6 @@ where
                 StorageConfig::Mem => None,
             };
 
-            if let Some(config) = self.metrics_push_config {
-                let PushMetricsConfig {
-                    interval,
-                    endpoint: gateway_endpoint,
-                    service_name,
-                    instance_name,
-                    username,
-                    password,
-                } = config;
-                tokio::spawn(async move {
-                    iroh_metrics::service::exporter(
-                        gateway_endpoint,
-                        service_name,
-                        instance_name,
-                        username,
-                        password,
-                        interval,
-                    )
-                    .await
-                });
-            }
-
             (
                 endpoint
                     .bind_addr_v4(self.addr_v4)
@@ -718,6 +696,31 @@ where
         let controller = quic_rpc::transport::boxed::Connection::new(controller);
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
+        let metrics_exporter_handle = if let Some(config) = self.metrics_push_config {
+            let PushMetricsConfig {
+                interval,
+                endpoint: gateway_endpoint,
+                service_name,
+                instance_name,
+                username,
+                password,
+            } = config;
+            let handle = tokio::spawn(async move {
+                iroh_metrics::service::exporter(
+                    gateway_endpoint,
+                    service_name,
+                    instance_name,
+                    username,
+                    password,
+                    interval,
+                )
+                .await
+            });
+            Some(AbortOnDropHandle::new(handle))
+        } else {
+            None
+        };
+
         let inner = Arc::new(NodeInner {
             rpc_addr: self.rpc_addr,
             db: Default::default(),
@@ -725,6 +728,7 @@ where
             client,
             cancel_token: CancellationToken::new(),
             local_pool_handle: lp.handle().clone(),
+            metrics_exporter_handle,
         });
 
         let protocol_builder = ProtocolBuilder {
