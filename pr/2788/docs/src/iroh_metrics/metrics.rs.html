@@ -150,7 +150,7 @@
         cfg.instance_name,
         cfg.username,
         cfg.password,
-        cfg.interval,
+        std::time::Duration::from_secs(cfg.interval),
     )
     .<span class="kw">await</span>;
 }
