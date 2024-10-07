@@ -68,6 +68,11 @@ pub struct Metrics {
     pub actor_tick_direct_addr_update_receiver: Counter,
     pub actor_link_change: Counter,
     pub actor_tick_other: Counter,
+
+    /// number of successfully handshaked connections
+    pub connection_handshake_success: Counter,
+    /// number of connections that switched to direct connections at least once
+    pub connection_became_direct: Counter,
 }
 
 impl Default for Metrics {
@@ -132,6 +137,9 @@ impl Default for Metrics {
             ),
             actor_link_change: Counter::new("actor_link_change"),
             actor_tick_other: Counter::new("actor_tick_other"),
+
+            connection_handshake_success: Counter::new("connection_handshake_success"),
+            connection_became_direct: Counter::new("connection_became_direct"),
         }
     }
 }

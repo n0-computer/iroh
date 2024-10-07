@@ -22,6 +22,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
+use iroh_metrics::inc;
 use pin_project::pin_project;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, instrument, trace, warn};
@@ -499,6 +500,10 @@ impl Endpoint {
         // Cancel the node discovery task (if still running).
         if let Some(discovery) = discovery {
             discovery.cancel();
+        }
+
+        if conn.is_ok() {
+            inc!(magicsock::Metrics, connection_handshake_success);
         }
 
         conn
@@ -1104,6 +1109,7 @@ impl Connecting {
         match self.inner.into_0rtt() {
             Ok((conn, zrtt_accepted)) => {
                 try_send_rtt_msg(&conn, &self.ep);
+                inc!(magicsock::Metrics, connection_handshake_success);
                 Ok((conn, zrtt_accepted))
             }
             Err(inner) => Err(Self { inner, ep: self.ep }),
@@ -1150,6 +1156,7 @@ impl Future for Connecting {
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(conn)) => {
                 try_send_rtt_msg(&conn, this.ep);
+                inc!(magicsock::Metrics, connection_handshake_success);
                 Poll::Ready(Ok(conn))
             }
         }
