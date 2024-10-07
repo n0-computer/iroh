@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
-use hyper::service::{self, service_fn};
+use hyper::service::service_fn;
 use hyper::{Request, Response};
 use tokio::io::AsyncWriteExt as _;
 use tokio::net::TcpListener;
@@ -125,7 +125,7 @@ pub async fn exporter(
     instance_name: String,
     username: Option<String>,
     password: String,
-    interval_ms: Duration
+    interval_ms: Duration,
 ) -> Result<()> {
     let core = Core::get().ok_or_else(|| anyhow!("metrics disabled"))?;
     let push_client = reqwest::Client::new();
