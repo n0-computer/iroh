@@ -124,7 +124,7 @@ struct NodeInner<D> {
     client: crate::client::Iroh,
     local_pool_handle: LocalPoolHandle,
     #[allow(dead_code)]
-    metrics_exporter_handle: Option<AbortOnDropHandle<anyhow::Result<()>>>,
+    metrics_exporter_handle: Option<AbortOnDropHandle<()>>,
 }
 
 /// In memory node.

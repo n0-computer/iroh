@@ -126,8 +126,11 @@ pub async fn exporter(
     username: Option<String>,
     password: String,
     interval: Duration,
-) -> Result<()> {
-    let core = Core::get().ok_or_else(|| anyhow!("metrics disabled"))?;
+) {
+    let Some(core) = Core::get() else {
+        error!("metrics disabled");
+        return;
+    };
     let push_client = reqwest::Client::new();
     let prom_gateway_uri = format!(
         "{}/metrics/job/{}/instance/{}",

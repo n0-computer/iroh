@@ -88,7 +88,7 @@ pub async fn start_metrics_exporter(interval: std::time::Duration) -> anyhow::Re
             password,
             interval,
         )
-        .await?
+        .await;
     }
     Ok(())
 }
