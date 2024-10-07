@@ -657,6 +657,28 @@ where
                 StorageConfig::Mem => None,
             };
 
+            if let Some(config) = self.metrics_push_config {
+                let PushMetricsConfig {
+                    interval,
+                    endpoint: gateway_endpoint,
+                    service_name,
+                    instance_name,
+                    username,
+                    password,
+                } = config;
+                tokio::spawn(async move {
+                    iroh_metrics::service::exporter(
+                        gateway_endpoint,
+                        service_name,
+                        instance_name,
+                        Some(username),
+                        password,
+                        interval,
+                    )
+                    .await
+                });
+            }
+
             (
                 endpoint
                     .bind_addr_v4(self.addr_v4)

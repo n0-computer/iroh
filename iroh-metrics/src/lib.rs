@@ -7,8 +7,9 @@ pub mod metrics;
 pub mod core;
 
 /// Expose iroh metrics
+/// todo: remove pub export
 #[cfg(feature = "metrics")]
-mod service;
+pub mod service;
 
 use core::UsageStatsReport;
 use std::collections::HashMap;
