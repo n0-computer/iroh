@@ -971,6 +971,28 @@
 <a href="#971" id="971">971</a>
 <a href="#972" id="972">972</a>
 <a href="#973" id="973">973</a>
+<a href="#974" id="974">974</a>
+<a href="#975" id="975">975</a>
+<a href="#976" id="976">976</a>
+<a href="#977" id="977">977</a>
+<a href="#978" id="978">978</a>
+<a href="#979" id="979">979</a>
+<a href="#980" id="980">980</a>
+<a href="#981" id="981">981</a>
+<a href="#982" id="982">982</a>
+<a href="#983" id="983">983</a>
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1100,6 +1122,19 @@
     </span>gc_done_callback: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() + Send&gt;&gt;,
     blob_events: EventSender,
     transport_config: <span class="prelude-ty">Option</span>&lt;TransportConfig&gt;,
+    metrics_push_config: <span class="prelude-ty">Option</span>&lt;PushMetricsConfig&gt;,
+}
+
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">pub struct </span>PushMetricsConfig {
+    <span class="doccomment">/// Push interval
+    </span><span class="kw">pub </span>interval: Duration,
+    <span class="doccomment">/// Endpoint url
+    </span><span class="kw">pub </span>endpoint: String,
+    <span class="kw">pub </span>service_name: String,
+    <span class="kw">pub </span>instance_name: String,
+    <span class="kw">pub </span>username: String,
+    <span class="kw">pub </span>password: String,
 }
 
 <span class="doccomment">/// Configuration for storage.
@@ -1228,6 +1263,7 @@
             gc_done_callback: <span class="prelude-val">None</span>,
             blob_events: Default::default(),
             transport_config: <span class="prelude-val">None</span>,
+            metrics_push_config: <span class="prelude-val">None</span>,
         }
     }
 }
@@ -1264,6 +1300,7 @@
             gc_done_callback: <span class="prelude-val">None</span>,
             blob_events: Default::default(),
             transport_config: <span class="prelude-val">None</span>,
+            metrics_push_config: <span class="prelude-val">None</span>,
         }
     }
 }
@@ -1278,6 +1315,12 @@
     /// To define an event sender, implement the [`iroh_blobs::provider::CustomEventSender`] trait.
     </span><span class="kw">pub fn </span>blobs_events(<span class="kw-2">mut </span><span class="self">self</span>, blob_events: <span class="kw">impl </span>Into&lt;EventSender&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.blob_events = blob_events.into();
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Set the metrics push configuration.
+    </span><span class="kw">pub fn </span>metrics_push_config(<span class="kw-2">mut </span><span class="self">self</span>, config: PushMetricsConfig) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.metrics_push_config = <span class="prelude-val">Some</span>(config);
         <span class="self">self
     </span>}
 
@@ -1324,6 +1367,7 @@
             gc_done_callback: <span class="self">self</span>.gc_done_callback,
             blob_events: <span class="self">self</span>.blob_events,
             transport_config: <span class="self">self</span>.transport_config,
+            metrics_push_config: <span class="self">self</span>.metrics_push_config,
         })
     }
 
