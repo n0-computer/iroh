@@ -481,6 +481,10 @@
 <a href="#481" id="481">481</a>
 <a href="#482" id="482">482</a>
 <a href="#483" id="483">483</a>
+<a href="#484" id="484">484</a>
+<a href="#485" id="485">485</a>
+<a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
@@ -589,14 +593,18 @@
     <span class="doccomment">/// Sends the `node_id` and `item` to each subscriber.
     ///
     /// Cleans up any subscribers that have been dropped.
-    </span><span class="kw">async fn </span>send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, item: DiscoveryItem) {
+    </span><span class="kw">fn </span>send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, item: DiscoveryItem) {
         <span class="kw">let </span><span class="kw-2">mut </span>clean_up = <span class="macro">vec!</span>[];
         <span class="kw">for </span>(i, subscriber) <span class="kw">in </span><span class="self">self</span>.<span class="number">0</span>.iter().enumerate() {
             <span class="comment">// assume subscriber was dropped
             </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = subscriber.try_send(item.clone()) {
                 <span class="kw">match </span>err {
                     TrySendError::Full(<span class="kw">_</span>) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"local swarm discovery subscriber {i} is blocked, dropping item {item:?}"</span>)
+                        <span class="macro">warn!</span>(
+                            <span class="question-mark">?</span>item,
+                            idx = i,
+                            <span class="string">"local swarm discovery subscriber is blocked, dropping item"
+                        </span>)
                     }
                     TrySendError::Closed(<span class="kw">_</span>) =&gt; clean_up.push(i),
                 }
@@ -727,7 +735,7 @@
                         // in other words, nodes sent to the `subscribers` should only be the ones that
                         // have been "passively" discovered
                         </span><span class="kw">if </span>!resolved {
-                            subscribers.send(item).<span class="kw">await</span>;
+                            subscribers.send(item);
                         }
                     }
                     Message::Resolve(node_id, sender) =&gt; {
