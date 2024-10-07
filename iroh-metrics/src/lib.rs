@@ -7,9 +7,8 @@ pub mod metrics;
 pub mod core;
 
 /// Expose iroh metrics
-/// todo: remove pub export
 #[cfg(feature = "metrics")]
-pub mod service;
+mod service;
 
 use core::UsageStatsReport;
 use std::collections::HashMap;
@@ -76,4 +75,21 @@ pub fn parse_prometheus_metrics(data: &str) -> anyhow::Result<HashMap<String, f6
         metrics.insert(metric.to_string(), value.unwrap());
     }
     Ok(metrics)
+}
+
+/// Configuration for pushing metrics to a remote endpoint.
+#[derive(PartialEq, Eq, Debug, Default, serde::Deserialize, Clone)]
+pub struct PushMetricsConfig {
+    /// Push interval
+    pub interval: std::time::Duration,
+    /// Endpoint url
+    pub endpoint: String,
+    /// Service name
+    pub service_name: String,
+    /// Instance name
+    pub instance_name: String,
+    /// Username for basic auth
+    pub username: Option<String>,
+    /// Password
+    pub password: String,
 }

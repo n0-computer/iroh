@@ -8,6 +8,7 @@ use iroh::{
     net::relay::{RelayMap, RelayMode},
     node::{Node, RpcStatus, DEFAULT_RPC_ADDR},
 };
+use iroh_metrics::PushMetricsConfig;
 use std::{
     future::Future,
     net::SocketAddr,
@@ -48,7 +49,7 @@ where
     let metrics_fut = start_metrics_server(config.metrics_addr);
     let metrics_dumper_fut =
         start_metrics_dumper(config.metrics_dump_path.clone(), Duration::from_millis(100));
-    let metrics_exporter_fut = start_metrics_exporter(Duration::from_millis(5000));
+    let metrics_exporter_fut = start_metrics_exporter(config.metrics_exporter_config.clone());
 
     let res = run_with_command_inner(config, iroh_data_root, rpc_addr, run_type, command).await;
 
@@ -232,10 +233,12 @@ pub fn start_metrics_dumper(
 /// Starts an iroh metrics exporter service.
 ///
 /// Returns `None` if succeeded; otherwise, returns the `JoinHandle` with which the task can be aborted.
-pub fn start_metrics_exporter(interval: Duration) -> Option<tokio::task::JoinHandle<()>> {
+pub fn start_metrics_exporter(
+    cfg: Option<PushMetricsConfig>,
+) -> Option<tokio::task::JoinHandle<()>> {
     Some(tokio::task::spawn(async move {
-        if let Err(e) = iroh_metrics::metrics::start_metrics_exporter(interval).await {
-            eprintln!("Failed to start metrics exporter: {e}");
+        if let Some(cfg) = cfg {
+            iroh_metrics::metrics::start_metrics_exporter(cfg).await;
         }
     }))
 }

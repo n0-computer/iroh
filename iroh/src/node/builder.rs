@@ -18,6 +18,7 @@ use iroh_blobs::{
 use iroh_docs::engine::DefaultAuthorStorage;
 use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
+use iroh_metrics::PushMetricsConfig;
 #[cfg(not(test))]
 use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 use iroh_net::{
@@ -128,18 +129,6 @@ where
     blob_events: EventSender,
     transport_config: Option<TransportConfig>,
     metrics_push_config: Option<PushMetricsConfig>,
-}
-
-#[derive(Debug)]
-pub struct PushMetricsConfig {
-    /// Push interval
-    pub interval: Duration,
-    /// Endpoint url
-    pub endpoint: String,
-    pub service_name: String,
-    pub instance_name: String,
-    pub username: Option<String>,
-    pub password: String,
 }
 
 /// Configuration for storage.
@@ -697,29 +686,12 @@ where
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
         let metrics_exporter_handle = if let Some(config) = self.metrics_push_config {
-            if cfg!(feature = "metrics")
-            {
-                let PushMetricsConfig {
-                    interval,
-                    endpoint: gateway_endpoint,
-                    service_name,
-                    instance_name,
-                    username,
-                    password,
-                } = config;
+            if cfg!(feature = "metrics") {
                 let handle = tokio::spawn(async move {
-                    iroh_metrics::service::exporter(
-                        gateway_endpoint,
-                        service_name,
-                        instance_name,
-                        username,
-                        password,
-                        interval,
-                    )
-                    .await
+                    iroh_metrics::metrics::start_metrics_exporter(config).await
                 });
                 Some(AbortOnDropHandle::new(handle))
-            } else {   
+            } else {
                 tracing::warn!("Metrics push configuration provided, but metrics feature is not enabled. Ignoring.");
                 None
             }
