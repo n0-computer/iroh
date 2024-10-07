@@ -139,8 +139,8 @@ impl Default for Metrics {
             actor_link_change: Counter::new("actor_link_change"),
             actor_tick_other: Counter::new("actor_tick_other"),
 
-            nodes_contacted: Counter::new("connection_handshake_success"),
-            nodes_contacted_directly: Counter::new("connection_became_direct"),
+            nodes_contacted: Counter::new("nodes_contacted"),
+            nodes_contacted_directly: Counter::new("nodes_contacted_directly"),
         }
     }
 }
