@@ -1015,6 +1015,10 @@
 <a href="#1015" id="1015">1015</a>
 <a href="#1016" id="1016">1016</a>
 <a href="#1017" id="1017">1017</a>
+<a href="#1018" id="1018">1018</a>
+<a href="#1019" id="1019">1019</a>
+<a href="#1020" id="1020">1020</a>
+<a href="#1021" id="1021">1021</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1155,7 +1159,7 @@
     </span><span class="kw">pub </span>endpoint: String,
     <span class="kw">pub </span>service_name: String,
     <span class="kw">pub </span>instance_name: String,
-    <span class="kw">pub </span>username: String,
+    <span class="kw">pub </span>username: <span class="prelude-ty">Option</span>&lt;String&gt;,
     <span class="kw">pub </span>password: String,
 }
 
@@ -1674,28 +1678,6 @@
                 StorageConfig::Mem =&gt; <span class="prelude-val">None</span>,
             };
 
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(config) = <span class="self">self</span>.metrics_push_config {
-                <span class="kw">let </span>PushMetricsConfig {
-                    interval,
-                    endpoint: gateway_endpoint,
-                    service_name,
-                    instance_name,
-                    username,
-                    password,
-                } = config;
-                tokio::spawn(<span class="kw">async move </span>{
-                    iroh_metrics::service::exporter(
-                        gateway_endpoint,
-                        service_name,
-                        instance_name,
-                        <span class="prelude-val">Some</span>(username),
-                        password,
-                        interval,
-                    )
-                    .<span class="kw">await
-                </span>});
-            }
-
             (
                 endpoint
                     .bind_addr_v4(<span class="self">self</span>.addr_v4)
@@ -1735,6 +1717,31 @@
         </span><span class="kw">let </span>controller = quic_rpc::transport::boxed::Connection::new(controller);
         <span class="kw">let </span>client = <span class="kw">crate</span>::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
+        <span class="kw">let </span>metrics_exporter_handle = <span class="kw">if let </span><span class="prelude-val">Some</span>(config) = <span class="self">self</span>.metrics_push_config {
+            <span class="kw">let </span>PushMetricsConfig {
+                interval,
+                endpoint: gateway_endpoint,
+                service_name,
+                instance_name,
+                username,
+                password,
+            } = config;
+            <span class="kw">let </span>handle = tokio::spawn(<span class="kw">async move </span>{
+                iroh_metrics::service::exporter(
+                    gateway_endpoint,
+                    service_name,
+                    instance_name,
+                    username,
+                    password,
+                    interval,
+                )
+                .<span class="kw">await
+            </span>});
+            <span class="prelude-val">Some</span>(AbortOnDropHandle::new(handle))
+        } <span class="kw">else </span>{
+            <span class="prelude-val">None
+        </span>};
+
         <span class="kw">let </span>inner = Arc::new(NodeInner {
             rpc_addr: <span class="self">self</span>.rpc_addr,
             db: Default::default(),
@@ -1742,6 +1749,7 @@
             client,
             cancel_token: CancellationToken::new(),
             local_pool_handle: lp.handle().clone(),
+            metrics_exporter_handle,
         });
 
         <span class="kw">let </span>protocol_builder = ProtocolBuilder {

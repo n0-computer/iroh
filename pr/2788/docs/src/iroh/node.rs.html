@@ -878,6 +878,8 @@
 <a href="#878" id="878">878</a>
 <a href="#879" id="879">879</a>
 <a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node API
 //!
 //! An iroh node is a server that is identified by an Ed25519 keypair and is
@@ -1003,6 +1005,8 @@
     cancel_token: CancellationToken,
     client: <span class="kw">crate</span>::client::Iroh,
     local_pool_handle: LocalPoolHandle,
+    <span class="attr">#[allow(dead_code)]
+    </span>metrics_exporter_handle: <span class="prelude-ty">Option</span>&lt;AbortOnDropHandle&lt;anyhow::Result&lt;()&gt;&gt;&gt;,
 }
 
 <span class="doccomment">/// In memory node.
