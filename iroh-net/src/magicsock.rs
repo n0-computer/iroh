@@ -1232,6 +1232,7 @@ impl MagicSock {
                 via = ?url,
                 ?addrs,
             );
+            inc!(Metrics, call_me_maybe_sent);
             let msg = direct_addrs.to_call_me_maybe_message();
             let msg = disco::Message::CallMeMaybe(msg);
             if !self.send_disco_message_relay(url, dst_node, msg) {
