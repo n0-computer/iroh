@@ -1025,8 +1025,6 @@
 <a href="#1025" id="1025">1025</a>
 <a href="#1026" id="1026">1026</a>
 <a href="#1027" id="1027">1027</a>
-<a href="#1028" id="1028">1028</a>
-<a href="#1029" id="1029">1029</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1726,8 +1724,8 @@
         <span class="kw">let </span>client = <span class="kw">crate</span>::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
         <span class="kw">let </span>metrics_exporter_handle = <span class="kw">if let </span><span class="prelude-val">Some</span>(config) = <span class="self">self</span>.metrics_push_config {
-            <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-            </span>{
+            <span class="kw">if </span><span class="macro">cfg!</span>(feature = <span class="string">"metrics"</span>)
+            {
                 <span class="kw">let </span>PushMetricsConfig {
                     interval,
                     endpoint: gateway_endpoint,
@@ -1748,10 +1746,8 @@
                     .<span class="kw">await
                 </span>});
                 <span class="prelude-val">Some</span>(AbortOnDropHandle::new(handle))
-            }
-            <span class="attr">#[cfg(not(feature = <span class="string">"metrics"</span>))]
-            </span>{
-                <span class="macro">warn!</span>(<span class="string">"Metrics push configuration provided, but metrics feature is not enabled. Ignoring."</span>);
+            } <span class="kw">else </span>{   
+                <span class="macro">tracing::warn!</span>(<span class="string">"Metrics push configuration provided, but metrics feature is not enabled. Ignoring."</span>);
                 <span class="prelude-val">None
             </span>}
         } <span class="kw">else </span>{
