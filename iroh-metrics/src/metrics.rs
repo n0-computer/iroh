@@ -72,7 +72,7 @@ pub async fn start_metrics_exporter(cfg: crate::PushMetricsConfig) {
         cfg.instance_name,
         cfg.username,
         cfg.password,
-        cfg.interval,
+        std::time::Duration::from_secs(cfg.interval),
     )
     .await;
 }

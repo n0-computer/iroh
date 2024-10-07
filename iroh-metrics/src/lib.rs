@@ -81,7 +81,7 @@ pub fn parse_prometheus_metrics(data: &str) -> anyhow::Result<HashMap<String, f6
 #[derive(PartialEq, Eq, Debug, Default, serde::Deserialize, Clone)]
 pub struct PushMetricsConfig {
     /// Push interval
-    pub interval: std::time::Duration,
+    pub interval: u64,
     /// Endpoint url
     pub endpoint: String,
     /// Service name

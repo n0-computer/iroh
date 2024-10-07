@@ -137,6 +137,7 @@ pub async fn exporter(
         gateway_endpoint, service_name, instance_name
     );
     loop {
+        tokio::time::sleep(interval).await;
         let buff = core.encode();
         match buff {
             Err(e) => error!("Failed to encode metrics: {e:#}"),
@@ -164,6 +165,5 @@ pub async fn exporter(
                 }
             }
         }
-        tokio::time::sleep(interval).await;
     }
 }
