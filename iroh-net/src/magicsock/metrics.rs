@@ -6,6 +6,7 @@ use iroh_metrics::{
 /// Enum of metrics for the module
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Iterable)]
+#[non_exhaustive]
 pub struct Metrics {
     pub re_stun_calls: Counter,
     pub update_direct_addrs: Counter,
