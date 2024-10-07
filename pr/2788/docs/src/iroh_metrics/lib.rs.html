@@ -76,6 +76,7 @@
 <a href="#76" id="76">76</a>
 <a href="#77" id="77">77</a>
 <a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Metrics library for iroh
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
@@ -85,8 +86,9 @@
 </span><span class="kw">pub mod </span>core;
 
 <span class="doccomment">/// Expose iroh metrics
+/// todo: remove pub export
 </span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-</span><span class="kw">mod </span>service;
+</span><span class="kw">pub mod </span>service;
 
 <span class="kw">use </span>core::UsageStatsReport;
 <span class="kw">use </span>std::collections::HashMap;
