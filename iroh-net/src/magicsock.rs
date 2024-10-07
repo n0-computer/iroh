@@ -53,7 +53,7 @@ use watchable::Watchable;
 
 use crate::{
     defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
-    disco::{self, SendAddr},
+    disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
     endpoint::NodeAddr,
@@ -1077,6 +1077,20 @@ impl MagicSock {
         inc!(MagicsockMetrics, send_disco_relay);
         match self.try_send_relay(url, dst_key, smallvec![pkt]) {
             Ok(()) => {
+                match &msg {
+                    disco::Message::Ping(_) => {}
+                    disco::Message::Pong(_) => {}
+                    disco::Message::CallMeMaybe(CallMeMaybe { ref my_numbers }) => {
+                        event!(
+                            target: "events.net.call-me-maybe.sent",
+                            Level::DEBUG,
+                            remote_node = %dst_key.fmt_short(),
+                            via = ?url,
+                            addrs = ?my_numbers,
+                        );
+                        inc!(MagicsockMetrics, call_me_maybe_sent);
+                    }
+                }
                 inc!(MagicsockMetrics, sent_disco_relay);
                 disco_message_sent(&msg);
                 true
@@ -1224,15 +1238,6 @@ impl MagicSock {
     fn send_or_queue_call_me_maybe(&self, url: &RelayUrl, dst_node: NodeId) {
         let direct_addrs = self.direct_addrs.read();
         if direct_addrs.fresh_enough() {
-            let addrs: Vec<_> = direct_addrs.iter().collect();
-            event!(
-                target: "events.net.call-me-maybe.sent",
-                Level::DEBUG,
-                remote_node = %dst_node.fmt_short(),
-                via = ?url,
-                ?addrs,
-            );
-            inc!(Metrics, call_me_maybe_sent);
             let msg = direct_addrs.to_call_me_maybe_message();
             let msg = disco::Message::CallMeMaybe(msg);
             if !self.send_disco_message_relay(url, dst_node, msg) {
