@@ -1750,12 +1750,6 @@
 <a href="#1750" id="1750">1750</a>
 <a href="#1751" id="1751">1751</a>
 <a href="#1752" id="1752">1752</a>
-<a href="#1753" id="1753">1753</a>
-<a href="#1754" id="1754">1754</a>
-<a href="#1755" id="1755">1755</a>
-<a href="#1756" id="1756">1756</a>
-<a href="#1757" id="1757">1757</a>
-<a href="#1758" id="1758">1758</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -2258,10 +2252,6 @@
         <span class="comment">// Cancel the node discovery task (if still running).
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(discovery) = discovery {
             discovery.cancel();
-        }
-
-        <span class="kw">if </span>conn.is_ok() {
-            <span class="macro">inc!</span>(magicsock::Metrics, connection_handshake_success);
         }
 
         conn
@@ -2867,7 +2857,6 @@
         <span class="kw">match </span><span class="self">self</span>.inner.into_0rtt() {
             <span class="prelude-val">Ok</span>((conn, zrtt_accepted)) =&gt; {
                 try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, <span class="kw-2">&amp;</span><span class="self">self</span>.ep);
-                <span class="macro">inc!</span>(magicsock::Metrics, connection_handshake_success);
                 <span class="prelude-val">Ok</span>((conn, zrtt_accepted))
             }
             <span class="prelude-val">Err</span>(inner) =&gt; <span class="prelude-val">Err</span>(<span class="self">Self </span>{ inner, ep: <span class="self">self</span>.ep }),
@@ -2914,7 +2903,6 @@
             Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
             Poll::Ready(<span class="prelude-val">Ok</span>(conn)) =&gt; {
                 try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep);
-                <span class="macro">inc!</span>(magicsock::Metrics, connection_handshake_success);
                 Poll::Ready(<span class="prelude-val">Ok</span>(conn))
             }
         }

@@ -1710,6 +1710,10 @@
 <a href="#1710" id="1710">1710</a>
 <a href="#1711" id="1711">1711</a>
 <a href="#1712" id="1712">1712</a>
+<a href="#1713" id="1713">1713</a>
+<a href="#1714" id="1714">1714</a>
+<a href="#1715" id="1715">1715</a>
+<a href="#1716" id="1716">1716</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{btree_map::Entry, BTreeSet, HashMap};
 <span class="kw">use </span>std::hash::Hash;
 <span class="kw">use </span>std::net::{IpAddr, SocketAddr};
@@ -2847,7 +2851,11 @@
         have_ipv6: bool,
     ) -&gt; (<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;, <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;, Vec&lt;PingAction&gt;) {
         <span class="kw">let </span>now = Instant::now();
-        <span class="self">self</span>.last_used.replace(now);
+        <span class="kw">let </span>prev = <span class="self">self</span>.last_used.replace(now);
+        <span class="kw">if </span>prev.is_none() {
+            <span class="comment">// this is the first time we are trying to connect to this node
+            </span><span class="macro">inc!</span>(MagicsockMetrics, connection_handshake_success);
+        }
         <span class="kw">let </span>(udp_addr, relay_url) = <span class="self">self</span>.addr_for_send(<span class="kw-2">&amp;</span>now, have_ipv6);
         <span class="kw">let </span><span class="kw-2">mut </span>ping_msgs = Vec::new();
 
