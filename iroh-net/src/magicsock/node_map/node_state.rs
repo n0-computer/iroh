@@ -128,7 +128,7 @@ pub(super) struct NodeState {
     last_call_me_maybe: Option<Instant>,
     /// The type of connection we have to the node, either direct, relay, mixed, or none.
     conn_type: Watchable<ConnectionType>,
-    /// Whether the conn_type was ever observed to be `Direct` before.
+    /// Whether the conn_type was ever observed to be `Direct` at some point.
     ///
     /// Used for metric reporting.
     has_been_direct: bool,
