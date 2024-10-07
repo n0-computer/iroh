@@ -305,7 +305,7 @@ impl NodeState {
         };
         if !self.has_been_direct && matches!(&typ, ConnectionType::Direct(_)) {
             self.has_been_direct = true;
-            inc!(MagicsockMetrics, connection_became_direct);
+            inc!(MagicsockMetrics, nodes_directly_contacted);
         }
         if let Ok(prev_typ) = self.conn_type.update(typ.clone()) {
             // The connection type has changed.
@@ -1138,7 +1138,7 @@ impl NodeState {
         let prev = self.last_used.replace(now);
         if prev.is_none() {
             // this is the first time we are trying to connect to this node
-            inc!(MagicsockMetrics, connection_handshake_success);
+            inc!(MagicsockMetrics, nodes_contacted);
         }
         let (udp_addr, relay_url) = self.addr_for_send(&now, have_ipv6);
         let mut ping_msgs = Vec::new();

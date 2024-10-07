@@ -70,10 +70,10 @@ pub struct Metrics {
     pub actor_link_change: Counter,
     pub actor_tick_other: Counter,
 
-    /// Number of successfully handshaked connections.
-    pub connection_handshake_success: Counter,
+    /// Number of nodes we have attempted to contact.
+    pub nodes_contacted: Counter,
     /// Number of connections that switched to direct connections at least once.
-    pub connection_became_direct: Counter,
+    pub nodes_directly_contacted: Counter,
 }
 
 impl Default for Metrics {
@@ -139,8 +139,8 @@ impl Default for Metrics {
             actor_link_change: Counter::new("actor_link_change"),
             actor_tick_other: Counter::new("actor_tick_other"),
 
-            connection_handshake_success: Counter::new("connection_handshake_success"),
-            connection_became_direct: Counter::new("connection_became_direct"),
+            nodes_contacted: Counter::new("connection_handshake_success"),
+            nodes_directly_contacted: Counter::new("connection_became_direct"),
         }
     }
 }
