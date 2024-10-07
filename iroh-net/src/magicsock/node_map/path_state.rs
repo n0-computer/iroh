@@ -5,10 +5,11 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use iroh_base::key::NodeId;
+use iroh_metrics::inc;
 use tracing::{debug, event, Level};
 
 use crate::disco::SendAddr;
-use crate::magicsock::HEARTBEAT_INTERVAL;
+use crate::magicsock::{Metrics, HEARTBEAT_INTERVAL};
 use crate::stun;
 
 use super::node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT};
@@ -124,6 +125,7 @@ impl PathState {
                     path = ?path,
                     direction = "outgoing",
                 );
+                inc!(Metrics, holepunched);
             }
         }
         self.recent_pong = Some(r);
@@ -263,6 +265,7 @@ impl PathState {
                             path = ?addr,
                             direction = "incoming",
                         );
+                        inc!(Metrics, holepunched);
                     }
                     PingRole::Activate
                 }

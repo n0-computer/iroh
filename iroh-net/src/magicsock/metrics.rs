@@ -68,6 +68,11 @@ pub struct Metrics {
     pub actor_tick_direct_addr_update_receiver: Counter,
     pub actor_link_change: Counter,
     pub actor_tick_other: Counter,
+
+    /// how often we holepunched
+    pub holepunched: Counter,
+    /// Sort of like attempts at holepunching
+    pub call_me_maybe_sent: Counter,
 }
 
 impl Default for Metrics {
@@ -132,6 +137,9 @@ impl Default for Metrics {
             ),
             actor_link_change: Counter::new("actor_link_change"),
             actor_tick_other: Counter::new("actor_tick_other"),
+
+            holepunched: Counter::new("holepunched"),
+            call_me_maybe_sent: Counter::new("call_me_maybe_sent"),
         }
     }
 }
