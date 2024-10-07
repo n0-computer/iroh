@@ -76,22 +76,6 @@
 <a href="#76" id="76">76</a>
 <a href="#77" id="77">77</a>
 <a href="#78" id="78">78</a>
-<a href="#79" id="79">79</a>
-<a href="#80" id="80">80</a>
-<a href="#81" id="81">81</a>
-<a href="#82" id="82">82</a>
-<a href="#83" id="83">83</a>
-<a href="#84" id="84">84</a>
-<a href="#85" id="85">85</a>
-<a href="#86" id="86">86</a>
-<a href="#87" id="87">87</a>
-<a href="#88" id="88">88</a>
-<a href="#89" id="89">89</a>
-<a href="#90" id="90">90</a>
-<a href="#91" id="91">91</a>
-<a href="#92" id="92">92</a>
-<a href="#93" id="93">93</a>
-<a href="#94" id="94">94</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Metrics collection
 //!
 //! Enables and manages a global registry of metrics.
@@ -159,31 +143,15 @@
 
 <span class="doccomment">/// Start a metrics exporter service.
 </span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-</span><span class="kw">pub async fn </span>start_metrics_exporter(interval: std::time::Duration) -&gt; anyhow::Result&lt;()&gt; {
-    <span class="comment">// parse env vars
-    </span><span class="kw">let </span>enabled = std::env::var(<span class="string">"IROH_TELEMETRY_ENABLED"</span>)
-        .unwrap_or_else(|<span class="kw">_</span>| <span class="string">"false"</span>.to_string())
-        .parse::&lt;bool&gt;()
-        .unwrap_or(<span class="bool-val">false</span>);
-    <span class="kw">if </span>!enabled {
-        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-    }
-    <span class="kw">let </span>gateway_endpoint = std::env::var(<span class="string">"IROH_TELEMETRY_GATEWAY_ENDPOINT"</span>).unwrap();
-    <span class="kw">let </span>service_name = std::env::var(<span class="string">"IROH_TELEMETRY_SERVICE_NAME"</span>).unwrap();
-    <span class="kw">let </span>instance_name = std::env::var(<span class="string">"IROH_TELEMETRY_INSTANCE_NAME"</span>).unwrap();
-    <span class="kw">let </span>username = std::env::var(<span class="string">"IROH_TELEMETRY_USERNAME"</span>).unwrap();
-    <span class="kw">let </span>password = std::env::var(<span class="string">"IROH_TELEMETRY_PASSWORD"</span>).unwrap();
-    <span class="kw">if </span>enabled {
-        <span class="kw">crate</span>::service::exporter(
-            gateway_endpoint,
-            service_name,
-            instance_name,
-            <span class="prelude-val">Some</span>(username),
-            password,
-            interval,
-        )
-        .<span class="kw">await</span>;
-    }
-    <span class="prelude-val">Ok</span>(())
+</span><span class="kw">pub async fn </span>start_metrics_exporter(cfg: <span class="kw">crate</span>::PushMetricsConfig) {
+    <span class="kw">crate</span>::service::exporter(
+        cfg.endpoint,
+        cfg.service_name,
+        cfg.instance_name,
+        cfg.username,
+        cfg.password,
+        cfg.interval,
+    )
+    .<span class="kw">await</span>;
 }
 </code></pre></div></section></main></body></html>
