@@ -134,7 +134,8 @@ impl RttActor {
                             new_type = ?new_conn_type,
                             "Congestion controller state reset",
                         );
-                        if !*was_direct_before {
+                        if !*was_direct_before && matches!(new_conn_type, ConnectionType::Direct(_))
+                        {
                             *was_direct_before = true;
                             inc!(MagicsockMetrics, connection_became_direct);
                         }
