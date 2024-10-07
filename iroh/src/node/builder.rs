@@ -127,6 +127,19 @@ where
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
     blob_events: EventSender,
     transport_config: Option<TransportConfig>,
+    metrics_push_config: Option<PushMetricsConfig>,
+}
+
+#[derive(Debug)]
+pub struct PushMetricsConfig {
+    /// Push interval
+    pub interval: Duration,
+    /// Endpoint url
+    pub endpoint: String,
+    pub service_name: String,
+    pub instance_name: String,
+    pub username: String,
+    pub password: String,
 }
 
 /// Configuration for storage.
@@ -255,6 +268,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             gc_done_callback: None,
             blob_events: Default::default(),
             transport_config: None,
+            metrics_push_config: None,
         }
     }
 }
@@ -291,6 +305,7 @@ impl<D: Map> Builder<D> {
             gc_done_callback: None,
             blob_events: Default::default(),
             transport_config: None,
+            metrics_push_config: None,
         }
     }
 }
@@ -305,6 +320,12 @@ where
     /// To define an event sender, implement the [`iroh_blobs::provider::CustomEventSender`] trait.
     pub fn blobs_events(mut self, blob_events: impl Into<EventSender>) -> Self {
         self.blob_events = blob_events.into();
+        self
+    }
+
+    /// Set the metrics push configuration.
+    pub fn metrics_push_config(mut self, config: PushMetricsConfig) -> Self {
+        self.metrics_push_config = Some(config);
         self
     }
 
@@ -351,6 +372,7 @@ where
             gc_done_callback: self.gc_done_callback,
             blob_events: self.blob_events,
             transport_config: self.transport_config,
+            metrics_push_config: self.metrics_push_config,
         })
     }
 
