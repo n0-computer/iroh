@@ -1840,10 +1840,10 @@
     </span>last_call_me_maybe: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
     <span class="doccomment">/// The type of connection we have to the node, either direct, relay, mixed, or none.
     </span>conn_type: Watchable&lt;ConnectionType&gt;,
-    <span class="doccomment">/// Whether the conn_type was observed to be `Direct` before.
+    <span class="doccomment">/// Whether the conn_type was ever observed to be `Direct` before.
     ///
     /// Used for metric reporting.
-    </span>was_conn_direct_before: bool,
+    </span>has_been_direct: bool,
 }
 
 <span class="doccomment">/// Options for creating a new [`NodeState`].
@@ -1883,7 +1883,7 @@
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: <span class="prelude-val">None</span>,
             conn_type: Watchable::new(ConnectionType::None),
-            was_conn_direct_before: <span class="bool-val">false</span>,
+            has_been_direct: <span class="bool-val">false</span>,
         }
     }
 
@@ -2015,8 +2015,8 @@
             (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(relay_url)) =&gt; ConnectionType::Relay(relay_url),
             (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>) =&gt; ConnectionType::None,
         };
-        <span class="kw">if </span>!<span class="self">self</span>.was_conn_direct_before &amp;&amp; <span class="macro">matches!</span>(<span class="kw-2">&amp;</span>typ, ConnectionType::Direct(<span class="kw">_</span>)) {
-            <span class="self">self</span>.was_conn_direct_before = <span class="bool-val">true</span>;
+        <span class="kw">if </span>!<span class="self">self</span>.has_been_direct &amp;&amp; <span class="macro">matches!</span>(<span class="kw-2">&amp;</span>typ, ConnectionType::Direct(<span class="kw">_</span>)) {
+            <span class="self">self</span>.has_been_direct = <span class="bool-val">true</span>;
             <span class="macro">inc!</span>(MagicsockMetrics, connection_became_direct);
         }
         <span class="kw">if let </span><span class="prelude-val">Ok</span>(prev_typ) = <span class="self">self</span>.conn_type.update(typ.clone()) {
@@ -3199,7 +3199,7 @@
                     last_used: <span class="prelude-val">Some</span>(now),
                     last_call_me_maybe: <span class="prelude-val">None</span>,
                     conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
-                    was_conn_direct_before: <span class="bool-val">true</span>,
+                    has_been_direct: <span class="bool-val">true</span>,
                 },
                 ip_port.into(),
             )
@@ -3219,7 +3219,7 @@
                 last_used: <span class="prelude-val">Some</span>(now),
                 last_call_me_maybe: <span class="prelude-val">None</span>,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
-                was_conn_direct_before: <span class="bool-val">false</span>,
+                has_been_direct: <span class="bool-val">false</span>,
             }
         };
 
@@ -3246,7 +3246,7 @@
                 last_used: <span class="prelude-val">Some</span>(now),
                 last_call_me_maybe: <span class="prelude-val">None</span>,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
-                was_conn_direct_before: <span class="bool-val">false</span>,
+                has_been_direct: <span class="bool-val">false</span>,
             }
         };
 
@@ -3286,7 +3286,7 @@
                         socket_addr,
                         send_addr.clone(),
                     )),
-                    was_conn_direct_before: <span class="bool-val">false</span>,
+                    has_been_direct: <span class="bool-val">false</span>,
                 },
                 socket_addr,
             )
