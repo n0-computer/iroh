@@ -164,6 +164,7 @@
 <a href="#164" id="164">164</a>
 <a href="#165" id="165">165</a>
 <a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Actor which coordinates the congestion controller for the magic socket
 
 </span><span class="kw">use </span>std::collections::HashMap;
@@ -300,7 +301,8 @@
                             new_type = <span class="question-mark">?</span>new_conn_type,
                             <span class="string">"Congestion controller state reset"</span>,
                         );
-                        <span class="kw">if </span>!<span class="kw-2">*</span>was_direct_before {
+                        <span class="kw">if </span>!<span class="kw-2">*</span>was_direct_before &amp;&amp; <span class="macro">matches!</span>(new_conn_type, ConnectionType::Direct(<span class="kw">_</span>))
+                        {
                             <span class="kw-2">*</span>was_direct_before = <span class="bool-val">true</span>;
                             <span class="macro">inc!</span>(MagicsockMetrics, connection_became_direct);
                         }
