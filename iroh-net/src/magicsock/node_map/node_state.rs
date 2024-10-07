@@ -305,7 +305,7 @@ impl NodeState {
         };
         if !self.has_been_direct && matches!(&typ, ConnectionType::Direct(_)) {
             self.has_been_direct = true;
-            inc!(MagicsockMetrics, nodes_directly_contacted);
+            inc!(MagicsockMetrics, nodes_contacted_directly);
         }
         if let Ok(prev_typ) = self.conn_type.update(typ.clone()) {
             // The connection type has changed.

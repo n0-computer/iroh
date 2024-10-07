@@ -72,8 +72,8 @@ pub struct Metrics {
 
     /// Number of nodes we have attempted to contact.
     pub nodes_contacted: Counter,
-    /// Number of connections that switched to direct connections at least once.
-    pub nodes_directly_contacted: Counter,
+    /// Number of nodes we have managed to contact directly.
+    pub nodes_contacted_directly: Counter,
 }
 
 impl Default for Metrics {
@@ -140,7 +140,7 @@ impl Default for Metrics {
             actor_tick_other: Counter::new("actor_tick_other"),
 
             nodes_contacted: Counter::new("connection_handshake_success"),
-            nodes_directly_contacted: Counter::new("connection_became_direct"),
+            nodes_contacted_directly: Counter::new("connection_became_direct"),
         }
     }
 }
