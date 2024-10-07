@@ -3932,6 +3932,11 @@
 <a href="#3932" id="3932">3932</a>
 <a href="#3933" id="3933">3933</a>
 <a href="#3934" id="3934">3934</a>
+<a href="#3935" id="3935">3935</a>
+<a href="#3936" id="3936">3936</a>
+<a href="#3937" id="3937">3937</a>
+<a href="#3938" id="3938">3938</a>
+<a href="#3939" id="3939">3939</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3987,7 +3992,7 @@
 
 <span class="kw">use crate</span>::{
     defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
-    disco::{<span class="self">self</span>, SendAddr},
+    disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
     endpoint::NodeAddr,
@@ -5011,6 +5016,20 @@
         <span class="macro">inc!</span>(MagicsockMetrics, send_disco_relay);
         <span class="kw">match </span><span class="self">self</span>.try_send_relay(url, dst_key, <span class="macro">smallvec!</span>[pkt]) {
             <span class="prelude-val">Ok</span>(()) =&gt; {
+                <span class="kw">match </span><span class="kw-2">&amp;</span>msg {
+                    disco::Message::Ping(<span class="kw">_</span>) =&gt; {}
+                    disco::Message::Pong(<span class="kw">_</span>) =&gt; {}
+                    disco::Message::CallMeMaybe(CallMeMaybe { <span class="kw-2">ref </span>my_numbers }) =&gt; {
+                        <span class="macro">event!</span>(
+                            target: <span class="string">"events.net.call-me-maybe.sent"</span>,
+                            Level::DEBUG,
+                            remote_node = %dst_key.fmt_short(),
+                            via = <span class="question-mark">?</span>url,
+                            addrs = <span class="question-mark">?</span>my_numbers,
+                        );
+                        <span class="macro">inc!</span>(MagicsockMetrics, call_me_maybe_sent);
+                    }
+                }
                 <span class="macro">inc!</span>(MagicsockMetrics, sent_disco_relay);
                 disco_message_sent(<span class="kw-2">&amp;</span>msg);
                 <span class="bool-val">true
@@ -5158,15 +5177,6 @@
     <span class="kw">fn </span>send_or_queue_call_me_maybe(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, dst_node: NodeId) {
         <span class="kw">let </span>direct_addrs = <span class="self">self</span>.direct_addrs.read();
         <span class="kw">if </span>direct_addrs.fresh_enough() {
-            <span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = direct_addrs.iter().collect();
-            <span class="macro">event!</span>(
-                target: <span class="string">"events.net.call-me-maybe.sent"</span>,
-                Level::DEBUG,
-                remote_node = %dst_node.fmt_short(),
-                via = <span class="question-mark">?</span>url,
-                <span class="question-mark">?</span>addrs,
-            );
-            <span class="macro">inc!</span>(Metrics, call_me_maybe_sent);
             <span class="kw">let </span>msg = direct_addrs.to_call_me_maybe_message();
             <span class="kw">let </span>msg = disco::Message::CallMeMaybe(msg);
             <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_relay(url, dst_node, msg) {
