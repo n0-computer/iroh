@@ -138,7 +138,7 @@ pub struct PushMetricsConfig {
     pub endpoint: String,
     pub service_name: String,
     pub instance_name: String,
-    pub username: String,
+    pub username: Option<String>,
     pub password: String,
 }
 
@@ -671,7 +671,7 @@ where
                         gateway_endpoint,
                         service_name,
                         instance_name,
-                        Some(username),
+                        username,
                         password,
                         interval,
                     )

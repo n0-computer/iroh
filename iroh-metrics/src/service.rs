@@ -125,7 +125,7 @@ pub async fn exporter(
     instance_name: String,
     username: Option<String>,
     password: String,
-    interval_ms: Duration,
+    interval: Duration,
 ) -> Result<()> {
     let core = Core::get().ok_or_else(|| anyhow!("metrics disabled"))?;
     let push_client = reqwest::Client::new();
@@ -161,6 +161,6 @@ pub async fn exporter(
                 }
             }
         }
-        tokio::time::sleep(interval_ms).await;
+        tokio::time::sleep(interval).await;
     }
 }
