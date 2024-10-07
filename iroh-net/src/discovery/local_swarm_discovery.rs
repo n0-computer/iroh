@@ -106,14 +106,18 @@ impl Subscribers {
     /// Sends the `node_id` and `item` to each subscriber.
     ///
     /// Cleans up any subscribers that have been dropped.
-    async fn send(&mut self, item: DiscoveryItem) {
+    fn send(&mut self, item: DiscoveryItem) {
         let mut clean_up = vec![];
         for (i, subscriber) in self.0.iter().enumerate() {
             // assume subscriber was dropped
             if let Err(err) = subscriber.try_send(item.clone()) {
                 match err {
                     TrySendError::Full(_) => {
-                        warn!("local swarm discovery subscriber {i} is blocked, dropping item {item:?}")
+                        warn!(
+                            ?item,
+                            idx = i,
+                            "local swarm discovery subscriber is blocked, dropping item"
+                        )
                     }
                     TrySendError::Closed(_) => clean_up.push(i),
                 }
@@ -244,7 +248,7 @@ impl LocalSwarmDiscovery {
                         // in other words, nodes sent to the `subscribers` should only be the ones that
                         // have been "passively" discovered
                         if !resolved {
-                            subscribers.send(item).await;
+                            subscribers.send(item);
                         }
                     }
                     Message::Resolve(node_id, sender) => {
