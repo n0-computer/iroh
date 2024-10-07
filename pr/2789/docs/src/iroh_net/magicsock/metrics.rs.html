@@ -149,6 +149,7 @@
 <a href="#149" id="149">149</a>
 <a href="#150" id="150">150</a>
 <a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,
@@ -157,6 +158,7 @@
 <span class="doccomment">/// Enum of metrics for the module
 </span><span class="attr">#[allow(missing_docs)]
 #[derive(Debug, Clone, Iterable)]
+#[non_exhaustive]
 </span><span class="kw">pub struct </span>Metrics {
     <span class="kw">pub </span>re_stun_calls: Counter,
     <span class="kw">pub </span>update_direct_addrs: Counter,
