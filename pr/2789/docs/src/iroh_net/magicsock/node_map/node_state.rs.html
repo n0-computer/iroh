@@ -2021,7 +2021,7 @@
         };
         <span class="kw">if </span>!<span class="self">self</span>.has_been_direct &amp;&amp; <span class="macro">matches!</span>(<span class="kw-2">&amp;</span>typ, ConnectionType::Direct(<span class="kw">_</span>)) {
             <span class="self">self</span>.has_been_direct = <span class="bool-val">true</span>;
-            <span class="macro">inc!</span>(MagicsockMetrics, connection_became_direct);
+            <span class="macro">inc!</span>(MagicsockMetrics, nodes_contacted_directly);
         }
         <span class="kw">if let </span><span class="prelude-val">Ok</span>(prev_typ) = <span class="self">self</span>.conn_type.update(typ.clone()) {
             <span class="comment">// The connection type has changed.
@@ -2854,7 +2854,7 @@
         <span class="kw">let </span>prev = <span class="self">self</span>.last_used.replace(now);
         <span class="kw">if </span>prev.is_none() {
             <span class="comment">// this is the first time we are trying to connect to this node
-            </span><span class="macro">inc!</span>(MagicsockMetrics, connection_handshake_success);
+            </span><span class="macro">inc!</span>(MagicsockMetrics, nodes_contacted);
         }
         <span class="kw">let </span>(udp_addr, relay_url) = <span class="self">self</span>.addr_for_send(<span class="kw-2">&amp;</span>now, have_ipv6);
         <span class="kw">let </span><span class="kw-2">mut </span>ping_msgs = Vec::new();

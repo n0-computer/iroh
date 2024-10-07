@@ -222,10 +222,10 @@
     <span class="kw">pub </span>actor_link_change: Counter,
     <span class="kw">pub </span>actor_tick_other: Counter,
 
-    <span class="doccomment">/// Number of successfully handshaked connections.
-    </span><span class="kw">pub </span>connection_handshake_success: Counter,
-    <span class="doccomment">/// Number of connections that switched to direct connections at least once.
-    </span><span class="kw">pub </span>connection_became_direct: Counter,
+    <span class="doccomment">/// Number of nodes we have attempted to contact.
+    </span><span class="kw">pub </span>nodes_contacted: Counter,
+    <span class="doccomment">/// Number of nodes we have managed to contact directly.
+    </span><span class="kw">pub </span>nodes_contacted_directly: Counter,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Metrics {
@@ -291,8 +291,8 @@
             actor_link_change: Counter::new(<span class="string">"actor_link_change"</span>),
             actor_tick_other: Counter::new(<span class="string">"actor_tick_other"</span>),
 
-            connection_handshake_success: Counter::new(<span class="string">"connection_handshake_success"</span>),
-            connection_became_direct: Counter::new(<span class="string">"connection_became_direct"</span>),
+            nodes_contacted: Counter::new(<span class="string">"connection_handshake_success"</span>),
+            nodes_contacted_directly: Counter::new(<span class="string">"connection_became_direct"</span>),
         }
     }
 }
