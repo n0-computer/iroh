@@ -169,7 +169,7 @@
 <span class="kw">use </span>std::time::{Duration, Instant};
 
 <span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>hyper::service::{<span class="self">self</span>, service_fn};
+<span class="kw">use </span>hyper::service::service_fn;
 <span class="kw">use </span>hyper::{Request, Response};
 <span class="kw">use </span>tokio::io::AsyncWriteExt <span class="kw">as _</span>;
 <span class="kw">use </span>tokio::net::TcpListener;
@@ -291,7 +291,7 @@
     instance_name: String,
     username: <span class="prelude-ty">Option</span>&lt;String&gt;,
     password: String,
-    interval_ms: Duration
+    interval_ms: Duration,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="kw">let </span>core = Core::get().ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"metrics disabled"</span>))<span class="question-mark">?</span>;
     <span class="kw">let </span>push_client = reqwest::Client::new();
@@ -329,4 +329,5 @@
         }
         tokio::time::sleep(interval_ms).<span class="kw">await</span>;
     }
-}</code></pre></div></section></main></body></html>
+}
+</code></pre></div></section></main></body></html>
