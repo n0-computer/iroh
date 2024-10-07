@@ -1135,7 +1135,11 @@ impl NodeState {
         have_ipv6: bool,
     ) -> (Option<SocketAddr>, Option<RelayUrl>, Vec<PingAction>) {
         let now = Instant::now();
-        self.last_used.replace(now);
+        let prev = self.last_used.replace(now);
+        if prev.is_none() {
+            // this is the first time we are trying to connect to this node
+            inc!(MagicsockMetrics, connection_handshake_success);
+        }
         let (udp_addr, relay_url) = self.addr_for_send(&now, have_ipv6);
         let mut ping_msgs = Vec::new();
 

@@ -502,10 +502,6 @@ impl Endpoint {
             discovery.cancel();
         }
 
-        if conn.is_ok() {
-            inc!(magicsock::Metrics, connection_handshake_success);
-        }
-
         conn
     }
 
@@ -1109,7 +1105,6 @@ impl Connecting {
         match self.inner.into_0rtt() {
             Ok((conn, zrtt_accepted)) => {
                 try_send_rtt_msg(&conn, &self.ep);
-                inc!(magicsock::Metrics, connection_handshake_success);
                 Ok((conn, zrtt_accepted))
             }
             Err(inner) => Err(Self { inner, ep: self.ep }),
@@ -1156,7 +1151,6 @@ impl Future for Connecting {
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(conn)) => {
                 try_send_rtt_msg(&conn, this.ep);
-                inc!(magicsock::Metrics, connection_handshake_success);
                 Poll::Ready(Ok(conn))
             }
         }
