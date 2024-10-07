@@ -697,7 +697,7 @@ where
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
         let metrics_exporter_handle = if let Some(config) = self.metrics_push_config {
-            #[cfg(feature = "metrics")]
+            if cfg!(feature = "metrics")
             {
                 let PushMetricsConfig {
                     interval,
@@ -719,10 +719,8 @@ where
                     .await
                 });
                 Some(AbortOnDropHandle::new(handle))
-            }
-            #[cfg(not(feature = "metrics"))]
-            {
-                warn!("Metrics push configuration provided, but metrics feature is not enabled. Ignoring.");
+            } else {   
+                tracing::warn!("Metrics push configuration provided, but metrics feature is not enabled. Ignoring.");
                 None
             }
         } else {
