@@ -1019,6 +1019,14 @@
 <a href="#1019" id="1019">1019</a>
 <a href="#1020" id="1020">1020</a>
 <a href="#1021" id="1021">1021</a>
+<a href="#1022" id="1022">1022</a>
+<a href="#1023" id="1023">1023</a>
+<a href="#1024" id="1024">1024</a>
+<a href="#1025" id="1025">1025</a>
+<a href="#1026" id="1026">1026</a>
+<a href="#1027" id="1027">1027</a>
+<a href="#1028" id="1028">1028</a>
+<a href="#1029" id="1029">1029</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1718,26 +1726,34 @@
         <span class="kw">let </span>client = <span class="kw">crate</span>::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
         <span class="kw">let </span>metrics_exporter_handle = <span class="kw">if let </span><span class="prelude-val">Some</span>(config) = <span class="self">self</span>.metrics_push_config {
-            <span class="kw">let </span>PushMetricsConfig {
-                interval,
-                endpoint: gateway_endpoint,
-                service_name,
-                instance_name,
-                username,
-                password,
-            } = config;
-            <span class="kw">let </span>handle = tokio::spawn(<span class="kw">async move </span>{
-                iroh_metrics::service::exporter(
-                    gateway_endpoint,
+            <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+            </span>{
+                <span class="kw">let </span>PushMetricsConfig {
+                    interval,
+                    endpoint: gateway_endpoint,
                     service_name,
                     instance_name,
                     username,
                     password,
-                    interval,
-                )
-                .<span class="kw">await
-            </span>});
-            <span class="prelude-val">Some</span>(AbortOnDropHandle::new(handle))
+                } = config;
+                <span class="kw">let </span>handle = tokio::spawn(<span class="kw">async move </span>{
+                    iroh_metrics::service::exporter(
+                        gateway_endpoint,
+                        service_name,
+                        instance_name,
+                        username,
+                        password,
+                        interval,
+                    )
+                    .<span class="kw">await
+                </span>});
+                <span class="prelude-val">Some</span>(AbortOnDropHandle::new(handle))
+            }
+            <span class="attr">#[cfg(not(feature = <span class="string">"metrics"</span>))]
+            </span>{
+                <span class="macro">warn!</span>(<span class="string">"Metrics push configuration provided, but metrics feature is not enabled. Ignoring."</span>);
+                <span class="prelude-val">None
+            </span>}
         } <span class="kw">else </span>{
             <span class="prelude-val">None
         </span>};
