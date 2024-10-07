@@ -697,26 +697,34 @@ where
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
         let metrics_exporter_handle = if let Some(config) = self.metrics_push_config {
-            let PushMetricsConfig {
-                interval,
-                endpoint: gateway_endpoint,
-                service_name,
-                instance_name,
-                username,
-                password,
-            } = config;
-            let handle = tokio::spawn(async move {
-                iroh_metrics::service::exporter(
-                    gateway_endpoint,
+            #[cfg(feature = "metrics")]
+            {
+                let PushMetricsConfig {
+                    interval,
+                    endpoint: gateway_endpoint,
                     service_name,
                     instance_name,
                     username,
                     password,
-                    interval,
-                )
-                .await
-            });
-            Some(AbortOnDropHandle::new(handle))
+                } = config;
+                let handle = tokio::spawn(async move {
+                    iroh_metrics::service::exporter(
+                        gateway_endpoint,
+                        service_name,
+                        instance_name,
+                        username,
+                        password,
+                        interval,
+                    )
+                    .await
+                });
+                Some(AbortOnDropHandle::new(handle))
+            }
+            #[cfg(not(feature = "metrics"))]
+            {
+                warn!("Metrics push configuration provided, but metrics feature is not enabled. Ignoring.");
+                None
+            }
         } else {
             None
         };
