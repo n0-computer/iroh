@@ -33,6 +33,7 @@ mod tls;
 use crate::state::AppState;
 use crate::{config::Config, metrics::Metrics};
 
+pub use self::rate_limiting::RateLimitConfig;
 pub use self::tls::CertMode;
 
 /// Config for the HTTP server
@@ -42,6 +43,9 @@ pub struct HttpConfig {
     pub port: u16,
     /// Optionally set a custom bind address (will use 0.0.0.0 if unset)
     pub bind_addr: Option<IpAddr>,
+    /// Config for http rate limit
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
 }
 
 /// Config for the HTTPS server
@@ -79,7 +83,13 @@ impl HttpServer {
             bail!("Either http or https config is required");
         }
 
-        let app = create_app(state);
+        let app = create_app(
+            state,
+            http_config
+                .as_ref()
+                .map(|h| h.rate_limit.clone())
+                .unwrap_or_default(),
+        );
 
         let mut tasks = JoinSet::new();
 
@@ -186,7 +196,7 @@ impl HttpServer {
     }
 }
 
-pub(crate) fn create_app(state: AppState) -> Router {
+pub(crate) fn create_app(state: AppState, rate_limit_config: RateLimitConfig) -> Router {
     // configure cors middleware
     let cors = CorsLayer::new()
         // allow `GET` and `POST` when accessing the resource
@@ -211,7 +221,7 @@ pub(crate) fn create_app(state: AppState) -> Router {
     });
 
     // configure rate limiting middleware
-    let rate_limit = rate_limiting::create();
+    let rate_limit = rate_limiting::create(rate_limit_config);
 
     // configure routes
     //
@@ -220,7 +230,11 @@ pub(crate) fn create_app(state: AppState) -> Router {
         .route("/dns-query", get(doh::get).post(doh::post))
         .route(
             "/pkarr/:key",
-            get(pkarr::get).put(pkarr::put.layer(rate_limit)),
+            if let Some(rate_limit) = rate_limit {
+                get(pkarr::get).put(pkarr::put.layer(rate_limit))
+            } else {
+                get(pkarr::get).put(pkarr::put)
+            },
         )
         .route("/healthcheck", get(|| async { "OK" }))
         .route("/", get(|| async { "Hi!" }))

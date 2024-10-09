@@ -1,3 +1,6 @@
+[http]
+rate_limit = "smart"
+
 [https]
 port = 443
 domains = ["irohdns.example.org"]
