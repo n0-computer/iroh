@@ -1389,16 +1389,16 @@ impl RemoteInfo {
 #[derive(derive_more::Display, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ConnectionType {
     /// Direct UDP connection
-    #[display("direct")]
+    #[display("direct({_0})")]
     Direct(SocketAddr),
     /// Relay connection over relay
-    #[display("relay")]
+    #[display("relay({_0})")]
     Relay(RelayUrl),
     /// Both a UDP and a relay connection are used.
     ///
     /// This is the case if we do have a UDP address, but are missing a recent confirmation that
     /// the address works.
-    #[display("mixed")]
+    #[display("mixed(udp: {_0}, relay: {_1})")]
     Mixed(SocketAddr, RelayUrl),
     /// We have no verified connection to this PublicKey
     #[display("none")]

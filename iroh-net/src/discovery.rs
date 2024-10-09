@@ -158,6 +158,8 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// until the stream is actually polled. To avoid missing discovered nodes,
     /// poll the stream as soon as possible.
     ///
+    /// If you do not regularly poll the stream, you may miss discovered nodes.
+    ///
     /// Any discovery systems that only discover when explicitly resolving a
     /// specific [`NodeId`] do not need to implement this method. Any nodes or
     /// addresses that are discovered by calling `resolve` should NOT be added
