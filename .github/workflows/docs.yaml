@@ -39,7 +39,7 @@ jobs:
     - name: Generate Docs
       run: cargo doc --workspace --all-features --no-deps
       env:
-        RUSTDOCFLAGS: --cfg docsrs
+        RUSTDOCFLAGS: --cfg iroh_docsrs
 
     - name: Deploy Docs to Preview Branch
       uses: peaceiris/actions-gh-pages@v4
