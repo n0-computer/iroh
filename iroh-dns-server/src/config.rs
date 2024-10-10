@@ -170,6 +170,7 @@ impl Default for Config {
                 cert_mode: CertMode::SelfSigned,
                 letsencrypt_contact: None,
                 letsencrypt_prod: None,
+                rate_limit: None,
             }),
             dns: DnsConfig {
                 port: 5300,

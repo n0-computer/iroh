@@ -63,6 +63,8 @@ pub struct HttpsConfig {
     pub letsencrypt_contact: Option<String>,
     /// Whether to use the letsenrypt production servers (only applies to [`CertMode::LetsEncrypt`])
     pub letsencrypt_prod: Option<bool>,
+    /// Config for https rate limit
+    pub rate_limit: Option<RateLimitConfig>,
 }
 
 /// The HTTP(S) server part of iroh-dns-server
@@ -85,9 +87,10 @@ impl HttpServer {
 
         let app = create_app(
             state,
-            http_config
+            https_config
                 .as_ref()
-                .map(|h| h.rate_limit.clone())
+                .and_then(|h| h.rate_limit.as_ref())
+                .or_else(|| http_config.as_ref().map(|h| &h.rate_limit))
                 .unwrap_or_default(),
         );
 
@@ -196,7 +199,7 @@ impl HttpServer {
     }
 }
 
-pub(crate) fn create_app(state: AppState, rate_limit_config: RateLimitConfig) -> Router {
+pub(crate) fn create_app(state: AppState, rate_limit_config: &RateLimitConfig) -> Router {
     // configure cors middleware
     let cors = CorsLayer::new()
         // allow `GET` and `POST` when accessing the resource

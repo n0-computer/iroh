@@ -9,7 +9,7 @@ use tower_governor::{
 };
 
 /// Config for http rate limit.
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Default, Serialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum RateLimitConfig {
     /// Disable rate limit for http server.
@@ -23,11 +23,17 @@ pub enum RateLimitConfig {
     Smart,
 }
 
+impl Default for &RateLimitConfig {
+    fn default() -> Self {
+        &RateLimitConfig::Simple
+    }
+}
+
 /// Create the default rate-limiting layer.
 ///
 /// This spawns a background thread to clean up the rate limiting cache.
 pub fn create(
-    rate_limit_config: RateLimitConfig,
+    rate_limit_config: &RateLimitConfig,
 ) -> Option<GovernorLayer<'static, PeerIpKeyExtractor, NoOpMiddleware<QuantaInstant>>> {
     let use_smart_extractor = match rate_limit_config {
         RateLimitConfig::Disabled => {
@@ -39,7 +45,7 @@ pub fn create(
         RateLimitConfig::Smart => true,
     };
 
-    tracing::info!("Rate limiting enabled");
+    tracing::info!("Rate limiting enabled ({rate_limit_config:?})");
 
     // Configure rate limiting:
     // * allow bursts with up to five requests per IP address
@@ -50,7 +56,6 @@ pub fn create(
     governor_conf_builder.burst_size(2);
 
     if use_smart_extractor {
-        tracing::info!("Rate limiting using smart extractor");
         governor_conf_builder.key_extractor(SmartIpKeyExtractor);
     }
 
