@@ -1,10 +1,8 @@
-[http]
-rate_limit = "smart"
-
 [https]
 port = 443
 domains = ["irohdns.example.org"]
 cert_mode = "lets_encrypt"
+rate_limit = "smart"
 letsencrypt_prod = true
 
 [dns]
