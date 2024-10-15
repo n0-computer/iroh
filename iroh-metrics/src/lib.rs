@@ -80,7 +80,7 @@ pub fn parse_prometheus_metrics(data: &str) -> anyhow::Result<HashMap<String, f6
 /// Configuration for pushing metrics to a remote endpoint.
 #[derive(PartialEq, Eq, Debug, Default, serde::Deserialize, Clone)]
 pub struct PushMetricsConfig {
-    /// Push interval
+    /// Push interval in seconds
     pub interval: u64,
     /// Endpoint url
     pub endpoint: String,
