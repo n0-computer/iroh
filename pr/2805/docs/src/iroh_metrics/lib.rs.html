@@ -97,6 +97,13 @@
 <a href="#97" id="97">97</a>
 <a href="#98" id="98">98</a>
 <a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Metrics library for iroh
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
@@ -179,21 +186,28 @@
 <span class="doccomment">/// Configuration for pushing metrics to a remote endpoint.
 </span><span class="attr">#[derive(PartialEq, Eq, Debug, Default, serde::Deserialize, Clone)]
 </span><span class="kw">pub struct </span>PushMetricsConfig {
-    <span class="doccomment">/// Push interval in seconds
+    <span class="doccomment">/// The push interval in seconds.
     </span><span class="kw">pub </span>interval: u64,
-    <span class="doccomment">/// Endpoint url where to push metrics
+    <span class="doccomment">/// The endpoint url for the push metrics collector.
     </span><span class="kw">pub </span>endpoint: String,
-    <span class="doccomment">/// Name of the service you're exporting metrics for
-    /// generally metrics_exporter is enough for use outside
-    /// of production deployments
+    <span class="doccomment">/// The name of the service you're exporting metrics for.
+    ///
+    /// Generally, `metrics_exporter` is good enough for use
+    /// outside of production deployments.
     </span><span class="kw">pub </span>service_name: String,
-    <span class="doccomment">/// The name of the instance you're exporting metrics for
-    /// ie. username-laptop, username-phone, etc.
-    /// Should be reasonably unique
+    <span class="doccomment">/// The name of the instance you're exporting metrics for.
+    /// This should be device-unique.
+    ///
+    /// E.g. `username-laptop`, `username-phone`, etc.
+    ///
+    /// Another potential scheme with good privacy would be a
+    /// keyed blake3 hash of the secret key. (This gives you
+    /// an identifier that is as unique as a `NodeID`, but
+    /// can't be correlated to `NodeID`s.)
     </span><span class="kw">pub </span>instance_name: String,
-    <span class="doccomment">/// Username for basic auth
+    <span class="doccomment">/// The username for basic auth for the push metrics collector.
     </span><span class="kw">pub </span>username: <span class="prelude-ty">Option</span>&lt;String&gt;,
-    <span class="doccomment">/// Password for basic auth
+    <span class="doccomment">/// The password for basic auth for the push metrics collector.
     </span><span class="kw">pub </span>password: String,
 }
 </code></pre></div></section></main></body></html>
