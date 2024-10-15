@@ -87,9 +87,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [package.metadata.docs.rs]
 all-features = true
-# enable unstable features in the documentation
-rustdoc-args = ["--cfg", "docsrs"]
-
+rustdoc-args = ["--cfg", "iroh_docsrs"]
 
 [[example]]
 name = "hello-world-provide"
