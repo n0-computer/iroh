@@ -74,6 +74,11 @@ pub struct Metrics {
     pub nodes_contacted: Counter,
     /// Number of nodes we have managed to contact directly.
     pub nodes_contacted_directly: Counter,
+
+    /// Number of connections with a successful handshake.
+    pub connection_handshake_success: Counter,
+    /// Number of connections with a successful handshake that became direct.
+    pub connection_became_direct: Counter,
 }
 
 impl Default for Metrics {
@@ -141,6 +146,9 @@ impl Default for Metrics {
 
             nodes_contacted: Counter::new("nodes_contacted"),
             nodes_contacted_directly: Counter::new("nodes_contacted_directly"),
+
+            connection_handshake_success: Counter::new("connection_handshake_success"),
+            connection_became_direct: Counter::new("connection_became_direct"),
         }
     }
 }
