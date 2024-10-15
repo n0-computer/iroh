@@ -82,14 +82,18 @@ pub fn parse_prometheus_metrics(data: &str) -> anyhow::Result<HashMap<String, f6
 pub struct PushMetricsConfig {
     /// Push interval in seconds
     pub interval: u64,
-    /// Endpoint url
+    /// Endpoint url where to push metrics
     pub endpoint: String,
-    /// Service name
+    /// Name of the service you're exporting metrics for
+    /// generally metrics_exporter is enough for use outside
+    /// of production deployments
     pub service_name: String,
-    /// Instance name
+    /// The name of the instance you're exporting metrics for
+    /// ie. username-laptop, username-phone, etc.
+    /// Should be reasonably unique
     pub instance_name: String,
     /// Username for basic auth
     pub username: Option<String>,
-    /// Password
+    /// Password for basic auth
     pub password: String,
 }
