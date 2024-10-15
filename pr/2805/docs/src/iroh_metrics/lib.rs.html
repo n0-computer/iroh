@@ -104,6 +104,8 @@
 <a href="#104" id="104">104</a>
 <a href="#105" id="105">105</a>
 <a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Metrics library for iroh
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
@@ -196,7 +198,9 @@
     /// outside of production deployments.
     </span><span class="kw">pub </span>service_name: String,
     <span class="doccomment">/// The name of the instance you're exporting metrics for.
-    /// This should be device-unique.
+    ///
+    /// This should be device-unique. If not, this will sum up
+    /// metrics from different devices.
     ///
     /// E.g. `username-laptop`, `username-phone`, etc.
     ///
