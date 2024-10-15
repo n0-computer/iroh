@@ -93,6 +93,10 @@
 <a href="#93" id="93">93</a>
 <a href="#94" id="94">94</a>
 <a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Metrics library for iroh
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
@@ -177,15 +181,19 @@
 </span><span class="kw">pub struct </span>PushMetricsConfig {
     <span class="doccomment">/// Push interval in seconds
     </span><span class="kw">pub </span>interval: u64,
-    <span class="doccomment">/// Endpoint url
+    <span class="doccomment">/// Endpoint url where to push metrics
     </span><span class="kw">pub </span>endpoint: String,
-    <span class="doccomment">/// Service name
+    <span class="doccomment">/// Name of the service you're exporting metrics for
+    /// generally metrics_exporter is enough for use outside
+    /// of production deployments
     </span><span class="kw">pub </span>service_name: String,
-    <span class="doccomment">/// Instance name
+    <span class="doccomment">/// The name of the instance you're exporting metrics for
+    /// ie. username-laptop, username-phone, etc.
+    /// Should be reasonably unique
     </span><span class="kw">pub </span>instance_name: String,
     <span class="doccomment">/// Username for basic auth
     </span><span class="kw">pub </span>username: <span class="prelude-ty">Option</span>&lt;String&gt;,
-    <span class="doccomment">/// Password
+    <span class="doccomment">/// Password for basic auth
     </span><span class="kw">pub </span>password: String,
 }
 </code></pre></div></section></main></body></html>
