@@ -75,9 +75,9 @@ pub struct Metrics {
     /// Number of nodes we have managed to contact directly.
     pub nodes_contacted_directly: Counter,
 
-    /// Number of connections with a successful handshake
+    /// Number of connections with a successful handshake.
     pub connection_handshake_success: Counter,
-    /// Number of connections that became direct
+    /// Number of connections that became direct.
     pub connection_became_direct: Counter,
 }
 

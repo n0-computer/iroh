@@ -65,6 +65,8 @@ struct RttActor {
     ///
     /// These are weak references so not to keep the connections alive.  The key allows
     /// removing the corresponding stream from `conn_type_changes`.
+    /// The boolean is an indiciator of whether this connection was direct before.
+    /// This helps establish metrics on number of connections that became direct.
     connections: HashMap<stream_group::Key, (quinn::WeakConnectionHandle, NodeId, bool)>,
     /// A way to notify the main actor loop to run over.
     ///
