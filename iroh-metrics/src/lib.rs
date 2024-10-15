@@ -90,7 +90,9 @@ pub struct PushMetricsConfig {
     /// outside of production deployments.
     pub service_name: String,
     /// The name of the instance you're exporting metrics for.
-    /// This should be device-unique.
+    ///
+    /// This should be device-unique. If not, this will sum up
+    /// metrics from different devices.
     ///
     /// E.g. `username-laptop`, `username-phone`, etc.
     ///
