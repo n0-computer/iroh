@@ -996,7 +996,6 @@
 <a href="#996" id="996">996</a>
 <a href="#997" id="997">997</a>
 <a href="#998" id="998">998</a>
-<a href="#999" id="999">999</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1017,7 +1016,6 @@
 <span class="kw">use </span>iroh_docs::engine::DefaultAuthorStorage;
 <span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
 <span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-<span class="kw">use </span>iroh_metrics::PushMetricsConfig;
 <span class="attr">#[cfg(not(test))]
 </span><span class="kw">use </span>iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 <span class="kw">use </span>iroh_net::{
@@ -1127,7 +1125,8 @@
     </span>gc_done_callback: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() + Send&gt;&gt;,
     blob_events: EventSender,
     transport_config: <span class="prelude-ty">Option</span>&lt;TransportConfig&gt;,
-    metrics_push_config: <span class="prelude-ty">Option</span>&lt;PushMetricsConfig&gt;,
+    <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+    </span>metrics_push_config: <span class="prelude-ty">Option</span>&lt;iroh_metrics::PushMetricsConfig&gt;,
 }
 
 <span class="doccomment">/// Configuration for storage.
@@ -1256,7 +1255,8 @@
             gc_done_callback: <span class="prelude-val">None</span>,
             blob_events: Default::default(),
             transport_config: <span class="prelude-val">None</span>,
-            metrics_push_config: <span class="prelude-val">None</span>,
+            <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+            </span>metrics_push_config: <span class="prelude-val">None</span>,
         }
     }
 }
@@ -1293,7 +1293,8 @@
             gc_done_callback: <span class="prelude-val">None</span>,
             blob_events: Default::default(),
             transport_config: <span class="prelude-val">None</span>,
-            metrics_push_config: <span class="prelude-val">None</span>,
+            <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+            </span>metrics_push_config: <span class="prelude-val">None</span>,
         }
     }
 }
@@ -1311,8 +1312,9 @@
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Set the metrics push configuration.
-    </span><span class="kw">pub fn </span>metrics_push_config(<span class="kw-2">mut </span><span class="self">self</span>, config: PushMetricsConfig) -&gt; <span class="self">Self </span>{
+    <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+    </span><span class="doccomment">/// Set the metrics push configuration.
+    </span><span class="kw">pub fn </span>metrics_push_config(<span class="kw-2">mut </span><span class="self">self</span>, config: iroh_metrics::PushMetricsConfig) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.metrics_push_config = <span class="prelude-val">Some</span>(config);
         <span class="self">self
     </span>}
@@ -1360,7 +1362,8 @@
             gc_done_callback: <span class="self">self</span>.gc_done_callback,
             blob_events: <span class="self">self</span>.blob_events,
             transport_config: <span class="self">self</span>.transport_config,
-            metrics_push_config: <span class="self">self</span>.metrics_push_config,
+            <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+            </span>metrics_push_config: <span class="self">self</span>.metrics_push_config,
         })
     }
 
@@ -1684,19 +1687,14 @@
         </span><span class="kw">let </span>controller = quic_rpc::transport::boxed::Connection::new(controller);
         <span class="kw">let </span>client = <span class="kw">crate</span>::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
-        <span class="kw">let </span>metrics_exporter_handle = <span class="kw">if let </span><span class="prelude-val">Some</span>(config) = <span class="self">self</span>.metrics_push_config {
-            <span class="kw">if </span><span class="macro">cfg!</span>(feature = <span class="string">"metrics"</span>) {
-                <span class="kw">let </span>handle = tokio::spawn(<span class="kw">async move </span>{
-                    iroh_metrics::metrics::start_metrics_exporter(config).<span class="kw">await
-                </span>});
-                <span class="prelude-val">Some</span>(AbortOnDropHandle::new(handle))
-            } <span class="kw">else </span>{
-                <span class="macro">tracing::warn!</span>(<span class="string">"Metrics push configuration provided, but metrics feature is not enabled. Ignoring."</span>);
-                <span class="prelude-val">None
-            </span>}
-        } <span class="kw">else </span>{
-            <span class="prelude-val">None
-        </span>};
+        <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+        </span><span class="kw">let </span>metrics_exporter_handle = <span class="self">self</span>.metrics_push_config.map(|config| {
+            AbortOnDropHandle::new(tokio::spawn(iroh_metrics::metrics::start_metrics_exporter(
+                config,
+            )))
+        });
+        <span class="attr">#[cfg(not(feature = <span class="string">"metrics"</span>))]
+        </span><span class="kw">let </span>metrics_exporter_handle = <span class="prelude-val">None</span>;
 
         <span class="kw">let </span>inner = Arc::new(NodeInner {
             rpc_addr: <span class="self">self</span>.rpc_addr,
