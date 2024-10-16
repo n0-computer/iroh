@@ -1,4 +1,4 @@
-//! Peer-to-peer connectivity based on QUIC.
+//! Peer-to-peer QUIC connections.
 //!
 //! iroh-net is a library to establish direct connectivity between peers.  It exposes an
 //! interface to [QUIC] connections and streams to the user, while implementing direct
@@ -88,9 +88,18 @@
 //!   initiator of this stream has to send data before the peer will be aware of this
 //!   stream.
 //!
-//! Additionally to being extremely light-weight, streams can be interleaved and will not block
-//! each other.  Allowing many streams to co-exist, regardless of how long they last.
+//! Additionally to being extremely light-weight, streams can be interleaved and will not
+//! block each other.  Allowing many streams to co-exist, regardless of how long they last.
 //!
+//! <div class="warning">
+//!
+//! To keep streams cheap, they are lazily created on the network: only once a sender starts
+//! sending data on the stream will the receiver become aware of a stream.  This means only
+//! calling [`Connection::open_bi`] is not sufficient for the corresponding call to
+//! [`Connection::accept_bi`] to return.  The sender **must** send data on the stream before
+//! the receiver's [`Connection::accept_bi`] call will return.
+//!
+//! </div>
 //!
 //! ## Node Discovery
 //!
@@ -103,8 +112,72 @@
 //! up the [`NodeId`] in the DNS system to find the addressing details.  This enables
 //! connecting using only the [`NodeId`] which is often more convenient and resilient.
 //!
+//! See [the discovery module] for more details.
+//!
+//!
+//! # Examples
+//!
+//! The central struct is the [`Endpoint`], which allows you to connect to other nodes:
+//!
+//! ```no_run
+//! use anyhow::Result;
+//! use iroh_net::{Endpoint, NodeAddr};
+//!
+//! async fn connect(addr: NodeAddr) -> Result<()> {
+//!     // The Endpoint is the central object that manages an iroh-net node.
+//!     let ep = Endpoint::builder().bind().await?;
+//!
+//!     // Establish a QUIC connection, open a bi-directional stream, exchange messages.
+//!     let conn = ep.connect(addr, b"hello-world").await?;
+//!     let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
+//!     send_stream.write_all(b"hello").await?;
+//!     send_stream.finish()?;
+//!     let msg = recv_stream.read_to_end(10).await?;
+//!     println!("Server message: {}", String::from_utf8_lossy(&msg));
+//!
+//!     // Gracefully close the connection and endpoint.
+//!     conn.close(1u8.into(), b"done");
+//!     ep.close(0u8.into(), b"ep closing").await?;
+//!     println!("Client closed");
+//!     Ok(())
+//! }
+//! ```
+//!
+//! Every [`Endpoint`] can also accept connections:
+//!
+//! ```no_run
+//! use anyhow::{Context, Result};
+//! use futures_lite::StreamExt;
+//! use iroh_net::ticket::NodeTicket;
+//! use iroh_net::{Endpoint, NodeAddr};
+//!
+//! async fn accept() -> Result<()> {
+//!     // To accept connections at least one ALPN must be configured.
+//!     let ep = Endpoint::builder()
+//!         .alpns(vec![b"hello-world".to_vec()])
+//!         .bind()
+//!         .await?;
+//!
+//!     // Accept a QUIC connection, accept a bi-directional stream, exchange messages.
+//!     let conn = ep.accept().await.context("no incoming connection")?.await?;
+//!     let (mut send_stream, mut recv_stream) = conn.accept_bi().await?;
+//!     let msg = recv_stream.read_to_end(10).await?;
+//!     println!("Client message: {}", String::from_utf8_lossy(&msg));
+//!     send_stream.write_all(b"world").await?;
+//!     send_stream.finish()?;
+//!
+//!     // Wait for the client to close the connection and gracefully close the endpoint.
+//!     conn.closed().await;
+//!     ep.close(0u8.into(), b"ep closing").await?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! Please see the examples directory for more nuanced examples.
+//!
 //!
 //! [QUIC]: https://quickwg.org
+//! [`NodeTicket`]: crate::ticket::NodeTicket
 //! [hole punching]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
 //! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html
 //! [STUN]: https://en.wikipedia.org/wiki/STUN
@@ -117,6 +190,9 @@
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [number 0]: https://n0.computer
 //! [`RelayMode::Default`]: crate::relay::RelayMode::Default
+//! [the discovery module]: crate::discovery
+//! [`Connection::open_bi`]: crate::endpoint::Connection::open_bi
+//! [`Connection::accept_bi`]: crate::endpoint::Connection::accept_bi
 
 #![recursion_limit = "256"]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
