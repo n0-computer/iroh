@@ -3870,27 +3870,6 @@
 <a href="#3870" id="3870">3870</a>
 <a href="#3871" id="3871">3871</a>
 <a href="#3872" id="3872">3872</a>
-<a href="#3873" id="3873">3873</a>
-<a href="#3874" id="3874">3874</a>
-<a href="#3875" id="3875">3875</a>
-<a href="#3876" id="3876">3876</a>
-<a href="#3877" id="3877">3877</a>
-<a href="#3878" id="3878">3878</a>
-<a href="#3879" id="3879">3879</a>
-<a href="#3880" id="3880">3880</a>
-<a href="#3881" id="3881">3881</a>
-<a href="#3882" id="3882">3882</a>
-<a href="#3883" id="3883">3883</a>
-<a href="#3884" id="3884">3884</a>
-<a href="#3885" id="3885">3885</a>
-<a href="#3886" id="3886">3886</a>
-<a href="#3887" id="3887">3887</a>
-<a href="#3888" id="3888">3888</a>
-<a href="#3889" id="3889">3889</a>
-<a href="#3890" id="3890">3890</a>
-<a href="#3891" id="3891">3891</a>
-<a href="#3892" id="3892">3892</a>
-<a href="#3893" id="3893">3893</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -5891,26 +5870,20 @@
         <span class="comment">// First add PortMapper provided addresses.
         </span><span class="kw">let </span>maybe_port_mapped = <span class="kw-2">*</span>portmap_watcher.borrow();
         <span class="kw">if let </span><span class="prelude-val">Some</span>(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
-            addrs.insert(
-                portmap_ext,
-                DirectAddr {
-                    addr: portmap_ext,
-                    typ: DirectAddrType::Portmapped,
-                },
-            );
+            addrs.entry(portmap_ext).or_insert(DirectAddr {
+                addr: portmap_ext,
+                typ: DirectAddrType::Portmapped,
+            });
             <span class="self">self</span>.set_net_info_have_port_map();
         }
 
         <span class="comment">// Next add STUN addresses from the netcheck report.
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(netcheck_report) = netcheck_report {
             <span class="kw">if let </span><span class="prelude-val">Some</span>(global_v4) = netcheck_report.global_v4 {
-                addrs.insert(
-                    global_v4.into(),
-                    DirectAddr {
-                        addr: global_v4.into(),
-                        typ: DirectAddrType::Stun,
-                    },
-                );
+                addrs.entry(global_v4.into()).or_insert(DirectAddr {
+                    addr: global_v4.into(),
+                    typ: DirectAddrType::Stun,
+                });
 
                 <span class="comment">// If they're behind a hard NAT and are using a fixed
                 // port locally, assume they might've added a static
@@ -5924,23 +5897,17 @@
                 </span>{
                     <span class="kw">let </span><span class="kw-2">mut </span>addr = global_v4;
                     addr.set_port(port);
-                    addrs.insert(
-                        addr.into(),
-                        DirectAddr {
-                            addr: addr.into(),
-                            typ: DirectAddrType::Stun4LocalPort,
-                        },
-                    );
+                    addrs.entry(addr.into()).or_insert(DirectAddr {
+                        addr: addr.into(),
+                        typ: DirectAddrType::Stun4LocalPort,
+                    });
                 }
             }
             <span class="kw">if let </span><span class="prelude-val">Some</span>(global_v6) = netcheck_report.global_v6 {
-                addrs.insert(
-                    global_v6.into(),
-                    DirectAddr {
-                        addr: global_v6.into(),
-                        typ: DirectAddrType::Stun,
-                    },
-                );
+                addrs.entry(global_v6.into()).or_insert(DirectAddr {
+                    addr: global_v6.into(),
+                    typ: DirectAddrType::Stun,
+                });
             }
         }
 
@@ -5989,13 +5956,10 @@
                         };
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(port) = port_if_unspecified {
                             <span class="kw">let </span>addr = SocketAddr::new(ip, port);
-                            addrs.insert(
+                            addrs.entry(addr).or_insert(DirectAddr {
                                 addr,
-                                DirectAddr {
-                                    addr,
-                                    typ: DirectAddrType::Local,
-                                },
-                            );
+                                typ: DirectAddrType::Local,
+                            });
                         }
                     }
                 }
@@ -6003,24 +5967,18 @@
                 <span class="comment">// If a socket is bound to a specific address, add it.
                 </span><span class="kw">if </span>!is_unspecified_v4 {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = local_addr_v4 {
-                        addrs.insert(
+                        addrs.entry(addr).or_insert(DirectAddr {
                             addr,
-                            DirectAddr {
-                                addr,
-                                typ: DirectAddrType::Local,
-                            },
-                        );
+                            typ: DirectAddrType::Local,
+                        });
                     }
                 }
                 <span class="kw">if </span>!is_unspecified_v6 {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = local_addr_v6 {
-                        addrs.insert(
+                        addrs.entry(addr).or_insert(DirectAddr {
                             addr,
-                            DirectAddr {
-                                addr,
-                                typ: DirectAddrType::Local,
-                            },
-                        );
+                            typ: DirectAddrType::Local,
+                        });
                     }
                 }
 
