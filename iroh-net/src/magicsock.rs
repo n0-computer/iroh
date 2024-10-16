@@ -2161,7 +2161,7 @@ impl Actor {
     /// Calls netcheck.
     ///
     /// Note that invoking this is managed by [`DirectAddrUpdateState`] via
-    /// [`Actor::update_direct_addrs`] and this should never be invoked directly.  Some day
+    /// [`Actor::refresh_direct_addrs`] and this should never be invoked directly.  Some day
     /// this will be refactored to not allow this easy mistake to be made.
     #[instrument(level = "debug", skip_all)]
     async fn update_net_info(&mut self, why: &'static str) {
