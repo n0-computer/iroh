@@ -1998,26 +1998,20 @@ impl Actor {
         // First add PortMapper provided addresses.
         let maybe_port_mapped = *portmap_watcher.borrow();
         if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
-            addrs.insert(
-                portmap_ext,
-                DirectAddr {
-                    addr: portmap_ext,
-                    typ: DirectAddrType::Portmapped,
-                },
-            );
+            addrs.entry(portmap_ext).or_insert(DirectAddr {
+                addr: portmap_ext,
+                typ: DirectAddrType::Portmapped,
+            });
             self.set_net_info_have_port_map();
         }
 
         // Next add STUN addresses from the netcheck report.
         if let Some(netcheck_report) = netcheck_report {
             if let Some(global_v4) = netcheck_report.global_v4 {
-                addrs.insert(
-                    global_v4.into(),
-                    DirectAddr {
-                        addr: global_v4.into(),
-                        typ: DirectAddrType::Stun,
-                    },
-                );
+                addrs.entry(global_v4.into()).or_insert(DirectAddr {
+                    addr: global_v4.into(),
+                    typ: DirectAddrType::Stun,
+                });
 
                 // If they're behind a hard NAT and are using a fixed
                 // port locally, assume they might've added a static
@@ -2031,23 +2025,17 @@ impl Actor {
                 {
                     let mut addr = global_v4;
                     addr.set_port(port);
-                    addrs.insert(
-                        addr.into(),
-                        DirectAddr {
-                            addr: addr.into(),
-                            typ: DirectAddrType::Stun4LocalPort,
-                        },
-                    );
+                    addrs.entry(addr.into()).or_insert(DirectAddr {
+                        addr: addr.into(),
+                        typ: DirectAddrType::Stun4LocalPort,
+                    });
                 }
             }
             if let Some(global_v6) = netcheck_report.global_v6 {
-                addrs.insert(
-                    global_v6.into(),
-                    DirectAddr {
-                        addr: global_v6.into(),
-                        typ: DirectAddrType::Stun,
-                    },
-                );
+                addrs.entry(global_v6.into()).or_insert(DirectAddr {
+                    addr: global_v6.into(),
+                    typ: DirectAddrType::Stun,
+                });
             }
         }
 
@@ -2096,13 +2084,10 @@ impl Actor {
                         };
                         if let Some(port) = port_if_unspecified {
                             let addr = SocketAddr::new(ip, port);
-                            addrs.insert(
+                            addrs.entry(addr).or_insert(DirectAddr {
                                 addr,
-                                DirectAddr {
-                                    addr,
-                                    typ: DirectAddrType::Local,
-                                },
-                            );
+                                typ: DirectAddrType::Local,
+                            });
                         }
                     }
                 }
@@ -2110,24 +2095,18 @@ impl Actor {
                 // If a socket is bound to a specific address, add it.
                 if !is_unspecified_v4 {
                     if let Some(addr) = local_addr_v4 {
-                        addrs.insert(
+                        addrs.entry(addr).or_insert(DirectAddr {
                             addr,
-                            DirectAddr {
-                                addr,
-                                typ: DirectAddrType::Local,
-                            },
-                        );
+                            typ: DirectAddrType::Local,
+                        });
                     }
                 }
                 if !is_unspecified_v6 {
                     if let Some(addr) = local_addr_v6 {
-                        addrs.insert(
+                        addrs.entry(addr).or_insert(DirectAddr {
                             addr,
-                            DirectAddr {
-                                addr,
-                                typ: DirectAddrType::Local,
-                            },
-                        );
+                            typ: DirectAddrType::Local,
+                        });
                     }
                 }
 
