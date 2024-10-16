@@ -1,4 +1,4 @@
-//! Peer-to-peer connectivity QUIC connections.
+//! Peer-to-peer QUIC connections.
 //!
 //! iroh-net is a library to establish direct connectivity between peers.  It exposes an
 //! interface to [QUIC] connections and streams to the user, while implementing direct
