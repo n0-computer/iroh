@@ -3088,16 +3088,16 @@
 </span><span class="attr">#[derive(derive_more::Display, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 </span><span class="kw">pub enum </span>ConnectionType {
     <span class="doccomment">/// Direct UDP connection
-    </span><span class="attr">#[display(<span class="string">"direct"</span>)]
+    </span><span class="attr">#[display(<span class="string">"direct({_0})"</span>)]
     </span>Direct(SocketAddr),
     <span class="doccomment">/// Relay connection over relay
-    </span><span class="attr">#[display(<span class="string">"relay"</span>)]
+    </span><span class="attr">#[display(<span class="string">"relay({_0})"</span>)]
     </span>Relay(RelayUrl),
     <span class="doccomment">/// Both a UDP and a relay connection are used.
     ///
     /// This is the case if we do have a UDP address, but are missing a recent confirmation that
     /// the address works.
-    </span><span class="attr">#[display(<span class="string">"mixed"</span>)]
+    </span><span class="attr">#[display(<span class="string">"mixed(udp: {_0}, relay: {_1})"</span>)]
     </span>Mixed(SocketAddr, RelayUrl),
     <span class="doccomment">/// We have no verified connection to this PublicKey
     </span><span class="attr">#[display(<span class="string">"none"</span>)]
