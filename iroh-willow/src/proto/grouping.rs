@@ -3,6 +3,9 @@
 use serde::{Deserialize, Serialize};
 pub use willow_data_model::grouping::{Range, RangeEnd};
 use willow_data_model::SubspaceId as _;
+use willow_store::{BlobSeq, QueryRange, QueryRange3d};
+
+use crate::store::memory::WillowParams;
 
 use super::data_model::{
     self, Entry, Path, SubspaceId, Timestamp, MAX_COMPONENT_COUNT, MAX_COMPONENT_LENGTH,
@@ -16,6 +19,38 @@ pub type Range3d = willow_data_model::grouping::Range3d<
     MAX_PATH_LENGTH,
     SubspaceId,
 >;
+
+pub fn path_to_blobseq(path: &Path) -> BlobSeq {
+    let path_bytes = path
+        .components()
+        .map(|component| component.to_vec())
+        .collect::<Vec<_>>();
+
+    BlobSeq::from(path_bytes)
+}
+
+pub fn to_query(range3d: &Range3d) -> QueryRange3d<WillowParams> {
+    let path_start = path_to_blobseq(&range3d.paths().start);
+    let path_end = match &range3d.paths().end {
+        RangeEnd::Closed(end) => Some(path_to_blobseq(end)),
+        RangeEnd::Open => None,
+    };
+    QueryRange3d {
+        x: to_query_range(range3d.subspaces()),
+        y: to_query_range(range3d.times()),
+        z: QueryRange::new(path_start, path_end),
+    }
+}
+
+pub fn to_query_range<T: Ord + Clone>(range: &Range<T>) -> QueryRange<T> {
+    QueryRange::new(
+        range.start.clone(),
+        match &range.end {
+            RangeEnd::Closed(end) => Some(end.clone()),
+            RangeEnd::Open => None,
+        },
+    )
+}
 
 /// See [`willow_data_model::grouping::Area`].
 pub type Area = willow_data_model::grouping::Area<

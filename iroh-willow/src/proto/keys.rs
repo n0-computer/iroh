@@ -12,6 +12,9 @@ use ed25519_dalek::{SignatureError, Signer, SigningKey, Verifier, VerifyingKey};
 use iroh_base::base32;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
+use willow_store::FixedSize;
+use willow_store::IsLowerBound;
+use willow_store::LowerBound;
 
 use super::meadowcap::IsCommunal;
 
@@ -413,12 +416,32 @@ impl std::hash::Hash for UserSignature {
     PartialEq,
     Hash,
     From,
+    zerocopy_derive::FromBytes,
+    zerocopy_derive::AsBytes,
+    zerocopy_derive::FromZeroes,
     Into,
     AsRef,
     Serialize,
     Deserialize,
 )]
+#[repr(transparent)]
 pub struct UserId([u8; 32]);
+
+impl LowerBound for UserId {
+    fn min_value() -> Self {
+        Self([0u8; 32])
+    }
+}
+
+impl IsLowerBound for UserId {
+    fn is_min_value(&self) -> bool {
+        *self == Self::min_value()
+    }
+}
+
+impl FixedSize for UserId {
+    const SIZE: usize = std::mem::size_of::<Self>();
+}
 
 bytestring!(UserId, PUBLIC_KEY_LENGTH);
 

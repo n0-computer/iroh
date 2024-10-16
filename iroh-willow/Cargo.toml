@@ -48,7 +48,10 @@ tracing = "0.1"
 ufotofu = { version = "0.4.1", features = ["std"] }
 willow-data-model = "0.1.0"
 willow-encoding = "0.1.0"
-zerocopy = { version = "0.8.0-alpha.9", features = ["derive"] }
+# willow-store = { git = "https://github.com/n0-computer/willow-store.git" }
+willow-store = { path = "../../willow-store" }
+zerocopy = { version = "0.7", features = ["derive"] }
+zerocopy-derive = "0.7"
 
 [dev-dependencies]
 iroh-test = { path = "../iroh-test" }
