@@ -15,15 +15,19 @@
 //! from responding to any hole punching attempts. This node will still,
 //! however, read any packets that come off the UDP sockets.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fmt::Display;
-use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
-use std::task::{Context, Poll, Waker};
-use std::time::{Duration, Instant};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    fmt::Display,
+    io,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
+        Arc, RwLock,
+    },
+    task::{Context, Poll, Waker},
+    time::{Duration, Instant},
+};
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
@@ -34,9 +38,11 @@ use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use smallvec::{smallvec, SmallVec};
-use tokio::sync::{self, mpsc, Mutex};
-use tokio::task::JoinSet;
-use tokio::time;
+use tokio::{
+    sync::{self, mpsc, Mutex},
+    task::JoinSet,
+    time,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
@@ -45,22 +51,25 @@ use tracing::{
 use url::Url;
 use watchable::Watchable;
 
-use crate::defaults::timeouts::NETCHECK_REPORT_TIMEOUT;
-use crate::disco::{self, CallMeMaybe, SendAddr};
-use crate::discovery::{Discovery, DiscoveryItem};
-use crate::dns::DnsResolver;
-use crate::endpoint::NodeAddr;
-use crate::key::{PublicKey, SecretKey, SharedSecret};
-use crate::net::ip::LocalAddresses;
-use crate::net::{interfaces, netmon};
-use crate::relay::{RelayMap, RelayUrl};
-use crate::{netcheck, portmapper};
-use crate::{stun, AddrInfo};
+use crate::{
+    defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
+    disco::{self, CallMeMaybe, SendAddr},
+    discovery::{Discovery, DiscoveryItem},
+    dns::DnsResolver,
+    endpoint::NodeAddr,
+    key::{PublicKey, SecretKey, SharedSecret},
+    net::{interfaces, ip::LocalAddresses, netmon},
+    netcheck, portmapper,
+    relay::{RelayMap, RelayUrl},
+    stun, AddrInfo,
+};
 
-use self::metrics::Metrics as MagicsockMetrics;
-use self::node_map::{NodeMap, PingAction, PingRole, SendPing};
-use self::relay_actor::{RelayActor, RelayActorMessage, RelayReadResult};
-use self::udp_conn::UdpConn;
+use self::{
+    metrics::Metrics as MagicsockMetrics,
+    node_map::{NodeMap, PingAction, PingRole, SendPing},
+    relay_actor::{RelayActor, RelayActorMessage, RelayReadResult},
+    udp_conn::UdpConn,
+};
 
 mod metrics;
 mod node_map;
