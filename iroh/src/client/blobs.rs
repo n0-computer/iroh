@@ -59,28 +59,29 @@
 //! To store the data permanently, a temp tag needs to be upgraded to a
 //! permanent tag using [`persist`](crate::client::blobs::Batch::persist) or
 //! [`persist_to`](crate::client::blobs::Batch::persist_to).
-use std::future::Future;
-use std::io;
-use std::path::PathBuf;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::{
+    future::Future,
+    io,
+    path::PathBuf,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use futures_util::SinkExt;
 use genawaiter::sync::{Co, Gen};
-use iroh_base::node_addr::AddrInfoOptions;
-use iroh_base::ticket::BlobTicket;
-use iroh_blobs::export::ExportProgress as BytesExportProgress;
-use iroh_blobs::format::collection::{Collection, SimpleStore};
-use iroh_blobs::get::db::DownloadProgress as BytesDownloadProgress;
-use iroh_blobs::store::{
-    BaoBlobSize, ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress,
+use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
+use iroh_blobs::{
+    export::ExportProgress as BytesExportProgress,
+    format::collection::{Collection, SimpleStore},
+    get::db::DownloadProgress as BytesDownloadProgress,
+    store::{BaoBlobSize, ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
+    util::SetTagOption,
+    BlobFormat, Hash, Tag,
 };
-use iroh_blobs::util::SetTagOption;
-use iroh_blobs::{BlobFormat, Hash, Tag};
 use iroh_net::NodeAddr;
 use portable_atomic::{AtomicU64, Ordering};
 use quic_rpc::client::BoxStreamSync;
@@ -93,13 +94,15 @@ mod batch;
 pub use batch::{AddDirOpts, AddFileOpts, AddReaderOpts, Batch};
 
 use super::{flatten, tags, Iroh, RpcClient};
-use crate::rpc_protocol::blobs::{
-    AddPathRequest, AddStreamRequest, AddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
-    BlobStatusRequest, ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse,
-    DeleteRequest, DownloadRequest, ExportRequest, ListIncompleteRequest, ListRequest,
-    ReadAtRequest, ReadAtResponse, ValidateRequest,
+use crate::rpc_protocol::{
+    blobs::{
+        AddPathRequest, AddStreamRequest, AddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
+        BlobStatusRequest, ConsistencyCheckRequest, CreateCollectionRequest,
+        CreateCollectionResponse, DeleteRequest, DownloadRequest, ExportRequest,
+        ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse, ValidateRequest,
+    },
+    node::StatusRequest,
 };
-use crate::rpc_protocol::node::StatusRequest;
 
 /// Iroh blobs client.
 #[derive(Debug, Clone, RefCast)]
@@ -997,8 +1000,7 @@ mod tests {
     use iroh_net::NodeId;
     use rand::RngCore;
     use testresult::TestResult;
-    use tokio::io::AsyncWriteExt;
-    use tokio::sync::mpsc;
+    use tokio::{io::AsyncWriteExt, sync::mpsc};
 
     use super::*;
 

@@ -5,11 +5,12 @@
 //! overview of pkarr.
 //!
 //! [pkarr module]: super
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
-use futures_lite::stream::Boxed;
-use futures_lite::StreamExt;
+use futures_lite::{stream::Boxed, StreamExt};
 use genawaiter::sync::{Co, Gen};
 use pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
@@ -18,11 +19,15 @@ use pkarr::{
 use tokio_util::task::AbortOnDropHandle;
 use url::Url;
 
-use crate::discovery::pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD};
-use crate::discovery::{Discovery, DiscoveryItem};
-use crate::dns::node_info::NodeInfo;
-use crate::key::SecretKey;
-use crate::{AddrInfo, Endpoint, NodeId};
+use crate::{
+    discovery::{
+        pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
+        Discovery, DiscoveryItem,
+    },
+    dns::node_info::NodeInfo,
+    key::SecretKey,
+    AddrInfo, Endpoint, NodeId,
+};
 
 /// Republish delay for the DHT.
 ///

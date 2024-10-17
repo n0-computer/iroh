@@ -1,8 +1,6 @@
 //! Contains helpers for looking up system network interfaces.
 
-use std::collections::HashMap;
-use std::fmt;
-use std::net::IpAddr;
+use std::{collections::HashMap, fmt, net::IpAddr};
 
 #[cfg(any(
     target_os = "freebsd",
@@ -95,9 +93,7 @@ impl Interface {
     pub(crate) fn fake() -> Self {
         use std::net::Ipv4Addr;
 
-        use netdev::interface::InterfaceType;
-        use netdev::mac::MacAddr;
-        use netdev::NetworkDevice;
+        use netdev::{interface::InterfaceType, mac::MacAddr, NetworkDevice};
 
         Self {
             iface: netdev::Interface {

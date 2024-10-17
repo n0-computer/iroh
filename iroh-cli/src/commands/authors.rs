@@ -4,9 +4,11 @@ use anyhow::{bail, Result};
 use clap::Parser;
 use derive_more::FromStr;
 use futures_lite::StreamExt;
-use iroh::base::base32::fmt_short;
-use iroh::client::Iroh;
-use iroh::docs::{Author, AuthorId};
+use iroh::{
+    base::base32::fmt_short,
+    client::Iroh,
+    docs::{Author, AuthorId},
+};
 
 use crate::config::ConsoleEnv;
 

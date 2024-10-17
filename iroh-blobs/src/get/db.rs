@@ -1,35 +1,38 @@
 //! Functions that use the iroh-blobs protocol in conjunction with a bao store.
 
-use std::future::Future;
-use std::io;
-use std::num::NonZeroU64;
-use std::pin::Pin;
+use std::{future::Future, io, num::NonZeroU64, pin::Pin};
 
 use anyhow::anyhow;
 use bao_tree::{ChunkNum, ChunkRanges};
 use futures_lite::StreamExt;
-use genawaiter::rc::{Co, Gen};
-use genawaiter::GeneratorState;
-use iroh_base::hash::Hash;
-use iroh_base::rpc::RpcError;
+use genawaiter::{
+    rc::{Co, Gen},
+    GeneratorState,
+};
+use iroh_base::{hash::Hash, rpc::RpcError};
 use iroh_io::AsyncSliceReader;
 use iroh_net::endpoint::Connection;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 use tracing::trace;
 
-use crate::get::error::GetError;
-use crate::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
-use crate::get::progress::TransferState;
-use crate::get::{self, Stats};
-use crate::hashseq::parse_hash_seq;
-use crate::protocol::{GetRequest, RangeSpec, RangeSpecSeq};
-use crate::store::{
-    BaoBatchWriter, BaoBlobSize, FallibleProgressBatchWriter, MapEntry, MapEntryMut, MapMut,
-    Store as BaoStore,
+use crate::{
+    get::{
+        self,
+        error::GetError,
+        fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext},
+        progress::TransferState,
+        Stats,
+    },
+    hashseq::parse_hash_seq,
+    protocol::{GetRequest, RangeSpec, RangeSpecSeq},
+    store::{
+        BaoBatchWriter, BaoBlobSize, FallibleProgressBatchWriter, MapEntry, MapEntryMut, MapMut,
+        Store as BaoStore,
+    },
+    util::progress::{IdGenerator, ProgressSender},
+    BlobFormat, HashAndFormat,
 };
-use crate::util::progress::{IdGenerator, ProgressSender};
-use crate::{BlobFormat, HashAndFormat};
 
 type GetGenerator = Gen<Yield, (), Pin<Box<dyn Future<Output = Result<Stats, GetError>>>>>;
 type GetFuture = Pin<Box<dyn Future<Output = Result<Stats, GetError>> + 'static>>;

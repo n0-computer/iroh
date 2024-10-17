@@ -9,15 +9,15 @@ use std::path::PathBuf;
 
 use anyhow::ensure;
 use clap::{Parser, Subcommand};
-use iroh::base::key::SecretKey;
-use iroh::client::blobs::WrapOption;
-use iroh::net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
-use iroh::node::{DiscoveryConfig, Node};
+use iroh::{
+    base::key::SecretKey,
+    client::blobs::WrapOption,
+    net::discovery::local_swarm_discovery::LocalSwarmDiscovery,
+    node::{DiscoveryConfig, Node},
+};
 use iroh_blobs::Hash;
-use iroh_net::key::PublicKey;
-use iroh_net::NodeAddr;
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::EnvFilter;
+use iroh_net::{key::PublicKey, NodeAddr};
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 use self::progress::show_download_progress;
 
@@ -138,10 +138,10 @@ mod progress {
         HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
         ProgressStyle,
     };
-    use iroh_blobs::get::db::DownloadProgress;
-    use iroh_blobs::get::progress::BlobProgress;
-    use iroh_blobs::get::Stats;
-    use iroh_blobs::Hash;
+    use iroh_blobs::{
+        get::{db::DownloadProgress, progress::BlobProgress, Stats},
+        Hash,
+    };
 
     pub async fn show_download_progress(
         hash: Hash,

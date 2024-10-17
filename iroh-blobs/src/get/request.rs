@@ -7,9 +7,11 @@ use iroh_net::endpoint::Connection;
 use rand::Rng;
 
 use super::{fsm, Stats};
-use crate::hashseq::HashSeq;
-use crate::protocol::{GetRequest, RangeSpecSeq};
-use crate::{Hash, HashAndFormat};
+use crate::{
+    hashseq::HashSeq,
+    protocol::{GetRequest, RangeSpecSeq},
+    Hash, HashAndFormat,
+};
 
 /// Get the claimed size of a blob from a peer.
 ///

@@ -4,26 +4,24 @@
 //!
 //! You obtain a [`Client`] via [`Iroh::docs()`](crate::client::Iroh::docs).
 
-use std::path::{Path, PathBuf};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::{
+    path::{Path, PathBuf},
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use derive_more::{Display, FromStr};
 use futures_lite::{Stream, StreamExt};
-use iroh_base::key::PublicKey;
-use iroh_base::node_addr::AddrInfoOptions;
-use iroh_base::rpc::RpcError;
-use iroh_blobs::export::ExportProgress;
-use iroh_blobs::store::ExportMode;
-use iroh_blobs::Hash;
-use iroh_docs::actor::OpenState;
+use iroh_base::{key::PublicKey, node_addr::AddrInfoOptions, rpc::RpcError};
+use iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 #[doc(inline)]
 pub use iroh_docs::engine::{Origin, SyncEvent, SyncReason};
-use iroh_docs::store::{DownloadPolicy, Query};
 use iroh_docs::{
+    actor::OpenState,
+    store::{DownloadPolicy, Query},
     AuthorId, Capability, CapabilityKind, ContentStatus, DocTicket, NamespaceId, PeerIdBytes,
     RecordIdentifier,
 };
@@ -34,14 +32,16 @@ use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
 use super::{blobs, flatten, RpcClient};
-use crate::rpc_protocol::docs::{
-    CloseRequest, CreateRequest, DelRequest, DelResponse, DocListRequest, DocSubscribeRequest,
-    DropRequest, ExportFileRequest, GetDownloadPolicyRequest, GetExactRequest, GetManyRequest,
-    GetSyncPeersRequest, ImportFileRequest, ImportRequest, LeaveRequest, OpenRequest,
-    SetDownloadPolicyRequest, SetHashRequest, SetRequest, ShareRequest, StartSyncRequest,
-    StatusRequest,
+use crate::rpc_protocol::{
+    docs::{
+        CloseRequest, CreateRequest, DelRequest, DelResponse, DocListRequest, DocSubscribeRequest,
+        DropRequest, ExportFileRequest, GetDownloadPolicyRequest, GetExactRequest, GetManyRequest,
+        GetSyncPeersRequest, ImportFileRequest, ImportRequest, LeaveRequest, OpenRequest,
+        SetDownloadPolicyRequest, SetHashRequest, SetRequest, ShareRequest, StartSyncRequest,
+        StatusRequest,
+    },
+    RpcService,
 };
-use crate::rpc_protocol::RpcService;
 
 /// Iroh docs client.
 #[derive(Debug, Clone, RefCast)]

@@ -1,22 +1,27 @@
 //! HTTP server part of iroh-dns-server
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::time::Instant;
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    time::Instant,
+};
 
 use anyhow::{bail, Context, Result};
-use axum::extract::{ConnectInfo, Request};
-use axum::handler::Handler;
-use axum::http::Method;
-use axum::middleware::{self, Next};
-use axum::response::IntoResponse;
-use axum::routing::get;
-use axum::Router;
+use axum::{
+    extract::{ConnectInfo, Request},
+    handler::Handler,
+    http::Method,
+    middleware::{self, Next},
+    response::IntoResponse,
+    routing::get,
+    Router,
+};
 use iroh_metrics::{inc, inc_by};
 use serde::{Deserialize, Serialize};
-use tokio::net::TcpListener;
-use tokio::task::JoinSet;
-use tower_http::cors::{self, CorsLayer};
-use tower_http::trace::TraceLayer;
+use tokio::{net::TcpListener, task::JoinSet};
+use tower_http::{
+    cors::{self, CorsLayer},
+    trace::TraceLayer,
+};
 use tracing::{info, span, warn, Level};
 
 mod doh;
@@ -26,9 +31,7 @@ mod rate_limiting;
 mod tls;
 
 pub use self::tls::CertMode;
-use crate::config::Config;
-use crate::metrics::Metrics;
-use crate::state::AppState;
+use crate::{config::Config, metrics::Metrics, state::AppState};
 
 /// Config for the HTTP server
 #[derive(Debug, Serialize, Deserialize, Clone)]

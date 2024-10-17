@@ -18,17 +18,17 @@
 //! message_payload: &[u8]
 //! ```
 
-use std::fmt::Display;
-use std::net::{IpAddr, SocketAddr};
+use std::{
+    fmt::Display,
+    net::{IpAddr, SocketAddr},
+};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use super::key::PublicKey;
-use super::stun;
-use crate::key;
-use crate::relay::RelayUrl;
+use super::{key::PublicKey, stun};
+use crate::{key, relay::RelayUrl};
 
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.

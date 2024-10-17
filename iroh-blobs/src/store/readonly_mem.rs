@@ -1,27 +1,35 @@
 //! A readonly in memory database for iroh-blobs, usable for testing and sharing static data.
 //!
 //! Main entry point is [Store].
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::future::Future;
-use std::io;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    future::Future,
+    io,
+    path::PathBuf,
+    sync::Arc,
+};
 
-use bao_tree::blake3;
-use bao_tree::io::outboard::PreOrderMemOutboard;
-use bao_tree::io::sync::Outboard;
+use bao_tree::{
+    blake3,
+    io::{outboard::PreOrderMemOutboard, sync::Outboard},
+};
 use bytes::Bytes;
 use futures_lite::Stream;
 use iroh_io::AsyncSliceReader;
 use tokio::io::AsyncWriteExt;
 
 use super::{BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, DbIter, ExportProgressCb};
-use crate::store::{
-    EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, MapEntryMut, ReadableStore,
+use crate::{
+    store::{
+        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, MapEntryMut,
+        ReadableStore,
+    },
+    util::{
+        progress::{BoxedProgressSender, IdGenerator, ProgressSender},
+        Tag,
+    },
+    BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
-use crate::util::progress::{BoxedProgressSender, IdGenerator, ProgressSender};
-use crate::util::Tag;
-use crate::{BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE};
 
 /// A readonly in memory database for iroh-blobs.
 ///

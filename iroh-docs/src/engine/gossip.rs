@@ -6,13 +6,14 @@ use futures_lite::StreamExt;
 use futures_util::FutureExt;
 use iroh_gossip::net::{Event, Gossip, GossipEvent, GossipReceiver, GossipSender, JoinOptions};
 use iroh_net::NodeId;
-use tokio::sync::mpsc;
-use tokio::task::{AbortHandle, JoinSet};
+use tokio::{
+    sync::mpsc,
+    task::{AbortHandle, JoinSet},
+};
 use tracing::{debug, instrument, warn};
 
 use super::live::{Op, ToLiveActor};
-use crate::actor::SyncHandle;
-use crate::{ContentStatus, NamespaceId};
+use crate::{actor::SyncHandle, ContentStatus, NamespaceId};
 
 #[derive(Debug)]
 struct ActiveState {

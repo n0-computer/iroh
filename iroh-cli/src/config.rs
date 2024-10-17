@@ -1,17 +1,21 @@
 //! Configuration for the iroh CLI.
 
-use std::env;
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    env,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
-use iroh::client::Iroh;
-use iroh::docs::{AuthorId, NamespaceId};
-use iroh::net::relay::{RelayMap, RelayNode};
-use iroh::node::GcPolicy;
+use iroh::{
+    client::Iroh,
+    docs::{AuthorId, NamespaceId},
+    net::relay::{RelayMap, RelayNode},
+    node::GcPolicy,
+};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::warn;

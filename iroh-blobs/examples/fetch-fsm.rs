@@ -6,13 +6,14 @@
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
-use iroh_blobs::get::fsm::{AtInitial, ConnectedNext, EndBlobNext};
-use iroh_blobs::hashseq::HashSeq;
-use iroh_blobs::protocol::GetRequest;
-use iroh_blobs::Hash;
+use iroh_blobs::{
+    get::fsm::{AtInitial, ConnectedNext, EndBlobNext},
+    hashseq::HashSeq,
+    protocol::GetRequest,
+    Hash,
+};
 use iroh_io::ConcatenateSliceWriter;
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 mod connect;
 use connect::{load_certs, make_client_endpoint};

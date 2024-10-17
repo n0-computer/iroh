@@ -1,13 +1,14 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
 use libc::c_void;
 use tokio::sync::mpsc;
 use tracing::{trace, warn};
-use windows::Win32::Foundation::{BOOLEAN, HANDLE as Handle};
-use windows::Win32::NetworkManagement::IpHelper::{
-    MIB_IPFORWARD_ROW2, MIB_NOTIFICATION_TYPE, MIB_UNICASTIPADDRESS_ROW,
+use windows::Win32::{
+    Foundation::{BOOLEAN, HANDLE as Handle},
+    NetworkManagement::IpHelper::{
+        MIB_IPFORWARD_ROW2, MIB_NOTIFICATION_TYPE, MIB_UNICASTIPADDRESS_ROW,
+    },
 };
 
 use super::actor::NetworkMessage;

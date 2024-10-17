@@ -1,8 +1,9 @@
-use std::collections::btree_map::Entry;
-use std::collections::{BTreeSet, HashMap};
-use std::hash::Hash;
-use std::net::{IpAddr, SocketAddr};
-use std::time::{Duration, Instant};
+use std::{
+    collections::{btree_map::Entry, BTreeSet, HashMap},
+    hash::Hash,
+    net::{IpAddr, SocketAddr},
+    time::{Duration, Instant},
+};
 
 use iroh_metrics::inc;
 use serde::{Deserialize, Serialize};
@@ -10,18 +11,23 @@ use tokio::sync::mpsc;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
 use watchable::{Watchable, WatcherStream};
 
-use super::best_addr::{self, ClearReason, Source as BestAddrSource};
-use super::path_state::{summarize_node_paths, PathState};
-use super::udp_paths::{NodeUdpPaths, UdpSendAddr};
-use super::{IpPort, Source};
-use crate::disco::{self, SendAddr};
-use crate::endpoint::AddrInfo;
-use crate::key::PublicKey;
-use crate::magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL};
-use crate::net::ip::is_unicast_link_local;
-use crate::relay::RelayUrl;
-use crate::util::relay_only_mode;
-use crate::{stun, NodeAddr, NodeId};
+use super::{
+    best_addr::{self, ClearReason, Source as BestAddrSource},
+    path_state::{summarize_node_paths, PathState},
+    udp_paths::{NodeUdpPaths, UdpSendAddr},
+    IpPort, Source,
+};
+use crate::{
+    disco::{self, SendAddr},
+    endpoint::AddrInfo,
+    key::PublicKey,
+    magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
+    net::ip::is_unicast_link_local,
+    relay::RelayUrl,
+    stun,
+    util::relay_only_mode,
+    NodeAddr, NodeId,
+};
 
 /// Number of addresses that are not active that we keep around per node.
 ///
@@ -1407,14 +1413,15 @@ pub enum ConnectionType {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-    use std::net::Ipv4Addr;
+    use std::{collections::BTreeMap, net::Ipv4Addr};
 
     use best_addr::BestAddr;
 
     use super::*;
-    use crate::key::SecretKey;
-    use crate::magicsock::node_map::{NodeMap, NodeMapInner};
+    use crate::{
+        key::SecretKey,
+        magicsock::node_map::{NodeMap, NodeMapInner},
+    };
 
     #[test]
     fn test_remote_infos() {

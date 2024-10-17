@@ -1,15 +1,18 @@
-use std::io::{Cursor, Write};
-use std::time::Duration;
+use std::{
+    io::{Cursor, Write},
+    time::Duration,
+};
 
 use anyhow::Result;
-use bao_tree::io::sync::Outboard;
-use bao_tree::{blake3, ChunkRanges};
+use bao_tree::{blake3, io::sync::Outboard, ChunkRanges};
 use bytes::Bytes;
 use iroh::node::{self, DocsStorage, Node};
-use iroh_blobs::hashseq::HashSeq;
-use iroh_blobs::store::{EntryStatus, MapMut, Store};
-use iroh_blobs::util::Tag;
-use iroh_blobs::{BlobFormat, HashAndFormat, IROH_BLOCK_SIZE};
+use iroh_blobs::{
+    hashseq::HashSeq,
+    store::{EntryStatus, MapMut, Store},
+    util::Tag,
+    BlobFormat, HashAndFormat, IROH_BLOCK_SIZE,
+};
 use rand::RngCore;
 
 pub fn create_test_data(size: usize) -> Bytes {
@@ -176,17 +179,18 @@ async fn gc_hashseq_impl() -> Result<()> {
 
 #[cfg(feature = "fs-store")]
 mod file {
-    use std::io;
-    use std::path::PathBuf;
+    use std::{io, path::PathBuf};
 
-    use bao_tree::io::fsm::{BaoContentItem, ResponseDecoderNext};
-    use bao_tree::BaoTree;
-    use futures_lite::StreamExt;
-    use iroh_blobs::store::{
-        BaoBatchWriter, ConsistencyCheckProgress, Map, MapEntryMut, ReportLevel,
+    use bao_tree::{
+        io::fsm::{BaoContentItem, ResponseDecoderNext},
+        BaoTree,
     };
-    use iroh_blobs::util::progress::{AsyncChannelProgressSender, ProgressSender as _};
-    use iroh_blobs::TempTag;
+    use futures_lite::StreamExt;
+    use iroh_blobs::{
+        store::{BaoBatchWriter, ConsistencyCheckProgress, Map, MapEntryMut, ReportLevel},
+        util::progress::{AsyncChannelProgressSender, ProgressSender as _},
+        TempTag,
+    };
     use iroh_io::AsyncSliceReaderExt;
     use testdir::testdir;
     use tokio::io::AsyncReadExt;

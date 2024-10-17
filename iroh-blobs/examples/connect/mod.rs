@@ -1,6 +1,5 @@
 //! Common code used to created quinn connections in the examples
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{bail, Context, Result};
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};

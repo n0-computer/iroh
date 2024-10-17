@@ -20,10 +20,12 @@ pub mod server;
 
 pub use iroh_base::node_addr::RelayUrl;
 
-pub use self::client::conn::{Conn as RelayConn, ReceivedMessage};
-pub use self::client::{
-    Client as HttpClient, ClientBuilder as HttpClientBuilder, ClientError as HttpClientError,
-    ClientReceiver as HttpClientReceiver,
+pub use self::{
+    client::{
+        conn::{Conn as RelayConn, ReceivedMessage},
+        Client as HttpClient, ClientBuilder as HttpClientBuilder, ClientError as HttpClientError,
+        ClientReceiver as HttpClientReceiver,
+    },
+    codec::MAX_PACKET_SIZE,
+    map::{RelayMap, RelayMode, RelayNode},
 };
-pub use self::codec::MAX_PACKET_SIZE;
-pub use self::map::{RelayMap, RelayMode, RelayNode};

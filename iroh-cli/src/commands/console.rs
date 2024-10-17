@@ -3,14 +3,14 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use iroh::base::base32::fmt_short;
-use iroh::client::Iroh;
-use rustyline::error::ReadlineError;
-use rustyline::{Config, DefaultEditor};
+use iroh::{base::base32::fmt_short, client::Iroh};
+use rustyline::{error::ReadlineError, Config, DefaultEditor};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::commands::rpc::RpcCommands;
-use crate::config::{ConsoleEnv, ConsolePaths};
+use crate::{
+    commands::rpc::RpcCommands,
+    config::{ConsoleEnv, ConsolePaths},
+};
 
 /// Runs the iroh console
 pub async fn run(iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {

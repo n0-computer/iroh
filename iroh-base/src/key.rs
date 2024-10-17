@@ -2,11 +2,13 @@
 
 mod encryption;
 
-use std::fmt::{Debug, Display};
-use std::hash::Hash;
-use std::str::FromStr;
-use std::sync::Mutex;
-use std::time::Duration;
+use std::{
+    fmt::{Debug, Display},
+    hash::Hash,
+    str::FromStr,
+    sync::Mutex,
+    time::Duration,
+};
 
 pub use ed25519_dalek::{Signature, PUBLIC_KEY_LENGTH};
 use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
@@ -411,8 +413,7 @@ impl TryFrom<&[u8]> for SecretKey {
 
 #[cfg(test)]
 mod tests {
-    use iroh_test::assert_eq_hex;
-    use iroh_test::hexdump::parse_hexdump;
+    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
     use super::*;
 

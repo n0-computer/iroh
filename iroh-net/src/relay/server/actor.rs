@@ -2,35 +2,43 @@
 //!
 //! based on tailscale/derp/derp_server.go
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use anyhow::{bail, Context as _, Result};
 use hyper::HeaderMap;
-use iroh_metrics::core::UsageStatsReport;
-use iroh_metrics::{inc, inc_by, report_usage_stats};
+use iroh_metrics::{core::UsageStatsReport, inc, inc_by, report_usage_stats};
 use time::{Date, OffsetDateTime};
 use tokio::sync::mpsc;
 use tokio_tungstenite::WebSocketStream;
-use tokio_util::codec::Framed;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::AbortOnDropHandle;
+use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{info_span, trace, Instrument};
 use tungstenite::protocol::Role;
 
-use crate::defaults::timeouts::relay::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT;
-use crate::key::{PublicKey, SecretKey};
-use crate::relay::codec::{
-    recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
+use crate::{
+    defaults::timeouts::relay::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT,
+    key::{PublicKey, SecretKey},
+    relay::{
+        codec::{
+            recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+            SERVER_CHANNEL_SIZE,
+        },
+        http::Protocol,
+        server::{
+            client_conn::ClientConnBuilder,
+            clients::Clients,
+            metrics::Metrics,
+            streams::{MaybeTlsStream, RelayIo},
+            types::ServerMessage,
+        },
+    },
 };
-use crate::relay::http::Protocol;
-use crate::relay::server::client_conn::ClientConnBuilder;
-use crate::relay::server::clients::Clients;
-use crate::relay::server::metrics::Metrics;
-use crate::relay::server::streams::{MaybeTlsStream, RelayIo};
-use crate::relay::server::types::ServerMessage;
 
 // TODO: skipping `verboseDropKeys` for now
 
@@ -406,13 +414,16 @@ mod tests {
     use bytes::Bytes;
     use tokio::io::DuplexStream;
     use tokio_util::codec::{FramedRead, FramedWrite};
-    use tracing_subscriber::prelude::*;
-    use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
-    use crate::relay::client::conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage};
-    use crate::relay::client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter};
-    use crate::relay::codec::{recv_frame, ClientInfo, Frame, FrameType};
+    use crate::relay::{
+        client::{
+            conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
+            streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
+        },
+        codec::{recv_frame, ClientInfo, Frame, FrameType},
+    };
 
     fn test_client_builder(
         key: PublicKey,

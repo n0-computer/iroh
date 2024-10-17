@@ -1,16 +1,16 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-use std::env;
-use std::io::{BufRead, BufReader, Read};
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use std::{
+    env,
+    io::{BufRead, BufReader, Read},
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::blake3;
 use duct::{cmd, ReaderHandle};
-use iroh::base::ticket::BlobTicket;
-use iroh::blobs::Hash;
-use iroh::util::path::IrohPaths;
+use iroh::{base::ticket::BlobTicket, blobs::Hash, util::path::IrohPaths};
 use rand::{RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
@@ -295,8 +295,10 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
     use std::time::Duration;
 
     use iroh::blobs::store::ReadableStore;
-    use nix::sys::signal::{self, Signal};
-    use nix::unistd::Pid;
+    use nix::{
+        sys::signal::{self, Signal},
+        unistd::Pid,
+    };
 
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh_data_dir");

@@ -1,12 +1,13 @@
 //! Utility functions and types.
-use std::borrow::Borrow;
-use std::fmt;
-use std::io::{BufReader, Read};
-use std::sync::{Arc, Weak};
-use std::time::SystemTime;
+use std::{
+    borrow::Borrow,
+    fmt,
+    io::{BufReader, Read},
+    sync::{Arc, Weak},
+    time::SystemTime,
+};
 
-use bao_tree::io::outboard::PreOrderOutboard;
-use bao_tree::{BaoTree, ChunkRanges};
+use bao_tree::{io::outboard::PreOrderOutboard, BaoTree, ChunkRanges};
 use bytes::Bytes;
 use derive_more::{Debug, Display, From, Into};
 use range_collections::range_set::RangeSetRange;

@@ -2,11 +2,12 @@
 
 use redb::{Key, Range, ReadOnlyTable, ReadableTable, Value};
 
-use super::bounds::{ByKeyBounds, RecordsBounds};
-use super::into_entry;
-use super::tables::{RecordsByKeyId, RecordsId, RecordsValue};
-use crate::store::SortDirection;
-use crate::SignedEntry;
+use super::{
+    bounds::{ByKeyBounds, RecordsBounds},
+    into_entry,
+    tables::{RecordsByKeyId, RecordsId, RecordsValue},
+};
+use crate::{store::SortDirection, SignedEntry};
 
 /// An extension trait for [`Range`] that provides methods for mapped retrieval.
 pub trait RangeExt<K: Key, V: Value> {

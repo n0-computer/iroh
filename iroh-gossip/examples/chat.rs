@@ -1,7 +1,9 @@
-use std::collections::HashMap;
-use std::fmt;
-use std::net::{Ipv4Addr, SocketAddrV4};
-use std::str::FromStr;
+use std::{
+    collections::HashMap,
+    fmt,
+    net::{Ipv4Addr, SocketAddrV4},
+    str::FromStr,
+};
 
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
@@ -9,11 +11,15 @@ use clap::Parser;
 use ed25519_dalek::Signature;
 use futures_lite::StreamExt;
 use iroh_base::base32;
-use iroh_gossip::net::{Event, Gossip, GossipEvent, GossipReceiver, GOSSIP_ALPN};
-use iroh_gossip::proto::TopicId;
-use iroh_net::key::{PublicKey, SecretKey};
-use iroh_net::relay::{RelayMap, RelayMode, RelayUrl};
-use iroh_net::{Endpoint, NodeAddr};
+use iroh_gossip::{
+    net::{Event, Gossip, GossipEvent, GossipReceiver, GOSSIP_ALPN},
+    proto::TopicId,
+};
+use iroh_net::{
+    key::{PublicKey, SecretKey},
+    relay::{RelayMap, RelayMode, RelayUrl},
+    Endpoint, NodeAddr,
+};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 

@@ -1,7 +1,9 @@
-use std::fmt::Debug;
-use std::io;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    fmt::Debug,
+    io,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::{anyhow, Result};
 use futures_buffered::BufferedStreamExt;
@@ -9,58 +11,68 @@ use futures_lite::{Stream, StreamExt};
 use futures_util::FutureExt;
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::{RpcError, RpcResult};
-use iroh_blobs::export::ExportProgress;
-use iroh_blobs::format::collection::Collection;
-use iroh_blobs::get::db::DownloadProgress;
-use iroh_blobs::provider::{AddProgress, BatchAddPathProgress};
-use iroh_blobs::store::{
-    ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry, Store as BaoStore,
-    ValidateProgress,
+use iroh_blobs::{
+    export::ExportProgress,
+    format::collection::Collection,
+    get::db::DownloadProgress,
+    provider::{AddProgress, BatchAddPathProgress},
+    store::{
+        ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry, Store as BaoStore,
+        ValidateProgress,
+    },
+    util::{
+        local_pool::LocalPoolHandle,
+        progress::{AsyncChannelProgressSender, ProgressSender},
+        SetTagOption,
+    },
+    BlobFormat, HashAndFormat, Tag,
 };
-use iroh_blobs::util::local_pool::LocalPoolHandle;
-use iroh_blobs::util::progress::{AsyncChannelProgressSender, ProgressSender};
-use iroh_blobs::util::SetTagOption;
-use iroh_blobs::{BlobFormat, HashAndFormat, Tag};
 use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
-use iroh_net::relay::RelayUrl;
-use iroh_net::{NodeAddr, NodeId};
+use iroh_net::{relay::RelayUrl, NodeAddr, NodeId};
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::task::JoinSet;
 use tokio_util::either::Either;
 use tracing::{debug, info, warn};
 
-use super::protocol::ProtocolMap;
-use super::IrohServerEndpoint;
-use crate::client::blobs::{BlobInfo, BlobStatus, IncompleteBlobInfo, WrapOption};
-use crate::client::tags::TagInfo;
-use crate::client::NodeStatus;
-use crate::node::docs::DocsEngine;
-use crate::node::protocol::BlobsProtocol;
-use crate::node::NodeInner;
-use crate::rpc_protocol::blobs::{
-    AddPathRequest, AddPathResponse, AddStreamRequest, AddStreamResponse, AddStreamUpdate,
-    BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest, BatchAddStreamResponse,
-    BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse, BatchCreateTempTagRequest,
-    BatchUpdate, BlobStatusRequest, BlobStatusResponse, ConsistencyCheckRequest,
-    CreateCollectionRequest, CreateCollectionResponse, DeleteRequest,
-    DownloadRequest as BlobDownloadRequest, DownloadResponse, ExportRequest, ExportResponse,
-    ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse, ValidateRequest,
+use super::{protocol::ProtocolMap, IrohServerEndpoint};
+use crate::{
+    client::{
+        blobs::{BlobInfo, BlobStatus, IncompleteBlobInfo, WrapOption},
+        tags::TagInfo,
+        NodeStatus,
+    },
+    node::{docs::DocsEngine, protocol::BlobsProtocol, NodeInner},
+    rpc_protocol::{
+        authors, blobs,
+        blobs::{
+            AddPathRequest, AddPathResponse, AddStreamRequest, AddStreamResponse, AddStreamUpdate,
+            BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest,
+            BatchAddStreamResponse, BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
+            BatchCreateTempTagRequest, BatchUpdate, BlobStatusRequest, BlobStatusResponse,
+            ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse,
+            DeleteRequest, DownloadRequest as BlobDownloadRequest, DownloadResponse, ExportRequest,
+            ExportResponse, ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse,
+            ValidateRequest,
+        },
+        docs::{
+            ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,
+            Request as DocsRequest, SetHashRequest,
+        },
+        gossip, net,
+        net::{
+            AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest,
+            RemoteInfoRequest, RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse,
+            WatchResponse,
+        },
+        node,
+        node::{ShutdownRequest, StatsRequest, StatsResponse, StatusRequest},
+        tags,
+        tags::{DeleteRequest as TagDeleteRequest, ListRequest as ListTagsRequest, SyncMode},
+        Request, RpcService,
+    },
 };
-use crate::rpc_protocol::docs::{
-    ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,
-    Request as DocsRequest, SetHashRequest,
-};
-use crate::rpc_protocol::net::{
-    AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest, RemoteInfoRequest,
-    RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse, WatchResponse,
-};
-use crate::rpc_protocol::node::{ShutdownRequest, StatsRequest, StatsResponse, StatusRequest};
-use crate::rpc_protocol::tags::{
-    DeleteRequest as TagDeleteRequest, ListRequest as ListTagsRequest, SyncMode,
-};
-use crate::rpc_protocol::{authors, blobs, gossip, net, node, tags, Request, RpcService};
 
 mod docs;
 

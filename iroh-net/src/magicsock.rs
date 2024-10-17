@@ -15,15 +15,19 @@
 //! from responding to any hole punching attempts. This node will still,
 //! however, read any packets that come off the UDP sockets.
 
-use std::collections::{BTreeMap, HashMap};
-use std::fmt::Display;
-use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::task::{Context, Poll, Waker};
-use std::time::{Duration, Instant};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::Display,
+    io,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
+        Arc,
+    },
+    task::{Context, Poll, Waker},
+    time::{Duration, Instant},
+};
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
@@ -32,12 +36,13 @@ use futures_util::stream::BoxStream;
 use iroh_base::key::NodeId;
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
-use rand::seq::SliceRandom;
-use rand::{Rng, SeedableRng};
+use rand::{seq::SliceRandom, Rng, SeedableRng};
 use smallvec::{smallvec, SmallVec};
-use tokio::sync::{self, mpsc, Mutex};
-use tokio::task::JoinSet;
-use tokio::time;
+use tokio::{
+    sync::{self, mpsc, Mutex},
+    task::JoinSet,
+    time,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
@@ -46,20 +51,24 @@ use tracing::{
 use url::Url;
 use watchable::Watchable;
 
-use self::metrics::Metrics as MagicsockMetrics;
-use self::node_map::{NodeMap, PingAction, PingRole, SendPing};
-use self::relay_actor::{RelayActor, RelayActorMessage, RelayReadResult};
-use self::udp_conn::UdpConn;
-use crate::defaults::timeouts::NETCHECK_REPORT_TIMEOUT;
-use crate::disco::{self, CallMeMaybe, SendAddr};
-use crate::discovery::{Discovery, DiscoveryItem};
-use crate::dns::DnsResolver;
-use crate::endpoint::NodeAddr;
-use crate::key::{PublicKey, SecretKey, SharedSecret};
-use crate::net::ip::LocalAddresses;
-use crate::net::{interfaces, netmon};
-use crate::relay::{RelayMap, RelayUrl};
-use crate::{netcheck, portmapper, stun, AddrInfo};
+use self::{
+    metrics::Metrics as MagicsockMetrics,
+    node_map::{NodeMap, PingAction, PingRole, SendPing},
+    relay_actor::{RelayActor, RelayActorMessage, RelayReadResult},
+    udp_conn::UdpConn,
+};
+use crate::{
+    defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
+    disco::{self, CallMeMaybe, SendAddr},
+    discovery::{Discovery, DiscoveryItem},
+    dns::DnsResolver,
+    endpoint::NodeAddr,
+    key::{PublicKey, SecretKey, SharedSecret},
+    net::{interfaces, ip::LocalAddresses, netmon},
+    netcheck, portmapper,
+    relay::{RelayMap, RelayUrl},
+    stun, AddrInfo,
+};
 
 mod metrics;
 mod node_map;
@@ -69,11 +78,11 @@ mod udp_conn;
 
 pub use node_map::Source;
 
-pub use self::metrics::Metrics;
-pub use self::node_map::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo,
-};
 pub(super) use self::timer::Timer;
+pub use self::{
+    metrics::Metrics,
+    node_map::{ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo},
+};
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
@@ -2821,9 +2830,7 @@ mod tests {
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
-    use crate::defaults::staging::EU_RELAY_HOSTNAME;
-    use crate::relay::RelayMode;
-    use crate::{tls, Endpoint};
+    use crate::{defaults::staging::EU_RELAY_HOSTNAME, relay::RelayMode, tls, Endpoint};
 
     const ALPN: &[u8] = b"n0/test/1";
 

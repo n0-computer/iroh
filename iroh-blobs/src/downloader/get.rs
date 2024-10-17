@@ -5,11 +5,11 @@
 use futures_lite::FutureExt;
 use iroh_net::endpoint;
 
-use super::progress::BroadcastProgressSender;
-use super::{DownloadKind, FailureAction, GetStartFut, Getter};
-use crate::get::db::get_to_db_in_steps;
-use crate::get::error::GetError;
-use crate::store::Store;
+use super::{progress::BroadcastProgressSender, DownloadKind, FailureAction, GetStartFut, Getter};
+use crate::{
+    get::{db::get_to_db_in_steps, error::GetError},
+    store::Store,
+};
 
 impl From<GetError> for FailureAction {
     fn from(e: GetError) -> Self {

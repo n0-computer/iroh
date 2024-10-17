@@ -1,15 +1,18 @@
 //! Simulation framework for testing the protocol implementation
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::time::{Duration, Instant};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    time::{Duration, Instant},
+};
 
 use bytes::Bytes;
 use rand::Rng;
 use rand_core::SeedableRng;
 use tracing::{debug, warn};
 
-use super::util::TimerMap;
-use super::{Command, Config, Event, InEvent, OutEvent, PeerIdentity, State, Timer, TopicId};
+use super::{
+    util::TimerMap, Command, Config, Event, InEvent, OutEvent, PeerIdentity, State, Timer, TopicId,
+};
 use crate::proto::Scope;
 
 const TICK_DURATION: Duration = Duration::from_millis(10);

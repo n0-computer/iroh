@@ -1,18 +1,20 @@
 //! Type declarations and utility functions for an RPC client to an iroh node running in a separate process.
 
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::path::Path;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    path::Path,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{bail, Context};
-use quic_rpc::transport::boxed::Connection as BoxedConnection;
-use quic_rpc::transport::quinn::QuinnConnection;
+use quic_rpc::transport::{boxed::Connection as BoxedConnection, quinn::QuinnConnection};
 
 use super::{Iroh, RpcClient};
-use crate::node::RpcStatus;
-use crate::rpc_protocol::node::StatusRequest;
-use crate::rpc_protocol::RpcService;
+use crate::{
+    node::RpcStatus,
+    rpc_protocol::{node::StatusRequest, RpcService},
+};
 
 /// ALPN used by irohs RPC mechanism.
 // TODO: Change to "/iroh-rpc/1"

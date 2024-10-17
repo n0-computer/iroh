@@ -1,34 +1,41 @@
 //! Implementation of a DNS name server for iroh node announces
 
-use std::collections::BTreeMap;
-use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    collections::BTreeMap,
+    io,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
-use hickory_server::authority::{Catalog, MessageResponse, ZoneType};
-use hickory_server::proto::rr::rdata::{self};
-use hickory_server::proto::rr::{RData, Record, RecordSet, RecordType, RrKey};
-use hickory_server::proto::serialize::binary::BinEncoder;
-use hickory_server::proto::serialize::txt::RDataParser;
-use hickory_server::proto::{self};
-use hickory_server::resolver::Name;
-use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
-use hickory_server::store::in_memory::InMemoryAuthority;
+use hickory_server::{
+    authority::{Catalog, MessageResponse, ZoneType},
+    proto::{
+        rr::{
+            rdata::{self},
+            RData, Record, RecordSet, RecordType, RrKey,
+        },
+        serialize::{binary::BinEncoder, txt::RDataParser},
+        {self},
+    },
+    resolver::Name,
+    server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
+    store::in_memory::InMemoryAuthority,
+};
 use iroh_metrics::inc;
-use proto::op::ResponseCode;
-use proto::rr::LowerName;
+use proto::{op::ResponseCode, rr::LowerName};
 use serde::{Deserialize, Serialize};
-use tokio::net::{TcpListener, UdpSocket};
-use tokio::sync::broadcast;
+use tokio::{
+    net::{TcpListener, UdpSocket},
+    sync::broadcast,
+};
 use tracing::{debug, info};
 
 use self::node_authority::NodeAuthority;
-use crate::metrics::Metrics;
-use crate::store::ZoneStore;
+use crate::{metrics::Metrics, store::ZoneStore};
 
 mod node_authority;
 

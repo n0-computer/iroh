@@ -1,15 +1,16 @@
 //! Holds the current mapping value and ensures that any change is reported accordingly.
 
-use std::future::Future;
-use std::net::{Ipv4Addr, SocketAddrV4};
-use std::num::NonZeroU16;
-use std::pin::Pin;
-use std::task::Poll;
-use std::time::Duration;
+use std::{
+    future::Future,
+    net::{Ipv4Addr, SocketAddrV4},
+    num::NonZeroU16,
+    pin::Pin,
+    task::Poll,
+    time::Duration,
+};
 
 use iroh_metrics::inc;
-use tokio::sync::watch;
-use tokio::time;
+use tokio::{sync::watch, time};
 use tracing::{debug, trace};
 
 /// This is an implementation detail to facilitate testing.

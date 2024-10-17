@@ -1,10 +1,12 @@
 //! This contains an actor spawned on a separate thread to process replica and store operations.
 
-use std::collections::{hash_map, HashMap};
-use std::num::NonZeroU64;
-use std::sync::Arc;
-use std::thread::JoinHandle;
-use std::time::Duration;
+use std::{
+    collections::{hash_map, HashMap},
+    num::NonZeroU64,
+    sync::Arc,
+    thread::JoinHandle,
+    time::Duration,
+};
 
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
@@ -12,15 +14,16 @@ use futures_util::FutureExt;
 use iroh_base::hash::Hash;
 use iroh_metrics::inc;
 use serde::{Deserialize, Serialize};
-use tokio::sync::oneshot;
-use tokio::task::JoinSet;
+use tokio::{sync::oneshot, task::JoinSet};
 use tracing::{debug, error, error_span, trace, warn};
 
-use crate::metrics::Metrics;
-use crate::ranger::Message;
-use crate::store::fs::{ContentHashesIterator, StoreInstance};
-use crate::store::{DownloadPolicy, ImportNamespaceOutcome, Query, Store};
 use crate::{
+    metrics::Metrics,
+    ranger::Message,
+    store::{
+        fs::{ContentHashesIterator, StoreInstance},
+        DownloadPolicy, ImportNamespaceOutcome, Query, Store,
+    },
     Author, AuthorHeads, AuthorId, Capability, CapabilityKind, ContentStatus,
     ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, ReplicaInfo,
     SignedEntry, SyncOutcome,

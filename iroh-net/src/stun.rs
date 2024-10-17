@@ -2,12 +2,13 @@
 
 use std::net::SocketAddr;
 
-use stun_rs::attributes::stun::{Fingerprint, XorMappedAddress};
-pub use stun_rs::attributes::StunAttribute;
-pub use stun_rs::error::StunDecodeError;
-pub use stun_rs::{methods, MessageClass, MessageDecoder, TransactionId};
 use stun_rs::{
+    attributes::stun::{Fingerprint, XorMappedAddress},
     DecoderContextBuilder, MessageDecoderBuilder, MessageEncoderBuilder, StunMessageBuilder,
+};
+pub use stun_rs::{
+    attributes::StunAttribute, error::StunDecodeError, methods, MessageClass, MessageDecoder,
+    TransactionId,
 };
 
 /// Errors that can occur when handling a STUN packet.
@@ -148,17 +149,23 @@ pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), Error> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
-    use std::sync::Arc;
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        sync::Arc,
+    };
 
     use anyhow::Result;
-    use tokio::net;
-    use tokio::sync::{oneshot, Mutex};
+    use tokio::{
+        net,
+        sync::{oneshot, Mutex},
+    };
     use tracing::{debug, trace};
 
     use super::*;
-    use crate::relay::{RelayMap, RelayNode, RelayUrl};
-    use crate::test_utils::CleanupDropGuard;
+    use crate::{
+        relay::{RelayMap, RelayNode, RelayUrl},
+        test_utils::CleanupDropGuard,
+    };
 
     // TODO: make all this private
 

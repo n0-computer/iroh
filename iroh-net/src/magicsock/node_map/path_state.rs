@@ -1,17 +1,19 @@
 //! The state kept for each network path to a remote node.
 
-use std::collections::{BTreeMap, HashMap};
-use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::{
+    collections::{BTreeMap, HashMap},
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 use iroh_base::key::NodeId;
 use tracing::{debug, event, Level};
 
-use super::node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT};
-use super::{IpPort, PingRole, Source};
-use crate::disco::SendAddr;
-use crate::magicsock::HEARTBEAT_INTERVAL;
-use crate::stun;
+use super::{
+    node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
+    IpPort, PingRole, Source,
+};
+use crate::{disco::SendAddr, magicsock::HEARTBEAT_INTERVAL, stun};
 
 /// The minimum time between pings to an endpoint.
 ///

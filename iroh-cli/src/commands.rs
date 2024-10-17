@@ -1,13 +1,17 @@
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{ensure, Context, Result};
 use clap::Parser;
 use iroh::client::Iroh;
 
-use self::blobs::{BlobAddOptions, BlobSource};
-use self::rpc::RpcCommands;
-use self::start::RunType;
+use self::{
+    blobs::{BlobAddOptions, BlobSource},
+    rpc::RpcCommands,
+    start::RunType,
+};
 use crate::config::{ConsoleEnv, NodeConfig};
 
 pub(crate) mod authors;

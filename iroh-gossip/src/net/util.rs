@@ -1,13 +1,13 @@
 //! Utilities for iroh-gossip networking
 
-use std::io;
-use std::pin::Pin;
-use std::time::Instant;
+use std::{io, pin::Pin, time::Instant};
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::time::{sleep_until, Sleep};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    time::{sleep_until, Sleep},
+};
 
 use super::ProtoMessage;
 use crate::proto::util::TimerMap;

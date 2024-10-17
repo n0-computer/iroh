@@ -1,17 +1,18 @@
 #![allow(unused_imports)]
 
-use std::future::Future;
-use std::net::{Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
+use std::{
+    future::Future,
+    net::{Ipv4Addr, SocketAddr},
+    path::PathBuf,
+};
 
 use anyhow::Result;
-use axum::routing::get;
-use axum::Router;
+use axum::{routing::get, Router};
 use clap::Parser;
 use futures_lite::FutureExt;
-use iroh_dns_server::config::Config;
-use iroh_dns_server::metrics::init_metrics;
-use iroh_dns_server::server::run_with_config_until_ctrl_c;
+use iroh_dns_server::{
+    config::Config, metrics::init_metrics, server::run_with_config_until_ctrl_c,
+};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, error_span, Instrument, Span};

@@ -14,9 +14,8 @@ pub use crate::rpc_protocol::RpcService;
 
 mod quic;
 
-pub use self::docs::Doc;
-pub use self::net::NodeStatus;
 pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
+pub use self::{docs::Doc, net::NodeStatus};
 
 pub mod authors;
 pub mod blobs;

@@ -4,13 +4,14 @@
 use std::collections::{HashMap, HashSet};
 
 use iroh_metrics::inc;
-use tokio::sync::mpsc;
-use tokio::task::JoinSet;
+use tokio::{sync::mpsc, task::JoinSet};
 use tracing::{Instrument, Span};
 
-use super::client_conn::{ClientConnBuilder, ClientConnManager};
-use super::metrics::Metrics;
-use super::types::Packet;
+use super::{
+    client_conn::{ClientConnBuilder, ClientConnManager},
+    metrics::Metrics,
+    types::Packet,
+};
 use crate::key::PublicKey;
 
 /// Number of times we try to send to a client connection before dropping the data;
@@ -259,9 +260,13 @@ mod tests {
     use tokio_util::codec::{Framed, FramedRead};
 
     use super::*;
-    use crate::key::SecretKey;
-    use crate::relay::codec::{recv_frame, DerpCodec, Frame, FrameType};
-    use crate::relay::server::streams::{MaybeTlsStream, RelayIo};
+    use crate::{
+        key::SecretKey,
+        relay::{
+            codec::{recv_frame, DerpCodec, Frame, FrameType},
+            server::streams::{MaybeTlsStream, RelayIo},
+        },
+    };
 
     fn test_client_builder(
         key: PublicKey,

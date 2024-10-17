@@ -1,17 +1,19 @@
 //! A full in memory database for iroh-blobs
 //!
 //! Main entry point is [Store].
-use std::collections::{BTreeMap, BTreeSet};
-use std::future::Future;
-use std::io;
-use std::path::PathBuf;
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::time::SystemTime;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+    io,
+    path::PathBuf,
+    sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    time::SystemTime,
+};
 
-use bao_tree::io::fsm::Outboard;
-use bao_tree::io::outboard::PreOrderOutboard;
-use bao_tree::io::sync::WriteAt;
-use bao_tree::BaoTree;
+use bao_tree::{
+    io::{fsm::Outboard, outboard::PreOrderOutboard, sync::WriteAt},
+    BaoTree,
+};
 use bytes::{Bytes, BytesMut};
 use futures_lite::{Stream, StreamExt};
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
@@ -21,13 +23,16 @@ use super::{
     temp_name, BaoBatchWriter, ConsistencyCheckProgress, ExportMode, ExportProgressCb, ImportMode,
     ImportProgress, Map, TempCounterMap,
 };
-use crate::store::mutable_mem_storage::MutableMemStorage;
-use crate::store::{BaoBlobSize, MapEntry, MapEntryMut, ReadableStore};
-use crate::util::progress::{
-    BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSender,
+use crate::{
+    store::{
+        mutable_mem_storage::MutableMemStorage, BaoBlobSize, MapEntry, MapEntryMut, ReadableStore,
+    },
+    util::{
+        progress::{BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSender},
+        TagCounter, TagDrop,
+    },
+    Tag, TempTag, IROH_BLOCK_SIZE,
 };
-use crate::util::{TagCounter, TagDrop};
-use crate::{Tag, TempTag, IROH_BLOCK_SIZE};
 
 /// A fully featured in memory database for iroh-blobs, including support for
 /// partial blobs.

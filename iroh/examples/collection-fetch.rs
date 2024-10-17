@@ -3,14 +3,11 @@
 //!
 //! This is using an in memory database and a random node id.
 //! Run the `collection-provide` example, which will give you instructions on how to run this example.
-use std::env;
-use std::str::FromStr;
+use std::{env, str::FromStr};
 
 use anyhow::{bail, ensure, Context, Result};
-use iroh::base::ticket::BlobTicket;
-use iroh::blobs::BlobFormat;
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::EnvFilter;
+use iroh::{base::ticket::BlobTicket, blobs::BlobFormat};
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
 pub fn setup_logging() {

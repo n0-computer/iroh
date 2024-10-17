@@ -78,8 +78,7 @@ pub(super) async fn store_node_addrs<P: AsRef<Path>>(
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
-    use iroh_net::key::SecretKey;
-    use iroh_net::relay::RelayUrl;
+    use iroh_net::{key::SecretKey, relay::RelayUrl};
 
     use super::*;
 

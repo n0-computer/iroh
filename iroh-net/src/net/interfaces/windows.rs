@@ -2,8 +2,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 use tracing::warn;
-use wmi::query::FilterValue;
-use wmi::{COMLibrary, WMIConnection};
+use wmi::{query::FilterValue, COMLibrary, WMIConnection};
 
 use super::DefaultRouteDetails;
 

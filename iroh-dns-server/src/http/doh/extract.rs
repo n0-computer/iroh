@@ -3,22 +3,27 @@
 // This module is mostly copied from
 // https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-server/src/extract/doh.rs
 
-use std::fmt::{self, Display, Formatter};
-use std::net::SocketAddr;
-use std::str::FromStr;
+use std::{
+    fmt::{self, Display, Formatter},
+    net::SocketAddr,
+    str::FromStr,
+};
 
 use async_trait::async_trait;
-use axum::extract::{ConnectInfo, FromRequest, FromRequestParts, Query};
-use axum::http::Request;
-use bytes::Bytes;
-use hickory_server::authority::MessageRequest;
-use hickory_server::proto::serialize::binary::{
-    BinDecodable, BinDecoder, BinEncodable, BinEncoder,
+use axum::{
+    extract::{ConnectInfo, FromRequest, FromRequestParts, Query},
+    http::Request,
 };
-use hickory_server::proto::{self};
-use hickory_server::server::{Protocol, Request as DNSRequest};
-use http::request::Parts;
-use http::{header, HeaderValue, StatusCode};
+use bytes::Bytes;
+use hickory_server::{
+    authority::MessageRequest,
+    proto::{
+        serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
+        {self},
+    },
+    server::{Protocol, Request as DNSRequest},
+};
+use http::{header, request::Parts, HeaderValue, StatusCode};
 use serde::Deserialize;
 use tracing::info;
 

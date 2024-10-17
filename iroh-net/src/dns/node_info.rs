@@ -32,19 +32,20 @@
 //! [`N0_DNS_NODE_ORIGIN_PROD`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN_PROD
 //! [`N0_DNS_NODE_ORIGIN_STAGING`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN_STAGING
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Display;
-use std::hash::Hash;
-use std::net::SocketAddr;
-use std::str::FromStr;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Display,
+    hash::Hash,
+    net::SocketAddr,
+    str::FromStr,
+};
 
 use anyhow::{anyhow, ensure, Result};
 use hickory_proto::error::ProtoError;
 use hickory_resolver::{Name, TokioAsyncResolver};
 use url::Url;
 
-use crate::key::SecretKey;
-use crate::{AddrInfo, NodeAddr, NodeId};
+use crate::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
@@ -297,8 +298,10 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 
     /// Parses a [`pkarr::SignedPacket`].
     pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
-        use pkarr::dns::rdata::RData;
-        use pkarr::dns::{self};
+        use pkarr::dns::{
+            rdata::RData,
+            {self},
+        };
         let pubkey = packet.public_key();
         let pubkey_z32 = pubkey.to_z32();
         let node_id = NodeId::from(*pubkey.verifying_key());

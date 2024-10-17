@@ -354,8 +354,7 @@ impl<'a> Iterator for NonEmptyRequestRangeSpecIter<'a> {
 mod tests {
     use std::ops::Range;
 
-    use iroh_test::assert_eq_hex;
-    use iroh_test::hexdump::parse_hexdump;
+    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
     use proptest::prelude::*;
 
     use super::*;

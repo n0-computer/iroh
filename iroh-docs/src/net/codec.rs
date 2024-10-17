@@ -10,9 +10,11 @@ use tokio_stream::StreamExt;
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
 use tracing::{debug, trace, Span};
 
-use crate::actor::SyncHandle;
-use crate::net::{AbortReason, AcceptError, AcceptOutcome, ConnectError};
-use crate::{NamespaceId, SyncOutcome};
+use crate::{
+    actor::SyncHandle,
+    net::{AbortReason, AcceptError, AcceptOutcome, ConnectError},
+    NamespaceId, SyncOutcome,
+};
 
 #[derive(Debug, Default)]
 struct SyncCodec;
@@ -297,9 +299,11 @@ mod tests {
     use rand_core::{CryptoRngCore, SeedableRng};
 
     use super::*;
-    use crate::actor::OpenOpts;
-    use crate::store::{self, Query, Store};
-    use crate::{AuthorId, NamespaceSecret};
+    use crate::{
+        actor::OpenOpts,
+        store::{self, Query, Store},
+        AuthorId, NamespaceSecret,
+    };
 
     #[tokio::test]
     async fn test_sync_simple() -> Result<()> {

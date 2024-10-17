@@ -5,10 +5,10 @@
 //! This is an async, non-determinate process, so the number of NodeIDs discovered each time may be different. If you have other iroh endpoints or iroh nodes with [`LocalSwarmDiscovery`] enabled, it may discover those nodes as well.
 use std::time::Duration;
 
-use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
-use iroh_net::endpoint::Source;
-use iroh_net::key::SecretKey;
-use iroh_net::Endpoint;
+use iroh_net::{
+    discovery::local_swarm_discovery::LocalSwarmDiscovery, endpoint::Source, key::SecretKey,
+    Endpoint,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

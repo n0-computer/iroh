@@ -1,30 +1,37 @@
-use std::io;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::{
+    io,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use futures_buffered::BufferedStreamExt;
 use futures_lite::StreamExt;
-use futures_util::sink::Buffer;
-use futures_util::{FutureExt, SinkExt, Stream};
-use iroh_blobs::format::collection::Collection;
-use iroh_blobs::provider::BatchAddPathProgress;
-use iroh_blobs::store::ImportMode;
-use iroh_blobs::util::{SetTagOption, TagDrop};
-use iroh_blobs::{BlobFormat, HashAndFormat, Tag, TempTag};
+use futures_util::{sink::Buffer, FutureExt, SinkExt, Stream};
+use iroh_blobs::{
+    format::collection::Collection,
+    provider::BatchAddPathProgress,
+    store::ImportMode,
+    util::{SetTagOption, TagDrop},
+    BlobFormat, HashAndFormat, Tag, TempTag,
+};
 use quic_rpc::client::UpdateSink;
 use tokio::io::AsyncRead;
 use tokio_util::io::ReaderStream;
 use tracing::{debug, warn};
 
 use super::WrapOption;
-use crate::client::{RpcClient, RpcConnection, RpcService};
-use crate::rpc_protocol::blobs::{
-    BatchAddPathRequest, BatchAddStreamRequest, BatchAddStreamResponse, BatchAddStreamUpdate,
-    BatchCreateTempTagRequest, BatchId, BatchUpdate,
+use crate::{
+    client::{RpcClient, RpcConnection, RpcService},
+    rpc_protocol::{
+        blobs::{
+            BatchAddPathRequest, BatchAddStreamRequest, BatchAddStreamResponse,
+            BatchAddStreamUpdate, BatchCreateTempTagRequest, BatchId, BatchUpdate,
+        },
+        tags::{self, SyncMode},
+    },
 };
-use crate::rpc_protocol::tags::{self, SyncMode};
 
 /// A scope in which blobs can be added.
 #[derive(derive_more::Debug)]

@@ -3,13 +3,14 @@ use std::collections::BTreeSet;
 
 use redb::ReadableTable;
 
-use super::tables::Tables;
 use super::{
-    raw_outboard_size, ActorResult, ActorState, DataLocation, EntryState, Hash, OutboardLocation,
+    raw_outboard_size, tables::Tables, ActorResult, ActorState, DataLocation, EntryState, Hash,
+    OutboardLocation,
 };
-use crate::store::fs::tables::BaoFilePart;
-use crate::store::{ConsistencyCheckProgress, ReportLevel};
-use crate::util::progress::BoxedProgressSender;
+use crate::{
+    store::{fs::tables::BaoFilePart, ConsistencyCheckProgress, ReportLevel},
+    util::progress::BoxedProgressSender,
+};
 
 impl ActorState {
     //! This performs a full consistency check. Eventually it will also validate

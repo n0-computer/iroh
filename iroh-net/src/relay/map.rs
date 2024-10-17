@@ -1,8 +1,6 @@
 //! based on tailscale/tailcfg/derpmap.go
 
-use std::collections::BTreeMap;
-use std::fmt;
-use std::sync::Arc;
+use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};

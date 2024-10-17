@@ -1,15 +1,19 @@
 //! Define commands to manage the start of the iroh node.
 
-use std::future::Future;
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::{
+    future::Future,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::Result;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use iroh::net::relay::{RelayMap, RelayMode};
-use iroh::node::{Node, RpcStatus, DEFAULT_RPC_ADDR};
+use iroh::{
+    net::relay::{RelayMap, RelayMode},
+    node::{Node, RpcStatus, DEFAULT_RPC_ADDR},
+};
 use tracing::{info_span, trace, Instrument};
 
 use crate::config::NodeConfig;

@@ -45,12 +45,10 @@
 //! [hyparview]: https://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf
 //! [plumtree]: https://asc.di.fct.unl.pt/~jleitao/pdf/srds07-leitao.pdf
 
-use std::fmt;
-use std::hash::Hash;
+use std::{fmt, hash::Hash};
 
 use bytes::Bytes;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 mod hyparview;
 mod plumtree;
@@ -120,18 +118,18 @@ impl<PI> From<(PI, Option<PeerData>)> for PeerInfo<PI> {
 #[cfg(test)]
 mod test {
 
-    use std::collections::HashSet;
-    use std::env;
-    use std::time::Instant;
+    use std::{collections::HashSet, env, time::Instant};
 
     use rand::SeedableRng;
 
     use super::{Command, Config, Event, State};
-    use crate::proto::tests::{
-        assert_synchronous_active, report_round_distribution, sort, Network, Simulator,
-        SimulatorConfig,
+    use crate::proto::{
+        tests::{
+            assert_synchronous_active, report_round_distribution, sort, Network, Simulator,
+            SimulatorConfig,
+        },
+        Scope, TopicId,
     };
-    use crate::proto::{Scope, TopicId};
 
     #[test]
     fn hyparview_smoke() {

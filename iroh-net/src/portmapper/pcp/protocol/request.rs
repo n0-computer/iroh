@@ -2,8 +2,10 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use super::opcode_data::{MapData, MapProtocol, OpcodeData};
-use super::Version;
+use super::{
+    opcode_data::{MapData, MapProtocol, OpcodeData},
+    Version,
+};
 
 /// A PCP Request.
 ///

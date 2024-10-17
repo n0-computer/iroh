@@ -1,27 +1,30 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
-use std::collections::BTreeSet;
-use std::future::Future;
-use std::io;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::{collections::BTreeSet, future::Future, io, path::PathBuf, time::Duration};
 
-use bao_tree::io::fsm::{BaoContentItem, Outboard};
-use bao_tree::{BaoTree, ChunkRanges};
+pub use bao_tree;
+use bao_tree::{
+    io::fsm::{BaoContentItem, Outboard},
+    BaoTree, ChunkRanges,
+};
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
 use iroh_io::AsyncSliceReader;
+pub use range_collections;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
-pub use {bao_tree, range_collections};
 
-use crate::hashseq::parse_hash_seq;
-use crate::protocol::RangeSpec;
-use crate::util::local_pool::{self, LocalPool};
-use crate::util::progress::{BoxedProgressSender, IdGenerator, ProgressSender};
-use crate::util::Tag;
-use crate::{BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE};
+use crate::{
+    hashseq::parse_hash_seq,
+    protocol::RangeSpec,
+    util::{
+        local_pool::{self, LocalPool},
+        progress::{BoxedProgressSender, IdGenerator, ProgressSender},
+        Tag,
+    },
+    BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
+};
 
 /// A fallible but owned iterator over the entries in a store.
 pub type DbIter<T> = Box<dyn Iterator<Item = io::Result<T>> + Send + Sync + 'static>;

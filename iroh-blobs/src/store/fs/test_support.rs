@@ -2,20 +2,23 @@
 //!
 //! For some tests we need to modify the state of the store in ways that are not
 //! possible through the public API. This module provides functions to do that.
-use std::io;
-use std::path::{Path, PathBuf};
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 
 use redb::ReadableTable;
 
-use super::tables::{ReadableTables, Tables};
 use super::{
+    tables::{ReadableTables, Tables},
     ActorError, ActorMessage, ActorResult, ActorState, DataLocation, EntryState, FilterPredicate,
     OutboardLocation, OuterResult, Store, StoreInner,
 };
-use crate::store::mutable_mem_storage::SizeInfo;
-use crate::store::DbIter;
-use crate::util::raw_outboard_size;
-use crate::Hash;
+use crate::{
+    store::{mutable_mem_storage::SizeInfo, DbIter},
+    util::raw_outboard_size,
+    Hash,
+};
 
 /// The full state of an entry, including the data.
 #[derive(derive_more::Debug)]

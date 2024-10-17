@@ -11,13 +11,15 @@
 //!
 //! [module docs]: crate
 
-use std::any::Any;
-use std::future::{Future, IntoFuture};
-use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::Poll;
-use std::time::Duration;
+use std::{
+    any::Any,
+    future::{Future, IntoFuture},
+    net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    pin::Pin,
+    sync::Arc,
+    task::Poll,
+    time::Duration,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
@@ -27,12 +29,14 @@ use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
-use crate::discovery::{Discovery, DiscoveryTask};
-use crate::dns::{default_resolver, DnsResolver};
-use crate::key::{PublicKey, SecretKey};
-use crate::magicsock::{self, Handle, QuicMappedAddr};
-use crate::relay::{RelayMode, RelayUrl};
-use crate::{tls, NodeId};
+use crate::{
+    discovery::{Discovery, DiscoveryTask},
+    dns::{default_resolver, DnsResolver},
+    key::{PublicKey, SecretKey},
+    magicsock::{self, Handle, QuicMappedAddr},
+    relay::{RelayMode, RelayUrl},
+    tls, NodeId,
+};
 
 mod rtt_actor;
 

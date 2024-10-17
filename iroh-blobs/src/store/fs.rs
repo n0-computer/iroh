@@ -63,15 +63,19 @@
 //!
 //! OuterError is an enum containing all the actor errors and in addition
 //! errors when communicating with the actor.
-use std::collections::{BTreeMap, BTreeSet};
-use std::future::Future;
-use std::io;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
-use std::time::{Duration, SystemTime};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+    io,
+    path::{Path, PathBuf},
+    sync::{Arc, RwLock},
+    time::{Duration, SystemTime},
+};
 
-use bao_tree::io::fsm::Outboard;
-use bao_tree::io::sync::{ReadAt, Size};
+use bao_tree::io::{
+    fsm::Outboard,
+    sync::{ReadAt, Size},
+};
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
@@ -94,23 +98,31 @@ mod validate;
 
 use tables::{ReadOnlyTables, ReadableTables, Tables};
 
-use self::tables::DeleteSet;
-use self::test_support::EntryData;
-use self::util::PeekableFlumeReceiver;
-use super::bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb};
+use self::{tables::DeleteSet, test_support::EntryData, util::PeekableFlumeReceiver};
 use super::{
+    bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
     temp_name, BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, EntryStatus, ExportMode,
     ExportProgressCb, ImportMode, ImportProgress, Map, ReadableStore, TempCounterMap,
 };
-use crate::store::bao_file::{BaoFileStorage, CompleteStorage};
-use crate::store::fs::tables::BaoFilePart;
-use crate::store::fs::util::{overwrite_and_sync, read_and_remove};
-use crate::store::{GcMarkEvent, GcSweepEvent};
-use crate::util::progress::{
-    BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSendError, ProgressSender,
+use crate::{
+    store::{
+        bao_file::{BaoFileStorage, CompleteStorage},
+        fs::{
+            tables::BaoFilePart,
+            util::{overwrite_and_sync, read_and_remove},
+        },
+        GcMarkEvent, GcSweepEvent,
+    },
+    util::{
+        compute_outboard,
+        progress::{
+            BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSendError,
+            ProgressSender,
+        },
+        raw_outboard_size, MemOrFile, TagCounter, TagDrop,
+    },
+    Tag, TempTag,
 };
-use crate::util::{compute_outboard, raw_outboard_size, MemOrFile, TagCounter, TagDrop};
-use crate::{Tag, TempTag};
 
 /// Location of the data.
 ///

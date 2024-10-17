@@ -1,7 +1,6 @@
 //! Implementation of [`super::Getter`] used for testing.
 
-use futures_lite::future::Boxed as BoxFuture;
-use futures_lite::FutureExt;
+use futures_lite::{future::Boxed as BoxFuture, FutureExt};
 use parking_lot::RwLock;
 
 use super::*;

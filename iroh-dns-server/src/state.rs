@@ -1,7 +1,6 @@
 //! Shared state and store for the iroh-dns-server
 
-use crate::dns::DnsHandler;
-use crate::store::ZoneStore;
+use crate::{dns::DnsHandler, store::ZoneStore};
 
 /// The shared app state.
 #[derive(Clone)]

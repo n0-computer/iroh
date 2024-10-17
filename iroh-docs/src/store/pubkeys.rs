@@ -1,5 +1,7 @@
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+};
 
 use ed25519_dalek::{SignatureError, VerifyingKey};
 

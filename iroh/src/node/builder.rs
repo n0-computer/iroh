@@ -1,46 +1,50 @@
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use futures_lite::StreamExt;
 use futures_util::{FutureExt as _, TryFutureExt as _};
 use iroh_base::key::SecretKey;
-use iroh_blobs::downloader::Downloader;
-use iroh_blobs::provider::EventSender;
-use iroh_blobs::store::{Map, Store as BaoStore};
-use iroh_blobs::util::local_pool::{self, LocalPool, LocalPoolHandle, PanicMode};
-use iroh_docs::engine::DefaultAuthorStorage;
-use iroh_docs::net::DOCS_ALPN;
+use iroh_blobs::{
+    downloader::Downloader,
+    provider::EventSender,
+    store::{Map, Store as BaoStore},
+    util::local_pool::{self, LocalPool, LocalPoolHandle, PanicMode},
+};
+use iroh_docs::{engine::DefaultAuthorStorage, net::DOCS_ALPN};
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-use iroh_net::discovery::dns::DnsDiscovery;
 #[cfg(not(test))]
 use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
-use iroh_net::discovery::pkarr::PkarrPublisher;
-use iroh_net::discovery::{ConcurrentDiscovery, Discovery};
-use iroh_net::dns::DnsResolver;
-use iroh_net::endpoint::TransportConfig;
-use iroh_net::relay::RelayMode;
-use iroh_net::Endpoint;
-use quic_rpc::transport::boxed::BoxableServerEndpoint;
-use quic_rpc::transport::quinn::QuinnServerEndpoint;
+use iroh_net::{
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
+    dns::DnsResolver,
+    endpoint::TransportConfig,
+    relay::RelayMode,
+    Endpoint,
+};
+use quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinError;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::AbortOnDropHandle;
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error_span, trace, Instrument};
 
-use super::docs::DocsEngine;
-use super::rpc_status::RpcStatus;
-use super::{IrohServerEndpoint, JoinErrToStr, Node, NodeInner};
-use crate::client::RPC_ALPN;
-use crate::node::nodes_storage::load_node_addrs;
-use crate::node::protocol::{BlobsProtocol, ProtocolMap};
-use crate::node::ProtocolHandler;
-use crate::rpc_protocol::RpcService;
-use crate::util::fs::load_secret_key;
-use crate::util::path::IrohPaths;
+use super::{
+    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
+};
+use crate::{
+    client::RPC_ALPN,
+    node::{
+        nodes_storage::load_node_addrs,
+        protocol::{BlobsProtocol, ProtocolMap},
+        ProtocolHandler,
+    },
+    rpc_protocol::RpcService,
+    util::{fs::load_secret_key, path::IrohPaths},
+};
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>

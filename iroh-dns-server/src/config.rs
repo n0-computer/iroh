@@ -1,15 +1,19 @@
 //! Configuration for the server
 
-use std::env;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::{
+    env,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::{Path, PathBuf},
+};
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::dns::DnsConfig;
-use crate::http::{CertMode, HttpConfig, HttpsConfig};
+use crate::{
+    dns::DnsConfig,
+    http::{CertMode, HttpConfig, HttpsConfig},
+};
 
 const DEFAULT_METRICS_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9117);
 

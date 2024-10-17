@@ -3,8 +3,7 @@
 use derive_more::Display;
 use num_enum::{IntoPrimitive, TryFromPrimitive, TryFromPrimitiveError};
 
-use super::opcode_data::OpcodeData;
-use super::{Opcode, Version};
+use super::{opcode_data::OpcodeData, Opcode, Version};
 
 /// ResultCode in a [`Response`] when it's successful.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive, IntoPrimitive)]

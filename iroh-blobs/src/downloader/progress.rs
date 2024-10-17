@@ -1,15 +1,18 @@
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
 use anyhow::anyhow;
 use parking_lot::Mutex;
 
 use super::DownloadKind;
-use crate::get::db::DownloadProgress;
-use crate::get::progress::TransferState;
-use crate::util::progress::{
-    AsyncChannelProgressSender, IdGenerator, ProgressSendError, ProgressSender,
+use crate::{
+    get::{db::DownloadProgress, progress::TransferState},
+    util::progress::{AsyncChannelProgressSender, IdGenerator, ProgressSendError, ProgressSender},
 };
 
 /// The channel that can be used to subscribe to progress updates.

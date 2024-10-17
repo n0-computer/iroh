@@ -7,8 +7,7 @@
 
 use std::sync::Arc;
 
-use der::asn1::OctetStringRef;
-use der::{Decode, Encode, Sequence};
+use der::{asn1::OctetStringRef, Decode, Encode, Sequence};
 use x509_parser::prelude::*;
 
 use crate::key::{PublicKey, SecretKey, Signature};

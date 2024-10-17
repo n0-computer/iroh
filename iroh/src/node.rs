@@ -35,35 +35,37 @@
 //! well, without going through [`client`](crate::client::Iroh))
 //!
 //! To shut down the node, call [`Node::shutdown`].
-use std::collections::BTreeSet;
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    collections::BTreeSet,
+    fmt::Debug,
+    marker::PhantomData,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
 use futures_util::future::{MapErr, Shared};
 use iroh_base::key::PublicKey;
-use iroh_blobs::protocol::Closed;
-use iroh_blobs::store::Store as BaoStore;
-use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
+use iroh_blobs::{
+    protocol::Closed,
+    store::Store as BaoStore,
+    util::local_pool::{LocalPool, LocalPoolHandle},
+};
 use iroh_docs::net::DOCS_ALPN;
-use iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
-use iroh_net::{AddrInfo, Endpoint, NodeAddr};
+use iroh_net::{
+    endpoint::{DirectAddrsStream, RemoteInfo},
+    AddrInfo, Endpoint, NodeAddr,
+};
 use protocol::BlobsProtocol;
-use quic_rpc::transport::ServerEndpoint as _;
-use quic_rpc::RpcServer;
+use quic_rpc::{transport::ServerEndpoint as _, RpcServer};
 use tokio::task::{JoinError, JoinSet};
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::AbortOnDropHandle;
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
-use crate::node::docs::DocsEngine;
-use crate::node::nodes_storage::store_node_addrs;
-use crate::node::protocol::ProtocolMap;
+use crate::node::{docs::DocsEngine, nodes_storage::store_node_addrs, protocol::ProtocolMap};
 
 mod builder;
 mod docs;
@@ -74,11 +76,13 @@ mod rpc_status;
 
 pub use protocol::ProtocolHandler;
 
-pub use self::builder::{
-    Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,
-    DEFAULT_RPC_ADDR,
+pub use self::{
+    builder::{
+        Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,
+        DEFAULT_RPC_ADDR,
+    },
+    rpc_status::RpcStatus,
 };
-pub use self::rpc_status::RpcStatus;
 
 /// How often to save node data.
 const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
@@ -545,13 +549,8 @@ mod tests {
     use anyhow::{bail, Context};
     use bytes::Bytes;
     use iroh_base::node_addr::AddrInfoOptions;
-    use iroh_blobs::provider::AddProgress;
-    use iroh_blobs::util::SetTagOption;
-    use iroh_blobs::BlobFormat;
-    use iroh_net::key::SecretKey;
-    use iroh_net::relay::RelayMode;
-    use iroh_net::test_utils::DnsPkarrServer;
-    use iroh_net::NodeAddr;
+    use iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
+    use iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
     use super::*;
     use crate::client::blobs::{AddOutcome, WrapOption};

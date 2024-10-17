@@ -35,19 +35,24 @@
 //!
 //! That's it! Follow along in the code below, we added a bunch of comments to explain things.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::Result;
 use clap::Parser;
 use futures_lite::future::Boxed as BoxedFuture;
-use iroh::blobs::Hash;
-use iroh::client::blobs;
-use iroh::net::endpoint::{get_remote_node_id, Connecting};
-use iroh::net::{Endpoint, NodeId};
-use iroh::node::ProtocolHandler;
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::EnvFilter;
+use iroh::{
+    blobs::Hash,
+    client::blobs,
+    net::{
+        endpoint::{get_remote_node_id, Connecting},
+        Endpoint, NodeId,
+    },
+    node::ProtocolHandler,
+};
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 #[derive(Debug, Parser)]
 pub struct Cli {

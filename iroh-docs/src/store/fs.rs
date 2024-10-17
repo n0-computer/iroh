@@ -1,11 +1,13 @@
 //! On disk storage for replicas.
 
-use std::cmp::Ordering;
-use std::collections::HashSet;
-use std::iter::{Chain, Flatten};
-use std::num::NonZeroU64;
-use std::ops::Bound;
-use std::path::Path;
+use std::{
+    cmp::Ordering,
+    collections::HashSet,
+    iter::{Chain, Flatten},
+    num::NonZeroU64,
+    ops::Bound,
+    path::Path,
+};
 
 use anyhow::{anyhow, Result};
 use ed25519_dalek::{SignatureError, VerifyingKey};
@@ -13,13 +15,15 @@ use iroh_base::hash::Hash;
 use rand_core::CryptoRngCore;
 use redb::{Database, DatabaseError, ReadableMultimapTable, ReadableTable, ReadableTableMetadata};
 
-use super::pubkeys::MemPublicKeyStore;
-use super::{DownloadPolicy, ImportNamespaceOutcome, OpenError, PublicKeyStore, Query};
-use crate::actor::MAX_COMMIT_DELAY;
-use crate::keys::Author;
-use crate::ranger::{Fingerprint, Range, RangeEntry};
-use crate::sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry};
+use super::{
+    pubkeys::MemPublicKeyStore, DownloadPolicy, ImportNamespaceOutcome, OpenError, PublicKeyStore,
+    Query,
+};
 use crate::{
+    actor::MAX_COMMIT_DELAY,
+    keys::Author,
+    ranger::{Fingerprint, Range, RangeEntry},
+    sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
     AuthorHeads, AuthorId, Capability, CapabilityKind, NamespaceId, NamespaceSecret, PeerIdBytes,
     ReplicaInfo,
 };
@@ -31,13 +35,15 @@ mod query;
 mod ranges;
 pub(crate) mod tables;
 
-use self::bounds::{ByKeyBounds, RecordsBounds};
-use self::query::QueryIterator;
-use self::ranges::RangeExt;
 pub use self::ranges::RecordsRange;
-use self::tables::{
-    LatestPerAuthorKey, LatestPerAuthorValue, ReadOnlyTables, RecordsId, RecordsTable,
-    RecordsValue, Tables, TransactionAndTables,
+use self::{
+    bounds::{ByKeyBounds, RecordsBounds},
+    query::QueryIterator,
+    ranges::RangeExt,
+    tables::{
+        LatestPerAuthorKey, LatestPerAuthorValue, ReadOnlyTables, RecordsId, RecordsTable,
+        RecordsValue, Tables, TransactionAndTables,
+    },
 };
 
 /// Manages the replicas and authors for an instance.
@@ -954,8 +960,7 @@ fn into_entry(key: RecordsId, value: RecordsValue) -> SignedEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::tables::LATEST_PER_AUTHOR_TABLE;
-    use super::*;
+    use super::{tables::LATEST_PER_AUTHOR_TABLE, *};
     use crate::ranger::Store as _;
 
     #[test]

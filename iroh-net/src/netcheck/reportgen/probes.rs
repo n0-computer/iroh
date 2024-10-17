@@ -4,16 +4,16 @@
 //! probes work and we also learn about our public IP addresses and ports.  But fallback
 //! probes for HTTPS and ICMP exist as well.
 
-use std::collections::BTreeSet;
-use std::fmt;
-use std::sync::Arc;
+use std::{collections::BTreeSet, fmt, sync::Arc};
 
 use anyhow::{ensure, Result};
 use tokio::time::Duration;
 
-use crate::net::interfaces;
-use crate::netcheck::Report;
-use crate::relay::{RelayMap, RelayNode, RelayUrl};
+use crate::{
+    net::interfaces,
+    netcheck::Report,
+    relay::{RelayMap, RelayNode, RelayUrl},
+};
 
 /// The retransmit interval used when netcheck first runs.
 ///
@@ -476,8 +476,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::defaults::staging::default_relay_map;
-    use crate::netcheck::RelayLatencies;
+    use crate::{defaults::staging::default_relay_map, netcheck::RelayLatencies};
 
     /// Shorthand which declares a new ProbeSet.
     ///

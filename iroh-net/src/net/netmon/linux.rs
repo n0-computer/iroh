@@ -1,15 +1,15 @@
-use std::collections::{HashMap, HashSet};
-use std::net::IpAddr;
+use std::{
+    collections::{HashMap, HashSet},
+    net::IpAddr,
+};
 
 use anyhow::Result;
 use futures_lite::StreamExt;
 use netlink_packet_core::NetlinkPayload;
-use netlink_packet_route::constants::*;
-use netlink_packet_route::{address, route, RtnlMessage};
+use netlink_packet_route::{address, constants::*, route, RtnlMessage};
 use netlink_sys::{AsyncSocket, SocketAddr};
 use rtnetlink::new_connection;
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{info, trace, warn};
 
 use super::actor::NetworkMessage;

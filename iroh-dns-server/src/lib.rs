@@ -16,17 +16,19 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
     use anyhow::Result;
-    use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig};
-    use hickory_resolver::AsyncResolver;
-    use iroh_net::discovery::pkarr::PkarrRelayClient;
-    use iroh_net::dns::node_info::NodeInfo;
-    use iroh_net::dns::{DnsResolver, ResolverExt};
-    use iroh_net::key::SecretKey;
+    use hickory_resolver::{
+        config::{NameServerConfig, Protocol, ResolverConfig},
+        AsyncResolver,
+    };
+    use iroh_net::{
+        discovery::pkarr::PkarrRelayClient,
+        dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
+        key::SecretKey,
+    };
     use pkarr::{PkarrClient, SignedPacket};
     use url::Url;
 
-    use crate::config::BootstrapOption;
-    use crate::server::Server;
+    use crate::{config::BootstrapOption, server::Server};
 
     #[tokio::test]
     async fn pkarr_publish_dns_resolve() -> Result<()> {

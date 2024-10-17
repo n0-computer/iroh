@@ -1,9 +1,11 @@
 //! Allows sending ICMP echo requests to a host in order to determine network latency.
 
-use std::fmt::Debug;
-use std::net::IpAddr;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    fmt::Debug,
+    net::IpAddr,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};

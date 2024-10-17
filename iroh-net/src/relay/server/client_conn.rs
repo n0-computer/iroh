@@ -1,8 +1,12 @@
 //! The server-side representation of an ongoing client relaying connection.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -10,16 +14,21 @@ use futures_lite::StreamExt;
 use futures_util::SinkExt;
 use iroh_metrics::{inc, inc_by};
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::AbortOnDropHandle;
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{trace, Instrument};
 
-use crate::disco::looks_like_disco_wrapper;
-use crate::key::PublicKey;
-use crate::relay::codec::{write_frame, Frame, KEEP_ALIVE};
-use crate::relay::server::metrics::Metrics;
-use crate::relay::server::streams::RelayIo;
-use crate::relay::server::types::{Packet, ServerMessage};
+use crate::{
+    disco::looks_like_disco_wrapper,
+    key::PublicKey,
+    relay::{
+        codec::{write_frame, Frame, KEEP_ALIVE},
+        server::{
+            metrics::Metrics,
+            streams::RelayIo,
+            types::{Packet, ServerMessage},
+        },
+    },
+};
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
 ///
@@ -456,10 +465,14 @@ mod tests {
     use tokio_util::codec::Framed;
 
     use super::*;
-    use crate::key::SecretKey;
-    use crate::relay::client::conn;
-    use crate::relay::codec::{recv_frame, DerpCodec, FrameType};
-    use crate::relay::server::streams::MaybeTlsStream;
+    use crate::{
+        key::SecretKey,
+        relay::{
+            client::conn,
+            codec::{recv_frame, DerpCodec, FrameType},
+            server::streams::MaybeTlsStream,
+        },
+    };
 
     #[tokio::test]
     async fn test_client_conn_io_basic() -> Result<()> {

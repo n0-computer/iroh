@@ -1,9 +1,11 @@
 //! Define blob-related commands.
 
-use std::collections::{BTreeMap, HashMap};
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::{
+    collections::{BTreeMap, HashMap},
+    net::SocketAddr,
+    path::PathBuf,
+    time::Duration,
+};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use clap::Subcommand;
@@ -13,25 +15,26 @@ use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
 };
-use iroh::base::node_addr::AddrInfoOptions;
-use iroh::base::ticket::BlobTicket;
-use iroh::blobs::get::db::DownloadProgress;
-use iroh::blobs::get::progress::BlobProgress;
-use iroh::blobs::get::Stats;
-use iroh::blobs::provider::AddProgress;
-use iroh::blobs::store::{
-    ConsistencyCheckProgress, ExportFormat, ExportMode, ReportLevel, ValidateProgress,
+use iroh::{
+    base::{node_addr::AddrInfoOptions, ticket::BlobTicket},
+    blobs::{
+        get::{db::DownloadProgress, progress::BlobProgress, Stats},
+        provider::AddProgress,
+        store::{
+            ConsistencyCheckProgress, ExportFormat, ExportMode, ReportLevel, ValidateProgress,
+        },
+        util::SetTagOption,
+        BlobFormat, Hash, HashAndFormat, Tag,
+    },
+    client::{
+        blobs::{
+            BlobInfo, BlobStatus, CollectionInfo, DownloadMode, DownloadOptions,
+            IncompleteBlobInfo, WrapOption,
+        },
+        Iroh,
+    },
+    net::{key::PublicKey, relay::RelayUrl, NodeAddr},
 };
-use iroh::blobs::util::SetTagOption;
-use iroh::blobs::{BlobFormat, Hash, HashAndFormat, Tag};
-use iroh::client::blobs::{
-    BlobInfo, BlobStatus, CollectionInfo, DownloadMode, DownloadOptions, IncompleteBlobInfo,
-    WrapOption,
-};
-use iroh::client::Iroh;
-use iroh::net::key::PublicKey;
-use iroh::net::relay::RelayUrl;
-use iroh::net::NodeAddr;
 use tokio::io::AsyncWriteExt;
 
 /// Subcommands for the blob command.

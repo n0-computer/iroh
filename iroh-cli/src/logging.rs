@@ -4,9 +4,7 @@ use derive_more::FromStr;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use tracing_appender::{non_blocking, rolling};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{fmt, Layer};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 /// `RUST_LOG` statement used by default in file logging.
 // rustyline is annoying

@@ -1,14 +1,20 @@
 //! A local task pool with proper shutdown
-use std::any::Any;
-use std::future::Future;
-use std::ops::Deref;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::{
+    any::Any,
+    future::Future,
+    ops::Deref,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use futures_lite::FutureExt;
-use tokio::sync::{Notify, Semaphore};
-use tokio::task::{JoinError, JoinSet, LocalSet};
+use tokio::{
+    sync::{Notify, Semaphore},
+    task::{JoinError, JoinSet, LocalSet},
+};
 
 type BoxedFut<T = ()> = Pin<Box<dyn Future<Output = T>>>;
 type SpawnFn<T = ()> = Box<dyn FnOnce() -> BoxedFut<T> + Send + 'static>;
@@ -534,8 +540,7 @@ impl CancellationToken {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicU64;
-    use std::time::Duration;
+    use std::{sync::atomic::AtomicU64, time::Duration};
 
     use tracing::info;
 

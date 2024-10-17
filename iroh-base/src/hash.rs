@@ -1,8 +1,6 @@
 //! The blake3 hash used in Iroh.
 
-use std::borrow::Borrow;
-use std::fmt;
-use std::str::FromStr;
+use std::{borrow::Borrow, fmt, str::FromStr};
 
 use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
@@ -398,8 +396,7 @@ impl<'de> Deserialize<'de> for HashAndFormat {
 #[cfg(test)]
 mod tests {
 
-    use iroh_test::assert_eq_hex;
-    use iroh_test::hexdump::parse_hexdump;
+    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
     use serde_test::{assert_tokens, Configure, Token};
 
     use super::*;

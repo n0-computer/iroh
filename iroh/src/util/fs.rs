@@ -1,7 +1,9 @@
 //! Utilities for filesystem operations.
-use std::borrow::Cow;
-use std::fs::read_dir;
-use std::path::{Component, Path, PathBuf};
+use std::{
+    borrow::Cow,
+    fs::read_dir,
+    path::{Component, Path, PathBuf},
+};
 
 use anyhow::{bail, Context};
 use bytes::Bytes;

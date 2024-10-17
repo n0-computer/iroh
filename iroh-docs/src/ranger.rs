@@ -2,8 +2,7 @@
 //! "Range-Based Set Reconciliation" by Aljoscha Meyer.
 //!
 
-use std::cmp::Ordering;
-use std::fmt::Debug;
+use std::{cmp::Ordering, fmt::Debug};
 
 use serde::{Deserialize, Serialize};
 
@@ -698,11 +697,7 @@ pub enum InsertOutcome {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-    use std::collections::BTreeMap;
-    use std::convert::Infallible;
-    use std::fmt::Debug;
-    use std::rc::Rc;
+    use std::{cell::RefCell, collections::BTreeMap, convert::Infallible, fmt::Debug, rc::Rc};
 
     use proptest::prelude::*;
     use test_strategy::proptest;

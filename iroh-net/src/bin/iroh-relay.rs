@@ -3,23 +3,23 @@
 //! This handles only the CLI and config file loading, the server implementation lives in
 //! [`iroh_net::relay::server`].
 
-use std::net::{Ipv6Addr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::{
+    net::{Ipv6Addr, SocketAddr},
+    path::{Path, PathBuf},
+};
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
-use iroh_net::defaults::{
-    DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT,
+use iroh_net::{
+    defaults::{DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT},
+    key::SecretKey,
+    relay::server as iroh_relay,
 };
-use iroh_net::key::SecretKey;
-use iroh_net::relay::server as iroh_relay;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
-use tokio_rustls_acme::caches::DirCache;
-use tokio_rustls_acme::AcmeConfig;
+use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
 use tracing::{debug, info};
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 /// The default `http_bind_port` when using `--dev`.
 const DEV_MODE_HTTP_PORT: u16 = 3340;
@@ -451,8 +451,10 @@ async fn build_relay_config(cfg: Config) -> Result<iroh_relay::ServerConfig<std:
 }
 
 mod metrics {
-    use iroh_metrics::core::{Counter, Metric};
-    use iroh_metrics::struct_iterable::Iterable;
+    use iroh_metrics::{
+        core::{Counter, Metric},
+        struct_iterable::Iterable,
+    };
 
     /// StunMetrics tracked for the relay server
     #[allow(missing_docs)]

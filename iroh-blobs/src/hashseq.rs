@@ -1,6 +1,5 @@
 //! traits related to collections of blobs
-use std::fmt::Debug;
-use std::io;
+use std::{fmt::Debug, io};
 
 use bytes::Bytes;
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};

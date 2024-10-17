@@ -1,8 +1,6 @@
-use std::future::Future;
-use std::time::Duration;
+use std::{future::Future, time::Duration};
 
-use tokio::task::JoinHandle;
-use tokio::time;
+use tokio::{task::JoinHandle, time};
 
 /// A timer that works similar to golangs `Timer`.
 #[derive(Debug)]
@@ -43,8 +41,10 @@ impl Future for Timer {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
 
     use super::*;
 

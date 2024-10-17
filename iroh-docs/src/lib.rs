@@ -54,9 +54,7 @@ mod heads;
 mod keys;
 mod ranger;
 
-pub use self::heads::*;
-pub use self::keys::*;
-pub use self::sync::*;
 #[cfg(feature = "net")]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "net")))]
 pub use self::ticket::DocTicket;
+pub use self::{heads::*, keys::*, sync::*};

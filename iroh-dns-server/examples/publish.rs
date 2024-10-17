@@ -2,13 +2,15 @@ use std::str::FromStr;
 
 use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
-use iroh_net::discovery::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
-use iroh_net::discovery::pkarr::{
-    PkarrRelayClient, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING,
+use iroh_net::{
+    discovery::{
+        dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
+        pkarr::{PkarrRelayClient, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
+    },
+    dns::node_info::{to_z32, NodeInfo, IROH_TXT_NAME},
+    key::SecretKey,
+    NodeId,
 };
-use iroh_net::dns::node_info::{to_z32, NodeInfo, IROH_TXT_NAME};
-use iroh_net::key::SecretKey;
-use iroh_net::NodeId;
 use url::Url;
 
 const LOCALHOST_PKARR: &str = "http://localhost:8080/pkarr";

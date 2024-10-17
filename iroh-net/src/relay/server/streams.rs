@@ -1,7 +1,9 @@
 //! Streams used in the server-side implementation of iroh relays.
 
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use anyhow::Result;
 use futures_lite::Stream;

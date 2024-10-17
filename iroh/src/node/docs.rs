@@ -1,13 +1,11 @@
-use std::ops::Deref;
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc};
 
 use anyhow::Result;
 use futures_lite::future::Boxed as BoxedFuture;
 use iroh_blobs::downloader::Downloader;
 use iroh_docs::engine::{DefaultAuthorStorage, Engine};
 use iroh_gossip::net::Gossip;
-use iroh_net::endpoint::Connecting;
-use iroh_net::Endpoint;
+use iroh_net::{endpoint::Connecting, Endpoint};
 
 use crate::node::{DocsStorage, ProtocolHandler};
 

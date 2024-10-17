@@ -1,13 +1,17 @@
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::{
+    net::SocketAddr,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use anyhow::{bail, Result};
 use bytes::Bytes;
 use hyper::upgrade::{Parts, Upgraded};
 use hyper_util::rt::TokioIo;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::TcpStream,
+};
 
 use crate::util::chain;
 

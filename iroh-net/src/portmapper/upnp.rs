@@ -1,6 +1,8 @@
-use std::net::{Ipv4Addr, SocketAddrV4};
-use std::num::NonZeroU16;
-use std::time::Duration;
+use std::{
+    net::{Ipv4Addr, SocketAddrV4},
+    num::NonZeroU16,
+    time::Duration,
+};
 
 use anyhow::{anyhow, Result};
 use igd_next::aio as aigd;

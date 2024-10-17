@@ -3,12 +3,16 @@ use std::io::Cursor;
 use bao_tree::ChunkRanges;
 use iroh_io::AsyncSliceReaderExt;
 
-use crate::store::bao_file::test_support::{
-    decode_response_into_batch, make_wire_data, random_test_data, simulate_remote, validate,
+use crate::{
+    store::{
+        bao_file::test_support::{
+            decode_response_into_batch, make_wire_data, random_test_data, simulate_remote, validate,
+        },
+        Map as _, MapEntryMut, MapMut, ReadableStore, Store as _,
+    },
+    util::raw_outboard,
+    IROH_BLOCK_SIZE,
 };
-use crate::store::{Map as _, MapEntryMut, MapMut, ReadableStore, Store as _};
-use crate::util::raw_outboard;
-use crate::IROH_BLOCK_SIZE;
 
 macro_rules! assert_matches {
         ($expression:expr, $pattern:pat) => {

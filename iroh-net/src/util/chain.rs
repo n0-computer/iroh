@@ -2,9 +2,11 @@
 
 // Based on tokios chain implementation, that doesn't make the concrete type public.
 
-use std::pin::Pin;
-use std::task::{ready, Context, Poll};
-use std::{fmt, io};
+use std::{
+    fmt, io,
+    pin::Pin,
+    task::{ready, Context, Poll},
+};
 
 use pin_project::pin_project;
 use tokio::io::{AsyncBufRead, AsyncRead, ReadBuf};

@@ -1,19 +1,21 @@
 //! Define the net subcommands.
 
-use std::net::SocketAddr;
-use std::time::Duration;
+use std::{net::SocketAddr, time::Duration};
 
 use anyhow::Result;
 use clap::Subcommand;
 use colored::Colorize;
-use comfy_table::presets::NOTHING;
-use comfy_table::{Cell, Table};
+use comfy_table::{presets::NOTHING, Cell, Table};
 use futures_lite::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
-use iroh::client::Iroh;
-use iroh::net::endpoint::{DirectAddrInfo, RemoteInfo};
-use iroh::net::relay::RelayUrl;
-use iroh::net::{NodeAddr, NodeId};
+use iroh::{
+    client::Iroh,
+    net::{
+        endpoint::{DirectAddrInfo, RemoteInfo},
+        relay::RelayUrl,
+        NodeAddr, NodeId,
+    },
+};
 
 /// Commands to manage the iroh network.
 #[derive(Subcommand, Debug, Clone)]

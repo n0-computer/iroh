@@ -1,7 +1,6 @@
 //! Author heads
 
-use std::collections::BTreeMap;
-use std::num::NonZeroU64;
+use std::{collections::BTreeMap, num::NonZeroU64};
 
 use anyhow::Result;
 

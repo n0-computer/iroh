@@ -1,13 +1,19 @@
 use core::fmt;
-use std::collections::{btree_map, BTreeMap};
-use std::str::FromStr;
-use std::sync::Arc;
+use std::{
+    collections::{btree_map, BTreeMap},
+    str::FromStr,
+    sync::Arc,
+};
 
 use anyhow::{anyhow, Result};
-use hickory_proto::op::Message;
-use hickory_proto::rr::domain::{IntoLabel, Label};
-use hickory_proto::rr::{Name, Record, RecordSet, RecordType, RrKey};
-use hickory_proto::serialize::binary::BinDecodable;
+use hickory_proto::{
+    op::Message,
+    rr::{
+        domain::{IntoLabel, Label},
+        Name, Record, RecordSet, RecordType, RrKey,
+    },
+    serialize::binary::BinDecodable,
+};
 use pkarr::SignedPacket;
 
 #[derive(

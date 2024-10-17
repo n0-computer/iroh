@@ -13,9 +13,7 @@ use std::net::SocketAddr;
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use iroh_net::endpoint::RemoteInfo;
-use iroh_net::relay::RelayUrl;
-use iroh_net::{NodeAddr, NodeId};
+use iroh_net::{endpoint::RemoteInfo, relay::RelayUrl, NodeAddr, NodeId};
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 

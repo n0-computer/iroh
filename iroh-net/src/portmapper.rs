@@ -1,8 +1,10 @@
 //! Port mapping client and service.
 
-use std::net::{Ipv4Addr, SocketAddrV4};
-use std::num::NonZeroU16;
-use std::time::{Duration, Instant};
+use std::{
+    net::{Ipv4Addr, SocketAddrV4},
+    num::NonZeroU16,
+    time::{Duration, Instant},
+};
 
 use anyhow::{anyhow, Result};
 use current_mapping::CurrentMapping;
@@ -12,8 +14,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, info_span, trace, Instrument};
 
-use crate::net::interfaces::HomeRouter;
-use crate::util;
+use crate::{net::interfaces::HomeRouter, util};
 
 mod current_mapping;
 mod mapping;

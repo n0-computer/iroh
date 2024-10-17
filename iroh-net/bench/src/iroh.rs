@@ -1,16 +1,21 @@
-use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::{
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_lite::StreamExt as _;
-use iroh_net::endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig};
-use iroh_net::relay::{RelayMap, RelayMode, RelayUrl};
-use iroh_net::{Endpoint, NodeAddr};
+use iroh_net::{
+    endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
+    relay::{RelayMap, RelayMode, RelayUrl},
+    Endpoint, NodeAddr,
+};
 use tracing::{trace, warn};
 
-use crate::stats::TransferResult;
-use crate::{client_handler, ClientStats, ConnectionSelector, EndpointSelector, Opt};
+use crate::{
+    client_handler, stats::TransferResult, ClientStats, ConnectionSelector, EndpointSelector, Opt,
+};
 
 pub const ALPN: &[u8] = b"n0/iroh-net-bench/0";
 

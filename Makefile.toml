@@ -10,12 +10,10 @@ args = [
      "--config",
      "unstable_features=true",
      "--config",
-     "imports_granularity=Module,group_imports=StdExternalCrate,reorder_imports=true",
+     "imports_granularity=Crate,group_imports=StdExternalCrate,reorder_imports=true",
 ]
 
 [tasks.format-check]
-# This task is used in CI.  The nightly version needs to be kept in
-# sync with the check_fmt job in the ci.yml workflow.
 workspace = false
 command = "cargo"
 args = [
@@ -26,5 +24,5 @@ args = [
      "--config",
      "unstable_features=true",
      "--config",
-     "imports_granularity=Module,group_imports=StdExternalCrate,reorder_imports=true",
+     "imports_granularity=Crate,group_imports=StdExternalCrate,reorder_imports=true",
 ]

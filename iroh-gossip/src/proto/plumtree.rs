@@ -6,17 +6,21 @@
 //! [paper]: https://asc.di.fct.unl.pt/~jleitao/pdf/srds07-leitao.pdf
 //! [impl]: https://gist.github.com/Horusiath/84fac596101b197da0546d1697580d99
 
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::hash::Hash;
-use std::time::{Duration, Instant};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    hash::Hash,
+    time::{Duration, Instant},
+};
 
 use bytes::Bytes;
 use derive_more::{Add, From, Sub};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use super::util::{idbytes_impls, TimeBoundCache};
-use super::{PeerIdentity, IO};
+use super::{
+    util::{idbytes_impls, TimeBoundCache},
+    PeerIdentity, IO,
+};
 
 /// A message identifier, which is the message content's blake3 hash.
 #[derive(Serialize, Deserialize, Clone, Hash, Copy, PartialEq, Eq)]

@@ -1,15 +1,12 @@
 //! Types for get progress state management.
 
-use std::collections::HashMap;
-use std::num::NonZeroU64;
+use std::{collections::HashMap, num::NonZeroU64};
 
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use super::db::{BlobId, DownloadProgress};
-use crate::protocol::RangeSpec;
-use crate::store::BaoBlobSize;
-use crate::Hash;
+use crate::{protocol::RangeSpec, store::BaoBlobSize, Hash};
 
 /// The identifier for progress events.
 pub type ProgressId = u64;

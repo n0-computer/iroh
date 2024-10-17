@@ -2,8 +2,10 @@
 
 use anyhow::Result;
 use futures_lite::future::Boxed as BoxFuture;
-use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinHandle;
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
 
 mod actor;
 #[cfg(target_os = "android")]

@@ -1,25 +1,32 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::future::Future;
-use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+    net::{IpAddr, SocketAddr},
+    sync::{atomic::Ordering, Arc},
+    time::{Duration, Instant},
+};
 
 use anyhow::Context;
 use backoff::backoff::Backoff;
 use bytes::{Bytes, BytesMut};
 use iroh_metrics::{inc, inc_by};
-use tokio::sync::{mpsc, oneshot};
-use tokio::task::{JoinHandle, JoinSet};
-use tokio::time;
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::{JoinHandle, JoinSet},
+    time,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, info_span, trace, warn, Instrument};
 
 use super::{ActorMessage, MagicSock, Metrics as MagicsockMetrics, RelayContents};
-use crate::key::{NodeId, PUBLIC_KEY_LENGTH};
-use crate::relay::client::conn::ReceivedMessage;
-use crate::relay::client::ClientError;
-use crate::relay::{self, RelayUrl, MAX_PACKET_SIZE};
+use crate::{
+    key::{NodeId, PUBLIC_KEY_LENGTH},
+    relay::{
+        self,
+        client::{conn::ReceivedMessage, ClientError},
+        RelayUrl, MAX_PACKET_SIZE,
+    },
+};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);

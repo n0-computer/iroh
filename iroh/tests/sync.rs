@@ -1,25 +1,32 @@
-use std::collections::HashMap;
-use std::future::Future;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    future::Future,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures_lite::Stream;
 use futures_util::{FutureExt, StreamExt, TryStreamExt};
-use iroh::base::node_addr::AddrInfoOptions;
-use iroh::client::docs::{Entry, LiveEvent, ShareMode};
-use iroh::client::Doc;
-use iroh::net::key::{PublicKey, SecretKey};
-use iroh::node::{Builder, Node};
+use iroh::{
+    base::node_addr::AddrInfoOptions,
+    client::{
+        docs::{Entry, LiveEvent, ShareMode},
+        Doc,
+    },
+    net::key::{PublicKey, SecretKey},
+    node::{Builder, Node},
+};
 use iroh_blobs::Hash;
-use iroh_docs::store::{DownloadPolicy, FilterKind, Query};
-use iroh_docs::{AuthorId, ContentStatus};
+use iroh_docs::{
+    store::{DownloadPolicy, FilterKind, Query},
+    AuthorId, ContentStatus,
+};
 use iroh_net::relay::RelayMode;
 use rand::{CryptoRng, Rng, SeedableRng};
 use tracing::{debug, error_span, info, Instrument};
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 

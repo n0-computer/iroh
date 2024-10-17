@@ -1,13 +1,19 @@
 use anyhow::Result;
 use iroh_base::hash::Hash;
 
-use super::bounds::{ByKeyBounds, RecordsBounds};
-use super::ranges::{RecordsByKeyRange, RecordsRange};
-use super::RecordsValue;
-use crate::store::fs::tables::ReadOnlyTables;
-use crate::store::util::{IndexKind, LatestPerKeySelector, SelectorRes};
-use crate::store::{AuthorFilter, KeyFilter, Query};
-use crate::{AuthorId, NamespaceId, SignedEntry};
+use super::{
+    bounds::{ByKeyBounds, RecordsBounds},
+    ranges::{RecordsByKeyRange, RecordsRange},
+    RecordsValue,
+};
+use crate::{
+    store::{
+        fs::tables::ReadOnlyTables,
+        util::{IndexKind, LatestPerKeySelector, SelectorRes},
+        AuthorFilter, KeyFilter, Query,
+    },
+    AuthorId, NamespaceId, SignedEntry,
+};
 
 /// A query iterator for entry queries.
 #[derive(Debug)]

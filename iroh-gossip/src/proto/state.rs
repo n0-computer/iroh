@@ -1,17 +1,23 @@
 //! The protocol state of the `iroh-gossip` protocol.
 
-use std::collections::{hash_map, HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::{
+    collections::{hash_map, HashMap, HashSet},
+    time::{Duration, Instant},
+};
 
 use iroh_metrics::{inc, inc_by};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 
-use crate::metrics::Metrics;
-use crate::proto::topic::{self, Command};
-use crate::proto::util::idbytes_impls;
-use crate::proto::{Config, PeerData, PeerIdentity};
+use crate::{
+    metrics::Metrics,
+    proto::{
+        topic::{self, Command},
+        util::idbytes_impls,
+        Config, PeerData, PeerIdentity,
+    },
+};
 
 /// The identifier for a topic
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Serialize, Ord, PartialOrd, Deserialize)]

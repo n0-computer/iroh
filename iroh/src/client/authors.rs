@@ -5,8 +5,7 @@
 //! You obtain a [`Client`] via [`Iroh::authors()`](crate::client::Iroh::authors).
 
 use anyhow::Result;
-use futures_lite::stream::StreamExt;
-use futures_lite::Stream;
+use futures_lite::{stream::StreamExt, Stream};
 use iroh_docs::{Author, AuthorId};
 use ref_cast::RefCast;
 
