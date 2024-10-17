@@ -18,6 +18,10 @@ mod map;
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
 pub mod server;
 
+/// Environment variable to force the use of staging relays.
+#[cfg_attr(iroh_docsrs, doc(cfg(not(test))))]
+pub const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
+
 pub use self::client::conn::{Conn as RelayConn, ReceivedMessage};
 pub use self::client::{
     Client as HttpClient, ClientBuilder as HttpClientBuilder, ClientError as HttpClientError,
