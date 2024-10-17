@@ -1856,6 +1856,9 @@
 <a href="#1856" id="1856">1856</a>
 <a href="#1857" id="1857">1857</a>
 <a href="#1858" id="1858">1858</a>
+<a href="#1859" id="1859">1859</a>
+<a href="#1860" id="1860">1860</a>
+<a href="#1861" id="1861">1861</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -2139,9 +2142,12 @@
     /// and a [`crate::discovery::dns::DnsDiscovery`], both configured to use the
     /// n0.computer dns server.
     ///
-    /// This will by default use [`crate::discovery::pkarr::N0_DNS_PKARR_RELAY_PROD`].
+    /// This will by default use [`N0_DNS_PKARR_RELAY_PROD`].
     /// When in tests, or when the `test-utils` feature is enabled, this will use the
-    /// [`crate::discovery::pkarr::N0_DNS_PKARR_RELAY_STAGING`].
+    /// [`N0_DNS_PKARR_RELAY_STAGING`].
+    ///
+    /// [`N0_DNS_PKARR_RELAY_PROD`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_PROD
+    /// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_STAGING
     </span><span class="kw">pub fn </span>discovery_n0(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
             <span class="prelude-val">Some</span>(Box::new(PkarrPublisher::n0_dns(secret_key.clone())))
@@ -2152,7 +2158,7 @@
     </span>}
 
     <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
-    </span><span class="doccomment">/// Configure the endpoint to also use the mainline DHT with default settings.
+    </span><span class="doccomment">/// Configures the endpoint to also use the mainline DHT with default settings.
     ///
     /// This is equivalent to adding a [`crate::discovery::pkarr::dht::DhtDiscovery`]
     /// with default settings. Note that DhtDiscovery has various more advanced
