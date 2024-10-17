@@ -46,6 +46,20 @@ impl StoredAuthorizedEntry {
         self.payload_size < other.payload_size
     }
 
+    pub fn from_authorised_entry(entry: &AuthorisedEntry) -> (Point<IrohWillowParams>, Self) {
+        let point = willow_store::Point::<IrohWillowParams>::new(
+            entry.entry().subspace_id(),
+            &entry.entry().timestamp(),
+            &path_to_blobseq(entry.entry().path()),
+        );
+        let entry = Self {
+            authorization_token_id: entry.token().signature.to_bytes(),
+            payload_digest: *entry.entry().payload_digest().0.as_bytes(),
+            payload_size: entry.entry().payload_length(),
+        };
+        (point, entry)
+    }
+
     pub fn into_authorised_entry(
         self,
         namespace: NamespaceId,

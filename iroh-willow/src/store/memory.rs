@@ -109,7 +109,7 @@ impl traits::SecretStorage for Rc<RefCell<SecretStore>> {
 
 #[derive(Debug, Clone)]
 pub struct EntryStore {
-    stores: HashMap<NamespaceId, willow_store::Node<IrohWillowParams>>,
+    stores: HashMap<NamespaceId, NamespaceStore>,
     authorization_tokens: BTreeMap<ed25519::SignatureBytes, AuthorisationToken>,
     store: willow_store::MemStore,
 }
@@ -124,10 +124,28 @@ impl Default for EntryStore {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct NamespaceStore {
-    entries: Vec<AuthorisedEntry>,
+    entries: willow_store::Node<IrohWillowParams>,
     events: EventQueue<StoreEvent>,
+}
+
+impl Clone for NamespaceStore {
+    fn clone(&self) -> Self {
+        Self {
+            entries: self.entries.clone(),
+            events: Default::default(),
+        }
+    }
+}
+
+impl Default for NamespaceStore {
+    fn default() -> Self {
+        Self {
+            entries: willow_store::Node::EMPTY,
+            events: Default::default(),
+        }
+    }
 }
 
 // impl<T: std::ops::Deref<Target = MemoryEntryStore> + 'static> ReadonlyStore for T {
@@ -220,16 +238,16 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
         &'a self,
         namespace: NamespaceId,
         range: &Range3d,
-    ) -> impl Iterator<Item = Result<AuthorisedEntry, anyhow::Error>> + 'a {
+    ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a {
         let slf = self.borrow();
-        let Some(store) = slf.stores.get(&namespace) else {
-            return Box::new(std::iter::empty())
-                as Box<dyn Iterator<Item = Result<AuthorisedEntry>> + 'a>;
+        let Some(ns_store) = slf.stores.get(&namespace) else {
+            return either::Left(std::iter::empty());
         };
         // TODO(matheus23): Maybe figure out a way to share this more efficiently?
         let atmap = slf.authorization_tokens.clone();
-        Box::new(
-            store
+        either::Right(
+            ns_store
+                .entries
                 .query(&to_query(range), &slf.store)
                 .map(move |result| {
                     let (point, stored_entry) = result?;
@@ -243,7 +261,7 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
                 })
                 .collect::<Vec<_>>()
                 .into_iter(),
-        ) as Box<dyn Iterator<Item = Result<AuthorisedEntry>> + 'a>
+        )
     }
 
     fn get_entry(
@@ -253,12 +271,13 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
         path: &Path,
     ) -> Result<Option<AuthorisedEntry>> {
         let inner = self.borrow();
-        let Some(entries) = inner.stores.get(&namespace) else {
+        let Some(ns_store) = inner.stores.get(&namespace) else {
             return Ok(None);
         };
         let blobseq = path_to_blobseq(path);
         let end = blobseq_successor(&blobseq);
-        let Some(result) = entries
+        let Some(result) = ns_store
+            .entries
             .query_ordered(
                 &QueryRange3d {
                     x: QueryRange::new(subspace, subspace.successor()),
@@ -309,33 +328,30 @@ fn blobseq_below(blobseq: &BlobSeq) -> Option<BlobSeq> {
 
 impl EntryStore {
     fn ingest_entry(&mut self, entry: &AuthorisedEntry, _origin: EntryOrigin) -> Result<bool> {
-        let store = self
+        let ns_store = self
             .stores
             .entry(*entry.entry().namespace_id())
-            .or_insert(willow_store::Node::EMPTY);
+            .or_default();
+
+        // Insert auth token & entry:
+
+        self.authorization_tokens
+            .entry(entry.token().signature.to_bytes())
+            .or_insert_with(|| entry.token().clone());
+
+        let (insert_point, insert_entry) = StoredAuthorizedEntry::from_authorised_entry(entry);
+
+        let _replaced = ns_store
+            .entries
+            .insert(&insert_point, &insert_entry, &mut self.store)?;
+
+        // TODO(matheus23): need to get a progress_id here somehow.
+        // There's ideas to use the willow-store NodeId for that.
+
+        // Enforce prefix deletion:
 
         let blobseq_start = path_to_blobseq(entry.entry().path());
         let blobseq_end = blobseq_below(&blobseq_start);
-
-        let sig_bytes = entry.token().signature.to_bytes();
-        self.authorization_tokens
-            .entry(sig_bytes)
-            .or_insert_with(|| entry.token().clone());
-
-        let inserted_entry = StoredAuthorizedEntry {
-            authorization_token_id: sig_bytes,
-            payload_digest: *entry.entry().payload_digest().0.as_bytes(),
-            payload_size: entry.entry().payload_length(),
-        };
-
-        let inserted_point = willow_store::Point::<IrohWillowParams>::new(
-            entry.entry().subspace_id(),
-            &entry.entry().timestamp(),
-            &blobseq_start,
-        );
-
-        let _replaced = store.insert(&inserted_point, &inserted_entry, &mut self.store)?;
-        // TODO(matheus23): so this is useful to track store events: store.id()
 
         let overwritten_range = QueryRange3d {
             x: QueryRange::new(
@@ -346,16 +362,16 @@ impl EntryStore {
             z: QueryRange::new(blobseq_start, blobseq_end),
         };
 
-        let deletion_candidates = store
+        let deletion_candidates = ns_store
+            .entries
             .query(&overwritten_range, &self.store)
             .collect::<Result<Vec<_>, _>>()?;
 
         for (pos, overwrite_candidate) in deletion_candidates {
-            if pos.y() < inserted_point.y() || inserted_entry.wins_tie_break(&overwrite_candidate) {
-                // TODO(matheus23): Don't *actually* delete here?
-                // There was some idea along the lines of "mark as deleted", that I don't 100% recall.
-                // Need to talk to rklaehn.
-                store.delete(&pos, &mut self.store)?;
+            if pos.y() < insert_point.y() || insert_entry.wins_tie_break(&overwrite_candidate) {
+                // TODO(matheus23): Don't *actually* delete here? (depending on a potential traceless bit)
+                // There was some idea along the lines of "mark as deleted" by storing the identifier for the deletion.
+                ns_store.entries.delete(&pos, &mut self.store)?;
             }
         }
 

@@ -3042,6 +3042,7 @@ dependencies = [
  "curve25519-dalek",
  "derive_more",
  "ed25519-dalek",
+ "either",
  "futures-buffered",
  "futures-concurrency",
  "futures-lite 2.3.0",
