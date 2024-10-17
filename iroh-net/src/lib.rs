@@ -4,6 +4,42 @@
 //! interface to [QUIC] connections and streams to the user, while implementing direct
 //! connectivity using [hole punching] complemented by relay servers under the hood.
 //!
+//! Connecting to a remote node looks roughly like this:
+//!
+//! ```no_run
+//! # use iroh_net::{Endpoint, NodeAddr};
+//! # async fn wrapper() -> testresult::TestResult {
+//! let addr: NodeAddr = todo!();
+//! let ep = Endpoint::builder().bind().await?;
+//! let conn = ep.connect(addr, b"my-alpn").await?;
+//! let mut send_stream = conn.open_uni().await?;
+//! send_stream.write_all(b"msg").await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! The other side can accept incoming connections like this:
+//!
+//! ```no_run
+//! # use iroh_net::{Endpoint, NodeAddr};
+//! # async fn wrapper() -> testresult::TestResult {
+//! let ep = Endpoint::builder()
+//!     .alpns(vec![b"my-alpn".to_vec()])
+//!     .bind()
+//!     .await?;
+//! let conn = ep.accept().await.ok_or("err")?.await?;
+//! let mut recv_stream = conn.accept_uni().await?;
+//! let mut buf = [0u8; 3];
+//! recv_stream.read_exact(&mut buf).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Of course you can also use [bi-directional streams] or any other features from QUIC.
+//!
+//! For more elaborate examples, see [below](#examples) or the examples directory in
+//! the source repository.
+//!
 //!
 //! # Connection Establishment
 //!
@@ -132,8 +168,7 @@
 //!     let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
 //!     send_stream.write_all(b"hello").await?;
 //!     send_stream.finish()?;
-//!     let msg = recv_stream.read_to_end(10).await?;
-//!     println!("Server message: {}", String::from_utf8_lossy(&msg));
+//!     let _msg = recv_stream.read_to_end(10).await?;
 //!
 //!     // Gracefully close the connection and endpoint.
 //!     conn.close(1u8.into(), b"done");
@@ -161,8 +196,7 @@
 //!     // Accept a QUIC connection, accept a bi-directional stream, exchange messages.
 //!     let conn = ep.accept().await.context("no incoming connection")?.await?;
 //!     let (mut send_stream, mut recv_stream) = conn.accept_bi().await?;
-//!     let msg = recv_stream.read_to_end(10).await?;
-//!     println!("Client message: {}", String::from_utf8_lossy(&msg));
+//!     let _msg = recv_stream.read_to_end(10).await?;
 //!     send_stream.write_all(b"world").await?;
 //!     send_stream.finish()?;
 //!
@@ -177,6 +211,7 @@
 //!
 //!
 //! [QUIC]: https://quickwg.org
+//! [bi-directional streams]: crate::endpoint::Connection::open_bi
 //! [`NodeTicket`]: crate::ticket::NodeTicket
 //! [hole punching]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
 //! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html
