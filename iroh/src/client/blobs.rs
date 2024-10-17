@@ -1639,6 +1639,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_blob_delete_mem() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 

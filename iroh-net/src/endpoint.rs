@@ -489,7 +489,7 @@ impl Endpoint {
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");
-
+        debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
         Ok(Self {
             msock,
             endpoint,
@@ -513,10 +513,12 @@ impl Endpoint {
 
     /// Connects to a remote [`Endpoint`].
     ///
-    /// A [`NodeAddr`] is required. It must contain the [`NodeId`] to dial and may also
-    /// contain a [`RelayUrl`] and direct addresses. If direct addresses are provided, they
-    /// will be used to try and establish a direct connection without involving a relay
-    /// server.
+    /// A value that can be converted into a [`NodeAddr`] is required. This can be either a
+    /// [`NodeAddr`], a [`NodeId`] or a [`iroh_base::ticket::NodeTicket`].
+    ///
+    /// The [`NodeAddr`] must contain the [`NodeId`] to dial and may also contain a [`RelayUrl`]
+    /// and direct addresses. If direct addresses are provided, they will be used to try and
+    /// establish a direct connection without involving a relay server.
     ///
     /// If neither a [`RelayUrl`] or direct addresses are configured in the [`NodeAddr`] it
     /// may still be possible a connection can be established.  This depends on other calls
@@ -531,8 +533,14 @@ impl Endpoint {
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
-    #[instrument(skip_all, fields(me = %self.node_id().fmt_short(), remote = %node_addr.node_id.fmt_short(), alpn = ?String::from_utf8_lossy(alpn)))]
-    pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
+    #[instrument(skip_all, fields(me = %self.node_id().fmt_short(), alpn = ?String::from_utf8_lossy(alpn)))]
+    pub async fn connect(
+        &self,
+        node_addr: impl Into<NodeAddr>,
+        alpn: &[u8],
+    ) -> Result<quinn::Connection> {
+        let node_addr = node_addr.into();
+        tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
             bail!(
@@ -583,6 +591,10 @@ impl Endpoint {
     /// information being provided by either the discovery service or using
     /// [`Endpoint::add_node_addr`].  See [`Endpoint::connect`] for the details of how it
     /// uses the discovery service to establish a connection to a remote node.
+    #[deprecated(
+        since = "0.27.0",
+        note = "Please use `connect` directly with a NodeId. This fn will be removed in 0.28.0."
+    )]
     pub async fn connect_by_node_id(
         &self,
         node_id: NodeId,
