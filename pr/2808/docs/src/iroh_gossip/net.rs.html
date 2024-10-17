@@ -1810,7 +1810,7 @@
     }
 }
 
-<span class="kw">fn </span>our_peer_data(endpoint: <span class="kw-2">&amp;</span>Endpoint, direct_addresses: <span class="kw-2">&amp;</span>[DirectAddr]) -&gt; <span class="prelude-ty">Result</span>&lt;PeerData&gt; {
+<span class="kw">fn </span>our_peer_data(endpoint: <span class="kw-2">&amp;</span>Endpoint, direct_addresses: <span class="kw-2">&amp;</span>BTreeSet&lt;DirectAddr&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;PeerData&gt; {
     <span class="kw">let </span>addr = NodeAddr::from_parts(
         endpoint.node_id(),
         endpoint.home_relay(),

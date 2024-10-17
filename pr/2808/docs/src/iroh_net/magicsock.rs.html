@@ -3866,6 +3866,8 @@
 <a href="#3866" id="3866">3866</a>
 <a href="#3867" id="3867">3867</a>
 <a href="#3868" id="3868">3868</a>
+<a href="#3869" id="3869">3869</a>
+<a href="#3870" id="3870">3870</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -6346,13 +6348,13 @@
 }
 
 <span class="kw">impl </span>Stream <span class="kw">for </span>DirectAddrsStream {
-    <span class="kw">type </span>Item = Vec&lt;DirectAddr&gt;;
+    <span class="kw">type </span>Item = BTreeSet&lt;DirectAddr&gt;;
 
     <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
         <span class="kw">let </span>this = <span class="kw-2">&amp;mut *</span><span class="self">self</span>;
         <span class="kw">if let </span><span class="prelude-val">Some</span>(addrs) = this.initial.take() {
             <span class="kw">if </span>!addrs.is_empty() {
-                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(addrs.iter().cloned().collect()));
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(addrs));
             }
         }
         <span class="kw">loop </span>{
@@ -6369,7 +6371,7 @@
                         // returning Poll::Pending immediately here.
                         </span><span class="kw">continue</span>;
                     } <span class="kw">else </span>{
-                        <span class="kw">break </span>Poll::Ready(<span class="prelude-val">Some</span>(addrs.iter().cloned().collect()));
+                        <span class="kw">break </span>Poll::Ready(<span class="prelude-val">Some</span>(addrs));
                     }
                 }
                 Poll::Ready(<span class="prelude-val">None</span>) =&gt; <span class="kw">break </span>Poll::Ready(<span class="prelude-val">None</span>),
@@ -6713,7 +6715,11 @@
     </span><span class="attr">#[instrument(skip_all)]
     </span><span class="kw">async fn </span>mesh_stacks(stacks: Vec&lt;MagicStack&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;CallOnDrop&gt; {
         <span class="doccomment">/// Registers endpoint addresses of a node to all other nodes.
-        </span><span class="kw">fn </span>update_direct_addrs(stacks: <span class="kw-2">&amp;</span>[MagicStack], my_idx: usize, new_addrs: Vec&lt;DirectAddr&gt;) {
+        </span><span class="kw">fn </span>update_direct_addrs(
+            stacks: <span class="kw-2">&amp;</span>[MagicStack],
+            my_idx: usize,
+            new_addrs: BTreeSet&lt;DirectAddr&gt;,
+        ) {
             <span class="kw">let </span>me = <span class="kw-2">&amp;</span>stacks[my_idx];
             <span class="kw">for </span>(i, m) <span class="kw">in </span>stacks.iter().enumerate() {
                 <span class="kw">if </span>i == my_idx {
@@ -7410,14 +7416,12 @@
         <span class="kw">let </span>ms = Handle::new(Default::default()).<span class="kw">await</span>.unwrap();
 
         <span class="comment">// See if we can get endpoints.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>eps0 = ms.direct_addresses().next().<span class="kw">await</span>.unwrap();
-        eps0.sort();
+        </span><span class="kw">let </span>eps0 = ms.direct_addresses().next().<span class="kw">await</span>.unwrap();
         <span class="macro">println!</span>(<span class="string">"{eps0:?}"</span>);
         <span class="macro">assert!</span>(!eps0.is_empty());
 
         <span class="comment">// Getting the endpoints again immediately should give the same results.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>eps1 = ms.direct_addresses().next().<span class="kw">await</span>.unwrap();
-        eps1.sort();
+        </span><span class="kw">let </span>eps1 = ms.direct_addresses().next().<span class="kw">await</span>.unwrap();
         <span class="macro">println!</span>(<span class="string">"{eps1:?}"</span>);
         <span class="macro">assert_eq!</span>(eps0, eps1);
     }
