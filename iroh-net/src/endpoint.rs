@@ -297,7 +297,7 @@ impl Builder {
     }
 
     #[cfg(feature = "discovery-pkarr-dht")]
-    /// Configure the endpoint to also use the mainline DHT with default settings.
+    /// Configures the endpoint to also use the mainline DHT with default settings.
     ///
     /// This is equivalent to adding a [`crate::discovery::pkarr::dht::DhtDiscovery`]
     /// with default settings. Note that DhtDiscovery has various more advanced
