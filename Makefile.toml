@@ -2,21 +2,21 @@
 
 [tasks.format]
 workspace = false
-toolchain = "nightly"
 command = "cargo"
 args = [
      "fmt",
      "--all",
      "--",
      "--config",
-     "imports_granularity=Module,group_imports=StdExternalCrate",
+     "unstable_features=true",
+     "--config",
+     "imports_granularity=Module,group_imports=StdExternalCrate,reorder_imports=true",
 ]
 
 [tasks.format-check]
 # This task is used in CI.  The nightly version needs to be kept in
 # sync with the check_fmt job in the ci.yml workflow.
 workspace = false
-toolchain = "nightly-2024-05-02"
 command = "cargo"
 args = [
      "fmt",
@@ -24,5 +24,7 @@ args = [
      "--check",
      "--",
      "--config",
-     "imports_granularity=Module,group_imports=StdExternalCrate",
+     "unstable_features=true",
+     "--config",
+     "imports_granularity=Module,group_imports=StdExternalCrate,reorder_imports=true",
 ]
