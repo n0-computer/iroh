@@ -61,11 +61,9 @@ use crate::{
     discovery::{Discovery, DiscoveryItem},
     dns::node_info::NodeInfo,
     key::SecretKey,
+    relay::ENV_FORCE_STAGING_RELAYS,
     AddrInfo, Endpoint, NodeId,
 };
-
-/// Environment variable to force the use of staging relays.
-const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
 #[cfg(feature = "discovery-pkarr-dht")]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-pkarr-dht")))]
@@ -186,13 +184,9 @@ impl PkarrPublisher {
     ///
     /// [number 0]: https://n0.computer
     pub fn n0_dns(secret_key: SecretKey) -> Self {
-        let force_staging_relay = match std::env::var(ENV_FORCE_STAGING_RELAYS) {
-            Ok(value) => value == "1",
-            Err(_) => false,
-        };
-        let pkarr_relay = match force_staging_relay {
-            true => N0_DNS_PKARR_RELAY_STAGING,
-            false => N0_DNS_PKARR_RELAY_PROD,
+        let pkarr_relay = match std::env::var(ENV_FORCE_STAGING_RELAYS) {
+            Ok(value) if !value.is_empty() => N0_DNS_PKARR_RELAY_STAGING,
+            _ => N0_DNS_PKARR_RELAY_PROD,
         };
 
         let pkarr_relay: Url = pkarr_relay.parse().expect("url is valid");

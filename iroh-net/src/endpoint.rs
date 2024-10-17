@@ -31,7 +31,7 @@ use crate::discovery::{Discovery, DiscoveryTask};
 use crate::dns::{default_resolver, DnsResolver};
 use crate::key::{PublicKey, SecretKey};
 use crate::magicsock::{self, Handle, QuicMappedAddr};
-use crate::relay::{RelayMode, RelayUrl};
+use crate::relay::{RelayMode, RelayUrl, ENV_FORCE_STAGING_RELAYS};
 use crate::{tls, NodeId};
 
 mod rtt_actor;
@@ -56,9 +56,6 @@ pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 /// [`Endpoint`] assumes one of those addresses probably works.  If after this delay there
 /// is still no connection the configured [`Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
-
-/// Environment variable to force the use of staging relays.
-const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
 /// Builder for [`Endpoint`].
 ///
@@ -1241,17 +1238,13 @@ fn proxy_url_from_env() -> Option<Url> {
 
 /// Returns the default relay mode.
 ///
-/// If the `IROH_FORCE_STAGING_RELAYS` environment variable is set to `1`, it will return `RelayMode::Staging`.
+/// If the `IROH_FORCE_STAGING_RELAYS` environment variable is set, it will return `RelayMode::Staging`.
 /// Otherwise, it will return `RelayMode::Default`.
 pub fn default_relay_mode() -> RelayMode {
     // Use staging in testing
-    let force_staging_relays = match std::env::var(ENV_FORCE_STAGING_RELAYS) {
-        Ok(value) => value == "1",
-        Err(_) => false,
-    };
-    match force_staging_relays {
-        true => RelayMode::Staging,
-        false => RelayMode::Default,
+    match std::env::var(ENV_FORCE_STAGING_RELAYS) {
+        Ok(value) if !value.is_empty() => RelayMode::Staging,
+        _ => RelayMode::Default,
     }
 }
 
