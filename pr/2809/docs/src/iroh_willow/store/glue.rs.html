@@ -131,6 +131,20 @@
 <a href="#131" id="131">131</a>
 <a href="#132" id="132">132</a>
 <a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Code required for willow-rs and willow-store to interface together.
 
 </span><span class="kw">use </span>anyhow::Result;
@@ -177,6 +191,20 @@
             <span class="kw">return </span><span class="bool-val">true</span>;
         }
         <span class="self">self</span>.payload_size &lt; other.payload_size
+    }
+
+    <span class="kw">pub fn </span>from_authorised_entry(entry: <span class="kw-2">&amp;</span>AuthorisedEntry) -&gt; (Point&lt;IrohWillowParams&gt;, <span class="self">Self</span>) {
+        <span class="kw">let </span>point = willow_store::Point::&lt;IrohWillowParams&gt;::new(
+            entry.entry().subspace_id(),
+            <span class="kw-2">&amp;</span>entry.entry().timestamp(),
+            <span class="kw-2">&amp;</span>path_to_blobseq(entry.entry().path()),
+        );
+        <span class="kw">let </span>entry = <span class="self">Self </span>{
+            authorization_token_id: entry.token().signature.to_bytes(),
+            payload_digest: <span class="kw-2">*</span>entry.entry().payload_digest().<span class="number">0</span>.as_bytes(),
+            payload_size: entry.entry().payload_length(),
+        };
+        (point, entry)
     }
 
     <span class="kw">pub fn </span>into_authorised_entry(
