@@ -15,7 +15,7 @@ pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
 pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
 /// Testing DNS node origin, must run server from [`crate::test_utils::DnsPkarrServer`].
 #[cfg(test)]
-#[cfg_attr(iroh_docsrs, doc(cfg(not(test))))]
+#[cfg_attr(iroh_docsrs, doc(cfg(test)))]
 pub const TEST_DNS_NODE_ORIGIN: &str = "dns.iroh.test";
 
 const DNS_STAGGERING_MS: &[u64] = &[200, 300];
@@ -57,8 +57,8 @@ impl DnsDiscovery {
     ///
     /// # Usage during tests
     ///
-    /// When `cfg(test)` is enabled or when using the `test-utils` cargo feature the
-    /// [`TEST_DNS_NODE_ORIGIN`] is used.
+    /// When `cfg(test)` is enabled the
+    /// [`crate::discovery::dns::TEST_DNS_NODE_ORIGIN`] is used.
     ///
     /// Note that the `iroh.test` domain is not integrated with the global DNS network and
     /// thus node discovery is effectively disabled.  To use node discovery in a test use
