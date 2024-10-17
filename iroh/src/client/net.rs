@@ -39,6 +39,7 @@ use super::{flatten, RpcClient};
 ///
 /// # Examples
 /// ```
+/// use std::collections::BTreeSet;
 /// use std::str::FromStr;
 /// use iroh_base::{key::NodeId, node_addr::{RelayUrl, NodeAddr}};
 /// use url::Url;
@@ -56,7 +57,7 @@ use super::{flatten, RpcClient};
 ///   // the home relay
 ///   Some(relay_url),
 ///   // the direct addresses
-///   vec!["120.0.0.1:0".parse().unwrap()],
+///   BTreeSet::from_iter(["120.0.0.1:0".parse().unwrap()]),
 /// );
 /// net_client.add_node_addr(addr).await?;
 /// // Shut down the node. Passing `true` will force the shutdown, passing in
