@@ -128,6 +128,8 @@ where
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
     blob_events: EventSender,
     transport_config: Option<TransportConfig>,
+    #[cfg(feature = "metrics")]
+    metrics_push_config: Option<iroh_metrics::PushMetricsConfig>,
 }
 
 /// Configuration for storage.
@@ -256,6 +258,8 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             gc_done_callback: None,
             blob_events: Default::default(),
             transport_config: None,
+            #[cfg(feature = "metrics")]
+            metrics_push_config: None,
         }
     }
 }
@@ -292,6 +296,8 @@ impl<D: Map> Builder<D> {
             gc_done_callback: None,
             blob_events: Default::default(),
             transport_config: None,
+            #[cfg(feature = "metrics")]
+            metrics_push_config: None,
         }
     }
 }
@@ -306,6 +312,13 @@ where
     /// To define an event sender, implement the [`iroh_blobs::provider::CustomEventSender`] trait.
     pub fn blobs_events(mut self, blob_events: impl Into<EventSender>) -> Self {
         self.blob_events = blob_events.into();
+        self
+    }
+
+    #[cfg(feature = "metrics")]
+    /// Set the metrics push configuration.
+    pub fn metrics_push_config(mut self, config: iroh_metrics::PushMetricsConfig) -> Self {
+        self.metrics_push_config = Some(config);
         self
     }
 
@@ -352,6 +365,8 @@ where
             gc_done_callback: self.gc_done_callback,
             blob_events: self.blob_events,
             transport_config: self.transport_config,
+            #[cfg(feature = "metrics")]
+            metrics_push_config: self.metrics_push_config,
         })
     }
 
@@ -677,6 +692,15 @@ where
         let controller = quic_rpc::transport::boxed::Connection::new(controller);
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
+        #[cfg(feature = "metrics")]
+        let metrics_exporter_handle = self.metrics_push_config.map(|config| {
+            AbortOnDropHandle::new(tokio::spawn(iroh_metrics::metrics::start_metrics_exporter(
+                config,
+            )))
+        });
+        #[cfg(not(feature = "metrics"))]
+        let metrics_exporter_handle = None;
+
         let inner = Arc::new(NodeInner {
             rpc_addr: self.rpc_addr,
             db: Default::default(),
@@ -684,6 +708,7 @@ where
             client,
             cancel_token: CancellationToken::new(),
             local_pool_handle: lp.handle().clone(),
+            metrics_exporter_handle,
         });
 
         let protocol_builder = ProtocolBuilder {
