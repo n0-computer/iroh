@@ -1992,26 +1992,25 @@ impl Actor {
         let portmap_watcher = self.port_mapper.watch_external_address();
 
         // We only want to have one DirectAddr for each SocketAddr we have.  So we store
-        // this as a map:
-        let mut addrs: BTreeMap<SocketAddr, DirectAddr> = BTreeMap::new();
+        // this as a map of SocketAddr -> DirectAddrType.  At the end we will construct a
+        // DirectAddr from each entry.
+        let mut addrs: BTreeMap<SocketAddr, DirectAddrType> = BTreeMap::new();
 
         // First add PortMapper provided addresses.
         let maybe_port_mapped = *portmap_watcher.borrow();
         if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
-            addrs.entry(portmap_ext).or_insert(DirectAddr {
-                addr: portmap_ext,
-                typ: DirectAddrType::Portmapped,
-            });
+            addrs
+                .entry(portmap_ext)
+                .or_insert(DirectAddrType::Portmapped);
             self.set_net_info_have_port_map();
         }
 
         // Next add STUN addresses from the netcheck report.
         if let Some(netcheck_report) = netcheck_report {
             if let Some(global_v4) = netcheck_report.global_v4 {
-                addrs.entry(global_v4.into()).or_insert(DirectAddr {
-                    addr: global_v4.into(),
-                    typ: DirectAddrType::Stun,
-                });
+                addrs
+                    .entry(global_v4.into())
+                    .or_insert(DirectAddrType::Stun);
 
                 // If they're behind a hard NAT and are using a fixed
                 // port locally, assume they might've added a static
@@ -2025,17 +2024,15 @@ impl Actor {
                 {
                     let mut addr = global_v4;
                     addr.set_port(port);
-                    addrs.entry(addr.into()).or_insert(DirectAddr {
-                        addr: addr.into(),
-                        typ: DirectAddrType::Stun4LocalPort,
-                    });
+                    addrs
+                        .entry(addr.into())
+                        .or_insert(DirectAddrType::Stun4LocalPort);
                 }
             }
             if let Some(global_v6) = netcheck_report.global_v6 {
-                addrs.entry(global_v6.into()).or_insert(DirectAddr {
-                    addr: global_v6.into(),
-                    typ: DirectAddrType::Stun,
-                });
+                addrs
+                    .entry(global_v6.into())
+                    .or_insert(DirectAddrType::Stun);
             }
         }
 
@@ -2084,10 +2081,7 @@ impl Actor {
                         };
                         if let Some(port) = port_if_unspecified {
                             let addr = SocketAddr::new(ip, port);
-                            addrs.entry(addr).or_insert(DirectAddr {
-                                addr,
-                                typ: DirectAddrType::Local,
-                            });
+                            addrs.entry(addr).or_insert(DirectAddrType::Local);
                         }
                     }
                 }
@@ -2095,24 +2089,26 @@ impl Actor {
                 // If a socket is bound to a specific address, add it.
                 if !is_unspecified_v4 {
                     if let Some(addr) = local_addr_v4 {
-                        addrs.entry(addr).or_insert(DirectAddr {
-                            addr,
-                            typ: DirectAddrType::Local,
-                        });
+                        addrs.entry(addr).or_insert(DirectAddrType::Local);
                     }
                 }
                 if !is_unspecified_v6 {
                     if let Some(addr) = local_addr_v6 {
-                        addrs.entry(addr).or_insert(DirectAddr {
-                            addr,
-                            typ: DirectAddrType::Local,
-                        });
+                        addrs.entry(addr).or_insert(DirectAddrType::Local);
                     }
                 }
 
-                // Finally store all these direct addresses created and send any queued
-                // call-me-maybe messages.
-                msock.store_direct_addresses(addrs.values().cloned().collect());
+                // Finally create and store store all these direct addresses and send any
+                // queued call-me-maybe messages.
+                msock.store_direct_addresses(
+                    addrs
+                        .iter()
+                        .map(|(addr, typ)| DirectAddr {
+                            addr: *addr,
+                            typ: *typ,
+                        })
+                        .collect(),
+                );
                 msock.send_queued_call_me_maybes();
             }
             .instrument(Span::current()),
