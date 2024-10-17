@@ -13,8 +13,10 @@ args = [
 ]
 
 [tasks.format-check]
+# This task is used in CI.  The nightly version needs to be kept in
+# sync with the check_fmt job in the ci.yml workflow.
 workspace = false
-toolchain = "nightly"
+toolchain = "nightly-2024-05-02"
 command = "cargo"
 args = [
      "fmt",
