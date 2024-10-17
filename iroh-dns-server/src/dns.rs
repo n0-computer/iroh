@@ -14,18 +14,17 @@ use bytes::Bytes;
 use hickory_server::{
     authority::{Catalog, MessageResponse, ZoneType},
     proto::{
-        self,
         rr::{
             rdata::{self},
             RData, Record, RecordSet, RecordType, RrKey,
         },
         serialize::{binary::BinEncoder, txt::RDataParser},
+        {self},
     },
     resolver::Name,
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
     store::in_memory::InMemoryAuthority,
 };
-
 use iroh_metrics::inc;
 use proto::{op::ResponseCode, rr::LowerName};
 use serde::{Deserialize, Serialize};
@@ -35,9 +34,8 @@ use tokio::{
 };
 use tracing::{debug, info};
 
-use crate::{metrics::Metrics, store::ZoneStore};
-
 use self::node_authority::NodeAuthority;
+use crate::{metrics::Metrics, store::ZoneStore};
 
 mod node_authority;
 

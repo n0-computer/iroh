@@ -27,9 +27,8 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::{key, relay::RelayUrl};
-
 use super::{key::PublicKey, stun};
+use crate::{key, relay::RelayUrl};
 
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.
@@ -404,9 +403,8 @@ const fn msg_header(t: MessageType, ver: u8) -> [u8; HEADER_LEN] {
 
 #[cfg(test)]
 mod tests {
-    use crate::key::SecretKey;
-
     use super::*;
+    use crate::key::SecretKey;
 
     #[test]
     fn test_to_from_bytes() {

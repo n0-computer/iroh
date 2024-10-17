@@ -1,5 +1,4 @@
 //! A local task pool with proper shutdown
-use futures_lite::FutureExt;
 use std::{
     any::Any,
     future::Future,
@@ -10,6 +9,8 @@ use std::{
         Arc,
     },
 };
+
+use futures_lite::FutureExt;
 use tokio::{
     sync::{Notify, Semaphore},
     task::{JoinError, JoinSet, LocalSet},

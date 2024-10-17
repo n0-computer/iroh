@@ -11,13 +11,15 @@
 //!
 //! [module docs]: crate
 
-use std::any::Any;
-use std::future::{Future, IntoFuture};
-use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::Poll;
-use std::time::Duration;
+use std::{
+    any::Any,
+    future::{Future, IntoFuture},
+    net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    pin::Pin,
+    sync::Arc,
+    task::Poll,
+    time::Duration,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
@@ -27,28 +29,28 @@ use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
-use crate::discovery::{Discovery, DiscoveryTask};
-use crate::dns::{default_resolver, DnsResolver};
-use crate::key::{PublicKey, SecretKey};
-use crate::magicsock::{self, Handle, QuicMappedAddr};
-use crate::relay::{RelayMode, RelayUrl};
-use crate::{tls, NodeId};
+use crate::{
+    discovery::{Discovery, DiscoveryTask},
+    dns::{default_resolver, DnsResolver},
+    key::{PublicKey, SecretKey},
+    magicsock::{self, Handle, QuicMappedAddr},
+    relay::{RelayMode, RelayUrl},
+    tls, NodeId,
+};
 
 mod rtt_actor;
 
-use self::rtt_actor::RttMessage;
-
+pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 pub use quinn::{
     ApplicationClose, Connection, ConnectionClose, ConnectionError, ReadError, RecvStream,
     RetryError, SendStream, ServerConfig, TransportConfig, VarInt, WriteError,
 };
 
+use self::rtt_actor::RttMessage;
 pub use super::magicsock::{
     ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
     DirectAddrsStream, RemoteInfo, Source,
 };
-
-pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 
 /// The delay to fall back to discovery when direct addresses fail.
 ///
@@ -1280,9 +1282,8 @@ mod tests {
     use rand::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
 
-    use crate::test_utils::run_relay_server;
-
     use super::*;
+    use crate::test_utils::run_relay_server;
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 

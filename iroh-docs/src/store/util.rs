@@ -1,8 +1,7 @@
 //! Utilities useful across different store impls.
 
-use crate::SignedEntry;
-
 use super::{AuthorFilter, KeyFilter, Query, QueryKind, SortBy};
+use crate::SignedEntry;
 
 /// A helper for stores that have by-author and by-key indexes for records.
 #[derive(Debug)]

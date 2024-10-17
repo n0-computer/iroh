@@ -78,7 +78,6 @@ use bao_tree::io::{
 };
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
-
 use genawaiter::rc::{Co, Gen};
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
@@ -97,6 +96,14 @@ mod tests;
 mod util;
 mod validate;
 
+use tables::{ReadOnlyTables, ReadableTables, Tables};
+
+use self::{tables::DeleteSet, test_support::EntryData, util::PeekableFlumeReceiver};
+use super::{
+    bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
+    temp_name, BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, EntryStatus, ExportMode,
+    ExportProgressCb, ImportMode, ImportProgress, Map, ReadableStore, TempCounterMap,
+};
 use crate::{
     store::{
         bao_file::{BaoFileStorage, CompleteStorage},
@@ -115,17 +122,6 @@ use crate::{
         raw_outboard_size, MemOrFile, TagCounter, TagDrop,
     },
     Tag, TempTag,
-};
-use tables::{ReadOnlyTables, ReadableTables, Tables};
-
-use self::{tables::DeleteSet, util::PeekableFlumeReceiver};
-
-use self::test_support::EntryData;
-
-use super::{
-    bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
-    temp_name, BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, EntryStatus, ExportMode,
-    ExportProgressCb, ImportMode, ImportProgress, Map, ReadableStore, TempCounterMap,
 };
 
 /// Location of the data.

@@ -3,8 +3,10 @@
 use anyhow::{anyhow, Result};
 #[cfg(not(target_os = "android"))]
 use futures_util::TryStreamExt;
-use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::{
+    fs::File,
+    io::{AsyncBufReadExt, BufReader},
+};
 
 use super::DefaultRouteDetails;
 

@@ -7,10 +7,11 @@ use std::{
     time::Duration,
 };
 
-use crate::defaults::timeouts::DEFAULT_PINGER_TIMEOUT as DEFAULT_TIMEOUT;
 use anyhow::{Context, Result};
 use surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};
 use tracing::debug;
+
+use crate::defaults::timeouts::DEFAULT_PINGER_TIMEOUT as DEFAULT_TIMEOUT;
 
 /// Whether this error was because we couldn't create a client or a send error.
 #[derive(Debug, thiserror::Error)]

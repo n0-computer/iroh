@@ -122,11 +122,10 @@ mod new {
 mod old {
     use redb_v1::{MultimapTableDefinition, TableDefinition};
 
-    use crate::PeerIdBytes;
-
     use super::new::tables::{
         LatestPerAuthorKey, LatestPerAuthorValue, Nanos, RecordsByKeyId, RecordsId, RecordsValue,
     };
+    use crate::PeerIdBytes;
 
     pub const AUTHORS_TABLE: TableDefinition<&[u8; 32], &[u8; 32]> =
         TableDefinition::new("authors-1");

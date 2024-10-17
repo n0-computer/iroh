@@ -1,6 +1,5 @@
 //! Define the commands to manage authors.
 
-use crate::config::ConsoleEnv;
 use anyhow::{bail, Result};
 use clap::Parser;
 use derive_more::FromStr;
@@ -10,6 +9,8 @@ use iroh::{
     client::Iroh,
     docs::{Author, AuthorId},
 };
+
+use crate::config::ConsoleEnv;
 
 /// Commands to manage authors.
 #[derive(Debug, Clone, Parser)]

@@ -1,42 +1,48 @@
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
-use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
+use conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
 use futures_lite::future::Boxed as BoxFuture;
 use futures_util::StreamExt;
 use http_body_util::Empty;
-use hyper::body::Incoming;
-use hyper::header::UPGRADE;
-use hyper::upgrade::Parts;
-use hyper::Request;
+use hyper::{body::Incoming, header::UPGRADE, upgrade::Parts, Request};
 use hyper_util::rt::TokioIo;
 use rand::Rng;
 use rustls::client::Resumption;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
-use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinSet;
-use tokio::time::Instant;
-use tokio_util::codec::{FramedRead, FramedWrite};
-use tokio_util::task::AbortOnDropHandle;
+use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::TcpStream,
+    sync::{mpsc, oneshot},
+    task::JoinSet,
+    time::Instant,
+};
+use tokio_util::{
+    codec::{FramedRead, FramedWrite},
+    task::AbortOnDropHandle,
+};
 use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 use url::Url;
 
-use conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
-use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
-
-use crate::defaults::timeouts::relay::*;
-use crate::dns::{DnsResolver, ResolverExt};
-use crate::key::{NodeId, PublicKey, SecretKey};
-use crate::relay::codec::DerpCodec;
-use crate::relay::http::{Protocol, RELAY_PATH};
-use crate::relay::RelayUrl;
-use crate::util::chain;
+use crate::{
+    defaults::timeouts::relay::*,
+    dns::{DnsResolver, ResolverExt},
+    key::{NodeId, PublicKey, SecretKey},
+    relay::{
+        codec::DerpCodec,
+        http::{Protocol, RELAY_PATH},
+        RelayUrl,
+    },
+    util::chain,
+};
 
 pub(crate) mod conn;
 pub(crate) mod streams;
@@ -1097,9 +1103,8 @@ fn url_port(url: &Url) -> Option<u16> {
 mod tests {
     use anyhow::{bail, Result};
 
-    use crate::dns::default_resolver;
-
     use super::*;
+    use crate::dns::default_resolver;
 
     #[tokio::test]
     async fn test_recv_detail_connect_error() -> Result<()> {

@@ -149,8 +149,10 @@ pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), Error> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
-    use std::sync::Arc;
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        sync::Arc,
+    };
 
     use anyhow::Result;
     use tokio::{
@@ -159,10 +161,11 @@ pub(crate) mod tests {
     };
     use tracing::{debug, trace};
 
-    use crate::relay::{RelayMap, RelayNode, RelayUrl};
-    use crate::test_utils::CleanupDropGuard;
-
     use super::*;
+    use crate::{
+        relay::{RelayMap, RelayNode, RelayUrl},
+        test_utils::CleanupDropGuard,
+    };
 
     // TODO: make all this private
 

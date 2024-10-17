@@ -40,10 +40,10 @@ pub mod provider;
 pub mod store;
 pub mod util;
 
-pub use crate::util::{Tag, TempTag};
+use bao_tree::BlockSize;
 pub use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 
-use bao_tree::BlockSize;
+pub use crate::util::{Tag, TempTag};
 
 /// Block size used by iroh, 2^4*1024 = 16KiB
 pub const IROH_BLOCK_SIZE: BlockSize = BlockSize::from_chunk_log(4);

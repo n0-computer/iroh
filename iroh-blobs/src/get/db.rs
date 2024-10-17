@@ -1,26 +1,20 @@
 //! Functions that use the iroh-blobs protocol in conjunction with a bao store.
 
-use std::future::Future;
-use std::io;
-use std::num::NonZeroU64;
-use std::pin::Pin;
+use std::{future::Future, io, num::NonZeroU64, pin::Pin};
 
+use anyhow::anyhow;
+use bao_tree::{ChunkNum, ChunkRanges};
 use futures_lite::StreamExt;
 use genawaiter::{
     rc::{Co, Gen},
     GeneratorState,
 };
-use iroh_base::hash::Hash;
-use iroh_base::rpc::RpcError;
+use iroh_base::{hash::Hash, rpc::RpcError};
+use iroh_io::AsyncSliceReader;
 use iroh_net::endpoint::Connection;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
-
-use crate::hashseq::parse_hash_seq;
-use crate::protocol::RangeSpec;
-use crate::store::BaoBatchWriter;
-use crate::store::BaoBlobSize;
-use crate::store::FallibleProgressBatchWriter;
+use tracing::trace;
 
 use crate::{
     get::{
@@ -30,15 +24,15 @@ use crate::{
         progress::TransferState,
         Stats,
     },
-    protocol::{GetRequest, RangeSpecSeq},
-    store::{MapEntry, MapEntryMut, MapMut, Store as BaoStore},
+    hashseq::parse_hash_seq,
+    protocol::{GetRequest, RangeSpec, RangeSpecSeq},
+    store::{
+        BaoBatchWriter, BaoBlobSize, FallibleProgressBatchWriter, MapEntry, MapEntryMut, MapMut,
+        Store as BaoStore,
+    },
     util::progress::{IdGenerator, ProgressSender},
     BlobFormat, HashAndFormat,
 };
-use anyhow::anyhow;
-use bao_tree::{ChunkNum, ChunkRanges};
-use iroh_io::AsyncSliceReader;
-use tracing::trace;
 
 type GetGenerator = Gen<Yield, (), Pin<Box<dyn Future<Output = Result<Stats, GetError>>>>>;
 type GetFuture = Pin<Box<dyn Future<Output = Result<Stats, GetError>> + 'static>>;

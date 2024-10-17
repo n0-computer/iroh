@@ -1,28 +1,29 @@
 //! The server side API
-use std::fmt::Debug;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
-use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
-use bao_tree::io::EncodeError;
+use bao_tree::io::{
+    fsm::{encode_ranges_validated, Outboard},
+    EncodeError,
+};
 use futures_lite::future::Boxed as BoxFuture;
 use iroh_base::rpc::RpcError;
-use iroh_io::stats::{
-    SliceReaderStats, StreamWriterStats, TrackingSliceReader, TrackingStreamWriter,
+use iroh_io::{
+    stats::{SliceReaderStats, StreamWriterStats, TrackingSliceReader, TrackingStreamWriter},
+    AsyncSliceReader, AsyncStreamWriter, TokioStreamWriter,
 };
-use iroh_io::{AsyncSliceReader, AsyncStreamWriter, TokioStreamWriter};
 use iroh_net::endpoint::{self, RecvStream, SendStream};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, debug_span, info, trace, warn};
 use tracing_futures::Instrument;
 
-use crate::hashseq::parse_hash_seq;
-use crate::protocol::{GetRequest, RangeSpec, Request};
-use crate::store::*;
-use crate::util::local_pool::LocalPoolHandle;
-use crate::util::Tag;
-use crate::{BlobFormat, Hash};
+use crate::{
+    hashseq::parse_hash_seq,
+    protocol::{GetRequest, RangeSpec, Request},
+    store::*,
+    util::{local_pool::LocalPoolHandle, Tag},
+    BlobFormat, Hash,
+};
 
 /// Events emitted by the provider informing about the current status.
 #[derive(Debug, Clone)]

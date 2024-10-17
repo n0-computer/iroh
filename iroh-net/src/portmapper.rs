@@ -7,16 +7,14 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+use current_mapping::CurrentMapping;
 use futures_lite::StreamExt;
+use iroh_metrics::inc;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, info_span, trace, Instrument};
 
-use iroh_metrics::inc;
-
 use crate::{net::interfaces::HomeRouter, util};
-
-use current_mapping::CurrentMapping;
 
 mod current_mapping;
 mod mapping;

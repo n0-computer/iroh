@@ -34,9 +34,8 @@ mod node_state;
 mod path_state;
 mod udp_paths;
 
-pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
-
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
+pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -655,10 +654,10 @@ impl IpPort {
 
 #[cfg(test)]
 mod tests {
-    use super::node_state::MAX_INACTIVE_DIRECT_ADDRESSES;
-    use super::*;
-    use crate::key::SecretKey;
     use std::net::Ipv4Addr;
+
+    use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
+    use crate::key::SecretKey;
 
     impl NodeMap {
         #[track_caller]

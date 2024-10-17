@@ -298,7 +298,10 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 
     /// Parses a [`pkarr::SignedPacket`].
     pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
-        use pkarr::dns::{self, rdata::RData};
+        use pkarr::dns::{
+            rdata::RData,
+            {self},
+        };
         let pubkey = packet.public_key();
         let pubkey_z32 = pubkey.to_z32();
         let node_id = NodeId::from(*pubkey.verifying_key());
@@ -410,8 +413,9 @@ fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name> {
 
 #[cfg(test)]
 mod tests {
-    use iroh_base::key::SecretKey;
     use std::str::FromStr;
+
+    use iroh_base::key::SecretKey;
 
     use super::NodeInfo;
 

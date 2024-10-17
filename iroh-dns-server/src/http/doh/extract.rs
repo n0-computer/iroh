@@ -3,6 +3,12 @@
 // This module is mostly copied from
 // https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-server/src/extract/doh.rs
 
+use std::{
+    fmt::{self, Display, Formatter},
+    net::SocketAddr,
+    str::FromStr,
+};
+
 use async_trait::async_trait;
 use axum::{
     extract::{ConnectInfo, FromRequest, FromRequestParts, Query},
@@ -12,18 +18,13 @@ use bytes::Bytes;
 use hickory_server::{
     authority::MessageRequest,
     proto::{
-        self,
         serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
+        {self},
     },
     server::{Protocol, Request as DNSRequest},
 };
 use http::{header, request::Parts, HeaderValue, StatusCode};
 use serde::Deserialize;
-use std::{
-    fmt::{self, Display, Formatter},
-    net::SocketAddr,
-    str::FromStr,
-};
 use tracing::info;
 
 use crate::http::error::AppError;

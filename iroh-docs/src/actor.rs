@@ -1021,9 +1021,8 @@ fn send_reply_error<T>(_err: T) -> SendReplyError {
 
 #[cfg(test)]
 mod tests {
-    use crate::store;
-
     use super::*;
+    use crate::store;
     #[tokio::test]
     async fn open_close() -> anyhow::Result<()> {
         let store = store::Store::memory();

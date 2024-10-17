@@ -117,10 +117,11 @@ mod tests {
 
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
-    use crate::base32;
-    use crate::key::{PublicKey, SecretKey};
-
     use super::*;
+    use crate::{
+        base32,
+        key::{PublicKey, SecretKey},
+    };
 
     fn make_ticket() -> NodeTicket {
         let peer = SecretKey::generate().public();

@@ -1,17 +1,17 @@
 //! Utilities for complex get requests.
 use std::sync::Arc;
 
-use crate::{
-    hashseq::HashSeq,
-    protocol::{GetRequest, RangeSpecSeq},
-    Hash, HashAndFormat,
-};
 use bao_tree::{ChunkNum, ChunkRanges};
 use bytes::Bytes;
 use iroh_net::endpoint::Connection;
 use rand::Rng;
 
 use super::{fsm, Stats};
+use crate::{
+    hashseq::HashSeq,
+    protocol::{GetRequest, RangeSpecSeq},
+    Hash, HashAndFormat,
+};
 
 /// Get the claimed size of a blob from a peer.
 ///

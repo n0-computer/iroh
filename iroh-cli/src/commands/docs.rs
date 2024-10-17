@@ -1,6 +1,13 @@
 //! Define commands for interacting with documents in Iroh.
 
-use crate::config::ConsoleEnv;
+use std::{
+    cell::RefCell,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    rc::Rc,
+    time::{Duration, Instant},
+};
+
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use colored::Colorize;
@@ -22,14 +29,9 @@ use iroh::{
     },
     util::fs::{path_content_info, path_to_key, PathContent},
 };
-use std::{
-    cell::RefCell,
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-    rc::Rc,
-    time::{Duration, Instant},
-};
 use tokio::io::AsyncReadExt;
+
+use crate::config::ConsoleEnv;
 
 /// The maximum length of content to display before truncating.
 const MAX_DISPLAY_CONTENT_LEN: u64 = 80;

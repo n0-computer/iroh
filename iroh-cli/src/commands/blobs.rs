@@ -1,5 +1,12 @@
 //! Define blob-related commands.
 
+use std::{
+    collections::{BTreeMap, HashMap},
+    net::SocketAddr,
+    path::PathBuf,
+    time::Duration,
+};
+
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use clap::Subcommand;
 use console::{style, Emoji};
@@ -9,8 +16,7 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::{
-    base::node_addr::AddrInfoOptions,
-    base::ticket::BlobTicket,
+    base::{node_addr::AddrInfoOptions, ticket::BlobTicket},
     blobs::{
         get::{db::DownloadProgress, progress::BlobProgress, Stats},
         provider::AddProgress,
@@ -28,12 +34,6 @@ use iroh::{
         Iroh,
     },
     net::{key::PublicKey, relay::RelayUrl, NodeAddr},
-};
-use std::{
-    collections::{BTreeMap, HashMap},
-    net::SocketAddr,
-    path::PathBuf,
-    time::Duration,
 };
 use tokio::io::AsyncWriteExt;
 

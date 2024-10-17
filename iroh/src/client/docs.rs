@@ -17,6 +17,8 @@ use derive_more::{Display, FromStr};
 use futures_lite::{Stream, StreamExt};
 use iroh_base::{key::PublicKey, node_addr::AddrInfoOptions, rpc::RpcError};
 use iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
+#[doc(inline)]
+pub use iroh_docs::engine::{Origin, SyncEvent, SyncReason};
 use iroh_docs::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
@@ -29,19 +31,17 @@ use quic_rpc::message::RpcMsg;
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
-use crate::rpc_protocol::docs::{
-    CloseRequest, CreateRequest, DelRequest, DelResponse, DocListRequest, DocSubscribeRequest,
-    DropRequest, ExportFileRequest, GetDownloadPolicyRequest, GetExactRequest, GetManyRequest,
-    GetSyncPeersRequest, ImportFileRequest, ImportRequest, LeaveRequest, OpenRequest,
-    SetDownloadPolicyRequest, SetHashRequest, SetRequest, ShareRequest, StartSyncRequest,
-    StatusRequest,
-};
-use crate::rpc_protocol::RpcService;
-
-#[doc(inline)]
-pub use iroh_docs::engine::{Origin, SyncEvent, SyncReason};
-
 use super::{blobs, flatten, RpcClient};
+use crate::rpc_protocol::{
+    docs::{
+        CloseRequest, CreateRequest, DelRequest, DelResponse, DocListRequest, DocSubscribeRequest,
+        DropRequest, ExportFileRequest, GetDownloadPolicyRequest, GetExactRequest, GetManyRequest,
+        GetSyncPeersRequest, ImportFileRequest, ImportRequest, LeaveRequest, OpenRequest,
+        SetDownloadPolicyRequest, SetHashRequest, SetRequest, ShareRequest, StartSyncRequest,
+        StatusRequest,
+    },
+    RpcService,
+};
 
 /// Iroh docs client.
 #[derive(Debug, Clone, RefCast)]

@@ -1,5 +1,13 @@
 //! Networking for the `iroh-gossip` protocol
 
+use std::{
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Instant,
+};
+
 use anyhow::{anyhow, Context as _, Result};
 use bytes::BytesMut;
 use futures_concurrency::{
@@ -17,13 +25,6 @@ use iroh_net::{
 };
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
-use std::{
-    collections::{BTreeSet, HashMap, HashSet, VecDeque},
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-    time::Instant,
-};
 use tokio::{sync::mpsc, task::JoinSet};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error_span, trace, warn, Instrument};
@@ -819,10 +820,11 @@ mod test {
 
     use bytes::Bytes;
     use futures_concurrency::future::TryJoin;
-    use iroh_net::key::SecretKey;
-    use iroh_net::relay::{RelayMap, RelayMode};
-    use tokio::spawn;
-    use tokio::time::timeout;
+    use iroh_net::{
+        key::SecretKey,
+        relay::{RelayMap, RelayMode},
+    };
+    use tokio::{spawn, time::timeout};
     use tokio_util::sync::CancellationToken;
     use tracing::info;
 

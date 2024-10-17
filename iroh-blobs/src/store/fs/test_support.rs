@@ -7,6 +7,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use redb::ReadableTable;
+
 use super::{
     tables::{ReadableTables, Tables},
     ActorError, ActorMessage, ActorResult, ActorState, DataLocation, EntryState, FilterPredicate,
@@ -17,7 +19,6 @@ use crate::{
     util::raw_outboard_size,
     Hash,
 };
-use redb::ReadableTable;
 
 /// The full state of an entry, including the data.
 #[derive(derive_more::Debug)]

@@ -10,9 +10,8 @@ use crate::{AuthorId, Entry, NamespaceId};
 pub mod fs;
 mod pubkeys;
 mod util;
-pub use pubkeys::*;
-
 pub use fs::Store;
+pub use pubkeys::*;
 
 /// Number of peers to cache per document.
 pub(crate) const PEERS_PER_DOC_CACHE_SIZE: NonZeroUsize = match NonZeroUsize::new(5) {

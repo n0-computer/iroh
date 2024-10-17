@@ -9,12 +9,11 @@ use std::{
 use anyhow::anyhow;
 use parking_lot::Mutex;
 
+use super::DownloadKind;
 use crate::{
     get::{db::DownloadProgress, progress::TransferState},
     util::progress::{AsyncChannelProgressSender, IdGenerator, ProgressSendError, ProgressSender},
 };
-
-use super::DownloadKind;
 
 /// The channel that can be used to subscribe to progress updates.
 pub type ProgressSubscriber = AsyncChannelProgressSender<DownloadProgress>;

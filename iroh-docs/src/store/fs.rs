@@ -15,6 +15,10 @@ use iroh_base::hash::Hash;
 use rand_core::CryptoRngCore;
 use redb::{Database, DatabaseError, ReadableMultimapTable, ReadableTable, ReadableTableMetadata};
 
+use super::{
+    pubkeys::MemPublicKeyStore, DownloadPolicy, ImportNamespaceOutcome, OpenError, PublicKeyStore,
+    Query,
+};
 use crate::{
     actor::MAX_COMMIT_DELAY,
     keys::Author,
@@ -24,11 +28,6 @@ use crate::{
     ReplicaInfo,
 };
 
-use super::{
-    pubkeys::MemPublicKeyStore, DownloadPolicy, ImportNamespaceOutcome, OpenError, PublicKeyStore,
-    Query,
-};
-
 mod bounds;
 mod migrate_v1_v2;
 mod migrations;
@@ -36,19 +35,16 @@ mod query;
 mod ranges;
 pub(crate) mod tables;
 
+pub use self::ranges::RecordsRange;
 use self::{
     bounds::{ByKeyBounds, RecordsBounds},
-    ranges::RangeExt,
-    tables::{RecordsTable, TransactionAndTables},
-};
-use self::{
     query::QueryIterator,
+    ranges::RangeExt,
     tables::{
-        LatestPerAuthorKey, LatestPerAuthorValue, ReadOnlyTables, RecordsId, RecordsValue, Tables,
+        LatestPerAuthorKey, LatestPerAuthorValue, ReadOnlyTables, RecordsId, RecordsTable,
+        RecordsValue, Tables, TransactionAndTables,
     },
 };
-
-pub use self::ranges::RecordsRange;
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug)]
@@ -648,10 +644,14 @@ impl<'a> super::DownloadPolicyStore for StoreInstance<'a> {
 
 impl<'a> crate::ranger::Store<SignedEntry> for StoreInstance<'a> {
     type Error = anyhow::Error;
-    type RangeIterator<'x> = Chain<RecordsRange<'x>, Flatten<std::option::IntoIter<RecordsRange<'x>>>>
-        where 'a: 'x;
-    type ParentIterator<'x> = ParentIterator
-        where 'a: 'x;
+    type RangeIterator<'x>
+        = Chain<RecordsRange<'x>, Flatten<std::option::IntoIter<RecordsRange<'x>>>>
+    where
+        'a: 'x;
+    type ParentIterator<'x>
+        = ParentIterator
+    where
+        'a: 'x;
 
     /// Get a the first key (or the default if none is available).
     fn get_first(&mut self) -> Result<RecordIdentifier> {
@@ -960,11 +960,8 @@ fn into_entry(key: RecordsId, value: RecordsValue) -> SignedEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::tables::LATEST_PER_AUTHOR_TABLE;
-
+    use super::{tables::LATEST_PER_AUTHOR_TABLE, *};
     use crate::ranger::Store as _;
-
-    use super::*;
 
     #[test]
     fn test_ranges() -> Result<()> {

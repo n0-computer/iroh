@@ -4,12 +4,11 @@ use anyhow::Result;
 use redb::{Database, ReadableTable, ReadableTableMetadata, TableHandle, WriteTransaction};
 use tracing::{debug, info};
 
-use crate::{Capability, NamespaceSecret};
-
 use super::tables::{
     LATEST_PER_AUTHOR_TABLE, NAMESPACES_TABLE, NAMESPACES_TABLE_V1, RECORDS_BY_KEY_TABLE,
     RECORDS_TABLE,
 };
+use crate::{Capability, NamespaceSecret};
 
 /// Run all database migrations, if needed.
 pub fn run_migrations(db: &Database) -> Result<()> {

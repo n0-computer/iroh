@@ -2,17 +2,16 @@
 //!
 //! [`crate::Replica`] is also called documents here.
 
-use std::path::PathBuf;
 use std::{
     io,
+    path::PathBuf,
     str::FromStr,
     sync::{Arc, RwLock},
 };
 
 use anyhow::{bail, Context, Result};
 use futures_lite::{Stream, StreamExt};
-use iroh_blobs::downloader::Downloader;
-use iroh_blobs::{store::EntryStatus, Hash};
+use iroh_blobs::{downloader::Downloader, store::EntryStatus, Hash};
 use iroh_gossip::net::Gossip;
 use iroh_net::{key::PublicKey, Endpoint, NodeAddr};
 use serde::{Deserialize, Serialize};
@@ -20,13 +19,14 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{error, error_span, Instrument};
 
-use crate::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
-use crate::{Author, AuthorId};
-
 use self::live::{LiveActor, ToLiveActor};
-
-pub use self::live::SyncEvent;
-pub use self::state::{Origin, SyncReason};
+pub use self::{
+    live::SyncEvent,
+    state::{Origin, SyncReason},
+};
+use crate::{
+    actor::SyncHandle, Author, AuthorId, ContentStatus, ContentStatusCallback, Entry, NamespaceId,
+};
 
 mod gossip;
 mod live;

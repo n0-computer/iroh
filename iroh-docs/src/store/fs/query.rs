@@ -1,6 +1,11 @@
 use anyhow::Result;
 use iroh_base::hash::Hash;
 
+use super::{
+    bounds::{ByKeyBounds, RecordsBounds},
+    ranges::{RecordsByKeyRange, RecordsRange},
+    RecordsValue,
+};
 use crate::{
     store::{
         fs::tables::ReadOnlyTables,
@@ -8,12 +13,6 @@ use crate::{
         AuthorFilter, KeyFilter, Query,
     },
     AuthorId, NamespaceId, SignedEntry,
-};
-
-use super::{
-    bounds::{ByKeyBounds, RecordsBounds},
-    ranges::{RecordsByKeyRange, RecordsRange},
-    RecordsValue,
 };
 
 /// A query iterator for entry queries.

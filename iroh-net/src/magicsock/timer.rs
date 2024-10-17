@@ -1,8 +1,6 @@
-use std::future::Future;
-use std::time::Duration;
+use std::{future::Future, time::Duration};
 
-use tokio::task::JoinHandle;
-use tokio::time;
+use tokio::{task::JoinHandle, time};
 
 /// A timer that works similar to golangs `Timer`.
 #[derive(Debug)]

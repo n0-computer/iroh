@@ -118,9 +118,8 @@ impl FromIterator<(Timestamp, AuthorId)> for AuthorHeads {
 
 #[cfg(test)]
 mod tests {
-    use crate::Record;
-
     use super::*;
+    use crate::Record;
     #[test]
     fn author_heads_encode_decode() -> Result<()> {
         let mut heads = AuthorHeads::default();

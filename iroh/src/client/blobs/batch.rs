@@ -21,6 +21,7 @@ use tokio::io::AsyncRead;
 use tokio_util::io::ReaderStream;
 use tracing::{debug, warn};
 
+use super::WrapOption;
 use crate::{
     client::{RpcClient, RpcConnection, RpcService},
     rpc_protocol::{
@@ -31,8 +32,6 @@ use crate::{
         tags::{self, SyncMode},
     },
 };
-
-use super::WrapOption;
 
 /// A scope in which blobs can be added.
 #[derive(derive_more::Debug)]

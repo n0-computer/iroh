@@ -18,13 +18,15 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, info_span, trace, warn, Instrument};
 
+use super::{ActorMessage, MagicSock, Metrics as MagicsockMetrics, RelayContents};
 use crate::{
     key::{NodeId, PUBLIC_KEY_LENGTH},
-    relay::{self, client::conn::ReceivedMessage, client::ClientError, RelayUrl, MAX_PACKET_SIZE},
+    relay::{
+        self,
+        client::{conn::ReceivedMessage, ClientError},
+        RelayUrl, MAX_PACKET_SIZE,
+    },
 };
-
-use super::{ActorMessage, MagicSock};
-use super::{Metrics as MagicsockMetrics, RelayContents};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);

@@ -12,21 +12,23 @@
 //! or you can choose to finish early.
 //!
 //! [iroh-net]: https://docs.rs/iroh-net
-use std::error::Error;
-use std::fmt::{self, Debug};
-use std::time::{Duration, Instant};
+use std::{
+    error::Error,
+    fmt::{self, Debug},
+    time::{Duration, Instant},
+};
 
-use crate::Hash;
 use anyhow::Result;
-use bao_tree::io::fsm::BaoContentItem;
-use bao_tree::ChunkNum;
+use bao_tree::{io::fsm::BaoContentItem, ChunkNum};
 use iroh_net::endpoint::{self, RecvStream, SendStream};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
-use crate::protocol::RangeSpecSeq;
-use crate::util::io::{TrackingReader, TrackingWriter};
-use crate::IROH_BLOCK_SIZE;
+use crate::{
+    protocol::RangeSpecSeq,
+    util::io::{TrackingReader, TrackingWriter},
+    Hash, IROH_BLOCK_SIZE,
+};
 
 pub mod db;
 pub mod error;
@@ -59,13 +61,6 @@ impl Stats {
 pub mod fsm {
     use std::{io, result};
 
-    use crate::{
-        protocol::{GetRequest, NonEmptyRequestRangeSpecIter, Request, MAX_MESSAGE_SIZE},
-        store::BaoBatchWriter,
-    };
-
-    use super::*;
-
     use bao_tree::{
         io::fsm::{OutboardMut, ResponseDecoder, ResponseDecoderNext},
         BaoTree, ChunkRanges, TreeNode,
@@ -74,6 +69,12 @@ pub mod fsm {
     use iroh_io::{AsyncSliceWriter, AsyncStreamReader, TokioStreamReader};
     use iroh_net::endpoint::Connection;
     use tokio::io::AsyncWriteExt;
+
+    use super::*;
+    use crate::{
+        protocol::{GetRequest, NonEmptyRequestRangeSpecIter, Request, MAX_MESSAGE_SIZE},
+        store::BaoBatchWriter,
+    };
 
     type WrappedRecvStream = TrackingReader<TokioStreamReader<RecvStream>>;
 

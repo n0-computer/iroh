@@ -15,16 +15,16 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use anyhow::{bail, Context, Result};
-use tokio::sync::oneshot;
-use tokio::time::Instant;
+use tokio::{sync::oneshot, time::Instant};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use crate::net::UdpSocket;
-use crate::netcheck::{self, reportgen, Inflight};
-use crate::stun;
-
-use crate::defaults::timeouts::HAIRPIN_CHECK_TIMEOUT;
+use crate::{
+    defaults::timeouts::HAIRPIN_CHECK_TIMEOUT,
+    net::UdpSocket,
+    netcheck::{self, reportgen, Inflight},
+    stun,
+};
 
 /// Handle to the hairpin actor.
 ///
@@ -176,8 +176,9 @@ impl Actor {
 
 #[cfg(test)]
 mod tests {
-    use bytes::BytesMut;
     use std::time::Duration;
+
+    use bytes::BytesMut;
     use tokio::sync::mpsc;
     use tracing::info;
 

@@ -293,17 +293,17 @@ impl BobState {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        actor::OpenOpts,
-        store::{self, Query, Store},
-        AuthorId, NamespaceSecret,
-    };
     use anyhow::Result;
     use iroh_base::hash::Hash;
     use iroh_net::key::SecretKey;
     use rand_core::{CryptoRngCore, SeedableRng};
 
     use super::*;
+    use crate::{
+        actor::OpenOpts,
+        store::{self, Query, Store},
+        AuthorId, NamespaceSecret,
+    };
 
     #[tokio::test]
     async fn test_sync_simple() -> Result<()> {

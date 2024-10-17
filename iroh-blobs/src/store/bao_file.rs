@@ -27,16 +27,15 @@ use bao_tree::{
 };
 use bytes::{Bytes, BytesMut};
 use derive_more::Debug;
+use iroh_base::hash::Hash;
 use iroh_io::AsyncSliceReader;
 
+use super::mutable_mem_storage::{MutableMemStorage, SizeInfo};
 use crate::{
     store::BaoBatchWriter,
     util::{get_limited_slice, MemOrFile, SparseMemFile},
     IROH_BLOCK_SIZE,
 };
-use iroh_base::hash::Hash;
-
-use super::mutable_mem_storage::{MutableMemStorage, SizeInfo};
 
 /// Data files are stored in 3 files. The data file, the outboard file,
 /// and a sizes file. The sizes file contains the size that the remote side told us
@@ -736,9 +735,8 @@ pub mod test_support {
     use rand::RngCore;
     use range_collections::RangeSet2;
 
-    use crate::util::limited_range;
-
     use super::*;
+    use crate::util::limited_range;
 
     pub const IROH_BLOCK_SIZE: BlockSize = BlockSize::from_chunk_log(4);
 
@@ -879,9 +877,8 @@ mod tests {
     };
     use tokio::task::JoinSet;
 
-    use crate::util::local_pool::LocalPool;
-
     use super::*;
+    use crate::util::local_pool::LocalPool;
 
     #[tokio::test]
     async fn partial_downloads() {

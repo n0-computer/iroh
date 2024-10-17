@@ -694,8 +694,9 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
-    use super::*;
     use proptest::prelude::*;
+
+    use super::*;
 
     fn secret_key() -> impl Strategy<Value = SecretKey> {
         prop::array::uniform32(any::<u8>()).prop_map(SecretKey::from)

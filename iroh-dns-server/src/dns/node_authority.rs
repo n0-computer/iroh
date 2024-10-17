@@ -14,7 +14,6 @@ use hickory_server::{
     server::RequestInfo,
     store::in_memory::InMemoryAuthority,
 };
-
 use tracing::{debug, trace};
 
 use crate::{

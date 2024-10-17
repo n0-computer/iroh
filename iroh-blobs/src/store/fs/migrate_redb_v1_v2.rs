@@ -101,14 +101,15 @@ mod new {
 }
 
 mod old {
-    use super::super::EntryState;
-    use crate::util::Tag;
     use bytes::Bytes;
     use iroh_base::hash::BlobFormat;
     use postcard::experimental::max_size::MaxSize;
     use redb_v1::{RedbKey, RedbValue, TableDefinition, TypeName};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use smallvec::SmallVec;
+
+    use super::super::EntryState;
+    use crate::util::Tag;
 
     pub const BLOBS_TABLE: TableDefinition<Hash, EntryState> = TableDefinition::new("blobs-0");
 

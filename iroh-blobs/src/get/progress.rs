@@ -5,9 +5,8 @@ use std::{collections::HashMap, num::NonZeroU64};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use crate::{protocol::RangeSpec, store::BaoBlobSize, Hash};
-
 use super::db::{BlobId, DownloadProgress};
+use crate::{protocol::RangeSpec, store::BaoBlobSize, Hash};
 
 /// The identifier for progress events.
 pub type ProgressId = u64;

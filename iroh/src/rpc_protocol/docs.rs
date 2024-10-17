@@ -7,8 +7,10 @@ use iroh_base::{
 };
 use iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 use iroh_docs::{
-    actor::OpenState, engine::LiveEvent, store::DownloadPolicy, store::Query, AuthorId, Capability,
-    CapabilityKind, DocTicket, Entry, NamespaceId, PeerIdBytes, SignedEntry,
+    actor::OpenState,
+    engine::LiveEvent,
+    store::{DownloadPolicy, Query},
+    AuthorId, Capability, CapabilityKind, DocTicket, Entry, NamespaceId, PeerIdBytes, SignedEntry,
 };
 use iroh_net::NodeAddr;
 use nested_enum_utils::enum_conversions;

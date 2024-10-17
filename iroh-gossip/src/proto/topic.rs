@@ -11,12 +11,12 @@ use rand::Rng;
 use rand_core::SeedableRng;
 use serde::{Deserialize, Serialize};
 
-use super::plumtree::{self, GossipEvent, InEvent as GossipIn, Scope};
 use super::{
     hyparview::{self, InEvent as SwarmIn},
+    plumtree::{self, GossipEvent, InEvent as GossipIn, Scope},
     state::MessageKind,
+    PeerData, PeerIdentity,
 };
-use super::{PeerData, PeerIdentity};
 
 /// The default maximum size in bytes for a gossip message.
 /// This is a sane but arbitrary default and can be changed in the [`Config`].

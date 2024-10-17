@@ -7,17 +7,16 @@
 //! Technologies (UK) Ltd.
 use std::sync::Arc;
 
-use rustls::pki_types::CertificateDer as Certificate;
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    pki_types::CertificateDer as Certificate,
     server::danger::{ClientCertVerified, ClientCertVerifier},
     CertificateError, DigitallySignedStruct, DistinguishedName, OtherError, PeerMisbehaved,
     SignatureScheme, SupportedProtocolVersion,
 };
 
-use crate::key::PublicKey;
-
 use super::certificate;
+use crate::key::PublicKey;
 
 /// The protocol versions supported by this verifier.
 ///

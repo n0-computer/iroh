@@ -1,7 +1,8 @@
 //! Utilities for working with tokio io
 
-use iroh_io::AsyncStreamReader;
 use std::{io, pin::Pin, task::Poll};
+
+use iroh_io::AsyncStreamReader;
 use tokio::io::AsyncWrite;
 
 /// A reader that tracks the number of bytes read

@@ -6,7 +6,6 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use igd_next::aio as aigd;
-
 use iroh_metrics::inc;
 use tracing::debug;
 

@@ -1,5 +1,7 @@
 //! Define the net subcommands.
 
+use std::{net::SocketAddr, time::Duration};
+
 use anyhow::Result;
 use clap::Subcommand;
 use colored::Colorize;
@@ -11,10 +13,9 @@ use iroh::{
     net::{
         endpoint::{DirectAddrInfo, RemoteInfo},
         relay::RelayUrl,
-        {NodeAddr, NodeId},
+        NodeAddr, NodeId,
     },
 };
-use std::{net::SocketAddr, time::Duration};
 
 /// Commands to manage the iroh network.
 #[derive(Subcommand, Debug, Clone)]
