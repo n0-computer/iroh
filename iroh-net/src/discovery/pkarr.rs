@@ -323,9 +323,9 @@ impl PkarrResolver {
     ///
     /// [number 0]: https://n0.computer
     pub fn n0_dns() -> Self {
-        #[cfg(not(all(test, feature = "test-utils")))]
+        #[cfg(not(test))]
         let pkarr_relay = N0_DNS_PKARR_RELAY_PROD;
-        #[cfg(all(test, feature = "test-utils"))]
+        #[cfg(test)]
         let pkarr_relay = N0_DNS_PKARR_RELAY_STAGING;
 
         let pkarr_relay: Url = pkarr_relay.parse().expect("url is valid");
