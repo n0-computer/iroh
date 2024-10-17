@@ -1629,6 +1629,17 @@
 <a href="#1629" id="1629">1629</a>
 <a href="#1630" id="1630">1630</a>
 <a href="#1631" id="1631">1631</a>
+<a href="#1632" id="1632">1632</a>
+<a href="#1633" id="1633">1633</a>
+<a href="#1634" id="1634">1634</a>
+<a href="#1635" id="1635">1635</a>
+<a href="#1636" id="1636">1636</a>
+<a href="#1637" id="1637">1637</a>
+<a href="#1638" id="1638">1638</a>
+<a href="#1639" id="1639">1639</a>
+<a href="#1640" id="1640">1640</a>
+<a href="#1641" id="1641">1641</a>
+<a href="#1642" id="1642">1642</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implementation of Set Reconcilliation based on
 //! "Range-Based Set Reconciliation" by Aljoscha Meyer.
 //!
@@ -2219,9 +2230,17 @@
 <span class="kw">impl</span>&lt;E: RangeEntry, S: Store&lt;E&gt;&gt; Store&lt;E&gt; <span class="kw">for </span><span class="kw-2">&amp;mut </span>S {
     <span class="kw">type </span>Error = S::Error;
 
-    <span class="kw">type </span>RangeIterator&lt;<span class="lifetime">'a</span>&gt; = S::RangeIterator&lt;<span class="lifetime">'a</span>&gt; <span class="kw">where </span><span class="self">Self</span>: <span class="lifetime">'a</span>, E: <span class="lifetime">'a</span>;
+    <span class="kw">type </span>RangeIterator&lt;<span class="lifetime">'a</span>&gt;
+        = S::RangeIterator&lt;<span class="lifetime">'a</span>&gt;
+    <span class="kw">where
+        </span><span class="self">Self</span>: <span class="lifetime">'a</span>,
+        E: <span class="lifetime">'a</span>;
 
-    <span class="kw">type </span>ParentIterator&lt;<span class="lifetime">'a</span>&gt; = S::ParentIterator&lt;<span class="lifetime">'a</span>&gt; <span class="kw">where </span><span class="self">Self</span>: <span class="lifetime">'a</span>, E: <span class="lifetime">'a</span>;
+    <span class="kw">type </span>ParentIterator&lt;<span class="lifetime">'a</span>&gt;
+        = S::ParentIterator&lt;<span class="lifetime">'a</span>&gt;
+    <span class="kw">where
+        </span><span class="self">Self</span>: <span class="lifetime">'a</span>,
+        E: <span class="lifetime">'a</span>;
 
     <span class="kw">fn </span>get_first(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;&lt;E <span class="kw">as </span>RangeEntry&gt;::Key, <span class="self">Self</span>::Error&gt; {
         (<span class="kw-2">**</span><span class="self">self</span>).get_first()
@@ -2431,8 +2450,11 @@
             <span class="prelude-val">Ok</span>(())
         }
 
-        <span class="kw">type </span>RangeIterator&lt;<span class="lifetime">'a</span>&gt; = SimpleRangeIterator&lt;<span class="lifetime">'a</span>, K, V&gt;
-        <span class="kw">where </span>K: <span class="lifetime">'a</span>, V: <span class="lifetime">'a</span>;
+        <span class="kw">type </span>RangeIterator&lt;<span class="lifetime">'a</span>&gt;
+            = SimpleRangeIterator&lt;<span class="lifetime">'a</span>, K, V&gt;
+        <span class="kw">where
+            </span>K: <span class="lifetime">'a</span>,
+            V: <span class="lifetime">'a</span>;
         <span class="doccomment">/// Returns all items in the given range
         </span><span class="kw">fn </span>get_range(<span class="kw-2">&amp;mut </span><span class="self">self</span>, range: Range&lt;K&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::RangeIterator&lt;<span class="lifetime">'_</span>&gt;, <span class="self">Self</span>::Error&gt; {
             <span class="comment">// TODO: this is not very efficient, optimize depending on data structure
