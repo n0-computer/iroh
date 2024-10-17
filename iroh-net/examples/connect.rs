@@ -5,6 +5,7 @@
 //! This example uses the default relay servers to attempt to holepunch, and will use that relay server to relay packets if the two devices cannot establish a direct UDP connection.
 //!
 //! Run the `listen` example first (`iroh-net/examples/listen.rs`), which will give you instructions on how to run this example to watch two nodes connect and exchange bytes.
+use std::collections::BTreeSet;
 use std::net::SocketAddr;
 
 use anyhow::Context;
@@ -70,7 +71,11 @@ async fn main() -> anyhow::Result<()> {
         .expect("should be connected to a relay server, try calling `endpoint.local_endpoints()` or `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection before checking for the connected relay server");
     println!("node relay server url: {relay_url}\n");
     // Build a `NodeAddr` from the node_id, relay url, and UDP addresses.
-    let addr = NodeAddr::from_parts(args.node_id, Some(args.relay_url), args.addrs);
+    let addr = NodeAddr::from_parts(
+        args.node_id,
+        Some(args.relay_url),
+        BTreeSet::from_iter(args.addrs),
+    );
 
     // Attempt to connect, over the given ALPN.
     // Returns a Quinn connection.

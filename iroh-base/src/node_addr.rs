@@ -74,13 +74,13 @@ impl NodeAddr {
     pub fn from_parts(
         node_id: PublicKey,
         relay_url: Option<RelayUrl>,
-        direct_addresses: Vec<SocketAddr>,
+        direct_addresses: BTreeSet<SocketAddr>,
     ) -> Self {
         Self {
             node_id,
             info: AddrInfo {
                 relay_url,
-                direct_addresses: direct_addresses.into_iter().collect(),
+                direct_addresses,
             },
         }
     }

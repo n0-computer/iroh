@@ -1,11 +1,10 @@
-use std::{
-    collections::{hash_map::Entry, HashMap},
-    hash::Hash,
-    net::{IpAddr, SocketAddr},
-    pin::Pin,
-    task::{Context, Poll},
-    time::Instant,
-};
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeSet, HashMap};
+use std::hash::Hash;
+use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::Instant;
 
 use futures_lite::stream::Stream;
 use iroh_base::key::NodeId;
@@ -15,19 +14,15 @@ use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};
 
-use self::{
-    best_addr::ClearReason,
-    node_state::{NodeState, Options, PingHandled},
-};
+use self::best_addr::ClearReason;
+use self::node_state::{NodeState, Options, PingHandled};
 use super::{
     metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
 };
-use crate::{
-    disco::{CallMeMaybe, Pong, SendAddr},
-    key::PublicKey,
-    relay::RelayUrl,
-    stun, NodeAddr,
-};
+use crate::disco::{CallMeMaybe, Pong, SendAddr};
+use crate::key::PublicKey;
+use crate::relay::RelayUrl;
+use crate::{stun, NodeAddr};
 
 mod best_addr;
 mod node_state;
@@ -284,10 +279,7 @@ impl NodeMap {
         self.inner.lock().prune_inactive();
     }
 
-    pub(crate) fn on_direct_addr_discovered(
-        &self,
-        discovered: impl Iterator<Item = impl Into<IpPort>>,
-    ) {
+    pub(crate) fn on_direct_addr_discovered(&self, discovered: BTreeSet<SocketAddr>) {
         self.inner.lock().on_direct_addr_discovered(discovered);
     }
 }
@@ -322,10 +314,7 @@ impl NodeMapInner {
     }
 
     /// Prunes direct addresses from nodes that claim to share an address we know points to us.
-    pub(super) fn on_direct_addr_discovered(
-        &mut self,
-        discovered: impl Iterator<Item = impl Into<IpPort>>,
-    ) {
+    pub(super) fn on_direct_addr_discovered(&mut self, discovered: BTreeSet<SocketAddr>) {
         for addr in discovered {
             self.remove_by_ipp(addr.into(), ClearReason::MatchesOurLocalAddr)
         }
