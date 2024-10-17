@@ -247,18 +247,20 @@
 <a href="#247" id="247">247</a>
 <a href="#248" id="248">248</a>
 <a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Holds the current mapping value and ensures that any change is reported accordingly.
 
-</span><span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::net::{Ipv4Addr, SocketAddrV4};
-<span class="kw">use </span>std::num::NonZeroU16;
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::task::Poll;
-<span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{
+    future::Future,
+    net::{Ipv4Addr, SocketAddrV4},
+    num::NonZeroU16,
+    pin::Pin,
+    task::Poll,
+    time::Duration,
+};
 
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>tokio::sync::watch;
-<span class="kw">use </span>tokio::time;
+<span class="kw">use </span>tokio::{sync::watch, time};
 <span class="kw">use </span>tracing::{debug, trace};
 
 <span class="doccomment">/// This is an implementation detail to facilitate testing.

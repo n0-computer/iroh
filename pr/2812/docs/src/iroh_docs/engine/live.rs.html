@@ -954,36 +954,50 @@
 <a href="#954" id="954">954</a>
 <a href="#955" id="955">955</a>
 <a href="#956" id="956">956</a>
+<a href="#957" id="957">957</a>
+<a href="#958" id="958">958</a>
+<a href="#959" id="959">959</a>
+<a href="#960" id="960">960</a>
+<a href="#961" id="961">961</a>
+<a href="#962" id="962">962</a>
+<a href="#963" id="963">963</a>
 </pre></div><pre class="rust"><code><span class="attr">#![allow(missing_docs)]
 
-</span><span class="kw">use </span>std::collections::{HashMap, HashSet};
-<span class="kw">use </span>std::time::SystemTime;
+</span><span class="kw">use </span>std::{
+    collections::{HashMap, HashSet},
+    time::SystemTime,
+};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::FutureExt;
-<span class="kw">use </span>iroh_blobs::downloader::{DownloadError, DownloadRequest, Downloader};
-<span class="kw">use </span>iroh_blobs::get::Stats;
-<span class="kw">use </span>iroh_blobs::store::EntryStatus;
-<span class="kw">use </span>iroh_blobs::{Hash, HashAndFormat};
+<span class="kw">use </span>iroh_blobs::{
+    downloader::{DownloadError, DownloadRequest, Downloader},
+    get::Stats,
+    store::EntryStatus,
+    Hash, HashAndFormat,
+};
 <span class="kw">use </span>iroh_gossip::net::Gossip;
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>iroh_net::key::PublicKey;
-<span class="kw">use </span>iroh_net::{Endpoint, NodeAddr, NodeId};
+<span class="kw">use </span>iroh_net::{key::PublicKey, Endpoint, NodeAddr, NodeId};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
-<span class="kw">use </span>tokio::sync::{<span class="self">self</span>, mpsc, oneshot};
-<span class="kw">use </span>tokio::task::JoinSet;
+<span class="kw">use </span>tokio::{
+    sync::{<span class="self">self</span>, mpsc, oneshot},
+    task::JoinSet,
+};
 <span class="kw">use </span>tracing::{debug, error, info, instrument, trace, warn, Instrument, Span};
 
 <span class="comment">// use super::gossip::{GossipActor, ToGossipActor};
 </span><span class="kw">use </span><span class="kw">super</span>::state::{NamespaceStates, Origin, SyncReason};
-<span class="kw">use </span><span class="kw">crate</span>::actor::{OpenOpts, SyncHandle};
-<span class="kw">use </span><span class="kw">crate</span>::engine::gossip::GossipState;
-<span class="kw">use </span><span class="kw">crate</span>::metrics::Metrics;
-<span class="kw">use </span><span class="kw">crate</span>::net::{
-    connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
-    SyncFinished,
+<span class="kw">use crate</span>::{
+    actor::{OpenOpts, SyncHandle},
+    engine::gossip::GossipState,
+    metrics::Metrics,
+    net::{
+        connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
+        SyncFinished,
+    },
+    AuthorHeads, ContentStatus, NamespaceId, SignedEntry,
 };
-<span class="kw">use crate</span>::{AuthorHeads, ContentStatus, NamespaceId, SignedEntry};
 
 <span class="doccomment">/// Name used for logging when new node addresses are added from the docs engine.
 </span><span class="kw">const </span>SOURCE_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"docs_engine"</span>;

@@ -102,11 +102,11 @@
 </span><span class="kw">use </span>futures_lite::FutureExt;
 <span class="kw">use </span>iroh_net::endpoint;
 
-<span class="kw">use </span><span class="kw">super</span>::progress::BroadcastProgressSender;
-<span class="kw">use super</span>::{DownloadKind, FailureAction, GetStartFut, Getter};
-<span class="kw">use </span><span class="kw">crate</span>::get::db::get_to_db_in_steps;
-<span class="kw">use </span><span class="kw">crate</span>::get::error::GetError;
-<span class="kw">use </span><span class="kw">crate</span>::store::Store;
+<span class="kw">use super</span>::{progress::BroadcastProgressSender, DownloadKind, FailureAction, GetStartFut, Getter};
+<span class="kw">use crate</span>::{
+    get::{db::get_to_db_in_steps, error::GetError},
+    store::Store,
+};
 
 <span class="kw">impl </span>From&lt;GetError&gt; <span class="kw">for </span>FailureAction {
     <span class="kw">fn </span>from(e: GetError) -&gt; <span class="self">Self </span>{

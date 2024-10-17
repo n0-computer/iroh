@@ -263,15 +263,9 @@
 <a href="#263" id="263">263</a>
 <a href="#264" id="264">264</a>
 <a href="#265" id="265">265</a>
-<a href="#266" id="266">266</a>
-<a href="#267" id="267">267</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr packet store used to resolve DNS queries.
 
-</span><span class="kw">use </span>std::collections::BTreeMap;
-<span class="kw">use </span>std::num::NonZeroUsize;
-<span class="kw">use </span>std::path::Path;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>hickory_proto::rr::{Name, RecordSet, RecordType, RrKey};
@@ -284,9 +278,11 @@
 <span class="kw">use </span>ttl_cache::TtlCache;
 
 <span class="kw">use </span><span class="self">self</span>::signed_packets::SignedPacketStore;
-<span class="kw">use </span><span class="kw">crate</span>::config::BootstrapOption;
-<span class="kw">use </span><span class="kw">crate</span>::metrics::Metrics;
-<span class="kw">use </span><span class="kw">crate</span>::util::{signed_packet_to_hickory_records_without_origin, PublicKeyBytes};
+<span class="kw">use crate</span>::{
+    config::BootstrapOption,
+    metrics::Metrics,
+    util::{signed_packet_to_hickory_records_without_origin, PublicKeyBytes},
+};
 
 <span class="kw">mod </span>signed_packets;
 

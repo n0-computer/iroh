@@ -211,6 +211,7 @@
 <a href="#211" id="211">211</a>
 <a href="#212" id="212">212</a>
 <a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{hash_map, HashMap};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
@@ -219,13 +220,14 @@
 <span class="kw">use </span>futures_util::FutureExt;
 <span class="kw">use </span>iroh_gossip::net::{Event, Gossip, GossipEvent, GossipReceiver, GossipSender, JoinOptions};
 <span class="kw">use </span>iroh_net::NodeId;
-<span class="kw">use </span>tokio::sync::mpsc;
-<span class="kw">use </span>tokio::task::{AbortHandle, JoinSet};
+<span class="kw">use </span>tokio::{
+    sync::mpsc,
+    task::{AbortHandle, JoinSet},
+};
 <span class="kw">use </span>tracing::{debug, instrument, warn};
 
 <span class="kw">use </span><span class="kw">super</span>::live::{Op, ToLiveActor};
-<span class="kw">use </span><span class="kw">crate</span>::actor::SyncHandle;
-<span class="kw">use crate</span>::{ContentStatus, NamespaceId};
+<span class="kw">use crate</span>::{actor::SyncHandle, ContentStatus, NamespaceId};
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>ActiveState {

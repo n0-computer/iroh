@@ -694,38 +694,44 @@
 <a href="#694" id="694">694</a>
 <a href="#695" id="695">695</a>
 <a href="#696" id="696">696</a>
+<a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
+<a href="#699" id="699">699</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Functions that use the iroh-blobs protocol in conjunction with a bao store.
 
-</span><span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::io;
-<span class="kw">use </span>std::num::NonZeroU64;
-<span class="kw">use </span>std::pin::Pin;
+</span><span class="kw">use </span>std::{future::Future, io, num::NonZeroU64, pin::Pin};
 
 <span class="kw">use </span>anyhow::anyhow;
 <span class="kw">use </span>bao_tree::{ChunkNum, ChunkRanges};
 <span class="kw">use </span>futures_lite::StreamExt;
-<span class="kw">use </span>genawaiter::rc::{Co, Gen};
-<span class="kw">use </span>genawaiter::GeneratorState;
-<span class="kw">use </span>iroh_base::hash::Hash;
-<span class="kw">use </span>iroh_base::rpc::RpcError;
+<span class="kw">use </span>genawaiter::{
+    rc::{Co, Gen},
+    GeneratorState,
+};
+<span class="kw">use </span>iroh_base::{hash::Hash, rpc::RpcError};
 <span class="kw">use </span>iroh_io::AsyncSliceReader;
 <span class="kw">use </span>iroh_net::endpoint::Connection;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::sync::oneshot;
 <span class="kw">use </span>tracing::trace;
 
-<span class="kw">use </span><span class="kw">crate</span>::get::error::GetError;
-<span class="kw">use </span><span class="kw">crate</span>::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
-<span class="kw">use </span><span class="kw">crate</span>::get::progress::TransferState;
-<span class="kw">use </span><span class="kw">crate</span>::get::{<span class="self">self</span>, Stats};
-<span class="kw">use </span><span class="kw">crate</span>::hashseq::parse_hash_seq;
-<span class="kw">use </span><span class="kw">crate</span>::protocol::{GetRequest, RangeSpec, RangeSpecSeq};
-<span class="kw">use </span><span class="kw">crate</span>::store::{
-    BaoBatchWriter, BaoBlobSize, FallibleProgressBatchWriter, MapEntry, MapEntryMut, MapMut,
-    Store <span class="kw">as </span>BaoStore,
+<span class="kw">use crate</span>::{
+    get::{
+        <span class="self">self</span>,
+        error::GetError,
+        fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext},
+        progress::TransferState,
+        Stats,
+    },
+    hashseq::parse_hash_seq,
+    protocol::{GetRequest, RangeSpec, RangeSpecSeq},
+    store::{
+        BaoBatchWriter, BaoBlobSize, FallibleProgressBatchWriter, MapEntry, MapEntryMut, MapMut,
+        Store <span class="kw">as </span>BaoStore,
+    },
+    util::progress::{IdGenerator, ProgressSender},
+    BlobFormat, HashAndFormat,
 };
-<span class="kw">use </span><span class="kw">crate</span>::util::progress::{IdGenerator, ProgressSender};
-<span class="kw">use crate</span>::{BlobFormat, HashAndFormat};
 
 <span class="kw">type </span>GetGenerator = Gen&lt;Yield, (), Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Stats, GetError&gt;&gt;&gt;&gt;&gt;;
 <span class="kw">type </span>GetFuture = Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Stats, GetError&gt;&gt; + <span class="lifetime">'static</span>&gt;&gt;;

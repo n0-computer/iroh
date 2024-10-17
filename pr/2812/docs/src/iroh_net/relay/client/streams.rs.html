@@ -286,16 +286,24 @@
 <a href="#286" id="286">286</a>
 <a href="#287" id="287">287</a>
 <a href="#288" id="288">288</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::net::SocketAddr;
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::task::{Context, Poll};
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    net::SocketAddr,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>hyper::upgrade::{Parts, Upgraded};
 <span class="kw">use </span>hyper_util::rt::TokioIo;
-<span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
-<span class="kw">use </span>tokio::net::TcpStream;
+<span class="kw">use </span>tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::TcpStream,
+};
 
 <span class="kw">use </span><span class="kw">crate</span>::util::chain;
 

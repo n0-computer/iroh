@@ -61,18 +61,14 @@
 <a href="#61" id="61">61</a>
 <a href="#62" id="62">62</a>
 <a href="#63" id="63">63</a>
-<a href="#64" id="64">64</a>
-<a href="#65" id="65">65</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::ops::Deref;
-<span class="kw">use </span>std::sync::Arc;
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{ops::Deref, sync::Arc};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::future::Boxed <span class="kw">as </span>BoxedFuture;
 <span class="kw">use </span>iroh_blobs::downloader::Downloader;
 <span class="kw">use </span>iroh_docs::engine::{DefaultAuthorStorage, Engine};
 <span class="kw">use </span>iroh_gossip::net::Gossip;
-<span class="kw">use </span>iroh_net::endpoint::Connecting;
-<span class="kw">use </span>iroh_net::Endpoint;
+<span class="kw">use </span>iroh_net::{endpoint::Connecting, Endpoint};
 
 <span class="kw">use </span><span class="kw">crate</span>::node::{DocsStorage, ProtocolHandler};
 

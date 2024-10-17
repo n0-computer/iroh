@@ -171,6 +171,9 @@
 <a href="#171" id="171">171</a>
 <a href="#172" id="172">172</a>
 <a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Tickets for nodes.
 
 </span><span class="kw">use </span>std::str::FromStr;
@@ -178,8 +181,10 @@
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use </span><span class="kw">crate</span>::node_addr::NodeAddr;
-<span class="kw">use </span><span class="kw">crate</span>::ticket::{<span class="self">self</span>, Ticket};
+<span class="kw">use crate</span>::{
+    node_addr::NodeAddr,
+    ticket::{<span class="self">self</span>, Ticket},
+};
 
 <span class="doccomment">/// A token containing information for establishing a connection to a node.
 ///
@@ -286,12 +291,13 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr};
 
-    <span class="kw">use </span>iroh_test::assert_eq_hex;
-    <span class="kw">use </span>iroh_test::hexdump::parse_hexdump;
+    <span class="kw">use </span>iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::base32;
-    <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
+    <span class="kw">use crate</span>::{
+        base32,
+        key::{PublicKey, SecretKey},
+    };
 
     <span class="kw">fn </span>make_ticket() -&gt; NodeTicket {
         <span class="kw">let </span>peer = SecretKey::generate().public();

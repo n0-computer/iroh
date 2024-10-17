@@ -184,18 +184,26 @@
 <a href="#184" id="184">184</a>
 <a href="#185" id="185">185</a>
 <a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Configuration for the server
 
-</span><span class="kw">use </span>std::env;
-<span class="kw">use </span>std::net::{IpAddr, Ipv4Addr, SocketAddr};
-<span class="kw">use </span>std::path::{Path, PathBuf};
+</span><span class="kw">use </span>std::{
+    env,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::{Path, PathBuf},
+};
 
 <span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tracing::info;
 
-<span class="kw">use </span><span class="kw">crate</span>::dns::DnsConfig;
-<span class="kw">use </span><span class="kw">crate</span>::http::{CertMode, HttpConfig, HttpsConfig};
+<span class="kw">use crate</span>::{
+    dns::DnsConfig,
+    http::{CertMode, HttpConfig, HttpsConfig},
+};
 
 <span class="kw">const </span>DEFAULT_METRICS_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), <span class="number">9117</span>);
 

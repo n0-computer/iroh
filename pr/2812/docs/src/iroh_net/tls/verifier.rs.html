@@ -234,10 +234,10 @@
 //! Technologies (UK) Ltd.
 </span><span class="kw">use </span>std::sync::Arc;
 
-<span class="kw">use </span>rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-<span class="kw">use </span>rustls::pki_types::CertificateDer <span class="kw">as </span>Certificate;
-<span class="kw">use </span>rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 <span class="kw">use </span>rustls::{
+    client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    pki_types::CertificateDer <span class="kw">as </span>Certificate,
+    server::danger::{ClientCertVerified, ClientCertVerifier},
     CertificateError, DigitallySignedStruct, DistinguishedName, OtherError, PeerMisbehaved,
     SignatureScheme, SupportedProtocolVersion,
 };

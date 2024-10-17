@@ -273,13 +273,16 @@
 <a href="#273" id="273">273</a>
 <a href="#274" id="274">274</a>
 <a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Topic handles for sending and receiving on a gossip topic.
 //!
 //! These are returned from [`super::Gossip`].
 
-</span><span class="kw">use </span>std::collections::{BTreeSet, HashSet};
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::task::{Context, Poll};
+</span><span class="kw">use </span>std::{
+    collections::{BTreeSet, HashSet},
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
@@ -287,8 +290,7 @@
 <span class="kw">use </span>iroh_net::NodeId;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use </span><span class="kw">crate</span>::net::TOPIC_EVENTS_DEFAULT_CAP;
-<span class="kw">use </span><span class="kw">crate</span>::proto::DeliveryScope;
+<span class="kw">use crate</span>::{net::TOPIC_EVENTS_DEFAULT_CAP, proto::DeliveryScope};
 
 <span class="doccomment">/// Sender for a gossip topic.
 </span><span class="attr">#[derive(Debug)]

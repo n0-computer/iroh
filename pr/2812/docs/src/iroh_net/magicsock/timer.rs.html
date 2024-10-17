@@ -99,11 +99,9 @@
 <a href="#99" id="99">99</a>
 <a href="#100" id="100">100</a>
 <a href="#101" id="101">101</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::time::Duration;
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, time::Duration};
 
-<span class="kw">use </span>tokio::task::JoinHandle;
-<span class="kw">use </span>tokio::time;
+<span class="kw">use </span>tokio::{task::JoinHandle, time};
 
 <span class="doccomment">/// A timer that works similar to golangs `Timer`.
 </span><span class="attr">#[derive(Debug)]
@@ -144,8 +142,10 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>std::sync::atomic::{AtomicBool, Ordering};
-    <span class="kw">use </span>std::sync::Arc;
+    <span class="kw">use </span>std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 

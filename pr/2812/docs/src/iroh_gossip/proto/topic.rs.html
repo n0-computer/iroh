@@ -340,10 +340,16 @@
 <a href="#340" id="340">340</a>
 <a href="#341" id="341">341</a>
 <a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This module contains the implementation of the gossiping protocol for an individual topic
 
-</span><span class="kw">use </span>std::collections::VecDeque;
-<span class="kw">use </span>std::time::{Duration, Instant};
+</span><span class="kw">use </span>std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>derive_more::From;
@@ -351,10 +357,12 @@
 <span class="kw">use </span>rand_core::SeedableRng;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use </span><span class="kw">super</span>::hyparview::{<span class="self">self</span>, InEvent <span class="kw">as </span>SwarmIn};
-<span class="kw">use </span><span class="kw">super</span>::plumtree::{<span class="self">self</span>, GossipEvent, InEvent <span class="kw">as </span>GossipIn, Scope};
-<span class="kw">use </span><span class="kw">super</span>::state::MessageKind;
-<span class="kw">use super</span>::{PeerData, PeerIdentity};
+<span class="kw">use super</span>::{
+    hyparview::{<span class="self">self</span>, InEvent <span class="kw">as </span>SwarmIn},
+    plumtree::{<span class="self">self</span>, GossipEvent, InEvent <span class="kw">as </span>GossipIn, Scope},
+    state::MessageKind,
+    PeerData, PeerIdentity,
+};
 
 <span class="doccomment">/// The default maximum size in bytes for a gossip message.
 /// This is a sane but arbitrary default and can be changed in the [`Config`].

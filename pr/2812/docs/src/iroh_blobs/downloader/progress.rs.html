@@ -189,18 +189,24 @@
 <a href="#189" id="189">189</a>
 <a href="#190" id="190">190</a>
 <a href="#191" id="191">191</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::HashMap;
-<span class="kw">use </span>std::sync::atomic::{AtomicU64, Ordering};
-<span class="kw">use </span>std::sync::Arc;
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
 <span class="kw">use </span>anyhow::anyhow;
 <span class="kw">use </span>parking_lot::Mutex;
 
 <span class="kw">use </span><span class="kw">super</span>::DownloadKind;
-<span class="kw">use </span><span class="kw">crate</span>::get::db::DownloadProgress;
-<span class="kw">use </span><span class="kw">crate</span>::get::progress::TransferState;
-<span class="kw">use </span><span class="kw">crate</span>::util::progress::{
-    AsyncChannelProgressSender, IdGenerator, ProgressSendError, ProgressSender,
+<span class="kw">use crate</span>::{
+    get::{db::DownloadProgress, progress::TransferState},
+    util::progress::{AsyncChannelProgressSender, IdGenerator, ProgressSendError, ProgressSender},
 };
 
 <span class="doccomment">/// The channel that can be used to subscribe to progress updates.

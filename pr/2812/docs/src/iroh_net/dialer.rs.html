@@ -126,13 +126,9 @@
 <a href="#126" id="126">126</a>
 <a href="#127" id="127">127</a>
 <a href="#128" id="128">128</a>
-<a href="#129" id="129">129</a>
-<a href="#130" id="130">130</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A dialer to conveniently dial many nodes.
 
-</span><span class="kw">use </span>std::collections::HashMap;
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::task::Poll;
+</span><span class="kw">use </span>std::{collections::HashMap, pin::Pin, task::Poll};
 
 <span class="kw">use </span>anyhow::anyhow;
 <span class="kw">use </span>futures_lite::Stream;

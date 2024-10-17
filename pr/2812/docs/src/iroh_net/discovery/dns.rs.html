@@ -97,14 +97,18 @@
 <a href="#97" id="97">97</a>
 <a href="#98" id="98">98</a>
 <a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh-net
 
 </span><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::stream::Boxed <span class="kw">as </span>BoxStream;
 
-<span class="kw">use </span><span class="kw">crate</span>::discovery::{Discovery, DiscoveryItem};
-<span class="kw">use </span><span class="kw">crate</span>::dns::ResolverExt;
-<span class="kw">use crate</span>::{Endpoint, NodeId};
+<span class="kw">use crate</span>::{
+    discovery::{Discovery, DiscoveryItem},
+    dns::ResolverExt,
+    Endpoint, NodeId,
+};
 
 <span class="doccomment">/// The n0 testing DNS node origin, for production.
 </span><span class="kw">pub const </span>N0_DNS_NODE_ORIGIN_PROD: <span class="kw-2">&amp;</span>str = <span class="string">"dns.iroh.link"</span>;

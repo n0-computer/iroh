@@ -339,28 +339,36 @@
 <a href="#339" id="339">339</a>
 <a href="#340" id="340">340</a>
 <a href="#341" id="341">341</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::any::Any;
-<span class="kw">use </span>std::collections::BTreeMap;
-<span class="kw">use </span>std::fmt;
-<span class="kw">use </span>std::sync::Arc;
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{any::Any, collections::BTreeMap, fmt, sync::Arc};
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::future::Boxed <span class="kw">as </span>BoxedFuture;
 <span class="kw">use </span>futures_util::future::join_all;
-<span class="kw">use </span>iroh_blobs::downloader::{DownloadRequest, Downloader};
-<span class="kw">use </span>iroh_blobs::get::db::{DownloadProgress, GetState};
-<span class="kw">use </span>iroh_blobs::get::Stats;
-<span class="kw">use </span>iroh_blobs::provider::EventSender;
-<span class="kw">use </span>iroh_blobs::util::local_pool::LocalPoolHandle;
-<span class="kw">use </span>iroh_blobs::util::progress::{AsyncChannelProgressSender, ProgressSender};
-<span class="kw">use </span>iroh_blobs::util::SetTagOption;
-<span class="kw">use </span>iroh_blobs::{HashAndFormat, TempTag};
-<span class="kw">use </span>iroh_net::endpoint::Connecting;
-<span class="kw">use </span>iroh_net::{Endpoint, NodeAddr};
+<span class="kw">use </span>iroh_blobs::{
+    downloader::{DownloadRequest, Downloader},
+    get::{
+        db::{DownloadProgress, GetState},
+        Stats,
+    },
+    provider::EventSender,
+    util::{
+        local_pool::LocalPoolHandle,
+        progress::{AsyncChannelProgressSender, ProgressSender},
+        SetTagOption,
+    },
+    HashAndFormat, TempTag,
+};
+<span class="kw">use </span>iroh_net::{endpoint::Connecting, Endpoint, NodeAddr};
 <span class="kw">use </span>tracing::{debug, warn};
 
-<span class="kw">use </span><span class="kw">crate</span>::client::blobs::DownloadMode;
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::blobs::{BatchId, DownloadRequest <span class="kw">as </span>BlobDownloadRequest};
+<span class="kw">use crate</span>::{
+    client::blobs::DownloadMode,
+    rpc_protocol::blobs::{BatchId, DownloadRequest <span class="kw">as </span>BlobDownloadRequest},
+};
 
 <span class="doccomment">/// Handler for incoming connections.
 ///

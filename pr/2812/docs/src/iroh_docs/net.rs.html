@@ -364,24 +364,28 @@
 <a href="#364" id="364">364</a>
 <a href="#365" id="365">365</a>
 <a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Network implementation of the iroh-docs protocol
 
-</span><span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::time::{Duration, Instant};
+</span><span class="kw">use </span>std::{
+    future::Future,
+    time::{Duration, Instant},
+};
 
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>iroh_net::endpoint::get_remote_node_id;
-<span class="kw">use </span>iroh_net::key::PublicKey;
-<span class="kw">use </span>iroh_net::{Endpoint, NodeAddr};
+<span class="kw">use </span>iroh_net::{endpoint::get_remote_node_id, key::PublicKey, Endpoint, NodeAddr};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tracing::{debug, error_span, trace, Instrument};
 
-<span class="kw">use </span><span class="kw">crate</span>::actor::SyncHandle;
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span><span class="kw">crate</span>::metrics::Metrics;
-<span class="kw">use </span><span class="kw">crate</span>::net::codec::{run_alice, BobState};
-<span class="kw">use crate</span>::{NamespaceId, SyncOutcome};
+<span class="kw">use crate</span>::{
+    actor::SyncHandle,
+    net::codec::{run_alice, BobState},
+    NamespaceId, SyncOutcome,
+};
 
 <span class="doccomment">/// The ALPN identifier for the iroh-docs protocol
 </span><span class="kw">pub const </span>DOCS_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"/iroh-sync/1"</span>;

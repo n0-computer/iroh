@@ -438,6 +438,18 @@
 <a href="#438" id="438">438</a>
 <a href="#439" id="439">439</a>
 <a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
@@ -446,9 +458,13 @@
 <span class="kw">pub use </span>dns_server::create_dns_resolver;
 <span class="kw">use </span>tokio::sync::oneshot;
 
-<span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
-<span class="kw">use </span><span class="kw">crate</span>::relay::server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig};
-<span class="kw">use </span><span class="kw">crate</span>::relay::{RelayMap, RelayNode, RelayUrl};
+<span class="kw">use crate</span>::{
+    key::SecretKey,
+    relay::{
+        server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
+        RelayMap, RelayNode, RelayUrl,
+    },
+};
 
 <span class="doccomment">/// A drop guard to clean up test infrastructure.
 ///
@@ -505,21 +521,20 @@
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>dns_and_pkarr_servers {
-    <span class="kw">use </span>std::net::SocketAddr;
-    <span class="kw">use </span>std::time::Duration;
+    <span class="kw">use </span>std::{net::SocketAddr, time::Duration};
 
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>iroh_base::key::{NodeId, SecretKey};
     <span class="kw">use </span>url::Url;
 
     <span class="kw">use super</span>::{create_dns_resolver, CleanupDropGuard};
-    <span class="kw">use </span><span class="kw">crate</span>::discovery::dns::DnsDiscovery;
-    <span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::PkarrPublisher;
-    <span class="kw">use </span><span class="kw">crate</span>::discovery::ConcurrentDiscovery;
-    <span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
-    <span class="kw">use </span><span class="kw">crate</span>::test_utils::dns_server::run_dns_server;
-    <span class="kw">use </span><span class="kw">crate</span>::test_utils::pkarr_dns_state::State;
-    <span class="kw">use </span><span class="kw">crate</span>::test_utils::pkarr_relay::run_pkarr_relay;
+    <span class="kw">use crate</span>::{
+        discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
+        dns::DnsResolver,
+        test_utils::{
+            dns_server::run_dns_server, pkarr_dns_state::State, pkarr_relay::run_pkarr_relay,
+        },
+    };
 
     <span class="doccomment">/// Handle and drop guard for test DNS and Pkarr servers.
     ///
@@ -585,18 +600,19 @@
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>dns_server {
-    <span class="kw">use </span>std::future::Future;
-    <span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr};
+    <span class="kw">use </span>std::{
+        future::Future,
+        net::{Ipv4Addr, SocketAddr},
+    };
 
     <span class="kw">use </span>anyhow::{ensure, <span class="prelude-ty">Result</span>};
     <span class="kw">use </span>futures_lite::future::Boxed <span class="kw">as </span>BoxFuture;
-    <span class="kw">use </span>hickory_proto::op::header::MessageType;
-    <span class="kw">use </span>hickory_proto::op::Message;
-    <span class="kw">use </span>hickory_proto::serialize::binary::BinDecodable;
-    <span class="kw">use </span>hickory_resolver::config::NameServerConfig;
-    <span class="kw">use </span>hickory_resolver::TokioAsyncResolver;
-    <span class="kw">use </span>tokio::net::UdpSocket;
-    <span class="kw">use </span>tokio::sync::oneshot;
+    <span class="kw">use </span>hickory_proto::{
+        op::{header::MessageType, Message},
+        serialize::binary::BinDecodable,
+    };
+    <span class="kw">use </span>hickory_resolver::{config::NameServerConfig, TokioAsyncResolver};
+    <span class="kw">use </span>tokio::{net::UdpSocket, sync::oneshot};
     <span class="kw">use </span>tracing::{debug, error, warn};
 
     <span class="kw">use </span><span class="kw">super</span>::CleanupDropGuard;
@@ -692,14 +708,18 @@
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>pkarr_relay {
-    <span class="kw">use </span>std::future::IntoFuture;
-    <span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr};
+    <span class="kw">use </span>std::{
+        future::IntoFuture,
+        net::{Ipv4Addr, SocketAddr},
+    };
 
     <span class="kw">use </span>anyhow::Result;
-    <span class="kw">use </span>axum::extract::{Path, State};
-    <span class="kw">use </span>axum::response::IntoResponse;
-    <span class="kw">use </span>axum::routing::put;
-    <span class="kw">use </span>axum::Router;
+    <span class="kw">use </span>axum::{
+        extract::{Path, State},
+        response::IntoResponse,
+        routing::put,
+        Router,
+    };
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>tokio::sync::oneshot;
     <span class="kw">use </span>tracing::{debug, error, warn};
@@ -763,19 +783,23 @@
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>pkarr_dns_state {
-    <span class="kw">use </span>std::collections::{hash_map, HashMap};
-    <span class="kw">use </span>std::future::Future;
-    <span class="kw">use </span>std::ops::Deref;
-    <span class="kw">use </span>std::sync::Arc;
-    <span class="kw">use </span>std::time::Duration;
+    <span class="kw">use </span>std::{
+        collections::{hash_map, HashMap},
+        future::Future,
+        ops::Deref,
+        sync::Arc,
+        time::Duration,
+    };
 
     <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
     <span class="kw">use </span>parking_lot::{Mutex, MutexGuard};
     <span class="kw">use </span>pkarr::SignedPacket;
 
-    <span class="kw">use </span><span class="kw">crate</span>::dns::node_info::{node_id_from_hickory_name, NodeInfo};
-    <span class="kw">use </span><span class="kw">crate</span>::test_utils::dns_server::QueryHandler;
-    <span class="kw">use </span><span class="kw">crate</span>::NodeId;
+    <span class="kw">use crate</span>::{
+        dns::node_info::{node_id_from_hickory_name, NodeInfo},
+        test_utils::dns_server::QueryHandler,
+        NodeId,
+    };
 
     <span class="attr">#[derive(Debug, Clone)]
     </span><span class="kw">pub struct </span>State {

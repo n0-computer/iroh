@@ -2598,6 +2598,18 @@
 <a href="#2598" id="2598">2598</a>
 <a href="#2599" id="2599">2599</a>
 <a href="#2600" id="2600">2600</a>
+<a href="#2601" id="2601">2601</a>
+<a href="#2602" id="2602">2602</a>
+<a href="#2603" id="2603">2603</a>
+<a href="#2604" id="2604">2604</a>
+<a href="#2605" id="2605">2605</a>
+<a href="#2606" id="2606">2606</a>
+<a href="#2607" id="2607">2607</a>
+<a href="#2608" id="2608">2608</a>
+<a href="#2609" id="2609">2609</a>
+<a href="#2610" id="2610">2610</a>
+<a href="#2611" id="2611">2611</a>
+<a href="#2612" id="2612">2612</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! redb backed storage
 //!
 //! Data can get into the store in two ways:
@@ -2663,15 +2675,19 @@
 //!
 //! OuterError is an enum containing all the actor errors and in addition
 //! errors when communicating with the actor.
-</span><span class="kw">use </span>std::collections::{BTreeMap, BTreeSet};
-<span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::io;
-<span class="kw">use </span>std::path::{Path, PathBuf};
-<span class="kw">use </span>std::sync::{Arc, RwLock};
-<span class="kw">use </span>std::time::{Duration, SystemTime};
+</span><span class="kw">use </span>std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+    io,
+    path::{Path, PathBuf},
+    sync::{Arc, RwLock},
+    time::{Duration, SystemTime},
+};
 
-<span class="kw">use </span>bao_tree::io::fsm::Outboard;
-<span class="kw">use </span>bao_tree::io::sync::{ReadAt, Size};
+<span class="kw">use </span>bao_tree::io::{
+    fsm::Outboard,
+    sync::{ReadAt, Size},
+};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>genawaiter::rc::{Co, Gen};
@@ -2694,23 +2710,31 @@
 
 <span class="kw">use </span>tables::{ReadOnlyTables, ReadableTables, Tables};
 
-<span class="kw">use </span><span class="self">self</span>::tables::DeleteSet;
-<span class="kw">use </span><span class="self">self</span>::test_support::EntryData;
-<span class="kw">use </span><span class="self">self</span>::util::PeekableFlumeReceiver;
-<span class="kw">use </span><span class="kw">super</span>::bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb};
+<span class="kw">use </span><span class="self">self</span>::{tables::DeleteSet, test_support::EntryData, util::PeekableFlumeReceiver};
 <span class="kw">use super</span>::{
+    bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
     temp_name, BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, EntryStatus, ExportMode,
     ExportProgressCb, ImportMode, ImportProgress, Map, ReadableStore, TempCounterMap,
 };
-<span class="kw">use </span><span class="kw">crate</span>::store::bao_file::{BaoFileStorage, CompleteStorage};
-<span class="kw">use </span><span class="kw">crate</span>::store::fs::tables::BaoFilePart;
-<span class="kw">use </span><span class="kw">crate</span>::store::fs::util::{overwrite_and_sync, read_and_remove};
-<span class="kw">use </span><span class="kw">crate</span>::store::{GcMarkEvent, GcSweepEvent};
-<span class="kw">use </span><span class="kw">crate</span>::util::progress::{
-    BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSendError, ProgressSender,
+<span class="kw">use crate</span>::{
+    store::{
+        bao_file::{BaoFileStorage, CompleteStorage},
+        fs::{
+            tables::BaoFilePart,
+            util::{overwrite_and_sync, read_and_remove},
+        },
+        GcMarkEvent, GcSweepEvent,
+    },
+    util::{
+        compute_outboard,
+        progress::{
+            BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSendError,
+            ProgressSender,
+        },
+        raw_outboard_size, MemOrFile, TagCounter, TagDrop,
+    },
+    Tag, TempTag,
 };
-<span class="kw">use </span><span class="kw">crate</span>::util::{compute_outboard, raw_outboard_size, MemOrFile, TagCounter, TagDrop};
-<span class="kw">use crate</span>::{Tag, TempTag};
 
 <span class="doccomment">/// Location of the data.
 ///

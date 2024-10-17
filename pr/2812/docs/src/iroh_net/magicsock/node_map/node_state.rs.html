@@ -1697,11 +1697,19 @@
 <a href="#1697" id="1697">1697</a>
 <a href="#1698" id="1698">1698</a>
 <a href="#1699" id="1699">1699</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::btree_map::Entry;
-<span class="kw">use </span>std::collections::{BTreeSet, HashMap};
-<span class="kw">use </span>std::hash::Hash;
-<span class="kw">use </span>std::net::{IpAddr, SocketAddr};
-<span class="kw">use </span>std::time::{Duration, Instant};
+<a href="#1700" id="1700">1700</a>
+<a href="#1701" id="1701">1701</a>
+<a href="#1702" id="1702">1702</a>
+<a href="#1703" id="1703">1703</a>
+<a href="#1704" id="1704">1704</a>
+<a href="#1705" id="1705">1705</a>
+<a href="#1706" id="1706">1706</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    collections::{btree_map::Entry, BTreeSet, HashMap},
+    hash::Hash,
+    net::{IpAddr, SocketAddr},
+    time::{Duration, Instant},
+};
 
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
@@ -1709,18 +1717,23 @@
 <span class="kw">use </span>tracing::{debug, event, info, instrument, trace, warn, Level};
 <span class="kw">use </span>watchable::{Watchable, WatcherStream};
 
-<span class="kw">use </span><span class="kw">super</span>::best_addr::{<span class="self">self</span>, ClearReason, Source <span class="kw">as </span>BestAddrSource};
-<span class="kw">use </span><span class="kw">super</span>::path_state::{summarize_node_paths, PathState};
-<span class="kw">use </span><span class="kw">super</span>::udp_paths::{NodeUdpPaths, UdpSendAddr};
-<span class="kw">use super</span>::{IpPort, Source};
-<span class="kw">use </span><span class="kw">crate</span>::disco::{<span class="self">self</span>, SendAddr};
-<span class="kw">use </span><span class="kw">crate</span>::endpoint::AddrInfo;
-<span class="kw">use </span><span class="kw">crate</span>::key::PublicKey;
-<span class="kw">use </span><span class="kw">crate</span>::magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL};
-<span class="kw">use </span><span class="kw">crate</span>::net::ip::is_unicast_link_local;
-<span class="kw">use </span><span class="kw">crate</span>::relay::RelayUrl;
-<span class="kw">use </span><span class="kw">crate</span>::util::relay_only_mode;
-<span class="kw">use crate</span>::{stun, NodeAddr, NodeId};
+<span class="kw">use super</span>::{
+    best_addr::{<span class="self">self</span>, ClearReason, Source <span class="kw">as </span>BestAddrSource},
+    path_state::{summarize_node_paths, PathState},
+    udp_paths::{NodeUdpPaths, UdpSendAddr},
+    IpPort, Source,
+};
+<span class="kw">use crate</span>::{
+    disco::{<span class="self">self</span>, SendAddr},
+    endpoint::AddrInfo,
+    key::PublicKey,
+    magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
+    net::ip::is_unicast_link_local,
+    relay::RelayUrl,
+    stun,
+    util::relay_only_mode,
+    NodeAddr, NodeId,
+};
 
 <span class="doccomment">/// Number of addresses that are not active that we keep around per node.
 ///
@@ -3106,14 +3119,15 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>std::collections::BTreeMap;
-    <span class="kw">use </span>std::net::Ipv4Addr;
+    <span class="kw">use </span>std::{collections::BTreeMap, net::Ipv4Addr};
 
     <span class="kw">use </span>best_addr::BestAddr;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
-    <span class="kw">use </span><span class="kw">crate</span>::magicsock::node_map::{NodeMap, NodeMapInner};
+    <span class="kw">use crate</span>::{
+        key::SecretKey,
+        magicsock::node_map::{NodeMap, NodeMapInner},
+    };
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_remote_infos() {

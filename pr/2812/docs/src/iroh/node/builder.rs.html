@@ -967,49 +967,57 @@
 <a href="#967" id="967">967</a>
 <a href="#968" id="968">968</a>
 <a href="#969" id="969">969</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-<span class="kw">use </span>std::path::{Path, PathBuf};
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::Duration;
+<a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a>
+<a href="#972" id="972">972</a>
+<a href="#973" id="973">973</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::StreamExt;
 <span class="kw">use </span>futures_util::{FutureExt <span class="kw">as _</span>, TryFutureExt <span class="kw">as _</span>};
 <span class="kw">use </span>iroh_base::key::SecretKey;
-<span class="kw">use </span>iroh_blobs::downloader::Downloader;
-<span class="kw">use </span>iroh_blobs::provider::EventSender;
-<span class="kw">use </span>iroh_blobs::store::{Map, Store <span class="kw">as </span>BaoStore};
-<span class="kw">use </span>iroh_blobs::util::local_pool::{<span class="self">self</span>, LocalPool, LocalPoolHandle, PanicMode};
-<span class="kw">use </span>iroh_docs::engine::DefaultAuthorStorage;
-<span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
+<span class="kw">use </span>iroh_blobs::{
+    downloader::Downloader,
+    provider::EventSender,
+    store::{Map, Store <span class="kw">as </span>BaoStore},
+    util::local_pool::{<span class="self">self</span>, LocalPool, LocalPoolHandle, PanicMode},
+};
+<span class="kw">use </span>iroh_docs::{engine::DefaultAuthorStorage, net::DOCS_ALPN};
 <span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-<span class="kw">use </span>iroh_net::discovery::dns::DnsDiscovery;
 <span class="attr">#[cfg(not(test))]
 </span><span class="kw">use </span>iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
-<span class="kw">use </span>iroh_net::discovery::pkarr::PkarrPublisher;
-<span class="kw">use </span>iroh_net::discovery::{ConcurrentDiscovery, Discovery};
-<span class="kw">use </span>iroh_net::dns::DnsResolver;
-<span class="kw">use </span>iroh_net::endpoint::TransportConfig;
-<span class="kw">use </span>iroh_net::relay::RelayMode;
-<span class="kw">use </span>iroh_net::Endpoint;
-<span class="kw">use </span>quic_rpc::transport::boxed::BoxableServerEndpoint;
-<span class="kw">use </span>quic_rpc::transport::quinn::QuinnServerEndpoint;
+<span class="kw">use </span>iroh_net::{
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
+    dns::DnsResolver,
+    endpoint::TransportConfig,
+    relay::RelayMode,
+    Endpoint,
+};
+<span class="kw">use </span>quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::task::JoinError;
-<span class="kw">use </span>tokio_util::sync::CancellationToken;
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
+<span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error_span, trace, Instrument};
 
-<span class="kw">use </span><span class="kw">super</span>::docs::DocsEngine;
-<span class="kw">use </span><span class="kw">super</span>::rpc_status::RpcStatus;
-<span class="kw">use super</span>::{IrohServerEndpoint, JoinErrToStr, Node, NodeInner};
-<span class="kw">use </span><span class="kw">crate</span>::client::RPC_ALPN;
-<span class="kw">use </span><span class="kw">crate</span>::node::nodes_storage::load_node_addrs;
-<span class="kw">use </span><span class="kw">crate</span>::node::protocol::{BlobsProtocol, ProtocolMap};
-<span class="kw">use </span><span class="kw">crate</span>::node::ProtocolHandler;
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::RpcService;
-<span class="kw">use </span><span class="kw">crate</span>::util::fs::load_secret_key;
-<span class="kw">use </span><span class="kw">crate</span>::util::path::IrohPaths;
+<span class="kw">use super</span>::{
+    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
+};
+<span class="kw">use crate</span>::{
+    client::RPC_ALPN,
+    node::{
+        nodes_storage::load_node_addrs,
+        protocol::{BlobsProtocol, ProtocolMap},
+        ProtocolHandler,
+    },
+    rpc_protocol::RpcService,
+    util::{fs::load_secret_key, path::IrohPaths},
+};
 
 <span class="doccomment">/// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak &lt;https://simple.wikipedia.org/wiki/Leet&gt;

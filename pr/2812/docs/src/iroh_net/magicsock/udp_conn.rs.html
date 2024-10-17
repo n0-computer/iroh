@@ -285,13 +285,16 @@
 <a href="#285" id="285">285</a>
 <a href="#286" id="286">286</a>
 <a href="#287" id="287">287</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
-<span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::io;
-<span class="kw">use </span>std::net::SocketAddr;
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::task::{ready, Context, Poll};
+<a href="#288" id="288">288</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    fmt::Debug,
+    future::Future,
+    io,
+    net::SocketAddr,
+    pin::Pin,
+    sync::Arc,
+    task::{ready, Context, Poll},
+};
 
 <span class="kw">use </span>anyhow::{bail, Context <span class="kw">as _</span>};
 <span class="kw">use </span>quinn::AsyncUdpSocket;
@@ -486,8 +489,7 @@
     <span class="kw">use </span>tracing::{info_span, Instrument};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::net::IpFamily;
-    <span class="kw">use crate</span>::{key, tls};
+    <span class="kw">use crate</span>::{key, net::IpFamily, tls};
 
     <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/test/1"</span>;
 

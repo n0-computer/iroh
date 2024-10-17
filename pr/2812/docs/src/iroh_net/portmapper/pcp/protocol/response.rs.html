@@ -294,14 +294,12 @@
 <a href="#294" id="294">294</a>
 <a href="#295" id="295">295</a>
 <a href="#296" id="296">296</a>
-<a href="#297" id="297">297</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A PCP response encoding and decoding.
 
 </span><span class="kw">use </span>derive_more::Display;
 <span class="kw">use </span>num_enum::{IntoPrimitive, TryFromPrimitive, TryFromPrimitiveError};
 
-<span class="kw">use </span><span class="kw">super</span>::opcode_data::OpcodeData;
-<span class="kw">use super</span>::{Opcode, Version};
+<span class="kw">use super</span>::{opcode_data::OpcodeData, Opcode, Version};
 
 <span class="doccomment">/// ResultCode in a [`Response`] when it's successful.
 </span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive, IntoPrimitive)]

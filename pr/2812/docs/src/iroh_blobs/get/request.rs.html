@@ -198,6 +198,8 @@
 <a href="#198" id="198">198</a>
 <a href="#199" id="199">199</a>
 <a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utilities for complex get requests.
 </span><span class="kw">use </span>std::sync::Arc;
 
@@ -207,9 +209,11 @@
 <span class="kw">use </span>rand::Rng;
 
 <span class="kw">use super</span>::{fsm, Stats};
-<span class="kw">use </span><span class="kw">crate</span>::hashseq::HashSeq;
-<span class="kw">use </span><span class="kw">crate</span>::protocol::{GetRequest, RangeSpecSeq};
-<span class="kw">use crate</span>::{Hash, HashAndFormat};
+<span class="kw">use crate</span>::{
+    hashseq::HashSeq,
+    protocol::{GetRequest, RangeSpecSeq},
+    Hash, HashAndFormat,
+};
 
 <span class="doccomment">/// Get the claimed size of a blob from a peer.
 ///

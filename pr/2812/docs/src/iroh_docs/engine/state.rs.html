@@ -254,16 +254,24 @@
 <a href="#254" id="254">254</a>
 <a href="#255" id="255">255</a>
 <a href="#256" id="256">256</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::BTreeMap;
-<span class="kw">use </span>std::time::{Instant, SystemTime};
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    collections::BTreeMap,
+    time::{Instant, SystemTime},
+};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>iroh_net::NodeId;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tracing::{debug, warn};
 
-<span class="kw">use </span><span class="kw">crate</span>::net::{AbortReason, AcceptOutcome, SyncFinished};
-<span class="kw">use </span><span class="kw">crate</span>::NamespaceId;
+<span class="kw">use crate</span>::{
+    net::{AbortReason, AcceptOutcome, SyncFinished},
+    NamespaceId,
+};
 
 <span class="doccomment">/// Why we started a sync request
 </span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Copy)]

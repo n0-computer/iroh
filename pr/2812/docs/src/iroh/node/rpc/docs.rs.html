@@ -305,34 +305,40 @@
 <a href="#305" id="305">305</a>
 <a href="#306" id="306">306</a>
 <a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This module contains an impl block on [`DocsEngine`] with handlers for RPC requests
 
 </span><span class="kw">use </span>anyhow::anyhow;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>iroh_base::rpc::RpcResult;
-<span class="kw">use </span>iroh_blobs::store::Store <span class="kw">as </span>BaoStore;
-<span class="kw">use </span>iroh_blobs::BlobFormat;
+<span class="kw">use </span>iroh_blobs::{store::Store <span class="kw">as </span>BaoStore, BlobFormat};
 <span class="kw">use </span>iroh_docs::{Author, DocTicket, NamespaceSecret};
 
-<span class="kw">use </span><span class="kw">crate</span>::client::docs::ShareMode;
-<span class="kw">use </span><span class="kw">crate</span>::node::DocsEngine;
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::authors::{
-    CreateRequest, CreateResponse, DeleteRequest, DeleteResponse, ExportRequest, ExportResponse,
-    GetDefaultRequest, GetDefaultResponse, ImportRequest, ImportResponse,
-    ListRequest <span class="kw">as </span>AuthorListRequest, ListResponse <span class="kw">as </span>AuthorListResponse, SetDefaultRequest,
-    SetDefaultResponse,
-};
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::docs::{
-    CloseRequest, CloseResponse, CreateRequest <span class="kw">as </span>DocCreateRequest,
-    CreateResponse <span class="kw">as </span>DocCreateResponse, DelRequest, DelResponse, DocListRequest,
-    DocSubscribeRequest, DocSubscribeResponse, DropRequest, DropResponse, GetDownloadPolicyRequest,
-    GetDownloadPolicyResponse, GetExactRequest, GetExactResponse, GetManyRequest, GetManyResponse,
-    GetSyncPeersRequest, GetSyncPeersResponse, ImportRequest <span class="kw">as </span>DocImportRequest,
-    ImportResponse <span class="kw">as </span>DocImportResponse, LeaveRequest, LeaveResponse,
-    ListResponse <span class="kw">as </span>DocListResponse, OpenRequest, OpenResponse, SetDownloadPolicyRequest,
-    SetDownloadPolicyResponse, SetHashRequest, SetHashResponse, SetRequest, SetResponse,
-    ShareRequest, ShareResponse, StartSyncRequest, StartSyncResponse, StatusRequest,
-    StatusResponse,
+<span class="kw">use crate</span>::{
+    client::docs::ShareMode,
+    node::DocsEngine,
+    rpc_protocol::{
+        authors::{
+            CreateRequest, CreateResponse, DeleteRequest, DeleteResponse, ExportRequest,
+            ExportResponse, GetDefaultRequest, GetDefaultResponse, ImportRequest, ImportResponse,
+            ListRequest <span class="kw">as </span>AuthorListRequest, ListResponse <span class="kw">as </span>AuthorListResponse,
+            SetDefaultRequest, SetDefaultResponse,
+        },
+        docs::{
+            CloseRequest, CloseResponse, CreateRequest <span class="kw">as </span>DocCreateRequest,
+            CreateResponse <span class="kw">as </span>DocCreateResponse, DelRequest, DelResponse, DocListRequest,
+            DocSubscribeRequest, DocSubscribeResponse, DropRequest, DropResponse,
+            GetDownloadPolicyRequest, GetDownloadPolicyResponse, GetExactRequest, GetExactResponse,
+            GetManyRequest, GetManyResponse, GetSyncPeersRequest, GetSyncPeersResponse,
+            ImportRequest <span class="kw">as </span>DocImportRequest, ImportResponse <span class="kw">as </span>DocImportResponse, LeaveRequest,
+            LeaveResponse, ListResponse <span class="kw">as </span>DocListResponse, OpenRequest, OpenResponse,
+            SetDownloadPolicyRequest, SetDownloadPolicyResponse, SetHashRequest, SetHashResponse,
+            SetRequest, SetResponse, ShareRequest, ShareResponse, StartSyncRequest,
+            StartSyncResponse, StatusRequest, StatusResponse,
+        },
+    },
 };
 
 <span class="doccomment">/// Capacity for the flume channels to forward sync store iterators to async RPC streams.

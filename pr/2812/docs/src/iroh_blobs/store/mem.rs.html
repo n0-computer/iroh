@@ -457,20 +457,27 @@
 <a href="#457" id="457">457</a>
 <a href="#458" id="458">458</a>
 <a href="#459" id="459">459</a>
+<a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A full in memory database for iroh-blobs
 //!
 //! Main entry point is [Store].
-</span><span class="kw">use </span>std::collections::{BTreeMap, BTreeSet};
-<span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::io;
-<span class="kw">use </span>std::path::PathBuf;
-<span class="kw">use </span>std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
-<span class="kw">use </span>std::time::SystemTime;
+</span><span class="kw">use </span>std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+    io,
+    path::PathBuf,
+    sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    time::SystemTime,
+};
 
-<span class="kw">use </span>bao_tree::io::fsm::Outboard;
-<span class="kw">use </span>bao_tree::io::outboard::PreOrderOutboard;
-<span class="kw">use </span>bao_tree::io::sync::WriteAt;
-<span class="kw">use </span>bao_tree::BaoTree;
+<span class="kw">use </span>bao_tree::{
+    io::{fsm::Outboard, outboard::PreOrderOutboard, sync::WriteAt},
+    BaoTree,
+};
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
@@ -480,13 +487,16 @@
     temp_name, BaoBatchWriter, ConsistencyCheckProgress, ExportMode, ExportProgressCb, ImportMode,
     ImportProgress, Map, TempCounterMap,
 };
-<span class="kw">use </span><span class="kw">crate</span>::store::mutable_mem_storage::MutableMemStorage;
-<span class="kw">use </span><span class="kw">crate</span>::store::{BaoBlobSize, MapEntry, MapEntryMut, ReadableStore};
-<span class="kw">use </span><span class="kw">crate</span>::util::progress::{
-    BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSender,
+<span class="kw">use crate</span>::{
+    store::{
+        mutable_mem_storage::MutableMemStorage, BaoBlobSize, MapEntry, MapEntryMut, ReadableStore,
+    },
+    util::{
+        progress::{BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSender},
+        TagCounter, TagDrop,
+    },
+    Tag, TempTag, IROH_BLOCK_SIZE,
 };
-<span class="kw">use </span><span class="kw">crate</span>::util::{TagCounter, TagDrop};
-<span class="kw">use crate</span>::{Tag, TempTag, IROH_BLOCK_SIZE};
 
 <span class="doccomment">/// A fully featured in memory database for iroh-blobs, including support for
 /// partial blobs.

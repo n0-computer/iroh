@@ -1507,6 +1507,11 @@
 <a href="#1507" id="1507">1507</a>
 <a href="#1508" id="1508">1508</a>
 <a href="#1509" id="1509">1509</a>
+<a href="#1510" id="1510">1510</a>
+<a href="#1511" id="1511">1511</a>
+<a href="#1512" id="1512">1512</a>
+<a href="#1513" id="1513">1513</a>
+<a href="#1514" id="1514">1514</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Handle downloading blobs and collections concurrently and from nodes.
 //!
 //! The [`Downloader`] interacts with four main components to this end.
@@ -1535,34 +1540,39 @@
 //! - *Requests per node*: to avoid overwhelming nodes with requests, the number of concurrent
 //!   requests to a single node is also limited.
 
-</span><span class="kw">use </span>std::collections::hash_map::{<span class="self">self</span>, Entry};
-<span class="kw">use </span>std::collections::{HashMap, HashSet};
-<span class="kw">use </span>std::fmt;
-<span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::num::NonZeroUsize;
-<span class="kw">use </span>std::sync::atomic::{AtomicU64, Ordering};
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{
+    collections::{
+        hash_map::{<span class="self">self</span>, Entry},
+        HashMap, HashSet,
+    },
+    fmt,
+    future::Future,
+    num::NonZeroUsize,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
-<span class="kw">use </span>futures_lite::future::BoxedLocal;
-<span class="kw">use </span>futures_lite::{Stream, StreamExt};
+<span class="kw">use </span>futures_lite::{future::BoxedLocal, Stream, StreamExt};
 <span class="kw">use </span>hashlink::LinkedHashSet;
 <span class="kw">use </span>iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>iroh_net::{endpoint, Endpoint, NodeAddr, NodeId};
-<span class="kw">use </span>tokio::sync::{mpsc, oneshot};
-<span class="kw">use </span>tokio::task::JoinSet;
-<span class="kw">use </span>tokio_util::either::Either;
-<span class="kw">use </span>tokio_util::sync::CancellationToken;
-<span class="kw">use </span>tokio_util::time::delay_queue;
+<span class="kw">use </span>tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinSet,
+};
+<span class="kw">use </span>tokio_util::{either::Either, sync::CancellationToken, time::delay_queue};
 <span class="kw">use </span>tracing::{debug, error_span, trace, warn, Instrument};
 
-<span class="kw">use </span><span class="kw">crate</span>::get::db::DownloadProgress;
-<span class="kw">use </span><span class="kw">crate</span>::get::Stats;
-<span class="kw">use </span><span class="kw">crate</span>::metrics::Metrics;
-<span class="kw">use </span><span class="kw">crate</span>::store::Store;
-<span class="kw">use </span><span class="kw">crate</span>::util::local_pool::LocalPoolHandle;
-<span class="kw">use </span><span class="kw">crate</span>::util::progress::ProgressSender;
+<span class="kw">use crate</span>::{
+    get::{db::DownloadProgress, Stats},
+    metrics::Metrics,
+    store::Store,
+    util::{local_pool::LocalPoolHandle, progress::ProgressSender},
+};
 
 <span class="kw">mod </span>get;
 <span class="kw">mod </span>invariants;

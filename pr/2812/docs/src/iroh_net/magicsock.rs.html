@@ -3914,6 +3914,13 @@
 <a href="#3914" id="3914">3914</a>
 <a href="#3915" id="3915">3915</a>
 <a href="#3916" id="3916">3916</a>
+<a href="#3917" id="3917">3917</a>
+<a href="#3918" id="3918">3918</a>
+<a href="#3919" id="3919">3919</a>
+<a href="#3920" id="3920">3920</a>
+<a href="#3921" id="3921">3921</a>
+<a href="#3922" id="3922">3922</a>
+<a href="#3923" id="3923">3923</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3931,15 +3938,19 @@
 //! from responding to any hole punching attempts. This node will still,
 //! however, read any packets that come off the UDP sockets.
 
-</span><span class="kw">use </span>std::collections::{BTreeMap, HashMap};
-<span class="kw">use </span>std::fmt::Display;
-<span class="kw">use </span>std::io;
-<span class="kw">use </span>std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::task::{Context, Poll, Waker};
-<span class="kw">use </span>std::time::{Duration, Instant};
+</span><span class="kw">use </span>std::{
+    collections::{BTreeMap, HashMap},
+    fmt::Display,
+    io,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
+        Arc,
+    },
+    task::{Context, Poll, Waker},
+    time::{Duration, Instant},
+};
 
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
@@ -3948,12 +3959,13 @@
 <span class="kw">use </span>iroh_base::key::NodeId;
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>quinn::AsyncUdpSocket;
-<span class="kw">use </span>rand::seq::SliceRandom;
-<span class="kw">use </span>rand::{Rng, SeedableRng};
+<span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};
 <span class="kw">use </span>smallvec::{smallvec, SmallVec};
-<span class="kw">use </span>tokio::sync::{<span class="self">self</span>, mpsc, Mutex};
-<span class="kw">use </span>tokio::task::JoinSet;
-<span class="kw">use </span>tokio::time;
+<span class="kw">use </span>tokio::{
+    sync::{<span class="self">self</span>, mpsc, Mutex},
+    task::JoinSet,
+    time,
+};
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
@@ -3962,20 +3974,24 @@
 <span class="kw">use </span>url::Url;
 <span class="kw">use </span>watchable::Watchable;
 
-<span class="kw">use </span><span class="self">self</span>::metrics::Metrics <span class="kw">as </span>MagicsockMetrics;
-<span class="kw">use </span><span class="self">self</span>::node_map::{NodeMap, PingAction, PingRole, SendPing};
-<span class="kw">use </span><span class="self">self</span>::relay_actor::{RelayActor, RelayActorMessage, RelayReadResult};
-<span class="kw">use </span><span class="self">self</span>::udp_conn::UdpConn;
-<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::NETCHECK_REPORT_TIMEOUT;
-<span class="kw">use </span><span class="kw">crate</span>::disco::{<span class="self">self</span>, CallMeMaybe, SendAddr};
-<span class="kw">use </span><span class="kw">crate</span>::discovery::{Discovery, DiscoveryItem};
-<span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
-<span class="kw">use </span><span class="kw">crate</span>::endpoint::NodeAddr;
-<span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey, SharedSecret};
-<span class="kw">use </span><span class="kw">crate</span>::net::ip::LocalAddresses;
-<span class="kw">use </span><span class="kw">crate</span>::net::{interfaces, netmon};
-<span class="kw">use </span><span class="kw">crate</span>::relay::{RelayMap, RelayUrl};
-<span class="kw">use crate</span>::{netcheck, portmapper, stun, AddrInfo};
+<span class="kw">use </span><span class="self">self</span>::{
+    metrics::Metrics <span class="kw">as </span>MagicsockMetrics,
+    node_map::{NodeMap, PingAction, PingRole, SendPing},
+    relay_actor::{RelayActor, RelayActorMessage, RelayReadResult},
+    udp_conn::UdpConn,
+};
+<span class="kw">use crate</span>::{
+    defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
+    disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
+    discovery::{Discovery, DiscoveryItem},
+    dns::DnsResolver,
+    endpoint::NodeAddr,
+    key::{PublicKey, SecretKey, SharedSecret},
+    net::{interfaces, ip::LocalAddresses, netmon},
+    netcheck, portmapper,
+    relay::{RelayMap, RelayUrl},
+    stun, AddrInfo,
+};
 
 <span class="kw">mod </span>metrics;
 <span class="kw">mod </span>node_map;
@@ -3985,11 +4001,11 @@
 
 <span class="kw">pub use </span>node_map::Source;
 
-<span class="kw">pub use </span><span class="self">self</span>::metrics::Metrics;
-<span class="kw">pub use </span><span class="self">self</span>::node_map::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo,
-};
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">use </span><span class="self">self</span>::timer::Timer;
+<span class="kw">pub use </span><span class="self">self</span>::{
+    metrics::Metrics,
+    node_map::{ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo},
+};
 
 <span class="doccomment">/// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
@@ -6737,9 +6753,7 @@
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::defaults::staging::EU_RELAY_HOSTNAME;
-    <span class="kw">use </span><span class="kw">crate</span>::relay::RelayMode;
-    <span class="kw">use crate</span>::{tls, Endpoint};
+    <span class="kw">use crate</span>::{defaults::staging::EU_RELAY_HOSTNAME, relay::RelayMode, tls, Endpoint};
 
     <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/test/1"</span>;
 

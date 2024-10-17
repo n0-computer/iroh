@@ -773,28 +773,42 @@
 <a href="#773" id="773">773</a>
 <a href="#774" id="774">774</a>
 <a href="#775" id="775">775</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{BTreeMap, BTreeSet};
-<span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::net::{IpAddr, SocketAddr};
-<span class="kw">use </span>std::sync::atomic::Ordering;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::{Duration, Instant};
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
+<a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
+<a href="#781" id="781">781</a>
+<a href="#782" id="782">782</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+    net::{IpAddr, SocketAddr},
+    sync::{atomic::Ordering, Arc},
+    time::{Duration, Instant},
+};
 
 <span class="kw">use </span>anyhow::Context;
 <span class="kw">use </span>backoff::backoff::Backoff;
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
-<span class="kw">use </span>tokio::sync::{mpsc, oneshot};
-<span class="kw">use </span>tokio::task::{JoinHandle, JoinSet};
-<span class="kw">use </span>tokio::time;
+<span class="kw">use </span>tokio::{
+    sync::{mpsc, oneshot},
+    task::{JoinHandle, JoinSet},
+    time,
+};
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, info, info_span, trace, warn, Instrument};
 
 <span class="kw">use super</span>::{ActorMessage, MagicSock, Metrics <span class="kw">as </span>MagicsockMetrics, RelayContents};
-<span class="kw">use </span><span class="kw">crate</span>::key::{NodeId, PUBLIC_KEY_LENGTH};
-<span class="kw">use </span><span class="kw">crate</span>::relay::client::conn::ReceivedMessage;
-<span class="kw">use </span><span class="kw">crate</span>::relay::client::ClientError;
-<span class="kw">use </span><span class="kw">crate</span>::relay::{<span class="self">self</span>, RelayUrl, MAX_PACKET_SIZE};
+<span class="kw">use crate</span>::{
+    key::{NodeId, PUBLIC_KEY_LENGTH},
+    relay::{
+        <span class="self">self</span>,
+        client::{conn::ReceivedMessage, ClientError},
+        RelayUrl, MAX_PACKET_SIZE,
+    },
+};
 
 <span class="doccomment">/// How long a non-home relay connection needs to be idle (last written to) before we close it.
 </span><span class="kw">const </span>RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(<span class="number">60</span>);

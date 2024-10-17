@@ -462,14 +462,24 @@
 <a href="#462" id="462">462</a>
 <a href="#463" id="463">463</a>
 <a href="#464" id="464">464</a>
+<a href="#465" id="465">465</a>
+<a href="#466" id="466">466</a>
+<a href="#467" id="467">467</a>
+<a href="#468" id="468">468</a>
+<a href="#469" id="469">469</a>
+<a href="#470" id="470">470</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utilities used in the protocol implementation
 
-</span><span class="kw">use </span>std::collections::{BTreeMap, HashMap};
-<span class="kw">use </span>std::hash::Hash;
-<span class="kw">use </span>std::time::{Duration, Instant};
+</span><span class="kw">use </span>std::{
+    collections::{BTreeMap, HashMap},
+    hash::Hash,
+    time::{Duration, Instant},
+};
 
-<span class="kw">use </span>rand::seq::{IteratorRandom, SliceRandom};
-<span class="kw">use </span>rand::Rng;
+<span class="kw">use </span>rand::{
+    seq::{IteratorRandom, SliceRandom},
+    Rng,
+};
 
 <span class="doccomment">/// Implement methods, display, debug and conversion traits for 32 byte identifiers.
 </span><span class="macro">macro_rules!</span> idbytes_impls {
@@ -801,8 +811,10 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>test {
-    <span class="kw">use </span>std::str::FromStr;
-    <span class="kw">use </span>std::time::{Duration, Instant};
+    <span class="kw">use </span>std::{
+        str::FromStr,
+        time::{Duration, Instant},
+    };
 
     <span class="kw">use </span>rand_core::SeedableRng;
 

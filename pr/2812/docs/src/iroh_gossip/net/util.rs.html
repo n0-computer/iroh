@@ -128,14 +128,14 @@
 <a href="#128" id="128">128</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utilities for iroh-gossip networking
 
-</span><span class="kw">use </span>std::io;
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::time::Instant;
+</span><span class="kw">use </span>std::{io, pin::Pin, time::Instant};
 
 <span class="kw">use </span>anyhow::{bail, ensure, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
-<span class="kw">use </span>tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-<span class="kw">use </span>tokio::time::{sleep_until, Sleep};
+<span class="kw">use </span>tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    time::{sleep_until, Sleep},
+};
 
 <span class="kw">use </span><span class="kw">super</span>::ProtoMessage;
 <span class="kw">use </span><span class="kw">crate</span>::proto::util::TimerMap;

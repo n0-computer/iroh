@@ -751,39 +751,58 @@
 <a href="#751" id="751">751</a>
 <a href="#752" id="752">752</a>
 <a href="#753" id="753">753</a>
+<a href="#754" id="754">754</a>
+<a href="#755" id="755">755</a>
+<a href="#756" id="756">756</a>
+<a href="#757" id="757">757</a>
+<a href="#758" id="758">758</a>
+<a href="#759" id="759">759</a>
+<a href="#760" id="760">760</a>
+<a href="#761" id="761">761</a>
+<a href="#762" id="762">762</a>
+<a href="#763" id="763">763</a>
+<a href="#764" id="764">764</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
 //!
 //! based on tailscale/derp/derp_server.go
 
-</span><span class="kw">use </span>std::collections::HashMap;
-<span class="kw">use </span>std::sync::atomic::{AtomicUsize, Ordering};
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 <span class="kw">use </span>anyhow::{bail, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>hyper::HeaderMap;
-<span class="kw">use </span>iroh_metrics::core::UsageStatsReport;
-<span class="kw">use </span>iroh_metrics::{inc, inc_by, report_usage_stats};
+<span class="kw">use </span>iroh_metrics::{core::UsageStatsReport, inc, inc_by, report_usage_stats};
 <span class="kw">use </span>time::{Date, OffsetDateTime};
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tokio_tungstenite::WebSocketStream;
-<span class="kw">use </span>tokio_util::codec::Framed;
-<span class="kw">use </span>tokio_util::sync::CancellationToken;
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
+<span class="kw">use </span>tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{info_span, trace, Instrument};
 <span class="kw">use </span>tungstenite::protocol::Role;
 
-<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::relay::SERVER_WRITE_TIMEOUT <span class="kw">as </span>WRITE_TIMEOUT;
-<span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
-<span class="kw">use </span><span class="kw">crate</span>::relay::codec::{
-    recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
+<span class="kw">use crate</span>::{
+    defaults::timeouts::relay::SERVER_WRITE_TIMEOUT <span class="kw">as </span>WRITE_TIMEOUT,
+    key::{PublicKey, SecretKey},
+    relay::{
+        codec::{
+            recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+            SERVER_CHANNEL_SIZE,
+        },
+        http::Protocol,
+        server::{
+            client_conn::ClientConnBuilder,
+            clients::Clients,
+            metrics::Metrics,
+            streams::{MaybeTlsStream, RelayIo},
+            types::ServerMessage,
+        },
+    },
 };
-<span class="kw">use </span><span class="kw">crate</span>::relay::http::Protocol;
-<span class="kw">use </span><span class="kw">crate</span>::relay::server::client_conn::ClientConnBuilder;
-<span class="kw">use </span><span class="kw">crate</span>::relay::server::clients::Clients;
-<span class="kw">use </span><span class="kw">crate</span>::relay::server::metrics::Metrics;
-<span class="kw">use </span><span class="kw">crate</span>::relay::server::streams::{MaybeTlsStream, RelayIo};
-<span class="kw">use </span><span class="kw">crate</span>::relay::server::types::ServerMessage;
 
 <span class="comment">// TODO: skipping `verboseDropKeys` for now
 
@@ -1159,13 +1178,16 @@
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>tokio::io::DuplexStream;
     <span class="kw">use </span>tokio_util::codec::{FramedRead, FramedWrite};
-    <span class="kw">use </span>tracing_subscriber::prelude::<span class="kw-2">*</span>;
-    <span class="kw">use </span>tracing_subscriber::EnvFilter;
+    <span class="kw">use </span>tracing_subscriber::{prelude::<span class="kw-2">*</span>, EnvFilter};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::relay::client::conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage};
-    <span class="kw">use </span><span class="kw">crate</span>::relay::client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter};
-    <span class="kw">use </span><span class="kw">crate</span>::relay::codec::{recv_frame, ClientInfo, Frame, FrameType};
+    <span class="kw">use </span><span class="kw">crate</span>::relay::{
+        client::{
+            conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
+            streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
+        },
+        codec::{recv_frame, ClientInfo, Frame, FrameType},
+    };
 
     <span class="kw">fn </span>test_client_builder(
         key: PublicKey,

@@ -1746,6 +1746,10 @@
 <a href="#1746" id="1746">1746</a>
 <a href="#1747" id="1747">1747</a>
 <a href="#1748" id="1748">1748</a>
+<a href="#1749" id="1749">1749</a>
+<a href="#1750" id="1750">1750</a>
+<a href="#1751" id="1751">1751</a>
+<a href="#1752" id="1752">1752</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1759,13 +1763,15 @@
 //!
 //! [module docs]: crate
 
-</span><span class="kw">use </span>std::any::Any;
-<span class="kw">use </span>std::future::{Future, IntoFuture};
-<span class="kw">use </span>std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::task::Poll;
-<span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{
+    any::Any,
+    future::{Future, IntoFuture},
+    net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    pin::Pin,
+    sync::Arc,
+    task::Poll,
+    time::Duration,
+};
 
 <span class="kw">use </span>anyhow::{anyhow, bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>derive_more::Debug;
@@ -1775,12 +1781,14 @@
 <span class="kw">use </span>tracing::{debug, instrument, trace, warn};
 <span class="kw">use </span>url::Url;
 
-<span class="kw">use </span><span class="kw">crate</span>::discovery::{Discovery, DiscoveryTask};
-<span class="kw">use </span><span class="kw">crate</span>::dns::{default_resolver, DnsResolver};
-<span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
-<span class="kw">use </span><span class="kw">crate</span>::magicsock::{<span class="self">self</span>, Handle, QuicMappedAddr};
-<span class="kw">use </span><span class="kw">crate</span>::relay::{RelayMode, RelayUrl};
-<span class="kw">use crate</span>::{tls, NodeId};
+<span class="kw">use crate</span>::{
+    discovery::{Discovery, DiscoveryTask},
+    dns::{default_resolver, DnsResolver},
+    key::{PublicKey, SecretKey},
+    magicsock::{<span class="self">self</span>, Handle, QuicMappedAddr},
+    relay::{RelayMode, RelayUrl},
+    tls, NodeId,
+};
 
 <span class="kw">mod </span>rtt_actor;
 

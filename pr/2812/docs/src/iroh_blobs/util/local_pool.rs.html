@@ -678,17 +678,28 @@
 <a href="#678" id="678">678</a>
 <a href="#679" id="679">679</a>
 <a href="#680" id="680">680</a>
+<a href="#681" id="681">681</a>
+<a href="#682" id="682">682</a>
+<a href="#683" id="683">683</a>
+<a href="#684" id="684">684</a>
+<a href="#685" id="685">685</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A local task pool with proper shutdown
-</span><span class="kw">use </span>std::any::Any;
-<span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::ops::Deref;
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::atomic::{AtomicBool, Ordering};
-<span class="kw">use </span>std::sync::Arc;
+</span><span class="kw">use </span>std::{
+    any::Any,
+    future::Future,
+    ops::Deref,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 <span class="kw">use </span>futures_lite::FutureExt;
-<span class="kw">use </span>tokio::sync::{Notify, Semaphore};
-<span class="kw">use </span>tokio::task::{JoinError, JoinSet, LocalSet};
+<span class="kw">use </span>tokio::{
+    sync::{Notify, Semaphore},
+    task::{JoinError, JoinSet, LocalSet},
+};
 
 <span class="kw">type </span>BoxedFut&lt;T = ()&gt; = Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = T&gt;&gt;&gt;;
 <span class="kw">type </span>SpawnFn&lt;T = ()&gt; = Box&lt;<span class="kw">dyn </span>FnOnce() -&gt; BoxedFut&lt;T&gt; + Send + <span class="lifetime">'static</span>&gt;;
@@ -1214,8 +1225,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>std::sync::atomic::AtomicU64;
-    <span class="kw">use </span>std::time::Duration;
+    <span class="kw">use </span>std::{sync::atomic::AtomicU64, time::Duration};
 
     <span class="kw">use </span>tracing::info;
 

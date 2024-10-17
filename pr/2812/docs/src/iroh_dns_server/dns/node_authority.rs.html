@@ -184,23 +184,33 @@
 <a href="#184" id="184">184</a>
 <a href="#185" id="185">185</a>
 <a href="#186" id="186">186</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt;
-<span class="kw">use </span>std::sync::Arc;
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt, sync::Arc};
 
 <span class="kw">use </span>anyhow::{bail, ensure, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>async_trait::async_trait;
-<span class="kw">use </span>hickory_proto::op::ResponseCode;
-<span class="kw">use </span>hickory_proto::rr::{LowerName, Name, RecordType};
-<span class="kw">use </span>hickory_server::authority::{
-    AuthLookup, Authority, LookupError, LookupOptions, LookupRecords, MessageRequest, UpdateResult,
-    ZoneType,
+<span class="kw">use </span>hickory_proto::{
+    op::ResponseCode,
+    rr::{LowerName, Name, RecordType},
 };
-<span class="kw">use </span>hickory_server::server::RequestInfo;
-<span class="kw">use </span>hickory_server::store::in_memory::InMemoryAuthority;
+<span class="kw">use </span>hickory_server::{
+    authority::{
+        AuthLookup, Authority, LookupError, LookupOptions, LookupRecords, MessageRequest,
+        UpdateResult, ZoneType,
+    },
+    server::RequestInfo,
+    store::in_memory::InMemoryAuthority,
+};
 <span class="kw">use </span>tracing::{debug, trace};
 
-<span class="kw">use </span><span class="kw">crate</span>::store::ZoneStore;
-<span class="kw">use </span><span class="kw">crate</span>::util::{record_set_append_origin, PublicKeyBytes};
+<span class="kw">use crate</span>::{
+    store::ZoneStore,
+    util::{record_set_append_origin, PublicKeyBytes},
+};
 
 <span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub struct </span>NodeAuthority {

@@ -102,7 +102,6 @@
 <a href="#102" id="102">102</a>
 <a href="#103" id="103">103</a>
 <a href="#104" id="104">104</a>
-<a href="#105" id="105">105</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Tickets for [`iroh-docs`] documents.
 
 </span><span class="kw">use </span>iroh_base::ticket;
@@ -172,8 +171,7 @@
 
     <span class="kw">use </span>iroh_base::base32;
     <span class="kw">use </span>iroh_net::key::PublicKey;
-    <span class="kw">use </span>iroh_test::assert_eq_hex;
-    <span class="kw">use </span>iroh_test::hexdump::parse_hexdump;
+    <span class="kw">use </span>iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span><span class="kw">crate</span>::NamespaceId;

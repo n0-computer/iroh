@@ -1031,6 +1031,16 @@
 <a href="#1031" id="1031">1031</a>
 <a href="#1032" id="1032">1032</a>
 <a href="#1033" id="1033">1033</a>
+<a href="#1034" id="1034">1034</a>
+<a href="#1035" id="1035">1035</a>
+<a href="#1036" id="1036">1036</a>
+<a href="#1037" id="1037">1037</a>
+<a href="#1038" id="1038">1038</a>
+<a href="#1039" id="1039">1039</a>
+<a href="#1040" id="1040">1040</a>
+<a href="#1041" id="1041">1041</a>
+<a href="#1042" id="1042">1042</a>
+<a href="#1043" id="1043">1043</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! An implementation of a bao file, meaning some data blob with associated
 //! outboard.
 //!
@@ -1042,25 +1052,33 @@
 //! the file system for the data, outboard, and sizes file. There is also a
 //! combined implementation that starts in memory and switches to file when
 //! the memory limit is reached.
-</span><span class="kw">use </span>std::fs::{File, OpenOptions};
-<span class="kw">use </span>std::io;
-<span class="kw">use </span>std::ops::{Deref, DerefMut};
-<span class="kw">use </span>std::path::{Path, PathBuf};
-<span class="kw">use </span>std::sync::{Arc, RwLock, Weak};
+</span><span class="kw">use </span>std::{
+    fs::{File, OpenOptions},
+    io,
+    ops::{Deref, DerefMut},
+    path::{Path, PathBuf},
+    sync::{Arc, RwLock, Weak},
+};
 
-<span class="kw">use </span>bao_tree::io::fsm::BaoContentItem;
-<span class="kw">use </span>bao_tree::io::outboard::PreOrderOutboard;
-<span class="kw">use </span>bao_tree::io::sync::{ReadAt, WriteAt};
-<span class="kw">use </span>bao_tree::BaoTree;
+<span class="kw">use </span>bao_tree::{
+    io::{
+        fsm::BaoContentItem,
+        outboard::PreOrderOutboard,
+        sync::{ReadAt, WriteAt},
+    },
+    BaoTree,
+};
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>derive_more::Debug;
 <span class="kw">use </span>iroh_base::hash::Hash;
 <span class="kw">use </span>iroh_io::AsyncSliceReader;
 
 <span class="kw">use </span><span class="kw">super</span>::mutable_mem_storage::{MutableMemStorage, SizeInfo};
-<span class="kw">use </span><span class="kw">crate</span>::store::BaoBatchWriter;
-<span class="kw">use </span><span class="kw">crate</span>::util::{get_limited_slice, MemOrFile, SparseMemFile};
-<span class="kw">use </span><span class="kw">crate</span>::IROH_BLOCK_SIZE;
+<span class="kw">use crate</span>::{
+    store::BaoBatchWriter,
+    util::{get_limited_slice, MemOrFile, SparseMemFile},
+    IROH_BLOCK_SIZE,
+};
 
 <span class="doccomment">/// Data files are stored in 3 files. The data file, the outboard file,
 /// and a sizes file. The sizes file contains the size that the remote side told us
@@ -1744,15 +1762,17 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">pub mod </span>test_support {
-    <span class="kw">use </span>std::future::Future;
-    <span class="kw">use </span>std::io::Cursor;
-    <span class="kw">use </span>std::ops::Range;
+    <span class="kw">use </span>std::{future::Future, io::Cursor, ops::Range};
 
-    <span class="kw">use </span>bao_tree::io::fsm::{ResponseDecoder, ResponseDecoderNext};
-    <span class="kw">use </span>bao_tree::io::outboard::PostOrderMemOutboard;
-    <span class="kw">use </span>bao_tree::io::round_up_to_chunks;
-    <span class="kw">use </span>bao_tree::io::sync::encode_ranges_validated;
-    <span class="kw">use </span>bao_tree::{BlockSize, ChunkRanges};
+    <span class="kw">use </span>bao_tree::{
+        io::{
+            fsm::{ResponseDecoder, ResponseDecoderNext},
+            outboard::PostOrderMemOutboard,
+            round_up_to_chunks,
+            sync::encode_ranges_validated,
+        },
+        BlockSize, ChunkRanges,
+    };
     <span class="kw">use </span>futures_lite::{Stream, StreamExt};
     <span class="kw">use </span>iroh_io::AsyncStreamReader;
     <span class="kw">use </span>rand::RngCore;

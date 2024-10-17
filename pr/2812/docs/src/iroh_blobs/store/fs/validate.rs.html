@@ -489,18 +489,20 @@
 <a href="#489" id="489">489</a>
 <a href="#490" id="490">490</a>
 <a href="#491" id="491">491</a>
+<a href="#492" id="492">492</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Validation of the store's contents.
 </span><span class="kw">use </span>std::collections::BTreeSet;
 
 <span class="kw">use </span>redb::ReadableTable;
 
-<span class="kw">use </span><span class="kw">super</span>::tables::Tables;
 <span class="kw">use super</span>::{
-    raw_outboard_size, ActorResult, ActorState, DataLocation, EntryState, Hash, OutboardLocation,
+    raw_outboard_size, tables::Tables, ActorResult, ActorState, DataLocation, EntryState, Hash,
+    OutboardLocation,
 };
-<span class="kw">use </span><span class="kw">crate</span>::store::fs::tables::BaoFilePart;
-<span class="kw">use </span><span class="kw">crate</span>::store::{ConsistencyCheckProgress, ReportLevel};
-<span class="kw">use </span><span class="kw">crate</span>::util::progress::BoxedProgressSender;
+<span class="kw">use crate</span>::{
+    store::{fs::tables::BaoFilePart, ConsistencyCheckProgress, ReportLevel},
+    util::progress::BoxedProgressSender,
+};
 
 <span class="kw">impl </span>ActorState {
     <span class="doccomment">//! This performs a full consistency check. Eventually it will also validate

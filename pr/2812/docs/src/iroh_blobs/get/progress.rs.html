@@ -183,21 +183,15 @@
 <a href="#183" id="183">183</a>
 <a href="#184" id="184">184</a>
 <a href="#185" id="185">185</a>
-<a href="#186" id="186">186</a>
-<a href="#187" id="187">187</a>
-<a href="#188" id="188">188</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Types for get progress state management.
 
-</span><span class="kw">use </span>std::collections::HashMap;
-<span class="kw">use </span>std::num::NonZeroU64;
+</span><span class="kw">use </span>std::{collections::HashMap, num::NonZeroU64};
 
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tracing::warn;
 
 <span class="kw">use </span><span class="kw">super</span>::db::{BlobId, DownloadProgress};
-<span class="kw">use </span><span class="kw">crate</span>::protocol::RangeSpec;
-<span class="kw">use </span><span class="kw">crate</span>::store::BaoBlobSize;
-<span class="kw">use </span><span class="kw">crate</span>::Hash;
+<span class="kw">use crate</span>::{protocol::RangeSpec, store::BaoBlobSize, Hash};
 
 <span class="doccomment">/// The identifier for progress events.
 </span><span class="kw">pub type </span>ProgressId = u64;

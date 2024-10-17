@@ -282,19 +282,29 @@
 <a href="#282" id="282">282</a>
 <a href="#283" id="283">283</a>
 <a href="#284" id="284">284</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::net::SocketAddr;
-<span class="kw">use </span>std::time::{Duration, Instant};
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::StreamExt <span class="kw">as _</span>;
-<span class="kw">use </span>iroh_net::endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig};
-<span class="kw">use </span>iroh_net::relay::{RelayMap, RelayMode, RelayUrl};
-<span class="kw">use </span>iroh_net::{Endpoint, NodeAddr};
+<span class="kw">use </span>iroh_net::{
+    endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
+    relay::{RelayMap, RelayMode, RelayUrl},
+    Endpoint, NodeAddr,
+};
 <span class="kw">use </span>tracing::{trace, warn};
 
-<span class="kw">use </span><span class="kw">crate</span>::stats::TransferResult;
-<span class="kw">use crate</span>::{client_handler, ClientStats, ConnectionSelector, EndpointSelector, Opt};
+<span class="kw">use crate</span>::{
+    client_handler, stats::TransferResult, ClientStats, ConnectionSelector, EndpointSelector, Opt,
+};
 
 <span class="kw">pub const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/iroh-net-bench/0"</span>;
 

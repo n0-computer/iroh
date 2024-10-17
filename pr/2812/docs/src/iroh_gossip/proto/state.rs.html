@@ -345,20 +345,32 @@
 <a href="#345" id="345">345</a>
 <a href="#346" id="346">346</a>
 <a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
+<a href="#353" id="353">353</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The protocol state of the `iroh-gossip` protocol.
 
-</span><span class="kw">use </span>std::collections::{hash_map, HashMap, HashSet};
-<span class="kw">use </span>std::time::{Duration, Instant};
+</span><span class="kw">use </span>std::{
+    collections::{hash_map, HashMap, HashSet},
+    time::{Duration, Instant},
+};
 
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>rand::Rng;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tracing::trace;
 
-<span class="kw">use </span><span class="kw">crate</span>::metrics::Metrics;
-<span class="kw">use </span><span class="kw">crate</span>::proto::topic::{<span class="self">self</span>, Command};
-<span class="kw">use </span><span class="kw">crate</span>::proto::util::idbytes_impls;
-<span class="kw">use </span><span class="kw">crate</span>::proto::{Config, PeerData, PeerIdentity};
+<span class="kw">use crate</span>::{
+    metrics::Metrics,
+    proto::{
+        topic::{<span class="self">self</span>, Command},
+        util::idbytes_impls,
+        Config, PeerData, PeerIdentity,
+    },
+};
 
 <span class="doccomment">/// The identifier for a topic
 </span><span class="attr">#[derive(Clone, Copy, Eq, PartialEq, Hash, Serialize, Ord, PartialOrd, Deserialize)]

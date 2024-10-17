@@ -344,9 +344,9 @@
 <a href="#344" id="344">344</a>
 <a href="#345" id="345">345</a>
 <a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The collection type used by iroh
-</span><span class="kw">use </span>std::collections::BTreeMap;
-<span class="kw">use </span>std::future::Future;
+</span><span class="kw">use </span>std::{collections::BTreeMap, future::Future};
 
 <span class="kw">use </span>anyhow::Context;
 <span class="kw">use </span>bao_tree::blake3;
@@ -354,11 +354,13 @@
 <span class="kw">use </span>iroh_io::AsyncSliceReaderExt;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use </span><span class="kw">crate</span>::get::{fsm, Stats};
-<span class="kw">use </span><span class="kw">crate</span>::hashseq::HashSeq;
-<span class="kw">use </span><span class="kw">crate</span>::store::MapEntry;
-<span class="kw">use </span><span class="kw">crate</span>::util::TempTag;
-<span class="kw">use crate</span>::{BlobFormat, Hash};
+<span class="kw">use crate</span>::{
+    get::{fsm, Stats},
+    hashseq::HashSeq,
+    store::MapEntry,
+    util::TempTag,
+    BlobFormat, Hash,
+};
 
 <span class="doccomment">/// A collection of blobs
 ///

@@ -564,14 +564,9 @@
 <a href="#564" id="564">564</a>
 <a href="#565" id="565">565</a>
 <a href="#566" id="566">566</a>
-<a href="#567" id="567">567</a>
-<a href="#568" id="568">568</a>
-<a href="#569" id="569">569</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The blake3 hash used in Iroh.
 
-</span><span class="kw">use </span>std::borrow::Borrow;
-<span class="kw">use </span>std::fmt;
-<span class="kw">use </span>std::str::FromStr;
+</span><span class="kw">use </span>std::{borrow::Borrow, fmt, str::FromStr};
 
 <span class="kw">use </span>postcard::experimental::max_size::MaxSize;
 <span class="kw">use </span>serde::{de, Deserialize, Deserializer, Serialize, Serializer};
@@ -967,8 +962,7 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
 
-    <span class="kw">use </span>iroh_test::assert_eq_hex;
-    <span class="kw">use </span>iroh_test::hexdump::parse_hexdump;
+    <span class="kw">use </span>iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
     <span class="kw">use </span>serde_test::{assert_tokens, Configure, Token};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;

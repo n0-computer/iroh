@@ -162,18 +162,18 @@
 <a href="#162" id="162">162</a>
 <a href="#163" id="163">163</a>
 <a href="#164" id="164">164</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{HashMap, HashSet};
-<span class="kw">use </span>std::net::IpAddr;
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    collections::{HashMap, HashSet},
+    net::IpAddr,
+};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::StreamExt;
 <span class="kw">use </span>netlink_packet_core::NetlinkPayload;
-<span class="kw">use </span>netlink_packet_route::constants::<span class="kw-2">*</span>;
-<span class="kw">use </span>netlink_packet_route::{address, route, RtnlMessage};
+<span class="kw">use </span>netlink_packet_route::{address, constants::<span class="kw-2">*</span>, route, RtnlMessage};
 <span class="kw">use </span>netlink_sys::{AsyncSocket, SocketAddr};
 <span class="kw">use </span>rtnetlink::new_connection;
-<span class="kw">use </span>tokio::sync::mpsc;
-<span class="kw">use </span>tokio::task::JoinHandle;
+<span class="kw">use </span>tokio::{sync::mpsc, task::JoinHandle};
 <span class="kw">use </span>tracing::{info, trace, warn};
 
 <span class="kw">use </span><span class="kw">super</span>::actor::NetworkMessage;

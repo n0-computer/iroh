@@ -444,6 +444,9 @@
 <a href="#444" id="444">444</a>
 <a href="#445" id="445">445</a>
 <a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
@@ -478,19 +481,20 @@
 //! [`N0_DNS_NODE_ORIGIN_PROD`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN_PROD
 //! [`N0_DNS_NODE_ORIGIN_STAGING`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN_STAGING
 
-</span><span class="kw">use </span>std::collections::{BTreeMap, BTreeSet};
-<span class="kw">use </span>std::fmt::Display;
-<span class="kw">use </span>std::hash::Hash;
-<span class="kw">use </span>std::net::SocketAddr;
-<span class="kw">use </span>std::str::FromStr;
+</span><span class="kw">use </span>std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Display,
+    hash::Hash,
+    net::SocketAddr,
+    str::FromStr,
+};
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>hickory_proto::error::ProtoError;
 <span class="kw">use </span>hickory_resolver::{Name, TokioAsyncResolver};
 <span class="kw">use </span>url::Url;
 
-<span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
-<span class="kw">use crate</span>::{AddrInfo, NodeAddr, NodeId};
+<span class="kw">use crate</span>::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
 
 <span class="doccomment">/// The DNS name for the iroh TXT record.
 </span><span class="kw">pub const </span>IROH_TXT_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"_iroh"</span>;
@@ -743,8 +747,10 @@
 
     <span class="doccomment">/// Parses a [`pkarr::SignedPacket`].
     </span><span class="kw">pub fn </span>from_pkarr_signed_packet(packet: <span class="kw-2">&amp;</span>pkarr::SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">use </span>pkarr::dns::rdata::RData;
-        <span class="kw">use </span>pkarr::dns::{<span class="self">self</span>};
+        <span class="kw">use </span>pkarr::dns::{
+            rdata::RData,
+            {<span class="self">self</span>},
+        };
         <span class="kw">let </span>pubkey = packet.public_key();
         <span class="kw">let </span>pubkey_z32 = pubkey.to_z32();
         <span class="kw">let </span>node_id = NodeId::from(<span class="kw-2">*</span>pubkey.verifying_key());

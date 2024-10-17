@@ -251,25 +251,33 @@
 <a href="#251" id="251">251</a>
 <a href="#252" id="252">252</a>
 <a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! HTTP server part of iroh-dns-server
 
-</span><span class="kw">use </span>std::net::{IpAddr, Ipv4Addr, SocketAddr};
-<span class="kw">use </span>std::time::Instant;
+</span><span class="kw">use </span>std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    time::Instant,
+};
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>axum::extract::{ConnectInfo, Request};
-<span class="kw">use </span>axum::handler::Handler;
-<span class="kw">use </span>axum::http::Method;
-<span class="kw">use </span>axum::middleware::{<span class="self">self</span>, Next};
-<span class="kw">use </span>axum::response::IntoResponse;
-<span class="kw">use </span>axum::routing::get;
-<span class="kw">use </span>axum::Router;
+<span class="kw">use </span>axum::{
+    extract::{ConnectInfo, Request},
+    handler::Handler,
+    http::Method,
+    middleware::{<span class="self">self</span>, Next},
+    response::IntoResponse,
+    routing::get,
+    Router,
+};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
-<span class="kw">use </span>tokio::net::TcpListener;
-<span class="kw">use </span>tokio::task::JoinSet;
-<span class="kw">use </span>tower_http::cors::{<span class="self">self</span>, CorsLayer};
-<span class="kw">use </span>tower_http::trace::TraceLayer;
+<span class="kw">use </span>tokio::{net::TcpListener, task::JoinSet};
+<span class="kw">use </span>tower_http::{
+    cors::{<span class="self">self</span>, CorsLayer},
+    trace::TraceLayer,
+};
 <span class="kw">use </span>tracing::{info, span, warn, Level};
 
 <span class="kw">mod </span>doh;
@@ -279,9 +287,7 @@
 <span class="kw">mod </span>tls;
 
 <span class="kw">pub use </span><span class="self">self</span>::tls::CertMode;
-<span class="kw">use </span><span class="kw">crate</span>::config::Config;
-<span class="kw">use </span><span class="kw">crate</span>::metrics::Metrics;
-<span class="kw">use </span><span class="kw">crate</span>::state::AppState;
+<span class="kw">use crate</span>::{config::Config, metrics::Metrics, state::AppState};
 
 <span class="doccomment">/// Config for the HTTP server
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize, Clone)]

@@ -498,15 +498,18 @@
 <a href="#498" id="498">498</a>
 <a href="#499" id="499">499</a>
 <a href="#500" id="500">500</a>
+<a href="#501" id="501">501</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Cryptographic key handling for `iroh-net`.
 
 </span><span class="kw">mod </span>encryption;
 
-<span class="kw">use </span>std::fmt::{Debug, Display};
-<span class="kw">use </span>std::hash::Hash;
-<span class="kw">use </span>std::str::FromStr;
-<span class="kw">use </span>std::sync::Mutex;
-<span class="kw">use </span>std::time::Duration;
+<span class="kw">use </span>std::{
+    fmt::{Debug, Display},
+    hash::Hash,
+    str::FromStr,
+    sync::Mutex,
+    time::Duration,
+};
 
 <span class="kw">pub use </span>ed25519_dalek::{Signature, PUBLIC_KEY_LENGTH};
 <span class="kw">use </span>ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
@@ -911,8 +914,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>iroh_test::assert_eq_hex;
-    <span class="kw">use </span>iroh_test::hexdump::parse_hexdump;
+    <span class="kw">use </span>iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 

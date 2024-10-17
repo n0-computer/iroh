@@ -444,7 +444,6 @@
 <a href="#444" id="444">444</a>
 <a href="#445" id="445">445</a>
 <a href="#446" id="446">446</a>
-<a href="#447" id="447">447</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! X.509 certificate handling.
 //!
 //! This module handles generation, signing, and verification of certificates.
@@ -454,8 +453,7 @@
 
 </span><span class="kw">use </span>std::sync::Arc;
 
-<span class="kw">use </span>der::asn1::OctetStringRef;
-<span class="kw">use </span>der::{Decode, Encode, Sequence};
+<span class="kw">use </span>der::{asn1::OctetStringRef, Decode, Encode, Sequence};
 <span class="kw">use </span>x509_parser::prelude::<span class="kw-2">*</span>;
 
 <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey, Signature};

@@ -332,19 +332,25 @@
 <a href="#332" id="332">332</a>
 <a href="#333" id="333">333</a>
 <a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/derp/derp_server.go
 //!
 //! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="kw">use </span>std::collections::{HashMap, HashSet};
 
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>tokio::sync::mpsc;
-<span class="kw">use </span>tokio::task::JoinSet;
+<span class="kw">use </span>tokio::{sync::mpsc, task::JoinSet};
 <span class="kw">use </span>tracing::{Instrument, Span};
 
-<span class="kw">use </span><span class="kw">super</span>::client_conn::{ClientConnBuilder, ClientConnManager};
-<span class="kw">use </span><span class="kw">super</span>::metrics::Metrics;
-<span class="kw">use </span><span class="kw">super</span>::types::Packet;
+<span class="kw">use super</span>::{
+    client_conn::{ClientConnBuilder, ClientConnManager},
+    metrics::Metrics,
+    types::Packet,
+};
 <span class="kw">use </span><span class="kw">crate</span>::key::PublicKey;
 
 <span class="doccomment">/// Number of times we try to send to a client connection before dropping the data;
@@ -593,9 +599,13 @@
     <span class="kw">use </span>tokio_util::codec::{Framed, FramedRead};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
-    <span class="kw">use </span><span class="kw">crate</span>::relay::codec::{recv_frame, DerpCodec, Frame, FrameType};
-    <span class="kw">use </span><span class="kw">crate</span>::relay::server::streams::{MaybeTlsStream, RelayIo};
+    <span class="kw">use crate</span>::{
+        key::SecretKey,
+        relay::{
+            codec::{recv_frame, DerpCodec, Frame, FrameType},
+            server::streams::{MaybeTlsStream, RelayIo},
+        },
+    };
 
     <span class="kw">fn </span>test_client_builder(
         key: PublicKey,

@@ -821,23 +821,22 @@
 <a href="#821" id="821">821</a>
 <a href="#822" id="822">822</a>
 <a href="#823" id="823">823</a>
-<a href="#824" id="824">824</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
 //!
 //! All the probes try and establish the latency to the relay servers.  Preferably the STUN
 //! probes work and we also learn about our public IP addresses and ports.  But fallback
 //! probes for HTTPS and ICMP exist as well.
 
-</span><span class="kw">use </span>std::collections::BTreeSet;
-<span class="kw">use </span>std::fmt;
-<span class="kw">use </span>std::sync::Arc;
+</span><span class="kw">use </span>std::{collections::BTreeSet, fmt, sync::Arc};
 
 <span class="kw">use </span>anyhow::{ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>tokio::time::Duration;
 
-<span class="kw">use </span><span class="kw">crate</span>::net::interfaces;
-<span class="kw">use </span><span class="kw">crate</span>::netcheck::Report;
-<span class="kw">use </span><span class="kw">crate</span>::relay::{RelayMap, RelayNode, RelayUrl};
+<span class="kw">use crate</span>::{
+    net::interfaces,
+    netcheck::Report,
+    relay::{RelayMap, RelayNode, RelayUrl},
+};
 
 <span class="doccomment">/// The retransmit interval used when netcheck first runs.
 ///
@@ -1300,8 +1299,7 @@
     <span class="kw">use </span>pretty_assertions::assert_eq;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::defaults::staging::default_relay_map;
-    <span class="kw">use </span><span class="kw">crate</span>::netcheck::RelayLatencies;
+    <span class="kw">use crate</span>::{defaults::staging::default_relay_map, netcheck::RelayLatencies};
 
     <span class="doccomment">/// Shorthand which declares a new ProbeSet.
     ///

@@ -100,13 +100,9 @@
 <a href="#100" id="100">100</a>
 <a href="#101" id="101">101</a>
 <a href="#102" id="102">102</a>
-<a href="#103" id="103">103</a>
-<a href="#104" id="104">104</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utilities for working with tokio io
 
-</span><span class="kw">use </span>std::io;
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::task::Poll;
+</span><span class="kw">use </span>std::{io, pin::Pin, task::Poll};
 
 <span class="kw">use </span>iroh_io::AsyncStreamReader;
 <span class="kw">use </span>tokio::io::AsyncWrite;

@@ -1163,6 +1163,11 @@
 <a href="#1163" id="1163">1163</a>
 <a href="#1164" id="1164">1164</a>
 <a href="#1165" id="1165">1165</a>
+<a href="#1166" id="1166">1166</a>
+<a href="#1167" id="1167">1167</a>
+<a href="#1168" id="1168">1168</a>
+<a href="#1169" id="1169">1169</a>
+<a href="#1170" id="1170">1170</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! Netcheck is responsible for finding out the network conditions of the current host, like
@@ -1171,25 +1176,29 @@
 //!
 //! Based on &lt;https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go&gt;
 
-</span><span class="kw">use </span>std::collections::{BTreeMap, HashMap};
-<span class="kw">use </span>std::fmt::{<span class="self">self</span>, Debug};
-<span class="kw">use </span>std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
-<span class="kw">use </span>std::sync::Arc;
+</span><span class="kw">use </span>std::{
+    collections::{BTreeMap, HashMap},
+    fmt::{<span class="self">self</span>, Debug},
+    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+    sync::Arc,
+};
 
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>tokio::sync::{<span class="self">self</span>, mpsc, oneshot};
-<span class="kw">use </span>tokio::time::{Duration, Instant};
-<span class="kw">use </span>tokio_util::sync::CancellationToken;
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
+<span class="kw">use </span>tokio::{
+    sync::{<span class="self">self</span>, mpsc, oneshot},
+    time::{Duration, Instant},
+};
+<span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
-<span class="kw">use </span><span class="kw">super</span>::relay::RelayMap;
-<span class="kw">use super</span>::{portmapper, stun};
-<span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
-<span class="kw">use </span><span class="kw">crate</span>::net::{IpFamily, UdpSocket};
-<span class="kw">use </span><span class="kw">crate</span>::relay::RelayUrl;
+<span class="kw">use super</span>::{portmapper, relay::RelayMap, stun};
+<span class="kw">use crate</span>::{
+    dns::DnsResolver,
+    net::{IpFamily, UdpSocket},
+    relay::RelayUrl,
+};
 
 <span class="kw">mod </span>metrics;
 <span class="kw">mod </span>reportgen;
@@ -1941,10 +1950,11 @@
     <span class="kw">use </span>tracing::info;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::defaults::staging::EU_RELAY_HOSTNAME;
-    <span class="kw">use </span><span class="kw">crate</span>::defaults::DEFAULT_STUN_PORT;
-    <span class="kw">use </span><span class="kw">crate</span>::ping::Pinger;
-    <span class="kw">use </span><span class="kw">crate</span>::relay::RelayNode;
+    <span class="kw">use crate</span>::{
+        defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT},
+        ping::Pinger,
+        relay::RelayNode,
+    };
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_basic() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {

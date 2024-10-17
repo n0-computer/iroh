@@ -1137,14 +1137,21 @@
 <a href="#1137" id="1137">1137</a>
 <a href="#1138" id="1138">1138</a>
 <a href="#1139" id="1139">1139</a>
+<a href="#1140" id="1140">1140</a>
+<a href="#1141" id="1141">1141</a>
+<a href="#1142" id="1142">1142</a>
+<a href="#1143" id="1143">1143</a>
+<a href="#1144" id="1144">1144</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! On disk storage for replicas.
 
-</span><span class="kw">use </span>std::cmp::Ordering;
-<span class="kw">use </span>std::collections::HashSet;
-<span class="kw">use </span>std::iter::{Chain, Flatten};
-<span class="kw">use </span>std::num::NonZeroU64;
-<span class="kw">use </span>std::ops::Bound;
-<span class="kw">use </span>std::path::Path;
+</span><span class="kw">use </span>std::{
+    cmp::Ordering,
+    collections::HashSet,
+    iter::{Chain, Flatten},
+    num::NonZeroU64,
+    ops::Bound,
+    path::Path,
+};
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>ed25519_dalek::{SignatureError, VerifyingKey};
@@ -1152,13 +1159,15 @@
 <span class="kw">use </span>rand_core::CryptoRngCore;
 <span class="kw">use </span>redb::{Database, DatabaseError, ReadableMultimapTable, ReadableTable, ReadableTableMetadata};
 
-<span class="kw">use </span><span class="kw">super</span>::pubkeys::MemPublicKeyStore;
-<span class="kw">use super</span>::{DownloadPolicy, ImportNamespaceOutcome, OpenError, PublicKeyStore, Query};
-<span class="kw">use </span><span class="kw">crate</span>::actor::MAX_COMMIT_DELAY;
-<span class="kw">use </span><span class="kw">crate</span>::keys::Author;
-<span class="kw">use </span><span class="kw">crate</span>::ranger::{Fingerprint, Range, RangeEntry};
-<span class="kw">use </span><span class="kw">crate</span>::sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry};
+<span class="kw">use super</span>::{
+    pubkeys::MemPublicKeyStore, DownloadPolicy, ImportNamespaceOutcome, OpenError, PublicKeyStore,
+    Query,
+};
 <span class="kw">use crate</span>::{
+    actor::MAX_COMMIT_DELAY,
+    keys::Author,
+    ranger::{Fingerprint, Range, RangeEntry},
+    sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
     AuthorHeads, AuthorId, Capability, CapabilityKind, NamespaceId, NamespaceSecret, PeerIdBytes,
     ReplicaInfo,
 };
@@ -1170,13 +1179,15 @@
 <span class="kw">mod </span>ranges;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>tables;
 
-<span class="kw">use </span><span class="self">self</span>::bounds::{ByKeyBounds, RecordsBounds};
-<span class="kw">use </span><span class="self">self</span>::query::QueryIterator;
-<span class="kw">use </span><span class="self">self</span>::ranges::RangeExt;
 <span class="kw">pub use </span><span class="self">self</span>::ranges::RecordsRange;
-<span class="kw">use </span><span class="self">self</span>::tables::{
-    LatestPerAuthorKey, LatestPerAuthorValue, ReadOnlyTables, RecordsId, RecordsTable,
-    RecordsValue, Tables, TransactionAndTables,
+<span class="kw">use </span><span class="self">self</span>::{
+    bounds::{ByKeyBounds, RecordsBounds},
+    query::QueryIterator,
+    ranges::RangeExt,
+    tables::{
+        LatestPerAuthorKey, LatestPerAuthorValue, ReadOnlyTables, RecordsId, RecordsTable,
+        RecordsValue, Tables, TransactionAndTables,
+    },
 };
 
 <span class="doccomment">/// Manages the replicas and authors for an instance.
@@ -2093,8 +2104,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span><span class="kw">super</span>::tables::LATEST_PER_AUTHOR_TABLE;
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use super</span>::{tables::LATEST_PER_AUTHOR_TABLE, <span class="kw-2">*</span>};
     <span class="kw">use </span><span class="kw">crate</span>::ranger::Store <span class="kw">as _</span>;
 
     <span class="attr">#[test]

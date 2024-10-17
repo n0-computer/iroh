@@ -999,36 +999,49 @@
 <a href="#999" id="999">999</a>
 <a href="#1000" id="1000">1000</a>
 <a href="#1001" id="1001">1001</a>
+<a href="#1002" id="1002">1002</a>
+<a href="#1003" id="1003">1003</a>
+<a href="#1004" id="1004">1004</a>
+<a href="#1005" id="1005">1005</a>
+<a href="#1006" id="1006">1006</a>
+<a href="#1007" id="1007">1007</a>
+<a href="#1008" id="1008">1008</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Networking for the `iroh-gossip` protocol
 
-</span><span class="kw">use </span>std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::task::{Context, Poll};
-<span class="kw">use </span>std::time::Instant;
+</span><span class="kw">use </span>std::{
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Instant,
+};
 
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::BytesMut;
-<span class="kw">use </span>futures_concurrency::future::TryJoin;
-<span class="kw">use </span>futures_concurrency::stream::{stream_group, StreamGroup};
-<span class="kw">use </span>futures_lite::stream::Stream;
-<span class="kw">use </span>futures_lite::StreamExt;
+<span class="kw">use </span>futures_concurrency::{
+    future::TryJoin,
+    stream::{stream_group, StreamGroup},
+};
+<span class="kw">use </span>futures_lite::{stream::Stream, StreamExt};
 <span class="kw">use </span>futures_util::TryFutureExt;
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>iroh_net::dialer::Dialer;
-<span class="kw">use </span>iroh_net::endpoint::{get_remote_node_id, Connection, DirectAddr};
-<span class="kw">use </span>iroh_net::key::PublicKey;
-<span class="kw">use </span>iroh_net::{AddrInfo, Endpoint, NodeAddr, NodeId};
+<span class="kw">use </span>iroh_net::{
+    dialer::Dialer,
+    endpoint::{get_remote_node_id, Connection, DirectAddr},
+    key::PublicKey,
+    AddrInfo, Endpoint, NodeAddr, NodeId,
+};
 <span class="kw">use </span>rand::rngs::StdRng;
 <span class="kw">use </span>rand_core::SeedableRng;
-<span class="kw">use </span>tokio::sync::mpsc;
-<span class="kw">use </span>tokio::task::JoinSet;
+<span class="kw">use </span>tokio::{sync::mpsc, task::JoinSet};
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error_span, trace, warn, Instrument};
 
 <span class="kw">use </span><span class="self">self</span>::util::{read_message, write_message, Timers};
-<span class="kw">use </span><span class="kw">crate</span>::metrics::Metrics;
-<span class="kw">use </span><span class="kw">crate</span>::proto::{<span class="self">self</span>, PeerData, Scope, TopicId};
+<span class="kw">use crate</span>::{
+    metrics::Metrics,
+    proto::{<span class="self">self</span>, PeerData, Scope, TopicId},
+};
 
 <span class="kw">mod </span>handles;
 <span class="kw">pub mod </span>util;
@@ -1815,10 +1828,11 @@
 
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>futures_concurrency::future::TryJoin;
-    <span class="kw">use </span>iroh_net::key::SecretKey;
-    <span class="kw">use </span>iroh_net::relay::{RelayMap, RelayMode};
-    <span class="kw">use </span>tokio::spawn;
-    <span class="kw">use </span>tokio::time::timeout;
+    <span class="kw">use </span>iroh_net::{
+        key::SecretKey,
+        relay::{RelayMap, RelayMode},
+    };
+    <span class="kw">use </span>tokio::{spawn, time::timeout};
     <span class="kw">use </span>tokio_util::sync::CancellationToken;
     <span class="kw">use </span>tracing::info;
 

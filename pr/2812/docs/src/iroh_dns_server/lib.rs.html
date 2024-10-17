@@ -224,6 +224,8 @@
 <a href="#224" id="224">224</a>
 <a href="#225" id="225">225</a>
 <a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
 
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
@@ -242,17 +244,19 @@
     <span class="kw">use </span>std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
     <span class="kw">use </span>anyhow::Result;
-    <span class="kw">use </span>hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig};
-    <span class="kw">use </span>hickory_resolver::AsyncResolver;
-    <span class="kw">use </span>iroh_net::discovery::pkarr::PkarrRelayClient;
-    <span class="kw">use </span>iroh_net::dns::node_info::NodeInfo;
-    <span class="kw">use </span>iroh_net::dns::{DnsResolver, ResolverExt};
-    <span class="kw">use </span>iroh_net::key::SecretKey;
+    <span class="kw">use </span>hickory_resolver::{
+        config::{NameServerConfig, Protocol, ResolverConfig},
+        AsyncResolver,
+    };
+    <span class="kw">use </span>iroh_net::{
+        discovery::pkarr::PkarrRelayClient,
+        dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
+        key::SecretKey,
+    };
     <span class="kw">use </span>pkarr::{PkarrClient, SignedPacket};
     <span class="kw">use </span>url::Url;
 
-    <span class="kw">use </span><span class="kw">crate</span>::config::BootstrapOption;
-    <span class="kw">use </span><span class="kw">crate</span>::server::Server;
+    <span class="kw">use crate</span>::{config::BootstrapOption, server::Server};
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>pkarr_publish_dns_resolve() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {

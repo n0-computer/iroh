@@ -724,17 +724,17 @@
 //! [paper]: https://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf
 //! [impl]: https://gist.github.com/Horusiath/84fac596101b197da0546d1697580d99
 
-</span><span class="kw">use </span>std::collections::{HashMap, HashSet};
-<span class="kw">use </span>std::time::{Duration, Instant};
+</span><span class="kw">use </span>std::{
+    collections::{HashMap, HashSet},
+    time::{Duration, Instant},
+};
 
 <span class="kw">use </span>derive_more::{From, Sub};
-<span class="kw">use </span>rand::rngs::ThreadRng;
-<span class="kw">use </span>rand::Rng;
+<span class="kw">use </span>rand::{rngs::ThreadRng, Rng};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tracing::debug;
 
-<span class="kw">use </span><span class="kw">super</span>::util::IndexSet;
-<span class="kw">use super</span>::{PeerData, PeerIdentity, PeerInfo, IO};
+<span class="kw">use super</span>::{util::IndexSet, PeerData, PeerIdentity, PeerInfo, IO};
 
 <span class="doccomment">/// Input event for HyParView
 </span><span class="attr">#[derive(Debug)]

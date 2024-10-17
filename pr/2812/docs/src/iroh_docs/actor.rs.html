@@ -1035,13 +1035,18 @@
 <a href="#1035" id="1035">1035</a>
 <a href="#1036" id="1036">1036</a>
 <a href="#1037" id="1037">1037</a>
+<a href="#1038" id="1038">1038</a>
+<a href="#1039" id="1039">1039</a>
+<a href="#1040" id="1040">1040</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This contains an actor spawned on a separate thread to process replica and store operations.
 
-</span><span class="kw">use </span>std::collections::{hash_map, HashMap};
-<span class="kw">use </span>std::num::NonZeroU64;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::thread::JoinHandle;
-<span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{
+    collections::{hash_map, HashMap},
+    num::NonZeroU64,
+    sync::Arc,
+    thread::JoinHandle,
+    time::Duration,
+};
 
 <span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
@@ -1049,15 +1054,16 @@
 <span class="kw">use </span>iroh_base::hash::Hash;
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
-<span class="kw">use </span>tokio::sync::oneshot;
-<span class="kw">use </span>tokio::task::JoinSet;
+<span class="kw">use </span>tokio::{sync::oneshot, task::JoinSet};
 <span class="kw">use </span>tracing::{debug, error, error_span, trace, warn};
 
-<span class="kw">use </span><span class="kw">crate</span>::metrics::Metrics;
-<span class="kw">use </span><span class="kw">crate</span>::ranger::Message;
-<span class="kw">use </span><span class="kw">crate</span>::store::fs::{ContentHashesIterator, StoreInstance};
-<span class="kw">use </span><span class="kw">crate</span>::store::{DownloadPolicy, ImportNamespaceOutcome, Query, Store};
 <span class="kw">use crate</span>::{
+    metrics::Metrics,
+    ranger::Message,
+    store::{
+        fs::{ContentHashesIterator, StoreInstance},
+        DownloadPolicy, ImportNamespaceOutcome, Query, Store,
+    },
     Author, AuthorHeads, AuthorId, Capability, CapabilityKind, ContentStatus,
     ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, ReplicaInfo,
     SignedEntry, SyncOutcome,

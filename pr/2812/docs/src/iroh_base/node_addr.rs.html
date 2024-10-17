@@ -316,10 +316,6 @@
 <a href="#316" id="316">316</a>
 <a href="#317" id="317">317</a>
 <a href="#318" id="318">318</a>
-<a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
-<a href="#322" id="322">322</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Addressing for iroh nodes.
 //!
 //! This module contains some common addressing types for iroh.  A node is uniquely
@@ -328,11 +324,7 @@
 //!
 //! The primary way of addressing a node is by using the [`NodeAddr`].
 
-</span><span class="kw">use </span>std::collections::BTreeSet;
-<span class="kw">use </span>std::fmt;
-<span class="kw">use </span>std::net::SocketAddr;
-<span class="kw">use </span>std::ops::Deref;
-<span class="kw">use </span>std::str::FromStr;
+</span><span class="kw">use </span>std::{collections::BTreeSet, fmt, net::SocketAddr, ops::Deref, str::FromStr};
 
 <span class="kw">use </span>anyhow::Context;
 <span class="kw">use </span>serde::{Deserialize, Serialize};

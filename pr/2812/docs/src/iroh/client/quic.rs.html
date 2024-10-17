@@ -70,21 +70,25 @@
 <a href="#70" id="70">70</a>
 <a href="#71" id="71">71</a>
 <a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Type declarations and utility functions for an RPC client to an iroh node running in a separate process.
 
-</span><span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-<span class="kw">use </span>std::path::Path;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    path::Path,
+    sync::Arc,
+    time::Duration,
+};
 
 <span class="kw">use </span>anyhow::{bail, Context};
-<span class="kw">use </span>quic_rpc::transport::boxed::Connection <span class="kw">as </span>BoxedConnection;
-<span class="kw">use </span>quic_rpc::transport::quinn::QuinnConnection;
+<span class="kw">use </span>quic_rpc::transport::{boxed::Connection <span class="kw">as </span>BoxedConnection, quinn::QuinnConnection};
 
 <span class="kw">use super</span>::{Iroh, RpcClient};
-<span class="kw">use </span><span class="kw">crate</span>::node::RpcStatus;
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::node::StatusRequest;
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::RpcService;
+<span class="kw">use crate</span>::{
+    node::RpcStatus,
+    rpc_protocol::{node::StatusRequest, RpcService},
+};
 
 <span class="doccomment">/// ALPN used by irohs RPC mechanism.
 </span><span class="comment">// TODO: Change to "/iroh-rpc/1"

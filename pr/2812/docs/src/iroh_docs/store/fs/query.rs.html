@@ -151,16 +151,28 @@
 <a href="#151" id="151">151</a>
 <a href="#152" id="152">152</a>
 <a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>iroh_base::hash::Hash;
 
-<span class="kw">use </span><span class="kw">super</span>::bounds::{ByKeyBounds, RecordsBounds};
-<span class="kw">use </span><span class="kw">super</span>::ranges::{RecordsByKeyRange, RecordsRange};
-<span class="kw">use </span><span class="kw">super</span>::RecordsValue;
-<span class="kw">use </span><span class="kw">crate</span>::store::fs::tables::ReadOnlyTables;
-<span class="kw">use </span><span class="kw">crate</span>::store::util::{IndexKind, LatestPerKeySelector, SelectorRes};
-<span class="kw">use </span><span class="kw">crate</span>::store::{AuthorFilter, KeyFilter, Query};
-<span class="kw">use crate</span>::{AuthorId, NamespaceId, SignedEntry};
+<span class="kw">use super</span>::{
+    bounds::{ByKeyBounds, RecordsBounds},
+    ranges::{RecordsByKeyRange, RecordsRange},
+    RecordsValue,
+};
+<span class="kw">use crate</span>::{
+    store::{
+        fs::tables::ReadOnlyTables,
+        util::{IndexKind, LatestPerKeySelector, SelectorRes},
+        AuthorFilter, KeyFilter, Query,
+    },
+    AuthorId, NamespaceId, SignedEntry,
+};
 
 <span class="doccomment">/// A query iterator for entry queries.
 </span><span class="attr">#[derive(Debug)]

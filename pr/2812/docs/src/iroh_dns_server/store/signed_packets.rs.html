@@ -107,19 +107,15 @@
 <a href="#107" id="107">107</a>
 <a href="#108" id="108">108</a>
 <a href="#109" id="109">109</a>
-<a href="#110" id="110">110</a>
-<a href="#111" id="111">111</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::path::Path;
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>pkarr::SignedPacket;
-<span class="kw">use </span>redb::backends::InMemoryBackend;
-<span class="kw">use </span>redb::{Database, ReadableTable, TableDefinition};
+<span class="kw">use </span>redb::{backends::InMemoryBackend, Database, ReadableTable, TableDefinition};
 <span class="kw">use </span>tracing::info;
 
-<span class="kw">use </span><span class="kw">crate</span>::metrics::Metrics;
-<span class="kw">use </span><span class="kw">crate</span>::util::PublicKeyBytes;
+<span class="kw">use crate</span>::{metrics::Metrics, util::PublicKeyBytes};
 
 <span class="kw">pub type </span>SignedPacketsKey = [u8; <span class="number">32</span>];
 <span class="kw">const </span>SIGNED_PACKETS_TABLE: TableDefinition&lt;<span class="kw-2">&amp;</span>SignedPacketsKey, <span class="kw-2">&amp;</span>[u8]&gt; =

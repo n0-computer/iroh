@@ -426,15 +426,15 @@
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::path::PathBuf;
 
 <span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>iroh_base::node_addr::AddrInfoOptions;
-<span class="kw">use </span>iroh_base::rpc::{RpcError, RpcResult};
-<span class="kw">use </span>iroh_blobs::export::ExportProgress;
-<span class="kw">use </span>iroh_blobs::store::ExportMode;
-<span class="kw">use </span>iroh_blobs::Hash;
-<span class="kw">use </span>iroh_docs::actor::OpenState;
-<span class="kw">use </span>iroh_docs::engine::LiveEvent;
-<span class="kw">use </span>iroh_docs::store::{DownloadPolicy, Query};
+<span class="kw">use </span>iroh_base::{
+    node_addr::AddrInfoOptions,
+    rpc::{RpcError, RpcResult},
+};
+<span class="kw">use </span>iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 <span class="kw">use </span>iroh_docs::{
+    actor::OpenState,
+    engine::LiveEvent,
+    store::{DownloadPolicy, Query},
     AuthorId, Capability, CapabilityKind, DocTicket, Entry, NamespaceId, PeerIdBytes, SignedEntry,
 };
 <span class="kw">use </span>iroh_net::NodeAddr;

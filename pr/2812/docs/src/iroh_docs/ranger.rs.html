@@ -1635,17 +1635,11 @@
 <a href="#1635" id="1635">1635</a>
 <a href="#1636" id="1636">1636</a>
 <a href="#1637" id="1637">1637</a>
-<a href="#1638" id="1638">1638</a>
-<a href="#1639" id="1639">1639</a>
-<a href="#1640" id="1640">1640</a>
-<a href="#1641" id="1641">1641</a>
-<a href="#1642" id="1642">1642</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implementation of Set Reconcilliation based on
 //! "Range-Based Set Reconciliation" by Aljoscha Meyer.
 //!
 
-</span><span class="kw">use </span>std::cmp::Ordering;
-<span class="kw">use </span>std::fmt::Debug;
+</span><span class="kw">use </span>std::{cmp::Ordering, fmt::Debug};
 
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
@@ -2340,11 +2334,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>std::cell::RefCell;
-    <span class="kw">use </span>std::collections::BTreeMap;
-    <span class="kw">use </span>std::convert::Infallible;
-    <span class="kw">use </span>std::fmt::Debug;
-    <span class="kw">use </span>std::rc::Rc;
+    <span class="kw">use </span>std::{cell::RefCell, collections::BTreeMap, convert::Infallible, fmt::Debug, rc::Rc};
 
     <span class="kw">use </span>proptest::prelude::<span class="kw-2">*</span>;
     <span class="kw">use </span>test_strategy::proptest;

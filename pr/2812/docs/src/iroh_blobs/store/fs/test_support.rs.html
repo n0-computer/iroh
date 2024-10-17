@@ -396,24 +396,30 @@
 <a href="#396" id="396">396</a>
 <a href="#397" id="397">397</a>
 <a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! DB functions to support testing
 //!
 //! For some tests we need to modify the state of the store in ways that are not
 //! possible through the public API. This module provides functions to do that.
-</span><span class="kw">use </span>std::io;
-<span class="kw">use </span>std::path::{Path, PathBuf};
+</span><span class="kw">use </span>std::{
+    io,
+    path::{Path, PathBuf},
+};
 
 <span class="kw">use </span>redb::ReadableTable;
 
-<span class="kw">use </span><span class="kw">super</span>::tables::{ReadableTables, Tables};
 <span class="kw">use super</span>::{
+    tables::{ReadableTables, Tables},
     ActorError, ActorMessage, ActorResult, ActorState, DataLocation, EntryState, FilterPredicate,
     OutboardLocation, OuterResult, Store, StoreInner,
 };
-<span class="kw">use </span><span class="kw">crate</span>::store::mutable_mem_storage::SizeInfo;
-<span class="kw">use </span><span class="kw">crate</span>::store::DbIter;
-<span class="kw">use </span><span class="kw">crate</span>::util::raw_outboard_size;
-<span class="kw">use </span><span class="kw">crate</span>::Hash;
+<span class="kw">use crate</span>::{
+    store::{mutable_mem_storage::SizeInfo, DbIter},
+    util::raw_outboard_size,
+    Hash,
+};
 
 <span class="doccomment">/// The full state of an entry, including the data.
 </span><span class="attr">#[derive(derive_more::Debug)]

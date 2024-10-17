@@ -413,6 +413,10 @@
 <a href="#413" id="413">413</a>
 <a href="#414" id="414">414</a>
 <a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
@@ -464,16 +468,20 @@
 <span class="kw">use </span>anyhow::{anyhow, bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_util::stream::BoxStream;
 <span class="kw">use </span>pkarr::SignedPacket;
-<span class="kw">use </span>tokio::task::JoinHandle;
-<span class="kw">use </span>tokio::time::{Duration, Instant};
+<span class="kw">use </span>tokio::{
+    task::JoinHandle,
+    time::{Duration, Instant},
+};
 <span class="kw">use </span>tracing::{debug, error_span, info, warn, Instrument};
 <span class="kw">use </span>url::Url;
 <span class="kw">use </span>watchable::{Watchable, Watcher};
 
-<span class="kw">use </span><span class="kw">crate</span>::discovery::{Discovery, DiscoveryItem};
-<span class="kw">use </span><span class="kw">crate</span>::dns::node_info::NodeInfo;
-<span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
-<span class="kw">use crate</span>::{AddrInfo, Endpoint, NodeId};
+<span class="kw">use crate</span>::{
+    discovery::{Discovery, DiscoveryItem},
+    dns::node_info::NodeInfo,
+    key::SecretKey,
+    AddrInfo, Endpoint, NodeId,
+};
 
 <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)))]

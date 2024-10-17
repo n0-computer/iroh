@@ -1684,6 +1684,8 @@
 <a href="#1684" id="1684">1684</a>
 <a href="#1685" id="1685">1685</a>
 <a href="#1686" id="1686">1686</a>
+<a href="#1687" id="1687">1687</a>
+<a href="#1688" id="1688">1688</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for blobs management.
 //!
 //! The main entry point is the [`Client`].
@@ -1745,28 +1747,29 @@
 //! To store the data permanently, a temp tag needs to be upgraded to a
 //! permanent tag using [`persist`](crate::client::blobs::Batch::persist) or
 //! [`persist_to`](crate::client::blobs::Batch::persist_to).
-</span><span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::io;
-<span class="kw">use </span>std::path::PathBuf;
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::task::{Context, Poll};
+</span><span class="kw">use </span>std::{
+    future::Future,
+    io,
+    path::PathBuf,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>futures_util::SinkExt;
 <span class="kw">use </span>genawaiter::sync::{Co, Gen};
-<span class="kw">use </span>iroh_base::node_addr::AddrInfoOptions;
-<span class="kw">use </span>iroh_base::ticket::BlobTicket;
-<span class="kw">use </span>iroh_blobs::export::ExportProgress <span class="kw">as </span>BytesExportProgress;
-<span class="kw">use </span>iroh_blobs::format::collection::{Collection, SimpleStore};
-<span class="kw">use </span>iroh_blobs::get::db::DownloadProgress <span class="kw">as </span>BytesDownloadProgress;
-<span class="kw">use </span>iroh_blobs::store::{
-    BaoBlobSize, ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress,
+<span class="kw">use </span>iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
+<span class="kw">use </span>iroh_blobs::{
+    export::ExportProgress <span class="kw">as </span>BytesExportProgress,
+    format::collection::{Collection, SimpleStore},
+    get::db::DownloadProgress <span class="kw">as </span>BytesDownloadProgress,
+    store::{BaoBlobSize, ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
+    util::SetTagOption,
+    BlobFormat, Hash, Tag,
 };
-<span class="kw">use </span>iroh_blobs::util::SetTagOption;
-<span class="kw">use </span>iroh_blobs::{BlobFormat, Hash, Tag};
 <span class="kw">use </span>iroh_net::NodeAddr;
 <span class="kw">use </span>portable_atomic::{AtomicU64, Ordering};
 <span class="kw">use </span>quic_rpc::client::BoxStreamSync;
@@ -1779,13 +1782,15 @@
 <span class="kw">pub use </span>batch::{AddDirOpts, AddFileOpts, AddReaderOpts, Batch};
 
 <span class="kw">use super</span>::{flatten, tags, Iroh, RpcClient};
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::blobs::{
-    AddPathRequest, AddStreamRequest, AddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
-    BlobStatusRequest, ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse,
-    DeleteRequest, DownloadRequest, ExportRequest, ListIncompleteRequest, ListRequest,
-    ReadAtRequest, ReadAtResponse, ValidateRequest,
+<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::{
+    blobs::{
+        AddPathRequest, AddStreamRequest, AddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
+        BlobStatusRequest, ConsistencyCheckRequest, CreateCollectionRequest,
+        CreateCollectionResponse, DeleteRequest, DownloadRequest, ExportRequest,
+        ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse, ValidateRequest,
+    },
+    node::StatusRequest,
 };
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::node::StatusRequest;
 
 <span class="doccomment">/// Iroh blobs client.
 </span><span class="attr">#[derive(Debug, Clone, RefCast)]
@@ -2683,8 +2688,7 @@
     <span class="kw">use </span>iroh_net::NodeId;
     <span class="kw">use </span>rand::RngCore;
     <span class="kw">use </span>testresult::TestResult;
-    <span class="kw">use </span>tokio::io::AsyncWriteExt;
-    <span class="kw">use </span>tokio::sync::mpsc;
+    <span class="kw">use </span>tokio::{io::AsyncWriteExt, sync::mpsc};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 

@@ -2529,6 +2529,8 @@
 <a href="#2529" id="2529">2529</a>
 <a href="#2530" id="2530">2530</a>
 <a href="#2531" id="2531">2531</a>
+<a href="#2532" id="2532">2532</a>
+<a href="#2533" id="2533">2533</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for iroh-docs replicas
 
 </span><span class="comment">// Names and concepts are roughly based on Willows design at the moment:
@@ -2537,29 +2539,29 @@
 //
 // This is going to change!
 
-</span><span class="kw">use </span>std::cmp::Ordering;
-<span class="kw">use </span>std::fmt::Debug;
-<span class="kw">use </span>std::ops::{Deref, DerefMut};
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::{Duration, SystemTime};
+</span><span class="kw">use </span>std::{
+    cmp::Ordering,
+    fmt::Debug,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>ed25519_dalek::{Signature, SignatureError};
-<span class="kw">use </span>iroh_base::base32;
-<span class="kw">use </span>iroh_base::hash::Hash;
+<span class="kw">use </span>iroh_base::{base32, hash::Hash};
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">pub use </span><span class="kw">crate</span>::heads::AuthorHeads;
-<span class="kw">use </span><span class="kw">crate</span>::keys::{
-    Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret,
-};
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span><span class="kw">crate</span>::metrics::Metrics;
-<span class="kw">use </span><span class="kw">crate</span>::ranger::{<span class="self">self</span>, Fingerprint, InsertOutcome, RangeEntry, RangeKey, RangeValue, Store};
-<span class="kw">use </span><span class="kw">crate</span>::store::fs::StoreInstance;
-<span class="kw">use </span><span class="kw">crate</span>::store::{<span class="self">self</span>, DownloadPolicyStore, PublicKeyStore};
+<span class="kw">use crate</span>::{
+    keys::{Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret},
+    ranger::{<span class="self">self</span>, Fingerprint, InsertOutcome, RangeEntry, RangeKey, RangeValue, Store},
+    store::{<span class="self">self</span>, fs::StoreInstance, DownloadPolicyStore, PublicKeyStore},
+};
 
 <span class="doccomment">/// Protocol message for the set reconciliation protocol.
 ///
@@ -3728,9 +3730,11 @@
     <span class="kw">use </span>rand_core::SeedableRng;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::actor::SyncHandle;
-    <span class="kw">use </span><span class="kw">crate</span>::ranger::{Range, Store <span class="kw">as _</span>};
-    <span class="kw">use </span><span class="kw">crate</span>::store::{OpenError, Query, SortBy, SortDirection, Store};
+    <span class="kw">use crate</span>::{
+        actor::SyncHandle,
+        ranger::{Range, Store <span class="kw">as _</span>},
+        store::{OpenError, Query, SortBy, SortDirection, Store},
+    };
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_basics_memory() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {

@@ -417,6 +417,7 @@
 <a href="#417" id="417">417</a>
 <a href="#418" id="418">418</a>
 <a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This module exports a DNS resolver, which is also the default resolver used in the
 //! [`crate::Endpoint`] if no custom resolver is configured.
 //!
@@ -424,15 +425,16 @@
 //! by ipv4, ipv6, name and node_id. See the [`node_info`] module documentation for details on how
 //! iroh node records are structured.
 
-</span><span class="kw">use </span>std::fmt::Write;
-<span class="kw">use </span>std::net::{IpAddr, Ipv6Addr};
-<span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{
+    fmt::Write,
+    net::{IpAddr, Ipv6Addr},
+    time::Duration,
+};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::{Future, StreamExt};
 <span class="kw">use </span>hickory_resolver::{AsyncResolver, IntoName, TokioAsyncResolver};
-<span class="kw">use </span>iroh_base::key::NodeId;
-<span class="kw">use </span>iroh_base::node_addr::NodeAddr;
+<span class="kw">use </span>iroh_base::{key::NodeId, node_addr::NodeAddr};
 <span class="kw">use </span>once_cell::sync::Lazy;
 
 <span class="kw">pub mod </span>node_info;

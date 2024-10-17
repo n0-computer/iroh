@@ -362,15 +362,17 @@
 <a href="#362" id="362">362</a>
 <a href="#363" id="363">363</a>
 <a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utility functions and types.
-</span><span class="kw">use </span>std::borrow::Borrow;
-<span class="kw">use </span>std::fmt;
-<span class="kw">use </span>std::io::{BufReader, Read};
-<span class="kw">use </span>std::sync::{Arc, Weak};
-<span class="kw">use </span>std::time::SystemTime;
+</span><span class="kw">use </span>std::{
+    borrow::Borrow,
+    fmt,
+    io::{BufReader, Read},
+    sync::{Arc, Weak},
+    time::SystemTime,
+};
 
-<span class="kw">use </span>bao_tree::io::outboard::PreOrderOutboard;
-<span class="kw">use </span>bao_tree::{BaoTree, ChunkRanges};
+<span class="kw">use </span>bao_tree::{io::outboard::PreOrderOutboard, BaoTree, ChunkRanges};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>derive_more::{Debug, Display, From, Into};
 <span class="kw">use </span>range_collections::range_set::RangeSetRange;

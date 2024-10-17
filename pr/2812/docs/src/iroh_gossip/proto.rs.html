@@ -374,8 +374,6 @@
 <a href="#374" id="374">374</a>
 <a href="#375" id="375">375</a>
 <a href="#376" id="376">376</a>
-<a href="#377" id="377">377</a>
-<a href="#378" id="378">378</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implementation of the iroh-gossip protocol, as an IO-less state machine
 //!
 //! This module implements the iroh-gossip protocol. The entry point is [`State`], which contains
@@ -423,12 +421,10 @@
 //! [hyparview]: https://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf
 //! [plumtree]: https://asc.di.fct.unl.pt/~jleitao/pdf/srds07-leitao.pdf
 
-</span><span class="kw">use </span>std::fmt;
-<span class="kw">use </span>std::hash::Hash;
+</span><span class="kw">use </span>std::{fmt, hash::Hash};
 
 <span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>serde::de::DeserializeOwned;
-<span class="kw">use </span>serde::{Deserialize, Serialize};
+<span class="kw">use </span>serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 <span class="kw">mod </span>hyparview;
 <span class="kw">mod </span>plumtree;
@@ -498,18 +494,18 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>test {
 
-    <span class="kw">use </span>std::collections::HashSet;
-    <span class="kw">use </span>std::env;
-    <span class="kw">use </span>std::time::Instant;
+    <span class="kw">use </span>std::{collections::HashSet, env, time::Instant};
 
     <span class="kw">use </span>rand::SeedableRng;
 
     <span class="kw">use super</span>::{Command, Config, Event, State};
-    <span class="kw">use </span><span class="kw">crate</span>::proto::tests::{
-        assert_synchronous_active, report_round_distribution, sort, Network, Simulator,
-        SimulatorConfig,
+    <span class="kw">use </span><span class="kw">crate</span>::proto::{
+        tests::{
+            assert_synchronous_active, report_round_distribution, sort, Network, Simulator,
+            SimulatorConfig,
+        },
+        Scope, TopicId,
     };
-    <span class="kw">use </span><span class="kw">crate</span>::proto::{Scope, TopicId};
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>hyparview_smoke() {

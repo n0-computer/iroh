@@ -875,26 +875,24 @@
 //!
 //! You obtain a [`Client`] via [`Iroh::docs()`](crate::client::Iroh::docs).
 
-</span><span class="kw">use </span>std::path::{Path, PathBuf};
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::task::{Context, Poll};
+</span><span class="kw">use </span>std::{
+    path::{Path, PathBuf},
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>derive_more::{Display, FromStr};
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
-<span class="kw">use </span>iroh_base::key::PublicKey;
-<span class="kw">use </span>iroh_base::node_addr::AddrInfoOptions;
-<span class="kw">use </span>iroh_base::rpc::RpcError;
-<span class="kw">use </span>iroh_blobs::export::ExportProgress;
-<span class="kw">use </span>iroh_blobs::store::ExportMode;
-<span class="kw">use </span>iroh_blobs::Hash;
-<span class="kw">use </span>iroh_docs::actor::OpenState;
+<span class="kw">use </span>iroh_base::{key::PublicKey, node_addr::AddrInfoOptions, rpc::RpcError};
+<span class="kw">use </span>iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 <span class="attr">#[doc(inline)]
 </span><span class="kw">pub use </span>iroh_docs::engine::{Origin, SyncEvent, SyncReason};
-<span class="kw">use </span>iroh_docs::store::{DownloadPolicy, Query};
 <span class="kw">use </span>iroh_docs::{
+    actor::OpenState,
+    store::{DownloadPolicy, Query},
     AuthorId, Capability, CapabilityKind, ContentStatus, DocTicket, NamespaceId, PeerIdBytes,
     RecordIdentifier,
 };
@@ -905,14 +903,16 @@
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">use super</span>::{blobs, flatten, RpcClient};
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::docs::{
-    CloseRequest, CreateRequest, DelRequest, DelResponse, DocListRequest, DocSubscribeRequest,
-    DropRequest, ExportFileRequest, GetDownloadPolicyRequest, GetExactRequest, GetManyRequest,
-    GetSyncPeersRequest, ImportFileRequest, ImportRequest, LeaveRequest, OpenRequest,
-    SetDownloadPolicyRequest, SetHashRequest, SetRequest, ShareRequest, StartSyncRequest,
-    StatusRequest,
+<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::{
+    docs::{
+        CloseRequest, CreateRequest, DelRequest, DelResponse, DocListRequest, DocSubscribeRequest,
+        DropRequest, ExportFileRequest, GetDownloadPolicyRequest, GetExactRequest, GetManyRequest,
+        GetSyncPeersRequest, ImportFileRequest, ImportRequest, LeaveRequest, OpenRequest,
+        SetDownloadPolicyRequest, SetHashRequest, SetRequest, ShareRequest, StartSyncRequest,
+        StatusRequest,
+    },
+    RpcService,
 };
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::RpcService;
 
 <span class="doccomment">/// Iroh docs client.
 </span><span class="attr">#[derive(Debug, Clone, RefCast)]

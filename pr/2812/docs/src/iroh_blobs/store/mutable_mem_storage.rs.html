@@ -126,13 +126,19 @@
 <a href="#126" id="126">126</a>
 <a href="#127" id="127">127</a>
 <a href="#128" id="128">128</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>bao_tree::io::fsm::BaoContentItem;
-<span class="kw">use </span>bao_tree::io::sync::WriteAt;
-<span class="kw">use </span>bao_tree::BaoTree;
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>bao_tree::{
+    io::{fsm::BaoContentItem, sync::WriteAt},
+    BaoTree,
+};
 <span class="kw">use </span>bytes::Bytes;
 
-<span class="kw">use </span><span class="kw">crate</span>::util::{compute_outboard, copy_limited_slice, SparseMemFile};
-<span class="kw">use </span><span class="kw">crate</span>::IROH_BLOCK_SIZE;
+<span class="kw">use crate</span>::{
+    util::{compute_outboard, copy_limited_slice, SparseMemFile},
+    IROH_BLOCK_SIZE,
+};
 
 <span class="doccomment">/// Mutable in memory storage for a bao file.
 ///

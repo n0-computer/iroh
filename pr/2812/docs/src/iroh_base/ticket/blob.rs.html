@@ -176,15 +176,20 @@
 <a href="#176" id="176">176</a>
 <a href="#177" id="177">177</a>
 <a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Tickets for blobs.
 </span><span class="kw">use </span>std::str::FromStr;
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use </span><span class="kw">crate</span>::hash::{BlobFormat, Hash};
-<span class="kw">use </span><span class="kw">crate</span>::node_addr::NodeAddr;
-<span class="kw">use </span><span class="kw">crate</span>::ticket::{<span class="self">self</span>, Ticket};
+<span class="kw">use crate</span>::{
+    hash::{BlobFormat, Hash},
+    node_addr::NodeAddr,
+    ticket::{<span class="self">self</span>, Ticket},
+};
 
 <span class="doccomment">/// A token containing everything to get a file from the provider.
 ///
@@ -293,12 +298,13 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::net::SocketAddr;
 
-    <span class="kw">use </span>iroh_test::assert_eq_hex;
-    <span class="kw">use </span>iroh_test::hexdump::parse_hexdump;
+    <span class="kw">use </span>iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::base32;
-    <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
+    <span class="kw">use crate</span>::{
+        base32,
+        key::{PublicKey, SecretKey},
+    };
 
     <span class="kw">fn </span>make_ticket() -&gt; BlobTicket {
         <span class="kw">let </span>hash = Hash::new(<span class="string">b"hi there"</span>);

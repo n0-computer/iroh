@@ -182,21 +182,23 @@
 <a href="#182" id="182">182</a>
 <a href="#183" id="183">183</a>
 <a href="#184" id="184">184</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::borrow::Cow;
-<span class="kw">use </span>std::io;
-<span class="kw">use </span>std::path::{Path, PathBuf};
-<span class="kw">use </span>std::sync::{Arc, OnceLock};
+<a href="#185" id="185">185</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    borrow::Cow,
+    io,
+    path::{Path, PathBuf},
+    sync::{Arc, OnceLock},
+};
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>axum_server::accept::Accept;
-<span class="kw">use </span>axum_server::tls_rustls::{RustlsAcceptor, RustlsConfig};
-<span class="kw">use </span>futures_lite::future::Boxed <span class="kw">as </span>BoxFuture;
-<span class="kw">use </span>futures_lite::FutureExt;
+<span class="kw">use </span>axum_server::{
+    accept::Accept,
+    tls_rustls::{RustlsAcceptor, RustlsConfig},
+};
+<span class="kw">use </span>futures_lite::{future::Boxed <span class="kw">as </span>BoxFuture, FutureExt};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
-<span class="kw">use </span>tokio_rustls_acme::axum::AxumAcceptor;
-<span class="kw">use </span>tokio_rustls_acme::caches::DirCache;
-<span class="kw">use </span>tokio_rustls_acme::AcmeConfig;
+<span class="kw">use </span>tokio_rustls_acme::{axum::AxumAcceptor, caches::DirCache, AcmeConfig};
 <span class="kw">use </span>tokio_stream::StreamExt;
 <span class="kw">use </span>tracing::{debug, error, info_span, Instrument};
 

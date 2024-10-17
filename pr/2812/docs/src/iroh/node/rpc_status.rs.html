@@ -109,12 +109,14 @@
 <a href="#109" id="109">109</a>
 <a href="#110" id="110">110</a>
 <a href="#111" id="111">111</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr};
-<span class="kw">use </span>std::path::Path;
+<a href="#112" id="112">112</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    net::{Ipv4Addr, SocketAddr},
+    path::Path,
+};
 
 <span class="kw">use </span>anyhow::{ensure, Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>tokio::fs;
-<span class="kw">use </span>tokio::io::AsyncReadExt;
+<span class="kw">use </span>tokio::{fs, io::AsyncReadExt};
 <span class="kw">use </span>tracing::trace;
 
 <span class="kw">use </span><span class="kw">crate</span>::util::path::IrohPaths;

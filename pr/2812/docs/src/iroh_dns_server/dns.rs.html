@@ -263,37 +263,51 @@
 <a href="#263" id="263">263</a>
 <a href="#264" id="264">264</a>
 <a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implementation of a DNS name server for iroh node announces
 
-</span><span class="kw">use </span>std::collections::BTreeMap;
-<span class="kw">use </span>std::io;
-<span class="kw">use </span>std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{
+    collections::BTreeMap,
+    io,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>hickory_server::authority::{Catalog, MessageResponse, ZoneType};
-<span class="kw">use </span>hickory_server::proto::rr::rdata::{<span class="self">self</span>};
-<span class="kw">use </span>hickory_server::proto::rr::{RData, Record, RecordSet, RecordType, RrKey};
-<span class="kw">use </span>hickory_server::proto::serialize::binary::BinEncoder;
-<span class="kw">use </span>hickory_server::proto::serialize::txt::RDataParser;
-<span class="kw">use </span>hickory_server::proto::{<span class="self">self</span>};
-<span class="kw">use </span>hickory_server::resolver::Name;
-<span class="kw">use </span>hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
-<span class="kw">use </span>hickory_server::store::in_memory::InMemoryAuthority;
+<span class="kw">use </span>hickory_server::{
+    authority::{Catalog, MessageResponse, ZoneType},
+    proto::{
+        rr::{
+            rdata::{<span class="self">self</span>},
+            RData, Record, RecordSet, RecordType, RrKey,
+        },
+        serialize::{binary::BinEncoder, txt::RDataParser},
+        {<span class="self">self</span>},
+    },
+    resolver::Name,
+    server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
+    store::in_memory::InMemoryAuthority,
+};
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>proto::op::ResponseCode;
-<span class="kw">use </span>proto::rr::LowerName;
+<span class="kw">use </span>proto::{op::ResponseCode, rr::LowerName};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
-<span class="kw">use </span>tokio::net::{TcpListener, UdpSocket};
-<span class="kw">use </span>tokio::sync::broadcast;
+<span class="kw">use </span>tokio::{
+    net::{TcpListener, UdpSocket},
+    sync::broadcast,
+};
 <span class="kw">use </span>tracing::{debug, info};
 
 <span class="kw">use </span><span class="self">self</span>::node_authority::NodeAuthority;
-<span class="kw">use </span><span class="kw">crate</span>::metrics::Metrics;
-<span class="kw">use </span><span class="kw">crate</span>::store::ZoneStore;
+<span class="kw">use crate</span>::{metrics::Metrics, store::ZoneStore};
 
 <span class="kw">mod </span>node_authority;
 

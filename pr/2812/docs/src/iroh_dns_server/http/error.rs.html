@@ -98,10 +98,13 @@
 <a href="#98" id="98">98</a>
 <a href="#99" id="99">99</a>
 <a href="#100" id="100">100</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>axum::extract::rejection::{ExtensionRejection, QueryRejection};
-<span class="kw">use </span>axum::http::StatusCode;
-<span class="kw">use </span>axum::response::IntoResponse;
-<span class="kw">use </span>axum::Json;
+<a href="#101" id="101">101</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>axum::{
+    extract::rejection::{ExtensionRejection, QueryRejection},
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">pub type </span>AppResult&lt;T&gt; = <span class="prelude-ty">Result</span>&lt;T, AppError&gt;;
@@ -176,8 +179,7 @@
 /// We could have used http_serde, but it encodes the status code as a NUMBER.
 </span><span class="kw">pub mod </span>serde_status_code {
     <span class="kw">use </span>http::StatusCode;
-    <span class="kw">use </span>serde::de::Unexpected;
-    <span class="kw">use </span>serde::{Deserialize, Deserializer, Serialize, Serializer};
+    <span class="kw">use </span>serde::{de::Unexpected, Deserialize, Deserializer, Serialize, Serializer};
 
     <span class="doccomment">/// Serialize [StatusCode]s.
     </span><span class="kw">pub fn </span>serialize&lt;S: Serializer&gt;(status: <span class="kw-2">&amp;</span>StatusCode, ser: S) -&gt; <span class="prelude-ty">Result</span>&lt;S::Ok, S::Error&gt; {

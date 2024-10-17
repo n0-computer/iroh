@@ -699,11 +699,14 @@
 <a href="#699" id="699">699</a>
 <a href="#700" id="700">700</a>
 <a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Port mapping client and service.
 
-</span><span class="kw">use </span>std::net::{Ipv4Addr, SocketAddrV4};
-<span class="kw">use </span>std::num::NonZeroU16;
-<span class="kw">use </span>std::time::{Duration, Instant};
+</span><span class="kw">use </span>std::{
+    net::{Ipv4Addr, SocketAddrV4},
+    num::NonZeroU16,
+    time::{Duration, Instant},
+};
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>current_mapping::CurrentMapping;
@@ -713,8 +716,7 @@
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, info_span, trace, Instrument};
 
-<span class="kw">use </span><span class="kw">crate</span>::net::interfaces::HomeRouter;
-<span class="kw">use </span><span class="kw">crate</span>::util;
+<span class="kw">use crate</span>::{net::interfaces::HomeRouter, util};
 
 <span class="kw">mod </span>current_mapping;
 <span class="kw">mod </span>mapping;

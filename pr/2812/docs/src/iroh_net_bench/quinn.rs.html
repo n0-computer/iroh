@@ -293,9 +293,14 @@
 <a href="#293" id="293">293</a>
 <a href="#294" id="294">294</a>
 <a href="#295" id="295">295</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::net::SocketAddr;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::{Duration, Instant};
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
@@ -303,8 +308,9 @@
 <span class="kw">use </span>socket2::{Domain, Protocol, Socket, Type};
 <span class="kw">use </span>tracing::{trace, warn};
 
-<span class="kw">use </span><span class="kw">crate</span>::stats::TransferResult;
-<span class="kw">use crate</span>::{client_handler, ClientStats, ConnectionSelector, EndpointSelector, Opt};
+<span class="kw">use crate</span>::{
+    client_handler, stats::TransferResult, ClientStats, ConnectionSelector, EndpointSelector, Opt,
+};
 
 <span class="doccomment">/// Derived from the iroh-net udp SOCKET_BUFFER_SIZE
 </span><span class="kw">const </span>SOCKET_BUFFER_SIZE: usize = <span class="number">7 </span>&lt;&lt; <span class="number">20</span>;

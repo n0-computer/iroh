@@ -522,17 +522,17 @@
 //! message_payload: &amp;[u8]
 //! ```
 
-</span><span class="kw">use </span>std::fmt::Display;
-<span class="kw">use </span>std::net::{IpAddr, SocketAddr};
+</span><span class="kw">use </span>std::{
+    fmt::Display,
+    net::{IpAddr, SocketAddr},
+};
 
 <span class="kw">use </span>anyhow::{anyhow, bail, ensure, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>url::Url;
 
-<span class="kw">use </span><span class="kw">super</span>::key::PublicKey;
-<span class="kw">use </span><span class="kw">super</span>::stun;
-<span class="kw">use </span><span class="kw">crate</span>::key;
-<span class="kw">use </span><span class="kw">crate</span>::relay::RelayUrl;
+<span class="kw">use super</span>::{key::PublicKey, stun};
+<span class="kw">use crate</span>::{key, relay::RelayUrl};
 
 <span class="comment">// TODO: custom magicn
 </span><span class="doccomment">/// The 6 byte header of all discovery messages.

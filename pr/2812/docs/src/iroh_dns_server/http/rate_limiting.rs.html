@@ -38,14 +38,12 @@
 <a href="#38" id="38">38</a>
 <a href="#39" id="39">39</a>
 <a href="#40" id="40">40</a>
-<a href="#41" id="41">41</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::time::Duration;
 
-<span class="kw">use </span>governor::clock::QuantaInstant;
-<span class="kw">use </span>governor::middleware::NoOpMiddleware;
-<span class="kw">use </span>tower_governor::governor::GovernorConfigBuilder;
-<span class="kw">use </span>tower_governor::key_extractor::PeerIpKeyExtractor;
-<span class="kw">use </span>tower_governor::GovernorLayer;
+<span class="kw">use </span>governor::{clock::QuantaInstant, middleware::NoOpMiddleware};
+<span class="kw">use </span>tower_governor::{
+    governor::GovernorConfigBuilder, key_extractor::PeerIpKeyExtractor, GovernorLayer,
+};
 
 <span class="doccomment">/// Create the default rate-limiting layer.
 ///

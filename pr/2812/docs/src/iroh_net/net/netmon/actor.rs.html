@@ -249,9 +249,15 @@
 <a href="#249" id="249">249</a>
 <a href="#250" id="250">250</a>
 <a href="#251" id="251">251</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::HashMap;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::{Duration, Instant};
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::future::Boxed <span class="kw">as </span>BoxFuture;
@@ -273,8 +279,10 @@
 </span><span class="kw">use </span><span class="kw">super</span>::linux <span class="kw">as </span>os;
 <span class="attr">#[cfg(target_os = <span class="string">"windows"</span>)]
 </span><span class="kw">use </span><span class="kw">super</span>::windows <span class="kw">as </span>os;
-<span class="kw">use </span><span class="kw">crate</span>::net::interfaces::{IpNet, State};
-<span class="kw">use </span><span class="kw">crate</span>::net::ip::is_link_local;
+<span class="kw">use </span><span class="kw">crate</span>::net::{
+    interfaces::{IpNet, State},
+    ip::is_link_local,
+};
 
 <span class="doccomment">/// The message sent by the OS specific monitors.
 </span><span class="attr">#[derive(Debug, Copy, Clone)]

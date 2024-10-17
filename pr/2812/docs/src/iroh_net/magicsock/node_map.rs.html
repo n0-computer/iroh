@@ -829,13 +829,19 @@
 <a href="#829" id="829">829</a>
 <a href="#830" id="830">830</a>
 <a href="#831" id="831">831</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::hash_map::Entry;
-<span class="kw">use </span>std::collections::HashMap;
-<span class="kw">use </span>std::hash::Hash;
-<span class="kw">use </span>std::net::{IpAddr, SocketAddr};
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::task::{Context, Poll};
-<span class="kw">use </span>std::time::Instant;
+<a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    collections::{hash_map::Entry, HashMap},
+    hash::Hash,
+    net::{IpAddr, SocketAddr},
+    pin::Pin,
+    task::{Context, Poll},
+    time::Instant,
+};
 
 <span class="kw">use </span>futures_lite::stream::Stream;
 <span class="kw">use </span>iroh_base::key::NodeId;
@@ -845,14 +851,19 @@
 <span class="kw">use </span>stun_rs::TransactionId;
 <span class="kw">use </span>tracing::{debug, info, instrument, trace, warn};
 
-<span class="kw">use </span><span class="self">self</span>::best_addr::ClearReason;
-<span class="kw">use </span><span class="self">self</span>::node_state::{NodeState, Options, PingHandled};
-<span class="kw">use </span><span class="kw">super</span>::metrics::Metrics <span class="kw">as </span>MagicsockMetrics;
-<span class="kw">use super</span>::{ActorMessage, DiscoMessageSource, QuicMappedAddr};
-<span class="kw">use </span><span class="kw">crate</span>::disco::{CallMeMaybe, Pong, SendAddr};
-<span class="kw">use </span><span class="kw">crate</span>::key::PublicKey;
-<span class="kw">use </span><span class="kw">crate</span>::relay::RelayUrl;
-<span class="kw">use crate</span>::{stun, NodeAddr};
+<span class="kw">use </span><span class="self">self</span>::{
+    best_addr::ClearReason,
+    node_state::{NodeState, Options, PingHandled},
+};
+<span class="kw">use super</span>::{
+    metrics::Metrics <span class="kw">as </span>MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
+};
+<span class="kw">use crate</span>::{
+    disco::{CallMeMaybe, Pong, SendAddr},
+    key::PublicKey,
+    relay::RelayUrl,
+    stun, NodeAddr,
+};
 
 <span class="kw">mod </span>best_addr;
 <span class="kw">mod </span>node_state;
@@ -1481,8 +1492,7 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::net::Ipv4Addr;
 
-    <span class="kw">use </span><span class="kw">super</span>::node_state::MAX_INACTIVE_DIRECT_ADDRESSES;
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use super</span>::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, <span class="kw-2">*</span>};
     <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
 
     <span class="kw">impl </span>NodeMap {
