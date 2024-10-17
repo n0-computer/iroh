@@ -48,8 +48,7 @@ tracing = "0.1"
 ufotofu = { version = "0.4.1", features = ["std"] }
 willow-data-model = "0.1.0"
 willow-encoding = "0.1.0"
-# willow-store = { git = "https://github.com/n0-computer/willow-store.git" }
-willow-store = { path = "../../willow-store" }
+willow-store = { git = "https://github.com/n0-computer/willow-store.git", branch = "matheus23/minor-adjustments" }
 zerocopy = { version = "0.7", features = ["derive"] }
 zerocopy-derive = "0.7"
 
