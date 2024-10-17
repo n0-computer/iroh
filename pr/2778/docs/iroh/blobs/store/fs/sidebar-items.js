@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["BatchOptions","InlineOptions","Options","PathOptions","Store"],"type":["Entry"]};

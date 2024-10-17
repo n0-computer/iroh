@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ENV_FORCE_STAGING_RELAYS","MAX_PACKET_SIZE"],"enum":["HttpClientError","ReceivedMessage","RelayMode"],"mod":["http","server"],"struct":["HttpClient","HttpClientBuilder","HttpClientReceiver","RelayConn","RelayMap","RelayNode","RelayUrl"]};
