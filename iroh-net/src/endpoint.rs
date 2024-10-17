@@ -39,8 +39,9 @@ mod rtt_actor;
 use self::rtt_actor::RttMessage;
 
 pub use quinn::{
-    ApplicationClose, Connection, ConnectionClose, ConnectionError, ReadError, RecvStream,
-    RetryError, SendStream, ServerConfig, TransportConfig, VarInt, WriteError,
+    AcceptBi, AcceptUni, ApplicationClose, Chunk, ClosedStream, Connection, ConnectionClose,
+    ConnectionError, OpenBi, OpenUni, ReadDatagram, ReadError, RecvStream, RetryError,
+    SendDatagramError, SendStream, ServerConfig, TransportConfig, VarInt, WriteError,
 };
 
 pub use super::magicsock::{
