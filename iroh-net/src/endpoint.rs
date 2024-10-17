@@ -264,7 +264,7 @@ impl Builder {
         self
     }
 
-    /// Configure the endpoint to use the default n0 discovery service.
+    /// Configures the endpoint to use the default n0 DNS discovery service.
     ///
     /// The default discovery service publishes to and resolves from the
     /// n0.computer dns server `iroh.link`.
