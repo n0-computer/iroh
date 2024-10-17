@@ -11,3 +11,16 @@ args = [
      "--config",
      "imports_granularity=Module,group_imports=StdExternalCrate",
 ]
+
+[tasks.format-check]
+workspace = false
+toolchain = "nightly"
+command = "cargo"
+args = [
+     "fmt",
+     "--all",
+     "--check",
+     "--",
+     "--config",
+     "imports_granularity=Module,group_imports=StdExternalCrate",
+]
