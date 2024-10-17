@@ -18,13 +18,13 @@
 //! # }
 //! ```
 //!
-//! Accepting connections is a little more work:
+//! The other side can accept incoming connections like this:
 //!
 //! ```no_run
 //! # use iroh_net::{Endpoint, NodeAddr};
 //! # async fn wrapper() -> testresult::TestResult {
 //! let ep = Endpoint::builder()
-//!     .alpns(vec![b"by-alpn".to_vec()])
+//!     .alpns(vec![b"my-alpn".to_vec()])
 //!     .bind()
 //!     .await?;
 //! let conn = ep.accept().await.ok_or("err")?.await?;
@@ -36,6 +36,9 @@
 //! ```
 //!
 //! Of course you can also use [bi-directional streams] or any other features from QUIC.
+//!
+//! For more elaborate examples, see [below](#examples) or the examples directory in
+//! the source repository.
 //!
 //!
 //! # Connection Establishment
