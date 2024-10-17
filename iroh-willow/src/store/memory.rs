@@ -13,15 +13,13 @@ use std::task::{Context, Poll, Waker};
 use anyhow::Result;
 use ed25519_dalek::ed25519;
 use futures_util::Stream;
-use iroh_blobs::Hash;
 use tracing::debug;
-use willow_data_model::{Component, SubspaceId as _};
-use willow_store::{
-    BlobSeq, BlobSeqRef, FixedSize, KeyParams, Point, QueryRange, QueryRange3d, TreeParams,
-};
+use willow_data_model::SubspaceId as _;
+use willow_store::{BlobSeq, QueryRange, QueryRange3d};
 
-use crate::proto::data_model::{AuthorisationToken, PathExt, PayloadDigest, Timestamp};
-use crate::proto::grouping::{path_to_blobseq, to_query, Area};
+use crate::proto::data_model::{AuthorisationToken, PathExt};
+use crate::proto::grouping::Area;
+use crate::store::glue::StoredAuthorizedEntry;
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
@@ -34,6 +32,7 @@ use crate::{
     store::traits::{self, RangeSplit, SplitAction, SplitOpts},
 };
 
+use super::glue::{blobseq_successor, path_to_blobseq, to_query, IrohWillowParams};
 use super::traits::{StoreEvent, SubscribeParams};
 use super::EntryOrigin;
 
@@ -110,7 +109,7 @@ impl traits::SecretStorage for Rc<RefCell<SecretStore>> {
 
 #[derive(Debug, Clone)]
 pub struct EntryStore {
-    stores: HashMap<NamespaceId, willow_store::Node<WillowParams>>,
+    stores: HashMap<NamespaceId, willow_store::Node<IrohWillowParams>>,
     authorization_tokens: BTreeMap<ed25519::SignatureBytes, AuthorisationToken>,
     store: willow_store::MemStore,
 }
@@ -123,82 +122,6 @@ impl Default for EntryStore {
             store: willow_store::MemStore::new(),
         }
     }
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    zerocopy_derive::FromBytes,
-    zerocopy_derive::AsBytes,
-    zerocopy_derive::FromZeroes,
-)]
-#[repr(packed)]
-pub(crate) struct StoredAuthorizedEntry {
-    pub(crate) authorization_token_id: ed25519::SignatureBytes,
-    pub(crate) payload_digest: [u8; 32],
-    pub(crate) payload_size: u64,
-}
-
-impl FixedSize for StoredAuthorizedEntry {
-    const SIZE: usize = std::mem::size_of::<Self>();
-}
-
-impl StoredAuthorizedEntry {
-    pub fn wins_tie_break(&self, other: &Self) -> bool {
-        if self.payload_digest < other.payload_digest {
-            return true;
-        }
-        self.payload_size < other.payload_size
-    }
-
-    pub fn into_authorised_entry(
-        self,
-        namespace: NamespaceId,
-        key: Point<WillowParams>,
-        auth_token: AuthorisationToken,
-    ) -> Result<AuthorisedEntry> {
-        let subspace = key.x();
-        let timestamp = key.y();
-        let blobseq = key.z().to_owned();
-        let components = blobseq
-            .components()
-            .map(|c| Component::new(c).unwrap()) // TODO err
-            .collect::<Vec<_>>();
-        let total_length = components.iter().map(|c| c.len()).sum::<usize>();
-        let path = Path::new_from_iter(total_length, &mut components.into_iter())?;
-        Ok(AuthorisedEntry::new(
-            Entry::new(
-                namespace,
-                *subspace,
-                path,
-                *timestamp,
-                self.payload_size,
-                PayloadDigest(Hash::from_bytes(self.payload_digest)),
-            ),
-            auth_token,
-        )?)
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy, Ord, PartialOrd, PartialEq, Eq)]
-pub(crate) struct WillowParams;
-
-impl TreeParams for WillowParams {
-    type V = StoredAuthorizedEntry;
-    type M = Fingerprint;
-}
-
-impl KeyParams for WillowParams {
-    type X = SubspaceId;
-
-    type Y = Timestamp;
-
-    type ZOwned = BlobSeq;
-
-    type Z = BlobSeqRef;
 }
 
 #[derive(Debug, Default)]
@@ -384,44 +307,6 @@ fn blobseq_below(blobseq: &BlobSeq) -> Option<BlobSeq> {
     }
 }
 
-fn blobseq_successor(blobseq: &BlobSeq) -> BlobSeq {
-    BlobSeq::from(
-        blobseq
-            .components()
-            .map(|slice| slice.to_vec())
-            .chain(Some(Vec::new())) // Add an empty path element
-            .collect::<Vec<_>>(),
-    )
-}
-
-fn query_path_and_below(path: &Path) -> QueryRange<BlobSeq> {
-    let mut path = path
-        .components()
-        .map(|component| component.to_vec())
-        .collect::<Vec<_>>();
-
-    let blobseq_start = BlobSeq::from(path.clone());
-    // compute the end blobseq
-    let blobseq_end = if path
-        .last_mut()
-        .map(|last_path| match last_path.last_mut() {
-            Some(255) | None => {
-                last_path.push(0);
-            }
-            Some(i) => {
-                *i += 1;
-            }
-        })
-        .is_some()
-    {
-        Some(BlobSeq::from(path))
-    } else {
-        None
-    };
-
-    QueryRange::new(blobseq_start, blobseq_end)
-}
-
 impl EntryStore {
     fn ingest_entry(&mut self, entry: &AuthorisedEntry, _origin: EntryOrigin) -> Result<bool> {
         let store = self
@@ -443,7 +328,7 @@ impl EntryStore {
             payload_size: entry.entry().payload_length(),
         };
 
-        let inserted_point = willow_store::Point::<WillowParams>::new(
+        let inserted_point = willow_store::Point::<IrohWillowParams>::new(
             entry.entry().subspace_id(),
             &entry.entry().timestamp(),
             &blobseq_start,
