@@ -257,6 +257,9 @@
 <a href="#257" id="257">257</a>
 <a href="#258" id="258">258</a>
 <a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
 //!
 //! iroh-net is a library to establish direct connectivity between peers.  It exposes an
@@ -277,13 +280,13 @@
 //! # }
 //! ```
 //!
-//! Accepting connections is a little more work:
+//! The other side can accept incoming connections like this:
 //!
 //! ```no_run
 //! # use iroh_net::{Endpoint, NodeAddr};
 //! # async fn wrapper() -&gt; testresult::TestResult {
 //! let ep = Endpoint::builder()
-//!     .alpns(vec![b"by-alpn".to_vec()])
+//!     .alpns(vec![b"my-alpn".to_vec()])
 //!     .bind()
 //!     .await?;
 //! let conn = ep.accept().await.ok_or("err")?.await?;
@@ -295,6 +298,9 @@
 //! ```
 //!
 //! Of course you can also use [bi-directional streams] or any other features from QUIC.
+//!
+//! For more elaborate examples, see [below](#examples) or the examples directory in
+//! the source repository.
 //!
 //!
 //! # Connection Establishment
