@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RangeEnd"],"mod":["serde_encoding"],"struct":["Point","Range"],"trait":["AreaExt","AreaOfInterestExt"],"type":["Area","AreaOfInterest","AreaSubspace","Range3d"]};
