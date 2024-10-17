@@ -17,6 +17,7 @@ pub(crate) mod blobs;
 pub(crate) mod console;
 pub(crate) mod docs;
 pub(crate) mod doctor;
+pub(crate) mod gen_api;
 pub(crate) mod gossip;
 pub(crate) mod net;
 pub(crate) mod rpc;
@@ -98,6 +99,9 @@ pub(crate) enum Commands {
         #[clap(subcommand)]
         command: self::doctor::Commands,
     },
+    /// Generate JSON definitions for the CLI.
+    #[clap(hide = true)]
+    GenApi { cmd: String },
 }
 
 impl Cli {
@@ -199,6 +203,7 @@ impl Cli {
                 let config = Self::load_config(self.config, self.metrics_addr).await?;
                 self::doctor::run(command, &config).await
             }
+            Commands::GenApi { cmd } => gen_api::gen_json_api(&cmd),
         }
     }
 
