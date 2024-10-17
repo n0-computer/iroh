@@ -245,7 +245,9 @@ impl Builder {
         self
     }
 
-    /// Adds a discovery mechanism for this endpoint. The function `discovery`
+    /// Adds a discovery mechanism for this endpoint.
+    ///
+    /// The function `discovery`
     /// will be called on endpoint creation with the configured secret key of
     /// the endpoint. Discovery services that need to publish information need
     /// to use this secret key to sign the information.
