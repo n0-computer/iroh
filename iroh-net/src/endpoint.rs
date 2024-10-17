@@ -231,7 +231,8 @@ impl Builder {
 
     /// Optionally sets a discovery mechanism for this endpoint.
     ///
-    /// If you want to combine multiple discovery services, you can pass a
+    /// If you want to combine multiple discovery services, you can use
+    /// [`Builder::add_discovery`] instead. This will internally create a
     /// [`crate::discovery::ConcurrentDiscovery`].
     ///
     /// If no discovery service is set, connecting to a node without providing its
@@ -244,13 +245,18 @@ impl Builder {
         self
     }
 
-    /// Adds a discovery mechanism for this endpoint.
+    /// Adds a discovery mechanism for this endpoint. The function `discovery`
+    /// will be called on endpoint creation with the configured secret key of
+    /// the endpoint. Discovery services that need to publish information need
+    /// to use this secret key to sign the information.
     ///
-    /// If you have multiple discovery services, they will be combined using
+    /// If you add multiple discovery services, they will be combined using a
     /// [`crate::discovery::ConcurrentDiscovery`].
     ///
     /// If no discovery service is set, connecting to a node without providing its
     /// direct addresses or relay URLs will fail.
+    ///
+    /// To clear all discovery services, use [`Builder::clear_discovery`].
     ///
     /// See the documentation of the [`Discovery`] trait for details.
     pub fn add_discovery<F, D>(mut self, discovery: F) -> Self
@@ -268,6 +274,14 @@ impl Builder {
     ///
     /// The default discovery service publishes to and resolves from the
     /// n0.computer dns server `iroh.link`.
+    ///
+    /// This is equivalent to adding both a [`crate::discovery::pkarr::PkarrPublisher`]
+    /// and a [`crate::discovery::dns::DnsDiscovery`], both configured to use the
+    /// n0.computer dns server.
+    ///
+    /// This will by default use [`crate::discovery::pkarr::N0_DNS_PKARR_RELAY_PROD`].
+    /// When in tests, or when the `test-utils` feature is enabled, this will use the
+    /// [`crate::discovery::pkarr::N0_DNS_PKARR_RELAY_STAGING`].
     pub fn discovery_n0(mut self) -> Self {
         self.discovery.push(Box::new(|secret_key| {
             Some(Box::new(PkarrPublisher::n0_dns(secret_key.clone())))
@@ -278,7 +292,12 @@ impl Builder {
     }
 
     #[cfg(feature = "discovery-pkarr-dht")]
-    /// Configure the endpoint to use the mainline DHT with default settings.
+    /// Configure the endpoint to also use the mainline DHT with default settings.
+    ///
+    /// This is equivalent to adding a [`crate::discovery::pkarr::dht::DhtDiscovery`]
+    /// with default settings. Note that DhtDiscovery has various more advanced
+    /// configuration options. If you need any of those, you should manually
+    /// create a DhtDiscovery and add it with [`Builder::add_discovery`].
     pub fn discovery_dht(mut self) -> Self {
         use crate::discovery::pkarr::dht::DhtDiscovery;
         self.discovery.push(Box::new(|secret_key| {
@@ -293,7 +312,12 @@ impl Builder {
     }
 
     #[cfg(feature = "discovery-local-network")]
-    /// Configure the endpoint to use local network discovery.
+    /// Configures the endpoint to also use local network discovery.
+    ///
+    /// This is equivalent to adding a [`crate::discovery::local_swarm_discovery::LocalSwarmDiscovery`]
+    /// with default settings. Note that LocalSwarmDiscovery has various more advanced
+    /// configuration options. If you need any of those, you should manually
+    /// create a LocalSwarmDiscovery and add it with [`Builder::add_discovery`].
     pub fn discovery_local_network(mut self) -> Self {
         use crate::discovery::local_swarm_discovery::LocalSwarmDiscovery;
         self.discovery.push(Box::new(|secret_key| {
