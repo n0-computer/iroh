@@ -223,7 +223,7 @@ impl Builder {
         self
     }
 
-    /// Remove all discovery services.
+    /// Removes all discovery services from the builder.
     pub fn clear_discovery(mut self) -> Self {
         self.discovery.clear();
         self
