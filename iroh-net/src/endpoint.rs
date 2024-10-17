@@ -246,7 +246,7 @@ impl Builder {
 
     /// Adds a discovery mechanism for this endpoint.
     ///
-    /// If you have multiple discovery services, they will be combined using a
+    /// If you have multiple discovery services, they will be combined using
     /// [`crate::discovery::ConcurrentDiscovery`].
     ///
     /// If no discovery service is set, connecting to a node without providing its
