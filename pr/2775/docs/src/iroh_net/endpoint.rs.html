@@ -1818,6 +1818,18 @@
 <a href="#1818" id="1818">1818</a>
 <a href="#1819" id="1819">1819</a>
 <a href="#1820" id="1820">1820</a>
+<a href="#1821" id="1821">1821</a>
+<a href="#1822" id="1822">1822</a>
+<a href="#1823" id="1823">1823</a>
+<a href="#1824" id="1824">1824</a>
+<a href="#1825" id="1825">1825</a>
+<a href="#1826" id="1826">1826</a>
+<a href="#1827" id="1827">1827</a>
+<a href="#1828" id="1828">1828</a>
+<a href="#1829" id="1829">1829</a>
+<a href="#1830" id="1830">1830</a>
+<a href="#1831" id="1831">1831</a>
+<a href="#1832" id="1832">1832</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -2309,7 +2321,7 @@
             Arc::new(quinn::TokioRuntime),
         )<span class="question-mark">?</span>;
         <span class="macro">trace!</span>(<span class="string">"created quinn endpoint"</span>);
-
+        <span class="macro">debug!</span>(version = <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>), <span class="string">"iroh Endpoint created"</span>);
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             msock,
             endpoint,
@@ -2333,10 +2345,12 @@
 
     </span><span class="doccomment">/// Connects to a remote [`Endpoint`].
     ///
-    /// A [`NodeAddr`] is required. It must contain the [`NodeId`] to dial and may also
-    /// contain a [`RelayUrl`] and direct addresses. If direct addresses are provided, they
-    /// will be used to try and establish a direct connection without involving a relay
-    /// server.
+    /// A value that can be converted into a [`NodeAddr`] is required. This can be either a
+    /// [`NodeAddr`], a [`NodeId`] or a [`iroh_base::ticket::NodeTicket`].
+    ///
+    /// The [`NodeAddr`] must contain the [`NodeId`] to dial and may also contain a [`RelayUrl`]
+    /// and direct addresses. If direct addresses are provided, they will be used to try and
+    /// establish a direct connection without involving a relay server.
     ///
     /// If neither a [`RelayUrl`] or direct addresses are configured in the [`NodeAddr`] it
     /// may still be possible a connection can be established.  This depends on other calls
@@ -2351,8 +2365,14 @@
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
-    </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.node_id().fmt_short(), remote = %node_addr.node_id.fmt_short(), alpn = <span class="question-mark">?</span>String::from_utf8_lossy(alpn)))]
-    </span><span class="kw">pub async fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
+    </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.node_id().fmt_short(), alpn = <span class="question-mark">?</span>String::from_utf8_lossy(alpn)))]
+    </span><span class="kw">pub async fn </span>connect(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        node_addr: <span class="kw">impl </span>Into&lt;NodeAddr&gt;,
+        alpn: <span class="kw-2">&amp;</span>[u8],
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
+        <span class="kw">let </span>node_addr = node_addr.into();
+        tracing::Span::current().record(<span class="string">"remote"</span>, node_addr.node_id.fmt_short());
         <span class="comment">// Connecting to ourselves is not supported.
         </span><span class="kw">if </span>node_addr.node_id == <span class="self">self</span>.node_id() {
             <span class="macro">bail!</span>(
@@ -2403,6 +2423,10 @@
     /// information being provided by either the discovery service or using
     /// [`Endpoint::add_node_addr`].  See [`Endpoint::connect`] for the details of how it
     /// uses the discovery service to establish a connection to a remote node.
+    </span><span class="attr">#[deprecated(
+        since = <span class="string">"0.27.0"</span>,
+        note = <span class="string">"Please use `connect` directly with a NodeId. This fn will be removed in 0.28.0."
+    </span>)]
     </span><span class="kw">pub async fn </span>connect_by_node_id(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_id: NodeId,

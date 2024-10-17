@@ -3927,10 +3927,6 @@
 <a href="#3927" id="3927">3927</a>
 <a href="#3928" id="3928">3928</a>
 <a href="#3929" id="3929">3929</a>
-<a href="#3930" id="3930">3930</a>
-<a href="#3931" id="3931">3931</a>
-<a href="#3932" id="3932">3932</a>
-<a href="#3933" id="3933">3933</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3986,7 +3982,7 @@
 
 <span class="kw">use crate</span>::{
     defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
-    disco::{<span class="self">self</span>, SendAddr},
+    disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
     endpoint::NodeAddr,
@@ -4539,7 +4535,7 @@
         <span class="kw">let </span>msg = RelayActorMessage::Send {
             url: url.clone(),
             contents,
-            peer: node,
+            remote_node: node,
         };
         <span class="kw">match </span><span class="self">self</span>.relay_actor_sender.try_send(msg) {
             <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
@@ -4999,17 +4995,21 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>send_disco_message_relay(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        url: <span class="kw-2">&amp;</span>RelayUrl,
-        dst_key: PublicKey,
-        msg: disco::Message,
-    ) -&gt; bool {
-        <span class="macro">debug!</span>(node = %dst_key.fmt_short(), %url, %msg, <span class="string">"send disco message (relay)"</span>);
-        <span class="kw">let </span>pkt = <span class="self">self</span>.encode_disco_message(dst_key, <span class="kw-2">&amp;</span>msg);
+    <span class="kw">fn </span>send_disco_message_relay(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, dst: NodeId, msg: disco::Message) -&gt; bool {
+        <span class="macro">debug!</span>(node = %dst.fmt_short(), %url, %msg, <span class="string">"send disco message (relay)"</span>);
+        <span class="kw">let </span>pkt = <span class="self">self</span>.encode_disco_message(dst, <span class="kw-2">&amp;</span>msg);
         <span class="macro">inc!</span>(MagicsockMetrics, send_disco_relay);
-        <span class="kw">match </span><span class="self">self</span>.try_send_relay(url, dst_key, <span class="macro">smallvec!</span>[pkt]) {
+        <span class="kw">match </span><span class="self">self</span>.try_send_relay(url, dst, <span class="macro">smallvec!</span>[pkt]) {
             <span class="prelude-val">Ok</span>(()) =&gt; {
+                <span class="kw">if let </span>disco::Message::CallMeMaybe(CallMeMaybe { <span class="kw-2">ref </span>my_numbers }) = msg {
+                    <span class="macro">event!</span>(
+                        target: <span class="string">"events.net.call-me-maybe.sent"</span>,
+                        Level::DEBUG,
+                        remote_node = %dst.fmt_short(),
+                        via = <span class="question-mark">?</span>url,
+                        addrs = <span class="question-mark">?</span>my_numbers,
+                    );
+                }
                 <span class="macro">inc!</span>(MagicsockMetrics, sent_disco_relay);
                 disco_message_sent(<span class="kw-2">&amp;</span>msg);
                 <span class="bool-val">true
@@ -5126,7 +5126,7 @@
         <span class="kw">let </span>msg = RelayActorMessage::Send {
             url: url.clone(),
             contents,
-            peer: node,
+            remote_node: node,
         };
         <span class="kw">match </span><span class="self">self</span>.relay_actor_sender.try_send(msg) {
             <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
@@ -5157,14 +5157,6 @@
     <span class="kw">fn </span>send_or_queue_call_me_maybe(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, dst_node: NodeId) {
         <span class="kw">let </span>direct_addrs = <span class="self">self</span>.direct_addrs.read();
         <span class="kw">if </span>direct_addrs.fresh_enough() {
-            <span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = direct_addrs.iter().collect();
-            <span class="macro">event!</span>(
-                target: <span class="string">"events.net.call-me-maybe.sent"</span>,
-                Level::DEBUG,
-                remote_node = %dst_node.fmt_short(),
-                via = <span class="question-mark">?</span>url,
-                <span class="question-mark">?</span>addrs,
-            );
             <span class="kw">let </span>msg = direct_addrs.to_call_me_maybe_message();
             <span class="kw">let </span>msg = disco::Message::CallMeMaybe(msg);
             <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_relay(url, dst_node, msg) {
