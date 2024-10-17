@@ -203,7 +203,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "on"
     steps:
     - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@master
+    - uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt
     - uses: mozilla-actions/sccache-action@v0.0.6
