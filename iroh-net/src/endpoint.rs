@@ -281,9 +281,12 @@ impl Builder {
     /// and a [`crate::discovery::dns::DnsDiscovery`], both configured to use the
     /// n0.computer dns server.
     ///
-    /// This will by default use [`crate::discovery::pkarr::N0_DNS_PKARR_RELAY_PROD`].
+    /// This will by default use [`N0_DNS_PKARR_RELAY_PROD`].
     /// When in tests, or when the `test-utils` feature is enabled, this will use the
-    /// [`crate::discovery::pkarr::N0_DNS_PKARR_RELAY_STAGING`].
+    /// [`N0_DNS_PKARR_RELAY_STAGING`].
+    ///
+    /// [`N0_DNS_PKARR_RELAY_PROD`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_PROD
+    /// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_STAGING
     pub fn discovery_n0(mut self) -> Self {
         self.discovery.push(Box::new(|secret_key| {
             Some(Box::new(PkarrPublisher::n0_dns(secret_key.clone())))
