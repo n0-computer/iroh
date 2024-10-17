@@ -1,0 +1,13 @@
+# Use cargo-make to run tasks here: https://crates.io/crates/cargo-make
+
+[tasks.format]
+workspace = false
+toolchain = "nightly"
+command = "cargo"
+args = [
+     "fmt",
+     "--all",
+     "--",
+     "--config",
+     "imports_granularity=Module,group_imports=StdExternalCrate",
+]
