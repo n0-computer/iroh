@@ -588,9 +588,17 @@ pub trait Store<E: RangeEntry>: Sized {
 impl<E: RangeEntry, S: Store<E>> Store<E> for &mut S {
     type Error = S::Error;
 
-    type RangeIterator<'a> = S::RangeIterator<'a> where Self: 'a, E: 'a;
+    type RangeIterator<'a>
+        = S::RangeIterator<'a>
+    where
+        Self: 'a,
+        E: 'a;
 
-    type ParentIterator<'a> = S::ParentIterator<'a> where Self: 'a, E: 'a;
+    type ParentIterator<'a>
+        = S::ParentIterator<'a>
+    where
+        Self: 'a,
+        E: 'a;
 
     fn get_first(&mut self) -> Result<<E as RangeEntry>::Key, Self::Error> {
         (**self).get_first()
@@ -800,8 +808,11 @@ mod tests {
             Ok(())
         }
 
-        type RangeIterator<'a> = SimpleRangeIterator<'a, K, V>
-        where K: 'a, V: 'a;
+        type RangeIterator<'a>
+            = SimpleRangeIterator<'a, K, V>
+        where
+            K: 'a,
+            V: 'a;
         /// Returns all items in the given range
         fn get_range(&mut self, range: Range<K>) -> Result<Self::RangeIterator<'_>, Self::Error> {
             // TODO: this is not very efficient, optimize depending on data structure

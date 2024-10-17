@@ -638,10 +638,14 @@ impl<'a> super::DownloadPolicyStore for StoreInstance<'a> {
 
 impl<'a> crate::ranger::Store<SignedEntry> for StoreInstance<'a> {
     type Error = anyhow::Error;
-    type RangeIterator<'x> = Chain<RecordsRange<'x>, Flatten<std::option::IntoIter<RecordsRange<'x>>>>
-        where 'a: 'x;
-    type ParentIterator<'x> = ParentIterator
-        where 'a: 'x;
+    type RangeIterator<'x>
+        = Chain<RecordsRange<'x>, Flatten<std::option::IntoIter<RecordsRange<'x>>>>
+    where
+        'a: 'x;
+    type ParentIterator<'x>
+        = ParentIterator
+    where
+        'a: 'x;
 
     /// Get a the first key (or the default if none is available).
     fn get_first(&mut self) -> Result<RecordIdentifier> {
