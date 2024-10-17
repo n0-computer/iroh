@@ -25,7 +25,7 @@ use crate::{
 pub struct Fingerprint(pub [u8; 32]);
 
 impl FixedSize for Fingerprint {
-    const SIZE: usize = 32;
+    const SIZE: usize = std::mem::size_of::<Self>();
 }
 
 impl LiftingCommutativeMonoid<PointRef<IrohWillowParams>, StoredAuthorizedEntry> for Fingerprint {
@@ -38,10 +38,9 @@ impl LiftingCommutativeMonoid<PointRef<IrohWillowParams>, StoredAuthorizedEntry>
     }
 
     fn combine(&self, other: &Self) -> Self {
-        let mut result = Self::neutral();
-        result ^= *self;
-        result ^= *other;
-        result
+        let mut slf = self.clone();
+        slf ^= *other;
+        slf
     }
 }
 
