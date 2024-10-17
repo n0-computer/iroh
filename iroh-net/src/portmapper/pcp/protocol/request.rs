@@ -2,10 +2,8 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use super::{
-    opcode_data::{MapData, MapProtocol, OpcodeData},
-    Version,
-};
+use super::opcode_data::{MapData, MapProtocol, OpcodeData};
+use super::Version;
 
 /// A PCP Request.
 ///
@@ -138,9 +136,9 @@ impl Request {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use rand::SeedableRng;
+
+    use super::*;
 
     #[test]
     fn test_encode_decode_addr_request() {

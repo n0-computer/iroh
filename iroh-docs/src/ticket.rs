@@ -65,12 +65,13 @@ impl std::str::FromStr for DocTicket {
 mod tests {
     use std::str::FromStr;
 
-    use crate::NamespaceId;
-
-    use super::*;
     use iroh_base::base32;
     use iroh_net::key::PublicKey;
-    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+    use iroh_test::assert_eq_hex;
+    use iroh_test::hexdump::parse_hexdump;
+
+    use super::*;
+    use crate::NamespaceId;
 
     #[test]
     fn test_ticket_base32() {

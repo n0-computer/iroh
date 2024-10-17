@@ -1,37 +1,33 @@
 #![allow(missing_docs)]
 
-use std::collections::HashSet;
-use std::{collections::HashMap, time::SystemTime};
+use std::collections::{HashMap, HashSet};
+use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use futures_lite::FutureExt;
 use iroh_blobs::downloader::{DownloadError, DownloadRequest, Downloader};
 use iroh_blobs::get::Stats;
-use iroh_blobs::HashAndFormat;
-use iroh_blobs::{store::EntryStatus, Hash};
+use iroh_blobs::store::EntryStatus;
+use iroh_blobs::{Hash, HashAndFormat};
 use iroh_gossip::net::Gossip;
 use iroh_metrics::inc;
-use iroh_net::NodeId;
-use iroh_net::{key::PublicKey, Endpoint, NodeAddr};
+use iroh_net::key::PublicKey;
+use iroh_net::{Endpoint, NodeAddr, NodeId};
 use serde::{Deserialize, Serialize};
-use tokio::{
-    sync::{self, mpsc, oneshot},
-    task::JoinSet,
-};
+use tokio::sync::{self, mpsc, oneshot};
+use tokio::task::JoinSet;
 use tracing::{debug, error, info, instrument, trace, warn, Instrument, Span};
-
-use crate::{
-    actor::{OpenOpts, SyncHandle},
-    net::{
-        connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
-        SyncFinished,
-    },
-    AuthorHeads, ContentStatus, NamespaceId, SignedEntry,
-};
-use crate::{engine::gossip::GossipState, metrics::Metrics};
 
 // use super::gossip::{GossipActor, ToGossipActor};
 use super::state::{NamespaceStates, Origin, SyncReason};
+use crate::actor::{OpenOpts, SyncHandle};
+use crate::engine::gossip::GossipState;
+use crate::metrics::Metrics;
+use crate::net::{
+    connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
+    SyncFinished,
+};
+use crate::{AuthorHeads, ContentStatus, NamespaceId, SignedEntry};
 
 /// Name used for logging when new node addresses are added from the docs engine.
 const SOURCE_NAME: &str = "docs_engine";

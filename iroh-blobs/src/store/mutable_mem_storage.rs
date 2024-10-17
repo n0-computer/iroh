@@ -1,13 +1,10 @@
-use bao_tree::{
-    io::{fsm::BaoContentItem, sync::WriteAt},
-    BaoTree,
-};
+use bao_tree::io::fsm::BaoContentItem;
+use bao_tree::io::sync::WriteAt;
+use bao_tree::BaoTree;
 use bytes::Bytes;
 
-use crate::{
-    util::{compute_outboard, copy_limited_slice, SparseMemFile},
-    IROH_BLOCK_SIZE,
-};
+use crate::util::{compute_outboard, copy_limited_slice, SparseMemFile};
+use crate::IROH_BLOCK_SIZE;
 
 /// Mutable in memory storage for a bao file.
 ///

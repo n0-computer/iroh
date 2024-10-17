@@ -6,10 +6,8 @@
 //! [paper]: https://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf
 //! [impl]: https://gist.github.com/Horusiath/84fac596101b197da0546d1697580d99
 
-use std::{
-    collections::{HashMap, HashSet},
-    time::{Duration, Instant},
-};
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use derive_more::{From, Sub};
 use rand::rngs::ThreadRng;
@@ -17,7 +15,8 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use super::{util::IndexSet, PeerData, PeerIdentity, PeerInfo, IO};
+use super::util::IndexSet;
+use super::{PeerData, PeerIdentity, PeerInfo, IO};
 
 /// Input event for HyParView
 #[derive(Debug)]

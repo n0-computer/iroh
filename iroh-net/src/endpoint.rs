@@ -36,19 +36,17 @@ use crate::{tls, NodeId};
 
 mod rtt_actor;
 
-use self::rtt_actor::RttMessage;
-
+pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 pub use quinn::{
     ApplicationClose, Connection, ConnectionClose, ConnectionError, ReadError, RecvStream,
     RetryError, SendStream, ServerConfig, TransportConfig, VarInt, WriteError,
 };
 
+use self::rtt_actor::RttMessage;
 pub use super::magicsock::{
     ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
     DirectAddrsStream, RemoteInfo, Source,
 };
-
-pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 
 /// The delay to fall back to discovery when direct addresses fail.
 ///
@@ -1280,9 +1278,8 @@ mod tests {
     use rand::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
 
-    use crate::test_utils::run_relay_server;
-
     use super::*;
+    use crate::test_utils::run_relay_server;
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 

@@ -26,39 +26,34 @@
 //! - *Requests per node*: to avoid overwhelming nodes with requests, the number of concurrent
 //!   requests to a single node is also limited.
 
-use std::{
-    collections::{
-        hash_map::{self, Entry},
-        HashMap, HashSet,
-    },
-    fmt,
-    future::Future,
-    num::NonZeroUsize,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::collections::hash_map::{self, Entry};
+use std::collections::{HashMap, HashSet};
+use std::fmt;
+use std::future::Future;
+use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
-use futures_lite::{future::BoxedLocal, Stream, StreamExt};
+use futures_lite::future::BoxedLocal;
+use futures_lite::{Stream, StreamExt};
 use hashlink::LinkedHashSet;
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_metrics::inc;
 use iroh_net::{endpoint, Endpoint, NodeAddr, NodeId};
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::JoinSet,
-};
-use tokio_util::{either::Either, sync::CancellationToken, time::delay_queue};
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinSet;
+use tokio_util::either::Either;
+use tokio_util::sync::CancellationToken;
+use tokio_util::time::delay_queue;
 use tracing::{debug, error_span, trace, warn, Instrument};
 
-use crate::{
-    get::{db::DownloadProgress, Stats},
-    metrics::Metrics,
-    store::Store,
-    util::{local_pool::LocalPoolHandle, progress::ProgressSender},
-};
+use crate::get::db::DownloadProgress;
+use crate::get::Stats;
+use crate::metrics::Metrics;
+use crate::store::Store;
+use crate::util::local_pool::LocalPoolHandle;
+use crate::util::progress::ProgressSender;
 
 mod get;
 mod invariants;

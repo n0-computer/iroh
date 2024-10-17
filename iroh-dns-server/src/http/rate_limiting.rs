@@ -1,9 +1,10 @@
 use std::time::Duration;
 
-use governor::{clock::QuantaInstant, middleware::NoOpMiddleware};
-use tower_governor::{
-    governor::GovernorConfigBuilder, key_extractor::PeerIpKeyExtractor, GovernorLayer,
-};
+use governor::clock::QuantaInstant;
+use governor::middleware::NoOpMiddleware;
+use tower_governor::governor::GovernorConfigBuilder;
+use tower_governor::key_extractor::PeerIpKeyExtractor;
+use tower_governor::GovernorLayer;
 
 /// Create the default rate-limiting layer.
 ///

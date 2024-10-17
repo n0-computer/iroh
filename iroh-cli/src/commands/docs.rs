@@ -1,6 +1,11 @@
 //! Define commands for interacting with documents in Iroh.
 
-use crate::config::ConsoleEnv;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use colored::Colorize;
@@ -8,28 +13,20 @@ use dialoguer::Confirm;
 use futures_buffered::BufferedStreamExt;
 use futures_lite::{Stream, StreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
-use iroh::{
-    base::{base32::fmt_short, node_addr::AddrInfoOptions},
-    blobs::{provider::AddProgress, util::SetTagOption, Hash, Tag},
-    client::{
-        blobs::WrapOption,
-        docs::{Doc, Entry, LiveEvent, Origin, ShareMode},
-        Iroh,
-    },
-    docs::{
-        store::{DownloadPolicy, FilterKind, Query, SortDirection},
-        AuthorId, DocTicket, NamespaceId,
-    },
-    util::fs::{path_content_info, path_to_key, PathContent},
-};
-use std::{
-    cell::RefCell,
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use iroh::base::base32::fmt_short;
+use iroh::base::node_addr::AddrInfoOptions;
+use iroh::blobs::provider::AddProgress;
+use iroh::blobs::util::SetTagOption;
+use iroh::blobs::{Hash, Tag};
+use iroh::client::blobs::WrapOption;
+use iroh::client::docs::{Doc, Entry, LiveEvent, Origin, ShareMode};
+use iroh::client::Iroh;
+use iroh::docs::store::{DownloadPolicy, FilterKind, Query, SortDirection};
+use iroh::docs::{AuthorId, DocTicket, NamespaceId};
+use iroh::util::fs::{path_content_info, path_to_key, PathContent};
 use tokio::io::AsyncReadExt;
+
+use crate::config::ConsoleEnv;
 
 /// The maximum length of content to display before truncating.
 const MAX_DISPLAY_CONTENT_LEN: u64 = 80;

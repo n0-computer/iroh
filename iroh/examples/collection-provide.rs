@@ -6,9 +6,12 @@
 //! This is using an in memory database and a random node id.
 //! run this example from the project root:
 //!     $ cargo run --example collection-provide
-use iroh::blobs::{format::collection::Collection, util::SetTagOption, BlobFormat};
+use iroh::blobs::format::collection::Collection;
+use iroh::blobs::util::SetTagOption;
+use iroh::blobs::BlobFormat;
 use iroh_base::node_addr::AddrInfoOptions;
-use tracing_subscriber::{prelude::*, EnvFilter};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::EnvFilter;
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
 pub fn setup_logging() {

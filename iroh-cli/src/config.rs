@@ -1,21 +1,17 @@
 //! Configuration for the iroh CLI.
 
-use std::{
-    env,
-    net::SocketAddr,
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::Arc,
-    time::Duration,
-};
+use std::env;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
+use iroh::client::Iroh;
+use iroh::docs::{AuthorId, NamespaceId};
 use iroh::net::relay::{RelayMap, RelayNode};
 use iroh::node::GcPolicy;
-use iroh::{
-    client::Iroh,
-    docs::{AuthorId, NamespaceId},
-};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -441,9 +437,8 @@ mod tests {
 
     use url::Url;
 
-    use crate::logging::{EnvFilter, Rotation};
-
     use super::*;
+    use crate::logging::{EnvFilter, Rotation};
 
     #[test]
     fn test_toml_invalid_field() {

@@ -2,15 +2,12 @@
 
 mod encryption;
 
-use std::{
-    fmt::{Debug, Display},
-    hash::Hash,
-    str::FromStr,
-    sync::Mutex,
-    time::Duration,
-};
+use std::fmt::{Debug, Display};
+use std::hash::Hash;
+use std::str::FromStr;
+use std::sync::Mutex;
+use std::time::Duration;
 
-use crate::base32::{self, HexOrBase32ParseError};
 pub use ed25519_dalek::{Signature, PUBLIC_KEY_LENGTH};
 use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
 use once_cell::sync::OnceCell;
@@ -21,6 +18,7 @@ use ttl_cache::TtlCache;
 
 pub use self::encryption::SharedSecret;
 use self::encryption::{public_ed_box, secret_ed_box};
+use crate::base32::{self, HexOrBase32ParseError};
 
 #[derive(Debug)]
 struct CryptoKeys {
@@ -413,7 +411,8 @@ impl TryFrom<&[u8]> for SecretKey {
 
 #[cfg(test)]
 mod tests {
-    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+    use iroh_test::assert_eq_hex;
+    use iroh_test::hexdump::parse_hexdump;
 
     use super::*;
 

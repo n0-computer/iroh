@@ -12,12 +12,11 @@ use std::time::{Duration, Instant};
 use rand::seq::IteratorRandom;
 use tracing::warn;
 
-use crate::disco::SendAddr;
-
 use super::best_addr::{self, BestAddr};
 use super::node_state::PongReply;
 use super::path_state::PathState;
 use super::IpPort;
+use crate::disco::SendAddr;
 
 /// The address on which to send datagrams over UDP.
 ///

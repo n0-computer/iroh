@@ -1,12 +1,10 @@
-use std::{
-    fmt::Debug,
-    future::Future,
-    io,
-    net::SocketAddr,
-    pin::Pin,
-    sync::Arc,
-    task::{ready, Context, Poll},
-};
+use std::fmt::Debug;
+use std::future::Future;
+use std::io;
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{ready, Context, Poll};
 
 use anyhow::{bail, Context as _};
 use quinn::AsyncUdpSocket;
@@ -196,12 +194,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{key, net::IpFamily, tls};
-
-    use super::*;
     use anyhow::Result;
     use tokio::sync::mpsc;
     use tracing::{info_span, Instrument};
+
+    use super::*;
+    use crate::net::IpFamily;
+    use crate::{key, tls};
 
     const ALPN: &[u8] = b"n0/test/1";
 

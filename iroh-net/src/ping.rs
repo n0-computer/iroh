@@ -1,16 +1,15 @@
 //! Allows sending ICMP echo requests to a host in order to determine network latency.
 
-use std::{
-    fmt::Debug,
-    net::IpAddr,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::fmt::Debug;
+use std::net::IpAddr;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use crate::defaults::timeouts::DEFAULT_PINGER_TIMEOUT as DEFAULT_TIMEOUT;
 use anyhow::{Context, Result};
 use surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};
 use tracing::debug;
+
+use crate::defaults::timeouts::DEFAULT_PINGER_TIMEOUT as DEFAULT_TIMEOUT;
 
 /// Whether this error was because we couldn't create a client or a send error.
 #[derive(Debug, thiserror::Error)]

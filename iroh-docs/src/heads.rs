@@ -1,6 +1,7 @@
 //! Author heads
 
-use std::{collections::BTreeMap, num::NonZeroU64};
+use std::collections::BTreeMap;
+use std::num::NonZeroU64;
 
 use anyhow::Result;
 
@@ -118,9 +119,8 @@ impl FromIterator<(Timestamp, AuthorId)> for AuthorHeads {
 
 #[cfg(test)]
 mod tests {
-    use crate::Record;
-
     use super::*;
+    use crate::Record;
     #[test]
     fn author_heads_encode_decode() -> Result<()> {
         let mut heads = AuthorHeads::default();

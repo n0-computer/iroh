@@ -1,13 +1,14 @@
 //! based on tailscale/tailcfg/derpmap.go
 
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use std::collections::BTreeMap;
+use std::fmt;
+use std::sync::Arc;
 
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::defaults::DEFAULT_STUN_PORT;
-
 use super::RelayUrl;
+use crate::defaults::DEFAULT_STUN_PORT;
 
 /// Configuration of the relay servers for an [`Endpoint`].
 ///

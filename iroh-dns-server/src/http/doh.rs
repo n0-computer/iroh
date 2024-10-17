@@ -4,20 +4,16 @@
 // https://github.com/fission-codes/fission-server/blob/main/fission-server/src/routes/doh.rs
 
 use anyhow::anyhow;
-use axum::{
-    extract::State,
-    response::{IntoResponse, Response},
-    Json,
-};
-use hickory_server::proto::{self, serialize::binary::BinDecodable};
-use http::{
-    header::{CACHE_CONTROL, CONTENT_TYPE},
-    HeaderValue, StatusCode,
-};
-
-use crate::state::AppState;
+use axum::extract::State;
+use axum::response::{IntoResponse, Response};
+use axum::Json;
+use hickory_server::proto::serialize::binary::BinDecodable;
+use hickory_server::proto::{self};
+use http::header::{CACHE_CONTROL, CONTENT_TYPE};
+use http::{HeaderValue, StatusCode};
 
 use super::error::AppResult;
+use crate::state::AppState;
 
 mod extract;
 mod response;

@@ -1,6 +1,10 @@
 //! Pkarr packet store used to resolve DNS queries.
 
-use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
+use std::collections::BTreeMap;
+use std::num::NonZeroUsize;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use hickory_proto::rr::{Name, RecordSet, RecordType, RrKey};
@@ -12,13 +16,10 @@ use pkarr::{PkarrClient, SignedPacket};
 use tracing::{debug, trace};
 use ttl_cache::TtlCache;
 
-use crate::{
-    config::BootstrapOption,
-    metrics::Metrics,
-    util::{signed_packet_to_hickory_records_without_origin, PublicKeyBytes},
-};
-
 use self::signed_packets::SignedPacketStore;
+use crate::config::BootstrapOption;
+use crate::metrics::Metrics;
+use crate::util::{signed_packet_to_hickory_records_without_origin, PublicKeyBytes};
 
 mod signed_packets;
 

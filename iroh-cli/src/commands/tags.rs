@@ -4,7 +4,8 @@ use anyhow::Result;
 use bytes::Bytes;
 use clap::Subcommand;
 use futures_lite::StreamExt;
-use iroh::{blobs::Tag, client::Iroh};
+use iroh::blobs::Tag;
+use iroh::client::Iroh;
 
 /// Commands to manage tags.
 #[derive(Subcommand, Debug, Clone)]

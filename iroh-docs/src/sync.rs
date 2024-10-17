@@ -6,30 +6,29 @@
 //
 // This is going to change!
 
-use std::{
-    cmp::Ordering,
-    fmt::Debug,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::cmp::Ordering;
+use std::fmt::Debug;
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use bytes::{Bytes, BytesMut};
+use ed25519_dalek::{Signature, SignatureError};
+use iroh_base::base32;
+use iroh_base::hash::Hash;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
-use std::ops::{Deref, DerefMut};
-
-use ed25519_dalek::{Signature, SignatureError};
-use iroh_base::{base32, hash::Hash};
 use serde::{Deserialize, Serialize};
 
 pub use crate::heads::AuthorHeads;
+use crate::keys::{
+    Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret,
+};
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
-use crate::{
-    keys::{Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret},
-    ranger::{self, Fingerprint, InsertOutcome, RangeEntry, RangeKey, RangeValue, Store},
-    store::{self, fs::StoreInstance, DownloadPolicyStore, PublicKeyStore},
-};
+use crate::ranger::{self, Fingerprint, InsertOutcome, RangeEntry, RangeKey, RangeValue, Store};
+use crate::store::fs::StoreInstance;
+use crate::store::{self, DownloadPolicyStore, PublicKeyStore};
 
 /// Protocol message for the set reconciliation protocol.
 ///
@@ -1197,13 +1196,10 @@ mod tests {
     use anyhow::Result;
     use rand_core::SeedableRng;
 
-    use crate::{
-        actor::SyncHandle,
-        ranger::{Range, Store as _},
-        store::{OpenError, Query, SortBy, SortDirection, Store},
-    };
-
     use super::*;
+    use crate::actor::SyncHandle;
+    use crate::ranger::{Range, Store as _};
+    use crate::store::{OpenError, Query, SortBy, SortDirection, Store};
 
     #[test]
     fn test_basics_memory() -> Result<()> {

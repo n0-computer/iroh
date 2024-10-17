@@ -3,26 +3,21 @@
 //! Since this example does not use [`iroh-net::Endpoint`], it does not do any holepunching, and so will only work locally or between two processes that have public IP addresses.
 //!
 //! Run the provide-bytes example first. It will give instructions on how to run this example properly.
+use std::io;
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
-use tracing_subscriber::{prelude::*, EnvFilter};
-
-use std::io;
-
 use bao_tree::io::fsm::BaoContentItem;
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
-use genawaiter::sync::Co;
-use genawaiter::sync::Gen;
+use genawaiter::sync::{Co, Gen};
+use iroh_blobs::get::fsm::{AtInitial, BlobContentNext, ConnectedNext, EndBlobNext};
+use iroh_blobs::hashseq::HashSeq;
+use iroh_blobs::protocol::GetRequest;
+use iroh_blobs::Hash;
 use tokio::io::AsyncWriteExt;
-
-use iroh_blobs::{
-    get::fsm::{AtInitial, BlobContentNext, ConnectedNext, EndBlobNext},
-    hashseq::HashSeq,
-    protocol::GetRequest,
-    Hash,
-};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::EnvFilter;
 
 mod connect;
 use connect::{load_certs, make_client_endpoint};

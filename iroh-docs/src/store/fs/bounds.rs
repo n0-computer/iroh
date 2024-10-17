@@ -2,9 +2,9 @@ use std::ops::{Bound, RangeBounds};
 
 use bytes::Bytes;
 
-use crate::{store::KeyFilter, AuthorId, NamespaceId};
-
 use super::tables::{RecordsByKeyId, RecordsByKeyIdOwned, RecordsId, RecordsIdOwned};
+use crate::store::KeyFilter;
+use crate::{AuthorId, NamespaceId};
 
 /// Bounds on the records table.
 ///

@@ -1,10 +1,9 @@
-use std::{
-    net::{Ipv4Addr, SocketAddr},
-    path::Path,
-};
+use std::net::{Ipv4Addr, SocketAddr};
+use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
-use tokio::{fs, io::AsyncReadExt};
+use tokio::fs;
+use tokio::io::AsyncReadExt;
 use tracing::trace;
 
 use crate::util::path::IrohPaths;

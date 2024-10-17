@@ -16,7 +16,6 @@ mod quic;
 
 pub use self::docs::Doc;
 pub use self::net::NodeStatus;
-
 pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
 
 pub mod authors;

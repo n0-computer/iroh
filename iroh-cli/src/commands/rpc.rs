@@ -1,13 +1,16 @@
 //! Define the subcommands to manage the iroh RPC.
 
-use super::{
-    authors::AuthorCommands, blobs::BlobCommands, docs::DocCommands, gossip::GossipCommands,
-    net::NetCommands, tags::TagCommands,
-};
-use crate::config::ConsoleEnv;
 use anyhow::Result;
 use clap::Subcommand;
 use iroh::client::Iroh;
+
+use super::authors::AuthorCommands;
+use super::blobs::BlobCommands;
+use super::docs::DocCommands;
+use super::gossip::GossipCommands;
+use super::net::NetCommands;
+use super::tags::TagCommands;
+use crate::config::ConsoleEnv;
 
 /// Commands to manage the iroh RPC.
 #[derive(Subcommand, Debug, Clone)]

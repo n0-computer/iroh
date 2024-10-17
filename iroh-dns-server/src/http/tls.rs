@@ -1,19 +1,18 @@
-use std::{
-    borrow::Cow,
-    io,
-    path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
-};
+use std::borrow::Cow;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{bail, Context, Result};
-use axum_server::{
-    accept::Accept,
-    tls_rustls::{RustlsAcceptor, RustlsConfig},
-};
-use futures_lite::{future::Boxed as BoxFuture, FutureExt};
+use axum_server::accept::Accept;
+use axum_server::tls_rustls::{RustlsAcceptor, RustlsConfig};
+use futures_lite::future::Boxed as BoxFuture;
+use futures_lite::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_rustls_acme::{axum::AxumAcceptor, caches::DirCache, AcmeConfig};
+use tokio_rustls_acme::axum::AxumAcceptor;
+use tokio_rustls_acme::caches::DirCache;
+use tokio_rustls_acme::AcmeConfig;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info_span, Instrument};
 

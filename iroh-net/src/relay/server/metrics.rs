@@ -1,7 +1,5 @@
-use iroh_metrics::{
-    core::{Counter, Metric},
-    struct_iterable::Iterable,
-};
+use iroh_metrics::core::{Counter, Metric};
+use iroh_metrics::struct_iterable::Iterable;
 
 /// Metrics tracked for the relay server
 #[allow(missing_docs)]

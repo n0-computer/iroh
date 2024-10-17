@@ -5,10 +5,8 @@ use std::str::FromStr;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    node_addr::NodeAddr,
-    ticket::{self, Ticket},
-};
+use crate::node_addr::NodeAddr;
+use crate::ticket::{self, Ticket};
 
 /// A token containing information for establishing a connection to a node.
 ///
@@ -115,12 +113,12 @@ impl<'de> Deserialize<'de> for NodeTicket {
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
-    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
-
-    use crate::base32;
-    use crate::key::{PublicKey, SecretKey};
+    use iroh_test::assert_eq_hex;
+    use iroh_test::hexdump::parse_hexdump;
 
     use super::*;
+    use crate::base32;
+    use crate::key::{PublicKey, SecretKey};
 
     fn make_ticket() -> NodeTicket {
         let peer = SecretKey::generate().public();

@@ -686,13 +686,13 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio::task::JoinHandle;
     use tracing::{info, info_span, Instrument};
-    use tracing_subscriber::{prelude::*, EnvFilter};
+    use tracing_subscriber::prelude::*;
+    use tracing_subscriber::EnvFilter;
 
+    use super::*;
     use crate::key::{PublicKey, SecretKey};
     use crate::relay::client::conn::ReceivedMessage;
     use crate::relay::client::{Client, ClientBuilder};
-
-    use super::*;
 
     pub(crate) fn make_tls_config() -> TlsConfig {
         let subject_alt_names = vec!["localhost".to_string()];

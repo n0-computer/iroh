@@ -1,9 +1,7 @@
-use axum::{
-    extract::rejection::{ExtensionRejection, QueryRejection},
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::extract::rejection::{ExtensionRejection, QueryRejection};
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use axum::Json;
 use serde::{Deserialize, Serialize};
 
 pub type AppResult<T> = Result<T, AppError>;
@@ -78,7 +76,8 @@ impl From<ExtensionRejection> for AppError {
 /// We could have used http_serde, but it encodes the status code as a NUMBER.
 pub mod serde_status_code {
     use http::StatusCode;
-    use serde::{de::Unexpected, Deserialize, Deserializer, Serialize, Serializer};
+    use serde::de::Unexpected;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     /// Serialize [StatusCode]s.
     pub fn serialize<S: Serializer>(status: &StatusCode, ser: S) -> Result<S::Ok, S::Error> {

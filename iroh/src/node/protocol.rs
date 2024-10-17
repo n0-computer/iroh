@@ -1,29 +1,25 @@
-use std::{any::Any, collections::BTreeMap, fmt, sync::Arc};
+use std::any::Any;
+use std::collections::BTreeMap;
+use std::fmt;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use futures_lite::future::Boxed as BoxedFuture;
 use futures_util::future::join_all;
-use iroh_blobs::{
-    downloader::{DownloadRequest, Downloader},
-    get::{
-        db::{DownloadProgress, GetState},
-        Stats,
-    },
-    provider::EventSender,
-    util::{
-        local_pool::LocalPoolHandle,
-        progress::{AsyncChannelProgressSender, ProgressSender},
-        SetTagOption,
-    },
-    HashAndFormat, TempTag,
-};
-use iroh_net::{endpoint::Connecting, Endpoint, NodeAddr};
+use iroh_blobs::downloader::{DownloadRequest, Downloader};
+use iroh_blobs::get::db::{DownloadProgress, GetState};
+use iroh_blobs::get::Stats;
+use iroh_blobs::provider::EventSender;
+use iroh_blobs::util::local_pool::LocalPoolHandle;
+use iroh_blobs::util::progress::{AsyncChannelProgressSender, ProgressSender};
+use iroh_blobs::util::SetTagOption;
+use iroh_blobs::{HashAndFormat, TempTag};
+use iroh_net::endpoint::Connecting;
+use iroh_net::{Endpoint, NodeAddr};
 use tracing::{debug, warn};
 
-use crate::{
-    client::blobs::DownloadMode,
-    rpc_protocol::blobs::{BatchId, DownloadRequest as BlobDownloadRequest},
-};
+use crate::client::blobs::DownloadMode;
+use crate::rpc_protocol::blobs::{BatchId, DownloadRequest as BlobDownloadRequest};
 
 /// Handler for incoming connections.
 ///

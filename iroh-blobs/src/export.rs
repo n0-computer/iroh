@@ -8,12 +8,10 @@ use iroh_base::rpc::RpcError;
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 
-use crate::{
-    format::collection::Collection,
-    store::{BaoBlobSize, ExportFormat, ExportMode, MapEntry, Store as BaoStore},
-    util::progress::{IdGenerator, ProgressSender},
-    Hash,
-};
+use crate::format::collection::Collection;
+use crate::store::{BaoBlobSize, ExportFormat, ExportMode, MapEntry, Store as BaoStore};
+use crate::util::progress::{IdGenerator, ProgressSender};
+use crate::Hash;
 
 /// Export a hash to the local file system.
 ///

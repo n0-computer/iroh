@@ -1,13 +1,14 @@
 //! Definitions and utilities to interact with a NAT-PMP server.
 
-use std::{net::Ipv4Addr, num::NonZeroU16, time::Duration};
+use std::net::Ipv4Addr;
+use std::num::NonZeroU16;
+use std::time::Duration;
 
 use tracing::{debug, trace};
 
+use self::protocol::{MapProtocol, Request, Response};
 use crate::defaults::timeouts::NAT_PMP_RECV_TIMEOUT as RECV_TIMEOUT;
 use crate::net::UdpSocket;
-
-use self::protocol::{MapProtocol, Request, Response};
 
 mod protocol;
 

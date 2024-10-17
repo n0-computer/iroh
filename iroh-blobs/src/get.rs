@@ -16,7 +16,6 @@ use std::error::Error;
 use std::fmt::{self, Debug};
 use std::time::{Duration, Instant};
 
-use crate::Hash;
 use anyhow::Result;
 use bao_tree::io::fsm::BaoContentItem;
 use bao_tree::ChunkNum;
@@ -26,7 +25,7 @@ use tracing::{debug, error};
 
 use crate::protocol::RangeSpecSeq;
 use crate::util::io::{TrackingReader, TrackingWriter};
-use crate::IROH_BLOCK_SIZE;
+use crate::{Hash, IROH_BLOCK_SIZE};
 
 pub mod db;
 pub mod error;
@@ -59,21 +58,16 @@ impl Stats {
 pub mod fsm {
     use std::{io, result};
 
-    use crate::{
-        protocol::{GetRequest, NonEmptyRequestRangeSpecIter, Request, MAX_MESSAGE_SIZE},
-        store::BaoBatchWriter,
-    };
-
-    use super::*;
-
-    use bao_tree::{
-        io::fsm::{OutboardMut, ResponseDecoder, ResponseDecoderNext},
-        BaoTree, ChunkRanges, TreeNode,
-    };
+    use bao_tree::io::fsm::{OutboardMut, ResponseDecoder, ResponseDecoderNext};
+    use bao_tree::{BaoTree, ChunkRanges, TreeNode};
     use derive_more::From;
     use iroh_io::{AsyncSliceWriter, AsyncStreamReader, TokioStreamReader};
     use iroh_net::endpoint::Connection;
     use tokio::io::AsyncWriteExt;
+
+    use super::*;
+    use crate::protocol::{GetRequest, NonEmptyRequestRangeSpecIter, Request, MAX_MESSAGE_SIZE};
+    use crate::store::BaoBatchWriter;
 
     type WrappedRecvStream = TrackingReader<TokioStreamReader<RecvStream>>;
 

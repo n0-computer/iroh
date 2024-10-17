@@ -3,11 +3,9 @@
 use anyhow::Result;
 use futures_lite::stream::Boxed as BoxStream;
 
-use crate::{
-    discovery::{Discovery, DiscoveryItem},
-    dns::ResolverExt,
-    Endpoint, NodeId,
-};
+use crate::discovery::{Discovery, DiscoveryItem};
+use crate::dns::ResolverExt;
+use crate::{Endpoint, NodeId};
 
 /// The n0 testing DNS node origin, for production.
 pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";

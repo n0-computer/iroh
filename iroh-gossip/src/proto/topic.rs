@@ -1,9 +1,7 @@
 //! This module contains the implementation of the gossiping protocol for an individual topic
 
-use std::{
-    collections::VecDeque,
-    time::{Duration, Instant},
-};
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use derive_more::From;
@@ -11,11 +9,9 @@ use rand::Rng;
 use rand_core::SeedableRng;
 use serde::{Deserialize, Serialize};
 
+use super::hyparview::{self, InEvent as SwarmIn};
 use super::plumtree::{self, GossipEvent, InEvent as GossipIn, Scope};
-use super::{
-    hyparview::{self, InEvent as SwarmIn},
-    state::MessageKind,
-};
+use super::state::MessageKind;
 use super::{PeerData, PeerIdentity};
 
 /// The default maximum size in bytes for a gossip message.

@@ -10,10 +10,12 @@
 //!    cargo run --example provide-bytes collection
 //! To provide a collection (multiple blobs)
 use anyhow::Result;
+use iroh_blobs::format::collection::Collection;
+use iroh_blobs::util::local_pool::LocalPool;
+use iroh_blobs::Hash;
 use tracing::warn;
-use tracing_subscriber::{prelude::*, EnvFilter};
-
-use iroh_blobs::{format::collection::Collection, util::local_pool::LocalPool, Hash};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::EnvFilter;
 
 mod connect;
 use connect::{make_and_write_certs, make_server_endpoint, CERT_PATH};

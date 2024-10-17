@@ -1,5 +1,6 @@
 //! The collection type used by iroh
-use std::{collections::BTreeMap, future::Future};
+use std::collections::BTreeMap;
+use std::future::Future;
 
 use anyhow::Context;
 use bao_tree::blake3;
@@ -7,13 +8,11 @@ use bytes::Bytes;
 use iroh_io::AsyncSliceReaderExt;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    get::{fsm, Stats},
-    hashseq::HashSeq,
-    store::MapEntry,
-    util::TempTag,
-    BlobFormat, Hash,
-};
+use crate::get::{fsm, Stats};
+use crate::hashseq::HashSeq;
+use crate::store::MapEntry;
+use crate::util::TempTag;
+use crate::{BlobFormat, Hash};
 
 /// A collection of blobs
 ///

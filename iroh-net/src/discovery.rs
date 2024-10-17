@@ -100,12 +100,14 @@
 
 use std::time::Duration;
 
-use crate::{AddrInfo, Endpoint, NodeId};
 use anyhow::{anyhow, ensure, Result};
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
-use tokio::{sync::oneshot, task::JoinHandle};
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
 use tracing::{debug, error_span, warn, Instrument};
+
+use crate::{AddrInfo, Endpoint, NodeId};
 
 pub mod dns;
 
@@ -430,20 +432,18 @@ impl Drop for DiscoveryTask {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::{BTreeSet, HashMap},
-        net::SocketAddr,
-        sync::Arc,
-        time::SystemTime,
-    };
+    use std::collections::{BTreeSet, HashMap};
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use std::time::SystemTime;
 
     use parking_lot::Mutex;
     use rand::Rng;
     use tokio_util::task::AbortOnDropHandle;
 
-    use crate::{key::SecretKey, relay::RelayMode};
-
     use super::*;
+    use crate::key::SecretKey;
+    use crate::relay::RelayMode;
 
     #[derive(Debug, Clone, Default)]
     struct TestDiscoveryShared {
@@ -732,17 +732,14 @@ mod test_dns_pkarr {
     use iroh_base::key::SecretKey;
     use tokio_util::task::AbortOnDropHandle;
 
-    use crate::{
-        discovery::pkarr::PkarrPublisher,
-        dns::{node_info::NodeInfo, ResolverExt},
-        relay::{RelayMap, RelayMode},
-        test_utils::{
-            dns_server::{create_dns_resolver, run_dns_server},
-            pkarr_dns_state::State,
-            run_relay_server, DnsPkarrServer,
-        },
-        AddrInfo, Endpoint, NodeAddr,
-    };
+    use crate::discovery::pkarr::PkarrPublisher;
+    use crate::dns::node_info::NodeInfo;
+    use crate::dns::ResolverExt;
+    use crate::relay::{RelayMap, RelayMode};
+    use crate::test_utils::dns_server::{create_dns_resolver, run_dns_server};
+    use crate::test_utils::pkarr_dns_state::State;
+    use crate::test_utils::{run_relay_server, DnsPkarrServer};
+    use crate::{AddrInfo, Endpoint, NodeAddr};
 
     const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 

@@ -18,6 +18,8 @@ mod map;
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
 pub mod server;
 
+pub use iroh_base::node_addr::RelayUrl;
+
 pub use self::client::conn::{Conn as RelayConn, ReceivedMessage};
 pub use self::client::{
     Client as HttpClient, ClientBuilder as HttpClientBuilder, ClientError as HttpClientError,
@@ -25,4 +27,3 @@ pub use self::client::{
 };
 pub use self::codec::MAX_PACKET_SIZE;
 pub use self::map::{RelayMap, RelayMode, RelayNode};
-pub use iroh_base::node_addr::RelayUrl;

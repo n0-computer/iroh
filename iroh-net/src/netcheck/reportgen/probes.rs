@@ -475,10 +475,9 @@ fn sort_relays<'a>(
 mod tests {
     use pretty_assertions::assert_eq;
 
+    use super::*;
     use crate::defaults::staging::default_relay_map;
     use crate::netcheck::RelayLatencies;
-
-    use super::*;
 
     /// Shorthand which declares a new ProbeSet.
     ///

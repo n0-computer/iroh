@@ -20,13 +20,11 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
+use super::relay::RelayMap;
+use super::{portmapper, stun};
 use crate::dns::DnsResolver;
 use crate::net::{IpFamily, UdpSocket};
 use crate::relay::RelayUrl;
-
-use super::portmapper;
-use super::relay::RelayMap;
-use super::stun;
 
 mod metrics;
 mod reportgen;
@@ -777,11 +775,11 @@ mod tests {
     use tokio::time;
     use tracing::info;
 
-    use crate::defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT};
+    use super::*;
+    use crate::defaults::staging::EU_RELAY_HOSTNAME;
+    use crate::defaults::DEFAULT_STUN_PORT;
     use crate::ping::Pinger;
     use crate::relay::RelayNode;
-
-    use super::*;
 
     #[tokio::test]
     async fn test_basic() -> Result<()> {

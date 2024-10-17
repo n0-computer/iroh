@@ -2,7 +2,8 @@ use std::io;
 
 use bao_tree::io::sync::{ReadAt, Size, WriteAt};
 use derive_more::Deref;
-use range_collections::{range_set::RangeSetRange, RangeSet2};
+use range_collections::range_set::RangeSetRange;
+use range_collections::RangeSet2;
 
 /// A file that is sparse in memory
 ///

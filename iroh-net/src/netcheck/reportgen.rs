@@ -34,8 +34,7 @@ use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span
 use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_STUN_PORT;
 use crate::dns::{DnsResolver, ResolverExt};
-use crate::net::interfaces;
-use crate::net::UdpSocket;
+use crate::net::{interfaces, UdpSocket};
 use crate::netcheck::{self, Report};
 use crate::ping::{PingError, Pinger};
 use crate::relay::{RelayMap, RelayNode, RelayUrl};
@@ -1114,7 +1113,6 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use super::*;
-
     use crate::defaults::staging::{default_eu_relay_node, default_na_relay_node};
 
     #[test]

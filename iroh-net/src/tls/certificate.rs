@@ -5,12 +5,13 @@
 //! Based on rust-libp2p/transports/tls/src/certificate.rs originally licensed under MIT by Parity
 //! Technologies (UK) Ltd.
 
-use der::{asn1::OctetStringRef, Decode, Encode, Sequence};
+use std::sync::Arc;
+
+use der::asn1::OctetStringRef;
+use der::{Decode, Encode, Sequence};
 use x509_parser::prelude::*;
 
 use crate::key::{PublicKey, SecretKey, Signature};
-
-use std::sync::Arc;
 
 /// The libp2p Public Key Extension is a X.509 extension
 /// with the Object Identifier 1.3.6.1.4.1.53594.1.1,

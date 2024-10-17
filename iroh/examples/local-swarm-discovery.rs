@@ -16,7 +16,8 @@ use iroh::node::{DiscoveryConfig, Node};
 use iroh_blobs::Hash;
 use iroh_net::key::PublicKey;
 use iroh_net::NodeAddr;
-use tracing_subscriber::{prelude::*, EnvFilter};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::EnvFilter;
 
 use self::progress::show_download_progress;
 
@@ -137,10 +138,10 @@ mod progress {
         HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
         ProgressStyle,
     };
-    use iroh_blobs::{
-        get::{db::DownloadProgress, progress::BlobProgress, Stats},
-        Hash,
-    };
+    use iroh_blobs::get::db::DownloadProgress;
+    use iroh_blobs::get::progress::BlobProgress;
+    use iroh_blobs::get::Stats;
+    use iroh_blobs::Hash;
 
     pub async fn show_download_progress(
         hash: Hash,

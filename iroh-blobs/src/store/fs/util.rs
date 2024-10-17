@@ -1,8 +1,6 @@
-use std::{
-    fs::OpenOptions,
-    io::{self, Write},
-    path::Path,
-};
+use std::fs::OpenOptions;
+use std::io::{self, Write};
+use std::path::Path;
 
 /// overwrite a file with the given data.
 ///

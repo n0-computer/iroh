@@ -10,7 +10,8 @@
 
 use clap::Parser;
 use iroh_blobs::store::Store;
-use tracing_subscriber::{prelude::*, EnvFilter};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::EnvFilter;
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
 pub fn setup_logging() {

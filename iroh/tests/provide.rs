@@ -1,30 +1,24 @@
-use std::{
-    collections::BTreeMap,
-    net::SocketAddr,
-    ops::Range,
-    time::{Duration, Instant},
-};
+use std::collections::BTreeMap;
+use std::net::SocketAddr;
+use std::ops::Range;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use bao_tree::{blake3, ChunkNum, ChunkRanges};
 use bytes::Bytes;
 use futures_lite::FutureExt;
 use iroh::node::{Builder, DocsStorage};
 use iroh_base::node_addr::AddrInfoOptions;
-use iroh_net::{defaults::staging::default_relay_map, key::SecretKey, NodeAddr, NodeId};
+use iroh_blobs::format::collection::Collection;
+use iroh_blobs::get::fsm::{self, ConnectedNext, DecodeError};
+use iroh_blobs::get::Stats;
+use iroh_blobs::protocol::{GetRequest, RangeSpecSeq};
+use iroh_blobs::store::{MapMut, Store};
+use iroh_blobs::{BlobFormat, Hash};
+use iroh_net::defaults::staging::default_relay_map;
+use iroh_net::key::SecretKey;
+use iroh_net::{NodeAddr, NodeId};
 use rand::RngCore;
-
-use bao_tree::{blake3, ChunkNum, ChunkRanges};
-use iroh_blobs::{
-    format::collection::Collection,
-    get::{
-        fsm::ConnectedNext,
-        fsm::{self, DecodeError},
-        Stats,
-    },
-    protocol::{GetRequest, RangeSpecSeq},
-    store::{MapMut, Store},
-    BlobFormat, Hash,
-};
 
 /// Create a new endpoint and dial a peer, returning the connection.
 async fn dial(secret_key: SecretKey, peer: NodeAddr) -> anyhow::Result<quinn::Connection> {

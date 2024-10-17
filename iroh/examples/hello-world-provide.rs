@@ -4,7 +4,8 @@
 //! run this example from the project root:
 //!     $ cargo run --example hello-world-provide
 use iroh_base::node_addr::AddrInfoOptions;
-use tracing_subscriber::{prelude::*, EnvFilter};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::EnvFilter;
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
 pub fn setup_logging() {

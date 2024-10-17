@@ -21,6 +21,8 @@ use http::response::Builder as ResponseBuilder;
 use http::{HeaderMap, Method, Request, Response, StatusCode};
 use hyper::body::Incoming;
 use iroh_metrics::inc;
+// Module defined in this file.
+use stun_metrics::StunMetrics;
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::task::JoinSet;
 use tokio_util::task::AbortOnDropHandle;
@@ -29,9 +31,6 @@ use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument
 use crate::key::SecretKey;
 use crate::relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH};
 use crate::stun;
-
-// Module defined in this file.
-use stun_metrics::StunMetrics;
 
 pub(crate) mod actor;
 pub(crate) mod client_conn;
@@ -657,10 +656,8 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
 }
 
 mod stun_metrics {
-    use iroh_metrics::{
-        core::{Counter, Metric},
-        struct_iterable::Iterable,
-    };
+    use iroh_metrics::core::{Counter, Metric};
+    use iroh_metrics::struct_iterable::Iterable;
 
     /// StunMetrics tracked for the DERPER
     #[allow(missing_docs)]
@@ -713,11 +710,10 @@ mod tests {
     use http::header::UPGRADE;
     use iroh_base::node_addr::RelayUrl;
 
+    use super::*;
     use crate::relay::client::conn::ReceivedMessage;
     use crate::relay::client::ClientBuilder;
     use crate::relay::http::{Protocol, HTTP_UPGRADE_PROTOCOL};
-
-    use super::*;
 
     async fn spawn_local_relay() -> Result<Server> {
         Server::spawn(ServerConfig::<(), ()> {

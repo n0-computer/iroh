@@ -4,13 +4,11 @@ use anyhow::Result;
 use iroh_metrics::metrics::start_metrics_server;
 use tracing::info;
 
-use crate::{
-    config::Config,
-    dns::{DnsHandler, DnsServer},
-    http::HttpServer,
-    state::AppState,
-    store::ZoneStore,
-};
+use crate::config::Config;
+use crate::dns::{DnsHandler, DnsServer};
+use crate::http::HttpServer;
+use crate::state::AppState;
+use crate::store::ZoneStore;
 
 /// Spawn the server and run until the `Ctrl-C` signal is received, then shutdown.
 pub async fn run_with_config_until_ctrl_c(config: Config) -> Result<()> {
@@ -99,8 +97,9 @@ impl Server {
     pub async fn spawn_for_tests_with_mainline(
         mainline: Option<crate::config::BootstrapOption>,
     ) -> Result<(Self, std::net::SocketAddr, url::Url)> {
-        use crate::config::MetricsConfig;
         use std::net::{IpAddr, Ipv4Addr};
+
+        use crate::config::MetricsConfig;
 
         let mut config = Config::default();
         config.dns.port = 0;

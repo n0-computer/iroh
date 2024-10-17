@@ -1,6 +1,8 @@
 //! A dialer to conveniently dial many nodes.
 
-use std::{collections::HashMap, pin::Pin, task::Poll};
+use std::collections::HashMap;
+use std::pin::Pin;
+use std::task::Poll;
 
 use anyhow::anyhow;
 use futures_lite::Stream;

@@ -9,34 +9,25 @@
 //! the file system for the data, outboard, and sizes file. There is also a
 //! combined implementation that starts in memory and switches to file when
 //! the memory limit is reached.
-use std::{
-    fs::{File, OpenOptions},
-    io,
-    ops::{Deref, DerefMut},
-    path::{Path, PathBuf},
-    sync::{Arc, RwLock, Weak},
-};
+use std::fs::{File, OpenOptions};
+use std::io;
+use std::ops::{Deref, DerefMut};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock, Weak};
 
-use bao_tree::{
-    io::{
-        fsm::BaoContentItem,
-        outboard::PreOrderOutboard,
-        sync::{ReadAt, WriteAt},
-    },
-    BaoTree,
-};
+use bao_tree::io::fsm::BaoContentItem;
+use bao_tree::io::outboard::PreOrderOutboard;
+use bao_tree::io::sync::{ReadAt, WriteAt};
+use bao_tree::BaoTree;
 use bytes::{Bytes, BytesMut};
 use derive_more::Debug;
+use iroh_base::hash::Hash;
 use iroh_io::AsyncSliceReader;
 
-use crate::{
-    store::BaoBatchWriter,
-    util::{get_limited_slice, MemOrFile, SparseMemFile},
-    IROH_BLOCK_SIZE,
-};
-use iroh_base::hash::Hash;
-
 use super::mutable_mem_storage::{MutableMemStorage, SizeInfo};
+use crate::store::BaoBatchWriter;
+use crate::util::{get_limited_slice, MemOrFile, SparseMemFile};
+use crate::IROH_BLOCK_SIZE;
 
 /// Data files are stored in 3 files. The data file, the outboard file,
 /// and a sizes file. The sizes file contains the size that the remote side told us
@@ -720,25 +711,22 @@ impl BaoBatchWriter for BaoFileWriter {
 
 #[cfg(test)]
 pub mod test_support {
-    use std::{future::Future, io::Cursor, ops::Range};
+    use std::future::Future;
+    use std::io::Cursor;
+    use std::ops::Range;
 
-    use bao_tree::{
-        io::{
-            fsm::{ResponseDecoder, ResponseDecoderNext},
-            outboard::PostOrderMemOutboard,
-            round_up_to_chunks,
-            sync::encode_ranges_validated,
-        },
-        BlockSize, ChunkRanges,
-    };
+    use bao_tree::io::fsm::{ResponseDecoder, ResponseDecoderNext};
+    use bao_tree::io::outboard::PostOrderMemOutboard;
+    use bao_tree::io::round_up_to_chunks;
+    use bao_tree::io::sync::encode_ranges_validated;
+    use bao_tree::{BlockSize, ChunkRanges};
     use futures_lite::{Stream, StreamExt};
     use iroh_io::AsyncStreamReader;
     use rand::RngCore;
     use range_collections::RangeSet2;
 
-    use crate::util::limited_range;
-
     use super::*;
+    use crate::util::limited_range;
 
     pub const IROH_BLOCK_SIZE: BlockSize = BlockSize::from_chunk_log(4);
 
@@ -879,9 +867,8 @@ mod tests {
     };
     use tokio::task::JoinSet;
 
-    use crate::util::local_pool::LocalPool;
-
     use super::*;
+    use crate::util::local_pool::LocalPool;
 
     #[tokio::test]
     async fn partial_downloads() {

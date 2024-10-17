@@ -1,14 +1,11 @@
 //! Utilities used in the protocol implementation
 
-use rand::{
-    seq::{IteratorRandom, SliceRandom},
-    Rng,
-};
-use std::{
-    collections::{BTreeMap, HashMap},
-    hash::Hash,
-    time::{Duration, Instant},
-};
+use std::collections::{BTreeMap, HashMap};
+use std::hash::Hash;
+use std::time::{Duration, Instant};
+
+use rand::seq::{IteratorRandom, SliceRandom};
+use rand::Rng;
 
 /// Implement methods, display, debug and conversion traits for 32 byte identifiers.
 macro_rules! idbytes_impls {
@@ -340,10 +337,8 @@ impl<K: Hash + Eq + Clone, V> TimeBoundCache<K, V> {
 
 #[cfg(test)]
 mod test {
-    use std::{
-        str::FromStr,
-        time::{Duration, Instant},
-    };
+    use std::str::FromStr;
+    use std::time::{Duration, Instant};
 
     use rand_core::SeedableRng;
 

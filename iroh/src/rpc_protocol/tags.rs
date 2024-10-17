@@ -4,9 +4,9 @@ use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
+use super::blobs::BatchId;
+use super::RpcService;
 use crate::client::tags::TagInfo;
-
-use super::{blobs::BatchId, RpcService};
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

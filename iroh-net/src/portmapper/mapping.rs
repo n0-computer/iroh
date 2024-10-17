@@ -1,6 +1,8 @@
 //! A port mapping created with one of the supported protocols.
 
-use std::{net::Ipv4Addr, num::NonZeroU16, time::Duration};
+use std::net::Ipv4Addr;
+use std::num::NonZeroU16;
+use std::time::Duration;
 
 use anyhow::Result;
 

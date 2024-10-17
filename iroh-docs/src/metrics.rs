@@ -1,9 +1,7 @@
 //! Metrics for iroh-docs
 
-use iroh_metrics::{
-    core::{Counter, Metric},
-    struct_iterable::Iterable,
-};
+use iroh_metrics::core::{Counter, Metric};
+use iroh_metrics::struct_iterable::Iterable;
 
 /// Metrics for iroh-docs
 #[allow(missing_docs)]

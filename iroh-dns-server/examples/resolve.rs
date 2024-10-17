@@ -1,15 +1,12 @@
 use std::net::SocketAddr;
 
 use clap::{Parser, ValueEnum};
-use hickory_resolver::{
-    config::{NameServerConfig, Protocol, ResolverConfig},
-    AsyncResolver,
-};
-use iroh_net::{
-    discovery::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
-    dns::{node_info::TxtAttrs, DnsResolver},
-    NodeId,
-};
+use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig};
+use hickory_resolver::AsyncResolver;
+use iroh_net::discovery::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
+use iroh_net::dns::node_info::TxtAttrs;
+use iroh_net::dns::DnsResolver;
+use iroh_net::NodeId;
 
 const LOCALHOST_DNS: &str = "127.0.0.1:5300";
 const EXAMPLE_ORIGIN: &str = "irohdns.example";

@@ -2,11 +2,10 @@ use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use futures_util::SinkExt;
 use iroh::client::Iroh;
-use iroh_gossip::{
-    net::{Command, Event, GossipEvent},
-    proto::TopicId,
-};
-use iroh_net::{key::SecretKey, NodeAddr};
+use iroh_gossip::net::{Command, Event, GossipEvent};
+use iroh_gossip::proto::TopicId;
+use iroh_net::key::SecretKey;
+use iroh_net::NodeAddr;
 use testresult::TestResult;
 
 /// Spawn an iroh node in a separate thread and tokio runtime, and return

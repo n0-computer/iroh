@@ -1,7 +1,11 @@
 //! Utilities for reporting progress.
 //!
 //! The main entry point is the [ProgressSender] trait.
-use std::{future::Future, io, marker::PhantomData, ops::Deref, sync::Arc};
+use std::future::Future;
+use std::io;
+use std::marker::PhantomData;
+use std::ops::Deref;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use iroh_io::AsyncSliceWriter;

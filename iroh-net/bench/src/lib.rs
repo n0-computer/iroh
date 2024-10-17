@@ -1,9 +1,7 @@
-use std::{
-    num::ParseIntError,
-    str::FromStr,
-    sync::{Arc, Mutex},
-    time::Instant,
-};
+use std::num::ParseIntError;
+use std::str::FromStr;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use anyhow::Result;
 use clap::Parser;

@@ -1,17 +1,16 @@
 //! Utilities for iroh-gossip networking
 
-use std::{io, pin::Pin, time::Instant};
+use std::io;
+use std::pin::Pin;
+use std::time::Instant;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    time::{sleep_until, Sleep},
-};
-
-use crate::proto::util::TimerMap;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::time::{sleep_until, Sleep};
 
 use super::ProtoMessage;
+use crate::proto::util::TimerMap;
 
 /// Write a `ProtoMessage` as a length-prefixed, postcard-encoded message.
 pub async fn write_message<W: AsyncWrite + Unpin>(

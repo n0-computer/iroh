@@ -5,16 +5,16 @@
 //! You obtain a [`Client`] via [`Iroh::authors()`](crate::client::Iroh::authors).
 
 use anyhow::Result;
-use futures_lite::{stream::StreamExt, Stream};
+use futures_lite::stream::StreamExt;
+use futures_lite::Stream;
 use iroh_docs::{Author, AuthorId};
 use ref_cast::RefCast;
 
+use super::{flatten, RpcClient};
 use crate::rpc_protocol::authors::{
     CreateRequest, DeleteRequest, ExportRequest, GetDefaultRequest, ImportRequest, ListRequest,
     SetDefaultRequest,
 };
-
-use super::{flatten, RpcClient};
 
 /// Iroh authors client.
 #[derive(Debug, Clone, RefCast)]
@@ -94,9 +94,8 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
-    use crate::node::Node;
-
     use super::*;
+    use crate::node::Node;
 
     #[tokio::test]
     async fn test_authors() -> Result<()> {

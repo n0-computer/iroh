@@ -3,10 +3,12 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use iroh_metrics::inc;
 use pkarr::SignedPacket;
-use redb::{backends::InMemoryBackend, Database, ReadableTable, TableDefinition};
+use redb::backends::InMemoryBackend;
+use redb::{Database, ReadableTable, TableDefinition};
 use tracing::info;
 
-use crate::{metrics::Metrics, util::PublicKeyBytes};
+use crate::metrics::Metrics;
+use crate::util::PublicKeyBytes;
 
 pub type SignedPacketsKey = [u8; 32];
 const SIGNED_PACKETS_TABLE: TableDefinition<&SignedPacketsKey, &[u8]> =

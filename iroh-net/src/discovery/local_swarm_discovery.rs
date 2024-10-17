@@ -32,31 +32,25 @@
 //!   println!("locally discovered nodes: {locally_discovered:?}");
 //! }
 //! ```
-use std::{
-    collections::{BTreeSet, HashMap},
-    net::{IpAddr, SocketAddr},
-    time::Duration,
-};
+use std::collections::{BTreeSet, HashMap};
+use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
 
 use anyhow::Result;
 use derive_more::FromStr;
 use futures_lite::stream::Boxed as BoxStream;
 use futures_util::FutureExt;
+use iroh_base::key::PublicKey;
+use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
+use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::mpsc::{self};
+use tokio::task::JoinSet;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 use watchable::Watchable;
 
-use iroh_base::key::PublicKey;
-use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
-use tokio::{
-    sync::mpsc::{self, error::TrySendError},
-    task::JoinSet,
-};
-use tokio_util::task::AbortOnDropHandle;
-
-use crate::{
-    discovery::{Discovery, DiscoveryItem},
-    AddrInfo, Endpoint, NodeId,
-};
+use crate::discovery::{Discovery, DiscoveryItem};
+use crate::{AddrInfo, Endpoint, NodeId};
 
 /// The n0 local swarm node discovery name
 const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
@@ -397,9 +391,10 @@ mod tests {
     /// This module's name signals nextest to run test in a single thread (no other concurrent
     /// tests)
     mod run_in_isolation {
-        use super::super::*;
         use futures_lite::StreamExt;
         use testresult::TestResult;
+
+        use super::super::*;
 
         #[tokio::test]
         async fn local_swarm_discovery_publish_resolve() -> TestResult {

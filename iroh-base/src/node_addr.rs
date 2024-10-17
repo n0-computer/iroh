@@ -6,7 +6,11 @@
 //!
 //! The primary way of addressing a node is by using the [`NodeAddr`].
 
-use std::{collections::BTreeSet, fmt, net::SocketAddr, ops::Deref, str::FromStr};
+use std::collections::BTreeSet;
+use std::fmt;
+use std::net::SocketAddr;
+use std::ops::Deref;
+use std::str::FromStr;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};

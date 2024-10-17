@@ -1,9 +1,7 @@
 //! The [`BestAddr`] is the currently active best address for UDP sends.
 
-use std::{
-    net::SocketAddr,
-    time::{Duration, Instant},
-};
+use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 
 use tracing::{debug, info};
 

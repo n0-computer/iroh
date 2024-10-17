@@ -1,26 +1,20 @@
-use std::{fmt, sync::Arc};
+use std::fmt;
+use std::sync::Arc;
 
 use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;
-use hickory_proto::{
-    op::ResponseCode,
-    rr::{LowerName, Name, RecordType},
+use hickory_proto::op::ResponseCode;
+use hickory_proto::rr::{LowerName, Name, RecordType};
+use hickory_server::authority::{
+    AuthLookup, Authority, LookupError, LookupOptions, LookupRecords, MessageRequest, UpdateResult,
+    ZoneType,
 };
-use hickory_server::{
-    authority::{
-        AuthLookup, Authority, LookupError, LookupOptions, LookupRecords, MessageRequest,
-        UpdateResult, ZoneType,
-    },
-    server::RequestInfo,
-    store::in_memory::InMemoryAuthority,
-};
-
+use hickory_server::server::RequestInfo;
+use hickory_server::store::in_memory::InMemoryAuthority;
 use tracing::{debug, trace};
 
-use crate::{
-    store::ZoneStore,
-    util::{record_set_append_origin, PublicKeyBytes},
-};
+use crate::store::ZoneStore;
+use crate::util::{record_set_append_origin, PublicKeyBytes};
 
 #[derive(derive_more::Debug)]
 pub struct NodeAuthority {

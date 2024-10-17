@@ -1,11 +1,10 @@
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use futures_lite::future::Boxed as BoxFuture;
+use os::{is_interesting_interface, RouteMonitor};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, trace, warn};
 
@@ -23,13 +22,8 @@ use super::bsd as os;
 use super::linux as os;
 #[cfg(target_os = "windows")]
 use super::windows as os;
-
-use os::{is_interesting_interface, RouteMonitor};
-
-use crate::net::{
-    interfaces::{IpNet, State},
-    ip::is_link_local,
-};
+use crate::net::interfaces::{IpNet, State};
+use crate::net::ip::is_link_local;
 
 /// The message sent by the OS specific monitors.
 #[derive(Debug, Copy, Clone)]

@@ -25,9 +25,9 @@ use crate::defaults::timeouts::relay::CLIENT_RECV_TIMEOUT;
 use crate::key::{PublicKey, SecretKey};
 use crate::relay::client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter};
 use crate::relay::codec::{
-    write_frame, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+    write_frame, ClientInfo, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_READ_QUEUE_DEPTH,
+    PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
 };
-use crate::relay::codec::{ClientInfo, PER_CLIENT_READ_QUEUE_DEPTH};
 
 impl PartialEq for Conn {
     fn eq(&self, other: &Self) -> bool {

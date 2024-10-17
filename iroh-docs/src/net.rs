@@ -1,24 +1,21 @@
 //! Network implementation of the iroh-docs protocol
 
-use std::{
-    future::Future,
-    time::{Duration, Instant},
-};
+use std::future::Future;
+use std::time::{Duration, Instant};
 
-use iroh_net::{endpoint::get_remote_node_id, key::PublicKey, Endpoint, NodeAddr};
+#[cfg(feature = "metrics")]
+use iroh_metrics::inc;
+use iroh_net::endpoint::get_remote_node_id;
+use iroh_net::key::PublicKey;
+use iroh_net::{Endpoint, NodeAddr};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error_span, trace, Instrument};
 
-use crate::{
-    actor::SyncHandle,
-    net::codec::{run_alice, BobState},
-    NamespaceId, SyncOutcome,
-};
-
+use crate::actor::SyncHandle;
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
-#[cfg(feature = "metrics")]
-use iroh_metrics::inc;
+use crate::net::codec::{run_alice, BobState};
+use crate::{NamespaceId, SyncOutcome};
 
 /// The ALPN identifier for the iroh-docs protocol
 pub const DOCS_ALPN: &[u8] = b"/iroh-sync/1";

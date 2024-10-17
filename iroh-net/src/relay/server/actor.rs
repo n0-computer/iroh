@@ -22,18 +22,15 @@ use tungstenite::protocol::Role;
 
 use crate::defaults::timeouts::relay::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT;
 use crate::key::{PublicKey, SecretKey};
+use crate::relay::codec::{
+    recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
+};
 use crate::relay::http::Protocol;
+use crate::relay::server::client_conn::ClientConnBuilder;
+use crate::relay::server::clients::Clients;
+use crate::relay::server::metrics::Metrics;
 use crate::relay::server::streams::{MaybeTlsStream, RelayIo};
 use crate::relay::server::types::ServerMessage;
-use crate::relay::{
-    codec::{
-        recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
-        SERVER_CHANNEL_SIZE,
-    },
-    server::client_conn::ClientConnBuilder,
-    server::clients::Clients,
-    server::metrics::Metrics,
-};
 
 // TODO: skipping `verboseDropKeys` for now
 
@@ -406,18 +403,16 @@ impl ClientCounter {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    use crate::relay::{
-        client::conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
-        client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
-        codec::{recv_frame, ClientInfo, Frame, FrameType},
-    };
-    use tokio_util::codec::{FramedRead, FramedWrite};
-    use tracing_subscriber::{prelude::*, EnvFilter};
-
     use bytes::Bytes;
     use tokio::io::DuplexStream;
+    use tokio_util::codec::{FramedRead, FramedWrite};
+    use tracing_subscriber::prelude::*;
+    use tracing_subscriber::EnvFilter;
+
+    use super::*;
+    use crate::relay::client::conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage};
+    use crate::relay::client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter};
+    use crate::relay::codec::{recv_frame, ClientInfo, Frame, FrameType};
 
     fn test_client_builder(
         key: PublicKey,

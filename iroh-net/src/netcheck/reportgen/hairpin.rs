@@ -20,11 +20,10 @@ use tokio::time::Instant;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
+use crate::defaults::timeouts::HAIRPIN_CHECK_TIMEOUT;
 use crate::net::UdpSocket;
 use crate::netcheck::{self, reportgen, Inflight};
 use crate::stun;
-
-use crate::defaults::timeouts::HAIRPIN_CHECK_TIMEOUT;
 
 /// Handle to the hairpin actor.
 ///
@@ -176,8 +175,9 @@ impl Actor {
 
 #[cfg(test)]
 mod tests {
-    use bytes::BytesMut;
     use std::time::Duration;
+
+    use bytes::BytesMut;
     use tokio::sync::mpsc;
     use tracing::info;
 

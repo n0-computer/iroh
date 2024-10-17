@@ -1,4 +1,5 @@
-use std::{fs::File, io};
+use std::fs::File;
+use std::io;
 
 use bao_tree::io::sync::{ReadAt, Size};
 use bytes::Bytes;

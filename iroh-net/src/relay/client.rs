@@ -5,8 +5,10 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use base64::{engine::general_purpose::URL_SAFE, Engine as _};
+use base64::engine::general_purpose::URL_SAFE;
+use base64::Engine as _;
 use bytes::Bytes;
+use conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
 use futures_lite::future::Boxed as BoxFuture;
 use futures_util::StreamExt;
 use http_body_util::Empty;
@@ -17,6 +19,7 @@ use hyper::Request;
 use hyper_util::rt::TokioIo;
 use rand::Rng;
 use rustls::client::Resumption;
+use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
@@ -26,9 +29,6 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 use url::Url;
-
-use conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
-use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
 
 use crate::defaults::timeouts::relay::*;
 use crate::dns::{DnsResolver, ResolverExt};
@@ -1097,9 +1097,8 @@ fn url_port(url: &Url) -> Option<u16> {
 mod tests {
     use anyhow::{bail, Result};
 
-    use crate::dns::default_resolver;
-
     use super::*;
+    use crate::dns::default_resolver;
 
     #[tokio::test]
     async fn test_recv_detail_connect_error() -> Result<()> {

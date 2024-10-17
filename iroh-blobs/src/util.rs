@@ -1,16 +1,16 @@
 //! Utility functions and types.
-use bao_tree::{io::outboard::PreOrderOutboard, BaoTree, ChunkRanges};
+use std::borrow::Borrow;
+use std::fmt;
+use std::io::{BufReader, Read};
+use std::sync::{Arc, Weak};
+use std::time::SystemTime;
+
+use bao_tree::io::outboard::PreOrderOutboard;
+use bao_tree::{BaoTree, ChunkRanges};
 use bytes::Bytes;
 use derive_more::{Debug, Display, From, Into};
 use range_collections::range_set::RangeSetRange;
 use serde::{Deserialize, Serialize};
-use std::{
-    borrow::Borrow,
-    fmt,
-    io::{BufReader, Read},
-    sync::{Arc, Weak},
-    time::SystemTime,
-};
 
 use crate::{BlobFormat, Hash, HashAndFormat, IROH_BLOCK_SIZE};
 
@@ -28,9 +28,10 @@ pub struct Tag(pub Bytes);
 
 #[cfg(feature = "redb")]
 mod redb_support {
-    use super::Tag;
     use bytes::Bytes;
     use redb::{Key as RedbKey, Value as RedbValue};
+
+    use super::Tag;
 
     impl RedbValue for Tag {
         type SelfType<'a> = Self;

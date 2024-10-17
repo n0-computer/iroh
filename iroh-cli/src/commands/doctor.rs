@@ -1,58 +1,60 @@
 //! Tool to get information about the current network environment of a node,
 //! and to test connectivity to specific other nodes.
 
-use crate::config::{iroh_data_root, NodeConfig};
+use std::collections::HashMap;
+use std::io;
+use std::net::SocketAddr;
+use std::num::NonZeroU16;
+use std::path::PathBuf;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
 use anyhow::Context;
 use clap::Subcommand;
 use console::style;
-use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind,
+};
+use crossterm::execute;
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use derive_more::Display;
 use futures_lite::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
-use iroh::net::metrics::MagicsockMetrics;
-use iroh::{
-    base::ticket::{BlobTicket, Ticket},
-    blobs::{
-        store::{ReadableStore, Store as _},
-        util::progress::{AsyncChannelProgressSender, ProgressSender},
-    },
-    docs::{Capability, DocTicket},
-    net::{
-        defaults::DEFAULT_STUN_PORT,
-        discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
-        dns::default_resolver,
-        endpoint::{self, Connection, ConnectionTypeStream, RecvStream, RemoteInfo, SendStream},
-        key::{PublicKey, SecretKey},
-        netcheck, portmapper,
-        relay::{RelayMap, RelayMode, RelayUrl},
-        ticket::NodeTicket,
-        Endpoint, NodeAddr, NodeId,
-    },
-    util::{path::IrohPaths, progress::ProgressWriter},
+use iroh::base::ticket::{BlobTicket, Ticket};
+use iroh::blobs::store::{ReadableStore, Store as _};
+use iroh::blobs::util::progress::{AsyncChannelProgressSender, ProgressSender};
+use iroh::docs::{Capability, DocTicket};
+use iroh::net::defaults::DEFAULT_STUN_PORT;
+use iroh::net::discovery::dns::DnsDiscovery;
+use iroh::net::discovery::pkarr::PkarrPublisher;
+use iroh::net::discovery::{ConcurrentDiscovery, Discovery};
+use iroh::net::dns::default_resolver;
+use iroh::net::endpoint::{
+    self, Connection, ConnectionTypeStream, RecvStream, RemoteInfo, SendStream,
 };
+use iroh::net::key::{PublicKey, SecretKey};
+use iroh::net::metrics::MagicsockMetrics;
+use iroh::net::relay::{RelayMap, RelayMode, RelayUrl};
+use iroh::net::ticket::NodeTicket;
+use iroh::net::{netcheck, portmapper, Endpoint, NodeAddr, NodeId};
+use iroh::util::path::IrohPaths;
+use iroh::util::progress::ProgressWriter;
 use iroh_metrics::core::Core;
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
-use ratatui::{prelude::*, widgets::*};
+use ratatui::prelude::*;
+use ratatui::widgets::*;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    io,
-    net::SocketAddr,
-    num::NonZeroU16,
-    path::PathBuf,
-    str::FromStr,
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use tokio::{io::AsyncWriteExt, sync};
+use tokio::io::AsyncWriteExt;
+use tokio::sync;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::warn;
+
+use crate::config::{iroh_data_root, NodeConfig};
 
 /// Options for the secret key usage.
 #[derive(Debug, Clone, derive_more::Display)]

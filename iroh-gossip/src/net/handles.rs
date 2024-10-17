@@ -2,11 +2,9 @@
 //!
 //! These are returned from [`super::Gossip`].
 
-use std::{
-    collections::{BTreeSet, HashSet},
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::collections::{BTreeSet, HashSet};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
@@ -14,7 +12,8 @@ use futures_lite::{Stream, StreamExt};
 use iroh_net::NodeId;
 use serde::{Deserialize, Serialize};
 
-use crate::{net::TOPIC_EVENTS_DEFAULT_CAP, proto::DeliveryScope};
+use crate::net::TOPIC_EVENTS_DEFAULT_CAP;
+use crate::proto::DeliveryScope;
 
 /// Sender for a gossip topic.
 #[derive(Debug)]

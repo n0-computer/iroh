@@ -1,25 +1,16 @@
 #![cfg(test)]
-use anyhow::anyhow;
-use std::{
-    sync::atomic::AtomicUsize,
-    time::{Duration, Instant},
-};
+use std::sync::atomic::AtomicUsize;
+use std::time::{Duration, Instant};
 
+use anyhow::anyhow;
 use futures_util::future::FutureExt;
 use iroh_net::key::SecretKey;
 
-use crate::{
-    get::{
-        db::BlobId,
-        progress::{BlobProgress, TransferState},
-    },
-    util::{
-        local_pool::LocalPool,
-        progress::{AsyncChannelProgressSender, IdGenerator},
-    },
-};
-
 use super::*;
+use crate::get::db::BlobId;
+use crate::get::progress::{BlobProgress, TransferState};
+use crate::util::local_pool::LocalPool;
+use crate::util::progress::{AsyncChannelProgressSender, IdGenerator};
 
 mod dialer;
 mod getter;

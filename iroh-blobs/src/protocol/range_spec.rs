@@ -354,9 +354,11 @@ impl<'a> Iterator for NonEmptyRequestRangeSpecIter<'a> {
 mod tests {
     use std::ops::Range;
 
-    use super::*;
-    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+    use iroh_test::assert_eq_hex;
+    use iroh_test::hexdump::parse_hexdump;
     use proptest::prelude::*;
+
+    use super::*;
 
     fn ranges(value_range: Range<u64>) -> impl Strategy<Value = ChunkRanges> {
         prop::collection::vec((value_range.clone(), value_range), 0..16).prop_map(|v| {

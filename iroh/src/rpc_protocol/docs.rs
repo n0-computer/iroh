@@ -1,14 +1,16 @@
 use std::path::PathBuf;
 
 use bytes::Bytes;
-use iroh_base::{
-    node_addr::AddrInfoOptions,
-    rpc::{RpcError, RpcResult},
-};
-use iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
+use iroh_base::node_addr::AddrInfoOptions;
+use iroh_base::rpc::{RpcError, RpcResult};
+use iroh_blobs::export::ExportProgress;
+use iroh_blobs::store::ExportMode;
+use iroh_blobs::Hash;
+use iroh_docs::actor::OpenState;
+use iroh_docs::engine::LiveEvent;
+use iroh_docs::store::{DownloadPolicy, Query};
 use iroh_docs::{
-    actor::OpenState, engine::LiveEvent, store::DownloadPolicy, store::Query, AuthorId, Capability,
-    CapabilityKind, DocTicket, Entry, NamespaceId, PeerIdBytes, SignedEntry,
+    AuthorId, Capability, CapabilityKind, DocTicket, Entry, NamespaceId, PeerIdBytes, SignedEntry,
 };
 use iroh_net::NodeAddr;
 use nested_enum_utils::enum_conversions;

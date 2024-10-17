@@ -49,20 +49,16 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Result};
 use futures_util::stream::BoxStream;
 use pkarr::SignedPacket;
-use tokio::{
-    task::JoinHandle,
-    time::{Duration, Instant},
-};
+use tokio::task::JoinHandle;
+use tokio::time::{Duration, Instant};
 use tracing::{debug, error_span, info, warn, Instrument};
 use url::Url;
 use watchable::{Watchable, Watcher};
 
-use crate::{
-    discovery::{Discovery, DiscoveryItem},
-    dns::node_info::NodeInfo,
-    key::SecretKey,
-    AddrInfo, Endpoint, NodeId,
-};
+use crate::discovery::{Discovery, DiscoveryItem};
+use crate::dns::node_info::NodeInfo;
+use crate::key::SecretKey;
+use crate::{AddrInfo, Endpoint, NodeId};
 
 #[cfg(feature = "discovery-pkarr-dht")]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-pkarr-dht")))]

@@ -1,9 +1,7 @@
 //! Metrics for iroh-gossip
 
-use iroh_metrics::{
-    core::{Counter, Metric},
-    struct_iterable::Iterable,
-};
+use iroh_metrics::core::{Counter, Metric};
+use iroh_metrics::struct_iterable::Iterable;
 
 /// Enum of metrics for the module
 #[allow(missing_docs)]

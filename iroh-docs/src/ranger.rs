@@ -690,8 +690,13 @@ pub enum InsertOutcome {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::convert::Infallible;
+    use std::fmt::Debug;
+    use std::rc::Rc;
+
     use proptest::prelude::*;
-    use std::{cell::RefCell, collections::BTreeMap, convert::Infallible, fmt::Debug, rc::Rc};
     use test_strategy::proptest;
 
     use super::*;

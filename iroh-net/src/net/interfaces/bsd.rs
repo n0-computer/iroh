@@ -2,10 +2,8 @@
 
 #![allow(unused)]
 
-use std::{
-    collections::HashMap,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
-};
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use libc::{c_int, uintptr_t, AF_INET, AF_INET6, AF_LINK, AF_ROUTE, AF_UNSPEC, CTL_NET};
 #[cfg(any(target_os = "macos", target_os = "ios"))]

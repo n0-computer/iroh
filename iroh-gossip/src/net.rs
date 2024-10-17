@@ -1,38 +1,33 @@
 //! Networking for the `iroh-gossip` protocol
 
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use std::time::Instant;
+
 use anyhow::{anyhow, Context as _, Result};
 use bytes::BytesMut;
-use futures_concurrency::{
-    future::TryJoin,
-    stream::{stream_group, StreamGroup},
-};
-use futures_lite::{stream::Stream, StreamExt};
+use futures_concurrency::future::TryJoin;
+use futures_concurrency::stream::{stream_group, StreamGroup};
+use futures_lite::stream::Stream;
+use futures_lite::StreamExt;
 use futures_util::TryFutureExt;
 use iroh_metrics::inc;
-use iroh_net::{
-    dialer::Dialer,
-    endpoint::{get_remote_node_id, Connection, DirectAddr},
-    key::PublicKey,
-    AddrInfo, Endpoint, NodeAddr, NodeId,
-};
+use iroh_net::dialer::Dialer;
+use iroh_net::endpoint::{get_remote_node_id, Connection, DirectAddr};
+use iroh_net::key::PublicKey;
+use iroh_net::{AddrInfo, Endpoint, NodeAddr, NodeId};
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
-use std::{
-    collections::{BTreeSet, HashMap, HashSet, VecDeque},
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-    time::Instant,
-};
-use tokio::{sync::mpsc, task::JoinSet};
+use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error_span, trace, warn, Instrument};
 
 use self::util::{read_message, write_message, Timers};
-use crate::{
-    metrics::Metrics,
-    proto::{self, PeerData, Scope, TopicId},
-};
+use crate::metrics::Metrics;
+use crate::proto::{self, PeerData, Scope, TopicId};
 
 mod handles;
 pub mod util;

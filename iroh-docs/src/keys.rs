@@ -1,6 +1,8 @@
 //! Keys used in iroh-docs
 
-use std::{cmp::Ordering, fmt, str::FromStr};
+use std::cmp::Ordering;
+use std::fmt;
+use std::str::FromStr;
 
 use ed25519_dalek::{Signature, SignatureError, Signer, SigningKey, VerifyingKey};
 use iroh_base::base32;

@@ -1,11 +1,10 @@
-use std::{
-    collections::{hash_map::Entry, HashMap},
-    hash::Hash,
-    net::{IpAddr, SocketAddr},
-    pin::Pin,
-    task::{Context, Poll},
-    time::Instant,
-};
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
+use std::hash::Hash;
+use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::Instant;
 
 use futures_lite::stream::Stream;
 use iroh_base::key::NodeId;
@@ -15,28 +14,22 @@ use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};
 
-use self::{
-    best_addr::ClearReason,
-    node_state::{NodeState, Options, PingHandled},
-};
-use super::{
-    metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
-};
-use crate::{
-    disco::{CallMeMaybe, Pong, SendAddr},
-    key::PublicKey,
-    relay::RelayUrl,
-    stun, NodeAddr,
-};
+use self::best_addr::ClearReason;
+use self::node_state::{NodeState, Options, PingHandled};
+use super::metrics::Metrics as MagicsockMetrics;
+use super::{ActorMessage, DiscoMessageSource, QuicMappedAddr};
+use crate::disco::{CallMeMaybe, Pong, SendAddr};
+use crate::key::PublicKey;
+use crate::relay::RelayUrl;
+use crate::{stun, NodeAddr};
 
 mod best_addr;
 mod node_state;
 mod path_state;
 mod udp_paths;
 
-pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
-
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
+pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -655,10 +648,11 @@ impl IpPort {
 
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+
     use super::node_state::MAX_INACTIVE_DIRECT_ADDRESSES;
     use super::*;
     use crate::key::SecretKey;
-    use std::net::Ipv4Addr;
 
     impl NodeMap {
         #[track_caller]

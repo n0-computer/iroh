@@ -1,8 +1,6 @@
-use std::{
-    net::SocketAddr,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -10,9 +8,8 @@ use quinn::{Connection, Endpoint, RecvStream, SendStream, TokioRuntime, Transpor
 use socket2::{Domain, Protocol, Socket, Type};
 use tracing::{trace, warn};
 
-use crate::{
-    client_handler, stats::TransferResult, ClientStats, ConnectionSelector, EndpointSelector, Opt,
-};
+use crate::stats::TransferResult;
+use crate::{client_handler, ClientStats, ConnectionSelector, EndpointSelector, Opt};
 
 /// Derived from the iroh-net udp SOCKET_BUFFER_SIZE
 const SOCKET_BUFFER_SIZE: usize = 7 << 20;

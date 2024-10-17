@@ -8,22 +8,18 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_lite::StreamExt;
 use futures_util::SinkExt;
+use iroh_metrics::{inc, inc_by};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{trace, Instrument};
 
-use crate::{disco::looks_like_disco_wrapper, key::PublicKey};
-
-use iroh_metrics::{inc, inc_by};
-
-use crate::relay::codec::Frame;
+use crate::disco::looks_like_disco_wrapper;
+use crate::key::PublicKey;
+use crate::relay::codec::{write_frame, Frame, KEEP_ALIVE};
+use crate::relay::server::metrics::Metrics;
 use crate::relay::server::streams::RelayIo;
 use crate::relay::server::types::{Packet, ServerMessage};
-use crate::relay::{
-    codec::{write_frame, KEEP_ALIVE},
-    server::metrics::Metrics,
-};
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
 ///
@@ -456,15 +452,14 @@ impl ClientConnIo {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::bail;
+    use tokio_util::codec::Framed;
+
+    use super::*;
     use crate::key::SecretKey;
     use crate::relay::client::conn;
     use crate::relay::codec::{recv_frame, DerpCodec, FrameType};
     use crate::relay::server::streams::MaybeTlsStream;
-
-    use super::*;
-
-    use anyhow::bail;
-    use tokio_util::codec::Framed;
 
     #[tokio::test]
     async fn test_client_conn_io_basic() -> Result<()> {

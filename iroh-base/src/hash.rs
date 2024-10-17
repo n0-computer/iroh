@@ -1,7 +1,8 @@
 //! The blake3 hash used in Iroh.
 
+use std::borrow::Borrow;
+use std::fmt;
 use std::str::FromStr;
-use std::{borrow::Borrow, fmt};
 
 use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
@@ -233,9 +234,10 @@ pub struct HashAndFormat {
 #[cfg(feature = "redb")]
 #[cfg_attr(iroh_docsrs, cfg(feature = "redb"))]
 mod redb_support {
-    use super::{Hash, HashAndFormat};
     use postcard::experimental::max_size::MaxSize;
     use redb::{Key as RedbKey, Value as RedbValue};
+
+    use super::{Hash, HashAndFormat};
 
     impl RedbValue for Hash {
         type SelfType<'a> = Self;
@@ -396,11 +398,11 @@ impl<'de> Deserialize<'de> for HashAndFormat {
 #[cfg(test)]
 mod tests {
 
-    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+    use iroh_test::assert_eq_hex;
+    use iroh_test::hexdump::parse_hexdump;
+    use serde_test::{assert_tokens, Configure, Token};
 
     use super::*;
-
-    use serde_test::{assert_tokens, Configure, Token};
 
     #[test]
     fn test_display_parse_roundtrip() {

@@ -45,8 +45,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
-use futures_util::future::MapErr;
-use futures_util::future::Shared;
+use futures_util::future::{MapErr, Shared};
 use iroh_base::key::PublicKey;
 use iroh_blobs::protocol::Closed;
 use iroh_blobs::store::Store as BaoStore;
@@ -62,8 +61,9 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
+use crate::node::docs::DocsEngine;
 use crate::node::nodes_storage::store_node_addrs;
-use crate::node::{docs::DocsEngine, protocol::ProtocolMap};
+use crate::node::protocol::ProtocolMap;
 
 mod builder;
 mod docs;
@@ -72,12 +72,13 @@ mod protocol;
 mod rpc;
 mod rpc_status;
 
+pub use protocol::ProtocolHandler;
+
 pub use self::builder::{
     Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,
     DEFAULT_RPC_ADDR,
 };
 pub use self::rpc_status::RpcStatus;
-pub use protocol::ProtocolHandler;
 
 /// How often to save node data.
 const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
@@ -544,12 +545,16 @@ mod tests {
     use anyhow::{bail, Context};
     use bytes::Bytes;
     use iroh_base::node_addr::AddrInfoOptions;
-    use iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
-    use iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
-
-    use crate::client::blobs::{AddOutcome, WrapOption};
+    use iroh_blobs::provider::AddProgress;
+    use iroh_blobs::util::SetTagOption;
+    use iroh_blobs::BlobFormat;
+    use iroh_net::key::SecretKey;
+    use iroh_net::relay::RelayMode;
+    use iroh_net::test_utils::DnsPkarrServer;
+    use iroh_net::NodeAddr;
 
     use super::*;
+    use crate::client::blobs::{AddOutcome, WrapOption};
 
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
