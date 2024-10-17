@@ -3868,6 +3868,15 @@
 <a href="#3868" id="3868">3868</a>
 <a href="#3869" id="3869">3869</a>
 <a href="#3870" id="3870">3870</a>
+<a href="#3871" id="3871">3871</a>
+<a href="#3872" id="3872">3872</a>
+<a href="#3873" id="3873">3873</a>
+<a href="#3874" id="3874">3874</a>
+<a href="#3875" id="3875">3875</a>
+<a href="#3876" id="3876">3876</a>
+<a href="#3877" id="3877">3877</a>
+<a href="#3878" id="3878">3878</a>
+<a href="#3879" id="3879">3879</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3885,15 +3894,19 @@
 //! from responding to any hole punching attempts. This node will still,
 //! however, read any packets that come off the UDP sockets.
 
-</span><span class="kw">use </span>std::collections::{BTreeMap, BTreeSet, HashMap};
-<span class="kw">use </span>std::fmt::Display;
-<span class="kw">use </span>std::io;
-<span class="kw">use </span>std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
-<span class="kw">use </span>std::sync::{Arc, RwLock};
-<span class="kw">use </span>std::task::{Context, Poll, Waker};
-<span class="kw">use </span>std::time::{Duration, Instant};
+</span><span class="kw">use </span>std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    fmt::Display,
+    io,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
+        Arc, RwLock,
+    },
+    task::{Context, Poll, Waker},
+    time::{Duration, Instant},
+};
 
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
@@ -3904,9 +3917,11 @@
 <span class="kw">use </span>quinn::AsyncUdpSocket;
 <span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};
 <span class="kw">use </span>smallvec::{smallvec, SmallVec};
-<span class="kw">use </span>tokio::sync::{<span class="self">self</span>, mpsc, Mutex};
-<span class="kw">use </span>tokio::task::JoinSet;
-<span class="kw">use </span>tokio::time;
+<span class="kw">use </span>tokio::{
+    sync::{<span class="self">self</span>, mpsc, Mutex},
+    task::JoinSet,
+    time,
+};
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
@@ -3915,22 +3930,25 @@
 <span class="kw">use </span>url::Url;
 <span class="kw">use </span>watchable::Watchable;
 
-<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::NETCHECK_REPORT_TIMEOUT;
-<span class="kw">use </span><span class="kw">crate</span>::disco::{<span class="self">self</span>, CallMeMaybe, SendAddr};
-<span class="kw">use </span><span class="kw">crate</span>::discovery::{Discovery, DiscoveryItem};
-<span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
-<span class="kw">use </span><span class="kw">crate</span>::endpoint::NodeAddr;
-<span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey, SharedSecret};
-<span class="kw">use </span><span class="kw">crate</span>::net::ip::LocalAddresses;
-<span class="kw">use </span><span class="kw">crate</span>::net::{interfaces, netmon};
-<span class="kw">use </span><span class="kw">crate</span>::relay::{RelayMap, RelayUrl};
-<span class="kw">use crate</span>::{netcheck, portmapper};
-<span class="kw">use crate</span>::{stun, AddrInfo};
+<span class="kw">use crate</span>::{
+    defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
+    disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
+    discovery::{Discovery, DiscoveryItem},
+    dns::DnsResolver,
+    endpoint::NodeAddr,
+    key::{PublicKey, SecretKey, SharedSecret},
+    net::{interfaces, ip::LocalAddresses, netmon},
+    netcheck, portmapper,
+    relay::{RelayMap, RelayUrl},
+    stun, AddrInfo,
+};
 
-<span class="kw">use </span><span class="self">self</span>::metrics::Metrics <span class="kw">as </span>MagicsockMetrics;
-<span class="kw">use </span><span class="self">self</span>::node_map::{NodeMap, PingAction, PingRole, SendPing};
-<span class="kw">use </span><span class="self">self</span>::relay_actor::{RelayActor, RelayActorMessage, RelayReadResult};
-<span class="kw">use </span><span class="self">self</span>::udp_conn::UdpConn;
+<span class="kw">use </span><span class="self">self</span>::{
+    metrics::Metrics <span class="kw">as </span>MagicsockMetrics,
+    node_map::{NodeMap, PingAction, PingRole, SendPing},
+    relay_actor::{RelayActor, RelayActorMessage, RelayReadResult},
+    udp_conn::UdpConn,
+};
 
 <span class="kw">mod </span>metrics;
 <span class="kw">mod </span>node_map;
