@@ -179,7 +179,7 @@ impl PkarrPublisher {
     /// [`N0_DNS_PKARR_RELAY_PROD`].
     ///
     /// When running with the environment variable
-    /// `IROH_FORCE_STAGING_RELAYS` set to `1` the [`N0_DNS_PKARR_RELAY_STAGING`]
+    /// `IROH_FORCE_STAGING_RELAYS` set to any non empty value [`N0_DNS_PKARR_RELAY_STAGING`]
     /// server is used instead.
     ///
     /// [number 0]: https://n0.computer

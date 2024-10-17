@@ -1354,7 +1354,7 @@ fn proxy_url_from_env() -> Option<Url> {
 
 /// Returns the default relay mode.
 ///
-/// If the `IROH_FORCE_STAGING_RELAYS` environment variable is set, it will return `RelayMode::Staging`.
+/// If the `IROH_FORCE_STAGING_RELAYS` environment variable is non empty, it will return `RelayMode::Staging`.
 /// Otherwise, it will return `RelayMode::Default`.
 pub fn default_relay_mode() -> RelayMode {
     // Use staging in testing
