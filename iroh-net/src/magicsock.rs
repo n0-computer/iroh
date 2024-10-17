@@ -2478,13 +2478,13 @@ pub struct DirectAddrsStream {
 }
 
 impl Stream for DirectAddrsStream {
-    type Item = Vec<DirectAddr>;
+    type Item = BTreeSet<DirectAddr>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = &mut *self;
         if let Some(addrs) = this.initial.take() {
             if !addrs.is_empty() {
-                return Poll::Ready(Some(addrs.iter().cloned().collect()));
+                return Poll::Ready(Some(addrs));
             }
         }
         loop {
@@ -2501,7 +2501,7 @@ impl Stream for DirectAddrsStream {
                         // returning Poll::Pending immediately here.
                         continue;
                     } else {
-                        break Poll::Ready(Some(addrs.iter().cloned().collect()));
+                        break Poll::Ready(Some(addrs));
                     }
                 }
                 Poll::Ready(None) => break Poll::Ready(None),
@@ -2845,7 +2845,11 @@ mod tests {
     #[instrument(skip_all)]
     async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<CallOnDrop> {
         /// Registers endpoint addresses of a node to all other nodes.
-        fn update_direct_addrs(stacks: &[MagicStack], my_idx: usize, new_addrs: Vec<DirectAddr>) {
+        fn update_direct_addrs(
+            stacks: &[MagicStack],
+            my_idx: usize,
+            new_addrs: BTreeSet<DirectAddr>,
+        ) {
             let me = &stacks[my_idx];
             for (i, m) in stacks.iter().enumerate() {
                 if i == my_idx {
@@ -3542,14 +3546,12 @@ mod tests {
         let ms = Handle::new(Default::default()).await.unwrap();
 
         // See if we can get endpoints.
-        let mut eps0 = ms.direct_addresses().next().await.unwrap();
-        eps0.sort();
+        let eps0 = ms.direct_addresses().next().await.unwrap();
         println!("{eps0:?}");
         assert!(!eps0.is_empty());
 
         // Getting the endpoints again immediately should give the same results.
-        let mut eps1 = ms.direct_addresses().next().await.unwrap();
-        eps1.sort();
+        let eps1 = ms.direct_addresses().next().await.unwrap();
         println!("{eps1:?}");
         assert_eq!(eps0, eps1);
     }

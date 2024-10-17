@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     net::SocketAddr,
     ops::Range,
     time::{Duration, Instant},
@@ -120,7 +120,7 @@ async fn empty_files() -> Result<()> {
 
 /// Create new get options with the given node id and addresses, using a
 /// randomly generated secret key.
-fn get_options(node_id: NodeId, addrs: Vec<SocketAddr>) -> (SecretKey, NodeAddr) {
+fn get_options(node_id: NodeId, addrs: BTreeSet<SocketAddr>) -> (SecretKey, NodeAddr) {
     let relay_map = default_relay_map();
     let peer = iroh_net::NodeAddr::from_parts(
         node_id,
@@ -150,7 +150,7 @@ async fn multiple_clients() -> Result<()> {
 
         tasks.push(node.local_pool_handle().spawn(move || {
             async move {
-                let (secret_key, peer) = get_options(peer_id, addrs);
+                let (secret_key, peer) = get_options(peer_id, BTreeSet::from_iter(addrs));
                 let expected_data = &content;
                 let expected_name = name;
                 let request = GetRequest::all(hash);
@@ -218,7 +218,7 @@ where
     let node = test_node(mdb.clone()).spawn().await?;
 
     let addrs = node.local_endpoint_addresses().await?;
-    let (secret_key, peer) = get_options(node.node_id(), addrs);
+    let (secret_key, peer) = get_options(node.node_id(), BTreeSet::from_iter(addrs));
     let request = GetRequest::all(collection_hash);
     let (collection, children, _stats) =
         run_collection_get_request(secret_key, peer, request).await?;
@@ -250,7 +250,7 @@ async fn test_server_close() {
     let node_addr = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
 
-    let (secret_key, peer) = get_options(peer_id, node_addr);
+    let (secret_key, peer) = get_options(peer_id, BTreeSet::from_iter(node_addr));
     let request = GetRequest::all(hash);
     let (_collection, _children, _stats) = run_collection_get_request(secret_key, peer, request)
         .await
@@ -286,7 +286,7 @@ async fn test_ipv6() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let (secret_key, peer) = get_options(peer_id, addrs);
+        let (secret_key, peer) = get_options(peer_id, BTreeSet::from_iter(addrs));
         let request = GetRequest::all(hash);
         run_collection_get_request(secret_key, peer, request).await
     })
@@ -313,7 +313,7 @@ async fn test_not_found() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let (secret_key, peer) = get_options(peer_id, addrs);
+        let (secret_key, peer) = get_options(peer_id, BTreeSet::from_iter(addrs));
         let request = GetRequest::single(hash);
         let res = run_collection_get_request(secret_key, peer, request).await;
         if let Err(cause) = res {
@@ -355,7 +355,7 @@ async fn test_chunk_not_found_1() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let (secret_key, peer) = get_options(peer_id, addrs);
+        let (secret_key, peer) = get_options(peer_id, BTreeSet::from_iter(addrs));
         let request = GetRequest::single(hash);
         let res = run_collection_get_request(secret_key, peer, request).await;
         if let Err(cause) = res {
@@ -438,7 +438,7 @@ async fn test_run_fsm() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let (secret_key, peer) = get_options(peer_id, addrs);
+        let (secret_key, peer) = get_options(peer_id, BTreeSet::from_iter(addrs));
         let request = GetRequest::all(hash);
         let (collection, children, _) =
             run_collection_get_request(secret_key, peer, request).await?;
@@ -490,7 +490,7 @@ async fn test_size_request_blob() {
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let request = GetRequest::last_chunk(hash);
-        let (secret_key, peer) = get_options(peer_id, addrs);
+        let (secret_key, peer) = get_options(peer_id, BTreeSet::from_iter(addrs));
         let connection = dial(secret_key, peer).await?;
         let response = fsm::start(connection, request);
         let connected = response.next().await?;
@@ -528,7 +528,7 @@ async fn test_collection_stat() {
             hash,
             RangeSpecSeq::from_ranges_infinite([ChunkRanges::all(), ranges]),
         );
-        let (secret_key, peer) = get_options(peer_id, addrs);
+        let (secret_key, peer) = get_options(peer_id, BTreeSet::from_iter(addrs));
         let (_collection, items, _stats) =
             run_collection_get_request(secret_key, peer, request).await?;
         // we should get the first <=1024 bytes and the last chunk of each child

@@ -115,6 +115,7 @@ impl<'de> Deserialize<'de> for BlobTicket {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::net::SocketAddr;
 
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
@@ -131,7 +132,7 @@ mod tests {
         let relay_url = None;
         BlobTicket {
             hash,
-            node: NodeAddr::from_parts(peer, relay_url, vec![addr]),
+            node: NodeAddr::from_parts(peer, relay_url, BTreeSet::from_iter([addr])),
             format: BlobFormat::HashSeq,
         }
     }
@@ -162,7 +163,7 @@ mod tests {
                 .unwrap();
 
         let ticket = BlobTicket {
-            node: NodeAddr::from_parts(node_id, None, vec![]),
+            node: NodeAddr::from_parts(node_id, None, BTreeSet::new()),
             format: BlobFormat::Raw,
             hash,
         };
