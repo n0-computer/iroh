@@ -1830,6 +1830,30 @@
 <a href="#1830" id="1830">1830</a>
 <a href="#1831" id="1831">1831</a>
 <a href="#1832" id="1832">1832</a>
+<a href="#1833" id="1833">1833</a>
+<a href="#1834" id="1834">1834</a>
+<a href="#1835" id="1835">1835</a>
+<a href="#1836" id="1836">1836</a>
+<a href="#1837" id="1837">1837</a>
+<a href="#1838" id="1838">1838</a>
+<a href="#1839" id="1839">1839</a>
+<a href="#1840" id="1840">1840</a>
+<a href="#1841" id="1841">1841</a>
+<a href="#1842" id="1842">1842</a>
+<a href="#1843" id="1843">1843</a>
+<a href="#1844" id="1844">1844</a>
+<a href="#1845" id="1845">1845</a>
+<a href="#1846" id="1846">1846</a>
+<a href="#1847" id="1847">1847</a>
+<a href="#1848" id="1848">1848</a>
+<a href="#1849" id="1849">1849</a>
+<a href="#1850" id="1850">1850</a>
+<a href="#1851" id="1851">1851</a>
+<a href="#1852" id="1852">1852</a>
+<a href="#1853" id="1853">1853</a>
+<a href="#1854" id="1854">1854</a>
+<a href="#1855" id="1855">1855</a>
+<a href="#1856" id="1856">1856</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -2063,7 +2087,8 @@
 
     <span class="doccomment">/// Optionally sets a discovery mechanism for this endpoint.
     ///
-    /// If you want to combine multiple discovery services, you can pass a
+    /// If you want to combine multiple discovery services, you can use
+    /// [`Builder::add_discovery`] instead. This will internally create a
     /// [`crate::discovery::ConcurrentDiscovery`].
     ///
     /// If no discovery service is set, connecting to a node without providing its
@@ -2076,13 +2101,18 @@
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Adds a discovery mechanism for this endpoint.
+    <span class="doccomment">/// Adds a discovery mechanism for this endpoint. The function `discovery`
+    /// will be called on endpoint creation with the configured secret key of
+    /// the endpoint. Discovery services that need to publish information need
+    /// to use this secret key to sign the information.
     ///
-    /// If you have multiple discovery services, they will be combined using
+    /// If you add multiple discovery services, they will be combined using a
     /// [`crate::discovery::ConcurrentDiscovery`].
     ///
     /// If no discovery service is set, connecting to a node without providing its
     /// direct addresses or relay URLs will fail.
+    ///
+    /// To clear all discovery services, use [`Builder::clear_discovery`].
     ///
     /// See the documentation of the [`Discovery`] trait for details.
     </span><span class="kw">pub fn </span>add_discovery&lt;F, D&gt;(<span class="kw-2">mut </span><span class="self">self</span>, discovery: F) -&gt; <span class="self">Self
@@ -2100,6 +2130,14 @@
     ///
     /// The default discovery service publishes to and resolves from the
     /// n0.computer dns server `iroh.link`.
+    ///
+    /// This is equivalent to adding both a [`crate::discovery::pkarr::PkarrPublisher`]
+    /// and a [`crate::discovery::dns::DnsDiscovery`], both configured to use the
+    /// n0.computer dns server.
+    ///
+    /// This will by default use [`crate::discovery::pkarr::N0_DNS_PKARR_RELAY_PROD`].
+    /// When in tests, or when the `test-utils` feature is enabled, this will use the
+    /// [`crate::discovery::pkarr::N0_DNS_PKARR_RELAY_STAGING`].
     </span><span class="kw">pub fn </span>discovery_n0(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
             <span class="prelude-val">Some</span>(Box::new(PkarrPublisher::n0_dns(secret_key.clone())))
@@ -2110,7 +2148,12 @@
     </span>}
 
     <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
-    </span><span class="doccomment">/// Configure the endpoint to use the mainline DHT with default settings.
+    </span><span class="doccomment">/// Configure the endpoint to also use the mainline DHT with default settings.
+    ///
+    /// This is equivalent to adding a [`crate::discovery::pkarr::dht::DhtDiscovery`]
+    /// with default settings. Note that DhtDiscovery has various more advanced
+    /// configuration options. If you need any of those, you should manually
+    /// create a DhtDiscovery and add it with [`Builder::add_discovery`].
     </span><span class="kw">pub fn </span>discovery_dht(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::dht::DhtDiscovery;
         <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
@@ -2125,7 +2168,12 @@
     </span>}
 
     <span class="attr">#[cfg(feature = <span class="string">"discovery-local-network"</span>)]
-    </span><span class="doccomment">/// Configure the endpoint to use local network discovery.
+    </span><span class="doccomment">/// Configures the endpoint to also use local network discovery.
+    ///
+    /// This is equivalent to adding a [`crate::discovery::local_swarm_discovery::LocalSwarmDiscovery`]
+    /// with default settings. Note that LocalSwarmDiscovery has various more advanced
+    /// configuration options. If you need any of those, you should manually
+    /// create a LocalSwarmDiscovery and add it with [`Builder::add_discovery`].
     </span><span class="kw">pub fn </span>discovery_local_network(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="kw">use </span><span class="kw">crate</span>::discovery::local_swarm_discovery::LocalSwarmDiscovery;
         <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
