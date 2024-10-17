@@ -416,13 +416,13 @@ impl std::hash::Hash for UserSignature {
     PartialEq,
     Hash,
     From,
-    zerocopy_derive::FromBytes,
-    zerocopy_derive::AsBytes,
-    zerocopy_derive::FromZeroes,
     Into,
     AsRef,
     Serialize,
     Deserialize,
+    zerocopy_derive::FromBytes,
+    zerocopy_derive::AsBytes,
+    zerocopy_derive::FromZeroes,
 )]
 #[repr(transparent)]
 pub struct UserId([u8; 32]);
