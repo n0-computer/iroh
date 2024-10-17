@@ -2055,7 +2055,7 @@
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Remove all discovery services.
+    <span class="doccomment">/// Removes all discovery services from the builder.
     </span><span class="kw">pub fn </span>clear_discovery(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.discovery.clear();
         <span class="self">self
@@ -2078,7 +2078,7 @@
 
     <span class="doccomment">/// Adds a discovery mechanism for this endpoint.
     ///
-    /// If you have multiple discovery services, they will be combined using a
+    /// If you have multiple discovery services, they will be combined using
     /// [`crate::discovery::ConcurrentDiscovery`].
     ///
     /// If no discovery service is set, connecting to a node without providing its
