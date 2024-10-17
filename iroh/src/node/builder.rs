@@ -228,9 +228,9 @@ fn mk_external_rpc() -> IrohServerEndpoint {
 impl Default for Builder<iroh_blobs::store::mem::Store> {
     fn default() -> Self {
         // Use staging in testing
-        #[cfg(not(all(test, feature = "test-utils")))]
+        #[cfg(not(test))]
         let relay_mode = RelayMode::Default;
-        #[cfg(all(test, feature = "test-utils"))]
+        #[cfg(test)]
         let relay_mode = RelayMode::Staging;
 
         Self {
@@ -264,9 +264,9 @@ impl<D: Map> Builder<D> {
         storage: StorageConfig,
     ) -> Self {
         // Use staging in testing
-        #[cfg(not(all(test, feature = "test-utils")))]
+        #[cfg(not(test))]
         let relay_mode = RelayMode::Default;
-        #[cfg(all(test, feature = "test-utils"))]
+        #[cfg(test)]
         let relay_mode = RelayMode::Staging;
 
         Self {
