@@ -392,13 +392,13 @@
     </span><span class="kw">pub fn </span>from_parts(
         node_id: PublicKey,
         relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
-        direct_addresses: BTreeSet&lt;SocketAddr&gt;,
+        direct_addresses: <span class="kw">impl </span>IntoIterator&lt;Item = SocketAddr&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             node_id,
             info: AddrInfo {
                 relay_url,
-                direct_addresses,
+                direct_addresses: direct_addresses.into_iter().collect(),
             },
         }
     }

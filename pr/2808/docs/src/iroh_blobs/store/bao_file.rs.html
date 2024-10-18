@@ -1041,9 +1041,6 @@
 <a href="#1041" id="1041">1041</a>
 <a href="#1042" id="1042">1042</a>
 <a href="#1043" id="1043">1043</a>
-<a href="#1044" id="1044">1044</a>
-<a href="#1045" id="1045">1045</a>
-<a href="#1046" id="1046">1046</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! An implementation of a bao file, meaning some data blob with associated
 //! outboard.
 //!
@@ -1073,16 +1070,15 @@
 };
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>derive_more::Debug;
+<span class="kw">use </span>iroh_base::hash::Hash;
 <span class="kw">use </span>iroh_io::AsyncSliceReader;
 
+<span class="kw">use </span><span class="kw">super</span>::mutable_mem_storage::{MutableMemStorage, SizeInfo};
 <span class="kw">use crate</span>::{
     store::BaoBatchWriter,
     util::{get_limited_slice, MemOrFile, SparseMemFile},
     IROH_BLOCK_SIZE,
 };
-<span class="kw">use </span>iroh_base::hash::Hash;
-
-<span class="kw">use </span><span class="kw">super</span>::mutable_mem_storage::{MutableMemStorage, SizeInfo};
 
 <span class="doccomment">/// Data files are stored in 3 files. The data file, the outboard file,
 /// and a sizes file. The sizes file contains the size that the remote side told us
@@ -1782,9 +1778,8 @@
     <span class="kw">use </span>rand::RngCore;
     <span class="kw">use </span>range_collections::RangeSet2;
 
-    <span class="kw">use </span><span class="kw">crate</span>::util::limited_range;
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::util::limited_range;
 
     <span class="kw">pub const </span>IROH_BLOCK_SIZE: BlockSize = BlockSize::from_chunk_log(<span class="number">4</span>);
 
@@ -1925,9 +1920,8 @@
     };
     <span class="kw">use </span>tokio::task::JoinSet;
 
-    <span class="kw">use </span><span class="kw">crate</span>::util::local_pool::LocalPool;
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::util::local_pool::LocalPool;
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>partial_downloads() {

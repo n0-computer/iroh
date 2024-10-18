@@ -811,6 +811,7 @@
 <a href="#811" id="811">811</a>
 <a href="#812" id="812">812</a>
 <a href="#813" id="813">813</a>
+<a href="#814" id="814">814</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::time::Duration;
 
 <span class="kw">use </span>anyhow::{bail, ensure};
@@ -1507,8 +1508,9 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>proptests {
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span>proptest::prelude::<span class="kw-2">*</span>;
+
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="kw">fn </span>secret_key() -&gt; <span class="kw">impl </span>Strategy&lt;Value = SecretKey&gt; {
         prop::array::uniform32(any::&lt;u8&gt;()).prop_map(SecretKey::from)

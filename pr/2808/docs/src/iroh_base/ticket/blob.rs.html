@@ -182,14 +182,14 @@
 </pre></div><pre class="rust"><code><span class="doccomment">//! Tickets for blobs.
 </span><span class="kw">use </span>std::str::FromStr;
 
-<span class="kw">use crate</span>::{
-    hash::{BlobFormat, Hash},
-    ticket::{<span class="self">self</span>, Ticket},
-};
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use </span><span class="kw">crate</span>::node_addr::NodeAddr;
+<span class="kw">use crate</span>::{
+    hash::{BlobFormat, Hash},
+    node_addr::NodeAddr,
+    ticket::{<span class="self">self</span>, Ticket},
+};
 
 <span class="doccomment">/// A token containing everything to get a file from the provider.
 ///
@@ -296,15 +296,15 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>std::collections::BTreeSet;
     <span class="kw">use </span>std::net::SocketAddr;
 
     <span class="kw">use </span>iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
-    <span class="kw">use </span><span class="kw">crate</span>::base32;
-    <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use crate</span>::{
+        base32,
+        key::{PublicKey, SecretKey},
+    };
 
     <span class="kw">fn </span>make_ticket() -&gt; BlobTicket {
         <span class="kw">let </span>hash = Hash::new(<span class="string">b"hi there"</span>);
@@ -313,7 +313,7 @@
         <span class="kw">let </span>relay_url = <span class="prelude-val">None</span>;
         BlobTicket {
             hash,
-            node: NodeAddr::from_parts(peer, relay_url, BTreeSet::from_iter([addr])),
+            node: NodeAddr::from_parts(peer, relay_url, [addr]),
             format: BlobFormat::HashSeq,
         }
     }
@@ -344,7 +344,7 @@
                 .unwrap();
 
         <span class="kw">let </span>ticket = BlobTicket {
-            node: NodeAddr::from_parts(node_id, <span class="prelude-val">None</span>, BTreeSet::new()),
+            node: NodeAddr::from_parts(node_id, <span class="prelude-val">None</span>, []),
             format: BlobFormat::Raw,
             hash,
         };

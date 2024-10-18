@@ -164,18 +164,16 @@
 <a href="#164" id="164">164</a>
 <a href="#165" id="165">165</a>
 <a href="#166" id="166">166</a>
-<a href="#167" id="167">167</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Ranges and helpers for working with [`redb`] tables
 
 </span><span class="kw">use </span>redb::{Key, Range, ReadOnlyTable, ReadableTable, Value};
-
-<span class="kw">use crate</span>::{store::SortDirection, SignedEntry};
 
 <span class="kw">use super</span>::{
     bounds::{ByKeyBounds, RecordsBounds},
     into_entry,
     tables::{RecordsByKeyId, RecordsId, RecordsValue},
 };
+<span class="kw">use crate</span>::{store::SortDirection, SignedEntry};
 
 <span class="doccomment">/// An extension trait for [`Range`] that provides methods for mapped retrieval.
 </span><span class="kw">pub trait </span>RangeExt&lt;K: Key, V: Value&gt; {

@@ -194,13 +194,17 @@
 <a href="#194" id="194">194</a>
 <a href="#195" id="195">195</a>
 <a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Linux-specific network interfaces implementations.
 
 </span><span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="attr">#[cfg(not(target_os = <span class="string">"android"</span>))]
 </span><span class="kw">use </span>futures_util::TryStreamExt;
-<span class="kw">use </span>tokio::fs::File;
-<span class="kw">use </span>tokio::io::{AsyncBufReadExt, BufReader};
+<span class="kw">use </span>tokio::{
+    fs::File,
+    io::{AsyncBufReadExt, BufReader},
+};
 
 <span class="kw">use </span><span class="kw">super</span>::DefaultRouteDetails;
 

@@ -412,17 +412,16 @@
 //!
 //! [`crate::Replica`] is also called documents here.
 
-</span><span class="kw">use </span>std::path::PathBuf;
-<span class="kw">use </span>std::{
+</span><span class="kw">use </span>std::{
     io,
+    path::PathBuf,
     str::FromStr,
     sync::{Arc, RwLock},
 };
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
-<span class="kw">use </span>iroh_blobs::downloader::Downloader;
-<span class="kw">use </span>iroh_blobs::{store::EntryStatus, Hash};
+<span class="kw">use </span>iroh_blobs::{downloader::Downloader, store::EntryStatus, Hash};
 <span class="kw">use </span>iroh_gossip::net::Gossip;
 <span class="kw">use </span>iroh_net::{key::PublicKey, Endpoint, NodeAddr};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
@@ -430,13 +429,14 @@
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{error, error_span, Instrument};
 
-<span class="kw">use crate</span>::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
-<span class="kw">use crate</span>::{Author, AuthorId};
-
 <span class="kw">use </span><span class="self">self</span>::live::{LiveActor, ToLiveActor};
-
-<span class="kw">pub use </span><span class="self">self</span>::live::SyncEvent;
-<span class="kw">pub use </span><span class="self">self</span>::state::{Origin, SyncReason};
+<span class="kw">pub use </span><span class="self">self</span>::{
+    live::SyncEvent,
+    state::{Origin, SyncReason},
+};
+<span class="kw">use crate</span>::{
+    actor::SyncHandle, Author, AuthorId, ContentStatus, ContentStatusCallback, Entry, NamespaceId,
+};
 
 <span class="kw">mod </span>gossip;
 <span class="kw">mod </span>live;

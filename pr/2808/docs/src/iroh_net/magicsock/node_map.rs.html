@@ -823,7 +823,6 @@
 <a href="#823" id="823">823</a>
 <a href="#824" id="824">824</a>
 <a href="#825" id="825">825</a>
-<a href="#826" id="826">826</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::hash_map::Entry;
 <span class="kw">use </span>std::collections::{BTreeSet, HashMap};
 <span class="kw">use </span>std::hash::Hash;
@@ -855,9 +854,8 @@
 <span class="kw">mod </span>path_state;
 <span class="kw">mod </span>udp_paths;
 
-<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">use </span>node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
-
 <span class="kw">pub use </span>node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">use </span>node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
 
 <span class="doccomment">/// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -1470,10 +1468,10 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span><span class="kw">super</span>::node_state::MAX_INACTIVE_DIRECT_ADDRESSES;
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
     <span class="kw">use </span>std::net::Ipv4Addr;
+
+    <span class="kw">use super</span>::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, <span class="kw-2">*</span>};
+    <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
 
     <span class="kw">impl </span>NodeMap {
         <span class="attr">#[track_caller]

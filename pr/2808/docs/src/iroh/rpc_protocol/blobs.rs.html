@@ -346,14 +346,15 @@
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::path::PathBuf;
 
 <span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>iroh_base::rpc::RpcResult;
-<span class="kw">use </span>iroh_base::{hash::Hash, rpc::RpcError};
-<span class="kw">use </span>iroh_blobs::provider::BatchAddPathProgress;
+<span class="kw">use </span>iroh_base::{
+    hash::Hash,
+    rpc::{RpcError, RpcResult},
+};
 <span class="kw">use </span>iroh_blobs::{
     export::ExportProgress,
     format::collection::Collection,
     get::db::DownloadProgress,
-    provider::AddProgress,
+    provider::{AddProgress, BatchAddPathProgress},
     store::{
         BaoBlobSize, ConsistencyCheckProgress, ExportFormat, ExportMode, ImportMode,
         ValidateProgress,
@@ -366,11 +367,10 @@
 <span class="kw">use </span>quic_rpc_derive::rpc_requests;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
+<span class="kw">use </span><span class="kw">super</span>::RpcService;
 <span class="kw">use </span><span class="kw">crate</span>::client::blobs::{
     BlobInfo, BlobStatus, DownloadMode, IncompleteBlobInfo, ReadAtLen, WrapOption,
 };
-
-<span class="kw">use </span><span class="kw">super</span>::RpcService;
 
 <span class="attr">#[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

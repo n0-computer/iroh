@@ -94,7 +94,6 @@
 <a href="#94" id="94">94</a>
 <a href="#95" id="95">95</a>
 <a href="#96" id="96">96</a>
-<a href="#97" id="97">97</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! TLS configuration based on libp2p TLS specs.
 //!
 //! See &lt;https://github.com/libp2p/specs/blob/master/tls/tls.md&gt;.
@@ -105,9 +104,8 @@
 <span class="kw">use </span>quinn::crypto::rustls::{NoInitialCipherSuite, QuicClientConfig, QuicServerConfig};
 <span class="kw">use </span>tracing::warn;
 
-<span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
-
 <span class="kw">use </span><span class="self">self</span>::certificate::AlwaysResolvesCert;
+<span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
 
 <span class="kw">pub mod </span>certificate;
 <span class="kw">mod </span>verifier;

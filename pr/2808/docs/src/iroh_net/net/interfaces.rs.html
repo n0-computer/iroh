@@ -422,12 +422,9 @@
 <a href="#422" id="422">422</a>
 <a href="#423" id="423">423</a>
 <a href="#424" id="424">424</a>
-<a href="#425" id="425">425</a>
-<a href="#426" id="426">426</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Contains helpers for looking up system network interfaces.
 
-</span><span class="kw">use </span>std::fmt;
-<span class="kw">use </span>std::{collections::HashMap, net::IpAddr};
+</span><span class="kw">use </span>std::{collections::HashMap, fmt, net::IpAddr};
 
 <span class="attr">#[cfg(any(
     target_os = <span class="string">"freebsd"</span>,
@@ -444,8 +441,6 @@
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>netdev::ip::{Ipv4Net, Ipv6Net};
 
-<span class="kw">use </span><span class="kw">crate</span>::net::ip::{is_private_v6, is_up};
-
 <span class="attr">#[cfg(any(
     target_os = <span class="string">"freebsd"</span>,
     target_os = <span class="string">"openbsd"</span>,
@@ -458,6 +453,7 @@
 </span><span class="kw">use </span><span class="self">self</span>::linux::default_route;
 <span class="attr">#[cfg(target_os = <span class="string">"windows"</span>)]
 </span><span class="kw">use </span><span class="self">self</span>::windows::default_route;
+<span class="kw">use </span><span class="kw">crate</span>::net::ip::{is_private_v6, is_up};
 
 <span class="doccomment">/// Represents a network interface.
 </span><span class="attr">#[derive(Debug)]

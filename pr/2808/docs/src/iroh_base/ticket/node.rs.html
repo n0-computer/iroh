@@ -289,22 +289,22 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>std::collections::BTreeSet;
     <span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr};
 
     <span class="kw">use </span>iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
-    <span class="kw">use </span><span class="kw">crate</span>::base32;
-    <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use crate</span>::{
+        base32,
+        key::{PublicKey, SecretKey},
+    };
 
     <span class="kw">fn </span>make_ticket() -&gt; NodeTicket {
         <span class="kw">let </span>peer = SecretKey::generate().public();
         <span class="kw">let </span>addr = SocketAddr::from((Ipv4Addr::LOCALHOST, <span class="number">1234</span>));
         <span class="kw">let </span>relay_url = <span class="prelude-val">None</span>;
         NodeTicket {
-            node: NodeAddr::from_parts(peer, relay_url, BTreeSet::from_iter([addr])),
+            node: NodeAddr::from_parts(peer, relay_url, [addr]),
         }
     }
 
@@ -334,7 +334,7 @@
             node: NodeAddr::from_parts(
                 node_id,
                 <span class="prelude-val">Some</span>(<span class="string">"http://derp.me./"</span>.parse().unwrap()),
-                BTreeSet::from_iter([<span class="string">"127.0.0.1:1024"</span>.parse().unwrap()]),
+                [<span class="string">"127.0.0.1:1024"</span>.parse().unwrap()],
             ),
         };
         <span class="kw">let </span>base32 = base32::parse_vec(ticket.to_string().strip_prefix(<span class="string">"node"</span>).unwrap()).unwrap();

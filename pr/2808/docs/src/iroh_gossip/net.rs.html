@@ -1004,9 +1004,19 @@
 <a href="#1004" id="1004">1004</a>
 <a href="#1005" id="1005">1005</a>
 <a href="#1006" id="1006">1006</a>
+<a href="#1007" id="1007">1007</a>
+<a href="#1008" id="1008">1008</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Networking for the `iroh-gossip` protocol
 
-</span><span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
+</span><span class="kw">use </span>std::{
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Instant,
+};
+
+<span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::BytesMut;
 <span class="kw">use </span>futures_concurrency::{
     future::TryJoin,
@@ -1023,13 +1033,6 @@
 };
 <span class="kw">use </span>rand::rngs::StdRng;
 <span class="kw">use </span>rand_core::SeedableRng;
-<span class="kw">use </span>std::{
-    collections::{BTreeSet, HashMap, HashSet, VecDeque},
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-    time::Instant,
-};
 <span class="kw">use </span>tokio::{sync::mpsc, task::JoinSet};
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error_span, trace, warn, Instrument};
@@ -1814,7 +1817,7 @@
     <span class="kw">let </span>addr = NodeAddr::from_parts(
         endpoint.node_id(),
         endpoint.home_relay(),
-        direct_addresses.iter().map(|x| x.addr).collect(),
+        direct_addresses.iter().map(|x| x.addr),
     );
     encode_peer_data(<span class="kw-2">&amp;</span>addr.info)
 }
@@ -1825,10 +1828,11 @@
 
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>futures_concurrency::future::TryJoin;
-    <span class="kw">use </span>iroh_net::key::SecretKey;
-    <span class="kw">use </span>iroh_net::relay::{RelayMap, RelayMode};
-    <span class="kw">use </span>tokio::spawn;
-    <span class="kw">use </span>tokio::time::timeout;
+    <span class="kw">use </span>iroh_net::{
+        key::SecretKey,
+        relay::{RelayMap, RelayMode},
+    };
+    <span class="kw">use </span>tokio::{spawn, time::timeout};
     <span class="kw">use </span>tokio_util::sync::CancellationToken;
     <span class="kw">use </span>tracing::info;
 
