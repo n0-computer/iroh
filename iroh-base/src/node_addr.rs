@@ -192,11 +192,11 @@ pub enum AddrInfoOptions {
     /// This usually means that iroh-dns discovery is used to find address information.
     #[default]
     Id,
-    /// Includes both the relay URL and the direct addresses.
+    /// Includes the Node ID and both the relay URL, and the direct addresses.
     RelayAndAddresses,
-    /// Only includes the relay URL.
+    /// Includes the Node ID and the relay URL.
     Relay,
-    /// Only includes the direct addresses.
+    /// Includes the Node ID and the direct addresses.
     Addresses,
 }
 
