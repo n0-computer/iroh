@@ -30,7 +30,7 @@ use iroh::{
     net::{key::PublicKey, relay::RelayUrl, NodeAddr},
 };
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     net::SocketAddr,
     path::PathBuf,
     time::Duration,
@@ -189,7 +189,7 @@ impl BlobCommands {
         match self {
             Self::Get {
                 ticket,
-                address,
+                mut address,
                 relay_url,
                 recursive,
                 override_addresses,
@@ -208,10 +208,9 @@ impl BlobCommands {
                             let NodeAddr { node_id, info } = node_addr;
                             let addresses = if override_addresses {
                                 // use only the cli supplied ones
-                                BTreeSet::from_iter(address)
+                                address
                             } else {
                                 // use both the cli supplied ones and the ticket ones
-                                let mut address = BTreeSet::from_iter(address);
                                 address.extend(info.direct_addresses);
                                 address
                             };
@@ -243,8 +242,7 @@ impl BlobCommands {
                             bail!("missing NodeId");
                         };
 
-                        let node_addr =
-                            NodeAddr::from_parts(node, relay_url, BTreeSet::from_iter(address));
+                        let node_addr = NodeAddr::from_parts(node, relay_url, address);
                         (node_addr, hash, blob_format)
                     }
                 };

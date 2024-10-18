@@ -669,8 +669,11 @@ impl Endpoint {
             .await
             .ok_or(anyhow!("No IP endpoints found"))?;
         let relay = self.home_relay();
-        let addrs = addrs.into_iter().map(|x| x.addr).collect();
-        Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
+        Ok(NodeAddr::from_parts(
+            self.node_id(),
+            relay,
+            addrs.into_iter().map(|x| x.addr),
+        ))
     }
 
     /// Returns the [`RelayUrl`] of the Relay server used as home relay.

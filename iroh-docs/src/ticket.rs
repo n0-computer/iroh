@@ -63,7 +63,6 @@ impl std::str::FromStr for DocTicket {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
     use std::str::FromStr;
 
     use crate::NamespaceId;
@@ -88,7 +87,7 @@ mod tests {
 
         let ticket = DocTicket {
             capability: Capability::Read(namespace_id),
-            nodes: vec![NodeAddr::from_parts(node_id, None, BTreeSet::new())],
+            nodes: vec![NodeAddr::from_parts(node_id, None, [])],
         };
         let base32 = base32::parse_vec(ticket.to_string().strip_prefix("doc").unwrap()).unwrap();
         let expected = parse_hexdump("

@@ -113,7 +113,6 @@ impl<'de> Deserialize<'de> for NodeTicket {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
     use std::net::{Ipv4Addr, SocketAddr};
 
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
@@ -128,7 +127,7 @@ mod tests {
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 1234));
         let relay_url = None;
         NodeTicket {
-            node: NodeAddr::from_parts(peer, relay_url, BTreeSet::from_iter([addr])),
+            node: NodeAddr::from_parts(peer, relay_url, [addr]),
         }
     }
 
@@ -158,7 +157,7 @@ mod tests {
             node: NodeAddr::from_parts(
                 node_id,
                 Some("http://derp.me./".parse().unwrap()),
-                BTreeSet::from_iter(["127.0.0.1:1024".parse().unwrap()]),
+                ["127.0.0.1:1024".parse().unwrap()],
             ),
         };
         let base32 = base32::parse_vec(ticket.to_string().strip_prefix("node").unwrap()).unwrap();

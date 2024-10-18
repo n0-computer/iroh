@@ -808,7 +808,7 @@ fn our_peer_data(endpoint: &Endpoint, direct_addresses: &BTreeSet<DirectAddr>) -
     let addr = NodeAddr::from_parts(
         endpoint.node_id(),
         endpoint.home_relay(),
-        direct_addresses.iter().map(|x| x.addr).collect(),
+        direct_addresses.iter().map(|x| x.addr),
     );
     encode_peer_data(&addr.info)
 }

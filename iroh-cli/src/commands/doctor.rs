@@ -41,7 +41,7 @@ use rand::Rng;
 use ratatui::{prelude::*, widgets::*};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     io,
     net::SocketAddr,
     num::NonZeroU16,
@@ -698,7 +698,7 @@ async fn make_endpoint(
 async fn connect(
     node_id: NodeId,
     secret_key: SecretKey,
-    direct_addresses: BTreeSet<SocketAddr>,
+    direct_addresses: Vec<SocketAddr>,
     relay_url: Option<RelayUrl>,
     relay_map: Option<RelayMap>,
     discovery: Option<Box<dyn Discovery>>,
@@ -1136,7 +1136,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             connect(
                 dial,
                 secret_key,
-                BTreeSet::from_iter(remote_endpoint),
+                remote_endpoint,
                 relay_url,
                 relay_map,
                 discovery,
