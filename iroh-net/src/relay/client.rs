@@ -570,6 +570,7 @@ impl Actor {
         if self.is_closed {
             return Err(ClientError::Closed);
         }
+        let url = self.url.clone();
         async move {
             if self.relay_conn.is_none() {
                 trace!("no connection, trying to connect");
@@ -589,7 +590,7 @@ impl Actor {
 
             Ok((conn, receiver))
         }
-        .instrument(info_span!("connect"))
+        .instrument(info_span!("connect", %url))
         .await
     }
 
