@@ -3871,6 +3871,17 @@
 <a href="#3871" id="3871">3871</a>
 <a href="#3872" id="3872">3872</a>
 <a href="#3873" id="3873">3873</a>
+<a href="#3874" id="3874">3874</a>
+<a href="#3875" id="3875">3875</a>
+<a href="#3876" id="3876">3876</a>
+<a href="#3877" id="3877">3877</a>
+<a href="#3878" id="3878">3878</a>
+<a href="#3879" id="3879">3879</a>
+<a href="#3880" id="3880">3880</a>
+<a href="#3881" id="3881">3881</a>
+<a href="#3882" id="3882">3882</a>
+<a href="#3883" id="3883">3883</a>
+<a href="#3884" id="3884">3884</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -5099,24 +5110,27 @@
     /// this information is too stale, the call-me-maybe is queued while a netcheck run is
     /// scheduled.  Once this run finishes, the call-me-maybe will be sent.
     </span><span class="kw">fn </span>send_or_queue_call_me_maybe(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, dst_node: NodeId) {
-        <span class="kw">if </span><span class="self">self</span>.direct_addrs.fresh_enough() {
-            <span class="kw">let </span>msg = <span class="self">self</span>.direct_addrs.to_call_me_maybe_message();
-            <span class="kw">let </span>msg = disco::Message::CallMeMaybe(msg);
-            <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_relay(url, dst_node, msg) {
-                <span class="macro">warn!</span>(dstkey = %dst_node.fmt_short(), relayurl = <span class="question-mark">?</span>url,
+        <span class="kw">match </span><span class="self">self</span>.direct_addrs.fresh_enough() {
+            <span class="prelude-val">Ok</span>(()) =&gt; {
+                <span class="kw">let </span>msg = <span class="self">self</span>.direct_addrs.to_call_me_maybe_message();
+                <span class="kw">let </span>msg = disco::Message::CallMeMaybe(msg);
+                <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_relay(url, dst_node, msg) {
+                    <span class="macro">warn!</span>(dstkey = %dst_node.fmt_short(), relayurl = <span class="question-mark">?</span>url,
                       <span class="string">"relay channel full, dropping call-me-maybe"</span>);
-            } <span class="kw">else </span>{
-                <span class="macro">debug!</span>(dstkey = %dst_node.fmt_short(), relayurl = <span class="question-mark">?</span>url, <span class="string">"call-me-maybe sent"</span>);
+                } <span class="kw">else </span>{
+                    <span class="macro">debug!</span>(dstkey = %dst_node.fmt_short(), relayurl = <span class="question-mark">?</span>url, <span class="string">"call-me-maybe sent"</span>);
+                }
             }
-        } <span class="kw">else </span>{
-            <span class="self">self</span>.pending_call_me_maybes
-                .lock()
-                .insert(dst_node, url.clone());
-            <span class="macro">debug!</span>(
-                last_refresh_ago = <span class="question-mark">?</span><span class="self">self</span>.direct_addrs.last_refresh_ago(),
-                <span class="string">"want call-me-maybe but direct addrs stale; queuing after restun"</span>,
-            );
-            <span class="self">self</span>.re_stun(<span class="string">"refresh-for-peering"</span>);
+            <span class="prelude-val">Err</span>(last_refresh_ago) =&gt; {
+                <span class="self">self</span>.pending_call_me_maybes
+                    .lock()
+                    .insert(dst_node, url.clone());
+                <span class="macro">debug!</span>(
+                    <span class="question-mark">?</span>last_refresh_ago,
+                    <span class="string">"want call-me-maybe but direct addrs stale; queuing after restun"</span>,
+                );
+                <span class="self">self</span>.re_stun(<span class="string">"refresh-for-peering"</span>);
+            }
         }
     }
 
@@ -6319,21 +6333,29 @@
         updated
     }
 
-    <span class="kw">fn </span>last_refresh_ago(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Duration&gt; {
-        <span class="self">self</span>.updated_at
-            .read()
-            .expect(<span class="string">"poisoned"</span>)
-            .map(|at| at.elapsed())
-    }
-
     <span class="kw">fn </span>sockaddrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BTreeSet&lt;SocketAddr&gt; {
         <span class="self">self</span>.addrs.read().iter().map(|da| da.addr).collect()
     }
 
-    <span class="kw">fn </span>fresh_enough(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+    <span class="doccomment">/// Whether the direct addr information is considered "fresh".
+    ///
+    /// If not fresh you should probably update the direct addresses before using this info.
+    ///
+    /// Returns `Ok(())` if fresh enough and `Err(elapsed)` if not fresh enough.
+    /// `elapsed` is the time elapsed since the direct addresses were last updated.
+    ///
+    /// If there is no direct address information `Err(Duration::ZERO)` is returned.
+    </span><span class="kw">fn </span>fresh_enough(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), Duration&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self</span>.updated_at.read().expect(<span class="string">"poisoned"</span>) {
-            <span class="prelude-val">None </span>=&gt; <span class="bool-val">false</span>,
-            <span class="prelude-val">Some</span>(time) =&gt; time.elapsed() &lt;= ENDPOINTS_FRESH_ENOUGH_DURATION,
+            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(Duration::ZERO),
+            <span class="prelude-val">Some</span>(time) =&gt; {
+                <span class="kw">let </span>elapsed = time.elapsed();
+                <span class="kw">if </span>elapsed &lt;= ENDPOINTS_FRESH_ENOUGH_DURATION {
+                    <span class="prelude-val">Ok</span>(())
+                } <span class="kw">else </span>{
+                    <span class="prelude-val">Err</span>(elapsed)
+                }
+            }
         }
     }
 
