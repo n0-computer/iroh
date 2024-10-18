@@ -300,7 +300,7 @@
 <span class="kw">use </span>quinn::AsyncUdpSocket;
 <span class="kw">use </span>quinn_udp::{Transmit, UdpSockRef};
 <span class="kw">use </span>tokio::io::Interest;
-<span class="kw">use </span>tracing::{debug, trace, warn};
+<span class="kw">use </span>tracing::{debug, trace};
 
 <span class="kw">use </span><span class="kw">crate</span>::net::UdpSocket;
 
@@ -425,7 +425,7 @@
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(pconn);
             }
             <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="macro">warn!</span>(%addr, <span class="string">"failed to bind: {:#?}"</span>, err);
+                <span class="macro">debug!</span>(%addr, <span class="string">"failed to bind: {err:#}"</span>);
                 <span class="kw">continue</span>;
             }
         }
