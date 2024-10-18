@@ -915,34 +915,37 @@
 <a href="#915" id="915">915</a>
 <a href="#916" id="916">916</a>
 <a href="#917" id="917">917</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::HashMap;
-<span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::net::SocketAddr;
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::Arc;
+<a href="#918" id="918">918</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
 <span class="kw">use </span>anyhow::{bail, ensure, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>derive_more::Debug;
 <span class="kw">use </span>futures_lite::FutureExt;
-<span class="kw">use </span>http::header::CONNECTION;
-<span class="kw">use </span>http::response::Builder <span class="kw">as </span>ResponseBuilder;
-<span class="kw">use </span>hyper::body::Incoming;
-<span class="kw">use </span>hyper::header::{HeaderValue, UPGRADE};
-<span class="kw">use </span>hyper::service::Service;
-<span class="kw">use </span>hyper::upgrade::Upgraded;
-<span class="kw">use </span>hyper::{HeaderMap, Method, Request, Response, StatusCode};
+<span class="kw">use </span>http::{header::CONNECTION, response::Builder <span class="kw">as </span>ResponseBuilder};
+<span class="kw">use </span>hyper::{
+    body::Incoming,
+    header::{HeaderValue, UPGRADE},
+    service::Service,
+    upgrade::Upgraded,
+    HeaderMap, Method, Request, Response, StatusCode,
+};
 <span class="kw">use </span>tokio::net::{TcpListener, TcpStream};
 <span class="kw">use </span>tokio_rustls_acme::AcmeAcceptor;
-<span class="kw">use </span>tokio_util::sync::CancellationToken;
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
+<span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
 <span class="kw">use </span>tungstenite::handshake::derive_accept_key;
 
-<span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
-<span class="kw">use </span><span class="kw">crate</span>::relay::http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION};
-<span class="kw">use </span><span class="kw">crate</span>::relay::server::actor::{ClientConnHandler, ServerActorTask};
-<span class="kw">use </span><span class="kw">crate</span>::relay::server::streams::MaybeTlsStream;
+<span class="kw">use crate</span>::{
+    key::SecretKey,
+    relay::{
+        http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
+        server::{
+            actor::{ClientConnHandler, ServerActorTask},
+            streams::MaybeTlsStream,
+        },
+    },
+};
 
 <span class="kw">type </span>BytesBody = http_body_util::Full&lt;hyper::body::Bytes&gt;;
 <span class="kw">type </span>HyperError = Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync&gt;;
@@ -1600,16 +1603,15 @@
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>reqwest::Url;
-    <span class="kw">use </span>tokio::sync::mpsc;
-    <span class="kw">use </span>tokio::task::JoinHandle;
+    <span class="kw">use </span>tokio::{sync::mpsc, task::JoinHandle};
     <span class="kw">use </span>tracing::{info, info_span, Instrument};
     <span class="kw">use </span>tracing_subscriber::{prelude::<span class="kw-2">*</span>, EnvFilter};
 
-    <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
-    <span class="kw">use </span><span class="kw">crate</span>::relay::client::conn::ReceivedMessage;
-    <span class="kw">use </span><span class="kw">crate</span>::relay::client::{Client, ClientBuilder};
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use crate</span>::{
+        key::{PublicKey, SecretKey},
+        relay::client::{conn::ReceivedMessage, Client, ClientBuilder},
+    };
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>make_tls_config() -&gt; TlsConfig {
         <span class="kw">let </span>subject_alt_names = <span class="macro">vec!</span>[<span class="string">"localhost"</span>.to_string()];

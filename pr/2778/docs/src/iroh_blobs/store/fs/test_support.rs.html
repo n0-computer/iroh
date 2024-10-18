@@ -398,6 +398,7 @@
 <a href="#398" id="398">398</a>
 <a href="#399" id="399">399</a>
 <a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! DB functions to support testing
 //!
 //! For some tests we need to modify the state of the store in ways that are not
@@ -406,6 +407,8 @@
     io,
     path::{Path, PathBuf},
 };
+
+<span class="kw">use </span>redb::ReadableTable;
 
 <span class="kw">use super</span>::{
     tables::{ReadableTables, Tables},
@@ -417,7 +420,6 @@
     util::raw_outboard_size,
     Hash,
 };
-<span class="kw">use </span>redb::ReadableTable;
 
 <span class="doccomment">/// The full state of an entry, including the data.
 </span><span class="attr">#[derive(derive_more::Debug)]

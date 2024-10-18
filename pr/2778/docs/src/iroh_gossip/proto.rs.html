@@ -373,6 +373,7 @@
 <a href="#373" id="373">373</a>
 <a href="#374" id="374">374</a>
 <a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implementation of the iroh-gossip protocol, as an IO-less state machine
 //!
 //! This module implements the iroh-gossip protocol. The entry point is [`State`], which contains
@@ -493,8 +494,9 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>test {
 
-    <span class="kw">use </span>rand::SeedableRng;
     <span class="kw">use </span>std::{collections::HashSet, env, time::Instant};
+
+    <span class="kw">use </span>rand::SeedableRng;
 
     <span class="kw">use super</span>::{Command, Config, Event, State};
     <span class="kw">use </span><span class="kw">crate</span>::proto::{

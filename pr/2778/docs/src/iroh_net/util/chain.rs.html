@@ -125,11 +125,11 @@
 
 </span><span class="comment">// Based on tokios chain implementation, that doesn't make the concrete type public.
 
-</span><span class="kw">use </span>std::fmt;
-<span class="kw">use </span>std::io;
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::task::ready;
-<span class="kw">use </span>std::task::{Context, Poll};
+</span><span class="kw">use </span>std::{
+    fmt, io,
+    pin::Pin,
+    task::{ready, Context, Poll},
+};
 
 <span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>tokio::io::{AsyncBufRead, AsyncRead, ReadBuf};

@@ -89,10 +89,10 @@
 <span class="kw">pub mod </span>store;
 <span class="kw">pub mod </span>util;
 
-<span class="kw">pub use </span><span class="kw">crate</span>::util::{Tag, TempTag};
+<span class="kw">use </span>bao_tree::BlockSize;
 <span class="kw">pub use </span>iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 
-<span class="kw">use </span>bao_tree::BlockSize;
+<span class="kw">pub use </span><span class="kw">crate</span>::util::{Tag, TempTag};
 
 <span class="doccomment">/// Block size used by iroh, 2^4*1024 = 16KiB
 </span><span class="kw">pub const </span>IROH_BLOCK_SIZE: BlockSize = BlockSize::from_chunk_log(<span class="number">4</span>);

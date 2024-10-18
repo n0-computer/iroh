@@ -108,16 +108,14 @@
 <a href="#108" id="108">108</a>
 <a href="#109" id="109">109</a>
 <a href="#110" id="110">110</a>
-<a href="#111" id="111">111</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>iroh_base::rpc::RpcResult;
 <span class="kw">use </span>iroh_blobs::{HashAndFormat, Tag};
 <span class="kw">use </span>nested_enum_utils::enum_conversions;
 <span class="kw">use </span>quic_rpc_derive::rpc_requests;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use </span><span class="kw">crate</span>::client::tags::TagInfo;
-
 <span class="kw">use super</span>::{blobs::BatchId, RpcService};
+<span class="kw">use </span><span class="kw">crate</span>::client::tags::TagInfo;
 
 <span class="attr">#[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

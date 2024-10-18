@@ -511,7 +511,6 @@
     time::Duration,
 };
 
-<span class="kw">use </span><span class="kw">crate</span>::base32::{<span class="self">self</span>, HexOrBase32ParseError};
 <span class="kw">pub use </span>ed25519_dalek::{Signature, PUBLIC_KEY_LENGTH};
 <span class="kw">use </span>ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
 <span class="kw">use </span>once_cell::sync::OnceCell;
@@ -522,6 +521,7 @@
 
 <span class="kw">pub use </span><span class="self">self</span>::encryption::SharedSecret;
 <span class="kw">use </span><span class="self">self</span>::encryption::{public_ed_box, secret_ed_box};
+<span class="kw">use </span><span class="kw">crate</span>::base32::{<span class="self">self</span>, HexOrBase32ParseError};
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>CryptoKeys {

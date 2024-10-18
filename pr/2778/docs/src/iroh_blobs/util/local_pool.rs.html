@@ -682,9 +682,9 @@
 <a href="#682" id="682">682</a>
 <a href="#683" id="683">683</a>
 <a href="#684" id="684">684</a>
+<a href="#685" id="685">685</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A local task pool with proper shutdown
-</span><span class="kw">use </span>futures_lite::FutureExt;
-<span class="kw">use </span>std::{
+</span><span class="kw">use </span>std::{
     any::Any,
     future::Future,
     ops::Deref,
@@ -694,6 +694,8 @@
         Arc,
     },
 };
+
+<span class="kw">use </span>futures_lite::FutureExt;
 <span class="kw">use </span>tokio::{
     sync::{Notify, Semaphore},
     task::{JoinError, JoinSet, LocalSet},

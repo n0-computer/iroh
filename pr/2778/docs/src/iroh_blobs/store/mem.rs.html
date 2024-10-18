@@ -465,15 +465,7 @@
 </pre></div><pre class="rust"><code><span class="doccomment">//! A full in memory database for iroh-blobs
 //!
 //! Main entry point is [Store].
-</span><span class="kw">use </span>bao_tree::{
-    io::{fsm::Outboard, outboard::PreOrderOutboard, sync::WriteAt},
-    BaoTree,
-};
-<span class="kw">use </span>bytes::{Bytes, BytesMut};
-<span class="kw">use </span>futures_lite::{Stream, StreamExt};
-<span class="kw">use </span>iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
-<span class="kw">use </span>iroh_io::AsyncSliceReader;
-<span class="kw">use </span>std::{
+</span><span class="kw">use </span>std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
     io,
@@ -482,6 +474,19 @@
     time::SystemTime,
 };
 
+<span class="kw">use </span>bao_tree::{
+    io::{fsm::Outboard, outboard::PreOrderOutboard, sync::WriteAt},
+    BaoTree,
+};
+<span class="kw">use </span>bytes::{Bytes, BytesMut};
+<span class="kw">use </span>futures_lite::{Stream, StreamExt};
+<span class="kw">use </span>iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
+<span class="kw">use </span>iroh_io::AsyncSliceReader;
+
+<span class="kw">use super</span>::{
+    temp_name, BaoBatchWriter, ConsistencyCheckProgress, ExportMode, ExportProgressCb, ImportMode,
+    ImportProgress, Map, TempCounterMap,
+};
 <span class="kw">use crate</span>::{
     store::{
         mutable_mem_storage::MutableMemStorage, BaoBlobSize, MapEntry, MapEntryMut, ReadableStore,
@@ -491,11 +496,6 @@
         TagCounter, TagDrop,
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
-};
-
-<span class="kw">use super</span>::{
-    temp_name, BaoBatchWriter, ConsistencyCheckProgress, ExportMode, ExportProgressCb, ImportMode,
-    ImportProgress, Map, TempCounterMap,
 };
 
 <span class="doccomment">/// A fully featured in memory database for iroh-blobs, including support for

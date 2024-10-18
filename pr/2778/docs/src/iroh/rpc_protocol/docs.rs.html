@@ -421,6 +421,8 @@
 <a href="#421" id="421">421</a>
 <a href="#422" id="422">422</a>
 <a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::path::PathBuf;
 
 <span class="kw">use </span>bytes::Bytes;
@@ -430,8 +432,10 @@
 };
 <span class="kw">use </span>iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 <span class="kw">use </span>iroh_docs::{
-    actor::OpenState, engine::LiveEvent, store::DownloadPolicy, store::Query, AuthorId, Capability,
-    CapabilityKind, DocTicket, Entry, NamespaceId, PeerIdBytes, SignedEntry,
+    actor::OpenState,
+    engine::LiveEvent,
+    store::{DownloadPolicy, Query},
+    AuthorId, Capability, CapabilityKind, DocTicket, Entry, NamespaceId, PeerIdBytes, SignedEntry,
 };
 <span class="kw">use </span>iroh_net::NodeAddr;
 <span class="kw">use </span>nested_enum_utils::enum_conversions;

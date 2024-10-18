@@ -354,6 +354,16 @@
     sync::Arc,
 };
 
+<span class="kw">use </span>bao_tree::{
+    blake3,
+    io::{outboard::PreOrderMemOutboard, sync::Outboard},
+};
+<span class="kw">use </span>bytes::Bytes;
+<span class="kw">use </span>futures_lite::Stream;
+<span class="kw">use </span>iroh_io::AsyncSliceReader;
+<span class="kw">use </span>tokio::io::AsyncWriteExt;
+
+<span class="kw">use super</span>::{BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, DbIter, ExportProgressCb};
 <span class="kw">use crate</span>::{
     store::{
         EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, MapEntryMut,
@@ -365,16 +375,6 @@
     },
     BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
-<span class="kw">use </span>bao_tree::{
-    blake3,
-    io::{outboard::PreOrderMemOutboard, sync::Outboard},
-};
-<span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>futures_lite::Stream;
-<span class="kw">use </span>iroh_io::AsyncSliceReader;
-<span class="kw">use </span>tokio::io::AsyncWriteExt;
-
-<span class="kw">use super</span>::{BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, DbIter, ExportProgressCb};
 
 <span class="doccomment">/// A readonly in memory database for iroh-blobs.
 ///

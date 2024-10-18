@@ -347,6 +347,9 @@
 <a href="#347" id="347">347</a>
 <a href="#348" id="348">348</a>
 <a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Generic utilities to track progress of data transfers.
 //!
 //! This is not especially specific to iroh but can be helpful together with it.  The
@@ -357,17 +360,20 @@
 //! similar and more advanced functionality is available in the `indicatif` crate for
 //! terminal applications.
 
-</span><span class="kw">use </span>std::fmt;
-<span class="kw">use </span>std::io::Read;
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::atomic::Ordering;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::task::Poll;
+</span><span class="kw">use </span>std::{
+    fmt,
+    io::Read,
+    pin::Pin,
+    sync::{atomic::Ordering, Arc},
+    task::Poll,
+};
 
 <span class="kw">use </span>iroh_blobs::util::io::TrackingWriter;
 <span class="kw">use </span>portable_atomic::{AtomicU16, AtomicU64};
-<span class="kw">use </span>tokio::io::{<span class="self">self</span>, AsyncRead, AsyncWrite};
-<span class="kw">use </span>tokio::sync::{broadcast, mpsc};
+<span class="kw">use </span>tokio::{
+    io::{<span class="self">self</span>, AsyncRead, AsyncWrite},
+    sync::{broadcast, mpsc},
+};
 
 <span class="doccomment">/// A generic progress event emitter.
 ///

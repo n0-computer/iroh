@@ -1050,6 +1050,7 @@
 <a href="#1050" id="1050">1050</a>
 <a href="#1051" id="1051">1051</a>
 <a href="#1052" id="1052">1052</a>
+<a href="#1053" id="1053">1053</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1061,29 +1062,29 @@
 //! can not outlive their handle.  It is also always possible to await for completion of a
 //! task.  Some tasks additionally have a method to do graceful shutdown.
 
-</span><span class="kw">use </span>std::fmt;
-<span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::net::SocketAddr;
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::Arc;
+</span><span class="kw">use </span>std::{fmt, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
 <span class="kw">use </span>anyhow::{anyhow, bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::StreamExt;
-<span class="kw">use </span>http::response::Builder <span class="kw">as </span>ResponseBuilder;
-<span class="kw">use </span>http::{HeaderMap, Method, Request, Response, StatusCode};
+<span class="kw">use </span>http::{
+    response::Builder <span class="kw">as </span>ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
+};
 <span class="kw">use </span>hyper::body::Incoming;
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>tokio::net::{TcpListener, UdpSocket};
-<span class="kw">use </span>tokio::task::JoinSet;
+<span class="comment">// Module defined in this file.
+</span><span class="kw">use </span>stun_metrics::StunMetrics;
+<span class="kw">use </span>tokio::{
+    net::{TcpListener, UdpSocket},
+    task::JoinSet,
+};
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-<span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
-<span class="kw">use </span><span class="kw">crate</span>::relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH};
-<span class="kw">use </span><span class="kw">crate</span>::stun;
-
-<span class="comment">// Module defined in this file.
-</span><span class="kw">use </span>stun_metrics::StunMetrics;
+<span class="kw">use crate</span>::{
+    key::SecretKey,
+    relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH},
+    stun,
+};
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>actor;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>client_conn;
@@ -1093,9 +1094,11 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>streams;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>types;
 
-<span class="kw">pub use </span><span class="self">self</span>::actor::{ClientConnHandler, ServerActorTask};
-<span class="kw">pub use </span><span class="self">self</span>::metrics::Metrics;
-<span class="kw">pub use </span><span class="self">self</span>::streams::MaybeTlsStream <span class="kw">as </span>MaybeTlsStreamServer;
+<span class="kw">pub use </span><span class="self">self</span>::{
+    actor::{ClientConnHandler, ServerActorTask},
+    metrics::Metrics,
+    streams::MaybeTlsStream <span class="kw">as </span>MaybeTlsStreamServer,
+};
 
 <span class="kw">const </span>NO_CONTENT_CHALLENGE_HEADER: <span class="kw-2">&amp;</span>str = <span class="string">"X-Tailscale-Challenge"</span>;
 <span class="kw">const </span>NO_CONTENT_RESPONSE_HEADER: <span class="kw-2">&amp;</span>str = <span class="string">"X-Tailscale-Response"</span>;
@@ -1758,18 +1761,17 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>std::net::Ipv4Addr;
-    <span class="kw">use </span>std::time::Duration;
+    <span class="kw">use </span>std::{net::Ipv4Addr, time::Duration};
 
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>http::header::UPGRADE;
     <span class="kw">use </span>iroh_base::node_addr::RelayUrl;
 
-    <span class="kw">use </span><span class="kw">crate</span>::relay::client::conn::ReceivedMessage;
-    <span class="kw">use </span><span class="kw">crate</span>::relay::client::ClientBuilder;
-    <span class="kw">use </span><span class="kw">crate</span>::relay::http::{Protocol, HTTP_UPGRADE_PROTOCOL};
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::relay::{
+        client::{conn::ReceivedMessage, ClientBuilder},
+        http::{Protocol, HTTP_UPGRADE_PROTOCOL},
+    };
 
     <span class="kw">async fn </span>spawn_local_relay() -&gt; <span class="prelude-ty">Result</span>&lt;Server&gt; {
         Server::spawn(ServerConfig::&lt;(), ()&gt; {

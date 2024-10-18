@@ -30,6 +30,9 @@
 <a href="#30" id="30">30</a>
 <a href="#31" id="31">31</a>
 <a href="#32" id="32">32</a>
+<a href="#33" id="33">33</a>
+<a href="#34" id="34">34</a>
+<a href="#35" id="35">35</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Package `relay` implements a revised version of the Designated Encrypted Relay for Packets (DERP)
 //! protocol written by Tailscale.
 </span><span class="comment">//
@@ -50,16 +53,19 @@
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"iroh-relay"</span>)))]
 </span><span class="kw">pub mod </span>server;
 
+<span class="kw">pub use </span>iroh_base::node_addr::RelayUrl;
+
 <span class="doccomment">/// Environment variable to force the use of staging relays.
 </span><span class="attr">#[cfg_attr(iroh_docsrs, doc(cfg(not(test))))]
 </span><span class="kw">pub const </span>ENV_FORCE_STAGING_RELAYS: <span class="kw-2">&amp;</span>str = <span class="string">"IROH_FORCE_STAGING_RELAYS"</span>;
 
-<span class="kw">pub use </span><span class="self">self</span>::client::conn::{Conn <span class="kw">as </span>RelayConn, ReceivedMessage};
-<span class="kw">pub use </span><span class="self">self</span>::client::{
-    Client <span class="kw">as </span>HttpClient, ClientBuilder <span class="kw">as </span>HttpClientBuilder, ClientError <span class="kw">as </span>HttpClientError,
-    ClientReceiver <span class="kw">as </span>HttpClientReceiver,
+<span class="kw">pub use </span><span class="self">self</span>::{
+    client::{
+        conn::{Conn <span class="kw">as </span>RelayConn, ReceivedMessage},
+        Client <span class="kw">as </span>HttpClient, ClientBuilder <span class="kw">as </span>HttpClientBuilder, ClientError <span class="kw">as </span>HttpClientError,
+        ClientReceiver <span class="kw">as </span>HttpClientReceiver,
+    },
+    codec::MAX_PACKET_SIZE,
+    map::{RelayMap, RelayMode, RelayNode},
 };
-<span class="kw">pub use </span><span class="self">self</span>::codec::MAX_PACKET_SIZE;
-<span class="kw">pub use </span><span class="self">self</span>::map::{RelayMap, RelayMode, RelayNode};
-<span class="kw">pub use </span>iroh_base::node_addr::RelayUrl;
 </code></pre></div></section></main></body></html>

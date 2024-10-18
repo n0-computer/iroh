@@ -157,6 +157,8 @@
 <a href="#157" id="157">157</a>
 <a href="#158" id="158">158</a>
 <a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Actor which coordinates the congestion controller for the magic socket
 
 </span><span class="kw">use </span>std::collections::HashMap;
@@ -164,9 +166,11 @@
 <span class="kw">use </span>futures_concurrency::stream::stream_group;
 <span class="kw">use </span>futures_lite::StreamExt;
 <span class="kw">use </span>iroh_base::key::NodeId;
-<span class="kw">use </span>tokio::sync::{mpsc, Notify};
-<span class="kw">use </span>tokio::task::JoinHandle;
-<span class="kw">use </span>tokio::time::Duration;
+<span class="kw">use </span>tokio::{
+    sync::{mpsc, Notify},
+    task::JoinHandle,
+    time::Duration,
+};
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
 <span class="kw">use </span><span class="kw">crate</span>::magicsock::{ConnectionType, ConnectionTypeStream};

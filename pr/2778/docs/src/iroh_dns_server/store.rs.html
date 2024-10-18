@@ -263,7 +263,6 @@
 <a href="#263" id="263">263</a>
 <a href="#264" id="264">264</a>
 <a href="#265" id="265">265</a>
-<a href="#266" id="266">266</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr packet store used to resolve DNS queries.
 
 </span><span class="kw">use </span>std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
@@ -278,13 +277,12 @@
 <span class="kw">use </span>tracing::{debug, trace};
 <span class="kw">use </span>ttl_cache::TtlCache;
 
+<span class="kw">use </span><span class="self">self</span>::signed_packets::SignedPacketStore;
 <span class="kw">use crate</span>::{
     config::BootstrapOption,
     metrics::Metrics,
     util::{signed_packet_to_hickory_records_without_origin, PublicKeyBytes},
 };
-
-<span class="kw">use </span><span class="self">self</span>::signed_packets::SignedPacketStore;
 
 <span class="kw">mod </span>signed_packets;
 

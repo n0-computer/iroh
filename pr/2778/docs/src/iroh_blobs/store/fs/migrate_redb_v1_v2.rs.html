@@ -320,6 +320,7 @@
 <a href="#320" id="320">320</a>
 <a href="#321" id="321">321</a>
 <a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::path::{Path, PathBuf};
 
 <span class="kw">use </span>anyhow::Result;
@@ -423,14 +424,15 @@
 }
 
 <span class="kw">mod </span>old {
-    <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::EntryState;
-    <span class="kw">use </span><span class="kw">crate</span>::util::Tag;
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>iroh_base::hash::BlobFormat;
     <span class="kw">use </span>postcard::experimental::max_size::MaxSize;
     <span class="kw">use </span>redb_v1::{RedbKey, RedbValue, TableDefinition, TypeName};
     <span class="kw">use </span>serde::{Deserialize, Deserializer, Serialize, Serializer};
     <span class="kw">use </span>smallvec::SmallVec;
+
+    <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::EntryState;
+    <span class="kw">use </span><span class="kw">crate</span>::util::Tag;
 
     <span class="kw">pub const </span>BLOBS_TABLE: TableDefinition&lt;Hash, EntryState&gt; = TableDefinition::new(<span class="string">"blobs-0"</span>);
 
