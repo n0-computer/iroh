@@ -203,16 +203,12 @@ jobs:
       SCCACHE_GHA_ENABLED: "on"
     steps:
     - uses: actions/checkout@v4
-
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt
-
-    - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.6
-
-    - name: fmt
-      run: cargo fmt --all -- --check
+    - uses: mozilla-actions/sccache-action@v0.0.6
+    - uses: taiki-e/install-action@cargo-make
+    - run: cargo make format-check
 
   check_docs:
     timeout-minutes: 30
