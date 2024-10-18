@@ -942,6 +942,7 @@
 <a href="#942" id="942">942</a>
 <a href="#943" id="943">943</a>
 <a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The client side API
 //!
 //! To get data, create a connection using [iroh-net] or use any quinn
@@ -956,21 +957,23 @@
 //! or you can choose to finish early.
 //!
 //! [iroh-net]: https://docs.rs/iroh-net
-</span><span class="kw">use </span>std::error::Error;
-<span class="kw">use </span>std::fmt::{<span class="self">self</span>, Debug};
-<span class="kw">use </span>std::time::{Duration, Instant};
+</span><span class="kw">use </span>std::{
+    error::Error,
+    fmt::{<span class="self">self</span>, Debug},
+    time::{Duration, Instant},
+};
 
-<span class="kw">use </span><span class="kw">crate</span>::Hash;
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>bao_tree::io::fsm::BaoContentItem;
-<span class="kw">use </span>bao_tree::ChunkNum;
+<span class="kw">use </span>bao_tree::{io::fsm::BaoContentItem, ChunkNum};
 <span class="kw">use </span>iroh_net::endpoint::{<span class="self">self</span>, RecvStream, SendStream};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tracing::{debug, error};
 
-<span class="kw">use </span><span class="kw">crate</span>::protocol::RangeSpecSeq;
-<span class="kw">use </span><span class="kw">crate</span>::util::io::{TrackingReader, TrackingWriter};
-<span class="kw">use </span><span class="kw">crate</span>::IROH_BLOCK_SIZE;
+<span class="kw">use crate</span>::{
+    protocol::RangeSpecSeq,
+    util::io::{TrackingReader, TrackingWriter},
+    Hash, IROH_BLOCK_SIZE,
+};
 
 <span class="kw">pub mod </span>db;
 <span class="kw">pub mod </span>error;
@@ -1003,13 +1006,6 @@
 </span><span class="kw">pub mod </span>fsm {
     <span class="kw">use </span>std::{io, result};
 
-    <span class="kw">use crate</span>::{
-        protocol::{GetRequest, NonEmptyRequestRangeSpecIter, Request, MAX_MESSAGE_SIZE},
-        store::BaoBatchWriter,
-    };
-
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-
     <span class="kw">use </span>bao_tree::{
         io::fsm::{OutboardMut, ResponseDecoder, ResponseDecoderNext},
         BaoTree, ChunkRanges, TreeNode,
@@ -1018,6 +1014,12 @@
     <span class="kw">use </span>iroh_io::{AsyncSliceWriter, AsyncStreamReader, TokioStreamReader};
     <span class="kw">use </span>iroh_net::endpoint::Connection;
     <span class="kw">use </span>tokio::io::AsyncWriteExt;
+
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use crate</span>::{
+        protocol::{GetRequest, NonEmptyRequestRangeSpecIter, Request, MAX_MESSAGE_SIZE},
+        store::BaoBatchWriter,
+    };
 
     <span class="kw">type </span>WrappedRecvStream = TrackingReader&lt;TokioStreamReader&lt;RecvStream&gt;&gt;;
 

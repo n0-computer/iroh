@@ -153,7 +153,6 @@
 <a href="#153" id="153">153</a>
 <a href="#154" id="154">154</a>
 <a href="#155" id="155">155</a>
-<a href="#156" id="156">156</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/tailcfg/derpmap.go
 
 </span><span class="kw">use </span>std::{collections::BTreeMap, fmt, sync::Arc};
@@ -161,9 +160,8 @@
 <span class="kw">use </span>anyhow::{ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use </span><span class="kw">crate</span>::defaults::DEFAULT_STUN_PORT;
-
 <span class="kw">use </span><span class="kw">super</span>::RelayUrl;
+<span class="kw">use </span><span class="kw">crate</span>::defaults::DEFAULT_STUN_PORT;
 
 <span class="doccomment">/// Configuration of the relay servers for an [`Endpoint`].
 ///

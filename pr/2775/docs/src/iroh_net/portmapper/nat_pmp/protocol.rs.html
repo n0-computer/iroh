@@ -33,18 +33,14 @@
 <a href="#33" id="33">33</a>
 <a href="#34" id="34">34</a>
 <a href="#35" id="35">35</a>
-<a href="#36" id="36">36</a>
-<a href="#37" id="37">37</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Definitions and utilities to interact with a NAT-PMP server.
 
 </span><span class="kw">mod </span>request;
 <span class="kw">mod </span>response;
 
 <span class="kw">use </span>num_enum::{IntoPrimitive, TryFromPrimitive};
-
 <span class="comment">// PCP and NAT-PMP share same ports, reassigned by IANA from the older version to the new one. See
 // &lt;https://datatracker.ietf.org/doc/html/rfc6887#section-19&gt;
-
 </span><span class="kw">pub use </span>request::<span class="kw-2">*</span>;
 <span class="kw">pub use </span>response::<span class="kw-2">*</span>;
 

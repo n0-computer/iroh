@@ -564,11 +564,9 @@
 <a href="#564" id="564">564</a>
 <a href="#565" id="565">565</a>
 <a href="#566" id="566">566</a>
-<a href="#567" id="567">567</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The blake3 hash used in Iroh.
 
-</span><span class="kw">use </span>std::str::FromStr;
-<span class="kw">use </span>std::{borrow::Borrow, fmt};
+</span><span class="kw">use </span>std::{borrow::Borrow, fmt, str::FromStr};
 
 <span class="kw">use </span>postcard::experimental::max_size::MaxSize;
 <span class="kw">use </span>serde::{de, Deserialize, Deserializer, Serialize, Serializer};
@@ -800,9 +798,10 @@
 <span class="attr">#[cfg(feature = <span class="string">"redb"</span>)]
 #[cfg_attr(iroh_docsrs, cfg(feature = <span class="string">"redb"</span>))]
 </span><span class="kw">mod </span>redb_support {
-    <span class="kw">use super</span>::{Hash, HashAndFormat};
     <span class="kw">use </span>postcard::experimental::max_size::MaxSize;
     <span class="kw">use </span>redb::{Key <span class="kw">as </span>RedbKey, Value <span class="kw">as </span>RedbValue};
+
+    <span class="kw">use super</span>::{Hash, HashAndFormat};
 
     <span class="kw">impl </span>RedbValue <span class="kw">for </span>Hash {
         <span class="kw">type </span>SelfType&lt;<span class="lifetime">'a</span>&gt; = <span class="self">Self</span>;
@@ -964,10 +963,9 @@
 </span><span class="kw">mod </span>tests {
 
     <span class="kw">use </span>iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+    <span class="kw">use </span>serde_test::{assert_tokens, Configure, Token};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-
-    <span class="kw">use </span>serde_test::{assert_tokens, Configure, Token};
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_display_parse_roundtrip() {

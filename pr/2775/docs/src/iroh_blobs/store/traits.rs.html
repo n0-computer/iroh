@@ -958,10 +958,10 @@
 <a href="#958" id="958">958</a>
 <a href="#959" id="959">959</a>
 <a href="#960" id="960">960</a>
-<a href="#961" id="961">961</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 </span><span class="kw">use </span>std::{collections::BTreeSet, future::Future, io, path::PathBuf, time::Duration};
 
+<span class="kw">pub use </span>bao_tree;
 <span class="kw">use </span>bao_tree::{
     io::fsm::{BaoContentItem, Outboard},
     BaoTree, ChunkRanges,
@@ -971,6 +971,7 @@
 <span class="kw">use </span>genawaiter::rc::{Co, Gen};
 <span class="kw">use </span>iroh_base::rpc::RpcError;
 <span class="kw">use </span>iroh_io::AsyncSliceReader;
+<span class="kw">pub use </span>range_collections;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::io::AsyncRead;
 
@@ -984,9 +985,6 @@
     },
     BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
-
-<span class="kw">pub use </span>bao_tree;
-<span class="kw">pub use </span>range_collections;
 
 <span class="doccomment">/// A fallible but owned iterator over the entries in a store.
 </span><span class="kw">pub type </span>DbIter&lt;T&gt; = Box&lt;<span class="kw">dyn </span>Iterator&lt;Item = io::Result&lt;T&gt;&gt; + Send + Sync + <span class="lifetime">'static</span>&gt;;

@@ -1685,6 +1685,7 @@
 <a href="#1685" id="1685">1685</a>
 <a href="#1686" id="1686">1686</a>
 <a href="#1687" id="1687">1687</a>
+<a href="#1688" id="1688">1688</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for blobs management.
 //!
 //! The main entry point is the [`Client`].
@@ -1780,15 +1781,16 @@
 <span class="kw">mod </span>batch;
 <span class="kw">pub use </span>batch::{AddDirOpts, AddFileOpts, AddReaderOpts, Batch};
 
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::blobs::{
-    AddPathRequest, AddStreamRequest, AddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
-    BlobStatusRequest, ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse,
-    DeleteRequest, DownloadRequest, ExportRequest, ListIncompleteRequest, ListRequest,
-    ReadAtRequest, ReadAtResponse, ValidateRequest,
-};
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::node::StatusRequest;
-
 <span class="kw">use super</span>::{flatten, tags, Iroh, RpcClient};
+<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::{
+    blobs::{
+        AddPathRequest, AddStreamRequest, AddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
+        BlobStatusRequest, ConsistencyCheckRequest, CreateCollectionRequest,
+        CreateCollectionResponse, DeleteRequest, DownloadRequest, ExportRequest,
+        ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse, ValidateRequest,
+    },
+    node::StatusRequest,
+};
 
 <span class="doccomment">/// Iroh blobs client.
 </span><span class="attr">#[derive(Debug, Clone, RefCast)]
@@ -2682,13 +2684,13 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-
     <span class="kw">use </span>iroh_blobs::hashseq::HashSeq;
     <span class="kw">use </span>iroh_net::NodeId;
     <span class="kw">use </span>rand::RngCore;
     <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tokio::{io::AsyncWriteExt, sync::mpsc};
+
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_blob_create_collection() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {

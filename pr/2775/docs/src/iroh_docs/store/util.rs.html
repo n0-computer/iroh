@@ -86,12 +86,10 @@
 <a href="#86" id="86">86</a>
 <a href="#87" id="87">87</a>
 <a href="#88" id="88">88</a>
-<a href="#89" id="89">89</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utilities useful across different store impls.
 
-</span><span class="kw">use </span><span class="kw">crate</span>::SignedEntry;
-
-<span class="kw">use super</span>::{AuthorFilter, KeyFilter, Query, QueryKind, SortBy};
+</span><span class="kw">use super</span>::{AuthorFilter, KeyFilter, Query, QueryKind, SortBy};
+<span class="kw">use </span><span class="kw">crate</span>::SignedEntry;
 
 <span class="doccomment">/// A helper for stores that have by-author and by-key indexes for records.
 </span><span class="attr">#[derive(Debug)]

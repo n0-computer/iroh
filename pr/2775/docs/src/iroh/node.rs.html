@@ -878,6 +878,10 @@
 <a href="#878" id="878">878</a>
 <a href="#879" id="879">879</a>
 <a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node API
 //!
 //! An iroh node is a server that is identified by an Ed25519 keypair and is
@@ -915,35 +919,37 @@
 //! well, without going through [`client`](crate::client::Iroh))
 //!
 //! To shut down the node, call [`Node::shutdown`].
-</span><span class="kw">use </span>std::collections::BTreeSet;
-<span class="kw">use </span>std::fmt::Debug;
-<span class="kw">use </span>std::marker::PhantomData;
-<span class="kw">use </span>std::net::SocketAddr;
-<span class="kw">use </span>std::path::{Path, PathBuf};
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{
+    collections::BTreeSet,
+    fmt::Debug,
+    marker::PhantomData,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::StreamExt;
-<span class="kw">use </span>futures_util::future::MapErr;
-<span class="kw">use </span>futures_util::future::Shared;
+<span class="kw">use </span>futures_util::future::{MapErr, Shared};
 <span class="kw">use </span>iroh_base::key::PublicKey;
-<span class="kw">use </span>iroh_blobs::protocol::Closed;
-<span class="kw">use </span>iroh_blobs::store::Store <span class="kw">as </span>BaoStore;
-<span class="kw">use </span>iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
+<span class="kw">use </span>iroh_blobs::{
+    protocol::Closed,
+    store::Store <span class="kw">as </span>BaoStore,
+    util::local_pool::{LocalPool, LocalPoolHandle},
+};
 <span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
-<span class="kw">use </span>iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
-<span class="kw">use </span>iroh_net::{AddrInfo, Endpoint, NodeAddr};
+<span class="kw">use </span>iroh_net::{
+    endpoint::{DirectAddrsStream, RemoteInfo},
+    AddrInfo, Endpoint, NodeAddr,
+};
 <span class="kw">use </span>protocol::BlobsProtocol;
-<span class="kw">use </span>quic_rpc::transport::ServerEndpoint <span class="kw">as _</span>;
-<span class="kw">use </span>quic_rpc::RpcServer;
+<span class="kw">use </span>quic_rpc::{transport::ServerEndpoint <span class="kw">as _</span>, RpcServer};
 <span class="kw">use </span>tokio::task::{JoinError, JoinSet};
-<span class="kw">use </span>tokio_util::sync::CancellationToken;
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
+<span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
-<span class="kw">use </span><span class="kw">crate</span>::node::nodes_storage::store_node_addrs;
-<span class="kw">use </span><span class="kw">crate</span>::node::{docs::DocsEngine, protocol::ProtocolMap};
+<span class="kw">use </span><span class="kw">crate</span>::node::{docs::DocsEngine, nodes_storage::store_node_addrs, protocol::ProtocolMap};
 
 <span class="kw">mod </span>builder;
 <span class="kw">mod </span>docs;
@@ -952,12 +958,15 @@
 <span class="kw">mod </span>rpc;
 <span class="kw">mod </span>rpc_status;
 
-<span class="kw">pub use </span><span class="self">self</span>::builder::{
-    Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,
-    DEFAULT_RPC_ADDR,
-};
-<span class="kw">pub use </span><span class="self">self</span>::rpc_status::RpcStatus;
 <span class="kw">pub use </span>protocol::ProtocolHandler;
+
+<span class="kw">pub use </span><span class="self">self</span>::{
+    builder::{
+        Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,
+        DEFAULT_RPC_ADDR,
+    },
+    rpc_status::RpcStatus,
+};
 
 <span class="doccomment">/// How often to save node data.
 </span><span class="kw">const </span>SAVE_NODES_INTERVAL: Duration = Duration::from_secs(<span class="number">30</span>);
@@ -1427,9 +1436,8 @@
     <span class="kw">use </span>iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
     <span class="kw">use </span>iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
-    <span class="kw">use </span><span class="kw">crate</span>::client::blobs::{AddOutcome, WrapOption};
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::client::blobs::{AddOutcome, WrapOption};
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_ticket_multiple_addrs() {

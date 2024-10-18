@@ -135,7 +135,6 @@
 <a href="#135" id="135">135</a>
 <a href="#136" id="136">136</a>
 <a href="#137" id="137">137</a>
-<a href="#138" id="138">138</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API to manage the iroh networking stack.
 //!
 //! The main entry point is the [`Client`].
@@ -155,12 +154,11 @@
 <span class="kw">use </span>ref_cast::RefCast;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
+<span class="kw">use super</span>::{flatten, RpcClient};
 <span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::net::{
     AddAddrRequest, AddrRequest, IdRequest, RelayRequest, RemoteInfoRequest, RemoteInfoResponse,
     RemoteInfosIterRequest,
 };
-
-<span class="kw">use super</span>::{flatten, RpcClient};
 
 <span class="doccomment">/// Iroh netx Client.
 ///

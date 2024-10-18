@@ -1120,45 +1120,56 @@
 <a href="#1120" id="1120">1120</a>
 <a href="#1121" id="1121">1121</a>
 <a href="#1122" id="1122">1122</a>
+<a href="#1123" id="1123">1123</a>
+<a href="#1124" id="1124">1124</a>
+<a href="#1125" id="1125">1125</a>
+<a href="#1126" id="1126">1126</a>
+<a href="#1127" id="1127">1127</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Based on tailscale/derp/derphttp/derphttp_client.go
 
-</span><span class="kw">use </span>std::collections::HashMap;
-<span class="kw">use </span>std::net::{IpAddr, SocketAddr};
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
 <span class="kw">use </span>base64::{engine::general_purpose::URL_SAFE, Engine <span class="kw">as _</span>};
 <span class="kw">use </span>bytes::Bytes;
+<span class="kw">use </span>conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
 <span class="kw">use </span>futures_lite::future::Boxed <span class="kw">as </span>BoxFuture;
 <span class="kw">use </span>futures_util::StreamExt;
 <span class="kw">use </span>http_body_util::Empty;
-<span class="kw">use </span>hyper::body::Incoming;
-<span class="kw">use </span>hyper::header::UPGRADE;
-<span class="kw">use </span>hyper::upgrade::Parts;
-<span class="kw">use </span>hyper::Request;
+<span class="kw">use </span>hyper::{body::Incoming, header::UPGRADE, upgrade::Parts, Request};
 <span class="kw">use </span>hyper_util::rt::TokioIo;
 <span class="kw">use </span>rand::Rng;
 <span class="kw">use </span>rustls::client::Resumption;
-<span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
-<span class="kw">use </span>tokio::net::TcpStream;
-<span class="kw">use </span>tokio::sync::{mpsc, oneshot};
-<span class="kw">use </span>tokio::task::JoinSet;
-<span class="kw">use </span>tokio::time::Instant;
-<span class="kw">use </span>tokio_util::codec::{FramedRead, FramedWrite};
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
+<span class="kw">use </span>streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
+<span class="kw">use </span>tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::TcpStream,
+    sync::{mpsc, oneshot},
+    task::JoinSet,
+    time::Instant,
+};
+<span class="kw">use </span>tokio_util::{
+    codec::{FramedRead, FramedWrite},
+    task::AbortOnDropHandle,
+};
 <span class="kw">use </span>tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 <span class="kw">use </span>url::Url;
 
-<span class="kw">use </span>conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
-<span class="kw">use </span>streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
-
-<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::relay::<span class="kw-2">*</span>;
-<span class="kw">use </span><span class="kw">crate</span>::dns::{DnsResolver, ResolverExt};
-<span class="kw">use </span><span class="kw">crate</span>::key::{NodeId, PublicKey, SecretKey};
-<span class="kw">use </span><span class="kw">crate</span>::relay::codec::DerpCodec;
-<span class="kw">use </span><span class="kw">crate</span>::relay::http::{Protocol, RELAY_PATH};
-<span class="kw">use </span><span class="kw">crate</span>::relay::RelayUrl;
-<span class="kw">use </span><span class="kw">crate</span>::util::chain;
+<span class="kw">use crate</span>::{
+    defaults::timeouts::relay::<span class="kw-2">*</span>,
+    dns::{DnsResolver, ResolverExt},
+    key::{NodeId, PublicKey, SecretKey},
+    relay::{
+        codec::DerpCodec,
+        http::{Protocol, RELAY_PATH},
+        RelayUrl,
+    },
+    util::chain,
+};
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>conn;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>streams;
@@ -2219,9 +2230,8 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
 
-    <span class="kw">use </span><span class="kw">crate</span>::dns::default_resolver;
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::dns::default_resolver;
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_recv_detail_connect_error() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {

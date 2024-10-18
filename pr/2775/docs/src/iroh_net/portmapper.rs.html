@@ -700,8 +700,6 @@
 <a href="#700" id="700">700</a>
 <a href="#701" id="701">701</a>
 <a href="#702" id="702">702</a>
-<a href="#703" id="703">703</a>
-<a href="#704" id="704">704</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Port mapping client and service.
 
 </span><span class="kw">use </span>std::{
@@ -711,16 +709,14 @@
 };
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>current_mapping::CurrentMapping;
 <span class="kw">use </span>futures_lite::StreamExt;
+<span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>tokio::sync::{mpsc, oneshot, watch};
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, info_span, trace, Instrument};
 
-<span class="kw">use </span>iroh_metrics::inc;
-
 <span class="kw">use crate</span>::{net::interfaces::HomeRouter, util};
-
-<span class="kw">use </span>current_mapping::CurrentMapping;
 
 <span class="kw">mod </span>current_mapping;
 <span class="kw">mod </span>mapping;

@@ -1385,10 +1385,15 @@
 <a href="#1385" id="1385">1385</a>
 <a href="#1386" id="1386">1386</a>
 <a href="#1387" id="1387">1387</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt::Debug;
-<span class="kw">use </span>std::io;
-<span class="kw">use </span>std::sync::{Arc, Mutex};
-<span class="kw">use </span>std::time::Duration;
+<a href="#1388" id="1388">1388</a>
+<a href="#1389" id="1389">1389</a>
+<a href="#1390" id="1390">1390</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    fmt::Debug,
+    io,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_buffered::BufferedStreamExt;
@@ -1396,70 +1401,68 @@
 <span class="kw">use </span>futures_util::FutureExt;
 <span class="kw">use </span>genawaiter::sync::{Co, Gen};
 <span class="kw">use </span>iroh_base::rpc::{RpcError, RpcResult};
-<span class="kw">use </span>iroh_blobs::export::ExportProgress;
-<span class="kw">use </span>iroh_blobs::format::collection::Collection;
-<span class="kw">use </span>iroh_blobs::get::db::DownloadProgress;
-<span class="kw">use </span>iroh_blobs::provider::BatchAddPathProgress;
-<span class="kw">use </span>iroh_blobs::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
-<span class="kw">use </span>iroh_blobs::util::local_pool::LocalPoolHandle;
-<span class="kw">use </span>iroh_blobs::util::progress::{AsyncChannelProgressSender, ProgressSender};
-<span class="kw">use </span>iroh_blobs::util::SetTagOption;
 <span class="kw">use </span>iroh_blobs::{
-    provider::AddProgress,
-    store::{Store <span class="kw">as </span>BaoStore, ValidateProgress},
-    HashAndFormat,
+    export::ExportProgress,
+    format::collection::Collection,
+    get::db::DownloadProgress,
+    provider::{AddProgress, BatchAddPathProgress},
+    store::{
+        ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry, Store <span class="kw">as </span>BaoStore,
+        ValidateProgress,
+    },
+    util::{
+        local_pool::LocalPoolHandle,
+        progress::{AsyncChannelProgressSender, ProgressSender},
+        SetTagOption,
+    },
+    BlobFormat, HashAndFormat, Tag,
 };
-<span class="kw">use </span>iroh_blobs::{BlobFormat, Tag};
 <span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
 <span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 <span class="kw">use </span>iroh_io::AsyncSliceReader;
-<span class="kw">use </span>iroh_net::relay::RelayUrl;
-<span class="kw">use </span>iroh_net::{NodeAddr, NodeId};
+<span class="kw">use </span>iroh_net::{relay::RelayUrl, NodeAddr, NodeId};
 <span class="kw">use </span>quic_rpc::server::{RpcChannel, RpcServerError};
 <span class="kw">use </span>tokio::task::JoinSet;
 <span class="kw">use </span>tokio_util::either::Either;
 <span class="kw">use </span>tracing::{debug, info, warn};
 
-<span class="kw">use </span><span class="kw">crate</span>::client::blobs::BlobStatus;
-<span class="kw">use </span><span class="kw">crate</span>::client::{
-    blobs::{BlobInfo, IncompleteBlobInfo, WrapOption},
-    tags::TagInfo,
-    NodeStatus,
-};
-<span class="kw">use </span><span class="kw">crate</span>::node::{docs::DocsEngine, protocol::BlobsProtocol, NodeInner};
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::blobs::{
-    BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest, BatchAddStreamResponse,
-    BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse, BatchCreateTempTagRequest,
-    BatchUpdate, BlobStatusRequest, BlobStatusResponse,
-};
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::tags::SyncMode;
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::{
-    authors, blobs,
-    blobs::{
-        AddPathRequest, AddPathResponse, AddStreamRequest, AddStreamResponse, AddStreamUpdate,
-        ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse, DeleteRequest,
-        DownloadRequest <span class="kw">as </span>BlobDownloadRequest, DownloadResponse, ExportRequest, ExportResponse,
-        ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse, ValidateRequest,
+<span class="kw">use super</span>::{protocol::ProtocolMap, IrohServerEndpoint};
+<span class="kw">use crate</span>::{
+    client::{
+        blobs::{BlobInfo, BlobStatus, IncompleteBlobInfo, WrapOption},
+        tags::TagInfo,
+        NodeStatus,
     },
-    docs::Request <span class="kw">as </span>DocsRequest,
-    docs::{
-        ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,
-        SetHashRequest,
+    node::{docs::DocsEngine, protocol::BlobsProtocol, NodeInner},
+    rpc_protocol::{
+        authors, blobs,
+        blobs::{
+            AddPathRequest, AddPathResponse, AddStreamRequest, AddStreamResponse, AddStreamUpdate,
+            BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest,
+            BatchAddStreamResponse, BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
+            BatchCreateTempTagRequest, BatchUpdate, BlobStatusRequest, BlobStatusResponse,
+            ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse,
+            DeleteRequest, DownloadRequest <span class="kw">as </span>BlobDownloadRequest, DownloadResponse, ExportRequest,
+            ExportResponse, ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse,
+            ValidateRequest,
+        },
+        docs::{
+            ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,
+            Request <span class="kw">as </span>DocsRequest, SetHashRequest,
+        },
+        gossip, net,
+        net::{
+            AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest,
+            RemoteInfoRequest, RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse,
+            WatchResponse,
+        },
+        node,
+        node::{ShutdownRequest, StatsRequest, StatsResponse, StatusRequest},
+        tags,
+        tags::{DeleteRequest <span class="kw">as </span>TagDeleteRequest, ListRequest <span class="kw">as </span>ListTagsRequest, SyncMode},
+        Request, RpcService,
     },
-    gossip, net,
-    net::{
-        AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest, RemoteInfoRequest,
-        RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse, WatchResponse,
-    },
-    node,
-    node::{ShutdownRequest, StatsRequest, StatsResponse, StatusRequest},
-    tags,
-    tags::{DeleteRequest <span class="kw">as </span>TagDeleteRequest, ListRequest <span class="kw">as </span>ListTagsRequest},
-    Request, RpcService,
 };
-
-<span class="kw">use </span><span class="kw">super</span>::protocol::ProtocolMap;
-<span class="kw">use </span><span class="kw">super</span>::IrohServerEndpoint;
 
 <span class="kw">mod </span>docs;
 
@@ -2050,9 +2053,11 @@
         progress: async_channel::Sender&lt;<span class="kw">crate</span>::client::docs::ImportProgress&gt;,
     ) -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>docs = <span class="self">self</span>.docs().ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"docs are disabled"</span>))<span class="question-mark">?</span>;
-        <span class="kw">use </span><span class="kw">crate</span>::client::docs::ImportProgress <span class="kw">as </span>DocImportProgress;
-        <span class="kw">use </span>iroh_blobs::store::ImportMode;
         <span class="kw">use </span>std::collections::BTreeMap;
+
+        <span class="kw">use </span>iroh_blobs::store::ImportMode;
+
+        <span class="kw">use </span><span class="kw">crate</span>::client::docs::ImportProgress <span class="kw">as </span>DocImportProgress;
 
         <span class="kw">let </span>progress = AsyncChannelProgressSender::new(progress);
         <span class="kw">let </span>names = Arc::new(Mutex::new(BTreeMap::new()));
@@ -2207,8 +2212,9 @@
         msg: AddPathRequest,
         progress: async_channel::Sender&lt;AddProgress&gt;,
     ) -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">use </span>iroh_blobs::store::ImportMode;
         <span class="kw">use </span>std::collections::BTreeMap;
+
+        <span class="kw">use </span>iroh_blobs::store::ImportMode;
 
         <span class="kw">let </span>blobs = <span class="self">self</span>.blobs();
         <span class="kw">let </span>progress = AsyncChannelProgressSender::new(progress);

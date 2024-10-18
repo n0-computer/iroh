@@ -888,6 +888,8 @@
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>iroh_base::{key::PublicKey, node_addr::AddrInfoOptions, rpc::RpcError};
 <span class="kw">use </span>iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
+<span class="attr">#[doc(inline)]
+</span><span class="kw">pub use </span>iroh_docs::engine::{Origin, SyncEvent, SyncReason};
 <span class="kw">use </span>iroh_docs::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
@@ -900,19 +902,17 @@
 <span class="kw">use </span>ref_cast::RefCast;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::docs::{
-    CloseRequest, CreateRequest, DelRequest, DelResponse, DocListRequest, DocSubscribeRequest,
-    DropRequest, ExportFileRequest, GetDownloadPolicyRequest, GetExactRequest, GetManyRequest,
-    GetSyncPeersRequest, ImportFileRequest, ImportRequest, LeaveRequest, OpenRequest,
-    SetDownloadPolicyRequest, SetHashRequest, SetRequest, ShareRequest, StartSyncRequest,
-    StatusRequest,
-};
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::RpcService;
-
-<span class="attr">#[doc(inline)]
-</span><span class="kw">pub use </span>iroh_docs::engine::{Origin, SyncEvent, SyncReason};
-
 <span class="kw">use super</span>::{blobs, flatten, RpcClient};
+<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::{
+    docs::{
+        CloseRequest, CreateRequest, DelRequest, DelResponse, DocListRequest, DocSubscribeRequest,
+        DropRequest, ExportFileRequest, GetDownloadPolicyRequest, GetExactRequest, GetManyRequest,
+        GetSyncPeersRequest, ImportFileRequest, ImportRequest, LeaveRequest, OpenRequest,
+        SetDownloadPolicyRequest, SetHashRequest, SetRequest, ShareRequest, StartSyncRequest,
+        StatusRequest,
+    },
+    RpcService,
+};
 
 <span class="doccomment">/// Iroh docs client.
 </span><span class="attr">#[derive(Debug, Clone, RefCast)]

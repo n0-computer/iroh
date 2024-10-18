@@ -173,6 +173,7 @@
 <a href="#173" id="173">173</a>
 <a href="#174" id="174">174</a>
 <a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Tickets for nodes.
 
 </span><span class="kw">use </span>std::str::FromStr;
@@ -292,10 +293,11 @@
 
     <span class="kw">use </span>iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
-    <span class="kw">use </span><span class="kw">crate</span>::base32;
-    <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use crate</span>::{
+        base32,
+        key::{PublicKey, SecretKey},
+    };
 
     <span class="kw">fn </span>make_ticket() -&gt; NodeTicket {
         <span class="kw">let </span>peer = SecretKey::generate().public();

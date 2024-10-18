@@ -162,13 +162,11 @@
 <a href="#162" id="162">162</a>
 <a href="#163" id="163">163</a>
 <a href="#164" id="164">164</a>
-<a href="#165" id="165">165</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Table definitions and accessors for the redb database.
 </span><span class="kw">use </span>std::collections::BTreeSet;
 
-<span class="kw">use </span>redb::{ReadableTable, TableDefinition, TableError};
-
 <span class="kw">use </span>iroh_base::hash::{Hash, HashAndFormat};
+<span class="kw">use </span>redb::{ReadableTable, TableDefinition, TableError};
 
 <span class="kw">use super</span>::{EntryState, PathOptions};
 <span class="kw">use </span><span class="kw">crate</span>::util::Tag;

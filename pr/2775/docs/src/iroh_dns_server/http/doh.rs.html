@@ -75,6 +75,8 @@
 <a href="#75" id="75">75</a>
 <a href="#76" id="76">76</a>
 <a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! DNS over HTTPS
 
 </span><span class="comment">// This module is mostly copied from
@@ -86,15 +88,17 @@
     response::{IntoResponse, Response},
     Json,
 };
-<span class="kw">use </span>hickory_server::proto::{<span class="self">self</span>, serialize::binary::BinDecodable};
+<span class="kw">use </span>hickory_server::proto::{
+    serialize::binary::BinDecodable,
+    {<span class="self">self</span>},
+};
 <span class="kw">use </span>http::{
     header::{CACHE_CONTROL, CONTENT_TYPE},
     HeaderValue, StatusCode,
 };
 
-<span class="kw">use </span><span class="kw">crate</span>::state::AppState;
-
 <span class="kw">use </span><span class="kw">super</span>::error::AppResult;
+<span class="kw">use </span><span class="kw">crate</span>::state::AppState;
 
 <span class="kw">mod </span>extract;
 <span class="kw">mod </span>response;

@@ -192,7 +192,6 @@
 <a href="#192" id="192">192</a>
 <a href="#193" id="193">193</a>
 <a href="#194" id="194">194</a>
-<a href="#195" id="195">195</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap,
     sync::{
@@ -204,12 +203,11 @@
 <span class="kw">use </span>anyhow::anyhow;
 <span class="kw">use </span>parking_lot::Mutex;
 
+<span class="kw">use </span><span class="kw">super</span>::DownloadKind;
 <span class="kw">use crate</span>::{
     get::{db::DownloadProgress, progress::TransferState},
     util::progress::{AsyncChannelProgressSender, IdGenerator, ProgressSendError, ProgressSender},
 };
-
-<span class="kw">use </span><span class="kw">super</span>::DownloadKind;
 
 <span class="doccomment">/// The channel that can be used to subscribe to progress updates.
 </span><span class="kw">pub type </span>ProgressSubscriber = AsyncChannelProgressSender&lt;DownloadProgress&gt;;
