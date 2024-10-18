@@ -28,17 +28,17 @@ use crate::proto::{
     zerocopy_derive::FromZeroes,
 )]
 #[repr(packed)]
-pub(crate) struct StoredAuthorizedEntry {
-    pub(crate) authorization_token_id: ed25519::SignatureBytes,
+pub(crate) struct StoredAuthorisedEntry {
+    pub(crate) authorisation_token_id: ed25519::SignatureBytes,
     pub(crate) payload_digest: [u8; 32],
     pub(crate) payload_size: u64,
 }
 
-impl FixedSize for StoredAuthorizedEntry {
+impl FixedSize for StoredAuthorisedEntry {
     const SIZE: usize = std::mem::size_of::<Self>();
 }
 
-impl StoredAuthorizedEntry {
+impl StoredAuthorisedEntry {
     pub fn from_authorised_entry(entry: &AuthorisedEntry) -> (Point<IrohWillowParams>, Self) {
         let point = willow_store::Point::<IrohWillowParams>::new(
             entry.entry().subspace_id(),
@@ -46,7 +46,7 @@ impl StoredAuthorizedEntry {
             &path_to_blobseq(entry.entry().path()),
         );
         let entry = Self {
-            authorization_token_id: entry.token().signature.to_bytes(),
+            authorisation_token_id: entry.token().signature.to_bytes(),
             payload_digest: *entry.entry().payload_digest().0.as_bytes(),
             payload_size: entry.entry().payload_length(),
         };
@@ -94,7 +94,7 @@ impl StoredAuthorizedEntry {
 pub(crate) struct IrohWillowParams;
 
 impl TreeParams for IrohWillowParams {
-    type V = StoredAuthorizedEntry;
+    type V = StoredAuthorisedEntry;
     type M = Fingerprint;
 }
 

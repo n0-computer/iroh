@@ -6,7 +6,7 @@ use willow_store::{FixedSize, LiftingCommutativeMonoid, PointRef};
 
 use crate::{
     proto::data_model::{Entry, EntryExt},
-    store::glue::{IrohWillowParams, StoredAuthorizedEntry},
+    store::glue::{IrohWillowParams, StoredAuthorisedEntry},
 };
 
 #[derive(
@@ -28,12 +28,12 @@ impl FixedSize for Fingerprint {
     const SIZE: usize = std::mem::size_of::<Self>();
 }
 
-impl LiftingCommutativeMonoid<PointRef<IrohWillowParams>, StoredAuthorizedEntry> for Fingerprint {
+impl LiftingCommutativeMonoid<PointRef<IrohWillowParams>, StoredAuthorisedEntry> for Fingerprint {
     fn neutral() -> Self {
         Self([0u8; 32])
     }
 
-    fn lift(_key: &PointRef<IrohWillowParams>, value: &StoredAuthorizedEntry) -> Self {
+    fn lift(_key: &PointRef<IrohWillowParams>, value: &StoredAuthorisedEntry) -> Self {
         Self(value.payload_digest)
     }
 

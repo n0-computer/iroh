@@ -21,7 +21,7 @@ use willow_store::{BlobSeq, QueryRange, QueryRange3d};
 
 use crate::proto::data_model::{AuthorisationToken, PathExt};
 use crate::proto::grouping::Area;
-use crate::store::glue::StoredAuthorizedEntry;
+use crate::store::glue::StoredAuthorisedEntry;
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
@@ -112,7 +112,7 @@ impl traits::SecretStorage for Rc<RefCell<SecretStore>> {
 #[derive(Debug, Clone)]
 pub struct EntryStore {
     stores: HashMap<NamespaceId, NamespaceStore>,
-    authorization_tokens: BTreeMap<ed25519::SignatureBytes, AuthorisationToken>,
+    authorisation_tokens: BTreeMap<ed25519::SignatureBytes, AuthorisationToken>,
     store: willow_store::MemStore,
 }
 
@@ -120,7 +120,7 @@ impl Default for EntryStore {
     fn default() -> Self {
         Self {
             stores: Default::default(),
-            authorization_tokens: Default::default(),
+            authorisation_tokens: Default::default(),
             store: willow_store::MemStore::new(),
         }
     }
@@ -246,17 +246,17 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
             return either::Left(std::iter::empty());
         };
         // TODO(matheus23): Maybe figure out a way to share this more efficiently?
-        let atmap = slf.authorization_tokens.clone();
+        let atmap = slf.authorisation_tokens.clone();
         either::Right(
             ns_store
                 .entries
                 .query(&to_query(range), &slf.store)
                 .map(move |result| {
                     let (point, stored_entry) = result?;
-                    let id = stored_entry.authorization_token_id;
+                    let id = stored_entry.authorisation_token_id;
                     let auth_token = atmap.get(&id).ok_or_else(|| {
                         anyhow::anyhow!(
-                            "couldn't find authorization token id (database inconsistent)"
+                            "couldn't find authorisation token id (database inconsistent)"
                         )
                     })?;
                     stored_entry.into_authorised_entry(namespace, &point, auth_token.clone())
@@ -295,9 +295,9 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
         };
 
         let (point, stored_entry) = result?;
-        let id = stored_entry.authorization_token_id;
-        let auth_token = inner.authorization_tokens.get(&id).ok_or_else(|| {
-            anyhow::anyhow!("couldn't find authorization token id (database inconsistent)")
+        let id = stored_entry.authorisation_token_id;
+        let auth_token = inner.authorisation_tokens.get(&id).ok_or_else(|| {
+            anyhow::anyhow!("couldn't find authorisation token id (database inconsistent)")
         })?;
         let entry = stored_entry.into_authorised_entry(namespace, &point, auth_token.clone())?;
         Ok(Some(entry))
@@ -335,11 +335,11 @@ impl EntryStore {
 
         // Insert auth token & entry:
 
-        self.authorization_tokens
+        self.authorisation_tokens
             .entry(entry.token().signature.to_bytes())
             .or_insert_with(|| entry.token().clone());
 
-        let (insert_point, insert_entry) = StoredAuthorizedEntry::from_authorised_entry(entry);
+        let (insert_point, insert_entry) = StoredAuthorisedEntry::from_authorised_entry(entry);
 
         let _replaced = ns_store
             .entries
@@ -369,10 +369,10 @@ impl EntryStore {
 
         for (prune_pos, prune_candidate) in prune_candidates {
             let auth_token = self
-                .authorization_tokens
-                .get(&prune_candidate.authorization_token_id)
+                .authorisation_tokens
+                .get(&prune_candidate.authorisation_token_id)
                 .ok_or_else(|| {
-                    anyhow::anyhow!("couldn't find authorization token id (database inconsistent)")
+                    anyhow::anyhow!("couldn't find authorisation token id (database inconsistent)")
                 })?;
             let pruned =
                 prune_candidate.into_authorised_entry(namespace, &prune_pos, auth_token.clone())?; // fairly inefficient
