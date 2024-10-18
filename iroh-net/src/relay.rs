@@ -24,6 +24,11 @@ pub use iroh_base::node_addr::RelayUrl;
 #[cfg_attr(iroh_docsrs, doc(cfg(not(test))))]
 pub const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
+/// Returns `true` if the use of staging relays is forced.
+pub fn force_staging_infra() -> bool {
+    matches!(std::env::var(ENV_FORCE_STAGING_RELAYS), Ok(value) if !value.is_empty())
+}
+
 pub use self::{
     client::{
         conn::{Conn as RelayConn, ReceivedMessage},
