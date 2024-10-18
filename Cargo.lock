@@ -51,7 +51,7 @@ dependencies = [
  "cfg-if",
  "once_cell",
  "version_check",
- "zerocopy 0.7.35",
+ "zerocopy",
 ]
 
 [[package]]
@@ -488,6 +488,19 @@ dependencies = [
  "radium",
  "tap",
  "wyz",
+]
+
+[[package]]
+name = "blake3"
+version = "1.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9ec96fe9a81b5e365f9db71fe00edc4fe4ca2cc7dcb7861f0603012a7caa210"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
 ]
 
 [[package]]
@@ -3029,6 +3042,7 @@ dependencies = [
  "curve25519-dalek",
  "derive_more",
  "ed25519-dalek",
+ "either",
  "futures-buffered",
  "futures-concurrency",
  "futures-lite 2.3.0",
@@ -3063,7 +3077,9 @@ dependencies = [
  "ufotofu",
  "willow-data-model",
  "willow-encoding",
- "zerocopy 0.8.0-alpha.17",
+ "willow-store",
+ "zerocopy",
+ "zerocopy-derive",
 ]
 
 [[package]]
@@ -6544,6 +6560,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "willow-store"
+version = "0.1.0"
+source = "git+https://github.com/n0-computer/willow-store.git?branch=matheus23/minor-adjustments#286389c1fd318b228d3833435b66d1920aa69d41"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "genawaiter",
+ "hex",
+ "itertools 0.13.0",
+ "redb 2.1.1",
+ "ref-cast",
+ "self_cell",
+ "smallvec",
+ "tracing",
+ "zerocopy",
+]
+
+[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6977,16 +7011,8 @@ version = "0.7.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b9b4fd18abc82b8136838da5d50bae7bdea537c574d8dc1a34ed098d6c166f0"
 dependencies = [
- "zerocopy-derive 0.7.35",
-]
-
-[[package]]
-name = "zerocopy"
-version = "0.8.0-alpha.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da056c7307048e30bce8d625c6f0633366d31f1086b3c87ed9b1f18fa1081cb1"
-dependencies = [
- "zerocopy-derive 0.8.0-alpha.17",
+ "byteorder",
+ "zerocopy-derive",
 ]
 
 [[package]]
@@ -6994,17 +7020,6 @@ name = "zerocopy-derive"
 version = "0.7.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fa4f8080344d4671fb4e831a13ad1e68092748387dfc4f55e356242fae12ce3e"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.72",
-]
-
-[[package]]
-name = "zerocopy-derive"
-version = "0.8.0-alpha.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9eb22123403bf9c05af423e2ced336a5fc2853df9179b42bea8144d6bf497a57"
 dependencies = [
  "proc-macro2",
  "quote",
