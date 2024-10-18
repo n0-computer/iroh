@@ -145,6 +145,7 @@
 <a href="#145" id="145">145</a>
 <a href="#146" id="146">146</a>
 <a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Code required for willow-rs and willow-store to interface together.
 
 </span><span class="kw">use </span>anyhow::Result;
@@ -186,13 +187,6 @@
 }
 
 <span class="kw">impl </span>StoredAuthorizedEntry {
-    <span class="kw">pub fn </span>wins_tie_break(<span class="kw-2">&amp;</span><span class="self">self</span>, other: <span class="kw-2">&amp;</span><span class="self">Self</span>) -&gt; bool {
-        <span class="kw">if </span><span class="self">self</span>.payload_digest &lt; other.payload_digest {
-            <span class="kw">return </span><span class="bool-val">true</span>;
-        }
-        <span class="self">self</span>.payload_size &lt; other.payload_size
-    }
-
     <span class="kw">pub fn </span>from_authorised_entry(entry: <span class="kw-2">&amp;</span>AuthorisedEntry) -&gt; (Point&lt;IrohWillowParams&gt;, <span class="self">Self</span>) {
         <span class="kw">let </span>point = willow_store::Point::&lt;IrohWillowParams&gt;::new(
             entry.entry().subspace_id(),
@@ -210,9 +204,20 @@
     <span class="kw">pub fn </span>into_authorised_entry(
         <span class="self">self</span>,
         namespace: NamespaceId,
-        key: Point&lt;IrohWillowParams&gt;,
+        key: <span class="kw-2">&amp;</span>Point&lt;IrohWillowParams&gt;,
         auth_token: AuthorisationToken,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;AuthorisedEntry&gt; {
+        <span class="prelude-val">Ok</span>(AuthorisedEntry::new(
+            <span class="self">self</span>.into_entry(namespace, key)<span class="question-mark">?</span>,
+            auth_token,
+        )<span class="question-mark">?</span>)
+    }
+
+    <span class="kw">pub fn </span>into_entry(
+        <span class="self">self</span>,
+        namespace: NamespaceId,
+        key: <span class="kw-2">&amp;</span>Point&lt;IrohWillowParams&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;Entry&gt; {
         <span class="kw">let </span>subspace = key.x();
         <span class="kw">let </span>timestamp = key.y();
         <span class="kw">let </span>blobseq = key.z().to_owned();
@@ -222,17 +227,14 @@
             </span>.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="kw">let </span>total_length = components.iter().map(|c| c.len()).sum::&lt;usize&gt;();
         <span class="kw">let </span>path = Path::new_from_iter(total_length, <span class="kw-2">&amp;mut </span>components.into_iter())<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(AuthorisedEntry::new(
-            Entry::new(
-                namespace,
-                <span class="kw-2">*</span>subspace,
-                path,
-                <span class="kw-2">*</span>timestamp,
-                <span class="self">self</span>.payload_size,
-                PayloadDigest(Hash::from_bytes(<span class="self">self</span>.payload_digest)),
-            ),
-            auth_token,
-        )<span class="question-mark">?</span>)
+        <span class="prelude-val">Ok</span>(Entry::new(
+            namespace,
+            <span class="kw-2">*</span>subspace,
+            path,
+            <span class="kw-2">*</span>timestamp,
+            <span class="self">self</span>.payload_size,
+            PayloadDigest(Hash::from_bytes(<span class="self">self</span>.payload_digest)),
+        ))
     }
 }
 

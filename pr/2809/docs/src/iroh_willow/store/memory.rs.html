@@ -680,6 +680,25 @@
 <a href="#680" id="680">680</a>
 <a href="#681" id="681">681</a>
 <a href="#682" id="682">682</a>
+<a href="#683" id="683">683</a>
+<a href="#684" id="684">684</a>
+<a href="#685" id="685">685</a>
+<a href="#686" id="686">686</a>
+<a href="#687" id="687">687</a>
+<a href="#688" id="688">688</a>
+<a href="#689" id="689">689</a>
+<a href="#690" id="690">690</a>
+<a href="#691" id="691">691</a>
+<a href="#692" id="692">692</a>
+<a href="#693" id="693">693</a>
+<a href="#694" id="694">694</a>
+<a href="#695" id="695">695</a>
+<a href="#696" id="696">696</a>
+<a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
+<a href="#699" id="699">699</a>
+<a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! In-memory storage implementation for testing purposes.
 //!
 //! This is a minimal, but spec-compliant (unless there's bugs) implementation of a willow store.
@@ -689,11 +708,13 @@
 
 </span><span class="kw">use </span>std::cell::RefCell;
 <span class="kw">use </span>std::collections::{BTreeMap, HashMap, VecDeque};
+<span class="kw">use </span>std::pin::Pin;
 <span class="kw">use </span>std::rc::{Rc, Weak};
 <span class="kw">use </span>std::task::{Context, Poll, Waker};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>ed25519_dalek::ed25519;
+<span class="kw">use </span>futures_lite::ready;
 <span class="kw">use </span>futures_util::Stream;
 <span class="kw">use </span>tracing::debug;
 <span class="kw">use </span>willow_data_model::SubspaceId <span class="kw">as _</span>;
@@ -939,7 +960,7 @@
                             <span class="string">"couldn't find authorization token id (database inconsistent)"
                         </span>)
                     })<span class="question-mark">?</span>;
-                    stored_entry.into_authorised_entry(namespace, point, auth_token.clone())
+                    stored_entry.into_authorised_entry(namespace, <span class="kw-2">&amp;</span>point, auth_token.clone())
                 })
                 .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
                 .into_iter(),
@@ -979,7 +1000,7 @@
         <span class="kw">let </span>auth_token = inner.authorization_tokens.get(<span class="kw-2">&amp;</span>id).ok_or_else(|| {
             <span class="macro">anyhow::anyhow!</span>(<span class="string">"couldn't find authorization token id (database inconsistent)"</span>)
         })<span class="question-mark">?</span>;
-        <span class="kw">let </span>entry = stored_entry.into_authorised_entry(namespace, point, auth_token.clone())<span class="question-mark">?</span>;
+        <span class="kw">let </span>entry = stored_entry.into_authorised_entry(namespace, <span class="kw-2">&amp;</span>point, auth_token.clone())<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(entry))
     }
 }
@@ -1009,11 +1030,9 @@
 }
 
 <span class="kw">impl </span>EntryStore {
-    <span class="kw">fn </span>ingest_entry(<span class="kw-2">&amp;mut </span><span class="self">self</span>, entry: <span class="kw-2">&amp;</span>AuthorisedEntry, _origin: EntryOrigin) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
-        <span class="kw">let </span>ns_store = <span class="self">self
-            </span>.stores
-            .entry(<span class="kw-2">*</span>entry.entry().namespace_id())
-            .or_default();
+    <span class="kw">fn </span>ingest_entry(<span class="kw-2">&amp;mut </span><span class="self">self</span>, entry: <span class="kw-2">&amp;</span>AuthorisedEntry, origin: EntryOrigin) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
+        <span class="kw">let </span>namespace = <span class="kw-2">*</span>entry.entry().namespace_id();
+        <span class="kw">let </span>ns_store = <span class="self">self</span>.stores.entry(namespace).or_default();
 
         <span class="comment">// Insert auth token &amp; entry:
 
@@ -1044,16 +1063,33 @@
             z: QueryRange::new(blobseq_start, blobseq_end),
         };
 
-        <span class="kw">let </span>deletion_candidates = ns_store
+        <span class="kw">let </span>prune_candidates = ns_store
             .entries
             .query(<span class="kw-2">&amp;</span>overwritten_range, <span class="kw-2">&amp;</span><span class="self">self</span>.store)
             .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
 
-        <span class="kw">for </span>(pos, overwrite_candidate) <span class="kw">in </span>deletion_candidates {
-            <span class="kw">if </span>pos.y() &lt; insert_point.y() || insert_entry.wins_tie_break(<span class="kw-2">&amp;</span>overwrite_candidate) {
+        <span class="kw">for </span>(prune_pos, prune_candidate) <span class="kw">in </span>prune_candidates {
+            <span class="kw">let </span>auth_token = <span class="self">self
+                </span>.authorization_tokens
+                .get(<span class="kw-2">&amp;</span>prune_candidate.authorization_token_id)
+                .ok_or_else(|| {
+                    <span class="macro">anyhow::anyhow!</span>(<span class="string">"couldn't find authorization token id (database inconsistent)"</span>)
+                })<span class="question-mark">?</span>;
+            <span class="kw">let </span>pruned =
+                prune_candidate.into_authorised_entry(namespace, <span class="kw-2">&amp;</span>prune_pos, auth_token.clone())<span class="question-mark">?</span>; <span class="comment">// fairly inefficient
+            </span><span class="kw">if </span>entry.entry().is_newer_than(pruned.entry()) {
                 <span class="comment">// TODO(matheus23): Don't *actually* delete here? (depending on a potential traceless bit)
                 // There was some idea along the lines of "mark as deleted" by storing the identifier for the deletion.
-                </span>ns_store.entries.delete(<span class="kw-2">&amp;</span>pos, <span class="kw-2">&amp;mut </span><span class="self">self</span>.store)<span class="question-mark">?</span>;
+                </span>ns_store.entries.delete(<span class="kw-2">&amp;</span>prune_pos, <span class="kw-2">&amp;mut </span><span class="self">self</span>.store)<span class="question-mark">?</span>;
+                ns_store.events.insert(<span class="kw">move </span>|id| {
+                    StoreEvent::Pruned(
+                        id,
+                        traits::PruneEvent {
+                            pruned,
+                            by: entry.clone(),
+                        },
+                    )
+                });
             }
         }
 
@@ -1062,6 +1098,11 @@
             path = %entry.entry().path().fmt_utf8(),
             <span class="string">"ingest entry"
         </span>);
+
+        ns_store
+            .events
+            .insert(|id| StoreEvent::Ingested(id, entry.clone(), origin));
+
         <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
     }
 }
@@ -1087,43 +1128,40 @@
 
     <span class="kw">fn </span>subscribe_area(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        _namespace: NamespaceId,
-        _area: Area,
-        _params: SubscribeParams,
+        namespace: NamespaceId,
+        area: Area,
+        params: SubscribeParams,
     ) -&gt; <span class="kw">impl </span>Stream&lt;Item = traits::StoreEvent&gt; + Unpin + <span class="lifetime">'static </span>{
-        <span class="comment">// TODO(matheus23): implement subscriptions
-        // For this we need a good plan.
-        // The point of subscriptions is to be able to reconstruct
-        // the current state from all subscriptions that happened.
-        // This doesn't mean we need to emit all changes that were made,
-        // e.g. intermediate modifications don't need to be kept,
-        // since they're overwritten.
-        // Still, it requires some thinking on what exactly we want
-        // to preserve and for how long.
-        // There's some ideas on this by re-using the internal willow store's
-        // NodeIds (they're u64s) as progress IDs.
-
-        // For now we'll just use a broadcast channel to send everyone
-        // new events when something is injested.
-        // BroadcastStream::new(self.borrow().events.subscribe())
-        //     .filter_map(Result::ok)
-        //     .filter(move |event| match event {
-        //         StoreEvent::Ingested(_, entry, _) =&gt; area.includes_entry(entry.entry()),
-        //         // not implemented yet
-        //         other =&gt; false,
-        //     })
-        // Actually, we'll skip for now
-        </span>futures_lite::stream::empty()
+        <span class="kw">let </span>progress_id = <span class="self">self
+            </span>.borrow_mut()
+            .stores
+            .entry(namespace)
+            .or_default()
+            .events
+            .next_progress_id();
+        EventStream {
+            area,
+            params,
+            namespace,
+            progress_id,
+            store: Rc::downgrade(<span class="self">self</span>),
+        }
     }
 
     <span class="kw">fn </span>resume_subscription(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        _progress_id: u64,
-        _namespace: NamespaceId,
-        _area: Area,
-        _params: SubscribeParams,
+        progress_id: u64,
+        namespace: NamespaceId,
+        area: Area,
+        params: SubscribeParams,
     ) -&gt; <span class="kw">impl </span>Stream&lt;Item = traits::StoreEvent&gt; + Unpin + <span class="lifetime">'static </span>{
-        futures_lite::stream::empty()
+        EventStream {
+            area,
+            params,
+            progress_id,
+            namespace,
+            store: Rc::downgrade(<span class="self">self</span>),
+        }
     }
 }
 
@@ -1141,32 +1179,32 @@
     params: SubscribeParams,
 }
 
-<span class="comment">// impl Stream for EventStream {
-//     type Item = StoreEvent;
-//     fn poll_next(mut self: Pin&lt;&amp;mut Self&gt;, cx: &amp;mut Context&lt;'_&gt;) -&gt; Poll&lt;Option&lt;Self::Item&gt;&gt; {
-//         let Some(inner) = self.store.upgrade() else {
-//             return Poll::Ready(None);
-//         };
-//         let mut inner_mut = inner.borrow_mut();
-//         let store = inner_mut.stores.entry(self.namespace).or_default();
-//         let res = ready!(store.events.poll_next(
-//             self.progress_id,
-//             |e| e.matches(self.namespace, &amp;self.area, &amp;self.params),
-//             cx,
-//         ));
-//         drop(inner_mut);
-//         drop(inner);
-//         Poll::Ready(match res {
-//             None =&gt; None,
-//             Some((next_id, event)) =&gt; {
-//                 self.progress_id = next_id;
-//                 Some(event)
-//             }
-//         })
-//     }
-// }
+<span class="kw">impl </span>Stream <span class="kw">for </span>EventStream {
+    <span class="kw">type </span>Item = StoreEvent;
+    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
+        <span class="kw">let </span><span class="prelude-val">Some</span>(inner) = <span class="self">self</span>.store.upgrade() <span class="kw">else </span>{
+            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">None</span>);
+        };
+        <span class="kw">let </span><span class="kw-2">mut </span>inner_mut = inner.borrow_mut();
+        <span class="kw">let </span>store = inner_mut.stores.entry(<span class="self">self</span>.namespace).or_default();
+        <span class="kw">let </span>res = <span class="macro">ready!</span>(store.events.poll_next(
+            <span class="self">self</span>.progress_id,
+            |e| e.matches(<span class="self">self</span>.namespace, <span class="kw-2">&amp;</span><span class="self">self</span>.area, <span class="kw-2">&amp;</span><span class="self">self</span>.params),
+            cx,
+        ));
+        drop(inner_mut);
+        drop(inner);
+        Poll::Ready(<span class="kw">match </span>res {
+            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
+            <span class="prelude-val">Some</span>((next_id, event)) =&gt; {
+                <span class="self">self</span>.progress_id = next_id;
+                <span class="prelude-val">Some</span>(event)
+            }
+        })
+    }
+}
 
-</span><span class="doccomment">/// A simple in-memory event queue.
+<span class="doccomment">/// A simple in-memory event queue.
 ///
 /// Events can be pushed, and get a unique monotonically-increasing *progress id*.
 /// Events can be polled, with a progress id to start at, and an optional filter function.
