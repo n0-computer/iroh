@@ -15,8 +15,7 @@ use iroh_blobs::{
     store::{Map, Store as BaoStore},
     util::local_pool::{self, LocalPool, LocalPoolHandle, PanicMode},
 };
-use iroh_docs::engine::DefaultAuthorStorage;
-use iroh_docs::net::DOCS_ALPN;
+use iroh_docs::{engine::DefaultAuthorStorage, net::DOCS_ALPN};
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 #[cfg(not(test))]
 use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
@@ -27,13 +26,15 @@ use iroh_net::{
     relay::RelayMode,
     Endpoint,
 };
-
 use quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinError;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error_span, trace, Instrument};
 
+use super::{
+    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
+};
 use crate::{
     client::RPC_ALPN,
     node::{
@@ -43,10 +44,6 @@ use crate::{
     },
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
-};
-
-use super::{
-    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
 };
 
 /// Default bind address for the node.

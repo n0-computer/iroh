@@ -3,9 +3,8 @@
 use futures_lite::{future::Boxed as BoxFuture, FutureExt};
 use parking_lot::RwLock;
 
-use crate::downloader;
-
 use super::*;
+use crate::downloader;
 
 #[derive(Default, Clone, derive_more::Debug)]
 #[debug("TestingGetter")]

@@ -6,13 +6,17 @@ use futures_concurrency::stream::stream_group;
 use futures_lite::StreamExt;
 use iroh_base::key::NodeId;
 use iroh_metrics::inc;
-use tokio::sync::{mpsc, Notify};
-use tokio::task::JoinHandle;
-use tokio::time::Duration;
+use tokio::{
+    sync::{mpsc, Notify},
+    task::JoinHandle,
+    time::Duration,
+};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use crate::magicsock::{ConnectionType, ConnectionTypeStream};
-use crate::metrics::MagicsockMetrics;
+use crate::{
+    magicsock::{ConnectionType, ConnectionTypeStream},
+    metrics::MagicsockMetrics,
+};
 
 #[derive(Debug)]
 pub(super) struct RttHandle {

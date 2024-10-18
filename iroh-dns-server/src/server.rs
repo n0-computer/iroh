@@ -99,8 +99,9 @@ impl Server {
     pub async fn spawn_for_tests_with_mainline(
         mainline: Option<crate::config::BootstrapOption>,
     ) -> Result<(Self, std::net::SocketAddr, url::Url)> {
-        use crate::config::MetricsConfig;
         use std::net::{IpAddr, Ipv4Addr};
+
+        use crate::config::MetricsConfig;
 
         let mut config = Config::default();
         config.dns.port = 0;

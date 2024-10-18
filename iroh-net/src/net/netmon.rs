@@ -85,9 +85,9 @@ impl Monitor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use futures_util::FutureExt;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_smoke_monitor() {

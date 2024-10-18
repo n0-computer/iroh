@@ -1,9 +1,8 @@
 //! Table definitions and accessors for the redb database.
 use std::collections::BTreeSet;
 
-use redb::{ReadableTable, TableDefinition, TableError};
-
 use iroh_base::hash::{Hash, HashAndFormat};
+use redb::{ReadableTable, TableDefinition, TableError};
 
 use super::{EntryState, PathOptions};
 use crate::util::Tag;

@@ -8,17 +8,20 @@
 //! similar and more advanced functionality is available in the `indicatif` crate for
 //! terminal applications.
 
-use std::fmt;
-use std::io::Read;
-use std::pin::Pin;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
-use std::task::Poll;
+use std::{
+    fmt,
+    io::Read,
+    pin::Pin,
+    sync::{atomic::Ordering, Arc},
+    task::Poll,
+};
 
 use iroh_blobs::util::io::TrackingWriter;
 use portable_atomic::{AtomicU16, AtomicU64};
-use tokio::io::{self, AsyncRead, AsyncWrite};
-use tokio::sync::{broadcast, mpsc};
+use tokio::{
+    io::{self, AsyncRead, AsyncWrite},
+    sync::{broadcast, mpsc},
+};
 
 /// A generic progress event emitter.
 ///

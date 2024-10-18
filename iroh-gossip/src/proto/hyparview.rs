@@ -12,8 +12,7 @@ use std::{
 };
 
 use derive_more::{From, Sub};
-use rand::rngs::ThreadRng;
-use rand::Rng;
+use rand::{rngs::ThreadRng, Rng};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
