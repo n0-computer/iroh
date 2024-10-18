@@ -62,3 +62,17 @@ pub async fn start_metrics_dumper(
 ) -> anyhow::Result<()> {
     crate::service::dumper(&path, interval).await
 }
+
+/// Start a metrics exporter service.
+#[cfg(feature = "metrics")]
+pub async fn start_metrics_exporter(cfg: crate::PushMetricsConfig) {
+    crate::service::exporter(
+        cfg.endpoint,
+        cfg.service_name,
+        cfg.instance_name,
+        cfg.username,
+        cfg.password,
+        std::time::Duration::from_secs(cfg.interval),
+    )
+    .await;
+}
