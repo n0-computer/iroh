@@ -422,7 +422,7 @@ impl RelayActor {
         url: &RelayUrl,
         remote_node: Option<&NodeId>,
     ) -> relay::client::Client {
-        debug!(%url, ?remote_node, "connect relay");
+        trace!(%url, ?remote_node, "connect relay");
         // See if we have a connection open to that relay node ID first. If so, might as
         // well use it. (It's a little arbitrary whether we use this one vs. the reverse route
         // below when we have both.)
