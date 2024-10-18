@@ -137,7 +137,7 @@ fn bind(mut addr: SocketAddr) -> anyhow::Result<UdpSocket> {
                 return Ok(pconn);
             }
             Err(err) => {
-                warn!(%addr, "failed to bind: {:#?}", err);
+                debug!(%addr, "failed to bind: {err:#}");
                 continue;
             }
         }
