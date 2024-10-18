@@ -365,12 +365,7 @@ impl MagicSock {
         let mut pruned = 0;
         for my_addr in self.direct_addrs.sockaddrs() {
             if addr.info.direct_addresses.remove(&my_addr) {
-                warn!(
-                    node_id=addr.node_id.fmt_short(),
-                    %my_addr,
-                    %source,
-                    "not adding our addr for node",
-                );
+                warn!( node_id=addr.node_id.fmt_short(), %my_addr, %source, "not adding our addr for node");
                 pruned += 1;
             }
         }
