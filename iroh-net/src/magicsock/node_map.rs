@@ -1,10 +1,11 @@
-use std::collections::hash_map::Entry;
-use std::collections::{BTreeSet, HashMap};
-use std::hash::Hash;
-use std::net::{IpAddr, SocketAddr};
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::time::Instant;
+use std::{
+    collections::{hash_map::Entry, BTreeSet, HashMap},
+    hash::Hash,
+    net::{IpAddr, SocketAddr},
+    pin::Pin,
+    task::{Context, Poll},
+    time::Instant,
+};
 
 use futures_lite::stream::Stream;
 use iroh_base::key::NodeId;
@@ -14,15 +15,19 @@ use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};
 
-use self::best_addr::ClearReason;
-use self::node_state::{NodeState, Options, PingHandled};
+use self::{
+    best_addr::ClearReason,
+    node_state::{NodeState, Options, PingHandled},
+};
 use super::{
     metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
 };
-use crate::disco::{CallMeMaybe, Pong, SendAddr};
-use crate::key::PublicKey;
-use crate::relay::RelayUrl;
-use crate::{stun, NodeAddr};
+use crate::{
+    disco::{CallMeMaybe, Pong, SendAddr},
+    key::PublicKey,
+    relay::RelayUrl,
+    stun, NodeAddr,
+};
 
 mod best_addr;
 mod node_state;
