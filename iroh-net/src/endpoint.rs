@@ -30,7 +30,9 @@ use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
 use crate::{
-    discovery::{Discovery, DiscoveryTask},
+    discovery::{
+        dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
+    },
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
     magicsock::{self, Handle, QuicMappedAddr},
@@ -64,6 +66,8 @@ const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 #[cfg_attr(iroh_docsrs, doc(cfg(not(any(test, feature = "test-utils")))))]
 const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
+type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
+
 /// Builder for [`Endpoint`].
 ///
 /// By default the endpoint will generate a new random [`SecretKey`], which will result in a
@@ -77,7 +81,8 @@ pub struct Builder {
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
     keylog: bool,
-    discovery: Option<Box<dyn Discovery>>,
+    #[debug(skip)]
+    discovery: Vec<DiscoveryBuilder>,
     proxy_url: Option<Url>,
     /// List of known nodes. See [`Builder::known_nodes`].
     node_map: Option<Vec<NodeAddr>>,
@@ -127,14 +132,23 @@ impl Builder {
         let dns_resolver = self
             .dns_resolver
             .unwrap_or_else(|| default_resolver().clone());
-
+        let discovery = self
+            .discovery
+            .into_iter()
+            .filter_map(|f| f(&secret_key))
+            .collect::<Vec<_>>();
+        let discovery: Option<Box<dyn Discovery>> = match discovery.len() {
+            0 => None,
+            1 => Some(discovery.into_iter().next().unwrap()),
+            _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
+        };
         let msock_opts = magicsock::Options {
             addr_v4: self.addr_v4,
             addr_v6: self.addr_v6,
             secret_key,
             relay_map,
             node_map: self.node_map,
-            discovery: self.discovery,
+            discovery,
             proxy_url: self.proxy_url,
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
@@ -211,9 +225,16 @@ impl Builder {
         self
     }
 
+    /// Removes all discovery services from the builder.
+    pub fn clear_discovery(mut self) -> Self {
+        self.discovery.clear();
+        self
+    }
+
     /// Optionally sets a discovery mechanism for this endpoint.
     ///
-    /// If you want to combine multiple discovery services, you can pass a
+    /// If you want to combine multiple discovery services, you can use
+    /// [`Builder::add_discovery`] instead. This will internally create a
     /// [`crate::discovery::ConcurrentDiscovery`].
     ///
     /// If no discovery service is set, connecting to a node without providing its
@@ -221,7 +242,96 @@ impl Builder {
     ///
     /// See the documentation of the [`Discovery`] trait for details.
     pub fn discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
-        self.discovery = Some(discovery);
+        self.discovery.clear();
+        self.discovery.push(Box::new(move |_| Some(discovery)));
+        self
+    }
+
+    /// Adds a discovery mechanism for this endpoint.
+    ///
+    /// The function `discovery`
+    /// will be called on endpoint creation with the configured secret key of
+    /// the endpoint. Discovery services that need to publish information need
+    /// to use this secret key to sign the information.
+    ///
+    /// If you add multiple discovery services, they will be combined using a
+    /// [`crate::discovery::ConcurrentDiscovery`].
+    ///
+    /// If no discovery service is set, connecting to a node without providing its
+    /// direct addresses or relay URLs will fail.
+    ///
+    /// To clear all discovery services, use [`Builder::clear_discovery`].
+    ///
+    /// See the documentation of the [`Discovery`] trait for details.
+    pub fn add_discovery<F, D>(mut self, discovery: F) -> Self
+    where
+        F: FnOnce(&SecretKey) -> Option<D> + Send + Sync + 'static,
+        D: Discovery + 'static,
+    {
+        let discovery: DiscoveryBuilder =
+            Box::new(move |secret_key| discovery(secret_key).map(|x| Box::new(x) as _));
+        self.discovery.push(discovery);
+        self
+    }
+
+    /// Configures the endpoint to use the default n0 DNS discovery service.
+    ///
+    /// The default discovery service publishes to and resolves from the
+    /// n0.computer dns server `iroh.link`.
+    ///
+    /// This is equivalent to adding both a [`crate::discovery::pkarr::PkarrPublisher`]
+    /// and a [`crate::discovery::dns::DnsDiscovery`], both configured to use the
+    /// n0.computer dns server.
+    ///
+    /// This will by default use [`N0_DNS_PKARR_RELAY_PROD`].
+    /// When in tests, or when the `test-utils` feature is enabled, this will use the
+    /// [`N0_DNS_PKARR_RELAY_STAGING`].
+    ///
+    /// [`N0_DNS_PKARR_RELAY_PROD`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_PROD
+    /// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_STAGING
+    pub fn discovery_n0(mut self) -> Self {
+        self.discovery.push(Box::new(|secret_key| {
+            Some(Box::new(PkarrPublisher::n0_dns(secret_key.clone())))
+        }));
+        self.discovery
+            .push(Box::new(|_| Some(Box::new(DnsDiscovery::n0_dns()))));
+        self
+    }
+
+    #[cfg(feature = "discovery-pkarr-dht")]
+    /// Configures the endpoint to also use the mainline DHT with default settings.
+    ///
+    /// This is equivalent to adding a [`crate::discovery::pkarr::dht::DhtDiscovery`]
+    /// with default settings. Note that DhtDiscovery has various more advanced
+    /// configuration options. If you need any of those, you should manually
+    /// create a DhtDiscovery and add it with [`Builder::add_discovery`].
+    pub fn discovery_dht(mut self) -> Self {
+        use crate::discovery::pkarr::dht::DhtDiscovery;
+        self.discovery.push(Box::new(|secret_key| {
+            Some(Box::new(
+                DhtDiscovery::builder()
+                    .secret_key(secret_key.clone())
+                    .build()
+                    .unwrap(),
+            ))
+        }));
+        self
+    }
+
+    #[cfg(feature = "discovery-local-network")]
+    /// Configures the endpoint to also use local network discovery.
+    ///
+    /// This is equivalent to adding a [`crate::discovery::local_swarm_discovery::LocalSwarmDiscovery`]
+    /// with default settings. Note that LocalSwarmDiscovery has various more advanced
+    /// configuration options. If you need any of those, you should manually
+    /// create a LocalSwarmDiscovery and add it with [`Builder::add_discovery`].
+    pub fn discovery_local_network(mut self) -> Self {
+        use crate::discovery::local_swarm_discovery::LocalSwarmDiscovery;
+        self.discovery.push(Box::new(|secret_key| {
+            LocalSwarmDiscovery::new(secret_key.public())
+                .map(|x| Box::new(x) as _)
+                .ok()
+        }));
         self
     }
 
