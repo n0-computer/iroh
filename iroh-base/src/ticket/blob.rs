@@ -1,14 +1,14 @@
 //! Tickets for blobs.
 use std::str::FromStr;
 
-use crate::{
-    hash::{BlobFormat, Hash},
-    ticket::{self, Ticket},
-};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::node_addr::NodeAddr;
+use crate::{
+    hash::{BlobFormat, Hash},
+    node_addr::NodeAddr,
+    ticket::{self, Ticket},
+};
 
 /// A token containing everything to get a file from the provider.
 ///
@@ -119,10 +119,11 @@ mod tests {
 
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
-    use crate::base32;
-    use crate::key::{PublicKey, SecretKey};
-
     use super::*;
+    use crate::{
+        base32,
+        key::{PublicKey, SecretKey},
+    };
 
     fn make_ticket() -> BlobTicket {
         let hash = Hash::new(b"hi there");

@@ -1,8 +1,10 @@
 //! traits related to collections of blobs
-use crate::Hash;
+use std::{fmt::Debug, io};
+
 use bytes::Bytes;
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
-use std::{fmt::Debug, io};
+
+use crate::Hash;
 
 /// A sequence of links, backed by a [`Bytes`] object.
 #[derive(Debug, Clone, derive_more::Into)]

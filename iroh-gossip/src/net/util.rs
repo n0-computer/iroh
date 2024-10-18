@@ -9,9 +9,8 @@ use tokio::{
     time::{sleep_until, Sleep},
 };
 
-use crate::proto::util::TimerMap;
-
 use super::ProtoMessage;
+use crate::proto::util::TimerMap;
 
 /// Write a `ProtoMessage` as a length-prefixed, postcard-encoded message.
 pub async fn write_message<W: AsyncWrite + Unpin>(

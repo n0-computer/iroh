@@ -10,6 +10,15 @@ use std::{
     time::Duration,
 };
 
+use futures_lite::{stream::Boxed, StreamExt};
+use genawaiter::sync::{Co, Gen};
+use pkarr::{
+    PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
+    RelaySettings, SignedPacket,
+};
+use tokio_util::task::AbortOnDropHandle;
+use url::Url;
+
 use crate::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
@@ -19,15 +28,6 @@ use crate::{
     key::SecretKey,
     AddrInfo, Endpoint, NodeId,
 };
-use futures_lite::{stream::Boxed, StreamExt};
-
-use genawaiter::sync::{Co, Gen};
-use pkarr::{
-    PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
-    RelaySettings, SignedPacket,
-};
-use tokio_util::task::AbortOnDropHandle;
-use url::Url;
 
 /// Republish delay for the DHT.
 ///
@@ -404,10 +404,11 @@ impl Discovery for DhtDiscovery {
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::*;
     use iroh_base::node_addr::RelayUrl;
     use mainline::dht::DhtSettings;
     use testresult::TestResult;
+
+    use super::*;
 
     #[tokio::test]
     #[ignore = "flaky"]

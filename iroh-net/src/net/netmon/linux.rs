@@ -12,9 +12,8 @@ use rtnetlink::new_connection;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{info, trace, warn};
 
-use crate::net::ip::is_link_local;
-
 use super::actor::NetworkMessage;
+use crate::net::ip::is_link_local;
 
 #[derive(Debug)]
 pub(super) struct RouteMonitor {

@@ -9,17 +9,16 @@
 use std::{
     cmp::Ordering,
     fmt::Debug,
+    ops::{Deref, DerefMut},
     sync::Arc,
     time::{Duration, SystemTime},
 };
 
 use bytes::{Bytes, BytesMut};
-#[cfg(feature = "metrics")]
-use iroh_metrics::{inc, inc_by};
-use std::ops::{Deref, DerefMut};
-
 use ed25519_dalek::{Signature, SignatureError};
 use iroh_base::{base32, hash::Hash};
+#[cfg(feature = "metrics")]
+use iroh_metrics::{inc, inc_by};
 use serde::{Deserialize, Serialize};
 
 pub use crate::heads::AuthorHeads;
@@ -1197,13 +1196,12 @@ mod tests {
     use anyhow::Result;
     use rand_core::SeedableRng;
 
+    use super::*;
     use crate::{
         actor::SyncHandle,
         ranger::{Range, Store as _},
         store::{OpenError, Query, SortBy, SortDirection, Store},
     };
-
-    use super::*;
 
     #[test]
     fn test_basics_memory() -> Result<()> {

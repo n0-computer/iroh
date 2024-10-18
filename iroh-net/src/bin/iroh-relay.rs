@@ -3,16 +3,18 @@
 //! This handles only the CLI and config file loading, the server implementation lives in
 //! [`iroh_net::relay::server`].
 
-use std::net::{Ipv6Addr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::{
+    net::{Ipv6Addr, SocketAddr},
+    path::{Path, PathBuf},
+};
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
-use iroh_net::defaults::{
-    DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT,
+use iroh_net::{
+    defaults::{DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT},
+    key::SecretKey,
+    relay::server as iroh_relay,
 };
-use iroh_net::key::SecretKey;
-use iroh_net::relay::server as iroh_relay;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};

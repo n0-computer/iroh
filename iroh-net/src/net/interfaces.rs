@@ -1,7 +1,6 @@
 //! Contains helpers for looking up system network interfaces.
 
-use std::fmt;
-use std::{collections::HashMap, net::IpAddr};
+use std::{collections::HashMap, fmt, net::IpAddr};
 
 #[cfg(any(
     target_os = "freebsd",
@@ -18,8 +17,6 @@ mod windows;
 
 pub(crate) use netdev::ip::{Ipv4Net, Ipv6Net};
 
-use crate::net::ip::{is_private_v6, is_up};
-
 #[cfg(any(
     target_os = "freebsd",
     target_os = "openbsd",
@@ -32,6 +29,7 @@ use self::bsd::default_route;
 use self::linux::default_route;
 #[cfg(target_os = "windows")]
 use self::windows::default_route;
+use crate::net::ip::{is_private_v6, is_up};
 
 /// Represents a network interface.
 #[derive(Debug)]
