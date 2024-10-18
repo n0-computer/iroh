@@ -438,7 +438,7 @@ impl Actor {
                 match port_mapper.probe().await {
                     Ok(Ok(res)) => Some(res),
                     Ok(Err(err)) => {
-                        warn!("skipping port mapping: {err:?}");
+                        debug!("skipping port mapping: {err:?}");
                         None
                     }
                     Err(recv_err) => {
