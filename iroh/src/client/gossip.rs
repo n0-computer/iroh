@@ -21,9 +21,8 @@ use iroh_gossip::proto::TopicId;
 use iroh_net::NodeId;
 use ref_cast::RefCast;
 
-pub use crate::rpc_protocol::gossip::{SubscribeRequest, SubscribeResponse, SubscribeUpdate};
-
 use super::RpcClient;
+pub use crate::rpc_protocol::gossip::{SubscribeRequest, SubscribeResponse, SubscribeUpdate};
 
 /// Iroh gossip client.
 #[derive(Debug, Clone, RefCast)]

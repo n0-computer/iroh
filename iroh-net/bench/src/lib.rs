@@ -8,8 +8,10 @@ use std::{
 use anyhow::Result;
 use clap::Parser;
 use stats::Stats;
-use tokio::runtime::{Builder, Runtime};
-use tokio::sync::Semaphore;
+use tokio::{
+    runtime::{Builder, Runtime},
+    sync::Semaphore,
+};
 use tracing::info;
 
 pub mod iroh;

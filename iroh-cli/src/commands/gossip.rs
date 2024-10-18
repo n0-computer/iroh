@@ -1,5 +1,7 @@
 //! Define the gossiping subcommands.
 
+use std::str::FromStr as _;
+
 use anyhow::{Context, Result};
 use bao_tree::blake3;
 use clap::{ArgGroup, Subcommand};
@@ -9,7 +11,6 @@ use iroh::{
     client::{gossip::SubscribeOpts, Iroh},
     net::NodeId,
 };
-use std::str::FromStr as _;
 use tokio::io::AsyncBufReadExt;
 
 /// Commands to manage gossiping.

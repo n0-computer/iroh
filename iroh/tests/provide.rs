@@ -6,25 +6,23 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use bao_tree::{blake3, ChunkNum, ChunkRanges};
 use bytes::Bytes;
 use futures_lite::FutureExt;
 use iroh::node::{Builder, DocsStorage};
 use iroh_base::node_addr::AddrInfoOptions;
-use iroh_net::{defaults::staging::default_relay_map, key::SecretKey, NodeAddr, NodeId};
-use rand::RngCore;
-
-use bao_tree::{blake3, ChunkNum, ChunkRanges};
 use iroh_blobs::{
     format::collection::Collection,
     get::{
-        fsm::ConnectedNext,
-        fsm::{self, DecodeError},
+        fsm::{self, ConnectedNext, DecodeError},
         Stats,
     },
     protocol::{GetRequest, RangeSpecSeq},
     store::{MapMut, Store},
     BlobFormat, Hash,
 };
+use iroh_net::{defaults::staging::default_relay_map, key::SecretKey, NodeAddr, NodeId};
+use rand::RngCore;
 
 /// Create a new endpoint and dial a peer, returning the connection.
 async fn dial(secret_key: SecretKey, peer: NodeAddr) -> anyhow::Result<quinn::Connection> {

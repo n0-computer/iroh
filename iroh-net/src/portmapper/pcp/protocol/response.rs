@@ -260,9 +260,9 @@ impl Response {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use rand::SeedableRng;
+
+    use super::*;
 
     #[test]
     fn test_decode_external_addr_response() {

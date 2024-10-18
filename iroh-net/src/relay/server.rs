@@ -9,29 +9,29 @@
 //! can not outlive their handle.  It is also always possible to await for completion of a
 //! task.  Some tasks additionally have a method to do graceful shutdown.
 
-use std::fmt;
-use std::future::Future;
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::sync::Arc;
+use std::{fmt, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures_lite::StreamExt;
-use http::response::Builder as ResponseBuilder;
-use http::{HeaderMap, Method, Request, Response, StatusCode};
+use http::{
+    response::Builder as ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
+};
 use hyper::body::Incoming;
 use iroh_metrics::inc;
-use tokio::net::{TcpListener, UdpSocket};
-use tokio::task::JoinSet;
+// Module defined in this file.
+use stun_metrics::StunMetrics;
+use tokio::{
+    net::{TcpListener, UdpSocket},
+    task::JoinSet,
+};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-use crate::key::SecretKey;
-use crate::relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH};
-use crate::stun;
-
-// Module defined in this file.
-use stun_metrics::StunMetrics;
+use crate::{
+    key::SecretKey,
+    relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH},
+    stun,
+};
 
 pub(crate) mod actor;
 pub(crate) mod client_conn;
@@ -41,9 +41,11 @@ mod metrics;
 pub(crate) mod streams;
 pub(crate) mod types;
 
-pub use self::actor::{ClientConnHandler, ServerActorTask};
-pub use self::metrics::Metrics;
-pub use self::streams::MaybeTlsStream as MaybeTlsStreamServer;
+pub use self::{
+    actor::{ClientConnHandler, ServerActorTask},
+    metrics::Metrics,
+    streams::MaybeTlsStream as MaybeTlsStreamServer,
+};
 
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
 const NO_CONTENT_RESPONSE_HEADER: &str = "X-Tailscale-Response";
@@ -706,18 +708,17 @@ mod stun_metrics {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
-    use std::time::Duration;
+    use std::{net::Ipv4Addr, time::Duration};
 
     use bytes::Bytes;
     use http::header::UPGRADE;
     use iroh_base::node_addr::RelayUrl;
 
-    use crate::relay::client::conn::ReceivedMessage;
-    use crate::relay::client::ClientBuilder;
-    use crate::relay::http::{Protocol, HTTP_UPGRADE_PROTOCOL};
-
     use super::*;
+    use crate::relay::{
+        client::{conn::ReceivedMessage, ClientBuilder},
+        http::{Protocol, HTTP_UPGRADE_PROTOCOL},
+    };
 
     async fn spawn_local_relay() -> Result<Server> {
         Server::spawn(ServerConfig::<(), ()> {

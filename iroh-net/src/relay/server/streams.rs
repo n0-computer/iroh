@@ -1,7 +1,9 @@
 //! Streams used in the server-side implementation of iroh relays.
 
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use anyhow::Result;
 use futures_lite::Stream;
@@ -10,8 +12,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::WebSocketStream;
 use tokio_util::codec::Framed;
 
-use crate::relay::codec::DerpCodec;
-use crate::relay::codec::Frame;
+use crate::relay::codec::{DerpCodec, Frame};
 
 #[derive(Debug)]
 pub(crate) enum RelayIo {

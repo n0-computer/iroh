@@ -17,12 +17,11 @@ use iroh_net::{endpoint::RemoteInfo, relay::RelayUrl, NodeAddr, NodeId};
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
+use super::{flatten, RpcClient};
 use crate::rpc_protocol::net::{
     AddAddrRequest, AddrRequest, IdRequest, RelayRequest, RemoteInfoRequest, RemoteInfoResponse,
     RemoteInfosIterRequest,
 };
-
-use super::{flatten, RpcClient};
 
 /// Iroh netx Client.
 ///
