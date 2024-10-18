@@ -61,7 +61,7 @@ use crate::{
     discovery::{Discovery, DiscoveryItem},
     dns::node_info::NodeInfo,
     key::SecretKey,
-    relay::ENV_FORCE_STAGING_RELAYS,
+    relay::force_staging_infra,
     AddrInfo, Endpoint, NodeId,
 };
 
@@ -184,9 +184,9 @@ impl PkarrPublisher {
     ///
     /// [number 0]: https://n0.computer
     pub fn n0_dns(secret_key: SecretKey) -> Self {
-        let pkarr_relay = match std::env::var(ENV_FORCE_STAGING_RELAYS) {
-            Ok(value) if !value.is_empty() => N0_DNS_PKARR_RELAY_STAGING,
-            _ => N0_DNS_PKARR_RELAY_PROD,
+        let pkarr_relay = match force_staging_infra() {
+            true => N0_DNS_PKARR_RELAY_STAGING,
+            false => N0_DNS_PKARR_RELAY_PROD,
         };
 
         let pkarr_relay: Url = pkarr_relay.parse().expect("url is valid");
@@ -317,16 +317,16 @@ impl PkarrResolver {
     /// This uses the pkarr relay server operated by [number 0] at
     /// [`N0_DNS_PKARR_RELAY_PROD`].
     ///
-    /// When compiling for tests, i.e. when `cfg(test)` is true, or when the
-    /// `test-utils` crate feature is enabled the [`N0_DNS_PKARR_RELAY_STAGING`] server is
-    /// used instead.
+    /// When running with the environment variable `IROH_FORCE_STAGING_RELAYS`
+    /// set to any non empty value [`N0_DNS_PKARR_RELAY_STAGING`]
+    /// server is used instead.
     ///
     /// [number 0]: https://n0.computer
     pub fn n0_dns() -> Self {
-        #[cfg(not(test))]
-        let pkarr_relay = N0_DNS_PKARR_RELAY_PROD;
-        #[cfg(test)]
-        let pkarr_relay = N0_DNS_PKARR_RELAY_STAGING;
+        let pkarr_relay = match force_staging_infra() {
+            true => N0_DNS_PKARR_RELAY_STAGING,
+            false => N0_DNS_PKARR_RELAY_PROD,
+        };
 
         let pkarr_relay: Url = pkarr_relay.parse().expect("url is valid");
         Self::new(pkarr_relay)

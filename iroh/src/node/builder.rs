@@ -23,7 +23,7 @@ use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
     endpoint::TransportConfig,
-    relay::RelayMode,
+    relay::{force_staging_infra, RelayMode},
     Endpoint,
 };
 use quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
@@ -228,10 +228,10 @@ fn mk_external_rpc() -> IrohServerEndpoint {
 impl Default for Builder<iroh_blobs::store::mem::Store> {
     fn default() -> Self {
         // Use staging in testing
-        #[cfg(not(test))]
-        let relay_mode = RelayMode::Default;
-        #[cfg(test)]
-        let relay_mode = RelayMode::Staging;
+        let relay_mode = match force_staging_infra() {
+            true => RelayMode::Staging,
+            false => RelayMode::Default,
+        };
 
         Self {
             storage: StorageConfig::Mem,
@@ -264,10 +264,10 @@ impl<D: Map> Builder<D> {
         storage: StorageConfig,
     ) -> Self {
         // Use staging in testing
-        #[cfg(not(test))]
-        let relay_mode = RelayMode::Default;
-        #[cfg(test)]
-        let relay_mode = RelayMode::Staging;
+        let relay_mode = match force_staging_infra() {
+            true => RelayMode::Staging,
+            false => RelayMode::Default,
+        };
 
         Self {
             storage,
@@ -506,6 +506,7 @@ where
     ///
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
+    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
         self
@@ -513,6 +514,7 @@ where
 
     /// Register a callback for when GC is done.
     #[cfg(any(test, feature = "test-utils"))]
+    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub fn register_gc_done_cb(mut self, cb: Box<dyn Fn() + Send>) -> Self {
         self.gc_done_callback.replace(cb);
         self

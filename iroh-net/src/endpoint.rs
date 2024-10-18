@@ -36,7 +36,7 @@ use crate::{
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
     magicsock::{self, Handle, QuicMappedAddr},
-    relay::{RelayMode, RelayUrl, ENV_FORCE_STAGING_RELAYS},
+    relay::{force_staging_infra, RelayMode, RelayUrl},
     tls, NodeId,
 };
 
@@ -1358,9 +1358,9 @@ fn proxy_url_from_env() -> Option<Url> {
 /// Otherwise, it will return `RelayMode::Default`.
 pub fn default_relay_mode() -> RelayMode {
     // Use staging in testing
-    match std::env::var(ENV_FORCE_STAGING_RELAYS) {
-        Ok(value) if !value.is_empty() => RelayMode::Staging,
-        _ => RelayMode::Default,
+    match force_staging_infra() {
+        true => RelayMode::Staging,
+        false => RelayMode::Default,
     }
 }
 
