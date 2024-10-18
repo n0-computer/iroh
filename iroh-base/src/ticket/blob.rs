@@ -132,7 +132,7 @@ mod tests {
         let relay_url = None;
         BlobTicket {
             hash,
-            node: NodeAddr::from_parts(peer, relay_url, vec![addr]),
+            node: NodeAddr::from_parts(peer, relay_url, [addr]),
             format: BlobFormat::HashSeq,
         }
     }
@@ -163,7 +163,7 @@ mod tests {
                 .unwrap();
 
         let ticket = BlobTicket {
-            node: NodeAddr::from_parts(node_id, None, vec![]),
+            node: NodeAddr::from_parts(node_id, None, []),
             format: BlobFormat::Raw,
             hash,
         };

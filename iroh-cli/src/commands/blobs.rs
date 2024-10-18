@@ -211,7 +211,7 @@ impl BlobCommands {
                                 address
                             } else {
                                 // use both the cli supplied ones and the ticket ones
-                                address.extend(info.direct_addresses.into_iter());
+                                address.extend(info.direct_addresses);
                                 address
                             };
 

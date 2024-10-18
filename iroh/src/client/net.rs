@@ -55,7 +55,7 @@ use crate::rpc_protocol::net::{
 ///   // the home relay
 ///   Some(relay_url),
 ///   // the direct addresses
-///   vec!["120.0.0.1:0".parse().unwrap()],
+///   ["120.0.0.1:0".parse().unwrap()],
 /// );
 /// net_client.add_node_addr(addr).await?;
 /// // Shut down the node. Passing `true` will force the shutdown, passing in

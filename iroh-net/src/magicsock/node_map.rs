@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     pin::Pin,
@@ -283,10 +283,7 @@ impl NodeMap {
         self.inner.lock().prune_inactive();
     }
 
-    pub(crate) fn on_direct_addr_discovered(
-        &self,
-        discovered: impl Iterator<Item = impl Into<IpPort>>,
-    ) {
+    pub(crate) fn on_direct_addr_discovered(&self, discovered: BTreeSet<SocketAddr>) {
         self.inner.lock().on_direct_addr_discovered(discovered);
     }
 }
@@ -321,10 +318,7 @@ impl NodeMapInner {
     }
 
     /// Prunes direct addresses from nodes that claim to share an address we know points to us.
-    pub(super) fn on_direct_addr_discovered(
-        &mut self,
-        discovered: impl Iterator<Item = impl Into<IpPort>>,
-    ) {
+    pub(super) fn on_direct_addr_discovered(&mut self, discovered: BTreeSet<SocketAddr>) {
         for addr in discovered {
             self.remove_by_ipp(addr.into(), ClearReason::MatchesOurLocalAddr)
         }

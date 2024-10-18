@@ -74,7 +74,7 @@ impl NodeAddr {
     pub fn from_parts(
         node_id: PublicKey,
         relay_url: Option<RelayUrl>,
-        direct_addresses: Vec<SocketAddr>,
+        direct_addresses: impl IntoIterator<Item = SocketAddr>,
     ) -> Self {
         Self {
             node_id,
