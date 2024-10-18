@@ -561,12 +561,6 @@ impl Actor {
         &mut self,
         why: &'static str,
     ) -> Result<(Conn, &'_ mut ConnReceiver), ClientError> {
-        debug!(
-            "connect: {}, current client {}",
-            why,
-            self.relay_conn.is_some()
-        );
-
         if self.is_closed {
             return Err(ClientError::Closed);
         }
@@ -590,7 +584,7 @@ impl Actor {
 
             Ok((conn, receiver))
         }
-        .instrument(info_span!("connect", %url))
+        .instrument(info_span!("connect", %url, %why))
         .await
     }
 
