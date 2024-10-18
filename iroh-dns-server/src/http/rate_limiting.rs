@@ -40,7 +40,6 @@ pub fn create(
             tracing::info!("Rate limiting disabled");
             return None;
         }
-        // By default apply rate limit
         RateLimitConfig::Simple => false,
         RateLimitConfig::Smart => true,
     };
