@@ -12,7 +12,7 @@ use anyhow::{bail, Context as _};
 use quinn::AsyncUdpSocket;
 use quinn_udp::{Transmit, UdpSockRef};
 use tokio::io::Interest;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 use crate::net::UdpSocket;
 
