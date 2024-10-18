@@ -1224,9 +1224,9 @@ impl MagicSock {
 
     /// Sends the call-me-maybe DISCO message, queuing if addresses are too stale.
     ///
-    /// To send the call-me-maybe message we need to know our current direct addresses.  If
-    /// this information is too stale the call-me-maybe is queued while a netcheck run is
-    /// scheduled.  Once this run finishes the call-me-maybe will be sent.
+    /// To send the call-me-maybe message, we need to know our current direct addresses.  If
+    /// this information is too stale, the call-me-maybe is queued while a netcheck run is
+    /// scheduled.  Once this run finishes, the call-me-maybe will be sent.
     fn send_or_queue_call_me_maybe(&self, url: &RelayUrl, dst_node: NodeId) {
         if self.direct_addrs.fresh_enough() {
             let msg = self.direct_addrs.to_call_me_maybe_message();
