@@ -1,13 +1,14 @@
 //! Utilities used in the protocol implementation
 
-use rand::{
-    seq::{IteratorRandom, SliceRandom},
-    Rng,
-};
 use std::{
     collections::{BTreeMap, HashMap},
     hash::Hash,
     time::{Duration, Instant},
+};
+
+use rand::{
+    seq::{IteratorRandom, SliceRandom},
+    Rng,
 };
 
 /// Implement methods, display, debug and conversion traits for 32 byte identifiers.

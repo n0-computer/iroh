@@ -100,12 +100,13 @@
 
 use std::time::Duration;
 
-use crate::{AddrInfo, Endpoint, NodeId};
 use anyhow::{anyhow, ensure, Result};
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error_span, warn, Instrument};
+
+use crate::{AddrInfo, Endpoint, NodeId};
 
 pub mod dns;
 
@@ -441,9 +442,8 @@ mod tests {
     use rand::Rng;
     use tokio_util::task::AbortOnDropHandle;
 
-    use crate::{key::SecretKey, relay::RelayMode};
-
     use super::*;
+    use crate::{key::SecretKey, relay::RelayMode};
 
     #[derive(Debug, Clone, Default)]
     struct TestDiscoveryShared {

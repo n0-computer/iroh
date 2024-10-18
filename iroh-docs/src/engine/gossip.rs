@@ -12,9 +12,8 @@ use tokio::{
 };
 use tracing::{debug, instrument, warn};
 
-use crate::{actor::SyncHandle, ContentStatus, NamespaceId};
-
 use super::live::{Op, ToLiveActor};
+use crate::{actor::SyncHandle, ContentStatus, NamespaceId};
 
 #[derive(Debug)]
 struct ActiveState {

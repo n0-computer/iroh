@@ -1,13 +1,17 @@
+use std::{
+    collections::BTreeMap,
+    time::{Instant, SystemTime},
+};
+
+use anyhow::Result;
+use iroh_net::NodeId;
+use serde::{Deserialize, Serialize};
+use tracing::{debug, warn};
+
 use crate::{
     net::{AbortReason, AcceptOutcome, SyncFinished},
     NamespaceId,
 };
-use anyhow::Result;
-use iroh_net::NodeId;
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-use std::time::{Instant, SystemTime};
-use tracing::{debug, warn};
 
 /// Why we started a sync request
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Copy)]

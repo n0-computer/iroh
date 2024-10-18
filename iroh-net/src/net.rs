@@ -6,5 +6,4 @@ mod ip_family;
 pub mod netmon;
 mod udp;
 
-pub use self::ip_family::IpFamily;
-pub use self::udp::UdpSocket;
+pub use self::{ip_family::IpFamily, udp::UdpSocket};

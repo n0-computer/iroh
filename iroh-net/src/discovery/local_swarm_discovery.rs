@@ -42,16 +42,18 @@ use anyhow::Result;
 use derive_more::FromStr;
 use futures_lite::stream::Boxed as BoxStream;
 use futures_util::FutureExt;
-use tracing::{debug, error, info_span, trace, warn, Instrument};
-use watchable::Watchable;
-
 use iroh_base::key::PublicKey;
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::{
-    sync::mpsc::{self, error::TrySendError},
+    sync::mpsc::{
+        error::TrySendError,
+        {self},
+    },
     task::JoinSet,
 };
 use tokio_util::task::AbortOnDropHandle;
+use tracing::{debug, error, info_span, trace, warn, Instrument};
+use watchable::Watchable;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
@@ -397,9 +399,10 @@ mod tests {
     /// This module's name signals nextest to run test in a single thread (no other concurrent
     /// tests)
     mod run_in_isolation {
-        use super::super::*;
         use futures_lite::StreamExt;
         use testresult::TestResult;
+
+        use super::super::*;
 
         #[tokio::test]
         async fn local_swarm_discovery_publish_resolve() -> TestResult {

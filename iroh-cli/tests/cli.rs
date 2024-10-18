@@ -1,9 +1,11 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-use std::env;
-use std::io::{BufRead, BufReader, Read};
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use std::{
+    env,
+    io::{BufRead, BufReader, Read},
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::blake3;
@@ -290,12 +292,13 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 #[cfg(unix)]
 #[tokio::test]
 async fn cli_provide_persistence() -> anyhow::Result<()> {
+    use std::time::Duration;
+
     use iroh::blobs::store::ReadableStore;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,
     };
-    use std::time::Duration;
 
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh_data_dir");

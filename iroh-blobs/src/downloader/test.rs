@@ -1,13 +1,14 @@
 #![cfg(test)]
-use anyhow::anyhow;
 use std::{
     sync::atomic::AtomicUsize,
     time::{Duration, Instant},
 };
 
+use anyhow::anyhow;
 use futures_util::future::FutureExt;
 use iroh_net::key::SecretKey;
 
+use super::*;
 use crate::{
     get::{
         db::BlobId,
@@ -18,8 +19,6 @@ use crate::{
         progress::{AsyncChannelProgressSender, IdGenerator},
     },
 };
-
-use super::*;
 
 mod dialer;
 mod getter;

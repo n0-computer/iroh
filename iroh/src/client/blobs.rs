@@ -93,15 +93,16 @@ use tracing::warn;
 mod batch;
 pub use batch::{AddDirOpts, AddFileOpts, AddReaderOpts, Batch};
 
-use crate::rpc_protocol::blobs::{
-    AddPathRequest, AddStreamRequest, AddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
-    BlobStatusRequest, ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse,
-    DeleteRequest, DownloadRequest, ExportRequest, ListIncompleteRequest, ListRequest,
-    ReadAtRequest, ReadAtResponse, ValidateRequest,
-};
-use crate::rpc_protocol::node::StatusRequest;
-
 use super::{flatten, tags, Iroh, RpcClient};
+use crate::rpc_protocol::{
+    blobs::{
+        AddPathRequest, AddStreamRequest, AddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
+        BlobStatusRequest, ConsistencyCheckRequest, CreateCollectionRequest,
+        CreateCollectionResponse, DeleteRequest, DownloadRequest, ExportRequest,
+        ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse, ValidateRequest,
+    },
+    node::StatusRequest,
+};
 
 /// Iroh blobs client.
 #[derive(Debug, Clone, RefCast)]
@@ -995,13 +996,13 @@ pub enum DownloadMode {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use iroh_blobs::hashseq::HashSeq;
     use iroh_net::NodeId;
     use rand::RngCore;
     use testresult::TestResult;
     use tokio::{io::AsyncWriteExt, sync::mpsc};
+
+    use super::*;
 
     #[tokio::test]
     async fn test_blob_create_collection() -> Result<()> {

@@ -9,15 +9,17 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use hickory_server::proto::{self, serialize::binary::BinDecodable};
+use hickory_server::proto::{
+    serialize::binary::BinDecodable,
+    {self},
+};
 use http::{
     header::{CACHE_CONTROL, CONTENT_TYPE},
     HeaderValue, StatusCode,
 };
 
-use crate::state::AppState;
-
 use super::error::AppResult;
+use crate::state::AppState;
 
 mod extract;
 mod response;

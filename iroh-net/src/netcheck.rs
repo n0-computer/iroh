@@ -6,27 +6,29 @@
 //!
 //! Based on <https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go>
 
-use std::collections::{BTreeMap, HashMap};
-use std::fmt::{self, Debug};
-use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::{self, Debug},
+    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+    sync::Arc,
+};
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use iroh_metrics::inc;
-use tokio::sync::{self, mpsc, oneshot};
-use tokio::time::{Duration, Instant};
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::AbortOnDropHandle;
+use tokio::{
+    sync::{self, mpsc, oneshot},
+    time::{Duration, Instant},
+};
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use crate::dns::DnsResolver;
-use crate::net::{IpFamily, UdpSocket};
-use crate::relay::RelayUrl;
-
-use super::portmapper;
-use super::relay::RelayMap;
-use super::stun;
+use super::{portmapper, relay::RelayMap, stun};
+use crate::{
+    dns::DnsResolver,
+    net::{IpFamily, UdpSocket},
+    relay::RelayUrl,
+};
 
 mod metrics;
 mod reportgen;
@@ -777,11 +779,12 @@ mod tests {
     use tokio::time;
     use tracing::info;
 
-    use crate::defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT};
-    use crate::ping::Pinger;
-    use crate::relay::RelayNode;
-
     use super::*;
+    use crate::{
+        defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT},
+        ping::Pinger,
+        relay::RelayNode,
+    };
 
     #[tokio::test]
     async fn test_basic() -> Result<()> {

@@ -18,16 +18,15 @@ use iroh::{
     net::key::{PublicKey, SecretKey},
     node::{Builder, Node},
 };
-use rand::{CryptoRng, Rng, SeedableRng};
-use tracing::{debug, error_span, info, Instrument};
-use tracing_subscriber::{prelude::*, EnvFilter};
-
 use iroh_blobs::Hash;
 use iroh_docs::{
     store::{DownloadPolicy, FilterKind, Query},
     AuthorId, ContentStatus,
 };
 use iroh_net::relay::RelayMode;
+use rand::{CryptoRng, Rng, SeedableRng};
+use tracing::{debug, error_span, info, Instrument};
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 

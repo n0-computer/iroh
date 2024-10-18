@@ -51,6 +51,12 @@ use tracing::{
 use url::Url;
 use watchable::Watchable;
 
+use self::{
+    metrics::Metrics as MagicsockMetrics,
+    node_map::{NodeMap, PingAction, PingRole, SendPing},
+    relay_actor::{RelayActor, RelayActorMessage, RelayReadResult},
+    udp_conn::UdpConn,
+};
 use crate::{
     defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
@@ -64,13 +70,6 @@ use crate::{
     stun, AddrInfo,
 };
 
-use self::{
-    metrics::Metrics as MagicsockMetrics,
-    node_map::{NodeMap, PingAction, PingRole, SendPing},
-    relay_actor::{RelayActor, RelayActorMessage, RelayReadResult},
-    udp_conn::UdpConn,
-};
-
 mod metrics;
 mod node_map;
 mod relay_actor;
@@ -80,10 +79,9 @@ mod udp_conn;
 pub use node_map::Source;
 
 pub(super) use self::timer::Timer;
-
-pub use self::metrics::Metrics;
-pub use self::node_map::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo,
+pub use self::{
+    metrics::Metrics,
+    node_map::{ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo},
 };
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -2831,12 +2829,8 @@ mod tests {
     use rand::RngCore;
     use tokio_util::task::AbortOnDropHandle;
 
-    use crate::defaults::staging::EU_RELAY_HOSTNAME;
-    use crate::relay::RelayMode;
-    use crate::tls;
-    use crate::Endpoint;
-
     use super::*;
+    use crate::{defaults::staging::EU_RELAY_HOSTNAME, relay::RelayMode, tls, Endpoint};
 
     const ALPN: &[u8] = b"n0/test/1";
 
