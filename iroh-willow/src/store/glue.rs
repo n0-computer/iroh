@@ -39,13 +39,6 @@ impl FixedSize for StoredAuthorizedEntry {
 }
 
 impl StoredAuthorizedEntry {
-    pub fn wins_tie_break(&self, other: &Self) -> bool {
-        if self.payload_digest < other.payload_digest {
-            return true;
-        }
-        self.payload_size < other.payload_size
-    }
-
     pub fn from_authorised_entry(entry: &AuthorisedEntry) -> (Point<IrohWillowParams>, Self) {
         let point = willow_store::Point::<IrohWillowParams>::new(
             entry.entry().subspace_id(),
@@ -63,9 +56,20 @@ impl StoredAuthorizedEntry {
     pub fn into_authorised_entry(
         self,
         namespace: NamespaceId,
-        key: Point<IrohWillowParams>,
+        key: &Point<IrohWillowParams>,
         auth_token: AuthorisationToken,
     ) -> Result<AuthorisedEntry> {
+        Ok(AuthorisedEntry::new(
+            self.into_entry(namespace, key)?,
+            auth_token,
+        )?)
+    }
+
+    pub fn into_entry(
+        self,
+        namespace: NamespaceId,
+        key: &Point<IrohWillowParams>,
+    ) -> Result<Entry> {
         let subspace = key.x();
         let timestamp = key.y();
         let blobseq = key.z().to_owned();
@@ -75,17 +79,14 @@ impl StoredAuthorizedEntry {
             .collect::<Vec<_>>();
         let total_length = components.iter().map(|c| c.len()).sum::<usize>();
         let path = Path::new_from_iter(total_length, &mut components.into_iter())?;
-        Ok(AuthorisedEntry::new(
-            Entry::new(
-                namespace,
-                *subspace,
-                path,
-                *timestamp,
-                self.payload_size,
-                PayloadDigest(Hash::from_bytes(self.payload_digest)),
-            ),
-            auth_token,
-        )?)
+        Ok(Entry::new(
+            namespace,
+            *subspace,
+            path,
+            *timestamp,
+            self.payload_size,
+            PayloadDigest(Hash::from_bytes(self.payload_digest)),
+        ))
     }
 }
 

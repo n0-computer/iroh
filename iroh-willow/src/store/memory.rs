@@ -7,11 +7,13 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::pin::Pin;
 use std::rc::{Rc, Weak};
 use std::task::{Context, Poll, Waker};
 
 use anyhow::Result;
 use ed25519_dalek::ed25519;
+use futures_lite::ready;
 use futures_util::Stream;
 use tracing::debug;
 use willow_data_model::SubspaceId as _;
@@ -257,7 +259,7 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
                             "couldn't find authorization token id (database inconsistent)"
                         )
                     })?;
-                    stored_entry.into_authorised_entry(namespace, point, auth_token.clone())
+                    stored_entry.into_authorised_entry(namespace, &point, auth_token.clone())
                 })
                 .collect::<Vec<_>>()
                 .into_iter(),
@@ -297,7 +299,7 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
         let auth_token = inner.authorization_tokens.get(&id).ok_or_else(|| {
             anyhow::anyhow!("couldn't find authorization token id (database inconsistent)")
         })?;
-        let entry = stored_entry.into_authorised_entry(namespace, point, auth_token.clone())?;
+        let entry = stored_entry.into_authorised_entry(namespace, &point, auth_token.clone())?;
         Ok(Some(entry))
     }
 }
@@ -327,11 +329,9 @@ fn blobseq_below(blobseq: &BlobSeq) -> Option<BlobSeq> {
 }
 
 impl EntryStore {
-    fn ingest_entry(&mut self, entry: &AuthorisedEntry, _origin: EntryOrigin) -> Result<bool> {
-        let ns_store = self
-            .stores
-            .entry(*entry.entry().namespace_id())
-            .or_default();
+    fn ingest_entry(&mut self, entry: &AuthorisedEntry, origin: EntryOrigin) -> Result<bool> {
+        let namespace = *entry.entry().namespace_id();
+        let ns_store = self.stores.entry(namespace).or_default();
 
         // Insert auth token & entry:
 
@@ -362,16 +362,33 @@ impl EntryStore {
             z: QueryRange::new(blobseq_start, blobseq_end),
         };
 
-        let deletion_candidates = ns_store
+        let prune_candidates = ns_store
             .entries
             .query(&overwritten_range, &self.store)
             .collect::<Result<Vec<_>, _>>()?;
 
-        for (pos, overwrite_candidate) in deletion_candidates {
-            if pos.y() < insert_point.y() || insert_entry.wins_tie_break(&overwrite_candidate) {
+        for (prune_pos, prune_candidate) in prune_candidates {
+            let auth_token = self
+                .authorization_tokens
+                .get(&prune_candidate.authorization_token_id)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("couldn't find authorization token id (database inconsistent)")
+                })?;
+            let pruned =
+                prune_candidate.into_authorised_entry(namespace, &prune_pos, auth_token.clone())?; // fairly inefficient
+            if entry.entry().is_newer_than(pruned.entry()) {
                 // TODO(matheus23): Don't *actually* delete here? (depending on a potential traceless bit)
                 // There was some idea along the lines of "mark as deleted" by storing the identifier for the deletion.
-                ns_store.entries.delete(&pos, &mut self.store)?;
+                ns_store.entries.delete(&prune_pos, &mut self.store)?;
+                ns_store.events.insert(move |id| {
+                    StoreEvent::Pruned(
+                        id,
+                        traits::PruneEvent {
+                            pruned,
+                            by: entry.clone(),
+                        },
+                    )
+                });
             }
         }
 
@@ -380,6 +397,11 @@ impl EntryStore {
             path = %entry.entry().path().fmt_utf8(),
             "ingest entry"
         );
+
+        ns_store
+            .events
+            .insert(|id| StoreEvent::Ingested(id, entry.clone(), origin));
+
         Ok(true)
     }
 }
@@ -405,43 +427,40 @@ impl traits::EntryStorage for Rc<RefCell<EntryStore>> {
 
     fn subscribe_area(
         &self,
-        _namespace: NamespaceId,
-        _area: Area,
-        _params: SubscribeParams,
+        namespace: NamespaceId,
+        area: Area,
+        params: SubscribeParams,
     ) -> impl Stream<Item = traits::StoreEvent> + Unpin + 'static {
-        // TODO(matheus23): implement subscriptions
-        // For this we need a good plan.
-        // The point of subscriptions is to be able to reconstruct
-        // the current state from all subscriptions that happened.
-        // This doesn't mean we need to emit all changes that were made,
-        // e.g. intermediate modifications don't need to be kept,
-        // since they're overwritten.
-        // Still, it requires some thinking on what exactly we want
-        // to preserve and for how long.
-        // There's some ideas on this by re-using the internal willow store's
-        // NodeIds (they're u64s) as progress IDs.
-
-        // For now we'll just use a broadcast channel to send everyone
-        // new events when something is injested.
-        // BroadcastStream::new(self.borrow().events.subscribe())
-        //     .filter_map(Result::ok)
-        //     .filter(move |event| match event {
-        //         StoreEvent::Ingested(_, entry, _) => area.includes_entry(entry.entry()),
-        //         // not implemented yet
-        //         other => false,
-        //     })
-        // Actually, we'll skip for now
-        futures_lite::stream::empty()
+        let progress_id = self
+            .borrow_mut()
+            .stores
+            .entry(namespace)
+            .or_default()
+            .events
+            .next_progress_id();
+        EventStream {
+            area,
+            params,
+            namespace,
+            progress_id,
+            store: Rc::downgrade(self),
+        }
     }
 
     fn resume_subscription(
         &self,
-        _progress_id: u64,
-        _namespace: NamespaceId,
-        _area: Area,
-        _params: SubscribeParams,
+        progress_id: u64,
+        namespace: NamespaceId,
+        area: Area,
+        params: SubscribeParams,
     ) -> impl Stream<Item = traits::StoreEvent> + Unpin + 'static {
-        futures_lite::stream::empty()
+        EventStream {
+            area,
+            params,
+            progress_id,
+            namespace,
+            store: Rc::downgrade(self),
+        }
     }
 }
 
@@ -459,30 +478,30 @@ struct EventStream {
     params: SubscribeParams,
 }
 
-// impl Stream for EventStream {
-//     type Item = StoreEvent;
-//     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-//         let Some(inner) = self.store.upgrade() else {
-//             return Poll::Ready(None);
-//         };
-//         let mut inner_mut = inner.borrow_mut();
-//         let store = inner_mut.stores.entry(self.namespace).or_default();
-//         let res = ready!(store.events.poll_next(
-//             self.progress_id,
-//             |e| e.matches(self.namespace, &self.area, &self.params),
-//             cx,
-//         ));
-//         drop(inner_mut);
-//         drop(inner);
-//         Poll::Ready(match res {
-//             None => None,
-//             Some((next_id, event)) => {
-//                 self.progress_id = next_id;
-//                 Some(event)
-//             }
-//         })
-//     }
-// }
+impl Stream for EventStream {
+    type Item = StoreEvent;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let Some(inner) = self.store.upgrade() else {
+            return Poll::Ready(None);
+        };
+        let mut inner_mut = inner.borrow_mut();
+        let store = inner_mut.stores.entry(self.namespace).or_default();
+        let res = ready!(store.events.poll_next(
+            self.progress_id,
+            |e| e.matches(self.namespace, &self.area, &self.params),
+            cx,
+        ));
+        drop(inner_mut);
+        drop(inner);
+        Poll::Ready(match res {
+            None => None,
+            Some((next_id, event)) => {
+                self.progress_id = next_id;
+                Some(event)
+            }
+        })
+    }
+}
 
 /// A simple in-memory event queue.
 ///
