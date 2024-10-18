@@ -722,7 +722,7 @@
 
 <span class="kw">use </span><span class="kw">crate</span>::proto::data_model::{AuthorisationToken, PathExt};
 <span class="kw">use </span><span class="kw">crate</span>::proto::grouping::Area;
-<span class="kw">use </span><span class="kw">crate</span>::store::glue::StoredAuthorizedEntry;
+<span class="kw">use </span><span class="kw">crate</span>::store::glue::StoredAuthorisedEntry;
 <span class="kw">use crate</span>::{
     interest::{CapSelector, CapabilityPack},
     proto::{
@@ -813,7 +813,7 @@
 <span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>EntryStore {
     stores: HashMap&lt;NamespaceId, NamespaceStore&gt;,
-    authorization_tokens: BTreeMap&lt;ed25519::SignatureBytes, AuthorisationToken&gt;,
+    authorisation_tokens: BTreeMap&lt;ed25519::SignatureBytes, AuthorisationToken&gt;,
     store: willow_store::MemStore,
 }
 
@@ -821,7 +821,7 @@
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             stores: Default::default(),
-            authorization_tokens: Default::default(),
+            authorisation_tokens: Default::default(),
             store: willow_store::MemStore::new(),
         }
     }
@@ -947,17 +947,17 @@
             <span class="kw">return </span>either::Left(std::iter::empty());
         };
         <span class="comment">// TODO(matheus23): Maybe figure out a way to share this more efficiently?
-        </span><span class="kw">let </span>atmap = slf.authorization_tokens.clone();
+        </span><span class="kw">let </span>atmap = slf.authorisation_tokens.clone();
         either::Right(
             ns_store
                 .entries
                 .query(<span class="kw-2">&amp;</span>to_query(range), <span class="kw-2">&amp;</span>slf.store)
                 .map(<span class="kw">move </span>|result| {
                     <span class="kw">let </span>(point, stored_entry) = result<span class="question-mark">?</span>;
-                    <span class="kw">let </span>id = stored_entry.authorization_token_id;
+                    <span class="kw">let </span>id = stored_entry.authorisation_token_id;
                     <span class="kw">let </span>auth_token = atmap.get(<span class="kw-2">&amp;</span>id).ok_or_else(|| {
                         <span class="macro">anyhow::anyhow!</span>(
-                            <span class="string">"couldn't find authorization token id (database inconsistent)"
+                            <span class="string">"couldn't find authorisation token id (database inconsistent)"
                         </span>)
                     })<span class="question-mark">?</span>;
                     stored_entry.into_authorised_entry(namespace, <span class="kw-2">&amp;</span>point, auth_token.clone())
@@ -996,9 +996,9 @@
         };
 
         <span class="kw">let </span>(point, stored_entry) = result<span class="question-mark">?</span>;
-        <span class="kw">let </span>id = stored_entry.authorization_token_id;
-        <span class="kw">let </span>auth_token = inner.authorization_tokens.get(<span class="kw-2">&amp;</span>id).ok_or_else(|| {
-            <span class="macro">anyhow::anyhow!</span>(<span class="string">"couldn't find authorization token id (database inconsistent)"</span>)
+        <span class="kw">let </span>id = stored_entry.authorisation_token_id;
+        <span class="kw">let </span>auth_token = inner.authorisation_tokens.get(<span class="kw-2">&amp;</span>id).ok_or_else(|| {
+            <span class="macro">anyhow::anyhow!</span>(<span class="string">"couldn't find authorisation token id (database inconsistent)"</span>)
         })<span class="question-mark">?</span>;
         <span class="kw">let </span>entry = stored_entry.into_authorised_entry(namespace, <span class="kw-2">&amp;</span>point, auth_token.clone())<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(entry))
@@ -1036,11 +1036,11 @@
 
         <span class="comment">// Insert auth token &amp; entry:
 
-        </span><span class="self">self</span>.authorization_tokens
+        </span><span class="self">self</span>.authorisation_tokens
             .entry(entry.token().signature.to_bytes())
             .or_insert_with(|| entry.token().clone());
 
-        <span class="kw">let </span>(insert_point, insert_entry) = StoredAuthorizedEntry::from_authorised_entry(entry);
+        <span class="kw">let </span>(insert_point, insert_entry) = StoredAuthorisedEntry::from_authorised_entry(entry);
 
         <span class="kw">let </span>_replaced = ns_store
             .entries
@@ -1070,10 +1070,10 @@
 
         <span class="kw">for </span>(prune_pos, prune_candidate) <span class="kw">in </span>prune_candidates {
             <span class="kw">let </span>auth_token = <span class="self">self
-                </span>.authorization_tokens
-                .get(<span class="kw-2">&amp;</span>prune_candidate.authorization_token_id)
+                </span>.authorisation_tokens
+                .get(<span class="kw-2">&amp;</span>prune_candidate.authorisation_token_id)
                 .ok_or_else(|| {
-                    <span class="macro">anyhow::anyhow!</span>(<span class="string">"couldn't find authorization token id (database inconsistent)"</span>)
+                    <span class="macro">anyhow::anyhow!</span>(<span class="string">"couldn't find authorisation token id (database inconsistent)"</span>)
                 })<span class="question-mark">?</span>;
             <span class="kw">let </span>pruned =
                 prune_candidate.into_authorised_entry(namespace, <span class="kw-2">&amp;</span>prune_pos, auth_token.clone())<span class="question-mark">?</span>; <span class="comment">// fairly inefficient

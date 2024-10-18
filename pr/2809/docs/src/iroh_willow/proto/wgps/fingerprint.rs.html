@@ -90,7 +90,7 @@
 
 <span class="kw">use crate</span>::{
     proto::data_model::{Entry, EntryExt},
-    store::glue::{IrohWillowParams, StoredAuthorizedEntry},
+    store::glue::{IrohWillowParams, StoredAuthorisedEntry},
 };
 
 <span class="attr">#[derive(
@@ -112,12 +112,12 @@
     <span class="kw">const </span>SIZE: usize = std::mem::size_of::&lt;<span class="self">Self</span>&gt;();
 }
 
-<span class="kw">impl </span>LiftingCommutativeMonoid&lt;PointRef&lt;IrohWillowParams&gt;, StoredAuthorizedEntry&gt; <span class="kw">for </span>Fingerprint {
+<span class="kw">impl </span>LiftingCommutativeMonoid&lt;PointRef&lt;IrohWillowParams&gt;, StoredAuthorisedEntry&gt; <span class="kw">for </span>Fingerprint {
     <span class="kw">fn </span>neutral() -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>([<span class="number">0u8</span>; <span class="number">32</span>])
     }
 
-    <span class="kw">fn </span>lift(_key: <span class="kw-2">&amp;</span>PointRef&lt;IrohWillowParams&gt;, value: <span class="kw-2">&amp;</span>StoredAuthorizedEntry) -&gt; <span class="self">Self </span>{
+    <span class="kw">fn </span>lift(_key: <span class="kw-2">&amp;</span>PointRef&lt;IrohWillowParams&gt;, value: <span class="kw-2">&amp;</span>StoredAuthorisedEntry) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>(value.payload_digest)
     }
 
