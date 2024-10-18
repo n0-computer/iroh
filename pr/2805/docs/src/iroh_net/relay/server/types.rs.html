@@ -22,13 +22,11 @@
 <a href="#22" id="22">22</a>
 <a href="#23" id="23">23</a>
 <a href="#24" id="24">24</a>
-<a href="#25" id="25">25</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Types that are shared between [`super::actor`] and [`super::client_conn`].
 
 </span><span class="kw">use </span>bytes::Bytes;
 
-<span class="kw">use </span><span class="kw">crate</span>::key::PublicKey;
-<span class="kw">use </span><span class="kw">crate</span>::relay::server::client_conn::ClientConnBuilder;
+<span class="kw">use crate</span>::{key::PublicKey, relay::server::client_conn::ClientConnBuilder};
 
 <span class="doccomment">/// A request to write a dataframe to a Client
 </span><span class="attr">#[derive(Debug, Clone)]

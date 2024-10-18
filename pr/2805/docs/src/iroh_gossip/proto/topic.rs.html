@@ -357,12 +357,12 @@
 <span class="kw">use </span>rand_core::SeedableRng;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use </span><span class="kw">super</span>::plumtree::{<span class="self">self</span>, GossipEvent, InEvent <span class="kw">as </span>GossipIn, Scope};
 <span class="kw">use super</span>::{
     hyparview::{<span class="self">self</span>, InEvent <span class="kw">as </span>SwarmIn},
+    plumtree::{<span class="self">self</span>, GossipEvent, InEvent <span class="kw">as </span>GossipIn, Scope},
     state::MessageKind,
+    PeerData, PeerIdentity,
 };
-<span class="kw">use super</span>::{PeerData, PeerIdentity};
 
 <span class="doccomment">/// The default maximum size in bytes for a gossip message.
 /// This is a sane but arbitrary default and can be changed in the [`Config`].

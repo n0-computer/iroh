@@ -122,6 +122,7 @@
 <a href="#122" id="122">122</a>
 <a href="#123" id="123">123</a>
 <a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The main server which combines the DNS and HTTP(S) servers.
 
 </span><span class="kw">use </span>anyhow::Result;
@@ -223,8 +224,9 @@
     </span><span class="kw">pub async fn </span>spawn_for_tests_with_mainline(
         mainline: <span class="prelude-ty">Option</span>&lt;<span class="kw">crate</span>::config::BootstrapOption&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(<span class="self">Self</span>, std::net::SocketAddr, url::Url)&gt; {
-        <span class="kw">use </span><span class="kw">crate</span>::config::MetricsConfig;
         <span class="kw">use </span>std::net::{IpAddr, Ipv4Addr};
+
+        <span class="kw">use </span><span class="kw">crate</span>::config::MetricsConfig;
 
         <span class="kw">let </span><span class="kw-2">mut </span>config = Config::default();
         config.dns.port = <span class="number">0</span>;

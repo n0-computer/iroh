@@ -58,8 +58,6 @@
 <a href="#58" id="58">58</a>
 <a href="#59" id="59">59</a>
 <a href="#60" id="60">60</a>
-<a href="#61" id="61">61</a>
-<a href="#62" id="62">62</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Multi-dimensional key-value documents with an efficient synchronization protocol
 //!
 //! The crate operates on [Replicas](Replica). A replica contains an unlimited number of
@@ -116,10 +114,8 @@
 <span class="kw">mod </span>keys;
 <span class="kw">mod </span>ranger;
 
-<span class="kw">pub use </span><span class="self">self</span>::heads::<span class="kw-2">*</span>;
-<span class="kw">pub use </span><span class="self">self</span>::keys::<span class="kw-2">*</span>;
-<span class="kw">pub use </span><span class="self">self</span>::sync::<span class="kw-2">*</span>;
 <span class="attr">#[cfg(feature = <span class="string">"net"</span>)]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"net"</span>)))]
 </span><span class="kw">pub use </span><span class="self">self</span>::ticket::DocTicket;
+<span class="kw">pub use </span><span class="self">self</span>::{heads::<span class="kw-2">*</span>, keys::<span class="kw-2">*</span>, sync::<span class="kw-2">*</span>};
 </code></pre></div></section></main></body></html>

@@ -169,12 +169,12 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::str::FromStr;
 
-    <span class="kw">use </span><span class="kw">crate</span>::NamespaceId;
-
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span>iroh_base::base32;
     <span class="kw">use </span>iroh_net::key::PublicKey;
     <span class="kw">use </span>iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::NamespaceId;
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_ticket_base32() {

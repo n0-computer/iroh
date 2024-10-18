@@ -2531,8 +2531,6 @@
 <a href="#2531" id="2531">2531</a>
 <a href="#2532" id="2532">2532</a>
 <a href="#2533" id="2533">2533</a>
-<a href="#2534" id="2534">2534</a>
-<a href="#2535" id="2535">2535</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API for iroh-docs replicas
 
 </span><span class="comment">// Names and concepts are roughly based on Willows design at the moment:
@@ -2544,17 +2542,16 @@
 </span><span class="kw">use </span>std::{
     cmp::Ordering,
     fmt::Debug,
+    ops::{Deref, DerefMut},
     sync::Arc,
     time::{Duration, SystemTime},
 };
 
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
-<span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-</span><span class="kw">use </span>iroh_metrics::{inc, inc_by};
-<span class="kw">use </span>std::ops::{Deref, DerefMut};
-
 <span class="kw">use </span>ed25519_dalek::{Signature, SignatureError};
 <span class="kw">use </span>iroh_base::{base32, hash::Hash};
+<span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+</span><span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">pub use </span><span class="kw">crate</span>::heads::AuthorHeads;
@@ -3732,13 +3729,12 @@
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>rand_core::SeedableRng;
 
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{
         actor::SyncHandle,
         ranger::{Range, Store <span class="kw">as _</span>},
         store::{OpenError, Query, SortBy, SortDirection, Store},
     };
-
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_basics_memory() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {

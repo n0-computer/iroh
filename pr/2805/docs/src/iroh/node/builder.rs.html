@@ -996,9 +996,6 @@
 <a href="#996" id="996">996</a>
 <a href="#997" id="997">997</a>
 <a href="#998" id="998">998</a>
-<a href="#999" id="999">999</a>
-<a href="#1000" id="1000">1000</a>
-<a href="#1001" id="1001">1001</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1016,8 +1013,7 @@
     store::{Map, Store <span class="kw">as </span>BaoStore},
     util::local_pool::{<span class="self">self</span>, LocalPool, LocalPoolHandle, PanicMode},
 };
-<span class="kw">use </span>iroh_docs::engine::DefaultAuthorStorage;
-<span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
+<span class="kw">use </span>iroh_docs::{engine::DefaultAuthorStorage, net::DOCS_ALPN};
 <span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 <span class="attr">#[cfg(not(test))]
 </span><span class="kw">use </span>iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
@@ -1028,13 +1024,15 @@
     relay::RelayMode,
     Endpoint,
 };
-
 <span class="kw">use </span>quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::task::JoinError;
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error_span, trace, Instrument};
 
+<span class="kw">use super</span>::{
+    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
+};
 <span class="kw">use crate</span>::{
     client::RPC_ALPN,
     node::{
@@ -1044,10 +1042,6 @@
     },
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
-};
-
-<span class="kw">use super</span>::{
-    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
 };
 
 <span class="doccomment">/// Default bind address for the node.

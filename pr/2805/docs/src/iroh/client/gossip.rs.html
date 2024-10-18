@@ -109,7 +109,6 @@
 <a href="#109" id="109">109</a>
 <a href="#110" id="110">110</a>
 <a href="#111" id="111">111</a>
-<a href="#112" id="112">112</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Gossip client.
 //!
 //! The gossip client allows you to subscribe to gossip topics and send updates to them.
@@ -133,9 +132,8 @@
 <span class="kw">use </span>iroh_net::NodeId;
 <span class="kw">use </span>ref_cast::RefCast;
 
-<span class="kw">pub use </span><span class="kw">crate</span>::rpc_protocol::gossip::{SubscribeRequest, SubscribeResponse, SubscribeUpdate};
-
 <span class="kw">use </span><span class="kw">super</span>::RpcClient;
+<span class="kw">pub use </span><span class="kw">crate</span>::rpc_protocol::gossip::{SubscribeRequest, SubscribeResponse, SubscribeUpdate};
 
 <span class="doccomment">/// Iroh gossip client.
 </span><span class="attr">#[derive(Debug, Clone, RefCast)]

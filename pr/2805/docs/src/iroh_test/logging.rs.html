@@ -129,13 +129,17 @@
 <a href="#129" id="129">129</a>
 <a href="#130" id="130">130</a>
 <a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Logging during tests.
 
 </span><span class="kw">use </span>tokio::runtime::RuntimeFlavor;
 <span class="kw">use </span>tracing::level_filters::LevelFilter;
-<span class="kw">use </span>tracing_subscriber::layer::{Layer, SubscriberExt};
-<span class="kw">use </span>tracing_subscriber::util::SubscriberInitExt;
-<span class="kw">use </span>tracing_subscriber::EnvFilter;
+<span class="kw">use </span>tracing_subscriber::{
+    layer::{Layer, SubscriberExt},
+    util::SubscriberInitExt,
+    EnvFilter,
+};
 
 <span class="doccomment">/// Configures logging for the current test, **single-threaded runtime only**.
 ///

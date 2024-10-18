@@ -3921,12 +3921,6 @@
 <a href="#3921" id="3921">3921</a>
 <a href="#3922" id="3922">3922</a>
 <a href="#3923" id="3923">3923</a>
-<a href="#3924" id="3924">3924</a>
-<a href="#3925" id="3925">3925</a>
-<a href="#3926" id="3926">3926</a>
-<a href="#3927" id="3927">3927</a>
-<a href="#3928" id="3928">3928</a>
-<a href="#3929" id="3929">3929</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3980,6 +3974,12 @@
 <span class="kw">use </span>url::Url;
 <span class="kw">use </span>watchable::Watchable;
 
+<span class="kw">use </span><span class="self">self</span>::{
+    metrics::Metrics <span class="kw">as </span>MagicsockMetrics,
+    node_map::{NodeMap, PingAction, PingRole, SendPing},
+    relay_actor::{RelayActor, RelayActorMessage, RelayReadResult},
+    udp_conn::UdpConn,
+};
 <span class="kw">use crate</span>::{
     defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
     disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
@@ -3993,13 +3993,6 @@
     stun, AddrInfo,
 };
 
-<span class="kw">use </span><span class="self">self</span>::{
-    metrics::Metrics <span class="kw">as </span>MagicsockMetrics,
-    node_map::{NodeMap, PingAction, PingRole, SendPing},
-    relay_actor::{RelayActor, RelayActorMessage, RelayReadResult},
-    udp_conn::UdpConn,
-};
-
 <span class="kw">mod </span>metrics;
 <span class="kw">mod </span>node_map;
 <span class="kw">mod </span>relay_actor;
@@ -4009,10 +4002,9 @@
 <span class="kw">pub use </span>node_map::Source;
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">use </span><span class="self">self</span>::timer::Timer;
-
-<span class="kw">pub use </span><span class="self">self</span>::metrics::Metrics;
-<span class="kw">pub use </span><span class="self">self</span>::node_map::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo,
+<span class="kw">pub use </span><span class="self">self</span>::{
+    metrics::Metrics,
+    node_map::{ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo},
 };
 
 <span class="doccomment">/// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -6760,12 +6752,8 @@
     <span class="kw">use </span>rand::RngCore;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
-    <span class="kw">use </span><span class="kw">crate</span>::defaults::staging::EU_RELAY_HOSTNAME;
-    <span class="kw">use </span><span class="kw">crate</span>::relay::RelayMode;
-    <span class="kw">use </span><span class="kw">crate</span>::tls;
-    <span class="kw">use </span><span class="kw">crate</span>::Endpoint;
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use crate</span>::{defaults::staging::EU_RELAY_HOSTNAME, relay::RelayMode, tls, Endpoint};
 
     <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/test/1"</span>;
 

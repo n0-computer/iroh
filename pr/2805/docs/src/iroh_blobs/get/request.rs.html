@@ -203,17 +203,17 @@
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utilities for complex get requests.
 </span><span class="kw">use </span>std::sync::Arc;
 
-<span class="kw">use crate</span>::{
-    hashseq::HashSeq,
-    protocol::{GetRequest, RangeSpecSeq},
-    Hash, HashAndFormat,
-};
 <span class="kw">use </span>bao_tree::{ChunkNum, ChunkRanges};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>iroh_net::endpoint::Connection;
 <span class="kw">use </span>rand::Rng;
 
 <span class="kw">use super</span>::{fsm, Stats};
+<span class="kw">use crate</span>::{
+    hashseq::HashSeq,
+    protocol::{GetRequest, RangeSpecSeq},
+    Hash, HashAndFormat,
+};
 
 <span class="doccomment">/// Get the claimed size of a blob from a peer.
 ///

@@ -166,20 +166,18 @@
 <a href="#166" id="166">166</a>
 <a href="#167" id="167">167</a>
 <a href="#168" id="168">168</a>
-<a href="#169" id="169">169</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::net::SocketAddr;
-<span class="kw">use </span>std::path::PathBuf;
-<span class="kw">use </span>std::time::{Duration, Instant};
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    net::SocketAddr,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 <span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>hyper::service::service_fn;
-<span class="kw">use </span>hyper::{Request, Response};
-<span class="kw">use </span>tokio::io::AsyncWriteExt <span class="kw">as _</span>;
-<span class="kw">use </span>tokio::net::TcpListener;
+<span class="kw">use </span>hyper::{service::service_fn, Request, Response};
+<span class="kw">use </span>tokio::{io::AsyncWriteExt <span class="kw">as _</span>, net::TcpListener};
 <span class="kw">use </span>tracing::{debug, error, info, warn};
 
-<span class="kw">use </span><span class="kw">crate</span>::core::Core;
-<span class="kw">use </span><span class="kw">crate</span>::parse_prometheus_metrics;
+<span class="kw">use crate</span>::{core::Core, parse_prometheus_metrics};
 
 <span class="kw">type </span>BytesBody = http_body_util::Full&lt;hyper::body::Bytes&gt;;
 

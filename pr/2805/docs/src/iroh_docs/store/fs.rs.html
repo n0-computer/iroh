@@ -1142,9 +1142,6 @@
 <a href="#1142" id="1142">1142</a>
 <a href="#1143" id="1143">1143</a>
 <a href="#1144" id="1144">1144</a>
-<a href="#1145" id="1145">1145</a>
-<a href="#1146" id="1146">1146</a>
-<a href="#1147" id="1147">1147</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! On disk storage for replicas.
 
 </span><span class="kw">use </span>std::{
@@ -1162,6 +1159,10 @@
 <span class="kw">use </span>rand_core::CryptoRngCore;
 <span class="kw">use </span>redb::{Database, DatabaseError, ReadableMultimapTable, ReadableTable, ReadableTableMetadata};
 
+<span class="kw">use super</span>::{
+    pubkeys::MemPublicKeyStore, DownloadPolicy, ImportNamespaceOutcome, OpenError, PublicKeyStore,
+    Query,
+};
 <span class="kw">use crate</span>::{
     actor::MAX_COMMIT_DELAY,
     keys::Author,
@@ -1171,11 +1172,6 @@
     ReplicaInfo,
 };
 
-<span class="kw">use super</span>::{
-    pubkeys::MemPublicKeyStore, DownloadPolicy, ImportNamespaceOutcome, OpenError, PublicKeyStore,
-    Query,
-};
-
 <span class="kw">mod </span>bounds;
 <span class="kw">mod </span>migrate_v1_v2;
 <span class="kw">mod </span>migrations;
@@ -1183,19 +1179,16 @@
 <span class="kw">mod </span>ranges;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>tables;
 
+<span class="kw">pub use </span><span class="self">self</span>::ranges::RecordsRange;
 <span class="kw">use </span><span class="self">self</span>::{
     bounds::{ByKeyBounds, RecordsBounds},
-    ranges::RangeExt,
-    tables::{RecordsTable, TransactionAndTables},
-};
-<span class="kw">use </span><span class="self">self</span>::{
     query::QueryIterator,
+    ranges::RangeExt,
     tables::{
-        LatestPerAuthorKey, LatestPerAuthorValue, ReadOnlyTables, RecordsId, RecordsValue, Tables,
+        LatestPerAuthorKey, LatestPerAuthorValue, ReadOnlyTables, RecordsId, RecordsTable,
+        RecordsValue, Tables, TransactionAndTables,
     },
 };
-
-<span class="kw">pub use </span><span class="self">self</span>::ranges::RecordsRange;
 
 <span class="doccomment">/// Manages the replicas and authors for an instance.
 </span><span class="attr">#[derive(Debug)]
@@ -1795,10 +1788,14 @@
 
 <span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; <span class="kw">crate</span>::ranger::Store&lt;SignedEntry&gt; <span class="kw">for </span>StoreInstance&lt;<span class="lifetime">'a</span>&gt; {
     <span class="kw">type </span>Error = anyhow::Error;
-    <span class="kw">type </span>RangeIterator&lt;<span class="lifetime">'x</span>&gt; = Chain&lt;RecordsRange&lt;<span class="lifetime">'x</span>&gt;, Flatten&lt;std::option::IntoIter&lt;RecordsRange&lt;<span class="lifetime">'x</span>&gt;&gt;&gt;&gt;
-        <span class="kw">where </span><span class="lifetime">'a</span>: <span class="lifetime">'x</span>;
-    <span class="kw">type </span>ParentIterator&lt;<span class="lifetime">'x</span>&gt; = ParentIterator
-        <span class="kw">where </span><span class="lifetime">'a</span>: <span class="lifetime">'x</span>;
+    <span class="kw">type </span>RangeIterator&lt;<span class="lifetime">'x</span>&gt;
+        = Chain&lt;RecordsRange&lt;<span class="lifetime">'x</span>&gt;, Flatten&lt;std::option::IntoIter&lt;RecordsRange&lt;<span class="lifetime">'x</span>&gt;&gt;&gt;&gt;
+    <span class="kw">where
+        </span><span class="lifetime">'a</span>: <span class="lifetime">'x</span>;
+    <span class="kw">type </span>ParentIterator&lt;<span class="lifetime">'x</span>&gt;
+        = ParentIterator
+    <span class="kw">where
+        </span><span class="lifetime">'a</span>: <span class="lifetime">'x</span>;
 
     <span class="doccomment">/// Get a the first key (or the default if none is available).
     </span><span class="kw">fn </span>get_first(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;RecordIdentifier&gt; {
@@ -2107,11 +2104,8 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span><span class="kw">super</span>::tables::LATEST_PER_AUTHOR_TABLE;
-
+    <span class="kw">use super</span>::{tables::LATEST_PER_AUTHOR_TABLE, <span class="kw-2">*</span>};
     <span class="kw">use </span><span class="kw">crate</span>::ranger::Store <span class="kw">as _</span>;
-
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_ranges() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {

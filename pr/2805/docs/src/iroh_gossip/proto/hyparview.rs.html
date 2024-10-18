@@ -716,7 +716,6 @@
 <a href="#716" id="716">716</a>
 <a href="#717" id="717">717</a>
 <a href="#718" id="718">718</a>
-<a href="#719" id="719">719</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implementation of the HyParView membership protocol
 //!
 //! The implementation is based on [this paper][paper] by Joao Leitao, Jose Pereira, Luıs Rodrigues
@@ -731,8 +730,7 @@
 };
 
 <span class="kw">use </span>derive_more::{From, Sub};
-<span class="kw">use </span>rand::rngs::ThreadRng;
-<span class="kw">use </span>rand::Rng;
+<span class="kw">use </span>rand::{rngs::ThreadRng, Rng};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tracing::debug;
 

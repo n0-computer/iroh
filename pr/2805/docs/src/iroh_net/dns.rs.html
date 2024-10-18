@@ -425,15 +425,16 @@
 //! by ipv4, ipv6, name and node_id. See the [`node_info`] module documentation for details on how
 //! iroh node records are structured.
 
-</span><span class="kw">use </span>std::fmt::Write;
-<span class="kw">use </span>std::net::{IpAddr, Ipv6Addr};
-<span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{
+    fmt::Write,
+    net::{IpAddr, Ipv6Addr},
+    time::Duration,
+};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::{Future, StreamExt};
 <span class="kw">use </span>hickory_resolver::{AsyncResolver, IntoName, TokioAsyncResolver};
-<span class="kw">use </span>iroh_base::key::NodeId;
-<span class="kw">use </span>iroh_base::node_addr::NodeAddr;
+<span class="kw">use </span>iroh_base::{key::NodeId, node_addr::NodeAddr};
 <span class="kw">use </span>once_cell::sync::Lazy;
 
 <span class="kw">pub mod </span>node_info;
@@ -801,9 +802,8 @@
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>tests {
     <span class="kw">use </span>std::sync::atomic::AtomicUsize;
 
-    <span class="kw">use </span><span class="kw">crate</span>::defaults::staging::NA_RELAY_HOSTNAME;
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::defaults::staging::NA_RELAY_HOSTNAME;
     <span class="kw">const </span>TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
     <span class="kw">const </span>STAGGERING_DELAYS: <span class="kw-2">&amp;</span>[u64] = <span class="kw-2">&amp;</span>[<span class="number">200</span>, <span class="number">300</span>];
 

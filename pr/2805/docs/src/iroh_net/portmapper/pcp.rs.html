@@ -198,7 +198,6 @@
 <a href="#198" id="198">198</a>
 <a href="#199" id="199">199</a>
 <a href="#200" id="200">200</a>
-<a href="#201" id="201">201</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Definitions and utilities to interact with a PCP server.
 
 </span><span class="kw">use </span>std::{net::Ipv4Addr, num::NonZeroU16, time::Duration};
@@ -206,8 +205,7 @@
 <span class="kw">use </span>rand::RngCore;
 <span class="kw">use </span>tracing::{debug, trace};
 
-<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::PCP_RECV_TIMEOUT <span class="kw">as </span>RECV_TIMEOUT;
-<span class="kw">use </span><span class="kw">crate</span>::net::UdpSocket;
+<span class="kw">use crate</span>::{defaults::timeouts::PCP_RECV_TIMEOUT <span class="kw">as </span>RECV_TIMEOUT, net::UdpSocket};
 
 <span class="kw">mod </span>protocol;
 

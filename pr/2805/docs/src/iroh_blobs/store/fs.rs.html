@@ -2610,10 +2610,6 @@
 <a href="#2610" id="2610">2610</a>
 <a href="#2611" id="2611">2611</a>
 <a href="#2612" id="2612">2612</a>
-<a href="#2613" id="2613">2613</a>
-<a href="#2614" id="2614">2614</a>
-<a href="#2615" id="2615">2615</a>
-<a href="#2616" id="2616">2616</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! redb backed storage
 //!
 //! Data can get into the store in two ways:
@@ -2694,7 +2690,6 @@
 };
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
-
 <span class="kw">use </span>genawaiter::rc::{Co, Gen};
 <span class="kw">use </span>iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 <span class="kw">use </span>iroh_io::AsyncSliceReader;
@@ -2713,6 +2708,14 @@
 <span class="kw">mod </span>util;
 <span class="kw">mod </span>validate;
 
+<span class="kw">use </span>tables::{ReadOnlyTables, ReadableTables, Tables};
+
+<span class="kw">use </span><span class="self">self</span>::{tables::DeleteSet, test_support::EntryData, util::PeekableFlumeReceiver};
+<span class="kw">use super</span>::{
+    bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
+    temp_name, BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, EntryStatus, ExportMode,
+    ExportProgressCb, ImportMode, ImportProgress, Map, ReadableStore, TempCounterMap,
+};
 <span class="kw">use crate</span>::{
     store::{
         bao_file::{BaoFileStorage, CompleteStorage},
@@ -2731,17 +2734,6 @@
         raw_outboard_size, MemOrFile, TagCounter, TagDrop,
     },
     Tag, TempTag,
-};
-<span class="kw">use </span>tables::{ReadOnlyTables, ReadableTables, Tables};
-
-<span class="kw">use </span><span class="self">self</span>::{tables::DeleteSet, util::PeekableFlumeReceiver};
-
-<span class="kw">use </span><span class="self">self</span>::test_support::EntryData;
-
-<span class="kw">use super</span>::{
-    bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
-    temp_name, BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, EntryStatus, ExportMode,
-    ExportProgressCb, ImportMode, ImportProgress, Map, ReadableStore, TempCounterMap,
 };
 
 <span class="doccomment">/// Location of the data.

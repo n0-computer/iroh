@@ -152,11 +152,15 @@
 <a href="#152" id="152">152</a>
 <a href="#153" id="153">153</a>
 <a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! traits related to collections of blobs
-</span><span class="kw">use </span><span class="kw">crate</span>::Hash;
+</span><span class="kw">use </span>std::{fmt::Debug, io};
+
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
-<span class="kw">use </span>std::{fmt::Debug, io};
+
+<span class="kw">use </span><span class="kw">crate</span>::Hash;
 
 <span class="doccomment">/// A sequence of links, backed by a [`Bytes`] object.
 </span><span class="attr">#[derive(Debug, Clone, derive_more::Into)]

@@ -467,16 +467,18 @@
 <a href="#467" id="467">467</a>
 <a href="#468" id="468">468</a>
 <a href="#469" id="469">469</a>
+<a href="#470" id="470">470</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utilities used in the protocol implementation
 
-</span><span class="kw">use </span>rand::{
-    seq::{IteratorRandom, SliceRandom},
-    Rng,
-};
-<span class="kw">use </span>std::{
+</span><span class="kw">use </span>std::{
     collections::{BTreeMap, HashMap},
     hash::Hash,
     time::{Duration, Instant},
+};
+
+<span class="kw">use </span>rand::{
+    seq::{IteratorRandom, SliceRandom},
+    Rng,
 };
 
 <span class="doccomment">/// Implement methods, display, debug and conversion traits for 32 byte identifiers.

@@ -248,12 +248,19 @@
 <a href="#248" id="248">248</a>
 <a href="#249" id="249">249</a>
 <a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Extractors for DNS-over-HTTPS requests
 
 </span><span class="comment">// This module is mostly copied from
 // https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-server/src/extract/doh.rs
 
-</span><span class="kw">use </span>async_trait::async_trait;
+</span><span class="kw">use </span>std::{
+    fmt::{<span class="self">self</span>, Display, Formatter},
+    net::SocketAddr,
+    str::FromStr,
+};
+
+<span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>axum::{
     extract::{ConnectInfo, FromRequest, FromRequestParts, Query},
     http::Request,
@@ -262,18 +269,13 @@
 <span class="kw">use </span>hickory_server::{
     authority::MessageRequest,
     proto::{
-        <span class="self">self</span>,
         serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
+        {<span class="self">self</span>},
     },
     server::{Protocol, Request <span class="kw">as </span>DNSRequest},
 };
 <span class="kw">use </span>http::{header, request::Parts, HeaderValue, StatusCode};
 <span class="kw">use </span>serde::Deserialize;
-<span class="kw">use </span>std::{
-    fmt::{<span class="self">self</span>, Display, Formatter},
-    net::SocketAddr,
-    str::FromStr,
-};
 <span class="kw">use </span>tracing::info;
 
 <span class="kw">use </span><span class="kw">crate</span>::http::error::AppError;

@@ -256,10 +256,10 @@
     num::NonZeroU16,
     pin::Pin,
     task::Poll,
+    time::Duration,
 };
 
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>tokio::{sync::watch, time};
 <span class="kw">use </span>tracing::{debug, trace};
 

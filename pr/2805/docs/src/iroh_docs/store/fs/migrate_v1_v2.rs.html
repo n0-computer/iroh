@@ -142,7 +142,6 @@
 <a href="#142" id="142">142</a>
 <a href="#143" id="143">143</a>
 <a href="#144" id="144">144</a>
-<a href="#145" id="145">145</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::path::{Path, PathBuf};
 
 <span class="kw">use </span>anyhow::Result;
@@ -267,11 +266,10 @@
 <span class="kw">mod </span>old {
     <span class="kw">use </span>redb_v1::{MultimapTableDefinition, TableDefinition};
 
-    <span class="kw">use </span><span class="kw">crate</span>::PeerIdBytes;
-
     <span class="kw">use </span><span class="kw">super</span>::new::tables::{
         LatestPerAuthorKey, LatestPerAuthorValue, Nanos, RecordsByKeyId, RecordsId, RecordsValue,
     };
+    <span class="kw">use </span><span class="kw">crate</span>::PeerIdBytes;
 
     <span class="kw">pub const </span>AUTHORS_TABLE: TableDefinition&lt;<span class="kw-2">&amp;</span>[u8; <span class="number">32</span>], <span class="kw-2">&amp;</span>[u8; <span class="number">32</span>]&gt; =
         TableDefinition::new(<span class="string">"authors-1"</span>);

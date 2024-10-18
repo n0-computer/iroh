@@ -659,31 +659,33 @@
 <a href="#659" id="659">659</a>
 <a href="#660" id="660">660</a>
 <a href="#661" id="661">661</a>
+<a href="#662" id="662">662</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server side API
-</span><span class="kw">use </span>std::fmt::Debug;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{fmt::Debug, sync::Arc, time::Duration};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>bao_tree::io::fsm::{encode_ranges_validated, Outboard};
-<span class="kw">use </span>bao_tree::io::EncodeError;
+<span class="kw">use </span>bao_tree::io::{
+    fsm::{encode_ranges_validated, Outboard},
+    EncodeError,
+};
 <span class="kw">use </span>futures_lite::future::Boxed <span class="kw">as </span>BoxFuture;
 <span class="kw">use </span>iroh_base::rpc::RpcError;
-<span class="kw">use </span>iroh_io::stats::{
-    SliceReaderStats, StreamWriterStats, TrackingSliceReader, TrackingStreamWriter,
+<span class="kw">use </span>iroh_io::{
+    stats::{SliceReaderStats, StreamWriterStats, TrackingSliceReader, TrackingStreamWriter},
+    AsyncSliceReader, AsyncStreamWriter, TokioStreamWriter,
 };
-<span class="kw">use </span>iroh_io::{AsyncSliceReader, AsyncStreamWriter, TokioStreamWriter};
 <span class="kw">use </span>iroh_net::endpoint::{<span class="self">self</span>, RecvStream, SendStream};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tracing::{debug, debug_span, info, trace, warn};
 <span class="kw">use </span>tracing_futures::Instrument;
 
-<span class="kw">use </span><span class="kw">crate</span>::hashseq::parse_hash_seq;
-<span class="kw">use </span><span class="kw">crate</span>::protocol::{GetRequest, RangeSpec, Request};
-<span class="kw">use </span><span class="kw">crate</span>::store::<span class="kw-2">*</span>;
-<span class="kw">use </span><span class="kw">crate</span>::util::local_pool::LocalPoolHandle;
-<span class="kw">use </span><span class="kw">crate</span>::util::Tag;
-<span class="kw">use crate</span>::{BlobFormat, Hash};
+<span class="kw">use crate</span>::{
+    hashseq::parse_hash_seq,
+    protocol::{GetRequest, RangeSpec, Request},
+    store::<span class="kw-2">*</span>,
+    util::{local_pool::LocalPoolHandle, Tag},
+    BlobFormat, Hash,
+};
 
 <span class="doccomment">/// Events emitted by the provider informing about the current status.
 </span><span class="attr">#[derive(Debug, Clone)]

@@ -490,20 +490,18 @@
 <a href="#490" id="490">490</a>
 <a href="#491" id="491">491</a>
 <a href="#492" id="492">492</a>
-<a href="#493" id="493">493</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Validation of the store's contents.
 </span><span class="kw">use </span>std::collections::BTreeSet;
 
 <span class="kw">use </span>redb::ReadableTable;
 
-<span class="kw">use crate</span>::{
-    store::{fs::tables::BaoFilePart, ConsistencyCheckProgress, ReportLevel},
-    util::progress::BoxedProgressSender,
-};
-
 <span class="kw">use super</span>::{
     raw_outboard_size, tables::Tables, ActorResult, ActorState, DataLocation, EntryState, Hash,
     OutboardLocation,
+};
+<span class="kw">use crate</span>::{
+    store::{fs::tables::BaoFilePart, ConsistencyCheckProgress, ReportLevel},
+    util::progress::BoxedProgressSender,
 };
 
 <span class="kw">impl </span>ActorState {

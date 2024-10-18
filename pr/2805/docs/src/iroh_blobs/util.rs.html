@@ -361,19 +361,22 @@
 <a href="#361" id="361">361</a>
 <a href="#362" id="362">362</a>
 <a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utility functions and types.
-</span><span class="kw">use </span>bao_tree::{io::outboard::PreOrderOutboard, BaoTree, ChunkRanges};
-<span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>derive_more::{Debug, Display, From, Into};
-<span class="kw">use </span>range_collections::range_set::RangeSetRange;
-<span class="kw">use </span>serde::{Deserialize, Serialize};
-<span class="kw">use </span>std::{
+</span><span class="kw">use </span>std::{
     borrow::Borrow,
     fmt,
     io::{BufReader, Read},
     sync::{Arc, Weak},
     time::SystemTime,
 };
+
+<span class="kw">use </span>bao_tree::{io::outboard::PreOrderOutboard, BaoTree, ChunkRanges};
+<span class="kw">use </span>bytes::Bytes;
+<span class="kw">use </span>derive_more::{Debug, Display, From, Into};
+<span class="kw">use </span>range_collections::range_set::RangeSetRange;
+<span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">use crate</span>::{BlobFormat, Hash, HashAndFormat, IROH_BLOCK_SIZE};
 
@@ -391,9 +394,10 @@
 
 <span class="attr">#[cfg(feature = <span class="string">"redb"</span>)]
 </span><span class="kw">mod </span>redb_support {
-    <span class="kw">use </span><span class="kw">super</span>::Tag;
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>redb::{Key <span class="kw">as </span>RedbKey, Value <span class="kw">as </span>RedbValue};
+
+    <span class="kw">use </span><span class="kw">super</span>::Tag;
 
     <span class="kw">impl </span>RedbValue <span class="kw">for </span>Tag {
         <span class="kw">type </span>SelfType&lt;<span class="lifetime">'a</span>&gt; = <span class="self">Self</span>;

@@ -225,11 +225,79 @@
 <a href="#225" id="225">225</a>
 <a href="#226" id="226">226</a>
 <a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
 //!
 //! iroh-net is a library to establish direct connectivity between peers.  It exposes an
 //! interface to [QUIC] connections and streams to the user, while implementing direct
 //! connectivity using [hole punching] complemented by relay servers under the hood.
+//!
+//! Connecting to a remote node looks roughly like this:
+//!
+//! ```no_run
+//! # use iroh_net::{Endpoint, NodeAddr};
+//! # async fn wrapper() -&gt; testresult::TestResult {
+//! let addr: NodeAddr = todo!();
+//! let ep = Endpoint::builder().bind().await?;
+//! let conn = ep.connect(addr, b"my-alpn").await?;
+//! let mut send_stream = conn.open_uni().await?;
+//! send_stream.write_all(b"msg").await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! The other side can accept incoming connections like this:
+//!
+//! ```no_run
+//! # use iroh_net::{Endpoint, NodeAddr};
+//! # async fn wrapper() -&gt; testresult::TestResult {
+//! let ep = Endpoint::builder()
+//!     .alpns(vec![b"my-alpn".to_vec()])
+//!     .bind()
+//!     .await?;
+//! let conn = ep.accept().await.ok_or("err")?.await?;
+//! let mut recv_stream = conn.accept_uni().await?;
+//! let mut buf = [0u8; 3];
+//! recv_stream.read_exact(&amp;mut buf).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Of course you can also use [bi-directional streams] or any other features from QUIC.
+//!
+//! For more elaborate examples, see [below](#examples) or the examples directory in
+//! the source repository.
 //!
 //!
 //! # Connection Establishment
@@ -359,8 +427,7 @@
 //!     let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
 //!     send_stream.write_all(b"hello").await?;
 //!     send_stream.finish()?;
-//!     let msg = recv_stream.read_to_end(10).await?;
-//!     println!("Server message: {}", String::from_utf8_lossy(&amp;msg));
+//!     let _msg = recv_stream.read_to_end(10).await?;
 //!
 //!     // Gracefully close the connection and endpoint.
 //!     conn.close(1u8.into(), b"done");
@@ -388,8 +455,7 @@
 //!     // Accept a QUIC connection, accept a bi-directional stream, exchange messages.
 //!     let conn = ep.accept().await.context("no incoming connection")?.await?;
 //!     let (mut send_stream, mut recv_stream) = conn.accept_bi().await?;
-//!     let msg = recv_stream.read_to_end(10).await?;
-//!     println!("Client message: {}", String::from_utf8_lossy(&amp;msg));
+//!     let _msg = recv_stream.read_to_end(10).await?;
 //!     send_stream.write_all(b"world").await?;
 //!     send_stream.finish()?;
 //!
@@ -404,6 +470,7 @@
 //!
 //!
 //! [QUIC]: https://quickwg.org
+//! [bi-directional streams]: crate::endpoint::Connection::open_bi
 //! [`NodeTicket`]: crate::ticket::NodeTicket
 //! [hole punching]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
 //! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html
@@ -444,10 +511,7 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>util;
 
 <span class="kw">pub use </span>endpoint::{AddrInfo, Endpoint, NodeAddr};
-
-<span class="kw">pub use </span>iroh_base::key;
-
-<span class="kw">pub use </span>iroh_base::key::NodeId;
+<span class="kw">pub use </span>iroh_base::{key, key::NodeId};
 
 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]

@@ -540,6 +540,9 @@
 <a href="#540" id="540">540</a>
 <a href="#541" id="541">541</a>
 <a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! STUN packets sending and receiving.
 
 </span><span class="kw">use </span>std::net::SocketAddr;
@@ -691,8 +694,10 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>tests {
-    <span class="kw">use </span>std::net::{IpAddr, Ipv4Addr};
-    <span class="kw">use </span>std::sync::Arc;
+    <span class="kw">use </span>std::{
+        net::{IpAddr, Ipv4Addr},
+        sync::Arc,
+    };
 
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>tokio::{
@@ -701,10 +706,11 @@
     };
     <span class="kw">use </span>tracing::{debug, trace};
 
-    <span class="kw">use </span><span class="kw">crate</span>::relay::{RelayMap, RelayNode, RelayUrl};
-    <span class="kw">use </span><span class="kw">crate</span>::test_utils::CleanupDropGuard;
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use crate</span>::{
+        relay::{RelayMap, RelayNode, RelayUrl},
+        test_utils::CleanupDropGuard,
+    };
 
     <span class="comment">// TODO: make all this private
 
