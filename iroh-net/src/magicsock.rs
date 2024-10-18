@@ -1226,10 +1226,10 @@ impl MagicSock {
                 let msg = self.direct_addrs.to_call_me_maybe_message();
                 let msg = disco::Message::CallMeMaybe(msg);
                 if !self.send_disco_message_relay(url, dst_node, msg) {
-                    warn!(dstkey = %dst_node.fmt_short(), relayurl = ?url,
+                    warn!(dstkey = %dst_node.fmt_short(), relayurl = %url,
                       "relay channel full, dropping call-me-maybe");
                 } else {
-                    debug!(dstkey = %dst_node.fmt_short(), relayurl = ?url, "call-me-maybe sent");
+                    debug!(dstkey = %dst_node.fmt_short(), relayurl = %url, "call-me-maybe sent");
                 }
             }
             Err(last_refresh_ago) => {
