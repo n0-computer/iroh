@@ -1226,24 +1226,27 @@ impl MagicSock {
     /// this information is too stale, the call-me-maybe is queued while a netcheck run is
     /// scheduled.  Once this run finishes, the call-me-maybe will be sent.
     fn send_or_queue_call_me_maybe(&self, url: &RelayUrl, dst_node: NodeId) {
-        if self.direct_addrs.fresh_enough() {
-            let msg = self.direct_addrs.to_call_me_maybe_message();
-            let msg = disco::Message::CallMeMaybe(msg);
-            if !self.send_disco_message_relay(url, dst_node, msg) {
-                warn!(dstkey = %dst_node.fmt_short(), relayurl = ?url,
+        match self.direct_addrs.fresh_enough() {
+            Ok(()) => {
+                let msg = self.direct_addrs.to_call_me_maybe_message();
+                let msg = disco::Message::CallMeMaybe(msg);
+                if !self.send_disco_message_relay(url, dst_node, msg) {
+                    warn!(dstkey = %dst_node.fmt_short(), relayurl = ?url,
                       "relay channel full, dropping call-me-maybe");
-            } else {
-                debug!(dstkey = %dst_node.fmt_short(), relayurl = ?url, "call-me-maybe sent");
+                } else {
+                    debug!(dstkey = %dst_node.fmt_short(), relayurl = ?url, "call-me-maybe sent");
+                }
             }
-        } else {
-            self.pending_call_me_maybes
-                .lock()
-                .insert(dst_node, url.clone());
-            debug!(
-                last_refresh_ago = ?self.direct_addrs.last_refresh_ago(),
-                "want call-me-maybe but direct addrs stale; queuing after restun",
-            );
-            self.re_stun("refresh-for-peering");
+            Err(last_refresh_ago) => {
+                self.pending_call_me_maybes
+                    .lock()
+                    .insert(dst_node, url.clone());
+                debug!(
+                    ?last_refresh_ago,
+                    "want call-me-maybe but direct addrs stale; queuing after restun",
+                );
+                self.re_stun("refresh-for-peering");
+            }
         }
     }
 
@@ -2446,21 +2449,29 @@ impl DiscoveredDirectAddrs {
         updated
     }
 
-    fn last_refresh_ago(&self) -> Option<Duration> {
-        self.updated_at
-            .read()
-            .expect("poisoned")
-            .map(|at| at.elapsed())
-    }
-
     fn sockaddrs(&self) -> BTreeSet<SocketAddr> {
         self.addrs.read().iter().map(|da| da.addr).collect()
     }
 
-    fn fresh_enough(&self) -> bool {
+    /// Whether the direct addr information is considered "fresh".
+    ///
+    /// If not fresh you should probably update the direct addresses before using this info.
+    ///
+    /// Returns `Ok(())` if fresh enough and `Err(elapsed)` if not fresh enough.
+    /// `elapsed` is the time elapsed since the direct addresses were last updated.
+    ///
+    /// If there is no direct address information `Err(Duration::ZERO)` is returned.
+    fn fresh_enough(&self) -> Result<(), Duration> {
         match *self.updated_at.read().expect("poisoned") {
-            None => false,
-            Some(time) => time.elapsed() <= ENDPOINTS_FRESH_ENOUGH_DURATION,
+            None => Err(Duration::ZERO),
+            Some(time) => {
+                let elapsed = time.elapsed();
+                if elapsed <= ENDPOINTS_FRESH_ENOUGH_DURATION {
+                    Ok(())
+                } else {
+                    Err(elapsed)
+                }
+            }
         }
     }
 
