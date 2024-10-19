@@ -1120,11 +1120,6 @@
 <a href="#1120" id="1120">1120</a>
 <a href="#1121" id="1121">1121</a>
 <a href="#1122" id="1122">1122</a>
-<a href="#1123" id="1123">1123</a>
-<a href="#1124" id="1124">1124</a>
-<a href="#1125" id="1125">1125</a>
-<a href="#1126" id="1126">1126</a>
-<a href="#1127" id="1127">1127</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Based on tailscale/derp/derphttp/derphttp_client.go
 
 </span><span class="kw">use </span>std::{
@@ -1688,15 +1683,10 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, <span class="kw-2">&amp;</span><span class="lifetime">'_ </span><span class="kw-2">mut </span>ConnReceiver), ClientError&gt; {
-        <span class="macro">debug!</span>(
-            <span class="string">"connect: {}, current client {}"</span>,
-            why,
-            <span class="self">self</span>.relay_conn.is_some()
-        );
-
         <span class="kw">if </span><span class="self">self</span>.is_closed {
             <span class="kw">return </span><span class="prelude-val">Err</span>(ClientError::Closed);
         }
+        <span class="kw">let </span>url = <span class="self">self</span>.url.clone();
         <span class="kw">async move </span>{
             <span class="kw">if </span><span class="self">self</span>.relay_conn.is_none() {
                 <span class="macro">trace!</span>(<span class="string">"no connection, trying to connect"</span>);
@@ -1716,7 +1706,7 @@
 
             <span class="prelude-val">Ok</span>((conn, receiver))
         }
-        .instrument(<span class="macro">info_span!</span>(<span class="string">"connect"</span>))
+        .instrument(<span class="macro">info_span!</span>(<span class="string">"connect"</span>, %url, %why))
         .<span class="kw">await
     </span>}
 

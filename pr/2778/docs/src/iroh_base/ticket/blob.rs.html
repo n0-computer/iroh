@@ -313,7 +313,7 @@
         <span class="kw">let </span>relay_url = <span class="prelude-val">None</span>;
         BlobTicket {
             hash,
-            node: NodeAddr::from_parts(peer, relay_url, <span class="macro">vec!</span>[addr]),
+            node: NodeAddr::from_parts(peer, relay_url, [addr]),
             format: BlobFormat::HashSeq,
         }
     }
@@ -344,7 +344,7 @@
                 .unwrap();
 
         <span class="kw">let </span>ticket = BlobTicket {
-            node: NodeAddr::from_parts(node_id, <span class="prelude-val">None</span>, <span class="macro">vec!</span>[]),
+            node: NodeAddr::from_parts(node_id, <span class="prelude-val">None</span>, []),
             format: BlobFormat::Raw,
             hash,
         };

@@ -968,6 +968,8 @@
 <a href="#968" id="968">968</a>
 <a href="#969" id="969">969</a>
 <a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a>
+<a href="#972" id="972">972</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -993,7 +995,7 @@
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
     endpoint::TransportConfig,
-    relay::RelayMode,
+    relay::{force_staging_infra, RelayMode},
     Endpoint,
 };
 <span class="kw">use </span>quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
@@ -1198,10 +1200,10 @@
 <span class="kw">impl </span>Default <span class="kw">for </span>Builder&lt;iroh_blobs::store::mem::Store&gt; {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
         <span class="comment">// Use staging in testing
-        </span><span class="attr">#[cfg(not(test))]
-        </span><span class="kw">let </span>relay_mode = RelayMode::Default;
-        <span class="attr">#[cfg(test)]
-        </span><span class="kw">let </span>relay_mode = RelayMode::Staging;
+        </span><span class="kw">let </span>relay_mode = <span class="kw">match </span>force_staging_infra() {
+            <span class="bool-val">true </span>=&gt; RelayMode::Staging,
+            <span class="bool-val">false </span>=&gt; RelayMode::Default,
+        };
 
         <span class="self">Self </span>{
             storage: StorageConfig::Mem,
@@ -1234,10 +1236,10 @@
         storage: StorageConfig,
     ) -&gt; <span class="self">Self </span>{
         <span class="comment">// Use staging in testing
-        </span><span class="attr">#[cfg(not(test))]
-        </span><span class="kw">let </span>relay_mode = RelayMode::Default;
-        <span class="attr">#[cfg(test)]
-        </span><span class="kw">let </span>relay_mode = RelayMode::Staging;
+        </span><span class="kw">let </span>relay_mode = <span class="kw">match </span>force_staging_infra() {
+            <span class="bool-val">true </span>=&gt; RelayMode::Staging,
+            <span class="bool-val">false </span>=&gt; RelayMode::Default,
+        };
 
         <span class="self">Self </span>{
             storage,
@@ -1476,6 +1478,7 @@
     ///
     /// May only be used in tests.
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
     </span><span class="kw">pub fn </span>insecure_skip_relay_cert_verify(<span class="kw-2">mut </span><span class="self">self</span>, skip_verify: bool) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.insecure_skip_relay_cert_verify = skip_verify;
         <span class="self">self
@@ -1483,6 +1486,7 @@
 
     <span class="doccomment">/// Register a callback for when GC is done.
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
     </span><span class="kw">pub fn </span>register_gc_done_cb(<span class="kw-2">mut </span><span class="self">self</span>, cb: Box&lt;<span class="kw">dyn </span>Fn() + Send&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.gc_done_callback.replace(cb);
         <span class="self">self

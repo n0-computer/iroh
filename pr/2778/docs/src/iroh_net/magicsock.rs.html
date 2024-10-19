@@ -3877,50 +3877,6 @@
 <a href="#3877" id="3877">3877</a>
 <a href="#3878" id="3878">3878</a>
 <a href="#3879" id="3879">3879</a>
-<a href="#3880" id="3880">3880</a>
-<a href="#3881" id="3881">3881</a>
-<a href="#3882" id="3882">3882</a>
-<a href="#3883" id="3883">3883</a>
-<a href="#3884" id="3884">3884</a>
-<a href="#3885" id="3885">3885</a>
-<a href="#3886" id="3886">3886</a>
-<a href="#3887" id="3887">3887</a>
-<a href="#3888" id="3888">3888</a>
-<a href="#3889" id="3889">3889</a>
-<a href="#3890" id="3890">3890</a>
-<a href="#3891" id="3891">3891</a>
-<a href="#3892" id="3892">3892</a>
-<a href="#3893" id="3893">3893</a>
-<a href="#3894" id="3894">3894</a>
-<a href="#3895" id="3895">3895</a>
-<a href="#3896" id="3896">3896</a>
-<a href="#3897" id="3897">3897</a>
-<a href="#3898" id="3898">3898</a>
-<a href="#3899" id="3899">3899</a>
-<a href="#3900" id="3900">3900</a>
-<a href="#3901" id="3901">3901</a>
-<a href="#3902" id="3902">3902</a>
-<a href="#3903" id="3903">3903</a>
-<a href="#3904" id="3904">3904</a>
-<a href="#3905" id="3905">3905</a>
-<a href="#3906" id="3906">3906</a>
-<a href="#3907" id="3907">3907</a>
-<a href="#3908" id="3908">3908</a>
-<a href="#3909" id="3909">3909</a>
-<a href="#3910" id="3910">3910</a>
-<a href="#3911" id="3911">3911</a>
-<a href="#3912" id="3912">3912</a>
-<a href="#3913" id="3913">3913</a>
-<a href="#3914" id="3914">3914</a>
-<a href="#3915" id="3915">3915</a>
-<a href="#3916" id="3916">3916</a>
-<a href="#3917" id="3917">3917</a>
-<a href="#3918" id="3918">3918</a>
-<a href="#3919" id="3919">3919</a>
-<a href="#3920" id="3920">3920</a>
-<a href="#3921" id="3921">3921</a>
-<a href="#3922" id="3922">3922</a>
-<a href="#3923" id="3923">3923</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3939,14 +3895,14 @@
 //! however, read any packets that come off the UDP sockets.
 
 </span><span class="kw">use </span>std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt::Display,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
-        Arc,
+        Arc, RwLock,
     },
     task::{Context, Poll, Waker},
     time::{Duration, Instant},
@@ -4152,7 +4108,7 @@
     </span>discovery: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt;,
 
     <span class="doccomment">/// Our discovered direct addresses.
-    </span>direct_addrs: Watchable&lt;DiscoveredDirectAddrs&gt;,
+    </span>direct_addrs: DiscoveredDirectAddrs,
 
     <span class="doccomment">/// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
@@ -4243,10 +4199,7 @@
     /// To get the current direct addresses, drop the stream after the first item was
     /// received.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DirectAddrsStream {
-        DirectAddrsStream {
-            initial: <span class="prelude-val">Some</span>(<span class="self">self</span>.direct_addrs.get()),
-            inner: <span class="self">self</span>.direct_addrs.watch().into_stream(),
-        }
+        <span class="self">self</span>.direct_addrs.updates_stream()
     }
 
     <span class="doccomment">/// Watch for changes to the home relay.
@@ -4288,11 +4241,10 @@
     <span class="doccomment">/// Add addresses for a node to the magic socket's addresbook.
     </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.me))]
     </span><span class="kw">pub fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="kw-2">mut </span>addr: NodeAddr, source: node_map::Source) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>my_addresses = <span class="self">self</span>.direct_addrs.get().addrs;
         <span class="kw">let </span><span class="kw-2">mut </span>pruned = <span class="number">0</span>;
-        <span class="kw">for </span>my_addr <span class="kw">in </span>my_addresses.into_iter().map(|ep| ep.addr) {
+        <span class="kw">for </span>my_addr <span class="kw">in </span><span class="self">self</span>.direct_addrs.sockaddrs() {
             <span class="kw">if </span>addr.info.direct_addresses.remove(<span class="kw-2">&amp;</span>my_addr) {
-                <span class="macro">warn!</span>(node_id=addr.node_id.fmt_short(), %my_addr, %source, <span class="string">"not adding our addr for node"</span>);
+                <span class="macro">warn!</span>( node_id=addr.node_id.fmt_short(), %my_addr, %source, <span class="string">"not adding our addr for node"</span>);
                 pruned += <span class="number">1</span>;
             }
         }
@@ -4308,19 +4260,15 @@
         }
     }
 
-    <span class="doccomment">/// Updates our direct addresses.
+    <span class="doccomment">/// Stores a new set of direct addresses.
     ///
-    /// On a successful update, our address is published to discovery.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>update_direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>, eps: Vec&lt;DirectAddr&gt;) {
-        <span class="kw">let </span>updated = <span class="self">self
-            </span>.direct_addrs
-            .update(DiscoveredDirectAddrs::new(eps))
-            .is_ok();
+    /// If the direct addresses have changed from the previous set, they are published to
+    /// discovery.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>store_direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>, addrs: BTreeSet&lt;DirectAddr&gt;) {
+        <span class="kw">let </span>updated = <span class="self">self</span>.direct_addrs.update(addrs);
         <span class="kw">if </span>updated {
-            <span class="kw">let </span>direct_addrs = <span class="self">self</span>.direct_addrs.read();
-            direct_addrs.log_direct_addrs_change();
             <span class="self">self</span>.node_map
-                .on_direct_addr_discovered(direct_addrs.iter().map(|addr| addr.addr));
+                .on_direct_addr_discovered(<span class="self">self</span>.direct_addrs.sockaddrs());
             <span class="self">self</span>.publish_my_addr();
         }
     }
@@ -5137,7 +5085,7 @@
     }
 
     <span class="kw">fn </span>send_queued_call_me_maybes(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="kw">let </span>msg = <span class="self">self</span>.direct_addrs.read().to_call_me_maybe_message();
+        <span class="kw">let </span>msg = <span class="self">self</span>.direct_addrs.to_call_me_maybe_message();
         <span class="kw">let </span>msg = disco::Message::CallMeMaybe(msg);
         <span class="kw">for </span>(public_key, url) <span class="kw">in </span><span class="self">self</span>.pending_call_me_maybes.lock().drain() {
             <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_relay(<span class="kw-2">&amp;</span>url, public_key, msg.clone()) {
@@ -5146,26 +5094,33 @@
         }
     }
 
-    <span class="kw">fn </span>send_or_queue_call_me_maybe(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, dst_node: NodeId) {
-        <span class="kw">let </span>direct_addrs = <span class="self">self</span>.direct_addrs.read();
-        <span class="kw">if </span>direct_addrs.fresh_enough() {
-            <span class="kw">let </span>msg = direct_addrs.to_call_me_maybe_message();
-            <span class="kw">let </span>msg = disco::Message::CallMeMaybe(msg);
-            <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_relay(url, dst_node, msg) {
-                <span class="macro">warn!</span>(dstkey = %dst_node.fmt_short(), relayurl = <span class="question-mark">?</span>url,
+    <span class="doccomment">/// Sends the call-me-maybe DISCO message, queuing if addresses are too stale.
+    ///
+    /// To send the call-me-maybe message, we need to know our current direct addresses.  If
+    /// this information is too stale, the call-me-maybe is queued while a netcheck run is
+    /// scheduled.  Once this run finishes, the call-me-maybe will be sent.
+    </span><span class="kw">fn </span>send_or_queue_call_me_maybe(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, dst_node: NodeId) {
+        <span class="kw">match </span><span class="self">self</span>.direct_addrs.fresh_enough() {
+            <span class="prelude-val">Ok</span>(()) =&gt; {
+                <span class="kw">let </span>msg = <span class="self">self</span>.direct_addrs.to_call_me_maybe_message();
+                <span class="kw">let </span>msg = disco::Message::CallMeMaybe(msg);
+                <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_relay(url, dst_node, msg) {
+                    <span class="macro">warn!</span>(dstkey = %dst_node.fmt_short(), relayurl = %url,
                       <span class="string">"relay channel full, dropping call-me-maybe"</span>);
-            } <span class="kw">else </span>{
-                <span class="macro">debug!</span>(dstkey = %dst_node.fmt_short(), relayurl = <span class="question-mark">?</span>url, <span class="string">"call-me-maybe sent"</span>);
+                } <span class="kw">else </span>{
+                    <span class="macro">debug!</span>(dstkey = %dst_node.fmt_short(), relayurl = %url, <span class="string">"call-me-maybe sent"</span>);
+                }
             }
-        } <span class="kw">else </span>{
-            <span class="self">self</span>.pending_call_me_maybes
-                .lock()
-                .insert(dst_node, url.clone());
-            <span class="macro">debug!</span>(
-                last_refresh_ago = <span class="question-mark">?</span>direct_addrs.updated_at.map(|x| x.elapsed()),
-                <span class="string">"want call-me-maybe but direct addrs stale; queuing after restun"</span>,
-            );
-            <span class="self">self</span>.re_stun(<span class="string">"refresh-for-peering"</span>);
+            <span class="prelude-val">Err</span>(last_refresh_ago) =&gt; {
+                <span class="self">self</span>.pending_call_me_maybes
+                    .lock()
+                    .insert(dst_node, url.clone());
+                <span class="macro">debug!</span>(
+                    <span class="question-mark">?</span>last_refresh_ago,
+                    <span class="string">"want call-me-maybe but direct addrs stale; queuing after restun"</span>,
+                );
+                <span class="self">self</span>.re_stun(<span class="string">"refresh-for-peering"</span>);
+            }
         }
     }
 
@@ -5182,12 +5137,9 @@
     /// Called whenever our addresses or home relay node changes.
     </span><span class="kw">fn </span>publish_my_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>discovery) = <span class="self">self</span>.discovery {
-            <span class="kw">let </span>addrs = <span class="self">self</span>.direct_addrs.read();
-            <span class="kw">let </span>relay_url = <span class="self">self</span>.my_relay();
-            <span class="kw">let </span>direct_addresses = addrs.iter().map(|da| da.addr).collect();
             <span class="kw">let </span>info = AddrInfo {
-                relay_url,
-                direct_addresses,
+                relay_url: <span class="self">self</span>.my_relay(),
+                direct_addresses: <span class="self">self</span>.direct_addrs.sockaddrs(),
             };
             discovery.publish(<span class="kw-2">&amp;</span>info);
         }
@@ -5366,7 +5318,7 @@
             relay_actor_sender: relay_actor_sender.clone(),
             udp_disco_sender,
             discovery,
-            direct_addrs: Watchable::new(Default::default()),
+            direct_addrs: Default::default(),
             pending_call_me_maybes: Default::default(),
             direct_addr_update_state: DirectAddrUpdateState::new(),
             dns_resolver,
@@ -5443,7 +5395,7 @@
         <span class="self">self</span>.msock.closing.store(<span class="bool-val">true</span>, Ordering::Relaxed);
         <span class="self">self</span>.msock.actor_sender.send(ActorMessage::Shutdown).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="self">self</span>.msock.closed.store(<span class="bool-val">true</span>, Ordering::SeqCst);
-        <span class="self">self</span>.msock.direct_addrs.shutdown();
+        <span class="self">self</span>.msock.direct_addrs.addrs.shutdown();
 
         <span class="kw">let </span><span class="kw-2">mut </span>tasks = <span class="self">self</span>.actor_tasks.lock().<span class="kw">await</span>;
 
@@ -5466,46 +5418,6 @@
         }
 
         <span class="prelude-val">Ok</span>(())
-    }
-}
-
-<span class="doccomment">/// Stream returning local endpoints as they change.
-</span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>DirectAddrsStream {
-    initial: <span class="prelude-ty">Option</span>&lt;DiscoveredDirectAddrs&gt;,
-    inner: watchable::WatcherStream&lt;DiscoveredDirectAddrs&gt;,
-}
-
-<span class="kw">impl </span>Stream <span class="kw">for </span>DirectAddrsStream {
-    <span class="kw">type </span>Item = Vec&lt;DirectAddr&gt;;
-
-    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
-        <span class="kw">let </span>this = <span class="kw-2">&amp;mut *</span><span class="self">self</span>;
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(initial_endpoints) = this.initial.take() {
-            <span class="kw">if </span>!initial_endpoints.is_empty() {
-                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(initial_endpoints.into_iter().collect()));
-            }
-        }
-        <span class="kw">loop </span>{
-            <span class="kw">match </span>Pin::new(<span class="kw-2">&amp;mut </span>this.inner).poll_next(cx) {
-                Poll::Pending =&gt; <span class="kw">break </span>Poll::Pending,
-                Poll::Ready(<span class="prelude-val">Some</span>(discovered)) =&gt; {
-                    <span class="kw">if </span>discovered.is_empty() {
-                        <span class="comment">// When we start up we might initially have empty local endpoints as
-                        // the magic socket has not yet figured this out.  Later on this set
-                        // should never be empty.  However even if it was the magicsock
-                        // would be in a state not very usable so skipping those events is
-                        // probably fine.
-                        // To make sure we install the right waker we loop rather than
-                        // returning Poll::Pending immediately here.
-                        </span><span class="kw">continue</span>;
-                    } <span class="kw">else </span>{
-                        <span class="kw">break </span>Poll::Ready(<span class="prelude-val">Some</span>(discovered.into_iter().collect()));
-                    }
-                }
-                Poll::Ready(<span class="prelude-val">None</span>) =&gt; <span class="kw">break </span>Poll::Ready(<span class="prelude-val">None</span>),
-            }
-        }
     }
 }
 
@@ -5558,34 +5470,6 @@
 }
 
 <span class="kw">type </span>RelayRecvResult = <span class="prelude-ty">Result</span>&lt;(PublicKey, quinn_udp::RecvMeta, Bytes), io::Error&gt;;
-
-<span class="doccomment">/// Reports whether x and y represent the same set of endpoints. The order doesn't matter.
-</span><span class="kw">fn </span>endpoint_sets_equal(xs: <span class="kw-2">&amp;</span>[DirectAddr], ys: <span class="kw-2">&amp;</span>[DirectAddr]) -&gt; bool {
-    <span class="kw">if </span>xs.is_empty() &amp;&amp; ys.is_empty() {
-        <span class="kw">return </span><span class="bool-val">true</span>;
-    }
-    <span class="kw">if </span>xs.len() == ys.len() {
-        <span class="kw">let </span><span class="kw-2">mut </span>order_matches = <span class="bool-val">true</span>;
-        <span class="kw">for </span>(i, x) <span class="kw">in </span>xs.iter().enumerate() {
-            <span class="kw">if </span>x != <span class="kw-2">&amp;</span>ys[i] {
-                order_matches = <span class="bool-val">false</span>;
-                <span class="kw">break</span>;
-            }
-        }
-        <span class="kw">if </span>order_matches {
-            <span class="kw">return </span><span class="bool-val">true</span>;
-        }
-    }
-    <span class="kw">let </span><span class="kw-2">mut </span>m: HashMap&lt;<span class="kw-2">&amp;</span>DirectAddr, usize&gt; = HashMap::new();
-    <span class="kw">for </span>x <span class="kw">in </span>xs {
-        <span class="kw-2">*</span>m.entry(x).or_default() |= <span class="number">1</span>;
-    }
-    <span class="kw">for </span>y <span class="kw">in </span>ys {
-        <span class="kw-2">*</span>m.entry(y).or_default() |= <span class="number">2</span>;
-    }
-
-    m.values().all(|v| <span class="kw-2">*</span>v == <span class="number">3</span>)
-}
 
 <span class="kw">impl </span>AsyncUdpSocket <span class="kw">for </span>Handle {
     <span class="kw">fn </span>create_io_poller(<span class="self">self</span>: Arc&lt;<span class="self">Self</span>&gt;) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
@@ -5802,7 +5686,7 @@
                     <span class="macro">trace!</span>(<span class="string">"tick: direct addr update receiver {:?}"</span>, reason);
                     <span class="macro">inc!</span>(Metrics, actor_tick_direct_addr_update_receiver);
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(reason) = reason {
-                        <span class="self">self</span>.update_direct_addrs(reason).<span class="kw">await</span>;
+                        <span class="self">self</span>.refresh_direct_addrs(reason).<span class="kw">await</span>;
                     }
                 }
                 <span class="prelude-val">Some</span>(is_major) = link_change_r.recv() =&gt; {
@@ -5972,7 +5856,7 @@
     /// never be invoked directly.  Some day this will be refactored to not allow this easy
     /// mistake to be made.
     </span><span class="attr">#[instrument(level = <span class="string">"debug"</span>, skip_all)]
-    </span><span class="kw">async fn </span>update_direct_addrs(<span class="kw-2">&amp;mut </span><span class="self">self</span>, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
+    </span><span class="kw">async fn </span>refresh_direct_addrs(<span class="kw-2">&amp;mut </span><span class="self">self</span>, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
         <span class="macro">inc!</span>(MagicsockMetrics, update_direct_addrs);
 
         <span class="macro">debug!</span>(<span class="string">"starting direct addr update ({})"</span>, why);
@@ -5980,54 +5864,62 @@
         <span class="self">self</span>.update_net_info(why).<span class="kw">await</span>;
     }
 
-    <span class="doccomment">/// Stores the results of a successful direct addr update.
-    </span><span class="kw">async fn </span>store_direct_addr_update(<span class="kw-2">&amp;mut </span><span class="self">self</span>, nr: <span class="prelude-ty">Option</span>&lt;Arc&lt;netcheck::Report&gt;&gt;) {
+    <span class="doccomment">/// Updates the direct addresses of this magic socket.
+    ///
+    /// Updates the [`DiscoveredDirectAddrs`] of this [`MagicSock`] with the current set of
+    /// direct addresses from:
+    ///
+    /// - The portmapper.
+    /// - A netcheck report.
+    /// - The local interfaces IP addresses.
+    </span><span class="kw">fn </span>update_direct_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>, netcheck_report: <span class="prelude-ty">Option</span>&lt;Arc&lt;netcheck::Report&gt;&gt;) {
         <span class="kw">let </span>portmap_watcher = <span class="self">self</span>.port_mapper.watch_external_address();
 
-        <span class="comment">// direct_addr -&gt; how it was found
-        </span><span class="kw">let </span><span class="kw-2">mut </span>already = HashMap::new();
-        <span class="comment">// unique direct addrs
-        </span><span class="kw">let </span><span class="kw-2">mut </span>addrs = Vec::new();
+        <span class="comment">// We only want to have one DirectAddr for each SocketAddr we have.  So we store
+        // this as a map of SocketAddr -&gt; DirectAddrType.  At the end we will construct a
+        // DirectAddr from each entry.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>addrs: BTreeMap&lt;SocketAddr, DirectAddrType&gt; = BTreeMap::new();
 
-        <span class="macro">macro_rules!</span> add_addr {
-            (<span class="macro-nonterminal">$already</span>:expr, <span class="macro-nonterminal">$addrs</span>:expr, <span class="macro-nonterminal">$ipp</span>:expr, <span class="macro-nonterminal">$typ</span>:expr) =&gt; {
-                <span class="attr">#[allow(clippy::map_entry)]
-                </span><span class="kw">if </span>!<span class="macro-nonterminal">$already</span>.contains_key(<span class="kw-2">&amp;</span><span class="macro-nonterminal">$ipp</span>) {
-                    <span class="macro-nonterminal">$already</span>.insert(<span class="macro-nonterminal">$ipp</span>, <span class="macro-nonterminal">$typ</span>);
-                    <span class="macro-nonterminal">$addrs</span>.push(DirectAddr {
-                        addr: <span class="macro-nonterminal">$ipp</span>,
-                        typ: <span class="macro-nonterminal">$typ</span>,
-                    });
-                }
-            };
-        }
-
-        <span class="kw">let </span>maybe_port_mapped = <span class="kw-2">*</span>portmap_watcher.borrow();
-
+        <span class="comment">// First add PortMapper provided addresses.
+        </span><span class="kw">let </span>maybe_port_mapped = <span class="kw-2">*</span>portmap_watcher.borrow();
         <span class="kw">if let </span><span class="prelude-val">Some</span>(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
-            <span class="macro">add_addr!</span>(already, addrs, portmap_ext, DirectAddrType::Portmapped);
-            <span class="self">self</span>.set_net_info_have_port_map().<span class="kw">await</span>;
+            addrs
+                .entry(portmap_ext)
+                .or_insert(DirectAddrType::Portmapped);
+            <span class="self">self</span>.set_net_info_have_port_map();
         }
 
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(nr) = nr {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(global_v4) = nr.global_v4 {
-                <span class="macro">add_addr!</span>(already, addrs, global_v4.into(), DirectAddrType::Stun);
+        <span class="comment">// Next add STUN addresses from the netcheck report.
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(netcheck_report) = netcheck_report {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(global_v4) = netcheck_report.global_v4 {
+                addrs
+                    .entry(global_v4.into())
+                    .or_insert(DirectAddrType::Stun);
 
                 <span class="comment">// If they're behind a hard NAT and are using a fixed
                 // port locally, assume they might've added a static
                 // port mapping on their router to the same explicit
                 // port that we are running with. Worst case it's an invalid candidate mapping.
                 </span><span class="kw">let </span>port = <span class="self">self</span>.msock.port.load(Ordering::Relaxed);
-                <span class="kw">if </span>nr.mapping_varies_by_dest_ip.unwrap_or_default() &amp;&amp; port != <span class="number">0 </span>{
+                <span class="kw">if </span>netcheck_report
+                    .mapping_varies_by_dest_ip
+                    .unwrap_or_default()
+                    &amp;&amp; port != <span class="number">0
+                </span>{
                     <span class="kw">let </span><span class="kw-2">mut </span>addr = global_v4;
                     addr.set_port(port);
-                    <span class="macro">add_addr!</span>(already, addrs, addr.into(), DirectAddrType::Stun4LocalPort);
+                    addrs
+                        .entry(addr.into())
+                        .or_insert(DirectAddrType::Stun4LocalPort);
                 }
             }
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(global_v6) = nr.global_v6 {
-                <span class="macro">add_addr!</span>(already, addrs, global_v6.into(), DirectAddrType::Stun);
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(global_v6) = netcheck_report.global_v6 {
+                addrs
+                    .entry(global_v6.into())
+                    .or_insert(DirectAddrType::Stun);
             }
         }
+
         <span class="kw">let </span>local_addr_v4 = <span class="self">self</span>.pconn4.local_addr().ok();
         <span class="kw">let </span>local_addr_v6 = <span class="self">self</span>.pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
@@ -6040,99 +5932,68 @@
 
         <span class="kw">let </span>msock = <span class="self">self</span>.msock.clone();
 
-        tokio::spawn(
+        <span class="comment">// The following code can be slow, we do not want to block the caller since it would
+        // block the actor loop.
+        </span>tokio::spawn(
             <span class="kw">async move </span>{
-                <span class="comment">// Depending on the OS and network interfaces attached and their state enumerating
-                // the local interfaces can take a long time.  Especially Windows is very slow.
-                </span><span class="kw">let </span>LocalAddresses {
-                    regular: <span class="kw-2">mut </span>ips,
-                    loopback,
-                } = tokio::task::spawn_blocking(LocalAddresses::new)
-                    .<span class="kw">await
-                    </span>.unwrap();
-
-                <span class="kw">if </span>is_unspecified_v4 || is_unspecified_v6 {
+                <span class="comment">// If a socket is bound to the unspecified address, create SocketAddrs for
+                // each local IP address by pairing it with the port the socket is bound on.
+                </span><span class="kw">if </span>is_unspecified_v4 || is_unspecified_v6 {
+                    <span class="comment">// Depending on the OS and network interfaces attached and their state
+                    // enumerating the local interfaces can take a long time.  Especially
+                    // Windows is very slow.
+                    </span><span class="kw">let </span>LocalAddresses {
+                        regular: <span class="kw-2">mut </span>ips,
+                        loopback,
+                    } = tokio::task::spawn_blocking(LocalAddresses::new)
+                        .<span class="kw">await
+                        </span>.unwrap();
                     <span class="kw">if </span>ips.is_empty() &amp;&amp; addrs.is_empty() {
-                        <span class="comment">// Only include loopback addresses if we have no
-                        // interfaces at all to use as direct addrs and don't
-                        // have a public IPv4 or IPv6 address. This allows
-                        // for localhost testing when you're on a plane and
-                        // offline, for example.
+                        <span class="comment">// Include loopback addresses only if there are no other interfaces
+                        // or public addresses, this allows testing offline.
                         </span>ips = loopback;
                     }
-                    <span class="kw">let </span>v4_port = local_addr_v4.and_then(|addr| {
-                        <span class="kw">if </span>addr.ip().is_unspecified() {
-                            <span class="prelude-val">Some</span>(addr.port())
-                        } <span class="kw">else </span>{
-                            <span class="prelude-val">None
-                        </span>}
-                    });
-
-                    <span class="kw">let </span>v6_port = local_addr_v6.and_then(|addr| {
-                        <span class="kw">if </span>addr.ip().is_unspecified() {
-                            <span class="prelude-val">Some</span>(addr.port())
-                        } <span class="kw">else </span>{
-                            <span class="prelude-val">None
-                        </span>}
-                    });
-
                     <span class="kw">for </span>ip <span class="kw">in </span>ips {
-                        <span class="kw">match </span>ip {
-                            IpAddr::V4(<span class="kw">_</span>) =&gt; {
-                                <span class="kw">if let </span><span class="prelude-val">Some</span>(port) = v4_port {
-                                    <span class="macro">add_addr!</span>(
-                                        already,
-                                        addrs,
-                                        SocketAddr::new(ip, port),
-                                        DirectAddrType::Local
-                                    );
-                                }
+                        <span class="kw">let </span>port_if_unspecified = <span class="kw">match </span>ip {
+                            IpAddr::V4(<span class="kw">_</span>) <span class="kw">if </span>is_unspecified_v4 =&gt; {
+                                local_addr_v4.map(|addr| addr.port())
                             }
-                            IpAddr::V6(<span class="kw">_</span>) =&gt; {
-                                <span class="kw">if let </span><span class="prelude-val">Some</span>(port) = v6_port {
-                                    <span class="macro">add_addr!</span>(
-                                        already,
-                                        addrs,
-                                        SocketAddr::new(ip, port),
-                                        DirectAddrType::Local
-                                    );
-                                }
+                            IpAddr::V6(<span class="kw">_</span>) <span class="kw">if </span>is_unspecified_v6 =&gt; {
+                                local_addr_v6.map(|addr| addr.port())
                             }
+                            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+                        };
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(port) = port_if_unspecified {
+                            <span class="kw">let </span>addr = SocketAddr::new(ip, port);
+                            addrs.entry(addr).or_insert(DirectAddrType::Local);
                         }
                     }
                 }
 
-                <span class="kw">if </span>!is_unspecified_v4 {
+                <span class="comment">// If a socket is bound to a specific address, add it.
+                </span><span class="kw">if </span>!is_unspecified_v4 {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = local_addr_v4 {
-                        <span class="comment">// Our local socket is bound to a particular address.
-                        // Do not offer addresses on other local interfaces.
-                        </span><span class="macro">add_addr!</span>(already, addrs, addr, DirectAddrType::Local);
+                        addrs.entry(addr).or_insert(DirectAddrType::Local);
                     }
                 }
-
                 <span class="kw">if </span>!is_unspecified_v6 {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = local_addr_v6 {
-                        <span class="comment">// Our local socket is bound to a particular address.
-                        // Do not offer addresses on other local interfaces.
-                        </span><span class="macro">add_addr!</span>(already, addrs, addr, DirectAddrType::Local);
+                        addrs.entry(addr).or_insert(DirectAddrType::Local);
                     }
                 }
 
-                <span class="comment">// Note: the direct addrs are intentionally returned in priority order,
-                // from "farthest but most reliable" to "closest but least
-                // reliable." Addresses returned from STUN should be globally
-                // addressable, but might go farther on the network than necessary.
-                // Local interface addresses might have lower latency, but not be
-                // globally addressable.
-                //
-                // The STUN address(es) are always first.
-                // Despite this sorting, clients are not relying on this sorting for decisions;
-
-                </span>msock.update_direct_addresses(addrs);
-
-                <span class="comment">// Regardless of whether our direct addrs changed, we now want to send any
+                <span class="comment">// Finally create and store store all these direct addresses and send any
                 // queued call-me-maybe messages.
-                </span>msock.send_queued_call_me_maybes();
+                </span>msock.store_direct_addresses(
+                    addrs
+                        .iter()
+                        .map(|(addr, typ)| DirectAddr {
+                            addr: <span class="kw-2">*</span>addr,
+                            typ: <span class="kw-2">*</span>typ,
+                        })
+                        .collect(),
+                );
+                msock.send_queued_call_me_maybes();
             }
             .instrument(Span::current()),
         );
@@ -6155,7 +6016,7 @@
 
     <span class="doccomment">/// Updates `NetInfo.HavePortMap` to true.
     </span><span class="attr">#[instrument(level = <span class="string">"debug"</span>, skip_all)]
-    </span><span class="kw">async fn </span>set_net_info_have_port_map(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+    </span><span class="kw">fn </span>set_net_info_have_port_map(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>net_info_last) = <span class="self">self</span>.net_info_last {
             <span class="kw">if </span>net_info_last.have_port_map {
                 <span class="comment">// No change.
@@ -6180,7 +6041,7 @@
     <span class="doccomment">/// Calls netcheck.
     ///
     /// Note that invoking this is managed by [`DirectAddrUpdateState`] via
-    /// [`Actor::update_direct_addrs`] and this should never be invoked directly.  Some day
+    /// [`Actor::refresh_direct_addrs`] and this should never be invoked directly.  Some day
     /// this will be refactored to not allow this easy mistake to be made.
     </span><span class="attr">#[instrument(level = <span class="string">"debug"</span>, skip_all)]
     </span><span class="kw">async fn </span>update_net_info(<span class="kw-2">&amp;mut </span><span class="self">self</span>, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
@@ -6218,7 +6079,7 @@
                         .<span class="kw">await
                         </span>.ok();
                     <span class="comment">// The receiver of the NetcheckReport message will call
-                    // .finalize_endpoints_update().
+                    // .finalize_direct_addrs_update().
                 </span>});
             }
             <span class="prelude-val">Err</span>(err) =&gt; {
@@ -6276,7 +6137,7 @@
             <span class="comment">// TODO: set link type
             </span><span class="self">self</span>.call_net_info_callback(ni).<span class="kw">await</span>;
         }
-        <span class="self">self</span>.store_direct_addr_update(report).<span class="kw">await</span>;
+        <span class="self">self</span>.update_direct_addresses(report);
     }
 
     <span class="kw">fn </span>set_nearest_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;) -&gt; bool {
@@ -6439,56 +6300,105 @@
 </span><span class="attr">#[derive(derive_more::Debug, Default, Clone)]
 </span><span class="kw">struct </span>DiscoveredDirectAddrs {
     <span class="doccomment">/// The last set of discovered direct addresses.
-    </span>addrs: Vec&lt;DirectAddr&gt;,
+    </span>addrs: Watchable&lt;BTreeSet&lt;DirectAddr&gt;&gt;,
 
     <span class="doccomment">/// The last time the direct addresses were updated, even if there was no change.
-    </span>updated_at: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
-}
-
-<span class="kw">impl </span>PartialEq <span class="kw">for </span>DiscoveredDirectAddrs {
-    <span class="kw">fn </span>eq(<span class="kw-2">&amp;</span><span class="self">self</span>, other: <span class="kw-2">&amp;</span><span class="self">Self</span>) -&gt; bool {
-        endpoint_sets_equal(<span class="kw-2">&amp;</span><span class="self">self</span>.addrs, <span class="kw-2">&amp;</span>other.addrs)
-    }
+    ///
+    /// This is only ever None at startup.
+    </span>updated_at: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;Instant&gt;&gt;&gt;,
 }
 
 <span class="kw">impl </span>DiscoveredDirectAddrs {
-    <span class="kw">fn </span>new(endpoints: Vec&lt;DirectAddr&gt;) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            addrs: endpoints,
-            updated_at: <span class="prelude-val">Some</span>(Instant::now()),
+    <span class="doccomment">/// Updates the direct addresses, returns `true` if they changed, `false` if not.
+    </span><span class="kw">fn </span>update(<span class="kw-2">&amp;</span><span class="self">self</span>, addrs: BTreeSet&lt;DirectAddr&gt;) -&gt; bool {
+        <span class="kw-2">*</span><span class="self">self</span>.updated_at.write().unwrap() = <span class="prelude-val">Some</span>(Instant::now());
+        <span class="kw">let </span>updated = <span class="self">self</span>.addrs.update(addrs).is_ok();
+        <span class="kw">if </span>updated {
+            <span class="macro">event!</span>(
+                target: <span class="string">"events.net.direct_addrs"</span>,
+                Level::DEBUG,
+                addrs = <span class="question-mark">?</span><span class="self">self</span>.addrs.get(),
+            );
         }
+        updated
     }
 
-    <span class="kw">fn </span>into_iter(<span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = DirectAddr&gt; {
-        <span class="self">self</span>.addrs.into_iter()
+    <span class="kw">fn </span>sockaddrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BTreeSet&lt;SocketAddr&gt; {
+        <span class="self">self</span>.addrs.read().iter().map(|da| da.addr).collect()
     }
 
-    <span class="kw">fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>DirectAddr&gt; + <span class="lifetime">'_ </span>{
-        <span class="self">self</span>.addrs.iter()
-    }
-
-    <span class="kw">fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.addrs.is_empty()
-    }
-
-    <span class="kw">fn </span>fresh_enough(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="kw">match </span><span class="self">self</span>.updated_at.as_ref() {
-            <span class="prelude-val">None </span>=&gt; <span class="bool-val">false</span>,
-            <span class="prelude-val">Some</span>(time) =&gt; time.elapsed() &lt;= ENDPOINTS_FRESH_ENOUGH_DURATION,
+    <span class="doccomment">/// Whether the direct addr information is considered "fresh".
+    ///
+    /// If not fresh you should probably update the direct addresses before using this info.
+    ///
+    /// Returns `Ok(())` if fresh enough and `Err(elapsed)` if not fresh enough.
+    /// `elapsed` is the time elapsed since the direct addresses were last updated.
+    ///
+    /// If there is no direct address information `Err(Duration::ZERO)` is returned.
+    </span><span class="kw">fn </span>fresh_enough(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), Duration&gt; {
+        <span class="kw">match </span><span class="kw-2">*</span><span class="self">self</span>.updated_at.read().expect(<span class="string">"poisoned"</span>) {
+            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(Duration::ZERO),
+            <span class="prelude-val">Some</span>(time) =&gt; {
+                <span class="kw">let </span>elapsed = time.elapsed();
+                <span class="kw">if </span>elapsed &lt;= ENDPOINTS_FRESH_ENOUGH_DURATION {
+                    <span class="prelude-val">Ok</span>(())
+                } <span class="kw">else </span>{
+                    <span class="prelude-val">Err</span>(elapsed)
+                }
+            }
         }
     }
 
     <span class="kw">fn </span>to_call_me_maybe_message(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; disco::CallMeMaybe {
-        <span class="kw">let </span>my_numbers = <span class="self">self</span>.addrs.iter().map(|ep| ep.addr).collect();
+        <span class="kw">let </span>my_numbers = <span class="self">self</span>.addrs.read().iter().map(|da| da.addr).collect();
         disco::CallMeMaybe { my_numbers }
     }
 
-    <span class="kw">fn </span>log_direct_addrs_change(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="macro">event!</span>(
-            target: <span class="string">"events.net.direct_addrs"</span>,
-            Level::DEBUG,
-            addrs = <span class="question-mark">?</span><span class="self">self</span>.addrs,
-        );
+    <span class="kw">fn </span>updates_stream(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DirectAddrsStream {
+        DirectAddrsStream {
+            initial: <span class="prelude-val">Some</span>(<span class="self">self</span>.addrs.get()),
+            inner: <span class="self">self</span>.addrs.watch().into_stream(),
+        }
+    }
+}
+
+<span class="doccomment">/// Stream returning local endpoints as they change.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub struct </span>DirectAddrsStream {
+    initial: <span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;,
+    inner: watchable::WatcherStream&lt;BTreeSet&lt;DirectAddr&gt;&gt;,
+}
+
+<span class="kw">impl </span>Stream <span class="kw">for </span>DirectAddrsStream {
+    <span class="kw">type </span>Item = BTreeSet&lt;DirectAddr&gt;;
+
+    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
+        <span class="kw">let </span>this = <span class="kw-2">&amp;mut *</span><span class="self">self</span>;
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(addrs) = this.initial.take() {
+            <span class="kw">if </span>!addrs.is_empty() {
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(addrs));
+            }
+        }
+        <span class="kw">loop </span>{
+            <span class="kw">match </span>Pin::new(<span class="kw-2">&amp;mut </span>this.inner).poll_next(cx) {
+                Poll::Pending =&gt; <span class="kw">break </span>Poll::Pending,
+                Poll::Ready(<span class="prelude-val">Some</span>(addrs)) =&gt; {
+                    <span class="kw">if </span>addrs.is_empty() {
+                        <span class="comment">// When we start up we might initially have empty direct addrs as
+                        // the magic socket has not yet figured this out.  Later on this set
+                        // should never be empty.  However even if it was the magicsock
+                        // would be in a state not very usable so skipping those events is
+                        // probably fine.
+                        // To make sure we install the right waker we loop rather than
+                        // returning Poll::Pending immediately here.
+                        </span><span class="kw">continue</span>;
+                    } <span class="kw">else </span>{
+                        <span class="kw">break </span>Poll::Ready(<span class="prelude-val">Some</span>(addrs));
+                    }
+                }
+                Poll::Ready(<span class="prelude-val">None</span>) =&gt; <span class="kw">break </span>Poll::Ready(<span class="prelude-val">None</span>),
+            }
+        }
     }
 }
 
@@ -6823,7 +6733,11 @@
     </span><span class="attr">#[instrument(skip_all)]
     </span><span class="kw">async fn </span>mesh_stacks(stacks: Vec&lt;MagicStack&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;CallOnDrop&gt; {
         <span class="doccomment">/// Registers endpoint addresses of a node to all other nodes.
-        </span><span class="kw">fn </span>update_direct_addrs(stacks: <span class="kw-2">&amp;</span>[MagicStack], my_idx: usize, new_addrs: Vec&lt;DirectAddr&gt;) {
+        </span><span class="kw">fn </span>update_direct_addrs(
+            stacks: <span class="kw-2">&amp;</span>[MagicStack],
+            my_idx: usize,
+            new_addrs: BTreeSet&lt;DirectAddr&gt;,
+        ) {
             <span class="kw">let </span>me = <span class="kw-2">&amp;</span>stacks[my_idx];
             <span class="kw">for </span>(i, m) <span class="kw">in </span>stacks.iter().enumerate() {
                 <span class="kw">if </span>i == my_idx {
@@ -7520,14 +7434,12 @@
         <span class="kw">let </span>ms = Handle::new(Default::default()).<span class="kw">await</span>.unwrap();
 
         <span class="comment">// See if we can get endpoints.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>eps0 = ms.direct_addresses().next().<span class="kw">await</span>.unwrap();
-        eps0.sort();
+        </span><span class="kw">let </span>eps0 = ms.direct_addresses().next().<span class="kw">await</span>.unwrap();
         <span class="macro">println!</span>(<span class="string">"{eps0:?}"</span>);
         <span class="macro">assert!</span>(!eps0.is_empty());
 
         <span class="comment">// Getting the endpoints again immediately should give the same results.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>eps1 = ms.direct_addresses().next().<span class="kw">await</span>.unwrap();
-        eps1.sort();
+        </span><span class="kw">let </span>eps1 = ms.direct_addresses().next().<span class="kw">await</span>.unwrap();
         <span class="macro">println!</span>(<span class="string">"{eps1:?}"</span>);
         <span class="macro">assert_eq!</span>(eps0, eps1);
     }

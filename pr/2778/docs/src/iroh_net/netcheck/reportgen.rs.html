@@ -1810,7 +1810,7 @@
                 <span class="kw">match </span>port_mapper.probe().<span class="kw">await </span>{
                     <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(res)) =&gt; <span class="prelude-val">Some</span>(res),
                     <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"skipping port mapping: {err:?}"</span>);
+                        <span class="macro">debug!</span>(<span class="string">"skipping port mapping: {err:?}"</span>);
                         <span class="prelude-val">None
                     </span>}
                     <span class="prelude-val">Err</span>(recv_err) =&gt; {

@@ -191,7 +191,7 @@
 
         <span class="kw">let </span>ticket = DocTicket {
             capability: Capability::Read(namespace_id),
-            nodes: <span class="macro">vec!</span>[NodeAddr::from_parts(node_id, <span class="prelude-val">None</span>, <span class="macro">vec!</span>[])],
+            nodes: <span class="macro">vec!</span>[NodeAddr::from_parts(node_id, <span class="prelude-val">None</span>, [])],
         };
         <span class="kw">let </span>base32 = base32::parse_vec(ticket.to_string().strip_prefix(<span class="string">"doc"</span>).unwrap()).unwrap();
         <span class="kw">let </span>expected = parse_hexdump(<span class="string">"

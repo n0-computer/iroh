@@ -24,7 +24,7 @@ provide address information about <em>other</em> nodes to your node.</p>
   <span class="comment">// the home relay
   </span><span class="prelude-val">Some</span>(relay_url),
   <span class="comment">// the direct addresses
-  </span><span class="macro">vec!</span>[<span class="string">"120.0.0.1:0"</span>.parse().unwrap()],
+  </span>[<span class="string">"120.0.0.1:0"</span>.parse().unwrap()],
 );
 net_client.add_node_addr(addr).<span class="kw">await</span><span class="question-mark">?</span>;
 <span class="comment">// Shut down the node. Passing `true` will force the shutdown, passing in

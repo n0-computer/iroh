@@ -33,6 +33,11 @@
 <a href="#33" id="33">33</a>
 <a href="#34" id="34">34</a>
 <a href="#35" id="35">35</a>
+<a href="#36" id="36">36</a>
+<a href="#37" id="37">37</a>
+<a href="#38" id="38">38</a>
+<a href="#39" id="39">39</a>
+<a href="#40" id="40">40</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Package `relay` implements a revised version of the Designated Encrypted Relay for Packets (DERP)
 //! protocol written by Tailscale.
 </span><span class="comment">//
@@ -58,6 +63,11 @@
 <span class="doccomment">/// Environment variable to force the use of staging relays.
 </span><span class="attr">#[cfg_attr(iroh_docsrs, doc(cfg(not(test))))]
 </span><span class="kw">pub const </span>ENV_FORCE_STAGING_RELAYS: <span class="kw-2">&amp;</span>str = <span class="string">"IROH_FORCE_STAGING_RELAYS"</span>;
+
+<span class="doccomment">/// Returns `true` if the use of staging relays is forced.
+</span><span class="kw">pub fn </span>force_staging_infra() -&gt; bool {
+    <span class="macro">matches!</span>(std::env::var(ENV_FORCE_STAGING_RELAYS), <span class="prelude-val">Ok</span>(value) <span class="kw">if </span>!value.is_empty())
+}
 
 <span class="kw">pub use </span><span class="self">self</span>::{
     client::{
