@@ -10,7 +10,7 @@ use iroh_net::endpoint::{
     Connection, ConnectionError, ReadError, ReadExactError, RecvStream, SendStream, VarInt,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 use crate::{
     proto::wgps::{

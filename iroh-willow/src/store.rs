@@ -26,6 +26,7 @@ use self::traits::Storage;
 pub(crate) use self::traits::EntryOrigin;
 
 pub(crate) mod auth;
+pub(crate) mod glue;
 pub mod memory;
 pub mod traits;
 
