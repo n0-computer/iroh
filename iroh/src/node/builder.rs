@@ -23,7 +23,7 @@ use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
     endpoint::TransportConfig,
-    relay::RelayMode,
+    relay::{force_staging_infra, RelayMode},
     Endpoint,
 };
 use quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
@@ -118,7 +118,6 @@ where
     node_discovery: DiscoveryConfig,
     docs_storage: DocsStorage,
     #[cfg(any(test, feature = "test-utils"))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     insecure_skip_relay_cert_verify: bool,
     /// Callback to register when a gc loop is done
     #[debug("callback")]
@@ -229,10 +228,10 @@ fn mk_external_rpc() -> IrohServerEndpoint {
 impl Default for Builder<iroh_blobs::store::mem::Store> {
     fn default() -> Self {
         // Use staging in testing
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let relay_mode = RelayMode::Default;
-        #[cfg(any(test, feature = "test-utils"))]
-        let relay_mode = RelayMode::Staging;
+        let relay_mode = match force_staging_infra() {
+            true => RelayMode::Staging,
+            false => RelayMode::Default,
+        };
 
         Self {
             storage: StorageConfig::Mem,
@@ -265,10 +264,10 @@ impl<D: Map> Builder<D> {
         storage: StorageConfig,
     ) -> Self {
         // Use staging in testing
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let relay_mode = RelayMode::Default;
-        #[cfg(any(test, feature = "test-utils"))]
-        let relay_mode = RelayMode::Staging;
+        let relay_mode = match force_staging_infra() {
+            true => RelayMode::Staging,
+            false => RelayMode::Default,
+        };
 
         Self {
             storage,

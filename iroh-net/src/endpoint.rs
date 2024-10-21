@@ -36,7 +36,7 @@ use crate::{
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
     magicsock::{self, Handle, QuicMappedAddr},
-    relay::{RelayMode, RelayUrl},
+    relay::{force_staging_infra, RelayMode, RelayUrl},
     tls, NodeId,
 };
 
@@ -60,11 +60,6 @@ pub use super::magicsock::{
 /// [`Endpoint`] assumes one of those addresses probably works.  If after this delay there
 /// is still no connection the configured [`Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
-
-/// Environment variable to force the use of staging relays.
-#[cfg(not(any(test, feature = "test-utils")))]
-#[cfg_attr(iroh_docsrs, doc(cfg(not(any(test, feature = "test-utils")))))]
-const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
 type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
 
@@ -1358,19 +1353,11 @@ fn proxy_url_from_env() -> Option<Url> {
 
 /// Returns the default relay mode.
 ///
-/// If the `IROH_FORCE_STAGING_RELAYS` environment variable is set to `1`, it will return `RelayMode::Staging`.
+/// If the `IROH_FORCE_STAGING_RELAYS` environment variable is non empty, it will return `RelayMode::Staging`.
 /// Otherwise, it will return `RelayMode::Default`.
 pub fn default_relay_mode() -> RelayMode {
     // Use staging in testing
-    #[cfg(not(any(test, feature = "test-utils")))]
-    let force_staging_relays = match std::env::var(ENV_FORCE_STAGING_RELAYS) {
-        Ok(value) => value == "1",
-        Err(_) => false,
-    };
-    #[cfg(any(test, feature = "test-utils"))]
-    let force_staging_relays = true;
-
-    match force_staging_relays {
+    match force_staging_infra() {
         true => RelayMode::Staging,
         false => RelayMode::Default,
     }
