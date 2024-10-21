@@ -92,6 +92,7 @@ pub enum MaybeTlsStream {
     Plain(tokio::net::TcpStream),
     /// A Tls wrapped [`tokio::net::TcpStream`]
     Tls(tokio_rustls::server::TlsStream<tokio::net::TcpStream>),
+    /// An in-memory bidirectional pipe.
     #[cfg(test)]
     Test(tokio::io::DuplexStream),
 }
