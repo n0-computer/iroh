@@ -58,9 +58,10 @@ impl DnsDiscovery {
     /// with [`DnsDiscovery::new`].  This would then use a hosted staging discovery
     /// service for testing purposes.
     pub fn n0_dns() -> Self {
-        match force_staging_infra() {
-            true => Self::new(N0_DNS_NODE_ORIGIN_STAGING.to_string()),
-            false => Self::new(N0_DNS_NODE_ORIGIN_PROD.to_string()),
+        if force_staging_infra() {
+            Self::new(N0_DNS_NODE_ORIGIN_STAGING.to_string())
+        } else {
+            Self::new(N0_DNS_NODE_ORIGIN_PROD.to_string())
         }
     }
 }
