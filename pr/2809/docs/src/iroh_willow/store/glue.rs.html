@@ -146,6 +146,30 @@
 <a href="#146" id="146">146</a>
 <a href="#147" id="147">147</a>
 <a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Code required for willow-rs and willow-store to interface together.
 
 </span><span class="kw">use </span>anyhow::Result;
@@ -270,6 +294,30 @@
             .chain(<span class="prelude-val">Some</span>(Vec::new())) <span class="comment">// Add an empty path element
             </span>.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
     )
+}
+
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>blobseq_below(blobseq: <span class="kw-2">&amp;</span>BlobSeq) -&gt; <span class="prelude-ty">Option</span>&lt;BlobSeq&gt; {
+    <span class="kw">let </span><span class="kw-2">mut </span>path = blobseq
+        .components()
+        .map(|slice| slice.to_vec())
+        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+
+    <span class="kw">if </span>path
+        .last_mut()
+        .map(|last_path| <span class="kw">match </span>last_path.last_mut() {
+            <span class="prelude-val">Some</span>(<span class="number">255</span>) | <span class="prelude-val">None </span>=&gt; {
+                last_path.push(<span class="number">0</span>);
+            }
+            <span class="prelude-val">Some</span>(i) =&gt; {
+                <span class="kw-2">*</span>i += <span class="number">1</span>;
+            }
+        })
+        .is_some()
+    {
+        <span class="prelude-val">Some</span>(BlobSeq::from(path))
+    } <span class="kw">else </span>{
+        <span class="prelude-val">None
+    </span>}
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>to_query(range3d: <span class="kw-2">&amp;</span>Range3d) -&gt; QueryRange3d&lt;IrohWillowParams&gt; {
