@@ -1,6 +1,6 @@
 [package]
 name = "iroh-blobs"
-version = "0.26.0"
+version = "0.27.0"
 edition = "2021"
 readme = "README.md"
 description = "blob and collection transfer support for iroh"
@@ -30,7 +30,7 @@ hex = "0.4.3"
 iroh-base = { version = "0.27.0", features = ["redb"], path = "../iroh-base" }
 iroh-io = { version = "0.6.0", features = ["stats"] }
 iroh-metrics = { version = "0.27.0", path = "../iroh-metrics", default-features = false }
-iroh-net = { version = "0.26.0", path = "../iroh-net" }
+iroh-net = { version = "0.27.0", path = "../iroh-net" }
 num_cpus = "1.15.0"
 oneshot = "0.1.8"
 parking_lot = { version = "0.12.1", optional = true }
