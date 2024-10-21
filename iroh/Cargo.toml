@@ -27,9 +27,9 @@ futures-util = "0.3"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
 hex = { version = "0.4.3" }
 iroh-blobs = { version = "0.26.0", path = "../iroh-blobs", features = ["downloader"] }
-iroh-base = { version = "0.26.0", path = "../iroh-base", features = ["key"] }
+iroh-base = { version = "0.27.0", path = "../iroh-base", features = ["key"] }
 iroh-io = { version = "0.6.0", features = ["stats"] }
-iroh-metrics = { version = "0.26.0", path = "../iroh-metrics", optional = true }
+iroh-metrics = { version = "0.27.0", path = "../iroh-metrics", optional = true }
 iroh-net = { version = "0.26.0", path = "../iroh-net", features = ["discovery-local-network"] }
 nested_enum_utils = "0.1.0"
 num_cpus = { version = "1.15.0" }
