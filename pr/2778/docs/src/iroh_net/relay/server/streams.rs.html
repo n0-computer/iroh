@@ -162,6 +162,7 @@
 <a href="#162" id="162">162</a>
 <a href="#163" id="163">163</a>
 <a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Streams used in the server-side implementation of iroh relays.
 
 </span><span class="kw">use </span>std::{
@@ -256,7 +257,8 @@
     </span>Plain(tokio::net::TcpStream),
     <span class="doccomment">/// A Tls wrapped [`tokio::net::TcpStream`]
     </span>Tls(tokio_rustls::server::TlsStream&lt;tokio::net::TcpStream&gt;),
-    <span class="attr">#[cfg(test)]
+    <span class="doccomment">/// An in-memory bidirectional pipe.
+    </span><span class="attr">#[cfg(test)]
     </span>Test(tokio::io::DuplexStream),
 }
 

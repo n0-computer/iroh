@@ -84,6 +84,7 @@
 <a href="#84" id="84">84</a>
 <a href="#85" id="85">85</a>
 <a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh-net
 
 </span><span class="kw">use </span>anyhow::Result;
@@ -144,9 +145,10 @@
     /// with [`DnsDiscovery::new`].  This would then use a hosted staging discovery
     /// service for testing purposes.
     </span><span class="kw">pub fn </span>n0_dns() -&gt; <span class="self">Self </span>{
-        <span class="kw">match </span>force_staging_infra() {
-            <span class="bool-val">true </span>=&gt; <span class="self">Self</span>::new(N0_DNS_NODE_ORIGIN_STAGING.to_string()),
-            <span class="bool-val">false </span>=&gt; <span class="self">Self</span>::new(N0_DNS_NODE_ORIGIN_PROD.to_string()),
+        <span class="kw">if </span>force_staging_infra() {
+            <span class="self">Self</span>::new(N0_DNS_NODE_ORIGIN_STAGING.to_string())
+        } <span class="kw">else </span>{
+            <span class="self">Self</span>::new(N0_DNS_NODE_ORIGIN_PROD.to_string())
         }
     }
 }
