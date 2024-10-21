@@ -2488,7 +2488,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2775,7 +2775,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "erased_set",
