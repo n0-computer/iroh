@@ -17,11 +17,11 @@ use futures_lite::ready;
 use futures_util::Stream;
 use tracing::debug;
 use willow_data_model::SubspaceId as _;
-use willow_store::{BlobSeq, QueryRange, QueryRange3d};
+use willow_store::{QueryRange, QueryRange3d};
 
 use crate::proto::data_model::{AuthorisationToken, PathExt};
 use crate::proto::grouping::Area;
-use crate::store::glue::StoredAuthorisedEntry;
+use crate::store::glue::{blobseq_below, StoredAuthorisedEntry};
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
@@ -136,6 +136,7 @@ impl Clone for NamespaceStore {
     fn clone(&self) -> Self {
         Self {
             entries: self.entries.clone(),
+            // TODO(matheus23): This is hacky!
             events: Default::default(),
         }
     }
@@ -301,30 +302,6 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
         })?;
         let entry = stored_entry.into_authorised_entry(namespace, &point, auth_token.clone())?;
         Ok(Some(entry))
-    }
-}
-
-fn blobseq_below(blobseq: &BlobSeq) -> Option<BlobSeq> {
-    let mut path = blobseq
-        .components()
-        .map(|slice| slice.to_vec())
-        .collect::<Vec<_>>();
-
-    if path
-        .last_mut()
-        .map(|last_path| match last_path.last_mut() {
-            Some(255) | None => {
-                last_path.push(0);
-            }
-            Some(i) => {
-                *i += 1;
-            }
-        })
-        .is_some()
-    {
-        Some(BlobSeq::from(path))
-    } else {
-        None
     }
 }
 
@@ -513,7 +490,7 @@ impl Stream for EventStream {
 // TODO: This would be quite a bit more efficient if we filtered the waker with a closure
 // that is set from the last poll, to not wake everyone for each new event.
 #[derive(Debug)]
-struct EventQueue<T> {
+pub(super) struct EventQueue<T> {
     events: VecDeque<T>,
     offset: u64,
     wakers: VecDeque<Waker>,
@@ -538,7 +515,7 @@ impl<T> Default for EventQueue<T> {
 }
 
 impl<T: Clone> EventQueue<T> {
-    fn insert(&mut self, f: impl FnOnce(u64) -> T) {
+    pub(super) fn insert(&mut self, f: impl FnOnce(u64) -> T) {
         let progress_id = self.next_progress_id();
         let event = f(progress_id);
         self.events.push_back(event);
@@ -547,11 +524,11 @@ impl<T: Clone> EventQueue<T> {
         }
     }
 
-    fn next_progress_id(&self) -> u64 {
+    pub(super) fn next_progress_id(&self) -> u64 {
         self.offset + self.events.len() as u64
     }
 
-    fn get(&self, progress_id: u64) -> Option<&T> {
+    pub(super) fn get(&self, progress_id: u64) -> Option<&T> {
         let index = progress_id.checked_sub(self.offset)?;
         self.events.get(index as usize)
     }
