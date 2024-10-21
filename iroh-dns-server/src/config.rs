@@ -12,7 +12,7 @@ use tracing::info;
 
 use crate::{
     dns::DnsConfig,
-    http::{CertMode, HttpConfig, HttpsConfig},
+    http::{CertMode, HttpConfig, HttpsConfig, RateLimitConfig},
 };
 
 const DEFAULT_METRICS_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9117);
@@ -161,6 +161,7 @@ impl Default for Config {
             http: Some(HttpConfig {
                 port: 8080,
                 bind_addr: None,
+                rate_limit: RateLimitConfig::default(),
             }),
             https: Some(HttpsConfig {
                 port: 8443,
@@ -169,6 +170,7 @@ impl Default for Config {
                 cert_mode: CertMode::SelfSigned,
                 letsencrypt_contact: None,
                 letsencrypt_prod: None,
+                rate_limit: None,
             }),
             dns: DnsConfig {
                 port: 5300,
