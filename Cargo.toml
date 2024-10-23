@@ -4,7 +4,6 @@ members = [
   "iroh-blobs",
   "iroh-base",
   "iroh-dns-server",
-  "iroh-gossip",
   "iroh-metrics",
   "iroh-net",
   "iroh-docs",
@@ -19,7 +18,7 @@ debug = true
 
 [profile.dev-ci]
 inherits = 'dev'
-opt-level = 1 
+opt-level = 1
 
 [profile.optimized-release]
 inherits = 'release'

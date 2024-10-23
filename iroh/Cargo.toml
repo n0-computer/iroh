@@ -35,7 +35,7 @@ nested_enum_utils = "0.1.0"
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
 iroh-docs = { version = "0.27.0", path = "../iroh-docs" }
-iroh-gossip = { version = "0.27.0", path = "../iroh-gossip" }
+iroh-gossip = "0.27.0"
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.12", default-features = false, features = ["flume-transport", "quinn-transport"] }
