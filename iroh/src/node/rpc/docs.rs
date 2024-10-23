@@ -8,7 +8,7 @@ use iroh_docs::{Author, DocTicket, NamespaceSecret};
 
 use crate::{
     client::docs::ShareMode,
-    node::DocsEngine,
+    node::protocol::docs::DocsProtocol,
     rpc_protocol::{
         authors::{
             CreateRequest, CreateResponse, DeleteRequest, DeleteResponse, ExportRequest,
@@ -35,7 +35,7 @@ use crate::{
 const ITER_CHANNEL_CAP: usize = 64;
 
 #[allow(missing_docs)]
-impl DocsEngine {
+impl DocsProtocol {
     pub async fn author_create(&self, _req: CreateRequest) -> RpcResult<CreateResponse> {
         // TODO: pass rng
         let author = Author::new(&mut rand::rngs::OsRng {});
