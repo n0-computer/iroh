@@ -94,9 +94,10 @@ impl StaticDiscovery {
     }
 
     /// Remove node info for the given node id.
-    pub fn remove_node_addr(&self, node_id: NodeId) {
+    pub fn remove_node_addr(&self, node_id: NodeId) -> NodeAddr {
         let mut guard = self.nodes.write().unwrap();
-        guard.remove(&node_id);
+        let res = guard.remove(&node_id)?;
+        NodeAddr { node_id, info: res }
     }
 }
 
