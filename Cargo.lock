@@ -280,7 +280,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -313,7 +313,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "http-body-util",
  "mime",
  "pin-project-lite",
@@ -346,7 +346,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -2155,17 +2155,6 @@ dependencies = [
 
 [[package]]
 name = "http-body"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ceab25649e9960c0311ea418d17bee82c0dcec1bd053b5f9a66e265a693bed2"
-dependencies = [
- "bytes",
- "http 0.2.12",
- "pin-project-lite",
-]
-
-[[package]]
-name = "http-body"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1efedce1fb8e6913f23e0c92de8e62cd5b772a67e7b3946df930a62566c93184"
@@ -2183,7 +2172,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "pin-project-lite",
 ]
 
@@ -2229,7 +2218,7 @@ dependencies = [
  "futures-util",
  "h2",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "httparse",
  "httpdate",
  "itoa",
@@ -2267,7 +2256,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "hyper",
  "pin-project-lite",
  "socket2",
@@ -2533,6 +2522,8 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69e83475d6c8cc312a224d4c6bdf287f862d30d2b176768ef71f188a0d8aa7cd"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2542,44 +2533,33 @@ dependencies = [
  "derive_more",
  "futures-buffered",
  "futures-lite 2.3.0",
- "futures-util",
  "genawaiter",
  "hashlink",
  "hex",
- "http-body 0.4.6",
  "iroh-base",
- "iroh-blobs",
  "iroh-io",
  "iroh-metrics",
  "iroh-net",
  "iroh-quinn",
- "iroh-test",
  "num_cpus",
  "oneshot",
  "parking_lot",
  "pin-project",
  "postcard",
- "proptest",
  "rand",
  "range-collections",
- "rcgen",
  "redb 1.5.1",
  "redb 2.1.1",
  "reflink-copy",
- "rustls",
  "self_cell",
  "serde",
- "serde_json",
- "serde_test",
  "smallvec",
  "tempfile",
- "testresult",
  "thiserror",
  "tokio",
  "tokio-util",
  "tracing",
  "tracing-futures",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -4518,7 +4498,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "http-body-util",
  "hyper",
  "hyper-rustls",
@@ -5844,7 +5824,7 @@ dependencies = [
  "bitflags 2.6.0",
  "bytes",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "http-body-util",
  "pin-project-lite",
  "tower-layer",
