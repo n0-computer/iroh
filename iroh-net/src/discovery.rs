@@ -98,7 +98,14 @@
 //! [`DhtDiscovery`]: pkarr::dht::DhtDiscovery
 //! [pkarr relay servers]: https://pkarr.org/#servers
 
-use std::time::Duration;
+use std::{
+    any::Any,
+    collections::HashMap,
+    fmt,
+    marker::PhantomData,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use anyhow::{anyhow, ensure, Result};
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
@@ -197,6 +204,124 @@ pub struct DiscoveryItem {
     pub last_updated: Option<u64>,
     /// The address info for the node being resolved.
     pub addr_info: AddrInfo,
+}
+
+/// A map of discovery services that allows insertion and removal
+#[derive(Debug, Default)]
+#[repr(transparent)]
+pub struct DiscoveryServiceMap {
+    inner: Arc<RwLock<DiscoveryServiceMapInner>>,
+}
+
+/// A handle to a [`Discovery`] service in a [`DiscoveryServiceMap`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DiscoveryServiceHandle<T>(u64, PhantomData<T>);
+
+trait DiscoveryServiceMapEntry: Send + Sync + 'static {
+    fn discovery(&self) -> &dyn Discovery;
+    fn any(&self) -> &dyn Any;
+    fn into_any(self: Box<Self>) -> Box<dyn Any>;
+}
+
+impl<T: Discovery + Any> DiscoveryServiceMapEntry for T {
+    fn discovery(&self) -> &dyn Discovery {
+        self
+    }
+
+    fn any(&self) -> &dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+#[derive(Default)]
+struct DiscoveryServiceMapInner {
+    items: HashMap<u64, Box<dyn DiscoveryServiceMapEntry>>,
+    max_id: u64,
+}
+
+impl fmt::Debug for DiscoveryServiceMapInner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DiscoveryServiceMapInner")
+            .field("max_id", &self.max_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl DiscoveryServiceMap {
+    /// Creates a new empty [`DiscoveryServiceMap`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Inserts a new [`Discovery`] service into the map.
+    ///
+    /// The returned handle can be used to remove the service as well as to get the service back.
+    pub fn insert<T: Discovery + 'static>(&self, service: T) -> DiscoveryServiceHandle<T> {
+        let mut guard = self.inner.write().unwrap();
+        let id = guard.max_id;
+        guard.max_id += 1;
+        guard.items.insert(id, Box::new(service));
+        DiscoveryServiceHandle(id, PhantomData)
+    }
+
+    /// Removes a [`Discovery`] service from the map.
+    pub fn remove<T: 'static>(&self, handle: DiscoveryServiceHandle<T>) -> Option<T> {
+        let mut guard = self.inner.write().unwrap();
+        let item = guard.items.remove(&handle.0)?;
+        let item = item.into_any().downcast::<T>().ok()?;
+        Some(*item)
+    }
+
+    /// Gets a [`Discovery`] service from the map.
+    pub fn get<T: Clone + 'static>(&self, handle: DiscoveryServiceHandle<T>) -> Option<T> {
+        let guard = self.inner.read().unwrap();
+        let item = guard.items.get(&handle.0)?;
+        let item = item.any().downcast_ref::<T>()?;
+        Some(item.clone())
+    }
+}
+
+impl Discovery for DiscoveryServiceMap {
+    fn publish(&self, info: &AddrInfo) {
+        let guard = self.inner.read().unwrap();
+        for service in guard.items.values() {
+            service.discovery().publish(info);
+        }
+    }
+
+    fn resolve(
+        &self,
+        endpoint: Endpoint,
+        node_id: NodeId,
+    ) -> Option<BoxStream<Result<DiscoveryItem>>> {
+        let guard = self.inner.read().unwrap();
+        let streams = guard
+            .items
+            .values()
+            .filter_map(|service| service.discovery().resolve(endpoint.clone(), node_id));
+        let streams = futures_buffered::MergeBounded::from_iter(streams);
+        drop(guard);
+
+        Some(Box::pin(streams))
+    }
+
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+        let mut streams = vec![];
+        let guard = self.inner.read().unwrap();
+        for service in guard.items.values() {
+            if let Some(stream) = service.discovery().subscribe() {
+                streams.push(stream)
+            }
+        }
+        drop(guard);
+
+        let streams = futures_buffered::MergeBounded::from_iter(streams);
+        Some(Box::pin(streams))
+    }
 }
 
 /// A discovery service that combines multiple discovery sources.
