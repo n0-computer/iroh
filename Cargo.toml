@@ -45,7 +45,11 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)"] }
 [workspace.lints.clippy]
 unused-async = "warn"
 
+# Temporary fix for dependencies
 [patch.crates-io]
-iroh-blobs = { path = "../iroh-blobs" }
-iroh-base = { path = "iroh-base" }
-iroh-net = { path = "iroh-net" }
+iroh-base = { path = "./iroh-base" }
+iroh-net = { path = "./iroh-net" }
+iroh-blobs = { path = "./iroh-blobs" }
+iroh-metrics = { path = "./iroh-metrics" }
+iroh-docs = { path = "./iroh-docs" }
+iroh-test = { path = "./iroh-test" }
