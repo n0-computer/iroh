@@ -6,7 +6,6 @@ members = [
   "iroh-dns-server",
   "iroh-metrics",
   "iroh-net",
-  "iroh-docs",
   "iroh-test",
   "iroh-net/bench",
   "iroh-cli",
@@ -52,5 +51,4 @@ iroh-base = { path = "./iroh-base" }
 iroh-net = { path = "./iroh-net" }
 iroh-blobs = { path = "./iroh-blobs" }
 iroh-metrics = { path = "./iroh-metrics" }
-iroh-docs = { path = "./iroh-docs" }
 iroh-test = { path = "./iroh-test" }
