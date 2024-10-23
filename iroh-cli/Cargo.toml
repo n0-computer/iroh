@@ -41,8 +41,8 @@ hex = "0.4.3"
 human-time = "0.1.6"
 indicatif = { version = "0.17", features = ["tokio"] }
 iroh = { version = "0.27.0", path = "../iroh", features = ["metrics"] }
-iroh-gossip = { version = "0.27.0", path = "../iroh-gossip" }
-iroh-metrics = { version = "0.27.0", path = "../iroh-metrics" }
+iroh-gossip = "0.27.0"
+iroh-metrics = { version = "0.27.0" }
 parking_lot = "0.12.1"
 pkarr = { version = "2.2.0", default-features = false }
 portable-atomic = "1"
