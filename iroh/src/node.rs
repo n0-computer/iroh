@@ -59,24 +59,20 @@ use iroh_net::{
     endpoint::{DirectAddrsStream, RemoteInfo},
     AddrInfo, Endpoint, NodeAddr,
 };
+use iroh_router::{ProtocolHandler, ProtocolMap};
 use protocol::blobs::BlobsProtocol;
 use quic_rpc::{transport::ServerEndpoint as _, RpcServer};
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
-use crate::node::{
-    nodes_storage::store_node_addrs,
-    protocol::{docs::DocsProtocol, ProtocolMap},
-};
+use crate::node::{nodes_storage::store_node_addrs, protocol::docs::DocsProtocol};
 
 mod builder;
 mod nodes_storage;
 mod protocol;
 mod rpc;
 mod rpc_status;
-
-pub use protocol::ProtocolHandler;
 
 pub use self::{
     builder::{

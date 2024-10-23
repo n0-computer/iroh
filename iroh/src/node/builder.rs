@@ -26,19 +26,22 @@ use iroh_net::{
     relay::{force_staging_infra, RelayMode},
     Endpoint,
 };
+use iroh_router::{ProtocolHandler, ProtocolMap};
 use quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinError;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error_span, trace, Instrument};
 
-use super::{rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner};
+use super::{
+    protocol::gossip::GossipProtocol, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr,
+    Node, NodeInner,
+};
 use crate::{
     client::RPC_ALPN,
     node::{
         nodes_storage::load_node_addrs,
-        protocol::{blobs::BlobsProtocol, docs::DocsProtocol, ProtocolMap},
-        ProtocolHandler,
+        protocol::{blobs::BlobsProtocol, docs::DocsProtocol},
     },
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
@@ -823,7 +826,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         self = self.accept(iroh_blobs::protocol::ALPN.to_vec(), Arc::new(blobs_proto));
 
         // Register gossip.
-        self = self.accept(GOSSIP_ALPN.to_vec(), Arc::new(gossip));
+        self = self.accept(GOSSIP_ALPN.to_vec(), Arc::new(GossipProtocol(gossip)));
 
         // Register docs, if enabled.
         if let Some(docs) = docs {

@@ -1,0 +1,13 @@
+[package]
+name = "iroh-router"
+version = "0.27.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.91"
+futures-buffered = "0.2.9"
+futures-lite = "2.3.0"
+iroh-net = { version = "0.27.0", path = "../iroh-net" }
+
+[lints]
+workspace = true

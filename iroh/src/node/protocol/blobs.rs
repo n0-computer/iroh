@@ -17,9 +17,9 @@ use iroh_blobs::{
     HashAndFormat, TempTag,
 };
 use iroh_net::{endpoint::Connecting, Endpoint, NodeAddr};
+use iroh_router::ProtocolHandler;
 use tracing::{debug, warn};
 
-use super::ProtocolHandler;
 use crate::{
     client::blobs::DownloadMode,
     rpc_protocol::blobs::{BatchId, DownloadRequest as BlobDownloadRequest},

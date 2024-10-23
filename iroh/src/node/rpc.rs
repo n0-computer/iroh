@@ -28,15 +28,16 @@ use iroh_blobs::{
     BlobFormat, HashAndFormat, Tag,
 };
 use iroh_docs::net::DOCS_ALPN;
-use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
+use iroh_gossip::net::GOSSIP_ALPN;
 use iroh_io::AsyncSliceReader;
 use iroh_net::{relay::RelayUrl, NodeAddr, NodeId};
+use iroh_router::ProtocolMap;
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::task::JoinSet;
 use tokio_util::either::Either;
 use tracing::{debug, info, warn};
 
-use super::{protocol::ProtocolMap, IrohServerEndpoint};
+use super::IrohServerEndpoint;
 use crate::{
     client::{
         blobs::{BlobInfo, BlobStatus, IncompleteBlobInfo, WrapOption},
@@ -44,14 +45,14 @@ use crate::{
         NodeStatus,
     },
     node::{
-        protocol::{blobs::BlobsProtocol, docs::DocsProtocol},
+        protocol::{blobs::BlobsProtocol, docs::DocsProtocol, gossip::GossipProtocol},
         NodeInner,
     },
     rpc_protocol::{
-        authors, blobs,
+        authors,
         blobs::{
-            AddPathRequest, AddPathResponse, AddStreamRequest, AddStreamResponse, AddStreamUpdate,
-            BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest,
+            self, AddPathRequest, AddPathResponse, AddStreamRequest, AddStreamResponse,
+            AddStreamUpdate, BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest,
             BatchAddStreamResponse, BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
             BatchCreateTempTagRequest, BatchUpdate, BlobStatusRequest, BlobStatusResponse,
             ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse,
@@ -63,16 +64,14 @@ use crate::{
             ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,
             Request as DocsRequest, SetHashRequest,
         },
-        gossip, net,
+        gossip,
         net::{
-            AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest,
+            self, AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest,
             RemoteInfoRequest, RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse,
             WatchResponse,
         },
-        node,
-        node::{ShutdownRequest, StatsRequest, StatsResponse, StatusRequest},
-        tags,
-        tags::{DeleteRequest as TagDeleteRequest, ListRequest as ListTagsRequest, SyncMode},
+        node::{self, ShutdownRequest, StatsRequest, StatsResponse, StatusRequest},
+        tags::{self, DeleteRequest as TagDeleteRequest, ListRequest as ListTagsRequest, SyncMode},
         Request, RpcService,
     },
 };
@@ -256,7 +255,7 @@ impl<D: BaoStore> Handler<D> {
                 chan.bidi_streaming(msg, self, |handler, req, updates| {
                     let stream = handler
                         .protocols
-                        .get_typed::<Gossip>(GOSSIP_ALPN)
+                        .get_typed::<GossipProtocol>(GOSSIP_ALPN)
                         .expect("missing gossip")
                         .join_with_stream(
                             req.topic,
