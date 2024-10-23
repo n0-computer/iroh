@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["StaticDiscovery"]};
+window.SIDEBAR_ITEMS = {"struct":["StaticProvider"]};

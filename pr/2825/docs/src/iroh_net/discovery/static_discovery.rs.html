@@ -124,6 +124,7 @@
 <a href="#124" id="124">124</a>
 <a href="#125" id="125">125</a>
 <a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A static discovery implementation that allows adding info for nodes manually.
 </span><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeMap},
@@ -138,14 +139,14 @@
 
 <span class="kw">use super</span>::{Discovery, DiscoveryItem};
 
-<span class="doccomment">/// A static discovery implementation that allows adding info for nodes manually.
+<span class="doccomment">/// A static discovery implementation that allows providing info for nodes manually.
 </span><span class="attr">#[derive(Debug, Default)]
 #[repr(transparent)]
-</span><span class="kw">pub struct </span>StaticDiscovery {
+</span><span class="kw">pub struct </span>StaticProvider {
     nodes: Arc&lt;RwLock&lt;BTreeMap&lt;NodeId, AddrInfo&gt;&gt;&gt;,
 }
 
-<span class="kw">impl </span>StaticDiscovery {
+<span class="kw">impl </span>StaticProvider {
     <span class="doccomment">/// The provenance string for this discovery implementation.
     </span><span class="kw">pub const </span>PROVENANCE: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str = <span class="string">"static_discovery"</span>;
 
@@ -161,15 +162,15 @@
     /// use std::str::FromStr;
     ///
     /// use iroh_base::ticket::NodeTicket;
-    /// use iroh_net::{Endpoint, discovery::static_discovery::StaticDiscovery};
+    /// use iroh_net::{Endpoint, discovery::static_discovery::StaticProvider};
     ///
     /// # async fn example() -&gt; anyhow::Result&lt;()&gt; {
     /// # #[derive(Default)] struct Args { tickets: Vec&lt;NodeTicket&gt; }
     /// # let args = Args::default();
     /// // get tickets from command line args
     /// let tickets: Vec&lt;NodeTicket&gt; = args.tickets;
-    /// // create a StaticDiscovery from the tickets. Ticket info will be combined if multiple tickets refer to the same node.
-    /// let discovery = StaticDiscovery::from_node_addrs(tickets);
+    /// // create a StaticProvider from the tickets. Ticket info will be combined if multiple tickets refer to the same node.
+    /// let discovery = StaticProvider::from_node_addrs(tickets);
     /// // create an endpoint with the discovery
     /// let endpoint = Endpoint::builder()
     ///     .add_discovery(|_| Some(discovery))
@@ -220,13 +221,14 @@
     }
 
     <span class="doccomment">/// Remove node info for the given node id.
-    </span><span class="kw">pub fn </span>remove_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) {
+    </span><span class="kw">pub fn </span>remove_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;NodeAddr&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.nodes.write().unwrap();
-        guard.remove(<span class="kw-2">&amp;</span>node_id);
+        <span class="kw">let </span>res = guard.remove(<span class="kw-2">&amp;</span>node_id)<span class="question-mark">?</span>;
+        <span class="prelude-val">Some</span>(NodeAddr { node_id, info: res })
     }
 }
 
-<span class="kw">impl </span>Discovery <span class="kw">for </span>StaticDiscovery {
+<span class="kw">impl </span>Discovery <span class="kw">for </span>StaticProvider {
     <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, _info: <span class="kw-2">&amp;</span>AddrInfo) {}
 
     <span class="kw">fn </span>resolve(
