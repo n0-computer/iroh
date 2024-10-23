@@ -115,6 +115,12 @@
 <a href="#115" id="115">115</a>
 <a href="#116" id="116">116</a>
 <a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A static discovery implementation that allows adding info for nodes manually.
 </span><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeMap},
@@ -149,15 +155,21 @@
     ///
     /// Example:
     /// ```rust
-    /// # #[derive(Default)] struct Args { tickets: Vec&lt;NodeTicket&gt; }
-    /// # let args = Args::default();
     /// use std::str::FromStr;
     ///
     /// use iroh_base::ticket::NodeTicket;
-    /// use iroh_net::discovery::static_discovery::StaticDiscovery;
+    /// use iroh_net::{Endpoint, discovery::static_discovery::StaticDiscovery};
     ///
+    /// # async fn example() -&gt; anyhow::Result&lt;()&gt; {
+    /// # #[derive(Default)] struct Args { tickets: Vec&lt;NodeTicket&gt; }
+    /// # let args = Args::default();
     /// let tickets: Vec&lt;NodeTicket&gt; = args.tickets;
     /// let discovery = StaticDiscovery::from_node_addrs(tickets);
+    /// let endpoint = Endpoint::builder()
+    ///     .add_discovery(|_| Some(discovery))
+    ///     .bind().await?;
+    /// # Ok(())
+    /// # }
     /// ```
     </span><span class="kw">pub fn </span>from_node_addrs(infos: <span class="kw">impl </span>IntoIterator&lt;Item = <span class="kw">impl </span>Into&lt;NodeAddr&gt;&gt;) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>res = <span class="self">Self</span>::default();
