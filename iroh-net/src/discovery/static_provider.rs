@@ -2,6 +2,7 @@
 use std::{
     collections::{btree_map::Entry, BTreeMap},
     sync::{Arc, RwLock},
+    time::SystemTime,
 };
 
 use futures_lite::stream::{self, StreamExt};
@@ -16,7 +17,13 @@ use super::{Discovery, DiscoveryItem};
 #[derive(Debug, Default)]
 #[repr(transparent)]
 pub struct StaticProvider {
-    nodes: Arc<RwLock<BTreeMap<NodeId, AddrInfo>>>,
+    nodes: Arc<RwLock<BTreeMap<NodeId, NodeInfo>>>,
+}
+
+#[derive(Debug)]
+struct NodeInfo {
+    info: AddrInfo,
+    last_updated: SystemTime,
 }
 
 impl StaticProvider {
@@ -35,7 +42,7 @@ impl StaticProvider {
     /// use std::str::FromStr;
     ///
     /// use iroh_base::ticket::NodeTicket;
-    /// use iroh_net::{Endpoint, discovery::static_discovery::StaticProvider};
+    /// use iroh_net::{Endpoint, discovery::static_provider::StaticProvider};
     ///
     /// # async fn example() -> anyhow::Result<()> {
     /// # #[derive(Default)] struct Args { tickets: Vec<NodeTicket> }
@@ -62,10 +69,21 @@ impl StaticProvider {
     /// Add node info for the given node id.
     ///
     /// This will completely overwrite any existing info for the node.
-    pub fn set_node_addr(&self, info: impl Into<NodeAddr>) {
+    pub fn set_node_addr(&self, info: impl Into<NodeAddr>) -> Option<NodeAddr> {
+        let last_updated = SystemTime::now();
         let info: NodeAddr = info.into();
         let mut guard = self.nodes.write().unwrap();
-        guard.insert(info.node_id, info.info);
+        let previous = guard.insert(
+            info.node_id,
+            NodeInfo {
+                info: info.info,
+                last_updated,
+            },
+        );
+        previous.map(|x| NodeAddr {
+            node_id: info.node_id,
+            info: x.info,
+        })
     }
 
     /// Add node info for the given node id, combining it with any existing info.
@@ -73,15 +91,23 @@ impl StaticProvider {
     /// This will add any new direct addresses and overwrite the relay url.
     pub fn add_node_addr(&self, info: impl Into<NodeAddr>) {
         let info: NodeAddr = info.into();
+        let last_updated = SystemTime::now();
         let mut guard = self.nodes.write().unwrap();
         match guard.entry(info.node_id) {
             Entry::Occupied(mut entry) => {
                 let existing = entry.get_mut();
-                existing.direct_addresses.extend(info.info.direct_addresses);
-                existing.relay_url = info.info.relay_url;
+                existing
+                    .info
+                    .direct_addresses
+                    .extend(info.info.direct_addresses);
+                existing.info.relay_url = info.info.relay_url;
+                existing.last_updated = last_updated;
             }
             Entry::Vacant(entry) => {
-                entry.insert(info.info);
+                entry.insert(NodeInfo {
+                    info: info.info,
+                    last_updated,
+                });
             }
         }
     }
@@ -89,7 +115,7 @@ impl StaticProvider {
     /// Get node info for the given node id.
     pub fn get_node_addr(&self, node_id: NodeId) -> Option<NodeAddr> {
         let guard = self.nodes.read().unwrap();
-        let info = guard.get(&node_id).cloned()?;
+        let info = guard.get(&node_id).map(|x| x.info.clone())?;
         Some(NodeAddr { node_id, info })
     }
 
@@ -97,7 +123,10 @@ impl StaticProvider {
     pub fn remove_node_addr(&self, node_id: NodeId) -> Option<NodeAddr> {
         let mut guard = self.nodes.write().unwrap();
         let res = guard.remove(&node_id)?;
-        Some(NodeAddr { node_id, info: res })
+        Some(NodeAddr {
+            node_id,
+            info: res.info,
+        })
     }
 }
 
@@ -116,8 +145,14 @@ impl Discovery for StaticProvider {
                 let item = DiscoveryItem {
                     node_id,
                     provenance: Self::PROVENANCE,
-                    last_updated: None,
-                    addr_info: addr_info.clone(),
+                    last_updated: Some(
+                        addr_info
+                            .last_updated
+                            .duration_since(SystemTime::UNIX_EPOCH)
+                            .expect("time drift")
+                            .as_micros() as u64,
+                    ),
+                    addr_info: addr_info.info.clone(),
                 };
                 Some(stream::iter(Some(Ok(item))).boxed())
             }
