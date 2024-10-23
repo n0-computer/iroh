@@ -1,13 +1,10 @@
 [workspace]
 members = [
   "iroh",
-  "iroh-blobs",
   "iroh-base",
   "iroh-dns-server",
-  "iroh-gossip",
   "iroh-metrics",
   "iroh-net",
-  "iroh-docs",
   "iroh-test",
   "iroh-net/bench",
   "iroh-cli",
@@ -19,7 +16,7 @@ debug = true
 
 [profile.dev-ci]
 inherits = 'dev'
-opt-level = 1 
+opt-level = 1
 
 [profile.optimized-release]
 inherits = 'release'
@@ -29,7 +26,6 @@ debug-assertions = false
 opt-level = 3
 panic = 'abort'
 incremental = false
-
 
 [workspace.lints.rust]
 missing_debug_implementations = "warn"
@@ -46,3 +42,10 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)"] }
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+# Temporary fix for dependencies
+[patch.crates-io]
+iroh-base = { path = "./iroh-base" }
+iroh-net = { path = "./iroh-net" }
+iroh-metrics = { path = "./iroh-metrics" }
+iroh-test = { path = "./iroh-test" }

@@ -1,7 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 25ec044e2b84054195984d7e04b93d9b39e2cc25eaee4037dc1be9398f9fd4b4 # shrinks to db = Database(RwLock { data: {}, poisoned: false, .. })
