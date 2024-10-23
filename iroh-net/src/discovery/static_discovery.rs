@@ -40,8 +40,11 @@ impl StaticDiscovery {
     /// # async fn example() -> anyhow::Result<()> {
     /// # #[derive(Default)] struct Args { tickets: Vec<NodeTicket> }
     /// # let args = Args::default();
+    /// // get tickets from command line args
     /// let tickets: Vec<NodeTicket> = args.tickets;
+    /// // create a StaticDiscovery from the tickets. Ticket info will be combined if multiple tickets refer to the same node.
     /// let discovery = StaticDiscovery::from_node_addrs(tickets);
+    /// // create an endpoint with the discovery
     /// let endpoint = Endpoint::builder()
     ///     .add_discovery(|_| Some(discovery))
     ///     .bind().await?;
