@@ -1,7 +1,6 @@
 [workspace]
 members = [
   "iroh",
-  "iroh-blobs",
   "iroh-base",
   "iroh-dns-server",
   "iroh-metrics",
@@ -28,7 +27,6 @@ opt-level = 3
 panic = 'abort'
 incremental = false
 
-
 [workspace.lints.rust]
 missing_debug_implementations = "warn"
 
@@ -49,6 +47,5 @@ unused-async = "warn"
 [patch.crates-io]
 iroh-base = { path = "./iroh-base" }
 iroh-net = { path = "./iroh-net" }
-iroh-blobs = { path = "./iroh-blobs" }
 iroh-metrics = { path = "./iroh-metrics" }
 iroh-test = { path = "./iroh-test" }
