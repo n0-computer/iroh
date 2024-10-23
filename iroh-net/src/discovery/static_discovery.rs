@@ -12,14 +12,14 @@ use iroh_base::{
 
 use super::{Discovery, DiscoveryItem};
 
-/// A static discovery implementation that allows adding info for nodes manually.
+/// A static discovery implementation that allows providing info for nodes manually.
 #[derive(Debug, Default)]
 #[repr(transparent)]
-pub struct StaticDiscovery {
+pub struct StaticProvider {
     nodes: Arc<RwLock<BTreeMap<NodeId, AddrInfo>>>,
 }
 
-impl StaticDiscovery {
+impl StaticProvider {
     /// The provenance string for this discovery implementation.
     pub const PROVENANCE: &'static str = "static_discovery";
 
@@ -35,15 +35,15 @@ impl StaticDiscovery {
     /// use std::str::FromStr;
     ///
     /// use iroh_base::ticket::NodeTicket;
-    /// use iroh_net::{Endpoint, discovery::static_discovery::StaticDiscovery};
+    /// use iroh_net::{Endpoint, discovery::static_discovery::StaticProvider};
     ///
     /// # async fn example() -> anyhow::Result<()> {
     /// # #[derive(Default)] struct Args { tickets: Vec<NodeTicket> }
     /// # let args = Args::default();
     /// // get tickets from command line args
     /// let tickets: Vec<NodeTicket> = args.tickets;
-    /// // create a StaticDiscovery from the tickets. Ticket info will be combined if multiple tickets refer to the same node.
-    /// let discovery = StaticDiscovery::from_node_addrs(tickets);
+    /// // create a StaticProvider from the tickets. Ticket info will be combined if multiple tickets refer to the same node.
+    /// let discovery = StaticProvider::from_node_addrs(tickets);
     /// // create an endpoint with the discovery
     /// let endpoint = Endpoint::builder()
     ///     .add_discovery(|_| Some(discovery))
@@ -94,14 +94,14 @@ impl StaticDiscovery {
     }
 
     /// Remove node info for the given node id.
-    pub fn remove_node_addr(&self, node_id: NodeId) -> NodeAddr {
+    pub fn remove_node_addr(&self, node_id: NodeId) -> Option<NodeAddr> {
         let mut guard = self.nodes.write().unwrap();
         let res = guard.remove(&node_id)?;
-        NodeAddr { node_id, info: res }
+        Some(NodeAddr { node_id, info: res })
     }
 }
 
-impl Discovery for StaticDiscovery {
+impl Discovery for StaticProvider {
     fn publish(&self, _info: &AddrInfo) {}
 
     fn resolve(
