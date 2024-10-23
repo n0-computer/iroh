@@ -1,7 +1,6 @@
 [workspace]
 members = [
   "iroh",
-  "iroh-blobs",
   "iroh-base",
   "iroh-dns-server",
   "iroh-gossip",
@@ -30,7 +29,6 @@ opt-level = 3
 panic = 'abort'
 incremental = false
 
-
 [workspace.lints.rust]
 missing_debug_implementations = "warn"
 
@@ -46,3 +44,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)"] }
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+[patch.crates-io]
+iroh-blobs = { path = "../iroh-blobs" }
+iroh-base = { path = "iroh-base" }
+iroh-net = { path = "iroh-net" }
