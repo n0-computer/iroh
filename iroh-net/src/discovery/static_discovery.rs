@@ -32,15 +32,21 @@ impl StaticDiscovery {
     ///
     /// Example:
     /// ```rust
-    /// # #[derive(Default)] struct Args { tickets: Vec<NodeTicket> }
-    /// # let args = Args::default();
     /// use std::str::FromStr;
     ///
     /// use iroh_base::ticket::NodeTicket;
-    /// use iroh_net::discovery::static_discovery::StaticDiscovery;
+    /// use iroh_net::{Endpoint, discovery::static_discovery::StaticDiscovery};
     ///
+    /// # async fn example() -> anyhow::Result<()> {
+    /// # #[derive(Default)] struct Args { tickets: Vec<NodeTicket> }
+    /// # let args = Args::default();
     /// let tickets: Vec<NodeTicket> = args.tickets;
     /// let discovery = StaticDiscovery::from_node_addrs(tickets);
+    /// let endpoint = Endpoint::builder()
+    ///     .add_discovery(|_| Some(discovery))
+    ///     .bind().await?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn from_node_addrs(infos: impl IntoIterator<Item = impl Into<NodeAddr>>) -> Self {
         let res = Self::default();
