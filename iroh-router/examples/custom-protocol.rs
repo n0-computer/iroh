@@ -1,15 +1,11 @@
-//! Example for adding a custom protocol to a iroh node.
+//! Example for adding a custom protocol.
 //!
-//! We are building a very simple custom protocol here, and make our iroh nodes speak this protocol
-//! in addition to the built-in protocols (blobs, gossip, docs).
+//! We are building a very simple custom protocol here.
 //!
-//! Our custom protocol allows querying the blob store of other nodes for text matches. For
-//! this, we keep a very primitive index of the UTF-8 text of our blobs.
+//! Our custom protocol allows querying the text stored on the other node.
 //!
 //! The example is contrived - we only use memory nodes, and our database is a hashmap in a mutex,
-//! and our queries just match if the query string appears as-is in a blob.
-//! Nevertheless, this shows how powerful systems can be built with custom protocols by also using
-//! the existing iroh protocols (blobs in this case).
+//! and our queries just match if the query string appears as-is.
 //!
 //! ## Usage
 //!
@@ -17,41 +13,33 @@
 //!
 //!     cargo run --example custom-protocol --features=examples  -- listen "hello-world" "foo-bar" "hello-moon"
 //!
-//! This spawns an iroh nodes with three blobs. It will print the node's node id.
+//! This spawns an iroh endpoint with three blobs. It will print the node's node id.
 //!
 //! In another terminal, run
 //!
 //!     cargo run --example custom-protocol --features=examples  -- query <node-id> hello
 //!
 //! Replace <node-id> with the node id from above. This will connect to the listening node with our
-//! custom protocol and query for the string `hello`. The listening node will return a list of
-//! blob hashes that contain `hello`. We will then download all these blobs with iroh-blobs,
-//! and then print a list of the hashes with their content.
+//! custom protocol and query for the string `hello`. The listening node will return a number of how many
+//! strings match the query.
 //!
 //! For this example, this will print:
 //!
-//!     moobakc6gao3ufmk: hello moon
-//!     25eyd35hbigiqc4n: hello world
+//! Found 2 matches
 //!
 //! That's it! Follow along in the code below, we added a bunch of comments to explain things.
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::{collections::BTreeSet, sync::Arc};
 
 use anyhow::Result;
 use clap::Parser;
 use futures_lite::future::Boxed as BoxedFuture;
-use iroh::{
-    blobs::Hash,
-    client::blobs,
-    net::{
-        endpoint::{get_remote_node_id, Connecting},
-        Endpoint, NodeId,
-    },
-    router::ProtocolHandler,
+use iroh_net::{
+    endpoint::{get_remote_node_id, Connecting},
+    Endpoint, NodeId,
 };
+use iroh_router::{ProtocolHandler, Router};
+use tokio::sync::Mutex;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 #[derive(Debug, Parser)]
@@ -87,24 +75,26 @@ async fn main() -> Result<()> {
     setup_logging();
     let args = Cli::parse();
 
-    // Build a in-memory node. For production code, you'd want a persistent node instead usually.
-    let builder = iroh::node::Node::memory().build().await?;
+    // Build an endpoint
+    let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
     // Build our custom protocol handler. The `builder` exposes access to various subsystems in the
     // iroh node. In our case, we need a blobs client and the endpoint.
-    let proto = BlobSearch::new(builder.client().blobs().clone(), builder.endpoint().clone());
+    let proto = BlobSearch::new(endpoint.clone());
+
+    let builder = Router::builder(endpoint);
 
     // Add our protocol, identified by our ALPN, to the node, and spawn the node.
-    let node = builder.accept(ALPN.to_vec(), proto.clone()).spawn().await?;
+    let router = builder.accept(ALPN.to_vec(), proto.clone()).spawn().await?;
 
     match args.command {
         Command::Listen { text } => {
-            let node_id = node.node_id();
+            let node_id = router.endpoint().node_id();
             println!("our node id: {node_id}");
 
             // Insert the text strings as blobs and index them.
             for text in text.into_iter() {
-                proto.insert_and_index(text).await?;
+                proto.insert(text).await?;
             }
 
             // Wait for Ctrl-C to be pressed.
@@ -114,25 +104,22 @@ async fn main() -> Result<()> {
             // Query the remote node.
             // This will send the query over our custom protocol, read hashes on the reply stream,
             // and download each hash over iroh-blobs.
-            let hashes = proto.query_remote(node_id, &query).await?;
+            let num_matches = proto.query_remote(node_id, &query).await?;
 
             // Print out our query results.
-            for hash in hashes {
-                read_and_print(node.blobs(), hash).await?;
-            }
+            println!("Found {} matches", num_matches);
         }
     }
 
-    node.shutdown().await?;
+    router.shutdown().await?;
 
     Ok(())
 }
 
 #[derive(Debug, Clone)]
 struct BlobSearch {
-    blobs: blobs::Client,
     endpoint: Endpoint,
-    index: Arc<Mutex<HashMap<String, Hash>>>,
+    blobs: Arc<Mutex<BTreeSet<String>>>,
 }
 
 impl ProtocolHandler for BlobSearch {
@@ -158,14 +145,12 @@ impl ProtocolHandler for BlobSearch {
 
             // Now, we can perform the actual query on our local database.
             let query = String::from_utf8(query_bytes)?;
-            let hashes = self.query_local(&query);
+            let num_matches = self.query_local(&query).await;
 
             // We want to return a list of hashes. We do the simplest thing possible, and just send
             // one hash after the other. Because the hashes have a fixed size of 32 bytes, this is
             // very easy to parse on the other end.
-            for hash in hashes {
-                send.write_all(hash.as_bytes()).await?;
-            }
+            send.write_all(&num_matches.to_le_bytes()).await?;
 
             // By calling `finish` on the send stream we signal that we will not send anything
             // further, which makes the receive stream on the other end terminate.
@@ -181,16 +166,15 @@ impl ProtocolHandler for BlobSearch {
 
 impl BlobSearch {
     /// Create a new protocol handler.
-    pub fn new(blobs: blobs::Client, endpoint: Endpoint) -> Arc<Self> {
+    pub fn new(endpoint: Endpoint) -> Arc<Self> {
         Arc::new(Self {
-            blobs,
             endpoint,
-            index: Default::default(),
+            blobs: Default::default(),
         })
     }
 
     /// Query a remote node, download all matching blobs and print the results.
-    pub async fn query_remote(&self, node_id: NodeId, query: &str) -> Result<Vec<Hash>> {
+    pub async fn query_remote(&self, node_id: NodeId, query: &str) -> Result<u64> {
         // Establish a connection to our node.
         // We use the default node discovery in iroh, so we can connect by node id without
         // providing further information.
@@ -216,77 +200,35 @@ impl BlobSearch {
 
         // The response is sent as a list of 32-byte long hashes.
         // We simply read one after the other into a byte buffer.
-        let mut hash_bytes = [0u8; 32];
-        loop {
-            // Read 32 bytes from the stream.
-            match recv.read_exact(&mut hash_bytes).await {
-                // FinishedEarly means that the remote side did not send further data,
-                // so in this case we break our loop.
-                Err(quinn::ReadExactError::FinishedEarly(_)) => break,
-                // Other errors are connection errors, so we bail.
-                Err(err) => return Err(err.into()),
-                Ok(_) => {}
-            };
-            // Upcast the raw bytes to the `Hash` type.
-            let hash = Hash::from_bytes(hash_bytes);
-            // Download the content via iroh-blobs.
-            self.blobs.download(hash, node_id.into()).await?.await?;
-            // Add the blob to our local database.
-            self.add_to_index(hash).await?;
-            out.push(hash);
-        }
-        Ok(out)
+        let mut num_matches = [0u8; 8];
+
+        // Read 8 bytes from the stream.
+        match recv.read_exact(&mut num_matches).await {
+            Err(err) => return Err(err.into()),
+            Ok(_) => {}
+        };
+        // Upcast the raw bytes to the `Hash` type.
+        let num_matches = u64::from_le_bytes(num_matches);
+        out.push(num_matches);
+
+        Ok(num_matches)
     }
 
     /// Query the local database.
     ///
-    /// Returns the list of hashes of blobs which contain `query` literally.
-    pub fn query_local(&self, query: &str) -> Vec<Hash> {
-        let db = self.index.lock().unwrap();
-        db.iter()
-            .filter_map(|(text, hash)| text.contains(query).then_some(*hash))
-            .collect::<Vec<_>>()
+    /// Returns how many matches were found.
+    pub async fn query_local(&self, query: &str) -> u64 {
+        let guard = self.blobs.lock().await;
+        let count: usize = guard.iter().filter(|text| text.contains(query)).count();
+        count as u64
     }
 
     /// Insert a text string into the database.
-    ///
-    /// This first imports the text as a blob into the iroh blob store, and then inserts a
-    /// reference to that hash in our (primitive) text database.
-    pub async fn insert_and_index(&self, text: String) -> Result<Hash> {
-        let hash = self.blobs.add_bytes(text.into_bytes()).await?.hash;
-        self.add_to_index(hash).await?;
-        Ok(hash)
+    pub async fn insert(&self, text: String) -> Result<()> {
+        let mut guard = self.blobs.lock().await;
+        guard.insert(text);
+        Ok(())
     }
-
-    /// Index a blob which is already in our blob store.
-    ///
-    /// This only indexes complete blobs that are smaller than 1KiB.
-    ///
-    /// Returns `true` if the blob was indexed.
-    async fn add_to_index(&self, hash: Hash) -> Result<bool> {
-        let mut reader = self.blobs.read(hash).await?;
-        // Skip blobs larger than 1KiB.
-        if reader.size() > 1024 * 1024 {
-            return Ok(false);
-        }
-        let bytes = reader.read_to_bytes().await?;
-        match String::from_utf8(bytes.to_vec()) {
-            Ok(text) => {
-                let mut db = self.index.lock().unwrap();
-                db.insert(text, hash);
-                Ok(true)
-            }
-            Err(_err) => Ok(false),
-        }
-    }
-}
-
-/// Read a blob from the local blob store and print it to STDOUT.
-async fn read_and_print(blobs: &blobs::Client, hash: Hash) -> Result<()> {
-    let content = blobs.read_to_bytes(hash).await?;
-    let message = String::from_utf8(content.to_vec())?;
-    println!("{}: {message}", hash.fmt_short());
-    Ok(())
 }
 
 /// Set the RUST_LOG env var to one of {debug,info,warn} to see logging.

@@ -2,4 +2,4 @@ mod protocol;
 mod router;
 
 pub use protocol::{ProtocolHandler, ProtocolMap};
-pub use router::Router;
+pub use router::{Router, RouterBuilder};

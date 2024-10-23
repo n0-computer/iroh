@@ -26,7 +26,7 @@ use iroh_net::{
     relay::{force_staging_infra, RelayMode},
     Endpoint,
 };
-use iroh_router::{ProtocolHandler, ProtocolMap};
+use iroh_router::{ProtocolHandler, RouterBuilder};
 use quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinError;
@@ -677,7 +677,7 @@ where
         let inner = Arc::new(NodeInner {
             rpc_addr: self.rpc_addr,
             db: Default::default(),
-            endpoint,
+            endpoint: endpoint.clone(),
             client,
             cancel_token: CancellationToken::new(),
             local_pool_handle: lp.handle().clone(),
@@ -685,7 +685,7 @@ where
 
         let protocol_builder = ProtocolBuilder {
             inner,
-            protocols: Default::default(),
+            router: RouterBuilder::new(endpoint),
             internal_rpc,
             external_rpc: self.rpc_endpoint,
             gc_policy: self.gc_policy,
@@ -719,7 +719,7 @@ pub struct ProtocolBuilder<D> {
     inner: Arc<NodeInner<D>>,
     internal_rpc: IrohServerEndpoint,
     external_rpc: IrohServerEndpoint,
-    protocols: ProtocolMap,
+    router: RouterBuilder,
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
     gc_policy: GcPolicy,
@@ -777,7 +777,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     ///
     ///
     pub fn accept(mut self, alpn: Vec<u8>, handler: Arc<dyn ProtocolHandler>) -> Self {
-        self.protocols.insert(alpn, handler);
+        self.router = self.router.accept(alpn, handler);
         self
     }
 
@@ -804,7 +804,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
     /// does not match the passed type.
     pub fn get_protocol<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
-        self.protocols.get_typed(alpn)
+        self.router.get_protocol::<P>(alpn)
     }
 
     /// Registers the core iroh protocols (blobs, gossip, docs).
@@ -842,24 +842,15 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
             inner,
             internal_rpc,
             external_rpc,
-            protocols,
+            router,
             gc_done_callback,
             gc_policy,
             nodes_data_path,
             local_pool: rt,
         } = self;
-        let protocols = Arc::new(protocols);
         let node_id = inner.endpoint.node_id();
 
-        // Update the endpoint with our alpns.
-        let alpns = protocols
-            .alpns()
-            .map(|alpn| alpn.to_vec())
-            .collect::<Vec<_>>();
-        if let Err(err) = inner.endpoint.set_alpns(alpns) {
-            inner.shutdown(protocols).await;
-            return Err(err);
-        }
+        let router = router.spawn().await?;
 
         // Spawn the main task and store it in the node for structured termination in shutdown.
         let fut = inner
@@ -867,7 +858,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
             .run(
                 external_rpc,
                 internal_rpc,
-                protocols.clone(),
+                router.clone(),
                 gc_policy,
                 gc_done_callback,
                 nodes_data_path,
@@ -878,7 +869,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
 
         let node = Node {
             inner,
-            protocols,
+            router,
             task: AbortOnDropHandle::new(task)
                 .map_err(Box::new(|e: JoinError| e.to_string()) as JoinErrToStr)
                 .shared(),
