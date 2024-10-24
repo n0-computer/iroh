@@ -24,7 +24,7 @@ use super::bsd as os;
 use super::linux as os;
 #[cfg(target_os = "windows")]
 use super::windows as os;
-use crate::net::{
+use crate::{
     interfaces::{IpNet, State},
     ip::is_link_local,
 };

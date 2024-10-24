@@ -29,7 +29,7 @@ use self::bsd::default_route;
 use self::linux::default_route;
 #[cfg(target_os = "windows")]
 use self::windows::default_route;
-use crate::net::ip::{is_private_v6, is_up};
+use crate::ip::{is_private_v6, is_up};
 
 /// Represents a network interface.
 #[derive(Debug)]
