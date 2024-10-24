@@ -2710,8 +2710,6 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b434d455389493ff2b2ecbab035c12eb3762f24d04080855ecd4956bf7739448"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2726,10 +2724,14 @@ dependencies = [
  "iroh-blake3",
  "iroh-metrics",
  "iroh-net",
+ "nested_enum_utils",
  "postcard",
+ "quic-rpc",
+ "quic-rpc-derive",
  "rand",
  "rand_core",
  "serde",
+ "strum 0.26.3",
  "tokio",
  "tokio-util",
  "tracing",

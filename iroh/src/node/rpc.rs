@@ -60,7 +60,7 @@ use crate::{
             ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,
             Request as DocsRequest, SetHashRequest,
         },
-        gossip, net,
+        net,
         net::{
             AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest,
             RemoteInfoRequest, RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse,
@@ -244,10 +244,11 @@ impl<D: BaoStore> Handler<D> {
 
     async fn handle_gossip_request(
         self,
-        msg: gossip::Request,
+        msg: iroh_gossip::rpc::Request,
         chan: RpcChannel<RpcService, IrohServerEndpoint>,
     ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
-        use gossip::Request::*;
+        let chan = chan.map::<iroh_gossip::rpc::RpcService>();
+        use iroh_gossip::rpc::Request::*;
         match msg {
             Subscribe(msg) => {
                 chan.bidi_streaming(msg, self, |handler, req, updates| {
