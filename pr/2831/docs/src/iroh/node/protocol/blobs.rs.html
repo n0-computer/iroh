@@ -266,7 +266,6 @@
 <a href="#266" id="266">266</a>
 <a href="#267" id="267">267</a>
 <a href="#268" id="268">268</a>
-<a href="#269" id="269">269</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::BTreeMap, sync::Arc};
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
@@ -288,12 +287,11 @@
 <span class="kw">use </span>iroh_net::{endpoint::Connecting, Endpoint, NodeAddr};
 <span class="kw">use </span>tracing::{debug, warn};
 
+<span class="kw">use </span><span class="kw">super</span>::ProtocolHandler;
 <span class="kw">use crate</span>::{
     client::blobs::DownloadMode,
     rpc_protocol::blobs::{BatchId, DownloadRequest <span class="kw">as </span>BlobDownloadRequest},
 };
-
-<span class="kw">use </span><span class="kw">super</span>::ProtocolHandler;
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>BlobsProtocol&lt;S&gt; {
