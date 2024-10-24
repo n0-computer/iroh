@@ -127,7 +127,7 @@ impl RttActor {
         match item {
             Some((key, new_conn_type)) => match self.connections.get(&key) {
                 Some((handle, node_id)) => {
-                    if handle.reset_congestion_state() {
+                    if handle.network_path_changed() {
                         debug!(
                             node_id = %node_id.fmt_short(),
                             new_type = ?new_conn_type,
