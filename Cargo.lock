@@ -2807,6 +2807,7 @@ dependencies = [
  "iroh-test",
  "libc",
  "mainline",
+ "net",
  "netdev",
  "netlink-packet-core",
  "netlink-packet-route",
