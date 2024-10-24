@@ -7,7 +7,7 @@ members = [
   "iroh-net",
   "iroh-test",
   "iroh-net/bench",
-  "iroh-cli", "net-tools/net",
+  "iroh-cli", "net-tools/net", "net-tools/portmapper",
 ]
 resolver = "2"
 
