@@ -155,10 +155,11 @@ impl ProtocolHandler for BlobSearch {
             // By calling `finish` on the send stream we signal that we will not send anything
             // further, which makes the receive stream on the other end terminate.
             send.finish()?;
-            // By calling stopped we wait until the remote iroh Endpoint has acknowledged
-            // all data.  This does not mean the remote application has received all data
-            // from the Endpoint.
-            send.stopped().await?;
+
+            // Wait until the remote closes the connection, which it does once it
+            // received the response.
+            connection.closed().await;
+
             Ok(())
         })
     }
@@ -189,25 +190,17 @@ impl BlobSearch {
         // Finish the send stream, signalling that no further data will be sent.
         // This makes the `read_to_end` call on the accepting side terminate.
         send.finish()?;
-        // By calling stopped we wait until the remote iroh Endpoint has acknowledged all
-        // data.  This does not mean the remote application has received all data from the
-        // Endpoint.
-        send.stopped().await?;
 
-        // In this example, we simply collect all results into a vector.
-        // For real protocols, you'd usually want to return a stream of results instead.
-        let mut out = vec![];
-
-        // The response is sent as a list of 32-byte long hashes.
-        // We simply read one after the other into a byte buffer.
+        // The response is a 64 bit integer
+        // We simply read it into a byte buffer.
         let mut num_matches = [0u8; 8];
 
         // Read 8 bytes from the stream.
         recv.read_exact(&mut num_matches).await?;
 
-        // Upcast the raw bytes to the `Hash` type.
         let num_matches = u64::from_le_bytes(num_matches);
-        out.push(num_matches);
+
+        // Dropping the conection here will close it.
 
         Ok(num_matches)
     }

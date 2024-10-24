@@ -7,10 +7,9 @@ use iroh_net::endpoint::Connecting;
 
 /// Handler for incoming connections.
 ///
-/// An iroh node can accept connections for arbitrary ALPN protocols. By default, the iroh node
-/// only accepts connections for the ALPNs of the core iroh protocols (blobs, gossip, docs).
+/// A router accepts connections for arbitrary ALPN protocols.
 ///
-/// With this trait, you can handle incoming connections for custom protocols.
+/// With this trait, you can handle incoming connections for any protocol.
 ///
 /// Implement this trait on a struct that should handle incoming connections.
 /// The protocol handler must then be registered on the node for an ALPN protocol with

@@ -108,7 +108,7 @@ impl RouterBuilder {
         let cancel = CancellationToken::new();
         let cancel_token = cancel.clone();
 
-        let fut = async move {
+        let run_loop_fut = async move {
             let protocols = protos;
             loop {
                 tokio::select! {
@@ -154,7 +154,7 @@ impl RouterBuilder {
             tracing::info!("Shutting down remaining tasks");
             join_set.shutdown().await;
         };
-        let task = tokio::task::spawn(fut);
+        let task = tokio::task::spawn(run_loop_fut);
         let task = AbortOnDropHandle::new(task)
             .map_err(Box::new(|e: JoinError| e.to_string()) as JoinErrToStr)
             .shared();
