@@ -1429,6 +1429,7 @@
 <span class="kw">use </span>tokio_util::either::Either;
 <span class="kw">use </span>tracing::{debug, info, warn};
 
+<span class="kw">use </span><span class="kw">super</span>::IrohServerEndpoint;
 <span class="kw">use crate</span>::{
     client::{
         blobs::{BlobInfo, BlobStatus, IncompleteBlobInfo, WrapOption},
@@ -1436,9 +1437,8 @@
         NodeStatus,
     },
     node::{
-        docs::DocsEngine,
-        protocol::{BlobsProtocol, GossipProtocol},
-        IrohServerEndpoint, NodeInner,
+        protocol::{blobs::BlobsProtocol, docs::DocsProtocol, gossip::GossipProtocol},
+        NodeInner,
     },
     rpc_protocol::{
         authors,
@@ -1489,8 +1489,8 @@
 }
 
 <span class="kw">impl</span>&lt;D: BaoStore&gt; Handler&lt;D&gt; {
-    <span class="kw">fn </span>docs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;DocsEngine&gt;&gt; {
-        <span class="self">self</span>.router.get_protocol::&lt;DocsEngine&gt;(DOCS_ALPN)
+    <span class="kw">fn </span>docs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;DocsProtocol&gt;&gt; {
+        <span class="self">self</span>.router.get_protocol::&lt;DocsProtocol&gt;(DOCS_ALPN)
     }
 
     <span class="kw">fn </span>blobs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;BlobsProtocol&lt;D&gt;&gt; {
@@ -1506,7 +1506,7 @@
     <span class="kw">async fn </span>with_docs&lt;T, F, Fut&gt;(<span class="self">self</span>, f: F) -&gt; RpcResult&lt;T&gt;
     <span class="kw">where
         </span>T: Send + <span class="lifetime">'static</span>,
-        F: FnOnce(Arc&lt;DocsEngine&gt;) -&gt; Fut,
+        F: FnOnce(Arc&lt;DocsProtocol&gt;) -&gt; Fut,
         Fut: std::future::Future&lt;Output = RpcResult&lt;T&gt;&gt;,
     {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(docs) = <span class="self">self</span>.docs() {
@@ -1519,7 +1519,7 @@
     <span class="kw">fn </span>with_docs_stream&lt;T, F, S&gt;(<span class="self">self</span>, f: F) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;T&gt;&gt;
     <span class="kw">where
         </span>T: Send + <span class="lifetime">'static</span>,
-        F: FnOnce(Arc&lt;DocsEngine&gt;) -&gt; S,
+        F: FnOnce(Arc&lt;DocsProtocol&gt;) -&gt; S,
         S: Stream&lt;Item = RpcResult&lt;T&gt;&gt;,
     {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(docs) = <span class="self">self</span>.docs() {

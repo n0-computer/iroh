@@ -831,7 +831,6 @@
 <a href="#831" id="831">831</a>
 <a href="#832" id="832">832</a>
 <a href="#833" id="833">833</a>
-<a href="#834" id="834">834</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node API
 //!
 //! An iroh node is a server that is identified by an Ed25519 keypair and is
@@ -893,16 +892,15 @@
     AddrInfo, Endpoint, NodeAddr,
 };
 <span class="kw">use </span>iroh_router::{ProtocolHandler, Router};
-<span class="kw">use </span>protocol::BlobsProtocol;
+<span class="kw">use </span>protocol::blobs::BlobsProtocol;
 <span class="kw">use </span>quic_rpc::{transport::ServerEndpoint <span class="kw">as _</span>, RpcServer};
 <span class="kw">use </span>tokio::task::{JoinError, JoinSet};
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
-<span class="kw">use </span><span class="kw">crate</span>::node::{docs::DocsEngine, nodes_storage::store_node_addrs};
+<span class="kw">use </span><span class="kw">crate</span>::node::{nodes_storage::store_node_addrs, protocol::docs::DocsProtocol};
 
 <span class="kw">mod </span>builder;
-<span class="kw">mod </span>docs;
 <span class="kw">mod </span>nodes_storage;
 <span class="kw">mod </span>protocol;
 <span class="kw">mod </span>rpc;
@@ -1128,7 +1126,7 @@
         </span><span class="kw">if let </span>GcPolicy::Interval(gc_period) = gc_policy {
             <span class="kw">let </span>router = router.clone();
             <span class="kw">let </span>handle = local_pool.spawn(<span class="kw">move </span>|| <span class="kw">async move </span>{
-                <span class="kw">let </span>docs_engine = router.get_protocol::&lt;DocsEngine&gt;(DOCS_ALPN);
+                <span class="kw">let </span>docs_engine = router.get_protocol::&lt;DocsProtocol&gt;(DOCS_ALPN);
                 <span class="kw">let </span>blobs = router
                     .get_protocol::&lt;BlobsProtocol&lt;D&gt;&gt;(iroh_blobs::protocol::ALPN)
                     .expect(<span class="string">"missing blobs"</span>);

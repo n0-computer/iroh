@@ -959,6 +959,9 @@
 <a href="#959" id="959">959</a>
 <a href="#960" id="960">960</a>
 <a href="#961" id="961">961</a>
+<a href="#962" id="962">962</a>
+<a href="#963" id="963">963</a>
+<a href="#964" id="964">964</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -995,12 +998,15 @@
 <span class="kw">use </span>tracing::{debug, error_span, trace, Instrument};
 
 <span class="kw">use super</span>::{
-    docs::DocsEngine, protocol::GossipProtocol, rpc_status::RpcStatus, IrohServerEndpoint,
-    JoinErrToStr, Node, NodeInner,
+    protocol::gossip::GossipProtocol, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr,
+    Node, NodeInner,
 };
 <span class="kw">use crate</span>::{
     client::RPC_ALPN,
-    node::{nodes_storage::load_node_addrs, protocol::BlobsProtocol},
+    node::{
+        nodes_storage::load_node_addrs,
+        protocol::{blobs::BlobsProtocol, docs::DocsProtocol},
+    },
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
 };
@@ -1613,8 +1619,8 @@
         </span><span class="kw">let </span>downloader = Downloader::new(<span class="self">self</span>.blobs_store.clone(), endpoint.clone(), lp.clone());
 
         <span class="comment">// Spawn the docs engine, if enabled.
-        // This returns None for DocsStorage::Disabled, otherwise Some(DocsEngine).
-        </span><span class="kw">let </span>docs = DocsEngine::spawn(
+        // This returns None for DocsStorage::Disabled, otherwise Some(DocsProtocol).
+        </span><span class="kw">let </span>docs = DocsProtocol::spawn(
             <span class="self">self</span>.docs_storage,
             <span class="self">self</span>.blobs_store.clone(),
             <span class="self">self</span>.storage.default_author_storage(),
@@ -1772,7 +1778,7 @@
         store: D,
         gossip: Gossip,
         downloader: Downloader,
-        docs: <span class="prelude-ty">Option</span>&lt;DocsEngine&gt;,
+        docs: <span class="prelude-ty">Option</span>&lt;DocsProtocol&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="comment">// Register blobs.
         </span><span class="kw">let </span>blobs_proto = BlobsProtocol::new_with_events(

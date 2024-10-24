@@ -308,7 +308,7 @@
 <a href="#308" id="308">308</a>
 <a href="#309" id="309">309</a>
 <a href="#310" id="310">310</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! This module contains an impl block on [`DocsEngine`] with handlers for RPC requests
+</pre></div><pre class="rust"><code><span class="doccomment">//! This module contains an impl block on [`DocsProtocol`] with handlers for RPC requests
 
 </span><span class="kw">use </span>anyhow::anyhow;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
@@ -318,7 +318,7 @@
 
 <span class="kw">use crate</span>::{
     client::docs::ShareMode,
-    node::DocsEngine,
+    node::protocol::docs::DocsProtocol,
     rpc_protocol::{
         authors::{
             CreateRequest, CreateResponse, DeleteRequest, DeleteResponse, ExportRequest,
@@ -345,7 +345,7 @@
 </span><span class="kw">const </span>ITER_CHANNEL_CAP: usize = <span class="number">64</span>;
 
 <span class="attr">#[allow(missing_docs)]
-</span><span class="kw">impl </span>DocsEngine {
+</span><span class="kw">impl </span>DocsProtocol {
     <span class="kw">pub async fn </span>author_create(<span class="kw-2">&amp;</span><span class="self">self</span>, _req: CreateRequest) -&gt; RpcResult&lt;CreateResponse&gt; {
         <span class="comment">// TODO: pass rng
         </span><span class="kw">let </span>author = Author::new(<span class="kw-2">&amp;mut </span>rand::rngs::OsRng {});
