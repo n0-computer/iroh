@@ -43,7 +43,10 @@ use crate::{
         tags::TagInfo,
         NodeStatus,
     },
-    node::{docs::DocsEngine, protocol::BlobsProtocol, NodeInner},
+    node::{
+        protocol::{blobs::BlobsProtocol, docs::DocsProtocol},
+        NodeInner,
+    },
     rpc_protocol::{
         authors, blobs,
         blobs::{
@@ -95,8 +98,8 @@ impl<D> Handler<D> {
 }
 
 impl<D: BaoStore> Handler<D> {
-    fn docs(&self) -> Option<Arc<DocsEngine>> {
-        self.protocols.get_typed::<DocsEngine>(DOCS_ALPN)
+    fn docs(&self) -> Option<Arc<DocsProtocol>> {
+        self.protocols.get_typed::<DocsProtocol>(DOCS_ALPN)
     }
 
     fn blobs(&self) -> Arc<BlobsProtocol<D>> {
@@ -112,7 +115,7 @@ impl<D: BaoStore> Handler<D> {
     async fn with_docs<T, F, Fut>(self, f: F) -> RpcResult<T>
     where
         T: Send + 'static,
-        F: FnOnce(Arc<DocsEngine>) -> Fut,
+        F: FnOnce(Arc<DocsProtocol>) -> Fut,
         Fut: std::future::Future<Output = RpcResult<T>>,
     {
         if let Some(docs) = self.docs() {
@@ -125,7 +128,7 @@ impl<D: BaoStore> Handler<D> {
     fn with_docs_stream<T, F, S>(self, f: F) -> impl Stream<Item = RpcResult<T>>
     where
         T: Send + 'static,
-        F: FnOnce(Arc<DocsEngine>) -> S,
+        F: FnOnce(Arc<DocsProtocol>) -> S,
         S: Stream<Item = RpcResult<T>>,
     {
         if let Some(docs) = self.docs() {

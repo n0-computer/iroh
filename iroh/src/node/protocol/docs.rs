@@ -11,9 +11,9 @@ use crate::node::{DocsStorage, ProtocolHandler};
 
 /// Wrapper around [`Engine`] so that we can implement our RPC methods directly.
 #[derive(Debug, Clone)]
-pub(crate) struct DocsEngine(Engine);
+pub(crate) struct DocsProtocol(Engine);
 
-impl DocsEngine {
+impl DocsProtocol {
     pub async fn spawn<S: iroh_blobs::store::Store>(
         storage: DocsStorage,
         blobs_store: S,
@@ -36,18 +36,18 @@ impl DocsEngine {
             default_author_storage,
         )
         .await?;
-        Ok(Some(DocsEngine(engine)))
+        Ok(Some(DocsProtocol(engine)))
     }
 }
 
-impl Deref for DocsEngine {
+impl Deref for DocsProtocol {
     type Target = Engine;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl ProtocolHandler for DocsEngine {
+impl ProtocolHandler for DocsProtocol {
     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move { self.handle_connection(conn).await })
     }

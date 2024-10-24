@@ -59,16 +59,18 @@ use iroh_net::{
     endpoint::{DirectAddrsStream, RemoteInfo},
     AddrInfo, Endpoint, NodeAddr,
 };
-use protocol::BlobsProtocol;
+use protocol::blobs::BlobsProtocol;
 use quic_rpc::{transport::ServerEndpoint as _, RpcServer};
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
-use crate::node::{docs::DocsEngine, nodes_storage::store_node_addrs, protocol::ProtocolMap};
+use crate::node::{
+    nodes_storage::store_node_addrs,
+    protocol::{docs::DocsProtocol, ProtocolMap},
+};
 
 mod builder;
-mod docs;
 mod nodes_storage;
 mod protocol;
 mod rpc;
@@ -296,7 +298,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         if let GcPolicy::Interval(gc_period) = gc_policy {
             let protocols = protocols.clone();
             let handle = local_pool.spawn(move || async move {
-                let docs_engine = protocols.get_typed::<DocsEngine>(DOCS_ALPN);
+                let docs_engine = protocols.get_typed::<DocsProtocol>(DOCS_ALPN);
                 let blobs = protocols
                     .get_typed::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
                     .expect("missing blobs");

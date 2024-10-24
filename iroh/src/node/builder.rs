@@ -32,14 +32,12 @@ use tokio::task::JoinError;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error_span, trace, Instrument};
 
-use super::{
-    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
-};
+use super::{rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner};
 use crate::{
     client::RPC_ALPN,
     node::{
         nodes_storage::load_node_addrs,
-        protocol::{BlobsProtocol, ProtocolMap},
+        protocol::{blobs::BlobsProtocol, docs::DocsProtocol, ProtocolMap},
         ProtocolHandler,
     },
     rpc_protocol::RpcService,
@@ -654,8 +652,8 @@ where
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
 
         // Spawn the docs engine, if enabled.
-        // This returns None for DocsStorage::Disabled, otherwise Some(DocsEngine).
-        let docs = DocsEngine::spawn(
+        // This returns None for DocsStorage::Disabled, otherwise Some(DocsProtocol).
+        let docs = DocsProtocol::spawn(
             self.docs_storage,
             self.blobs_store.clone(),
             self.storage.default_author_storage(),
@@ -813,7 +811,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         store: D,
         gossip: Gossip,
         downloader: Downloader,
-        docs: Option<DocsEngine>,
+        docs: Option<DocsProtocol>,
     ) -> Self {
         // Register blobs.
         let blobs_proto = BlobsProtocol::new_with_events(
