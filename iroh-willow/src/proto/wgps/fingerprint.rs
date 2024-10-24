@@ -2,11 +2,47 @@ use std::fmt;
 
 use iroh_blobs::Hash;
 use serde::{Deserialize, Serialize};
+use willow_store::{FixedSize, LiftingCommutativeMonoid, PointRef};
 
-use crate::proto::data_model::{Entry, EntryExt};
+use crate::{
+    proto::data_model::{Entry, EntryExt},
+    store::glue::{IrohWillowParams, StoredAuthorisedEntry},
+};
 
-#[derive(Default, Serialize, Deserialize, Eq, PartialEq, Clone, Copy)]
+#[derive(
+    Default,
+    Serialize,
+    Deserialize,
+    Eq,
+    PartialEq,
+    Clone,
+    Copy,
+    zerocopy_derive::FromBytes,
+    zerocopy_derive::AsBytes,
+    zerocopy_derive::FromZeroes,
+)]
+#[repr(transparent)]
 pub struct Fingerprint(pub [u8; 32]);
+
+impl FixedSize for Fingerprint {
+    const SIZE: usize = std::mem::size_of::<Self>();
+}
+
+impl LiftingCommutativeMonoid<PointRef<IrohWillowParams>, StoredAuthorisedEntry> for Fingerprint {
+    fn neutral() -> Self {
+        Self([0u8; 32])
+    }
+
+    fn lift(_key: &PointRef<IrohWillowParams>, value: &StoredAuthorisedEntry) -> Self {
+        Self(value.payload_digest)
+    }
+
+    fn combine(&self, other: &Self) -> Self {
+        let mut slf = self.clone();
+        slf ^= *other;
+        slf
+    }
+}
 
 impl fmt::Debug for Fingerprint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
