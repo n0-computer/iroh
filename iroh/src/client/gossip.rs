@@ -22,7 +22,7 @@ use iroh_net::NodeId;
 use ref_cast::RefCast;
 
 use super::RpcClient;
-pub use crate::rpc_protocol::gossip::{SubscribeRequest, SubscribeResponse, SubscribeUpdate};
+pub use iroh_gossip::rpc::{SubscribeRequest, SubscribeResponse, SubscribeUpdate};
 
 /// Iroh gossip client.
 #[derive(Debug, Clone, RefCast)]
@@ -78,6 +78,8 @@ impl Client {
     )> {
         let (sink, stream) = self
             .rpc
+            .clone()
+            .map::<iroh_gossip::rpc::RpcService>()
             .bidi(SubscribeRequest {
                 topic,
                 bootstrap: opts.bootstrap,
