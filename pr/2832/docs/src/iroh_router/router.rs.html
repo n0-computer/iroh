@@ -319,7 +319,7 @@
         <span class="kw">let </span>cancel = CancellationToken::new();
         <span class="kw">let </span>cancel_token = cancel.clone();
 
-        <span class="kw">let </span>fut = <span class="kw">async move </span>{
+        <span class="kw">let </span>run_loop_fut = <span class="kw">async move </span>{
             <span class="kw">let </span>protocols = protos;
             <span class="kw">loop </span>{
                 <span class="macro">tokio::select!</span> {
@@ -365,7 +365,7 @@
             </span><span class="macro">tracing::info!</span>(<span class="string">"Shutting down remaining tasks"</span>);
             join_set.shutdown().<span class="kw">await</span>;
         };
-        <span class="kw">let </span>task = tokio::task::spawn(fut);
+        <span class="kw">let </span>task = tokio::task::spawn(run_loop_fut);
         <span class="kw">let </span>task = AbortOnDropHandle::new(task)
             .map_err(Box::new(|e: JoinError| e.to_string()) <span class="kw">as </span>JoinErrToStr)
             .shared();
