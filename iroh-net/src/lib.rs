@@ -241,7 +241,7 @@ pub mod dns;
 pub mod endpoint;
 mod magicsock;
 pub mod metrics;
-pub mod net;
+pub use net;
 pub mod netcheck;
 pub mod ping;
 pub mod portmapper;

@@ -33,7 +33,7 @@ use crate::ip::{is_private_v6, is_up};
 
 /// Represents a network interface.
 #[derive(Debug)]
-pub(crate) struct Interface {
+pub struct Interface {
     iface: netdev::interface::Interface,
 }
 
@@ -71,7 +71,7 @@ impl Interface {
     }
 
     /// A list of all ip addresses of this interface.
-    pub(crate) fn addrs(&self) -> impl Iterator<Item = IpNet> + '_ {
+    pub fn addrs(&self) -> impl Iterator<Item = IpNet> + '_ {
         self.iface
             .ipv4
             .iter()
@@ -89,7 +89,6 @@ impl Interface {
     /// free to add parameters or different alternative constructors.
     ///
     /// [`ProbePlan`]: crate::netcheck::reportgen::probes::ProbePlan
-    #[cfg(test)]
     pub(crate) fn fake() -> Self {
         use std::net::Ipv4Addr;
 
@@ -126,7 +125,7 @@ impl Interface {
 
 /// Structure of an IP network, either IPv4 or IPv6.
 #[derive(Clone, Debug)]
-pub(crate) enum IpNet {
+pub enum IpNet {
     /// Structure of IPv4 Network.
     V4(Ipv4Net),
     /// Structure of IPv6 Network.
@@ -161,16 +160,16 @@ impl IpNet {
 /// Intended to store the state of the machine's network interfaces, routing table, and
 /// other network configuration. For now it's pretty basic.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct State {
+pub struct State {
     /// Maps from an interface name interface.
-    pub(crate) interfaces: HashMap<String, Interface>,
+    pub interfaces: HashMap<String, Interface>,
 
     /// Whether this machine has an IPv6 Global or Unique Local Address
     /// which might provide connectivity.
-    pub(crate) have_v6: bool,
+    pub have_v6: bool,
 
     /// Whether the machine has some non-localhost, non-link-local IPv4 address.
-    pub(crate) have_v4: bool,
+    pub have_v4: bool,
 
     //// Whether the current network interface is considered "expensive", which currently means LTE/etc
     /// instead of Wifi. This field is not populated by `get_state`.
@@ -262,8 +261,7 @@ impl State {
     /// free to add parameters or different alternative constructors.
     ///
     /// [`ProbePlan`]: crate::netcheck::reportgen::probes::ProbePlan
-    #[cfg(test)]
-    pub(crate) fn fake() -> Self {
+    pub fn fake() -> Self {
         let fake = Interface::fake();
         let ifname = fake.iface.name.clone();
         Self {
@@ -341,7 +339,7 @@ pub async fn default_route_interface() -> Option<String> {
 /// Likely IPs of the residentla router, and the ip address of the current
 /// machine using it.
 #[derive(Debug, Clone)]
-pub(crate) struct HomeRouter {
+pub struct HomeRouter {
     /// Ip of the router.
     pub gateway: IpAddr,
     /// Our local Ip if known.
@@ -354,7 +352,7 @@ impl HomeRouter {
     /// In addition, it returns the IP address of the current machine on
     /// the LAN using that gateway.
     /// This is used as the destination for UPnP, NAT-PMP, PCP, etc queries.
-    pub(crate) fn new() -> Option<Self> {
+    pub fn new() -> Option<Self> {
         let gateway = Self::get_default_gateway()?;
         let my_ip = netdev::interface::get_local_ipaddr();
 
