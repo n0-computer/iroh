@@ -6,8 +6,9 @@ use iroh_blobs::downloader::Downloader;
 use iroh_docs::engine::{DefaultAuthorStorage, Engine};
 use iroh_gossip::net::Gossip;
 use iroh_net::{endpoint::Connecting, Endpoint};
+use iroh_router::ProtocolHandler;
 
-use crate::node::{DocsStorage, ProtocolHandler};
+use crate::node::DocsStorage;
 
 /// Wrapper around [`Engine`] so that we can implement our RPC methods directly.
 #[derive(Debug, Clone)]
