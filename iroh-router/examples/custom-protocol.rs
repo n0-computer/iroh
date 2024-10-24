@@ -200,7 +200,7 @@ impl BlobSearch {
 
         let num_matches = u64::from_le_bytes(num_matches);
 
-        // Dropping the conection here will close it.
+        // Dropping the connection here will close it.
 
         Ok(num_matches)
     }
