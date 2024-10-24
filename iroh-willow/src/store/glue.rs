@@ -114,40 +114,6 @@ pub(crate) fn path_to_blobseq(path: &Path) -> BlobSeq {
     BlobSeq::from(path_bytes)
 }
 
-pub(crate) fn blobseq_successor(blobseq: &BlobSeq) -> BlobSeq {
-    BlobSeq::from(
-        blobseq
-            .components()
-            .map(|slice| slice.to_vec())
-            .chain(Some(Vec::new())) // Add an empty path element
-            .collect::<Vec<_>>(),
-    )
-}
-
-pub(crate) fn blobseq_below(blobseq: &BlobSeq) -> Option<BlobSeq> {
-    let mut path = blobseq
-        .components()
-        .map(|slice| slice.to_vec())
-        .collect::<Vec<_>>();
-
-    if path
-        .last_mut()
-        .map(|last_path| match last_path.last_mut() {
-            Some(255) | None => {
-                last_path.push(0);
-            }
-            Some(i) => {
-                *i += 1;
-            }
-        })
-        .is_some()
-    {
-        Some(BlobSeq::from(path))
-    } else {
-        None
-    }
-}
-
 pub(crate) fn to_query(range3d: &Range3d) -> QueryRange3d<IrohWillowParams> {
     let path_start = path_to_blobseq(&range3d.paths().start);
     let path_end = match &range3d.paths().end {
