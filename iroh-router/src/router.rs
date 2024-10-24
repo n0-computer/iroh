@@ -16,7 +16,7 @@ use crate::{ProtocolHandler, ProtocolMap};
 pub struct Router {
     endpoint: Endpoint,
     protocols: Arc<ProtocolMap>,
-    // `Node` needs to be `Clone + Send`, and we need to `task.await` in its `shutdown()` impl.
+    // `Router` needs to be `Clone + Send`, and we need to `task.await` in its `shutdown()` impl.
     // So we need
     // - `Shared` so we can `task.await` from all `Node` clones
     // - `MapErr` to map the `JoinError` to a `String`, because `JoinError` is `!Clone`
