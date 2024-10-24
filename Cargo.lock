@@ -2840,7 +2840,6 @@ dependencies = [
  "stun-rs",
  "surge-ping",
  "swarm-discovery",
- "testdir",
  "testresult",
  "thiserror",
  "time",
