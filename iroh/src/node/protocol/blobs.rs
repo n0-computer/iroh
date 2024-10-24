@@ -19,12 +19,11 @@ use iroh_blobs::{
 use iroh_net::{endpoint::Connecting, Endpoint, NodeAddr};
 use tracing::{debug, warn};
 
+use super::ProtocolHandler;
 use crate::{
     client::blobs::DownloadMode,
     rpc_protocol::blobs::{BatchId, DownloadRequest as BlobDownloadRequest},
 };
-
-use super::ProtocolHandler;
 
 #[derive(Debug)]
 pub(crate) struct BlobsProtocol<S> {
