@@ -2,6 +2,13 @@
 name = "iroh-router"
 version = "0.27.0"
 edition = "2021"
+readme = "README.md"
+description = "protocol router support for iroh"
+license = "MIT OR Apache-2.0"
+authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
+repository = "https://github.com/n0-computer/iroh"
+keywords = ["quic", "networking", "holepunching", "p2p"]
+
 
 [dependencies]
 anyhow = "1.0.91"

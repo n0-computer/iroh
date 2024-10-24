@@ -203,10 +203,8 @@ impl BlobSearch {
         let mut num_matches = [0u8; 8];
 
         // Read 8 bytes from the stream.
-        match recv.read_exact(&mut num_matches).await {
-            Err(err) => return Err(err.into()),
-            Ok(_) => {}
-        };
+        recv.read_exact(&mut num_matches).await?;
+
         // Upcast the raw bytes to the `Hash` type.
         let num_matches = u64::from_le_bytes(num_matches);
         out.push(num_matches);
