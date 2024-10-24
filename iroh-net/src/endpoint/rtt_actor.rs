@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use futures_concurrency::stream::stream_group;
 use futures_lite::StreamExt;
 use iroh_base::key::NodeId;
+use iroh_metrics::inc;
 use tokio::{
     sync::{mpsc, Notify},
     task::JoinHandle,
@@ -12,7 +13,10 @@ use tokio::{
 };
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use crate::magicsock::{ConnectionType, ConnectionTypeStream};
+use crate::{
+    magicsock::{ConnectionType, ConnectionTypeStream},
+    metrics::MagicsockMetrics,
+};
 
 #[derive(Debug)]
 pub(super) struct RttHandle {
@@ -65,7 +69,9 @@ struct RttActor {
     ///
     /// These are weak references so not to keep the connections alive.  The key allows
     /// removing the corresponding stream from `conn_type_changes`.
-    connections: HashMap<stream_group::Key, (quinn::WeakConnectionHandle, NodeId)>,
+    /// The boolean is an indiciator of whether this connection was direct before.
+    /// This helps establish metrics on number of connections that became direct.
+    connections: HashMap<stream_group::Key, (quinn::WeakConnectionHandle, NodeId, bool)>,
     /// A way to notify the main actor loop to run over.
     ///
     /// E.g. when a new stream was added.
@@ -113,8 +119,9 @@ impl RttActor {
         node_id: NodeId,
     ) {
         let key = self.connection_events.insert(conn_type_changes);
-        self.connections.insert(key, (connection, node_id));
+        self.connections.insert(key, (connection, node_id, false));
         self.tick.notify_one();
+        inc!(MagicsockMetrics, connection_handshake_success);
     }
 
     /// Performs the congestion controller reset for a magic socket path change.
@@ -125,14 +132,19 @@ impl RttActor {
     /// happens commonly.
     fn do_reset_rtt(&mut self, item: Option<(stream_group::Key, ConnectionType)>) {
         match item {
-            Some((key, new_conn_type)) => match self.connections.get(&key) {
-                Some((handle, node_id)) => {
+            Some((key, new_conn_type)) => match self.connections.get_mut(&key) {
+                Some((handle, node_id, was_direct_before)) => {
                     if handle.reset_congestion_state() {
                         debug!(
                             node_id = %node_id.fmt_short(),
                             new_type = ?new_conn_type,
                             "Congestion controller state reset",
                         );
+                        if !*was_direct_before && matches!(new_conn_type, ConnectionType::Direct(_))
+                        {
+                            *was_direct_before = true;
+                            inc!(MagicsockMetrics, connection_became_direct);
+                        }
                     } else {
                         debug!(
                             node_id = %node_id.fmt_short(),
@@ -151,7 +163,7 @@ impl RttActor {
 
     /// Performs cleanup for closed connection.
     fn do_connections_cleanup(&mut self) {
-        for (key, (handle, node_id)) in self.connections.iter() {
+        for (key, (handle, node_id, _)) in self.connections.iter() {
             if !handle.is_alive() {
                 trace!(node_id = %node_id.fmt_short(), "removing stale connection");
                 self.connection_events.remove(*key);
