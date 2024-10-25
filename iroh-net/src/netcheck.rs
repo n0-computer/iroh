@@ -24,7 +24,8 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use super::{relay::RelayMap, stun};
-use crate::{dns::DnsResolver, relay::RelayUrl};
+use crate::relay::RelayUrl;
+use hickory_resolver::TokioAsyncResolver as DnsResolver;
 use net::{IpFamily, UdpSocket};
 
 mod metrics;
