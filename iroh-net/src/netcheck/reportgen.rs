@@ -26,6 +26,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use iroh_metrics::inc;
+use net::{interfaces, UdpSocket};
 use rand::seq::IteratorRandom;
 use tokio::{
     sync::{mpsc, oneshot},
@@ -45,7 +46,6 @@ use crate::{
     stun,
     util::MaybeFuture,
 };
-use net::{interfaces, UdpSocket};
 
 mod hairpin;
 mod probes;

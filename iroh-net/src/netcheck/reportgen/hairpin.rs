@@ -15,6 +15,7 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use anyhow::{bail, Context, Result};
+use net::UdpSocket;
 use tokio::{sync::oneshot, time::Instant};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
@@ -24,7 +25,6 @@ use crate::{
     netcheck::{self, reportgen, Inflight},
     stun,
 };
-use net::UdpSocket;
 
 /// Handle to the hairpin actor.
 ///

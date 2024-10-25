@@ -9,12 +9,11 @@ use std::{
 };
 
 use anyhow::{bail, Context as _};
+use net::UdpSocket;
 use quinn::AsyncUdpSocket;
 use quinn_udp::{Transmit, UdpSockRef};
 use tokio::io::Interest;
 use tracing::{debug, trace};
-
-use net::UdpSocket;
 
 /// A UDP socket implementing Quinn's [`AsyncUdpSocket`].
 #[derive(Clone, Debug)]
