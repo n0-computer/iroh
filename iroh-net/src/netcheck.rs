@@ -26,7 +26,7 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use super::{relay::RelayMap, stun};
-use crate::relay::RelayUrl;
+use iroh_base::node_addr::RelayUrl;
 
 mod metrics;
 mod reportgen;
