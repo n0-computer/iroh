@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, info_span, trace, Instrument};
 
-use crate::{net::interfaces::HomeRouter, util};
+use net::interfaces::HomeRouter;
 
 mod current_mapping;
 mod mapping;
@@ -22,6 +22,19 @@ mod metrics;
 mod nat_pmp;
 mod pcp;
 mod upnp;
+mod util;
+mod defaults {
+    use std::time::Duration;
+
+    /// Maximum duration a UPnP search can take before timing out.
+    pub(crate) const UPNP_SEARCH_TIMEOUT: Duration = Duration::from_secs(1);
+
+    /// Timeout to receive a response from a PCP server.
+    pub(crate) const PCP_RECV_TIMEOUT: Duration = Duration::from_millis(500);
+
+    /// Timeout to receive a response from a NAT-PMP server.
+    pub(crate) const NAT_PMP_RECV_TIMEOUT: Duration = Duration::from_millis(500);
+}
 
 pub use metrics::Metrics;
 

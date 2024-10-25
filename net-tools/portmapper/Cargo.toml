@@ -86,7 +86,7 @@ swarm-discovery = { version = "0.2.1", optional = true }
 
 # dht_discovery
 genawaiter = { version = "0.99.1", features = ["futures03"], optional = true }
-net = { version = "0.1.0", path = "../net-tools/net" }
+net = { version = "0.1.0", path = "../net" }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
@@ -110,14 +110,9 @@ rand_chacha = "0.3.1"
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 iroh-test = "0.27.0"
-iroh-net = { path = ".", features = ["iroh-relay"] }
 serde_json = "1.0.107"
 testresult = "0.4.0"
 mainline = "2.0.1"
-
-[[bench]]
-name = "key"
-harness = false
 
 [build-dependencies]
 duct = "0.13.6"
@@ -139,30 +134,6 @@ test-utils = ["iroh-relay"]
 discovery-local-network = ["dep:swarm-discovery"]
 discovery-pkarr-dht = ["pkarr/dht", "dep:genawaiter"]
 
-[[bin]]
-name = "iroh-relay"
-required-features = ["iroh-relay"]
-
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "iroh_docsrs"]
-
-[[example]]
-name = "listen"
-
-[[example]]
-name = "connect"
-
-[[example]]
-name = "listen-unreliable"
-
-[[example]]
-name = "connect-unreliable"
-
-[[example]]
-name = "dht_discovery"
-required-features = ["discovery-pkarr-dht"]
-
-[[example]]
-name = "locally-discovered-nodes"
-required-features = ["discovery-local-network"]
