@@ -251,8 +251,8 @@ pub(crate) mod util;
 
 pub use endpoint::{AddrInfo, Endpoint, NodeAddr};
 pub use iroh_base::{key, key::NodeId};
-pub use net;
-pub use portmapper;
+// pub use net;
+// pub use portmapper;
 
 #[cfg(any(test, feature = "test-utils"))]
 #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]

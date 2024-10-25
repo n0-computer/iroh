@@ -2617,6 +2617,7 @@ dependencies = [
  "parking_lot",
  "pkarr",
  "portable-atomic",
+ "portmapper",
  "postcard",
  "quic-rpc",
  "rand",
@@ -3290,6 +3291,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "derive_more",
  "futures-lite 2.3.0",
  "futures-sink",
  "futures-util",
@@ -3301,6 +3303,7 @@ dependencies = [
  "netlink-sys",
  "once_cell",
  "rtnetlink",
+ "serde",
  "socket2",
  "thiserror",
  "time",

@@ -10,10 +10,10 @@ use anyhow::{ensure, Result};
 use tokio::time::Duration;
 
 use crate::{
-    net::interfaces,
     netcheck::Report,
     relay::{RelayMap, RelayNode, RelayUrl},
 };
+use net::interfaces;
 
 /// The retransmit interval used when netcheck first runs.
 ///

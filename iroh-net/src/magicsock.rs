@@ -64,11 +64,12 @@ use crate::{
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    net::{interfaces, ip::LocalAddresses, netmon},
-    netcheck, portmapper,
+    netcheck,
     relay::{RelayMap, RelayUrl},
     stun, AddrInfo,
 };
+use net::{interfaces, ip::LocalAddresses, netmon};
+use portmapper;
 
 mod metrics;
 mod node_map;

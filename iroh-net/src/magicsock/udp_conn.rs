@@ -14,7 +14,7 @@ use quinn_udp::{Transmit, UdpSockRef};
 use tokio::io::Interest;
 use tracing::{debug, trace};
 
-use crate::net::UdpSocket;
+use net::UdpSocket;
 
 /// A UDP socket implementing Quinn's [`AsyncUdpSocket`].
 #[derive(Clone, Debug)]

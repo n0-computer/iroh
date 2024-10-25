@@ -23,12 +23,9 @@ use tokio::{
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use super::{portmapper, relay::RelayMap, stun};
-use crate::{
-    dns::DnsResolver,
-    net::{IpFamily, UdpSocket},
-    relay::RelayUrl,
-};
+use super::{relay::RelayMap, stun};
+use crate::{dns::DnsResolver, relay::RelayUrl};
+use net::{IpFamily, UdpSocket};
 
 mod metrics;
 mod reportgen;

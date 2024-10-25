@@ -21,10 +21,10 @@ use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::{
     defaults::timeouts::HAIRPIN_CHECK_TIMEOUT,
-    net::UdpSocket,
     netcheck::{self, reportgen, Inflight},
     stun,
 };
+use net::UdpSocket;
 
 /// Handle to the hairpin actor.
 ///
