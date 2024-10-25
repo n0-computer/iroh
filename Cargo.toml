@@ -49,4 +49,5 @@ iroh-base = { path = "./iroh-base" }
 iroh-net = { path = "./iroh-net" }
 iroh-metrics = { path = "./iroh-metrics" }
 iroh-test = { path = "./iroh-test" }
-iroh-gossip = { git = "https://github.com/n0-computer/iroh-gossip", branch = "rpc" }
+# iroh-gossip = { git = "https://github.com/n0-computer/iroh-gossip", branch = "rpc" }
+iroh-gossip = { path = "../iroh-gossip" }

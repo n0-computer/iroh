@@ -248,28 +248,9 @@ impl<D: BaoStore> Handler<D> {
         chan: RpcChannel<RpcService, IrohServerEndpoint>,
     ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         let chan = chan.map::<iroh_gossip::rpc::RpcService>();
-        use iroh_gossip::rpc::Request::*;
-        match msg {
-            Subscribe(msg) => {
-                chan.bidi_streaming(msg, self, |handler, req, updates| {
-                    let stream = handler
-                        .protocols
-                        .get_typed::<Gossip>(GOSSIP_ALPN)
-                        .expect("missing gossip")
-                        .join_with_stream(
-                            req.topic,
-                            iroh_gossip::net::JoinOptions {
-                                bootstrap: req.bootstrap,
-                                subscription_capacity: req.subscription_capacity,
-                            },
-                            Box::pin(updates),
-                        );
-                    futures_util::TryStreamExt::map_err(stream, RpcError::from)
-                })
-                .await
-            }
-            Update(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
-        }
+
+        let gossip = self.protocols.get_typed::<Gossip>(GOSSIP_ALPN).unwrap();
+        gossip.handle_rpc_request(msg, chan).await
     }
 
     async fn handle_authors_request(

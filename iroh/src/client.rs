@@ -20,7 +20,6 @@ pub use self::{docs::Doc, net::NodeStatus};
 pub mod authors;
 pub mod blobs;
 pub mod docs;
-pub mod gossip;
 pub mod net;
 pub mod tags;
 
@@ -81,8 +80,9 @@ impl Iroh {
     }
 
     /// Returns the gossip client.
-    pub fn gossip(&self) -> &gossip::Client {
-        gossip::Client::ref_cast(&self.rpc)
+    pub fn gossip(&self) -> iroh_gossip::rpc::client::Client<RpcService> {
+        let channel = self.rpc.clone().map::<iroh_gossip::rpc::RpcService>();
+        iroh_gossip::rpc::client::Client::new(channel)
     }
 
     /// Returns the net client.
