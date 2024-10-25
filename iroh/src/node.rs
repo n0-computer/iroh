@@ -73,6 +73,7 @@ mod protocol;
 mod rpc;
 mod rpc_status;
 
+pub(crate) use self::rpc::{RpcError, RpcResult};
 pub use self::{
     builder::{
         Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,

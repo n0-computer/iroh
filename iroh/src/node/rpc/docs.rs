@@ -2,10 +2,10 @@
 
 use anyhow::anyhow;
 use futures_lite::{Stream, StreamExt};
-use iroh_base::rpc::RpcResult;
 use iroh_blobs::{store::Store as BaoStore, BlobFormat};
 use iroh_docs::{Author, DocTicket, NamespaceSecret};
 
+use super::{RpcError, RpcResult};
 use crate::{
     client::docs::ShareMode,
     node::protocol::docs::DocsProtocol,
@@ -39,7 +39,10 @@ impl DocsProtocol {
     pub async fn author_create(&self, _req: CreateRequest) -> RpcResult<CreateResponse> {
         // TODO: pass rng
         let author = Author::new(&mut rand::rngs::OsRng {});
-        self.sync.import_author(author.clone()).await?;
+        self.sync
+            .import_author(author.clone())
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(CreateResponse {
             author_id: author.id(),
         })
@@ -54,7 +57,10 @@ impl DocsProtocol {
         &self,
         req: SetDefaultRequest,
     ) -> RpcResult<SetDefaultResponse> {
-        self.default_author.set(req.author_id, &self.sync).await?;
+        self.default_author
+            .set(req.author_id, &self.sync)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(SetDefaultResponse)
     }
 
@@ -74,41 +80,65 @@ impl DocsProtocol {
         });
         rx.boxed().map(|r| {
             r.map(|author_id| AuthorListResponse { author_id })
-                .map_err(Into::into)
+                .map_err(|e| RpcError::new(&*e))
         })
     }
 
     pub async fn author_import(&self, req: ImportRequest) -> RpcResult<ImportResponse> {
-        let author_id = self.sync.import_author(req.author).await?;
+        let author_id = self
+            .sync
+            .import_author(req.author)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(ImportResponse { author_id })
     }
 
     pub async fn author_export(&self, req: ExportRequest) -> RpcResult<ExportResponse> {
-        let author = self.sync.export_author(req.author).await?;
+        let author = self
+            .sync
+            .export_author(req.author)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
 
         Ok(ExportResponse { author })
     }
 
     pub async fn author_delete(&self, req: DeleteRequest) -> RpcResult<DeleteResponse> {
         if req.author == self.default_author.get() {
-            return Err(anyhow!("Deleting the default author is not supported").into());
+            return Err(RpcError::new(&*anyhow!(
+                "Deleting the default author is not supported"
+            )));
         }
-        self.sync.delete_author(req.author).await?;
+        self.sync
+            .delete_author(req.author)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(DeleteResponse)
     }
 
     pub async fn doc_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {
         let namespace = NamespaceSecret::new(&mut rand::rngs::OsRng {});
         let id = namespace.id();
-        self.sync.import_namespace(namespace.into()).await?;
-        self.sync.open(id, Default::default()).await?;
+        self.sync
+            .import_namespace(namespace.into())
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
+        self.sync
+            .open(id, Default::default())
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(DocCreateResponse { id })
     }
 
     pub async fn doc_drop(&self, req: DropRequest) -> RpcResult<DropResponse> {
         let DropRequest { doc_id } = req;
-        self.leave(doc_id, true).await?;
-        self.sync.drop_replica(doc_id).await?;
+        self.leave(doc_id, true)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
+        self.sync
+            .drop_replica(doc_id)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(DropResponse {})
     }
 
@@ -128,22 +158,32 @@ impl DocsProtocol {
         });
         rx.boxed().map(|r| {
             r.map(|(id, capability)| DocListResponse { id, capability })
-                .map_err(Into::into)
+                .map_err(|e| RpcError::new(&*e))
         })
     }
 
     pub async fn doc_open(&self, req: OpenRequest) -> RpcResult<OpenResponse> {
-        self.sync.open(req.doc_id, Default::default()).await?;
+        self.sync
+            .open(req.doc_id, Default::default())
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(OpenResponse {})
     }
 
     pub async fn doc_close(&self, req: CloseRequest) -> RpcResult<CloseResponse> {
-        self.sync.close(req.doc_id).await?;
+        self.sync
+            .close(req.doc_id)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(CloseResponse {})
     }
 
     pub async fn doc_status(&self, req: StatusRequest) -> RpcResult<StatusResponse> {
-        let status = self.sync.get_state(req.doc_id).await?;
+        let status = self
+            .sync
+            .get_state(req.doc_id)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(StatusResponse { status })
     }
 
@@ -153,17 +193,27 @@ impl DocsProtocol {
             mode,
             addr_options,
         } = req;
-        let mut me = self.endpoint.node_addr().await?;
+        let mut me = self
+            .endpoint
+            .node_addr()
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         me.apply_options(addr_options);
 
         let capability = match mode {
             ShareMode::Read => iroh_docs::Capability::Read(doc_id),
             ShareMode::Write => {
-                let secret = self.sync.export_secret_key(doc_id).await?;
+                let secret = self
+                    .sync
+                    .export_secret_key(doc_id)
+                    .await
+                    .map_err(|e| RpcError::new(&*e))?;
                 iroh_docs::Capability::Write(secret)
             }
         };
-        self.start_sync(doc_id, vec![]).await?;
+        self.start_sync(doc_id, vec![])
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
 
         Ok(ShareResponse(DocTicket {
             capability,
@@ -175,30 +225,44 @@ impl DocsProtocol {
         &self,
         req: DocSubscribeRequest,
     ) -> RpcResult<impl Stream<Item = RpcResult<DocSubscribeResponse>>> {
-        let stream = self.subscribe(req.doc_id).await?;
+        let stream = self
+            .subscribe(req.doc_id)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
 
         Ok(stream.map(|el| {
             el.map(|event| DocSubscribeResponse { event })
-                .map_err(Into::into)
+                .map_err(|e| RpcError::new(&*e))
         }))
     }
 
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {
         let DocImportRequest { capability } = req;
-        let doc_id = self.sync.import_namespace(capability).await?;
-        self.sync.open(doc_id, Default::default()).await?;
+        let doc_id = self
+            .sync
+            .import_namespace(capability)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
+        self.sync
+            .open(doc_id, Default::default())
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(DocImportResponse { doc_id })
     }
 
     pub async fn doc_start_sync(&self, req: StartSyncRequest) -> RpcResult<StartSyncResponse> {
         let StartSyncRequest { doc_id, peers } = req;
-        self.start_sync(doc_id, peers).await?;
+        self.start_sync(doc_id, peers)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(StartSyncResponse {})
     }
 
     pub async fn doc_leave(&self, req: LeaveRequest) -> RpcResult<LeaveResponse> {
         let LeaveRequest { doc_id } = req;
-        self.leave(doc_id, false).await?;
+        self.leave(doc_id, false)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(LeaveResponse {})
     }
 
@@ -214,15 +278,20 @@ impl DocsProtocol {
             value,
         } = req;
         let len = value.len();
-        let tag = bao_store.import_bytes(value, BlobFormat::Raw).await?;
+        let tag = bao_store
+            .import_bytes(value, BlobFormat::Raw)
+            .await
+            .map_err(|e| RpcError::new(&e))?;
         self.sync
             .insert_local(doc_id, author_id, key.clone(), *tag.hash(), len as u64)
-            .await?;
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         let entry = self
             .sync
             .get_exact(doc_id, author_id, key, false)
-            .await?
-            .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
+            .await
+            .map_err(|e| RpcError::new(&*e))?
+            .ok_or_else(|| RpcError::new(&*anyhow!("failed to get entry after insertion")))?;
         Ok(SetResponse { entry })
     }
 
@@ -232,7 +301,11 @@ impl DocsProtocol {
             author_id,
             prefix,
         } = req;
-        let removed = self.sync.delete_prefix(doc_id, author_id, prefix).await?;
+        let removed = self
+            .sync
+            .delete_prefix(doc_id, author_id, prefix)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(DelResponse { removed })
     }
 
@@ -246,7 +319,8 @@ impl DocsProtocol {
         } = req;
         self.sync
             .insert_local(doc_id, author_id, key.clone(), hash, size)
-            .await?;
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(SetHashResponse {})
     }
 
@@ -265,8 +339,10 @@ impl DocsProtocol {
                 tx2.send(Err(err)).await.ok();
             }
         });
-        rx.boxed()
-            .map(|r| r.map(|entry| GetManyResponse { entry }).map_err(Into::into))
+        rx.boxed().map(|r| {
+            r.map(|entry| GetManyResponse { entry })
+                .map_err(|e| RpcError::new(&*e))
+        })
     }
 
     pub async fn doc_get_exact(&self, req: GetExactRequest) -> RpcResult<GetExactResponse> {
@@ -279,7 +355,8 @@ impl DocsProtocol {
         let entry = self
             .sync
             .get_exact(doc_id, author, key, include_empty)
-            .await?;
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(GetExactResponse { entry })
     }
 
@@ -289,14 +366,19 @@ impl DocsProtocol {
     ) -> RpcResult<SetDownloadPolicyResponse> {
         self.sync
             .set_download_policy(req.doc_id, req.policy)
-            .await?;
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(SetDownloadPolicyResponse {})
     }
     pub async fn doc_get_download_policy(
         &self,
         req: GetDownloadPolicyRequest,
     ) -> RpcResult<GetDownloadPolicyResponse> {
-        let policy = self.sync.get_download_policy(req.doc_id).await?;
+        let policy = self
+            .sync
+            .get_download_policy(req.doc_id)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(GetDownloadPolicyResponse { policy })
     }
 
@@ -304,7 +386,11 @@ impl DocsProtocol {
         &self,
         req: GetSyncPeersRequest,
     ) -> RpcResult<GetSyncPeersResponse> {
-        let peers = self.sync.get_sync_peers(req.doc_id).await?;
+        let peers = self
+            .sync
+            .get_sync_peers(req.doc_id)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(GetSyncPeersResponse { peers })
     }
 }
