@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["memory","traits"]};
+window.SIDEBAR_ITEMS = {"mod":["memory","persistent","traits"]};

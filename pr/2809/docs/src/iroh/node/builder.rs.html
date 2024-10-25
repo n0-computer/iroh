@@ -997,6 +997,14 @@
 <a href="#997" id="997">997</a>
 <a href="#998" id="998">998</a>
 <a href="#999" id="999">999</a>
+<a href="#1000" id="1000">1000</a>
+<a href="#1001" id="1001">1001</a>
+<a href="#1002" id="1002">1002</a>
+<a href="#1003" id="1003">1003</a>
+<a href="#1004" id="1004">1004</a>
+<a href="#1005" id="1005">1005</a>
+<a href="#1006" id="1006">1006</a>
+<a href="#1007" id="1007">1007</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1672,8 +1680,16 @@
                 );
                 <span class="prelude-val">Some</span>(engine)
             }
-            SpacesStorage::Persistent(<span class="kw">_</span>) =&gt; {
-                <span class="macro">unimplemented!</span>(<span class="string">"persistent storage for willow is not yet implemented"</span>)
+            SpacesStorage::Persistent(path) =&gt; {
+                <span class="kw">let </span>blobs_store = <span class="self">self</span>.blobs_store.clone();
+                <span class="kw">let </span>create_store =
+                    <span class="kw">move </span>|| iroh_willow::store::persistent::Store::new(path, blobs_store);
+                <span class="kw">let </span>engine = iroh_willow::Engine::spawn(
+                    endpoint.clone(),
+                    create_store,
+                    iroh_willow::engine::AcceptOpts::default(),
+                );
+                <span class="prelude-val">Some</span>(engine)
             }
         };
         <span class="comment">// Spawn the willow engine.

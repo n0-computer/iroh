@@ -143,6 +143,7 @@
 <a href="#143" id="143">143</a>
 <a href="#144" id="144">144</a>
 <a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Store for entries, secrets, and capabilities used in the Willow engine.
 //!
 //! The storage backend is defined in the [`Storage`] trait and its associated types.
@@ -173,6 +174,7 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>auth;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>glue;
 <span class="kw">pub mod </span>memory;
+<span class="kw">pub mod </span>persistent;
 <span class="kw">pub mod </span>traits;
 
 <span class="doccomment">/// Storage for the Willow engine.

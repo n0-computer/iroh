@@ -675,7 +675,6 @@
 <a href="#675" id="675">675</a>
 <a href="#676" id="676">676</a>
 <a href="#677" id="677">677</a>
-<a href="#678" id="678">678</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! In-memory storage implementation for testing purposes.
 //!
 //! This is a minimal, but spec-compliant (unless there's bugs) implementation of a willow store.
@@ -699,11 +698,10 @@
 
 <span class="kw">use </span><span class="kw">crate</span>::proto::data_model::{AuthorisationToken, PathExt};
 <span class="kw">use </span><span class="kw">crate</span>::proto::grouping::Area;
-<span class="kw">use </span><span class="kw">crate</span>::store::glue::{blobseq_below, StoredAuthorisedEntry};
 <span class="kw">use crate</span>::{
     interest::{CapSelector, CapabilityPack},
     proto::{
-        data_model::{AuthorisedEntry, Entry, EntryExt, Path, SubspaceId, WriteCapability},
+        data_model::{AuthorisedEntry, Entry, EntryExt <span class="kw">as _</span>, Path, SubspaceId, WriteCapability},
         grouping::{Range, Range3d, RangeEnd},
         keys::{NamespaceId, NamespaceSecretKey, UserId, UserSecretKey},
         meadowcap::{<span class="self">self</span>, is_wider_than, ReadAuthorisation},
@@ -712,7 +710,7 @@
     store::traits::{<span class="self">self</span>, RangeSplit, SplitAction, SplitOpts},
 };
 
-<span class="kw">use </span><span class="kw">super</span>::glue::{blobseq_successor, path_to_blobseq, to_query, IrohWillowParams};
+<span class="kw">use </span><span class="kw">super</span>::glue::{path_to_blobseq, to_query, IrohWillowParams, StoredAuthorisedEntry};
 <span class="kw">use </span><span class="kw">super</span>::traits::{StoreEvent, SubscribeParams};
 <span class="kw">use </span><span class="kw">super</span>::EntryOrigin;
 
@@ -789,9 +787,9 @@
 
 <span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>EntryStore {
-    stores: HashMap&lt;NamespaceId, NamespaceStore&gt;,
-    authorisation_tokens: BTreeMap&lt;ed25519::SignatureBytes, AuthorisationToken&gt;,
-    store: willow_store::MemStore,
+    <span class="kw">pub </span>stores: HashMap&lt;NamespaceId, NamespaceStore&gt;,
+    <span class="kw">pub </span>authorisation_tokens: BTreeMap&lt;ed25519::SignatureBytes, AuthorisationToken&gt;,
+    <span class="kw">pub </span>store: willow_store::MemStore,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>EntryStore {
@@ -956,7 +954,7 @@
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
         };
         <span class="kw">let </span>blobseq = path_to_blobseq(path);
-        <span class="kw">let </span>end = blobseq_successor(<span class="kw-2">&amp;</span>blobseq);
+        <span class="kw">let </span>end = blobseq.immediate_successor();
         <span class="kw">let </span><span class="prelude-val">Some</span>(result) = ns_store
             .entries
             .query_ordered(
@@ -1006,7 +1004,7 @@
         // Enforce prefix deletion:
 
         </span><span class="kw">let </span>blobseq_start = path_to_blobseq(entry.entry().path());
-        <span class="kw">let </span>blobseq_end = blobseq_below(<span class="kw-2">&amp;</span>blobseq_start);
+        <span class="kw">let </span>blobseq_end = blobseq_start.subseq_successor();
 
         <span class="kw">let </span>overwritten_range = QueryRange3d {
             x: QueryRange::new(
