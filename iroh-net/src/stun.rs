@@ -3,13 +3,15 @@
 use std::net::SocketAddr;
 
 use stun_rs::{
-    attributes::stun::{Fingerprint, XorMappedAddress},
-    DecoderContextBuilder, MessageDecoderBuilder, MessageEncoderBuilder, StunMessageBuilder,
+    attributes::{
+        stun::{Fingerprint, XorMappedAddress},
+        StunAttribute,
+    },
+    methods, DecoderContextBuilder, MessageClass, MessageDecoder, MessageDecoderBuilder,
+    MessageEncoderBuilder, StunMessageBuilder,
 };
-pub use stun_rs::{
-    attributes::StunAttribute, error::StunDecodeError, methods, MessageClass, MessageDecoder,
-    TransactionId,
-};
+
+pub use stun_rs::TransactionId;
 
 /// Errors that can occur when handling a STUN packet.
 #[derive(Debug, thiserror::Error)]
