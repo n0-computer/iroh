@@ -7,7 +7,10 @@ members = [
   "iroh-net",
   "iroh-test",
   "iroh-net/bench",
-  "iroh-cli", "net-tools/net", "net-tools/portmapper",
+  "iroh-cli",
+  "net-tools/net",
+  "net-tools/portmapper",
+  "iroh-router",
 ]
 resolver = "2"
 
@@ -49,3 +52,4 @@ iroh-base = { path = "./iroh-base" }
 iroh-net = { path = "./iroh-net" }
 iroh-metrics = { path = "./iroh-metrics" }
 iroh-test = { path = "./iroh-test" }
+iroh-router = { path = "./iroh-router" }
