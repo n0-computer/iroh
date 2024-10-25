@@ -2818,6 +2818,7 @@ dependencies = [
  "parking_lot",
  "pin-project",
  "pkarr",
+ "portmapper",
  "postcard",
  "pretty_assertions",
  "proptest",

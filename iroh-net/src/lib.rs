@@ -241,10 +241,8 @@ pub mod dns;
 pub mod endpoint;
 mod magicsock;
 pub mod metrics;
-pub use net;
 pub mod netcheck;
 pub mod ping;
-pub mod portmapper;
 pub mod relay;
 pub mod stun;
 pub mod ticket;
@@ -253,6 +251,8 @@ pub(crate) mod util;
 
 pub use endpoint::{AddrInfo, Endpoint, NodeAddr};
 pub use iroh_base::{key, key::NodeId};
+pub use net;
+pub use portmapper;
 
 #[cfg(any(test, feature = "test-utils"))]
 #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
