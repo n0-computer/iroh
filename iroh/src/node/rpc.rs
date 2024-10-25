@@ -28,15 +28,16 @@ use iroh_blobs::{
     BlobFormat, HashAndFormat, Tag,
 };
 use iroh_docs::net::DOCS_ALPN;
-use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
+use iroh_gossip::net::GOSSIP_ALPN;
 use iroh_io::AsyncSliceReader;
 use iroh_net::{relay::RelayUrl, NodeAddr, NodeId};
+use iroh_router::Router;
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::task::JoinSet;
 use tokio_util::either::Either;
 use tracing::{debug, info, warn};
 
-use super::{protocol::ProtocolMap, IrohServerEndpoint};
+use super::IrohServerEndpoint;
 use crate::{
     client::{
         blobs::{BlobInfo, BlobStatus, IncompleteBlobInfo, WrapOption},
@@ -44,14 +45,14 @@ use crate::{
         NodeStatus,
     },
     node::{
-        protocol::{blobs::BlobsProtocol, docs::DocsProtocol},
+        protocol::{blobs::BlobsProtocol, docs::DocsProtocol, gossip::GossipProtocol},
         NodeInner,
     },
     rpc_protocol::{
-        authors, blobs,
+        authors,
         blobs::{
-            AddPathRequest, AddPathResponse, AddStreamRequest, AddStreamResponse, AddStreamUpdate,
-            BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest,
+            self, AddPathRequest, AddPathResponse, AddStreamRequest, AddStreamResponse,
+            AddStreamUpdate, BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest,
             BatchAddStreamResponse, BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
             BatchCreateTempTagRequest, BatchUpdate, BlobStatusRequest, BlobStatusResponse,
             ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse,
@@ -63,16 +64,14 @@ use crate::{
             ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,
             Request as DocsRequest, SetHashRequest,
         },
-        gossip, net,
+        gossip,
         net::{
-            AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest,
+            self, AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest,
             RemoteInfoRequest, RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse,
             WatchResponse,
         },
-        node,
-        node::{ShutdownRequest, StatsRequest, StatsResponse, StatusRequest},
-        tags,
-        tags::{DeleteRequest as TagDeleteRequest, ListRequest as ListTagsRequest, SyncMode},
+        node::{self, ShutdownRequest, StatsRequest, StatsResponse, StatusRequest},
+        tags::{self, DeleteRequest as TagDeleteRequest, ListRequest as ListTagsRequest, SyncMode},
         Request, RpcService,
     },
 };
@@ -88,23 +87,23 @@ const RPC_BLOB_GET_CHANNEL_CAP: usize = 2;
 #[derive(Debug, Clone)]
 pub(crate) struct Handler<D> {
     pub(crate) inner: Arc<NodeInner<D>>,
-    pub(crate) protocols: Arc<ProtocolMap>,
+    pub(crate) router: Router,
 }
 
 impl<D> Handler<D> {
-    pub fn new(inner: Arc<NodeInner<D>>, protocols: Arc<ProtocolMap>) -> Self {
-        Self { inner, protocols }
+    pub fn new(inner: Arc<NodeInner<D>>, router: Router) -> Self {
+        Self { inner, router }
     }
 }
 
 impl<D: BaoStore> Handler<D> {
     fn docs(&self) -> Option<Arc<DocsProtocol>> {
-        self.protocols.get_typed::<DocsProtocol>(DOCS_ALPN)
+        self.router.get_protocol::<DocsProtocol>(DOCS_ALPN)
     }
 
     fn blobs(&self) -> Arc<BlobsProtocol<D>> {
-        self.protocols
-            .get_typed::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
+        self.router
+            .get_protocol::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
             .expect("missing blobs")
     }
 
@@ -142,9 +141,9 @@ impl<D: BaoStore> Handler<D> {
         inner: Arc<NodeInner<D>>,
         join_set: &mut JoinSet<anyhow::Result<()>>,
         accepting: quic_rpc::server::Accepting<RpcService, IrohServerEndpoint>,
-        protocols: Arc<ProtocolMap>,
+        router: Router,
     ) {
-        let handler = Self::new(inner, protocols);
+        let handler = Self::new(inner, router);
         join_set.spawn(async move {
             let (msg, chan) = accepting.read_first().await?;
             if let Err(err) = handler.handle_rpc_request(msg, chan).await {
@@ -255,8 +254,8 @@ impl<D: BaoStore> Handler<D> {
             Subscribe(msg) => {
                 chan.bidi_streaming(msg, self, |handler, req, updates| {
                     let stream = handler
-                        .protocols
-                        .get_typed::<Gossip>(GOSSIP_ALPN)
+                        .router
+                        .get_protocol::<GossipProtocol>(GOSSIP_ALPN)
                         .expect("missing gossip")
                         .join_with_stream(
                             req.topic,
@@ -780,8 +779,8 @@ impl<D: BaoStore> Handler<D> {
         let progress = AsyncChannelProgressSender::new(sender);
 
         let blobs_protocol = self
-            .protocols
-            .get_typed::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
+            .router
+            .get_protocol::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
             .expect("missing blobs");
 
         self.local_pool_handle().spawn_detached(move || async move {
