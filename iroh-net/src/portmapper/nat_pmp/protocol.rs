@@ -4,10 +4,8 @@ mod request;
 mod response;
 
 use num_enum::{IntoPrimitive, TryFromPrimitive};
-
 // PCP and NAT-PMP share same ports, reassigned by IANA from the older version to the new one. See
 // <https://datatracker.ietf.org/doc/html/rfc6887#section-19>
-
 pub use request::*;
 pub use response::*;
 

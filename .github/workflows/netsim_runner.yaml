@@ -143,6 +143,8 @@ jobs:
         echo "LAST_COMMIT_SHA=$(git rev-parse --short ${GITHUB_SHA})" >> ${GITHUB_ENV}
   
     - name: Run tests
+      id: run_tests
+      continue-on-error: true
       run: |
         cd ../chuck/netsim
         # split sim_paths by comma
@@ -153,6 +155,7 @@ jobs:
 
     - name: Generate report
       id: generate_report
+      if: always()
       run: |
         cd ../chuck/netsim
         python3 reports_csv.py --table > report_table.txt
@@ -161,6 +164,7 @@ jobs:
         python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
     
     - name: Upload report
+      if: always()
       run: |
         export AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}
         export AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}
@@ -179,10 +183,12 @@ jobs:
         fi        
 
     - name: Move report
+      if: always()
       run: |
         cp ../chuck/netsim/report.tar.gz ./report.tar.gz
 
     - name: Upload report
+      if: always()
       uses: actions/upload-artifact@v4
       id: upload-report
       with:
@@ -190,6 +196,10 @@ jobs:
         path: report.tar.gz
         retention-days: 3
         overwrite: true
+    
+    - name: Fail Job if Tests Failed
+      if: ${{ failure() && steps.run_tests.outcome == 'failure' }}
+      run: exit 1
 
     - name: Find Docs Comment
       if: ${{ inputs.pr_number != '' }}

@@ -1,8 +1,10 @@
 #![allow(unused_imports)]
 
-use std::future::Future;
-use std::net::{Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
+use std::{
+    future::Future,
+    net::{Ipv4Addr, SocketAddr},
+    path::PathBuf,
+};
 
 use anyhow::Result;
 use axum::{routing::get, Router};

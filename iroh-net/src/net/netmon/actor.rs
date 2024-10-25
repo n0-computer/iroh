@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::Result;
 use futures_lite::future::Boxed as BoxFuture;
+use os::{is_interesting_interface, RouteMonitor};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, trace, warn};
 
@@ -23,9 +24,6 @@ use super::bsd as os;
 use super::linux as os;
 #[cfg(target_os = "windows")]
 use super::windows as os;
-
-use os::{is_interesting_interface, RouteMonitor};
-
 use crate::net::{
     interfaces::{IpNet, State},
     ip::is_link_local,

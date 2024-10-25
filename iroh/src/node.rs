@@ -35,49 +35,56 @@
 //! well, without going through [`client`](crate::client::Iroh))
 //!
 //! To shut down the node, call [`Node::shutdown`].
-use std::collections::BTreeSet;
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    collections::BTreeSet,
+    fmt::Debug,
+    marker::PhantomData,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
-use futures_util::future::MapErr;
-use futures_util::future::Shared;
+use futures_util::future::{MapErr, Shared};
 use iroh_base::key::PublicKey;
-use iroh_blobs::protocol::Closed;
-use iroh_blobs::store::Store as BaoStore;
-use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
+use iroh_blobs::{
+    protocol::Closed,
+    store::Store as BaoStore,
+    util::local_pool::{LocalPool, LocalPoolHandle},
+};
 use iroh_docs::net::DOCS_ALPN;
-use iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
-use iroh_net::{AddrInfo, Endpoint, NodeAddr};
-use protocol::BlobsProtocol;
-use quic_rpc::transport::ServerEndpoint as _;
-use quic_rpc::RpcServer;
+use iroh_net::{
+    endpoint::{DirectAddrsStream, RemoteInfo},
+    AddrInfo, Endpoint, NodeAddr,
+};
+use protocol::blobs::BlobsProtocol;
+use quic_rpc::{transport::ServerEndpoint as _, RpcServer};
 use tokio::task::{JoinError, JoinSet};
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::AbortOnDropHandle;
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
-use crate::node::nodes_storage::store_node_addrs;
-use crate::node::{docs::DocsEngine, protocol::ProtocolMap};
+use crate::node::{
+    nodes_storage::store_node_addrs,
+    protocol::{docs::DocsProtocol, ProtocolMap},
+};
 
 mod builder;
-mod docs;
 mod nodes_storage;
 mod protocol;
 mod rpc;
 mod rpc_status;
 
-pub use self::builder::{
-    Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,
-    DEFAULT_RPC_ADDR,
-};
-pub use self::rpc_status::RpcStatus;
 pub use protocol::ProtocolHandler;
+
+pub use self::{
+    builder::{
+        Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,
+        DEFAULT_RPC_ADDR,
+    },
+    rpc_status::RpcStatus,
+};
 
 /// How often to save node data.
 const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
@@ -291,7 +298,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         if let GcPolicy::Interval(gc_period) = gc_policy {
             let protocols = protocols.clone();
             let handle = local_pool.spawn(move || async move {
-                let docs_engine = protocols.get_typed::<DocsEngine>(DOCS_ALPN);
+                let docs_engine = protocols.get_typed::<DocsProtocol>(DOCS_ALPN);
                 let blobs = protocols
                     .get_typed::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
                     .expect("missing blobs");
@@ -547,9 +554,8 @@ mod tests {
     use iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
     use iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
-    use crate::client::blobs::{AddOutcome, WrapOption};
-
     use super::*;
+    use crate::client::blobs::{AddOutcome, WrapOption};
 
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {

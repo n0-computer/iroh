@@ -1,7 +1,9 @@
-use std::fmt::Debug;
-use std::io;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    fmt::Debug,
+    io,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::{anyhow, Result};
 use futures_buffered::BufferedStreamExt;
@@ -9,70 +11,71 @@ use futures_lite::{Stream, StreamExt};
 use futures_util::FutureExt;
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::{RpcError, RpcResult};
-use iroh_blobs::export::ExportProgress;
-use iroh_blobs::format::collection::Collection;
-use iroh_blobs::get::db::DownloadProgress;
-use iroh_blobs::provider::BatchAddPathProgress;
-use iroh_blobs::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
-use iroh_blobs::util::local_pool::LocalPoolHandle;
-use iroh_blobs::util::progress::{AsyncChannelProgressSender, ProgressSender};
-use iroh_blobs::util::SetTagOption;
 use iroh_blobs::{
-    provider::AddProgress,
-    store::{Store as BaoStore, ValidateProgress},
-    HashAndFormat,
+    export::ExportProgress,
+    format::collection::Collection,
+    get::db::DownloadProgress,
+    provider::{AddProgress, BatchAddPathProgress},
+    store::{
+        ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry, Store as BaoStore,
+        ValidateProgress,
+    },
+    util::{
+        local_pool::LocalPoolHandle,
+        progress::{AsyncChannelProgressSender, ProgressSender},
+        SetTagOption,
+    },
+    BlobFormat, HashAndFormat, Tag,
 };
-use iroh_blobs::{BlobFormat, Tag};
 use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
-use iroh_net::relay::RelayUrl;
-use iroh_net::{NodeAddr, NodeId};
+use iroh_net::{relay::RelayUrl, NodeAddr, NodeId};
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::task::JoinSet;
 use tokio_util::either::Either;
 use tracing::{debug, info, warn};
 
-use crate::client::blobs::BlobStatus;
-use crate::client::{
-    blobs::{BlobInfo, IncompleteBlobInfo, WrapOption},
-    tags::TagInfo,
-    NodeStatus,
-};
-use crate::node::{docs::DocsEngine, protocol::BlobsProtocol, NodeInner};
-use crate::rpc_protocol::blobs::{
-    BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest, BatchAddStreamResponse,
-    BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse, BatchCreateTempTagRequest,
-    BatchUpdate, BlobStatusRequest, BlobStatusResponse,
-};
-use crate::rpc_protocol::tags::SyncMode;
-use crate::rpc_protocol::{
-    authors, blobs,
-    blobs::{
-        AddPathRequest, AddPathResponse, AddStreamRequest, AddStreamResponse, AddStreamUpdate,
-        ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse, DeleteRequest,
-        DownloadRequest as BlobDownloadRequest, DownloadResponse, ExportRequest, ExportResponse,
-        ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse, ValidateRequest,
+use super::{protocol::ProtocolMap, IrohServerEndpoint};
+use crate::{
+    client::{
+        blobs::{BlobInfo, BlobStatus, IncompleteBlobInfo, WrapOption},
+        tags::TagInfo,
+        NodeStatus,
     },
-    docs::Request as DocsRequest,
-    docs::{
-        ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,
-        SetHashRequest,
+    node::{
+        protocol::{blobs::BlobsProtocol, docs::DocsProtocol},
+        NodeInner,
     },
-    gossip, net,
-    net::{
-        AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest, RemoteInfoRequest,
-        RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse, WatchResponse,
+    rpc_protocol::{
+        authors, blobs,
+        blobs::{
+            AddPathRequest, AddPathResponse, AddStreamRequest, AddStreamResponse, AddStreamUpdate,
+            BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest,
+            BatchAddStreamResponse, BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
+            BatchCreateTempTagRequest, BatchUpdate, BlobStatusRequest, BlobStatusResponse,
+            ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse,
+            DeleteRequest, DownloadRequest as BlobDownloadRequest, DownloadResponse, ExportRequest,
+            ExportResponse, ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse,
+            ValidateRequest,
+        },
+        docs::{
+            ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,
+            Request as DocsRequest, SetHashRequest,
+        },
+        gossip, net,
+        net::{
+            AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest,
+            RemoteInfoRequest, RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse,
+            WatchResponse,
+        },
+        node,
+        node::{ShutdownRequest, StatsRequest, StatsResponse, StatusRequest},
+        tags,
+        tags::{DeleteRequest as TagDeleteRequest, ListRequest as ListTagsRequest, SyncMode},
+        Request, RpcService,
     },
-    node,
-    node::{ShutdownRequest, StatsRequest, StatsResponse, StatusRequest},
-    tags,
-    tags::{DeleteRequest as TagDeleteRequest, ListRequest as ListTagsRequest},
-    Request, RpcService,
 };
-
-use super::protocol::ProtocolMap;
-use super::IrohServerEndpoint;
 
 mod docs;
 
@@ -95,8 +98,8 @@ impl<D> Handler<D> {
 }
 
 impl<D: BaoStore> Handler<D> {
-    fn docs(&self) -> Option<Arc<DocsEngine>> {
-        self.protocols.get_typed::<DocsEngine>(DOCS_ALPN)
+    fn docs(&self) -> Option<Arc<DocsProtocol>> {
+        self.protocols.get_typed::<DocsProtocol>(DOCS_ALPN)
     }
 
     fn blobs(&self) -> Arc<BlobsProtocol<D>> {
@@ -112,7 +115,7 @@ impl<D: BaoStore> Handler<D> {
     async fn with_docs<T, F, Fut>(self, f: F) -> RpcResult<T>
     where
         T: Send + 'static,
-        F: FnOnce(Arc<DocsEngine>) -> Fut,
+        F: FnOnce(Arc<DocsProtocol>) -> Fut,
         Fut: std::future::Future<Output = RpcResult<T>>,
     {
         if let Some(docs) = self.docs() {
@@ -125,7 +128,7 @@ impl<D: BaoStore> Handler<D> {
     fn with_docs_stream<T, F, S>(self, f: F) -> impl Stream<Item = RpcResult<T>>
     where
         T: Send + 'static,
-        F: FnOnce(Arc<DocsEngine>) -> S,
+        F: FnOnce(Arc<DocsProtocol>) -> S,
         S: Stream<Item = RpcResult<T>>,
     {
         if let Some(docs) = self.docs() {
@@ -663,9 +666,11 @@ impl<D: BaoStore> Handler<D> {
         progress: async_channel::Sender<crate::client::docs::ImportProgress>,
     ) -> anyhow::Result<()> {
         let docs = self.docs().ok_or_else(|| anyhow!("docs are disabled"))?;
-        use crate::client::docs::ImportProgress as DocImportProgress;
-        use iroh_blobs::store::ImportMode;
         use std::collections::BTreeMap;
+
+        use iroh_blobs::store::ImportMode;
+
+        use crate::client::docs::ImportProgress as DocImportProgress;
 
         let progress = AsyncChannelProgressSender::new(progress);
         let names = Arc::new(Mutex::new(BTreeMap::new()));
@@ -820,8 +825,9 @@ impl<D: BaoStore> Handler<D> {
         msg: AddPathRequest,
         progress: async_channel::Sender<AddProgress>,
     ) -> anyhow::Result<()> {
-        use iroh_blobs::store::ImportMode;
         use std::collections::BTreeMap;
+
+        use iroh_blobs::store::ImportMode;
 
         let blobs = self.blobs();
         let progress = AsyncChannelProgressSender::new(progress);

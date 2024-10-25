@@ -17,12 +17,11 @@ use iroh_net::{endpoint::RemoteInfo, relay::RelayUrl, NodeAddr, NodeId};
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
+use super::{flatten, RpcClient};
 use crate::rpc_protocol::net::{
     AddAddrRequest, AddrRequest, IdRequest, RelayRequest, RemoteInfoRequest, RemoteInfoResponse,
     RemoteInfosIterRequest,
 };
-
-use super::{flatten, RpcClient};
 
 /// Iroh netx Client.
 ///
@@ -56,7 +55,7 @@ use super::{flatten, RpcClient};
 ///   // the home relay
 ///   Some(relay_url),
 ///   // the direct addresses
-///   vec!["120.0.0.1:0".parse().unwrap()],
+///   ["120.0.0.1:0".parse().unwrap()],
 /// );
 /// net_client.add_node_addr(addr).await?;
 /// // Shut down the node. Passing `true` will force the shutdown, passing in

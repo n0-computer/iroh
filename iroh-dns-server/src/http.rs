@@ -30,10 +30,8 @@ mod pkarr;
 mod rate_limiting;
 mod tls;
 
-use crate::state::AppState;
-use crate::{config::Config, metrics::Metrics};
-
 pub use self::tls::CertMode;
+use crate::{config::Config, metrics::Metrics, state::AppState};
 
 /// Config for the HTTP server
 #[derive(Debug, Serialize, Deserialize, Clone)]

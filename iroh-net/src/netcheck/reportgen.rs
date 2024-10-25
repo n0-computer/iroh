@@ -16,31 +16,37 @@
 //!   - Stop if there are no outstanding tasks/futures, or on timeout.
 //! - Sends the completed report to the netcheck actor.
 
-use std::future::Future;
-use std::net::{IpAddr, SocketAddr};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    future::Future,
+    net::{IpAddr, SocketAddr},
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use iroh_metrics::inc;
 use rand::seq::IteratorRandom;
-use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinSet;
-use tokio::time::{self, Instant};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinSet,
+    time::{self, Instant},
+};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 
 use super::NetcheckMetrics;
-use crate::defaults::DEFAULT_STUN_PORT;
-use crate::dns::{DnsResolver, ResolverExt};
-use crate::net::interfaces;
-use crate::net::UdpSocket;
-use crate::netcheck::{self, Report};
-use crate::ping::{PingError, Pinger};
-use crate::relay::{RelayMap, RelayNode, RelayUrl};
-use crate::util::MaybeFuture;
-use crate::{portmapper, stun};
+use crate::{
+    defaults::DEFAULT_STUN_PORT,
+    dns::{DnsResolver, ResolverExt},
+    net::{interfaces, UdpSocket},
+    netcheck::{self, Report},
+    ping::{PingError, Pinger},
+    portmapper,
+    relay::{RelayMap, RelayNode, RelayUrl},
+    stun,
+    util::MaybeFuture,
+};
 
 mod hairpin;
 mod probes;
@@ -432,7 +438,7 @@ impl Actor {
                 match port_mapper.probe().await {
                     Ok(Ok(res)) => Some(res),
                     Ok(Err(err)) => {
-                        warn!("skipping port mapping: {err:?}");
+                        debug!("skipping port mapping: {err:?}");
                         None
                     }
                     Err(recv_err) => {
@@ -1114,7 +1120,6 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use super::*;
-
     use crate::defaults::staging::{default_eu_relay_node, default_na_relay_node};
 
     #[test]

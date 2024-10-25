@@ -74,7 +74,7 @@ impl NodeAddr {
     pub fn from_parts(
         node_id: PublicKey,
         relay_url: Option<RelayUrl>,
-        direct_addresses: Vec<SocketAddr>,
+        direct_addresses: impl IntoIterator<Item = SocketAddr>,
     ) -> Self {
         Self {
             node_id,
@@ -192,11 +192,11 @@ pub enum AddrInfoOptions {
     /// This usually means that iroh-dns discovery is used to find address information.
     #[default]
     Id,
-    /// Includes both the relay URL and the direct addresses.
+    /// Includes the Node ID and both the relay URL, and the direct addresses.
     RelayAndAddresses,
-    /// Only includes the relay URL.
+    /// Includes the Node ID and the relay URL.
     Relay,
-    /// Only includes the direct addresses.
+    /// Includes the Node ID and the direct addresses.
     Addresses,
 }
 

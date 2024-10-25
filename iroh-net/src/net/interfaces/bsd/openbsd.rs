@@ -1,6 +1,6 @@
-use super::{MessageType, RoutingStack, WireFormat};
-
 use libc::c_int;
+
+use super::{MessageType, RoutingStack, WireFormat};
 
 // Missing constants from libc.
 // https://github.com/rust-lang/libc/issues/3711

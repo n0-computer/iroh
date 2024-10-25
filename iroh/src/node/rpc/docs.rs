@@ -1,4 +1,4 @@
-//! This module contains an impl block on [`DocsEngine`] with handlers for RPC requests
+//! This module contains an impl block on [`DocsProtocol`] with handlers for RPC requests
 
 use anyhow::anyhow;
 use futures_lite::{Stream, StreamExt};
@@ -6,26 +6,28 @@ use iroh_base::rpc::RpcResult;
 use iroh_blobs::{store::Store as BaoStore, BlobFormat};
 use iroh_docs::{Author, DocTicket, NamespaceSecret};
 
-use crate::client::docs::ShareMode;
-use crate::node::DocsEngine;
-use crate::rpc_protocol::{
-    authors::{
-        CreateRequest, CreateResponse, DeleteRequest, DeleteResponse, ExportRequest,
-        ExportResponse, GetDefaultRequest, GetDefaultResponse, ImportRequest, ImportResponse,
-        ListRequest as AuthorListRequest, ListResponse as AuthorListResponse, SetDefaultRequest,
-        SetDefaultResponse,
-    },
-    docs::{
-        CloseRequest, CloseResponse, CreateRequest as DocCreateRequest,
-        CreateResponse as DocCreateResponse, DelRequest, DelResponse, DocListRequest,
-        DocSubscribeRequest, DocSubscribeResponse, DropRequest, DropResponse,
-        GetDownloadPolicyRequest, GetDownloadPolicyResponse, GetExactRequest, GetExactResponse,
-        GetManyRequest, GetManyResponse, GetSyncPeersRequest, GetSyncPeersResponse,
-        ImportRequest as DocImportRequest, ImportResponse as DocImportResponse, LeaveRequest,
-        LeaveResponse, ListResponse as DocListResponse, OpenRequest, OpenResponse,
-        SetDownloadPolicyRequest, SetDownloadPolicyResponse, SetHashRequest, SetHashResponse,
-        SetRequest, SetResponse, ShareRequest, ShareResponse, StartSyncRequest, StartSyncResponse,
-        StatusRequest, StatusResponse,
+use crate::{
+    client::docs::ShareMode,
+    node::protocol::docs::DocsProtocol,
+    rpc_protocol::{
+        authors::{
+            CreateRequest, CreateResponse, DeleteRequest, DeleteResponse, ExportRequest,
+            ExportResponse, GetDefaultRequest, GetDefaultResponse, ImportRequest, ImportResponse,
+            ListRequest as AuthorListRequest, ListResponse as AuthorListResponse,
+            SetDefaultRequest, SetDefaultResponse,
+        },
+        docs::{
+            CloseRequest, CloseResponse, CreateRequest as DocCreateRequest,
+            CreateResponse as DocCreateResponse, DelRequest, DelResponse, DocListRequest,
+            DocSubscribeRequest, DocSubscribeResponse, DropRequest, DropResponse,
+            GetDownloadPolicyRequest, GetDownloadPolicyResponse, GetExactRequest, GetExactResponse,
+            GetManyRequest, GetManyResponse, GetSyncPeersRequest, GetSyncPeersResponse,
+            ImportRequest as DocImportRequest, ImportResponse as DocImportResponse, LeaveRequest,
+            LeaveResponse, ListResponse as DocListResponse, OpenRequest, OpenResponse,
+            SetDownloadPolicyRequest, SetDownloadPolicyResponse, SetHashRequest, SetHashResponse,
+            SetRequest, SetResponse, ShareRequest, ShareResponse, StartSyncRequest,
+            StartSyncResponse, StatusRequest, StatusResponse,
+        },
     },
 };
 
@@ -33,7 +35,7 @@ use crate::rpc_protocol::{
 const ITER_CHANNEL_CAP: usize = 64;
 
 #[allow(missing_docs)]
-impl DocsEngine {
+impl DocsProtocol {
     pub async fn author_create(&self, _req: CreateRequest) -> RpcResult<CreateResponse> {
         // TODO: pass rng
         let author = Author::new(&mut rand::rngs::OsRng {});

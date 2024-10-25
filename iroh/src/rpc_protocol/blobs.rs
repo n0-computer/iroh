@@ -1,14 +1,15 @@
 use std::path::PathBuf;
 
 use bytes::Bytes;
-use iroh_base::rpc::RpcResult;
-use iroh_base::{hash::Hash, rpc::RpcError};
-use iroh_blobs::provider::BatchAddPathProgress;
+use iroh_base::{
+    hash::Hash,
+    rpc::{RpcError, RpcResult},
+};
 use iroh_blobs::{
     export::ExportProgress,
     format::collection::Collection,
     get::db::DownloadProgress,
-    provider::AddProgress,
+    provider::{AddProgress, BatchAddPathProgress},
     store::{
         BaoBlobSize, ConsistencyCheckProgress, ExportFormat, ExportMode, ImportMode,
         ValidateProgress,
@@ -21,11 +22,10 @@ use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
+use super::RpcService;
 use crate::client::blobs::{
     BlobInfo, BlobStatus, DownloadMode, IncompleteBlobInfo, ReadAtLen, WrapOption,
 };
-
-use super::RpcService;
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

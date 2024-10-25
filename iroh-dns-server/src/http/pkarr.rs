@@ -1,16 +1,14 @@
 use anyhow::Result;
-use axum::extract::Path;
-use axum::{extract::State, response::IntoResponse};
+use axum::{
+    extract::{Path, State},
+    response::IntoResponse,
+};
 use bytes::Bytes;
-
 use http::{header, StatusCode};
-
 use tracing::info;
 
-use crate::util::PublicKeyBytes;
-use crate::{state::AppState, store::PacketSource};
-
 use super::error::AppError;
+use crate::{state::AppState, store::PacketSource, util::PublicKeyBytes};
 
 pub async fn put(
     State(state): State<AppState>,

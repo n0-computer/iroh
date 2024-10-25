@@ -2,8 +2,7 @@
 
 use bytes::Bytes;
 
-use crate::key::PublicKey;
-use crate::relay::server::client_conn::ClientConnBuilder;
+use crate::{key::PublicKey, relay::server::client_conn::ClientConnBuilder};
 
 /// A request to write a dataframe to a Client
 #[derive(Debug, Clone)]

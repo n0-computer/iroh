@@ -1,16 +1,15 @@
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::{
+    net::SocketAddr,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use anyhow::{anyhow, Context, Result};
-use hyper::service::service_fn;
-use hyper::{Request, Response};
-use tokio::io::AsyncWriteExt as _;
-use tokio::net::TcpListener;
+use hyper::{service::service_fn, Request, Response};
+use tokio::{io::AsyncWriteExt as _, net::TcpListener};
 use tracing::{error, info};
 
-use crate::core::Core;
-use crate::parse_prometheus_metrics;
+use crate::{core::Core, parse_prometheus_metrics};
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 

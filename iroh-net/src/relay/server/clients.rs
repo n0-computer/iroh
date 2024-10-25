@@ -3,16 +3,16 @@
 //! The "Server" side of the client. Uses the `ClientConnManager`.
 use std::collections::{HashMap, HashSet};
 
-use tokio::{sync::mpsc, task::JoinSet};
-
 use iroh_metrics::inc;
+use tokio::{sync::mpsc, task::JoinSet};
 use tracing::{Instrument, Span};
 
+use super::{
+    client_conn::{ClientConnBuilder, ClientConnManager},
+    metrics::Metrics,
+    types::Packet,
+};
 use crate::key::PublicKey;
-
-use super::client_conn::{ClientConnBuilder, ClientConnManager};
-use super::metrics::Metrics;
-use super::types::Packet;
 
 /// Number of times we try to send to a client connection before dropping the data;
 const RETRIES: usize = 3;
@@ -254,8 +254,12 @@ impl Clients {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use anyhow::Result;
+    use bytes::Bytes;
+    use tokio::io::DuplexStream;
+    use tokio_util::codec::{Framed, FramedRead};
 
+    use super::*;
     use crate::{
         key::SecretKey,
         relay::{
@@ -263,11 +267,6 @@ mod tests {
             server::streams::{MaybeTlsStream, RelayIo},
         },
     };
-
-    use anyhow::Result;
-    use bytes::Bytes;
-    use tokio::io::DuplexStream;
-    use tokio_util::codec::{Framed, FramedRead};
 
     fn test_client_builder(
         key: PublicKey,

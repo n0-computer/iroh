@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     pin::Pin,
@@ -34,9 +34,8 @@ mod node_state;
 mod path_state;
 mod udp_paths;
 
-pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
-
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
+pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -284,10 +283,7 @@ impl NodeMap {
         self.inner.lock().prune_inactive();
     }
 
-    pub(crate) fn on_direct_addr_discovered(
-        &self,
-        discovered: impl Iterator<Item = impl Into<IpPort>>,
-    ) {
+    pub(crate) fn on_direct_addr_discovered(&self, discovered: BTreeSet<SocketAddr>) {
         self.inner.lock().on_direct_addr_discovered(discovered);
     }
 }
@@ -322,10 +318,7 @@ impl NodeMapInner {
     }
 
     /// Prunes direct addresses from nodes that claim to share an address we know points to us.
-    pub(super) fn on_direct_addr_discovered(
-        &mut self,
-        discovered: impl Iterator<Item = impl Into<IpPort>>,
-    ) {
+    pub(super) fn on_direct_addr_discovered(&mut self, discovered: BTreeSet<SocketAddr>) {
         for addr in discovered {
             self.remove_by_ipp(addr.into(), ClearReason::MatchesOurLocalAddr)
         }
@@ -655,10 +648,10 @@ impl IpPort {
 
 #[cfg(test)]
 mod tests {
-    use super::node_state::MAX_INACTIVE_DIRECT_ADDRESSES;
-    use super::*;
-    use crate::key::SecretKey;
     use std::net::Ipv4Addr;
+
+    use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
+    use crate::key::SecretKey;
 
     impl NodeMap {
         #[track_caller]

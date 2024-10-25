@@ -280,7 +280,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -313,7 +313,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "http-body-util",
  "mime",
  "pin-project-lite",
@@ -346,7 +346,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -797,26 +797,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
-name = "const_format"
-version = "0.2.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3a214c7af3d04997541b18d432afaff4c455e79e2029079647e72fc2bd27673"
-dependencies = [
- "const_format_proc_macros",
-]
-
-[[package]]
-name = "const_format_proc_macros"
-version = "0.2.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7f6ff08fd20f4f299298a28e2dfa8a8ba1036e6cd2460ac1de7b425d76f2500"
-dependencies = [
- "proc-macro2",
- "quote",
- "unicode-xid",
-]
-
-[[package]]
 name = "constant_time_eq"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -900,9 +880,9 @@ dependencies = [
 
 [[package]]
 name = "critical-section"
-version = "1.1.2"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7059fff8937831a9ae6f0fe4d658ffabf58f2ca96aa9dec1c889f936f705f216"
+checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
 name = "crossbeam-channel"
@@ -1386,6 +1366,12 @@ name = "embedded-io"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef1a6892d9eef45c8fa6b9e0086428a2cca8491aca8f787c534a3d6d0bcb3ced"
+
+[[package]]
+name = "embedded-io"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "encode_unicode"
@@ -2169,17 +2155,6 @@ dependencies = [
 
 [[package]]
 name = "http-body"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ceab25649e9960c0311ea418d17bee82c0dcec1bd053b5f9a66e265a693bed2"
-dependencies = [
- "bytes",
- "http 0.2.12",
- "pin-project-lite",
-]
-
-[[package]]
-name = "http-body"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1efedce1fb8e6913f23e0c92de8e62cd5b772a67e7b3946df930a62566c93184"
@@ -2197,7 +2172,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "pin-project-lite",
 ]
 
@@ -2243,7 +2218,7 @@ dependencies = [
  "futures-util",
  "h2",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "httparse",
  "httpdate",
  "itoa",
@@ -2281,7 +2256,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "hyper",
  "pin-project-lite",
  "socket2",
@@ -2447,7 +2422,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2502,7 +2477,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2546,7 +2521,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-blobs"
-version = "0.26.0"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69e83475d6c8cc312a224d4c6bdf287f862d30d2b176768ef71f188a0d8aa7cd"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2556,49 +2533,38 @@ dependencies = [
  "derive_more",
  "futures-buffered",
  "futures-lite 2.3.0",
- "futures-util",
  "genawaiter",
  "hashlink",
  "hex",
- "http-body 0.4.6",
  "iroh-base",
- "iroh-blobs",
  "iroh-io",
  "iroh-metrics",
  "iroh-net",
  "iroh-quinn",
- "iroh-test",
  "num_cpus",
  "oneshot",
  "parking_lot",
  "pin-project",
  "postcard",
- "proptest",
  "rand",
  "range-collections",
- "rcgen",
  "redb 1.5.1",
  "redb 2.1.1",
  "reflink-copy",
- "rustls",
  "self_cell",
  "serde",
- "serde_json",
- "serde_test",
  "smallvec",
  "tempfile",
- "testresult",
  "thiserror",
  "tokio",
  "tokio-util",
  "tracing",
  "tracing-futures",
- "tracing-subscriber",
 ]
 
 [[package]]
 name = "iroh-cli"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2655,7 +2621,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2704,7 +2670,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-docs"
-version = "0.26.0"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb2c8bc1fe680549dd9776031be30e68663884026f71a914aab7108e0b8f8ce4"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2721,13 +2689,10 @@ dependencies = [
  "iroh-gossip",
  "iroh-metrics",
  "iroh-net",
- "iroh-test",
  "lru",
  "num_enum",
  "postcard",
- "proptest",
  "rand",
- "rand_chacha",
  "rand_core",
  "redb 1.5.1",
  "redb 2.1.1",
@@ -2735,7 +2700,6 @@ dependencies = [
  "serde",
  "strum 0.25.0",
  "tempfile",
- "test-strategy",
  "thiserror",
  "tokio",
  "tokio-stream",
@@ -2745,12 +2709,13 @@ dependencies = [
 
 [[package]]
 name = "iroh-gossip"
-version = "0.26.0"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b434d455389493ff2b2ecbab035c12eb3762f24d04080855ecd4956bf7739448"
 dependencies = [
  "anyhow",
  "async-channel",
  "bytes",
- "clap",
  "derive_more",
  "ed25519-dalek",
  "futures-concurrency",
@@ -2761,17 +2726,13 @@ dependencies = [
  "iroh-blake3",
  "iroh-metrics",
  "iroh-net",
- "iroh-test",
  "postcard",
  "rand",
- "rand_chacha",
  "rand_core",
  "serde",
  "tokio",
  "tokio-util",
  "tracing",
- "tracing-subscriber",
- "url",
 ]
 
 [[package]]
@@ -2789,7 +2750,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "erased_set",
@@ -2808,7 +2769,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2904,7 +2865,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-bench"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2973,7 +2934,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-test"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "tokio",
@@ -3956,13 +3917,13 @@ dependencies = [
 
 [[package]]
 name = "postcard"
-version = "1.0.8"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a55c51ee6c0db07e68448e336cf8ea4131a620edefebf9893e759b2d793420f8"
+checksum = "5f7f0a8d620d71c457dd1d47df76bb18960378da56af4527aaa10f515eee732e"
 dependencies = [
  "cobs",
- "const_format",
- "embedded-io",
+ "embedded-io 0.4.0",
+ "embedded-io 0.6.1",
  "heapless",
  "postcard-derive",
  "serde",
@@ -3970,9 +3931,9 @@ dependencies = [
 
 [[package]]
 name = "postcard-derive"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc4b01218787dd4420daf63875163a787a78294ad48a24e9f6fa8c6507759a79"
+checksum = "0239fa9c1d225d4b7eb69925c25c5e082307a141e470573fbbe3a817ce6a7a37"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4537,7 +4498,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "http-body-util",
  "hyper",
  "hyper-rustls",
@@ -5324,29 +5285,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e9426b2a0c03e6cc2ea8dbc0168dbbf943f88755e409fb91bcb8f6a268305f4a"
 
 [[package]]
-name = "structmeta"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78ad9e09554f0456d67a69c1584c9798ba733a5b50349a6c0d0948710523922d"
-dependencies = [
- "proc-macro2",
- "quote",
- "structmeta-derive",
- "syn 2.0.72",
-]
-
-[[package]]
-name = "structmeta-derive"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a60bcaff7397072dca0017d1db428e30d5002e00b6847703e2e42005c95fbe00"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.72",
-]
-
-[[package]]
 name = "strum"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5561,18 +5499,6 @@ dependencies = [
  "fastrand 2.1.0",
  "rustix",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "test-strategy"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8361c808554228ad09bfed70f5c823caf8a3450b6881cc3a38eb57e8c08c1d9"
-dependencies = [
- "proc-macro2",
- "quote",
- "structmeta",
- "syn 2.0.72",
 ]
 
 [[package]]
@@ -5898,7 +5824,7 @@ dependencies = [
  "bitflags 2.6.0",
  "bytes",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "http-body-util",
  "pin-project-lite",
  "tower-layer",
