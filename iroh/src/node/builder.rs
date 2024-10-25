@@ -675,8 +675,10 @@ where
             }
             SpacesStorage::Persistent(path) => {
                 let blobs_store = self.blobs_store.clone();
-                let create_store =
-                    move || iroh_willow::store::persistent::Store::new(path, blobs_store);
+                let create_store = move || {
+                    iroh_willow::store::persistent::Store::new(path, blobs_store)
+                        .expect("failed to spawn persistent store") // TODO(matheus23)
+                };
                 let engine = iroh_willow::Engine::spawn(
                     endpoint.clone(),
                     create_store,
