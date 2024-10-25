@@ -673,8 +673,16 @@ where
                 );
                 Some(engine)
             }
-            SpacesStorage::Persistent(_) => {
-                unimplemented!("persistent storage for willow is not yet implemented")
+            SpacesStorage::Persistent(path) => {
+                let blobs_store = self.blobs_store.clone();
+                let create_store =
+                    move || iroh_willow::store::persistent::Store::new(path, blobs_store);
+                let engine = iroh_willow::Engine::spawn(
+                    endpoint.clone(),
+                    create_store,
+                    iroh_willow::engine::AcceptOpts::default(),
+                );
+                Some(engine)
             }
         };
         // Spawn the willow engine.

@@ -180,6 +180,7 @@ pub mod serde_encoding {
         Serialize,
         Deserialize,
     )]
+    #[repr(transparent)]
     pub struct SerdeReadAuthorisation(#[serde(with = "read_authorisation")] pub ReadAuthorisation);
 
     pub mod mc_capability {

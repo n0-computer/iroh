@@ -21,11 +21,10 @@ use willow_store::{QueryRange, QueryRange3d};
 
 use crate::proto::data_model::{AuthorisationToken, PathExt};
 use crate::proto::grouping::Area;
-use crate::store::glue::{blobseq_below, StoredAuthorisedEntry};
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
-        data_model::{AuthorisedEntry, Entry, EntryExt, Path, SubspaceId, WriteCapability},
+        data_model::{AuthorisedEntry, Entry, EntryExt as _, Path, SubspaceId, WriteCapability},
         grouping::{Range, Range3d, RangeEnd},
         keys::{NamespaceId, NamespaceSecretKey, UserId, UserSecretKey},
         meadowcap::{self, is_wider_than, ReadAuthorisation},
@@ -34,7 +33,7 @@ use crate::{
     store::traits::{self, RangeSplit, SplitAction, SplitOpts},
 };
 
-use super::glue::{blobseq_successor, path_to_blobseq, to_query, IrohWillowParams};
+use super::glue::{path_to_blobseq, to_query, IrohWillowParams, StoredAuthorisedEntry};
 use super::traits::{StoreEvent, SubscribeParams};
 use super::EntryOrigin;
 
@@ -111,9 +110,9 @@ impl traits::SecretStorage for Rc<RefCell<SecretStore>> {
 
 #[derive(Debug, Clone)]
 pub struct EntryStore {
-    stores: HashMap<NamespaceId, NamespaceStore>,
-    authorisation_tokens: BTreeMap<ed25519::SignatureBytes, AuthorisationToken>,
-    store: willow_store::MemStore,
+    pub stores: HashMap<NamespaceId, NamespaceStore>,
+    pub authorisation_tokens: BTreeMap<ed25519::SignatureBytes, AuthorisationToken>,
+    pub store: willow_store::MemStore,
 }
 
 impl Default for EntryStore {
@@ -278,7 +277,7 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
             return Ok(None);
         };
         let blobseq = path_to_blobseq(path);
-        let end = blobseq_successor(&blobseq);
+        let end = blobseq.immediate_successor();
         let Some(result) = ns_store
             .entries
             .query_ordered(
@@ -328,7 +327,7 @@ impl EntryStore {
         // Enforce prefix deletion:
 
         let blobseq_start = path_to_blobseq(entry.entry().path());
-        let blobseq_end = blobseq_below(&blobseq_start);
+        let blobseq_end = blobseq_start.subseq_successor();
 
         let overwritten_range = QueryRange3d {
             x: QueryRange::new(

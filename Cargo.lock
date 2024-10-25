@@ -3062,6 +3062,7 @@ dependencies = [
  "rand_chacha",
  "rand_core",
  "redb 2.1.1",
+ "self_cell",
  "serde",
  "sha2",
  "strum 0.26.3",
@@ -6562,7 +6563,7 @@ dependencies = [
 [[package]]
 name = "willow-store"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/willow-store.git?branch=matheus23/redb-ref#4cc73658c96f7a95ba0252408454671515a74d2c"
+source = "git+https://github.com/n0-computer/willow-store.git?branch=matheus23/redb-ref#1a26f408a98fd02de60b9ec5447620a0e1df82e9"
 dependencies = [
  "anyhow",
  "blake3",
