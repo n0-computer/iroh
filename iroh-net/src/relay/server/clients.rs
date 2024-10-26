@@ -3,6 +3,7 @@
 //! The "Server" side of the client. Uses the `ClientConnManager`.
 use std::collections::{HashMap, HashSet};
 
+use iroh_base::key::PublicKey;
 use iroh_metrics::inc;
 use tokio::{sync::mpsc, task::JoinSet};
 use tracing::{Instrument, Span};
@@ -12,7 +13,6 @@ use super::{
     metrics::Metrics,
     types::Packet,
 };
-use crate::key::PublicKey;
 
 /// Number of times we try to send to a client connection before dropping the data;
 const RETRIES: usize = 3;

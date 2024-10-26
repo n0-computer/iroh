@@ -12,21 +12,17 @@ use hyper::{
     upgrade::Upgraded,
     HeaderMap, Method, Request, Response, StatusCode,
 };
+use iroh_base::key::SecretKey;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
 use tungstenite::handshake::derive_accept_key;
 
-use crate::{
-    key::SecretKey,
-    relay::{
-        http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
-        server::{
-            actor::{ClientConnHandler, ServerActorTask},
-            streams::MaybeTlsStream,
-        },
-    },
+use super::{
+    super::http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
+    actor::{ClientConnHandler, ServerActorTask},
+    streams::MaybeTlsStream,
 };
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;

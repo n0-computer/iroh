@@ -15,6 +15,7 @@ use futures_util::StreamExt;
 use http_body_util::Empty;
 use hyper::{body::Incoming, header::UPGRADE, upgrade::Parts, Request};
 use hyper_util::rt::TokioIo;
+use iroh_base::key::{NodeId, PublicKey, SecretKey};
 use rand::Rng;
 use rustls::client::Resumption;
 use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
@@ -32,15 +33,14 @@ use tokio_util::{
 use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 use url::Url;
 
+use super::{
+    codec::DerpCodec,
+    http::{Protocol, RELAY_PATH},
+    RelayUrl,
+};
 use crate::{
     defaults::timeouts::relay::*,
     dns::{DnsResolver, ResolverExt},
-    key::{NodeId, PublicKey, SecretKey},
-    relay::{
-        codec::DerpCodec,
-        http::{Protocol, RELAY_PATH},
-        RelayUrl,
-    },
     util::chain,
 };
 

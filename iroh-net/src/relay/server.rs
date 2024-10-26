@@ -17,6 +17,7 @@ use http::{
     response::Builder as ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
 };
 use hyper::body::Incoming;
+use iroh_base::key::SecretKey;
 use iroh_metrics::inc;
 // Module defined in this file.
 use stun_metrics::StunMetrics;
@@ -27,11 +28,8 @@ use tokio::{
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-use crate::{
-    key::SecretKey,
-    relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH},
-    stun,
-};
+use super::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH};
+use crate::stun;
 
 pub(crate) mod actor;
 pub(crate) mod client_conn;

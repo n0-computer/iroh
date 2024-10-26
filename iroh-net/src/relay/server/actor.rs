@@ -13,6 +13,7 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use hyper::HeaderMap;
+use iroh_base::key::{PublicKey, SecretKey};
 use iroh_metrics::{core::UsageStatsReport, inc, inc_by, report_usage_stats};
 use time::{Date, OffsetDateTime};
 use tokio::sync::mpsc;
@@ -21,24 +22,21 @@ use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle
 use tracing::{info_span, trace, Instrument};
 use tungstenite::protocol::Role;
 
-use crate::{
-    defaults::timeouts::relay::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT,
-    key::{PublicKey, SecretKey},
-    relay::{
+use super::{
+    super::{
         codec::{
             recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
             SERVER_CHANNEL_SIZE,
         },
         http::Protocol,
-        server::{
-            client_conn::ClientConnBuilder,
-            clients::Clients,
-            metrics::Metrics,
-            streams::{MaybeTlsStream, RelayIo},
-            types::ServerMessage,
-        },
     },
+    client_conn::ClientConnBuilder,
+    clients::Clients,
+    metrics::Metrics,
+    streams::{MaybeTlsStream, RelayIo},
+    types::ServerMessage,
 };
+use crate::defaults::timeouts::relay::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT;
 
 // TODO: skipping `verboseDropKeys` for now
 

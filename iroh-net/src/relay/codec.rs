@@ -6,12 +6,10 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures_lite::{Stream, StreamExt};
 use futures_sink::Sink;
 use futures_util::SinkExt;
-use iroh_base::key::{Signature, PUBLIC_KEY_LENGTH};
+use iroh_base::key::{PublicKey, SecretKey, Signature, PUBLIC_KEY_LENGTH};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Decoder, Encoder};
-
-use crate::key::{PublicKey, SecretKey};
 
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
