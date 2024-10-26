@@ -21,8 +21,7 @@ use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::{
-    defaults::timeouts::HAIRPIN_CHECK_TIMEOUT,
-    netcheck::{self, reportgen, Inflight},
+    netcheck::{self, defaults::timeouts::HAIRPIN_CHECK_TIMEOUT, reportgen, Inflight},
     stun,
 };
 

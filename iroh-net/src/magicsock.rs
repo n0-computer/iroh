@@ -59,13 +59,12 @@ use self::{
     udp_conn::UdpConn,
 };
 use crate::{
-    defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    netcheck,
+    netcheck::{self, defaults::timeouts::NETCHECK_REPORT_TIMEOUT},
     relay::{RelayMap, RelayUrl},
     stun, AddrInfo,
 };

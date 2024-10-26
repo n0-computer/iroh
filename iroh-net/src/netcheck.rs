@@ -33,6 +33,9 @@ mod metrics;
 pub mod ping;
 mod reportgen;
 
+// TODO(@divma): re-eval how pub is everything here
+pub(crate) mod defaults;
+
 pub use metrics::Metrics;
 use Metrics as NetcheckMetrics;
 
@@ -779,11 +782,9 @@ mod tests {
     use tokio::time;
     use tracing::info;
 
+    use super::defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT};
     use super::{ping::Pinger, *};
-    use crate::{
-        defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT},
-        relay::RelayNode,
-    };
+    use crate::relay::RelayNode;
 
     #[tokio::test]
     async fn test_basic() -> Result<()> {

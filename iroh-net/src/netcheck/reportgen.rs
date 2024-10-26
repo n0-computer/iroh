@@ -38,10 +38,6 @@ use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 
 use super::{
-    ping::{PingError, Pinger},
-    NetcheckMetrics, Report,
-};
-use crate::{
     defaults::{
         timeouts::{
             CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, DNS_TIMEOUT, OVERALL_REPORT_TIMEOUT,
@@ -49,6 +45,10 @@ use crate::{
         },
         DEFAULT_STUN_PORT,
     },
+    ping::{PingError, Pinger},
+    NetcheckMetrics, Report,
+};
+use crate::{
     dns::{DnsResolver, ResolverExt},
     relay::{RelayMap, RelayNode, RelayUrl},
     stun,
