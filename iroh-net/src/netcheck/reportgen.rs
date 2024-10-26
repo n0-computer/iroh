@@ -27,6 +27,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use iroh_metrics::inc;
 use net::{interfaces, UdpSocket};
+use probes::{Probe, ProbePlan, ProbeProto};
 use rand::seq::IteratorRandom;
 use tokio::{
     sync::{mpsc, oneshot},
@@ -41,7 +42,13 @@ use super::{
     NetcheckMetrics, Report,
 };
 use crate::{
-    defaults::DEFAULT_STUN_PORT,
+    defaults::{
+        timeouts::{
+            CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, DNS_TIMEOUT, OVERALL_REPORT_TIMEOUT,
+            PROBES_TIMEOUT,
+        },
+        DEFAULT_STUN_PORT,
+    },
     dns::{DnsResolver, ResolverExt},
     relay::{RelayMap, RelayNode, RelayUrl},
     stun,
@@ -50,13 +57,6 @@ use crate::{
 
 mod hairpin;
 mod probes;
-
-use probes::{Probe, ProbePlan, ProbeProto};
-
-use crate::defaults::timeouts::{
-    CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, DNS_TIMEOUT, OVERALL_REPORT_TIMEOUT,
-    PROBES_TIMEOUT,
-};
 
 const ENOUGH_NODES: usize = 3;
 
