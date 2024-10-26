@@ -36,11 +36,13 @@ use tokio::{
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 
-use super::{NetcheckMetrics, Report};
+use super::{
+    ping::{PingError, Pinger},
+    NetcheckMetrics, Report,
+};
 use crate::{
     defaults::DEFAULT_STUN_PORT,
     dns::{DnsResolver, ResolverExt},
-    ping::{PingError, Pinger},
     relay::{RelayMap, RelayNode, RelayUrl},
     stun,
     util::MaybeFuture,

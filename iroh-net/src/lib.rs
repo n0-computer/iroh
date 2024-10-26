@@ -242,7 +242,6 @@ pub mod endpoint;
 mod magicsock;
 pub mod metrics;
 pub mod netcheck;
-pub mod ping;
 pub mod relay;
 pub mod stun;
 pub mod ticket;
@@ -253,6 +252,8 @@ pub use endpoint::{AddrInfo, Endpoint, NodeAddr};
 pub use iroh_base::{key, key::NodeId};
 // TODO(@divma): re-evaluate this re-export
 pub use net;
+// TODO(@divma): re-evaluate this re-export
+pub use netcheck::ping;
 // TODO(@divma): re-evaluate this re-export
 pub use portmapper;
 

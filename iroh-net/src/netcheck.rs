@@ -29,6 +29,8 @@ use tracing::{debug, error, info_span, trace, warn, Instrument};
 use super::{relay::RelayMap, stun};
 
 mod metrics;
+// TODO(@divma): re-evaluate this re-export. It's necessary to maintain the re-export in iroh-net
+pub mod ping;
 mod reportgen;
 
 pub use metrics::Metrics;
@@ -777,10 +779,9 @@ mod tests {
     use tokio::time;
     use tracing::info;
 
-    use super::*;
+    use super::{ping::Pinger, *};
     use crate::{
         defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT},
-        ping::Pinger,
         relay::RelayNode,
     };
 
