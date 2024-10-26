@@ -782,8 +782,11 @@ mod tests {
     use tokio::time;
     use tracing::info;
 
-    use super::defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT};
-    use super::{ping::Pinger, *};
+    use super::{
+        defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT},
+        ping::Pinger,
+        *,
+    };
     use crate::relay::RelayNode;
 
     #[tokio::test]
