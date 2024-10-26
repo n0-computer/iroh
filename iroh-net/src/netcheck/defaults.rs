@@ -7,6 +7,12 @@
 /// 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
 pub const DEFAULT_STUN_PORT: u16 = 3478;
 
+#[cfg(test)]
+pub(crate) mod staging {
+    /// Hostname of the default EU relay.
+    pub const EU_RELAY_HOSTNAME: &str = "staging-euw1-1.relay.iroh.network.";
+}
+
 pub(crate) mod timeouts {
     use std::time::Duration;
 
