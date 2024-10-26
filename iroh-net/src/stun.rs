@@ -2,6 +2,7 @@
 
 use std::net::SocketAddr;
 
+pub use stun_rs::TransactionId;
 use stun_rs::{
     attributes::{
         stun::{Fingerprint, XorMappedAddress},
@@ -10,8 +11,6 @@ use stun_rs::{
     methods, DecoderContextBuilder, MessageClass, MessageDecoder, MessageDecoderBuilder,
     MessageEncoderBuilder, StunMessageBuilder,
 };
-
-pub use stun_rs::TransactionId;
 
 /// Errors that can occur when handling a STUN packet.
 #[derive(Debug, thiserror::Error)]

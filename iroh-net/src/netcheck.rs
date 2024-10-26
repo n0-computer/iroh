@@ -16,6 +16,7 @@ use std::{
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use hickory_resolver::TokioAsyncResolver as DnsResolver;
+use iroh_base::node_addr::RelayUrl;
 use iroh_metrics::inc;
 use net::{IpFamily, UdpSocket};
 use tokio::{
@@ -26,7 +27,6 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use super::{relay::RelayMap, stun};
-use iroh_base::node_addr::RelayUrl;
 
 mod metrics;
 mod reportgen;

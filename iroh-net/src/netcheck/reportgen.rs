@@ -36,11 +36,10 @@ use tokio::{
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 
-use super::NetcheckMetrics;
+use super::{NetcheckMetrics, Report};
 use crate::{
     defaults::DEFAULT_STUN_PORT,
     dns::{DnsResolver, ResolverExt},
-    netcheck::{self, Report},
     ping::{PingError, Pinger},
     relay::{RelayMap, RelayNode, RelayUrl},
     stun,
@@ -77,7 +76,7 @@ impl Client {
     /// The actor starts running immediately and only generates a single report, after which
     /// it shuts down.  Dropping this handle will abort the actor.
     pub(super) fn new(
-        netcheck: netcheck::Addr,
+        netcheck: super::Addr,
         last_report: Option<Arc<Report>>,
         port_mapper: Option<portmapper::Client>,
         relay_map: RelayMap,
@@ -197,7 +196,7 @@ impl Actor {
             Ok(_) => debug!("reportgen actor finished"),
             Err(err) => {
                 self.netcheck
-                    .send(netcheck::Message::ReportAborted { err })
+                    .send(super::Message::ReportAborted { err })
                     .await
                     .ok();
             }
@@ -309,7 +308,7 @@ impl Actor {
 
         debug!("Sending report to netcheck actor");
         self.netcheck
-            .send(netcheck::Message::ReportReady {
+            .send(super::Message::ReportReady {
                 report: Box::new(self.report.clone()),
             })
             .await?;
@@ -677,7 +676,7 @@ async fn run_probe(
     stun_sock6: Option<Arc<UdpSocket>>,
     relay_node: Arc<RelayNode>,
     probe: Probe,
-    netcheck: netcheck::Addr,
+    netcheck: super::Addr,
     pinger: Pinger,
     dns_resolver: DnsResolver,
 ) -> Result<ProbeReport, ProbeError> {
@@ -771,7 +770,7 @@ async fn run_probe(
 async fn run_stun_probe(
     sock: &Arc<UdpSocket>,
     relay_addr: SocketAddr,
-    netcheck: netcheck::Addr,
+    netcheck: super::Addr,
     probe: Probe,
 ) -> Result<ProbeReport, ProbeError> {
     match probe.proto() {
@@ -786,8 +785,8 @@ async fn run_stun_probe(
     let (stun_tx, stun_rx) = oneshot::channel();
     let (inflight_ready_tx, inflight_ready_rx) = oneshot::channel();
     netcheck
-        .send(netcheck::Message::InFlightStun(
-            netcheck::Inflight {
+        .send(super::Message::InFlightStun(
+            super::Inflight {
                 txn: txid,
                 start: Instant::now(),
                 s: stun_tx,
