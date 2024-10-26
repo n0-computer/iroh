@@ -28,6 +28,7 @@ use super::{
             recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
             SERVER_CHANNEL_SIZE,
         },
+        defaults::timeouts::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT,
         http::Protocol,
     },
     client_conn::ClientConnBuilder,
@@ -36,7 +37,6 @@ use super::{
     streams::{MaybeTlsStream, RelayIo},
     types::ServerMessage,
 };
-use crate::defaults::timeouts::relay::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT;
 
 // TODO: skipping `verboseDropKeys` for now
 

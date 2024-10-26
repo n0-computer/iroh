@@ -35,11 +35,11 @@ use url::Url;
 
 use super::{
     codec::DerpCodec,
+    defaults::timeouts::*,
     http::{Protocol, RELAY_PATH},
     RelayUrl,
 };
 use crate::{
-    defaults::timeouts::relay::*,
     dns::{DnsResolver, ResolverExt},
     util::chain,
 };

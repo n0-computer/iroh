@@ -5,8 +5,7 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
-use super::RelayUrl;
-use crate::defaults::DEFAULT_STUN_PORT;
+use super::{defaults::DEFAULT_STUN_PORT, RelayUrl};
 
 /// Configuration of the relay servers for an [`Endpoint`].
 ///
@@ -30,8 +29,8 @@ impl RelayMode {
     pub fn relay_map(&self) -> RelayMap {
         match self {
             RelayMode::Disabled => RelayMap::empty(),
-            RelayMode::Default => crate::defaults::prod::default_relay_map(),
-            RelayMode::Staging => crate::defaults::staging::default_relay_map(),
+            RelayMode::Default => super::defaults::prod::default_relay_map(),
+            RelayMode::Staging => super::defaults::staging::default_relay_map(),
             RelayMode::Custom(relay_map) => relay_map.clone(),
         }
     }

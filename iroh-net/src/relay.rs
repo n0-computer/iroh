@@ -20,6 +20,8 @@ pub mod server;
 
 pub use iroh_base::node_addr::RelayUrl;
 
+mod defaults;
+
 /// Environment variable to force the use of staging relays.
 #[cfg_attr(iroh_docsrs, doc(cfg(not(test))))]
 pub const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";

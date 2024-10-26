@@ -19,6 +19,7 @@ use futures_util::{
     stream::{SplitSink, SplitStream, StreamExt},
     SinkExt,
 };
+use iroh_base::key::{PublicKey, SecretKey};
 use tokio::sync::mpsc;
 use tokio_tungstenite_wasm::WebSocketStream;
 use tokio_util::{
@@ -27,16 +28,13 @@ use tokio_util::{
 };
 use tracing::{debug, info_span, trace, Instrument};
 
-use crate::{
-    defaults::timeouts::relay::CLIENT_RECV_TIMEOUT,
-    key::{PublicKey, SecretKey},
-    relay::{
-        client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
-        codec::{
-            write_frame, ClientInfo, DerpCodec, Frame, MAX_PACKET_SIZE,
-            PER_CLIENT_READ_QUEUE_DEPTH, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
-        },
+use super::super::{
+    client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
+    codec::{
+        write_frame, ClientInfo, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_READ_QUEUE_DEPTH,
+        PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
     },
+    defaults::timeouts::CLIENT_RECV_TIMEOUT,
 };
 
 impl PartialEq for Conn {
