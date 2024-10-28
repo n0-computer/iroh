@@ -33,10 +33,7 @@ use tokio::task::JoinError;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error_span, trace, Instrument};
 
-use super::{
-    protocol::gossip::GossipProtocol, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr,
-    Node, NodeInner,
-};
+use super::{rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner};
 use crate::{
     client::RPC_ALPN,
     node::{
@@ -826,7 +823,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         self = self.accept(iroh_blobs::protocol::ALPN.to_vec(), Arc::new(blobs_proto));
 
         // Register gossip.
-        self = self.accept(GOSSIP_ALPN.to_vec(), Arc::new(GossipProtocol(gossip)));
+        self = self.accept(GOSSIP_ALPN.to_vec(), Arc::new(gossip));
 
         // Register docs, if enabled.
         if let Some(docs) = docs {

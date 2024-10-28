@@ -6,12 +6,9 @@ pub use dns_and_pkarr_servers::DnsPkarrServer;
 pub use dns_server::create_dns_resolver;
 use tokio::sync::oneshot;
 
-use crate::{
-    key::SecretKey,
-    relay::{
-        server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
-        RelayMap, RelayNode, RelayUrl,
-    },
+use crate::relay::{
+    server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
+    RelayMap, RelayNode, RelayUrl,
 };
 
 /// A drop guard to clean up test infrastructure.
@@ -29,7 +26,6 @@ pub struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
 pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server)> {
-    let secret_key = SecretKey::generate();
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
     let rustls_cert = rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
     let private_key =
@@ -39,7 +35,6 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server)> {
     let config = ServerConfig {
         relay: Some(RelayConfig {
             http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-            secret_key,
             tls: Some(TlsConfig {
                 cert: CertConfig::<(), ()>::Manual {
                     private_key,

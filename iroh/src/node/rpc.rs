@@ -10,7 +10,6 @@ use futures_buffered::BufferedStreamExt;
 use futures_lite::{Stream, StreamExt};
 use futures_util::FutureExt;
 use genawaiter::sync::{Co, Gen};
-use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_blobs::{
     export::ExportProgress,
     format::collection::Collection,
@@ -28,7 +27,7 @@ use iroh_blobs::{
     BlobFormat, HashAndFormat, Tag,
 };
 use iroh_docs::net::DOCS_ALPN;
-use iroh_gossip::net::GOSSIP_ALPN;
+use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
 use iroh_net::{relay::RelayUrl, NodeAddr, NodeId};
 use iroh_router::Router;
@@ -45,7 +44,7 @@ use crate::{
         NodeStatus,
     },
     node::{
-        protocol::{blobs::BlobsProtocol, docs::DocsProtocol, gossip::GossipProtocol},
+        protocol::{blobs::BlobsProtocol, docs::DocsProtocol},
         NodeInner,
     },
     rpc_protocol::{
@@ -83,6 +82,9 @@ const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 const RPC_BLOB_GET_CHUNK_SIZE: usize = 1024 * 64;
 /// Channel cap for getting blobs over RPC
 const RPC_BLOB_GET_CHANNEL_CAP: usize = 2;
+
+pub(crate) type RpcError = serde_error::Error;
+pub(crate) type RpcResult<T> = Result<T, RpcError>;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Handler<D> {
@@ -255,7 +257,7 @@ impl<D: BaoStore> Handler<D> {
                 chan.bidi_streaming(msg, self, |handler, req, updates| {
                     let stream = handler
                         .router
-                        .get_protocol::<GossipProtocol>(GOSSIP_ALPN)
+                        .get_protocol::<Gossip>(GOSSIP_ALPN)
                         .expect("missing gossip")
                         .join_with_stream(
                             req.topic,
@@ -265,7 +267,7 @@ impl<D: BaoStore> Handler<D> {
                             },
                             Box::pin(updates),
                         );
-                    futures_util::TryStreamExt::map_err(stream, RpcError::from)
+                    futures_util::TryStreamExt::map_err(stream, |e| RpcError::new(&*e))
                 })
                 .await
             }
@@ -484,7 +486,11 @@ impl<D: BaoStore> Handler<D> {
 
     async fn blob_status(self, msg: BlobStatusRequest) -> RpcResult<BlobStatusResponse> {
         let blobs = self.blobs();
-        let entry = blobs.store().get(&msg.hash).await?;
+        let entry = blobs
+            .store()
+            .get(&msg.hash)
+            .await
+            .map_err(|e| RpcError::new(&e))?;
         Ok(BlobStatusResponse(match entry {
             Some(entry) => {
                 if entry.is_complete() {
@@ -549,7 +555,7 @@ impl<D: BaoStore> Handler<D> {
     ) -> impl Stream<Item = RpcResult<BlobInfo>> + Send + 'static {
         Gen::new(|co| async move {
             if let Err(e) = self.blob_list_impl(&co).await {
-                co.yield_(Err(e.into())).await;
+                co.yield_(Err(RpcError::new(&e))).await;
             }
         })
     }
@@ -560,18 +566,24 @@ impl<D: BaoStore> Handler<D> {
     ) -> impl Stream<Item = RpcResult<IncompleteBlobInfo>> + Send + 'static {
         Gen::new(move |co| async move {
             if let Err(e) = self.blob_list_incomplete_impl(&co).await {
-                co.yield_(Err(e.into())).await;
+                co.yield_(Err(RpcError::new(&e))).await;
             }
         })
     }
 
     async fn blob_delete_tag(self, msg: TagDeleteRequest) -> RpcResult<()> {
-        self.blobs_store().set_tag(msg.name, None).await?;
+        self.blobs_store()
+            .set_tag(msg.name, None)
+            .await
+            .map_err(|e| RpcError::new(&e))?;
         Ok(())
     }
 
     async fn blob_delete_blob(self, msg: DeleteRequest) -> RpcResult<()> {
-        self.blobs_store().delete(vec![msg.hash]).await?;
+        self.blobs_store()
+            .delete(vec![msg.hash])
+            .await
+            .map_err(|e| RpcError::new(&e))?;
         Ok(())
     }
 
@@ -605,7 +617,9 @@ impl<D: BaoStore> Handler<D> {
                 .validate(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
                 .await
             {
-                tx2.send(ValidateProgress::Abort(e.into())).await.ok();
+                tx2.send(ValidateProgress::Abort(RpcError::new(&e)))
+                    .await
+                    .ok();
             }
         });
         rx
@@ -625,7 +639,7 @@ impl<D: BaoStore> Handler<D> {
                 .consistency_check(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
                 .await
             {
-                tx2.send(ConsistencyCheckProgress::Abort(e.into()))
+                tx2.send(ConsistencyCheckProgress::Abort(RpcError::new(&e)))
                     .await
                     .ok();
             }
@@ -639,7 +653,7 @@ impl<D: BaoStore> Handler<D> {
         let tx2 = tx.clone();
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(e) = self.blob_add_from_path0(msg, tx).await {
-                tx2.send(AddProgress::Abort(e.into())).await.ok();
+                tx2.send(AddProgress::Abort(RpcError::new(&*e))).await.ok();
             }
         });
         rx.map(AddPathResponse)
@@ -651,9 +665,11 @@ impl<D: BaoStore> Handler<D> {
         let tx2 = tx.clone();
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(e) = self.doc_import_file0(msg, tx).await {
-                tx2.send(crate::client::docs::ImportProgress::Abort(e.into()))
-                    .await
-                    .ok();
+                tx2.send(crate::client::docs::ImportProgress::Abort(RpcError::new(
+                    &*e,
+                )))
+                .await
+                .ok();
             }
         });
         rx.map(ImportFileResponse)
@@ -737,7 +753,9 @@ impl<D: BaoStore> Handler<D> {
         let tx2 = tx.clone();
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(e) = self.doc_export_file0(msg, tx).await {
-                tx2.send(ExportProgress::Abort(e.into())).await.ok();
+                tx2.send(ExportProgress::Abort(RpcError::new(&*e)))
+                    .await
+                    .ok();
             }
         });
         rx.map(ExportFileResponse)
@@ -789,7 +807,7 @@ impl<D: BaoStore> Handler<D> {
                 .await
             {
                 progress
-                    .send(DownloadProgress::Abort(err.into()))
+                    .send(DownloadProgress::Abort(RpcError::new(&*err)))
                     .await
                     .ok();
             }
@@ -813,7 +831,10 @@ impl<D: BaoStore> Handler<D> {
             .await;
             match res {
                 Ok(()) => progress.send(ExportProgress::AllDone).await.ok(),
-                Err(err) => progress.send(ExportProgress::Abort(err.into())).await.ok(),
+                Err(err) => progress
+                    .send(ExportProgress::Abort(RpcError::new(&*err)))
+                    .await
+                    .ok(),
             };
         });
         rx.map(ExportResponse)
@@ -942,18 +963,23 @@ impl<D: BaoStore> Handler<D> {
     async fn node_stats(self, _req: StatsRequest) -> RpcResult<StatsResponse> {
         #[cfg(feature = "metrics")]
         let res = Ok(StatsResponse {
-            stats: crate::metrics::get_metrics()?,
+            stats: crate::metrics::get_metrics().map_err(|e| RpcError::new(&*e))?,
         });
 
         #[cfg(not(feature = "metrics"))]
-        let res = Err(anyhow::anyhow!("metrics are disabled").into());
+        let res = Err(RpcError::new(&*anyhow::anyhow!("metrics are disabled")));
 
         res
     }
 
     async fn node_status(self, _: StatusRequest) -> RpcResult<NodeStatus> {
         Ok(NodeStatus {
-            addr: self.inner.endpoint.node_addr().await?,
+            addr: self
+                .inner
+                .endpoint
+                .node_addr()
+                .await
+                .map_err(|e| RpcError::new(&*e))?,
             listen_addrs: self
                 .inner
                 .local_endpoint_addresses()
@@ -970,7 +996,12 @@ impl<D: BaoStore> Handler<D> {
     }
 
     async fn node_addr(self, _: AddrRequest) -> RpcResult<NodeAddr> {
-        let addr = self.inner.endpoint.node_addr().await?;
+        let addr = self
+            .inner
+            .endpoint
+            .node_addr()
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(addr)
     }
 
@@ -993,13 +1024,21 @@ impl<D: BaoStore> Handler<D> {
 
     async fn tags_set(self, msg: tags::SetRequest) -> RpcResult<()> {
         let blobs = self.blobs();
-        blobs.store().set_tag(msg.name, msg.value).await?;
+        blobs
+            .store()
+            .set_tag(msg.name, msg.value)
+            .await
+            .map_err(|e| RpcError::new(&e))?;
         if let SyncMode::Full = msg.sync {
-            blobs.store().sync().await?;
+            blobs.store().sync().await.map_err(|e| RpcError::new(&e))?;
         }
         if let Some(batch) = msg.batch {
             if let Some(content) = msg.value.as_ref() {
-                blobs.batches().await.remove_one(batch, content)?;
+                blobs
+                    .batches()
+                    .await
+                    .remove_one(batch, content)
+                    .map_err(|e| RpcError::new(&*e))?;
             }
         }
         Ok(())
@@ -1007,12 +1046,20 @@ impl<D: BaoStore> Handler<D> {
 
     async fn tags_create(self, msg: tags::CreateRequest) -> RpcResult<Tag> {
         let blobs = self.blobs();
-        let tag = blobs.store().create_tag(msg.value).await?;
+        let tag = blobs
+            .store()
+            .create_tag(msg.value)
+            .await
+            .map_err(|e| RpcError::new(&e))?;
         if let SyncMode::Full = msg.sync {
-            blobs.store().sync().await?;
+            blobs.store().sync().await.map_err(|e| RpcError::new(&e))?;
         }
         if let Some(batch) = msg.batch {
-            blobs.batches().await.remove_one(batch, &msg.value)?;
+            blobs
+                .batches()
+                .await
+                .remove_one(batch, &msg.value)
+                .map_err(|e| RpcError::new(&*e))?;
         }
         Ok(tag)
     }
@@ -1046,7 +1093,7 @@ impl<D: BaoStore> Handler<D> {
 
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(err) = this.batch_add_stream0(msg, stream, tx.clone()).await {
-                tx.send(BatchAddStreamResponse::Abort(err.into()))
+                tx.send(BatchAddStreamResponse::Abort(RpcError::new(&*err)))
                     .await
                     .ok();
             }
@@ -1063,7 +1110,9 @@ impl<D: BaoStore> Handler<D> {
         let tx2 = tx.clone();
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(e) = self.batch_add_from_path0(msg, tx).await {
-                tx2.send(BatchAddPathProgress::Abort(e.into())).await.ok();
+                tx2.send(BatchAddPathProgress::Abort(RpcError::new(&*e)))
+                    .await
+                    .ok();
             }
         });
         rx.map(BatchAddPathResponse)
@@ -1153,7 +1202,7 @@ impl<D: BaoStore> Handler<D> {
 
         self.local_pool_handle().spawn_detached(|| async move {
             if let Err(err) = this.blob_add_stream0(msg, stream, tx.clone()).await {
-                tx.send(AddProgress::Abort(err.into())).await.ok();
+                tx.send(AddProgress::Abort(RpcError::new(&*err))).await.ok();
             }
         });
 
@@ -1222,7 +1271,7 @@ impl<D: BaoStore> Handler<D> {
         let db = self.blobs_store();
         self.local_pool_handle().spawn_detached(move || async move {
             if let Err(err) = read_loop(req, db, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
-                tx.send(RpcResult::Err(err.into())).await.ok();
+                tx.send(RpcResult::Err(RpcError::new(&*err))).await.ok();
             }
         });
 
@@ -1349,7 +1398,10 @@ impl<D: BaoStore> Handler<D> {
     #[allow(clippy::unused_async)]
     async fn node_add_addr(self, req: AddAddrRequest) -> RpcResult<()> {
         let AddAddrRequest { addr } = req;
-        self.inner.endpoint.add_node_addr(addr)?;
+        self.inner
+            .endpoint
+            .add_node_addr(addr)
+            .map_err(|e| RpcError::new(&*e))?;
         Ok(())
     }
 
@@ -1365,7 +1417,10 @@ impl<D: BaoStore> Handler<D> {
 
         let blobs = self.blobs();
 
-        let temp_tag = collection.store(blobs.store()).await?;
+        let temp_tag = collection
+            .store(blobs.store())
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
         let hash_and_format = temp_tag.inner();
         let HashAndFormat { hash, .. } = *hash_and_format;
         let tag = match tag {
@@ -1373,14 +1428,23 @@ impl<D: BaoStore> Handler<D> {
                 blobs
                     .store()
                     .set_tag(tag.clone(), Some(*hash_and_format))
-                    .await?;
+                    .await
+                    .map_err(|e| RpcError::new(&e))?;
                 tag
             }
-            SetTagOption::Auto => blobs.store().create_tag(*hash_and_format).await?,
+            SetTagOption::Auto => blobs
+                .store()
+                .create_tag(*hash_and_format)
+                .await
+                .map_err(|e| RpcError::new(&e))?,
         };
 
         for tag in tags_to_delete {
-            blobs.store().set_tag(tag, None).await?;
+            blobs
+                .store()
+                .set_tag(tag, None)
+                .await
+                .map_err(|e| RpcError::new(&e))?;
         }
 
         Ok(CreateCollectionResponse { hash, tag })
@@ -1388,5 +1452,5 @@ impl<D: BaoStore> Handler<D> {
 }
 
 fn docs_disabled() -> RpcError {
-    anyhow!("docs are disabled").into()
+    RpcError::new(&*anyhow!("docs are disabled"))
 }

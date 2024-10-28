@@ -1,6 +1,5 @@
 use std::collections::BTreeSet;
 
-use iroh_base::rpc::RpcResult;
 pub use iroh_gossip::net::{Command as SubscribeUpdate, Event as SubscribeResponse};
 use iroh_gossip::proto::TopicId;
 use iroh_net::NodeId;
@@ -9,6 +8,7 @@ use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
 use super::RpcService;
+use crate::node::RpcResult;
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

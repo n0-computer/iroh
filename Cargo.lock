@@ -2485,6 +2485,7 @@ dependencies = [
  "ref-cast",
  "regex",
  "serde",
+ "serde-error",
  "serde_json",
  "strum 0.25.0",
  "tempfile",
@@ -2521,7 +2522,6 @@ dependencies = [
  "rand_core",
  "redb 2.1.1",
  "serde",
- "serde-error",
  "serde_json",
  "serde_test",
  "ssh-key",
@@ -2547,8 +2547,7 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69e83475d6c8cc312a224d4c6bdf287f862d30d2b176768ef71f188a0d8aa7cd"
+source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#f87c3bf59e5040382d29d872ba543351a908f500"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2578,6 +2577,7 @@ dependencies = [
  "reflink-copy",
  "self_cell",
  "serde",
+ "serde-error",
  "smallvec",
  "tempfile",
  "thiserror",
@@ -2736,8 +2736,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b434d455389493ff2b2ecbab035c12eb3762f24d04080855ecd4956bf7739448"
+source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#85c32cd86195a7ff54474b9cf153579ca04ae06f"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2752,6 +2751,7 @@ dependencies = [
  "iroh-blake3",
  "iroh-metrics",
  "iroh-net",
+ "iroh-router",
  "postcard",
  "rand",
  "rand_core",
@@ -2860,7 +2860,6 @@ dependencies = [
  "rustls-webpki",
  "serde",
  "serde_json",
- "serde_with",
  "smallvec",
  "socket2",
  "strum 0.26.3",
@@ -5010,9 +5009,9 @@ dependencies = [
 
 [[package]]
 name = "serde-error"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e988182713aeed6a619a88bca186f6d6407483485ffe44c869ee264f8eabd13f"
+checksum = "342110fb7a5d801060c885da03bf91bfa7c7ca936deafcc64bb6706375605d47"
 dependencies = [
  "serde",
 ]
