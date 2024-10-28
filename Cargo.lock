@@ -2857,7 +2857,6 @@ dependencies = [
  "rustls-webpki",
  "serde",
  "serde_json",
- "serde_with",
  "smallvec",
  "socket2",
  "strum 0.26.3",
