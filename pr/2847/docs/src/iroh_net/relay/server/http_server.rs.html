@@ -832,52 +832,6 @@
 <a href="#832" id="832">832</a>
 <a href="#833" id="833">833</a>
 <a href="#834" id="834">834</a>
-<a href="#835" id="835">835</a>
-<a href="#836" id="836">836</a>
-<a href="#837" id="837">837</a>
-<a href="#838" id="838">838</a>
-<a href="#839" id="839">839</a>
-<a href="#840" id="840">840</a>
-<a href="#841" id="841">841</a>
-<a href="#842" id="842">842</a>
-<a href="#843" id="843">843</a>
-<a href="#844" id="844">844</a>
-<a href="#845" id="845">845</a>
-<a href="#846" id="846">846</a>
-<a href="#847" id="847">847</a>
-<a href="#848" id="848">848</a>
-<a href="#849" id="849">849</a>
-<a href="#850" id="850">850</a>
-<a href="#851" id="851">851</a>
-<a href="#852" id="852">852</a>
-<a href="#853" id="853">853</a>
-<a href="#854" id="854">854</a>
-<a href="#855" id="855">855</a>
-<a href="#856" id="856">856</a>
-<a href="#857" id="857">857</a>
-<a href="#858" id="858">858</a>
-<a href="#859" id="859">859</a>
-<a href="#860" id="860">860</a>
-<a href="#861" id="861">861</a>
-<a href="#862" id="862">862</a>
-<a href="#863" id="863">863</a>
-<a href="#864" id="864">864</a>
-<a href="#865" id="865">865</a>
-<a href="#866" id="866">866</a>
-<a href="#867" id="867">867</a>
-<a href="#868" id="868">868</a>
-<a href="#869" id="869">869</a>
-<a href="#870" id="870">870</a>
-<a href="#871" id="871">871</a>
-<a href="#872" id="872">872</a>
-<a href="#873" id="873">873</a>
-<a href="#874" id="874">874</a>
-<a href="#875" id="875">875</a>
-<a href="#876" id="876">876</a>
-<a href="#877" id="877">877</a>
-<a href="#878" id="878">878</a>
-<a href="#879" id="879">879</a>
-<a href="#880" id="880">880</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
 <span class="kw">use </span>anyhow::{bail, ensure, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
@@ -1025,11 +979,6 @@
 ///
 /// Defaults to handling relay requests on the "/relay" (and "/derp" for backwards compatibility) endpoint.
 /// Other HTTP endpoints can be added using [`ServerBuilder::request_handler`].
-///
-/// If no [`SecretKey`] is provided, it is assumed that you will provide a
-/// [`ServerBuilder::relay_override`] function that handles requests to the relay
-/// endpoint. Not providing a [`ServerBuilder::relay_override`] in this case will result in
-/// an error on `spawn`.
 </span><span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub struct </span>ServerBuilder {
     <span class="doccomment">/// The ip + port combination for this server.
@@ -1043,11 +992,6 @@
     /// Used when certain routes in your server should be made available at the same port as
     /// the relay server, and so must be handled along side requests to the relay endpoint.
     </span>handlers: Handlers,
-    <span class="doccomment">/// Use a custom relay response handler.
-    ///
-    /// Typically used when you want to disable any relay connections.
-    </span><span class="attr">#[debug(<span class="string">"{}"</span>, relay_override.as_ref().map_or(<span class="string">"None"</span>, |<span class="kw">_</span>| <span class="string">"Some(Box&lt;Fn(Request&lt;Incoming&gt;, ResponseBuilder) -&gt; Result&lt;Response&lt;BytesBody&gt; + Send + Sync + 'static&gt;)"</span>))]
-    </span>relay_override: <span class="prelude-ty">Option</span>&lt;HyperHandler&gt;,
     <span class="doccomment">/// Headers to use for HTTP responses.
     </span>headers: HeaderMap,
     <span class="doccomment">/// 404 not found response.
@@ -1064,7 +1008,6 @@
             addr,
             tls_config: <span class="prelude-val">None</span>,
             handlers: Default::default(),
-            relay_override: <span class="prelude-val">None</span>,
             headers: HeaderMap::new(),
             not_found_fn: <span class="prelude-val">None</span>,
         }
@@ -1104,16 +1047,8 @@
 
     <span class="doccomment">/// Builds and spawns an HTTP(S) Relay Server.
     </span><span class="kw">pub async fn </span>spawn(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Server&gt; {
-        <span class="kw">let </span>(relay_handler, relay_server) = <span class="kw">match </span><span class="self">self</span>.relay_override {
-            <span class="prelude-val">Some</span>(relay_override) =&gt; (RelayHandler::Override(relay_override), <span class="prelude-val">None</span>),
-            <span class="prelude-val">None </span>=&gt; {
-                <span class="kw">let </span>server = ServerActorTask::new();
-                (
-                    RelayHandler::ConnHandler(server.client_conn_handler(<span class="self">self</span>.headers.clone())),
-                    <span class="prelude-val">Some</span>(server),
-                )
-            }
-        };
+        <span class="kw">let </span>relay_server = ServerActorTask::new();
+        <span class="kw">let </span>relay_handler = relay_server.client_conn_handler(<span class="self">self</span>.headers.clone());
 
         <span class="kw">let </span>h = <span class="self">self</span>.headers.clone();
         <span class="kw">let </span>not_found_fn = <span class="kw">match </span><span class="self">self</span>.not_found_fn {
@@ -1146,7 +1081,7 @@
 </span><span class="kw">struct </span>ServerState {
     addr: SocketAddr,
     tls_config: <span class="prelude-ty">Option</span>&lt;TlsConfig&gt;,
-    server: <span class="prelude-ty">Option</span>&lt;ServerActorTask&gt;,
+    server: ServerActorTask,
     service: RelayService,
 }
 
@@ -1206,11 +1141,9 @@
                     }
                 }
             }
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(server) = server {
-                <span class="comment">// TODO: if the task this is running in is aborted this server is not shut
-                // down.
-                </span>server.close().<span class="kw">await</span>;
-            }
+            <span class="comment">// TODO: if the task this is running in is aborted this server is not shut
+            // down.
+            </span>server.close().<span class="kw">await</span>;
             set.shutdown().<span class="kw">await</span>;
             <span class="macro">debug!</span>(<span class="string">"[{http_str}] relay: server has been shutdown."</span>);
         }.instrument(<span class="macro">info_span!</span>(<span class="string">"relay-http-serve"</span>)));
@@ -1347,19 +1280,11 @@
             (req.method(), req.uri().path()),
             (<span class="kw-2">&amp;</span>hyper::Method::GET, LEGACY_RELAY_PATH | RELAY_PATH)
         ) {
-            <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>.relay_handler {
-                RelayHandler::Override(f) =&gt; {
-                    <span class="comment">// see if we have some override response
-                    </span><span class="kw">let </span>res = f(req, <span class="self">self</span>.<span class="number">0</span>.default_response());
-                    <span class="kw">return </span>Box::pin(<span class="kw">async move </span>{ res });
-                }
-                RelayHandler::ConnHandler(handler) =&gt; {
-                    <span class="kw">let </span>h = handler.clone();
-                    <span class="comment">// otherwise handle the relay connection as normal
-                    </span><span class="kw">return </span>Box::pin(<span class="kw">async move </span>{ h.call(req).<span class="kw">await</span>.map_err(Into::into) });
-                }
-            }
+            <span class="kw">let </span>h = <span class="self">self</span>.<span class="number">0</span>.relay_handler.clone();
+            <span class="comment">// otherwise handle the relay connection as normal
+            </span><span class="kw">return </span>Box::pin(<span class="kw">async move </span>{ h.call(req).<span class="kw">await</span>.map_err(Into::into) });
         }
+
         <span class="comment">// check all other possible endpoints
         </span><span class="kw">let </span>uri = req.uri().clone();
         <span class="kw">if let </span><span class="prelude-val">Some</span>(res) = <span class="self">self</span>.<span class="number">0</span>.handlers.get(<span class="kw-2">&amp;</span>(req.method().clone(), uri.path())) {
@@ -1378,28 +1303,11 @@
 
 <span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">struct </span>Inner {
-    <span class="kw">pub </span>relay_handler: RelayHandler,
+    <span class="kw">pub </span>relay_handler: ClientConnHandler,
     <span class="attr">#[debug(<span class="string">"Box&lt;Fn(ResponseBuilder) -&gt; Result&lt;Response&lt;BytesBody&gt;&gt; + Send + Sync + 'static&gt;"</span>)]
     </span><span class="kw">pub </span>not_found_fn: HyperHandler,
     <span class="kw">pub </span>handlers: Handlers,
     <span class="kw">pub </span>headers: HeaderMap,
-}
-
-<span class="doccomment">/// Action to take when a connection is made at the relay endpoint.`
-</span><span class="attr">#[derive(derive_more::Debug)]
-</span><span class="kw">enum </span>RelayHandler {
-    <span class="doccomment">/// Pass the connection to a [`ClientConnHandler`] to get added to the relay server. The default.
-    </span>ConnHandler(ClientConnHandler),
-    <span class="doccomment">/// Return some static response. Used when the http(s) should be running, but the relay portion
-    /// of the server is disabled.
-    </span><span class="comment">// TODO: Can we remove this debug override?
-    </span>Override(
-        <span class="attr">#[debug(
-            <span class="string">"{}"</span>,
-            <span class="string">"Box&lt;Fn(Request&lt;Incoming&gt;, ResponseBuilder) -&gt; Result&lt;Response&lt;BytesBody&gt; + Send + Sync + 'static&gt;"
-        </span>)]
-        </span>HyperHandler,
-    ),
 }
 
 <span class="kw">impl </span>Inner {
@@ -1425,7 +1333,7 @@
 <span class="kw">impl </span>RelayService {
     <span class="kw">fn </span>new(
         handlers: Handlers,
-        relay_handler: RelayHandler,
+        relay_handler: ClientConnHandler,
         not_found_fn: HyperHandler,
         headers: HeaderMap,
     ) -&gt; <span class="self">Self </span>{
