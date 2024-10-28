@@ -304,7 +304,7 @@
         <span class="kw">let </span>addr = SocketAddr::from((Ipv4Addr::LOCALHOST, <span class="number">1234</span>));
         <span class="kw">let </span>relay_url = <span class="prelude-val">None</span>;
         NodeTicket {
-            node: NodeAddr::from_parts(peer, relay_url, <span class="macro">vec!</span>[addr]),
+            node: NodeAddr::from_parts(peer, relay_url, [addr]),
         }
     }
 
@@ -334,7 +334,7 @@
             node: NodeAddr::from_parts(
                 node_id,
                 <span class="prelude-val">Some</span>(<span class="string">"http://derp.me./"</span>.parse().unwrap()),
-                <span class="macro">vec!</span>[<span class="string">"127.0.0.1:1024"</span>.parse().unwrap()],
+                [<span class="string">"127.0.0.1:1024"</span>.parse().unwrap()],
             ),
         };
         <span class="kw">let </span>base32 = base32::parse_vec(ticket.to_string().strip_prefix(<span class="string">"node"</span>).unwrap()).unwrap();

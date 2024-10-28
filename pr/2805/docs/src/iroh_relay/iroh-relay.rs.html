@@ -481,22 +481,6 @@
 <a href="#481" id="481">481</a>
 <a href="#482" id="482">482</a>
 <a href="#483" id="483">483</a>
-<a href="#484" id="484">484</a>
-<a href="#485" id="485">485</a>
-<a href="#486" id="486">486</a>
-<a href="#487" id="487">487</a>
-<a href="#488" id="488">488</a>
-<a href="#489" id="489">489</a>
-<a href="#490" id="490">490</a>
-<a href="#491" id="491">491</a>
-<a href="#492" id="492">492</a>
-<a href="#493" id="493">493</a>
-<a href="#494" id="494">494</a>
-<a href="#495" id="495">495</a>
-<a href="#496" id="496">496</a>
-<a href="#497" id="497">497</a>
-<a href="#498" id="498">498</a>
-<a href="#499" id="499">499</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A simple relay server for iroh-net.
 //!
 //! This handles only the CLI and config file loading, the server implementation lives in
@@ -511,13 +495,11 @@
 <span class="kw">use </span>clap::Parser;
 <span class="kw">use </span>iroh_net::{
     defaults::{DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT},
-    key::SecretKey,
     relay::server <span class="kw">as </span>iroh_relay,
 };
 <span class="kw">use </span>serde::{Deserialize, Serialize};
-<span class="kw">use </span>serde_with::{serde_as, DisplayFromStr};
 <span class="kw">use </span>tokio_rustls_acme::{caches::DirCache, AcmeConfig};
-<span class="kw">use </span>tracing::{debug, info};
+<span class="kw">use </span>tracing::debug;
 <span class="kw">use </span>tracing_subscriber::{prelude::<span class="kw-2">*</span>, EnvFilter};
 
 <span class="doccomment">/// The default `http_bind_port` when using `--dev`.
@@ -593,16 +575,8 @@
 <span class="doccomment">/// Configuration for the relay-server.
 ///
 /// This is (de)serialised to/from a TOML config file.
-</span><span class="attr">#[serde_as]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+</span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize)]
 </span><span class="kw">struct </span>Config {
-    <span class="doccomment">/// The iroh [`SecretKey`] for this relay server.
-    ///
-    /// If not specified a new key will be generated and the config file will be re-written
-    /// using it.
-    </span><span class="attr">#[serde_as(<span class="kw">as </span>= <span class="string">"DisplayFromStr"</span>)]
-    #[serde(default = <span class="string">"SecretKey::generate"</span>)]
-    </span>secret_key: SecretKey,
     <span class="doccomment">/// Whether to enable the Relay server.
     ///
     /// Defaults to `true`.
@@ -677,7 +651,6 @@
 <span class="kw">impl </span>Default <span class="kw">for </span>Config {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            secret_key: SecretKey::generate(),
             enable_relay: <span class="bool-val">true</span>,
             http_bind_addr: <span class="prelude-val">None</span>,
             tls: <span class="prelude-val">None</span>,
@@ -820,10 +793,6 @@
             .<span class="kw">await
             </span>.context(<span class="string">"unable to read config"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>config: <span class="self">Self </span>= toml::from_str(<span class="kw-2">&amp;</span>config_ser).context(<span class="string">"config file must be valid toml"</span>)<span class="question-mark">?</span>;
-        <span class="kw">if </span>!config_ser.contains(<span class="string">"secret_key"</span>) {
-            <span class="macro">info!</span>(<span class="string">"generating new secret key and updating config file"</span>);
-            config.write_to_file(path).<span class="kw">await</span><span class="question-mark">?</span>;
-        }
 
         <span class="prelude-val">Ok</span>(config)
     }
@@ -929,7 +898,6 @@
             .unwrap_or_default(),
     };
     <span class="kw">let </span>relay_config = iroh_relay::RelayConfig {
-        secret_key: cfg.secret_key.clone(),
         http_bind_addr: cfg.http_bind_addr(),
         tls,
         limits,

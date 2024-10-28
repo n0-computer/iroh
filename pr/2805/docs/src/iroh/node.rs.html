@@ -832,58 +832,6 @@
 <a href="#832" id="832">832</a>
 <a href="#833" id="833">833</a>
 <a href="#834" id="834">834</a>
-<a href="#835" id="835">835</a>
-<a href="#836" id="836">836</a>
-<a href="#837" id="837">837</a>
-<a href="#838" id="838">838</a>
-<a href="#839" id="839">839</a>
-<a href="#840" id="840">840</a>
-<a href="#841" id="841">841</a>
-<a href="#842" id="842">842</a>
-<a href="#843" id="843">843</a>
-<a href="#844" id="844">844</a>
-<a href="#845" id="845">845</a>
-<a href="#846" id="846">846</a>
-<a href="#847" id="847">847</a>
-<a href="#848" id="848">848</a>
-<a href="#849" id="849">849</a>
-<a href="#850" id="850">850</a>
-<a href="#851" id="851">851</a>
-<a href="#852" id="852">852</a>
-<a href="#853" id="853">853</a>
-<a href="#854" id="854">854</a>
-<a href="#855" id="855">855</a>
-<a href="#856" id="856">856</a>
-<a href="#857" id="857">857</a>
-<a href="#858" id="858">858</a>
-<a href="#859" id="859">859</a>
-<a href="#860" id="860">860</a>
-<a href="#861" id="861">861</a>
-<a href="#862" id="862">862</a>
-<a href="#863" id="863">863</a>
-<a href="#864" id="864">864</a>
-<a href="#865" id="865">865</a>
-<a href="#866" id="866">866</a>
-<a href="#867" id="867">867</a>
-<a href="#868" id="868">868</a>
-<a href="#869" id="869">869</a>
-<a href="#870" id="870">870</a>
-<a href="#871" id="871">871</a>
-<a href="#872" id="872">872</a>
-<a href="#873" id="873">873</a>
-<a href="#874" id="874">874</a>
-<a href="#875" id="875">875</a>
-<a href="#876" id="876">876</a>
-<a href="#877" id="877">877</a>
-<a href="#878" id="878">878</a>
-<a href="#879" id="879">879</a>
-<a href="#880" id="880">880</a>
-<a href="#881" id="881">881</a>
-<a href="#882" id="882">882</a>
-<a href="#883" id="883">883</a>
-<a href="#884" id="884">884</a>
-<a href="#885" id="885">885</a>
-<a href="#886" id="886">886</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node API
 //!
 //! An iroh node is a server that is identified by an Ed25519 keypair and is
@@ -936,7 +884,6 @@
 <span class="kw">use </span>futures_util::future::{MapErr, Shared};
 <span class="kw">use </span>iroh_base::key::PublicKey;
 <span class="kw">use </span>iroh_blobs::{
-    protocol::Closed,
     store::Store <span class="kw">as </span>BaoStore,
     util::local_pool::{LocalPool, LocalPoolHandle},
 };
@@ -945,23 +892,22 @@
     endpoint::{DirectAddrsStream, RemoteInfo},
     AddrInfo, Endpoint, NodeAddr,
 };
-<span class="kw">use </span>protocol::BlobsProtocol;
+<span class="kw">use </span>iroh_router::{ProtocolHandler, Router};
+<span class="kw">use </span>protocol::blobs::BlobsProtocol;
 <span class="kw">use </span>quic_rpc::{transport::ServerEndpoint <span class="kw">as _</span>, RpcServer};
 <span class="kw">use </span>tokio::task::{JoinError, JoinSet};
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
-<span class="kw">use </span><span class="kw">crate</span>::node::{docs::DocsEngine, nodes_storage::store_node_addrs, protocol::ProtocolMap};
+<span class="kw">use </span><span class="kw">crate</span>::node::{nodes_storage::store_node_addrs, protocol::docs::DocsProtocol};
 
 <span class="kw">mod </span>builder;
-<span class="kw">mod </span>docs;
 <span class="kw">mod </span>nodes_storage;
 <span class="kw">mod </span>protocol;
 <span class="kw">mod </span>rpc;
 <span class="kw">mod </span>rpc_status;
 
-<span class="kw">pub use </span>protocol::ProtocolHandler;
-
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::rpc::{RpcError, RpcResult};
 <span class="kw">pub use </span><span class="self">self</span>::{
     builder::{
         Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,
@@ -1001,7 +947,7 @@
     // - `AbortOnDropHandle` to make sure that the `task` is cancelled when all `Node`s are dropped
     //   (`Shared` acts like an `Arc` around its inner future).
     </span>task: Shared&lt;MapErr&lt;AbortOnDropHandle&lt;()&gt;, JoinErrToStr&gt;&gt;,
-    protocols: Arc&lt;ProtocolMap&gt;,
+    router: Router,
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>JoinErrToStr = Box&lt;<span class="kw">dyn </span>Fn(JoinError) -&gt; String + Send + Sync + <span class="lifetime">'static</span>&gt;;
@@ -1014,8 +960,6 @@
     cancel_token: CancellationToken,
     client: <span class="kw">crate</span>::client::Iroh,
     local_pool_handle: LocalPoolHandle,
-    <span class="attr">#[allow(dead_code)]
-    </span>metrics_exporter_handle: <span class="prelude-ty">Option</span>&lt;AbortOnDropHandle&lt;()&gt;&gt;,
 }
 
 <span class="doccomment">/// In memory node.
@@ -1132,7 +1076,7 @@
     /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
     /// does not match the passed type.
     </span><span class="kw">pub fn </span>get_protocol&lt;P: ProtocolHandler&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;P&gt;&gt; {
-        <span class="self">self</span>.protocols.get_typed(alpn)
+        <span class="self">self</span>.router.get_protocol(alpn)
     }
 }
 
@@ -1160,7 +1104,7 @@
         <span class="self">self</span>: Arc&lt;<span class="self">Self</span>&gt;,
         external_rpc: IrohServerEndpoint,
         internal_rpc: IrohServerEndpoint,
-        protocols: Arc&lt;ProtocolMap&gt;,
+        router: Router,
         gc_policy: GcPolicy,
         gc_done_callback: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() + Send&gt;&gt;,
         nodes_data_path: <span class="prelude-ty">Option</span>&lt;PathBuf&gt;,
@@ -1182,11 +1126,11 @@
 
         <span class="comment">// Spawn a task for the garbage collection.
         </span><span class="kw">if let </span>GcPolicy::Interval(gc_period) = gc_policy {
-            <span class="kw">let </span>protocols = protocols.clone();
+            <span class="kw">let </span>router = router.clone();
             <span class="kw">let </span>handle = local_pool.spawn(<span class="kw">move </span>|| <span class="kw">async move </span>{
-                <span class="kw">let </span>docs_engine = protocols.get_typed::&lt;DocsEngine&gt;(DOCS_ALPN);
-                <span class="kw">let </span>blobs = protocols
-                    .get_typed::&lt;BlobsProtocol&lt;D&gt;&gt;(iroh_blobs::protocol::ALPN)
+                <span class="kw">let </span>docs_engine = router.get_protocol::&lt;DocsProtocol&gt;(DOCS_ALPN);
+                <span class="kw">let </span>blobs = router
+                    .get_protocol::&lt;BlobsProtocol&lt;D&gt;&gt;(iroh_blobs::protocol::ALPN)
                     .expect(<span class="string">"missing blobs"</span>);
 
                 blobs
@@ -1286,7 +1230,7 @@
                 </span>request = external_rpc.accept() =&gt; {
                     <span class="kw">match </span>request {
                         <span class="prelude-val">Ok</span>(accepting) =&gt; {
-                            rpc::Handler::spawn_rpc_request(<span class="self">self</span>.clone(), <span class="kw-2">&amp;mut </span>join_set, accepting, protocols.clone());
+                            rpc::Handler::spawn_rpc_request(<span class="self">self</span>.clone(), <span class="kw-2">&amp;mut </span>join_set, accepting, router.clone());
                         }
                         <span class="prelude-val">Err</span>(e) =&gt; {
                             <span class="macro">info!</span>(<span class="string">"rpc request error: {:?}"</span>, e);
@@ -1297,20 +1241,12 @@
                 </span>request = internal_rpc.accept() =&gt; {
                     <span class="kw">match </span>request {
                         <span class="prelude-val">Ok</span>(accepting) =&gt; {
-                            rpc::Handler::spawn_rpc_request(<span class="self">self</span>.clone(), <span class="kw-2">&amp;mut </span>join_set, accepting, protocols.clone());
+                            rpc::Handler::spawn_rpc_request(<span class="self">self</span>.clone(), <span class="kw-2">&amp;mut </span>join_set, accepting, router.clone());
                         }
                         <span class="prelude-val">Err</span>(e) =&gt; {
                             <span class="macro">info!</span>(<span class="string">"internal rpc request error: {:?}"</span>, e);
                         }
                     }
-                },
-                <span class="comment">// handle incoming p2p connections.
-                </span><span class="prelude-val">Some</span>(incoming) = <span class="self">self</span>.endpoint.accept() =&gt; {
-                    <span class="kw">let </span>protocols = protocols.clone();
-                    join_set.spawn(<span class="kw">async move </span>{
-                        handle_connection(incoming, protocols).<span class="kw">await</span>;
-                        <span class="prelude-val">Ok</span>(())
-                    });
                 },
                 <span class="comment">// handle task terminations and quit on panics.
                 </span>res = join_set.join_next(), <span class="kw">if </span>!join_set.is_empty() =&gt; {
@@ -1336,7 +1272,9 @@
             }
         }
 
-        <span class="self">self</span>.shutdown(protocols).<span class="kw">await</span>;
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = router.shutdown().<span class="kw">await </span>{
+            <span class="macro">tracing::warn!</span>(<span class="string">"Error when shutting down router: {:?}"</span>, err);
+        };
 
         <span class="comment">// Abort remaining tasks.
         </span>join_set.shutdown().<span class="kw">await</span>;
@@ -1345,48 +1283,6 @@
         <span class="comment">// Abort remaining local tasks.
         </span><span class="macro">tracing::info!</span>(<span class="string">"Shutting down local pool"</span>);
         local_pool.shutdown().<span class="kw">await</span>;
-    }
-
-    <span class="doccomment">/// Shutdown the different parts of the node concurrently.
-    </span><span class="kw">async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>, protocols: Arc&lt;ProtocolMap&gt;) {
-        <span class="kw">let </span>error_code = Closed::ProviderTerminating;
-
-        <span class="comment">// We ignore all errors during shutdown.
-        </span><span class="kw">let _ </span>= <span class="macro">tokio::join!</span>(
-            <span class="comment">// Close the endpoint.
-            // Closing the Endpoint is the equivalent of calling Connection::close on all
-            // connections: Operations will immediately fail with ConnectionError::LocallyClosed.
-            // All streams are interrupted, this is not graceful.
-            </span><span class="self">self</span>.endpoint
-                .clone()
-                .close(error_code.into(), error_code.reason()),
-            <span class="comment">// Shutdown protocol handlers.
-            </span>protocols.shutdown(),
-        );
-    }
-}
-
-<span class="kw">async fn </span>handle_connection(incoming: iroh_net::endpoint::Incoming, protocols: Arc&lt;ProtocolMap&gt;) {
-    <span class="kw">let </span><span class="kw-2">mut </span>connecting = <span class="kw">match </span>incoming.accept() {
-        <span class="prelude-val">Ok</span>(conn) =&gt; conn,
-        <span class="prelude-val">Err</span>(err) =&gt; {
-            <span class="macro">warn!</span>(<span class="string">"Ignoring connection: accepting failed: {err:#}"</span>);
-            <span class="kw">return</span>;
-        }
-    };
-    <span class="kw">let </span>alpn = <span class="kw">match </span>connecting.alpn().<span class="kw">await </span>{
-        <span class="prelude-val">Ok</span>(alpn) =&gt; alpn,
-        <span class="prelude-val">Err</span>(err) =&gt; {
-            <span class="macro">warn!</span>(<span class="string">"Ignoring connection: invalid handshake: {err:#}"</span>);
-            <span class="kw">return</span>;
-        }
-    };
-    <span class="kw">let </span><span class="prelude-val">Some</span>(handler) = protocols.get(<span class="kw-2">&amp;</span>alpn) <span class="kw">else </span>{
-        <span class="macro">warn!</span>(<span class="string">"Ignoring connection: unsupported ALPN protocol"</span>);
-        <span class="kw">return</span>;
-    };
-    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = handler.accept(connecting).<span class="kw">await </span>{
-        <span class="macro">warn!</span>(<span class="string">"Handling incoming connection ended with error: {err}"</span>);
     }
 }
 

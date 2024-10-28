@@ -959,43 +959,6 @@
 <a href="#959" id="959">959</a>
 <a href="#960" id="960">960</a>
 <a href="#961" id="961">961</a>
-<a href="#962" id="962">962</a>
-<a href="#963" id="963">963</a>
-<a href="#964" id="964">964</a>
-<a href="#965" id="965">965</a>
-<a href="#966" id="966">966</a>
-<a href="#967" id="967">967</a>
-<a href="#968" id="968">968</a>
-<a href="#969" id="969">969</a>
-<a href="#970" id="970">970</a>
-<a href="#971" id="971">971</a>
-<a href="#972" id="972">972</a>
-<a href="#973" id="973">973</a>
-<a href="#974" id="974">974</a>
-<a href="#975" id="975">975</a>
-<a href="#976" id="976">976</a>
-<a href="#977" id="977">977</a>
-<a href="#978" id="978">978</a>
-<a href="#979" id="979">979</a>
-<a href="#980" id="980">980</a>
-<a href="#981" id="981">981</a>
-<a href="#982" id="982">982</a>
-<a href="#983" id="983">983</a>
-<a href="#984" id="984">984</a>
-<a href="#985" id="985">985</a>
-<a href="#986" id="986">986</a>
-<a href="#987" id="987">987</a>
-<a href="#988" id="988">988</a>
-<a href="#989" id="989">989</a>
-<a href="#990" id="990">990</a>
-<a href="#991" id="991">991</a>
-<a href="#992" id="992">992</a>
-<a href="#993" id="993">993</a>
-<a href="#994" id="994">994</a>
-<a href="#995" id="995">995</a>
-<a href="#996" id="996">996</a>
-<a href="#997" id="997">997</a>
-<a href="#998" id="998">998</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1021,24 +984,22 @@
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
     endpoint::TransportConfig,
-    relay::RelayMode,
+    relay::{force_staging_infra, RelayMode},
     Endpoint,
 };
+<span class="kw">use </span>iroh_router::{ProtocolHandler, RouterBuilder};
 <span class="kw">use </span>quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::task::JoinError;
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error_span, trace, Instrument};
 
-<span class="kw">use super</span>::{
-    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
-};
+<span class="kw">use super</span>::{rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner};
 <span class="kw">use crate</span>::{
     client::RPC_ALPN,
     node::{
         nodes_storage::load_node_addrs,
-        protocol::{BlobsProtocol, ProtocolMap},
-        ProtocolHandler,
+        protocol::{blobs::BlobsProtocol, docs::DocsProtocol},
     },
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
@@ -1116,15 +1077,12 @@
     node_discovery: DiscoveryConfig,
     docs_storage: DocsStorage,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
     </span>insecure_skip_relay_cert_verify: bool,
     <span class="doccomment">/// Callback to register when a gc loop is done
     </span><span class="attr">#[debug(<span class="string">"callback"</span>)]
     </span>gc_done_callback: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() + Send&gt;&gt;,
     blob_events: EventSender,
     transport_config: <span class="prelude-ty">Option</span>&lt;TransportConfig&gt;,
-    <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-    </span>metrics_push_config: <span class="prelude-ty">Option</span>&lt;iroh_metrics::PushMetricsConfig&gt;,
 }
 
 <span class="doccomment">/// Configuration for storage.
@@ -1229,10 +1187,10 @@
 <span class="kw">impl </span>Default <span class="kw">for </span>Builder&lt;iroh_blobs::store::mem::Store&gt; {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
         <span class="comment">// Use staging in testing
-        </span><span class="attr">#[cfg(not(any(test, feature = <span class="string">"test-utils"</span>)))]
-        </span><span class="kw">let </span>relay_mode = RelayMode::Default;
-        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-        </span><span class="kw">let </span>relay_mode = RelayMode::Staging;
+        </span><span class="kw">let </span>relay_mode = <span class="kw">match </span>force_staging_infra() {
+            <span class="bool-val">true </span>=&gt; RelayMode::Staging,
+            <span class="bool-val">false </span>=&gt; RelayMode::Default,
+        };
 
         <span class="self">Self </span>{
             storage: StorageConfig::Mem,
@@ -1253,8 +1211,6 @@
             gc_done_callback: <span class="prelude-val">None</span>,
             blob_events: Default::default(),
             transport_config: <span class="prelude-val">None</span>,
-            <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-            </span>metrics_push_config: <span class="prelude-val">None</span>,
         }
     }
 }
@@ -1267,10 +1223,10 @@
         storage: StorageConfig,
     ) -&gt; <span class="self">Self </span>{
         <span class="comment">// Use staging in testing
-        </span><span class="attr">#[cfg(not(any(test, feature = <span class="string">"test-utils"</span>)))]
-        </span><span class="kw">let </span>relay_mode = RelayMode::Default;
-        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-        </span><span class="kw">let </span>relay_mode = RelayMode::Staging;
+        </span><span class="kw">let </span>relay_mode = <span class="kw">match </span>force_staging_infra() {
+            <span class="bool-val">true </span>=&gt; RelayMode::Staging,
+            <span class="bool-val">false </span>=&gt; RelayMode::Default,
+        };
 
         <span class="self">Self </span>{
             storage,
@@ -1291,8 +1247,6 @@
             gc_done_callback: <span class="prelude-val">None</span>,
             blob_events: Default::default(),
             transport_config: <span class="prelude-val">None</span>,
-            <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-            </span>metrics_push_config: <span class="prelude-val">None</span>,
         }
     }
 }
@@ -1307,13 +1261,6 @@
     /// To define an event sender, implement the [`iroh_blobs::provider::CustomEventSender`] trait.
     </span><span class="kw">pub fn </span>blobs_events(<span class="kw-2">mut </span><span class="self">self</span>, blob_events: <span class="kw">impl </span>Into&lt;EventSender&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.blob_events = blob_events.into();
-        <span class="self">self
-    </span>}
-
-    <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-    </span><span class="doccomment">/// Set the metrics push configuration.
-    </span><span class="kw">pub fn </span>metrics_push_config(<span class="kw-2">mut </span><span class="self">self</span>, config: iroh_metrics::PushMetricsConfig) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.metrics_push_config = <span class="prelude-val">Some</span>(config);
         <span class="self">self
     </span>}
 
@@ -1360,8 +1307,6 @@
             gc_done_callback: <span class="self">self</span>.gc_done_callback,
             blob_events: <span class="self">self</span>.blob_events,
             transport_config: <span class="self">self</span>.transport_config,
-            <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-            </span>metrics_push_config: <span class="self">self</span>.metrics_push_config,
         })
     }
 
@@ -1668,8 +1613,8 @@
         </span><span class="kw">let </span>downloader = Downloader::new(<span class="self">self</span>.blobs_store.clone(), endpoint.clone(), lp.clone());
 
         <span class="comment">// Spawn the docs engine, if enabled.
-        // This returns None for DocsStorage::Disabled, otherwise Some(DocsEngine).
-        </span><span class="kw">let </span>docs = DocsEngine::spawn(
+        // This returns None for DocsStorage::Disabled, otherwise Some(DocsProtocol).
+        </span><span class="kw">let </span>docs = DocsProtocol::spawn(
             <span class="self">self</span>.docs_storage,
             <span class="self">self</span>.blobs_store.clone(),
             <span class="self">self</span>.storage.default_author_storage(),
@@ -1687,28 +1632,18 @@
         </span><span class="kw">let </span>controller = quic_rpc::transport::boxed::Connection::new(controller);
         <span class="kw">let </span>client = <span class="kw">crate</span>::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
-        <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-        </span><span class="kw">let </span>metrics_exporter_handle = <span class="self">self</span>.metrics_push_config.map(|config| {
-            AbortOnDropHandle::new(tokio::spawn(iroh_metrics::metrics::start_metrics_exporter(
-                config,
-            )))
-        });
-        <span class="attr">#[cfg(not(feature = <span class="string">"metrics"</span>))]
-        </span><span class="kw">let </span>metrics_exporter_handle = <span class="prelude-val">None</span>;
-
         <span class="kw">let </span>inner = Arc::new(NodeInner {
             rpc_addr: <span class="self">self</span>.rpc_addr,
             db: Default::default(),
-            endpoint,
+            endpoint: endpoint.clone(),
             client,
             cancel_token: CancellationToken::new(),
             local_pool_handle: lp.handle().clone(),
-            metrics_exporter_handle,
         });
 
         <span class="kw">let </span>protocol_builder = ProtocolBuilder {
             inner,
-            protocols: Default::default(),
+            router: RouterBuilder::new(endpoint),
             internal_rpc,
             external_rpc: <span class="self">self</span>.rpc_endpoint,
             gc_policy: <span class="self">self</span>.gc_policy,
@@ -1742,7 +1677,7 @@
     inner: Arc&lt;NodeInner&lt;D&gt;&gt;,
     internal_rpc: IrohServerEndpoint,
     external_rpc: IrohServerEndpoint,
-    protocols: ProtocolMap,
+    router: RouterBuilder,
     <span class="attr">#[debug(<span class="string">"callback"</span>)]
     </span>gc_done_callback: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() + Send&gt;&gt;,
     gc_policy: GcPolicy,
@@ -1764,7 +1699,7 @@
     /// # use std::sync::Arc;
     /// # use anyhow::Result;
     /// # use futures_lite::future::Boxed as BoxedFuture;
-    /// # use iroh::{node::{Node, ProtocolHandler}, net::endpoint::Connecting, client::Iroh};
+    /// # use iroh::{node::{Node}, net::endpoint::Connecting, client::Iroh, router::ProtocolHandler};
     /// #
     /// # #[tokio::main]
     /// # async fn main() -&gt; Result&lt;()&gt; {
@@ -1800,7 +1735,7 @@
     ///
     ///
     </span><span class="kw">pub fn </span>accept(<span class="kw-2">mut </span><span class="self">self</span>, alpn: Vec&lt;u8&gt;, handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.protocols.insert(alpn, handler);
+        <span class="self">self</span>.router = <span class="self">self</span>.router.accept(alpn, handler);
         <span class="self">self
     </span>}
 
@@ -1827,7 +1762,7 @@
     /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
     /// does not match the passed type.
     </span><span class="kw">pub fn </span>get_protocol&lt;P: ProtocolHandler&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;P&gt;&gt; {
-        <span class="self">self</span>.protocols.get_typed(alpn)
+        <span class="self">self</span>.router.get_protocol::&lt;P&gt;(alpn)
     }
 
     <span class="doccomment">/// Registers the core iroh protocols (blobs, gossip, docs).
@@ -1837,7 +1772,7 @@
         store: D,
         gossip: Gossip,
         downloader: Downloader,
-        docs: <span class="prelude-ty">Option</span>&lt;DocsEngine&gt;,
+        docs: <span class="prelude-ty">Option</span>&lt;DocsProtocol&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="comment">// Register blobs.
         </span><span class="kw">let </span>blobs_proto = BlobsProtocol::new_with_events(
@@ -1865,24 +1800,15 @@
             inner,
             internal_rpc,
             external_rpc,
-            protocols,
+            router,
             gc_done_callback,
             gc_policy,
             nodes_data_path,
             local_pool: rt,
         } = <span class="self">self</span>;
-        <span class="kw">let </span>protocols = Arc::new(protocols);
         <span class="kw">let </span>node_id = inner.endpoint.node_id();
 
-        <span class="comment">// Update the endpoint with our alpns.
-        </span><span class="kw">let </span>alpns = protocols
-            .alpns()
-            .map(|alpn| alpn.to_vec())
-            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = inner.endpoint.set_alpns(alpns) {
-            inner.shutdown(protocols).<span class="kw">await</span>;
-            <span class="kw">return </span><span class="prelude-val">Err</span>(err);
-        }
+        <span class="kw">let </span>router = router.spawn().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// Spawn the main task and store it in the node for structured termination in shutdown.
         </span><span class="kw">let </span>fut = inner
@@ -1890,7 +1816,7 @@
             .run(
                 external_rpc,
                 internal_rpc,
-                protocols.clone(),
+                router.clone(),
                 gc_policy,
                 gc_done_callback,
                 nodes_data_path,
@@ -1901,7 +1827,7 @@
 
         <span class="kw">let </span>node = Node {
             inner,
-            protocols,
+            router,
             task: AbortOnDropHandle::new(task)
                 .map_err(Box::new(|e: JoinError| e.to_string()) <span class="kw">as </span>JoinErrToStr)
                 .shared(),

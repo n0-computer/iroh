@@ -392,7 +392,7 @@
     </span><span class="kw">pub fn </span>from_parts(
         node_id: PublicKey,
         relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
-        direct_addresses: Vec&lt;SocketAddr&gt;,
+        direct_addresses: <span class="kw">impl </span>IntoIterator&lt;Item = SocketAddr&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             node_id,
@@ -510,11 +510,11 @@
     /// This usually means that iroh-dns discovery is used to find address information.
     </span><span class="attr">#[default]
     </span>Id,
-    <span class="doccomment">/// Includes both the relay URL and the direct addresses.
+    <span class="doccomment">/// Includes the Node ID and both the relay URL, and the direct addresses.
     </span>RelayAndAddresses,
-    <span class="doccomment">/// Only includes the relay URL.
+    <span class="doccomment">/// Includes the Node ID and the relay URL.
     </span>Relay,
-    <span class="doccomment">/// Only includes the direct addresses.
+    <span class="doccomment">/// Includes the Node ID and the direct addresses.
     </span>Addresses,
 }
 

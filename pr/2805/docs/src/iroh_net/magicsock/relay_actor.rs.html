@@ -1204,7 +1204,7 @@
         url: <span class="kw-2">&amp;</span>RelayUrl,
         remote_node: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>NodeId&gt;,
     ) -&gt; relay::client::Client {
-        <span class="macro">debug!</span>(%url, <span class="question-mark">?</span>remote_node, <span class="string">"connect relay"</span>);
+        <span class="macro">trace!</span>(%url, <span class="question-mark">?</span>remote_node, <span class="string">"connect relay"</span>);
         <span class="comment">// See if we have a connection open to that relay node ID first. If so, might as
         // well use it. (It's a little arbitrary whether we use this one vs. the reverse route
         // below when we have both.)

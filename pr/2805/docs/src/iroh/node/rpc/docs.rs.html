@@ -308,17 +308,103 @@
 <a href="#308" id="308">308</a>
 <a href="#309" id="309">309</a>
 <a href="#310" id="310">310</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! This module contains an impl block on [`DocsEngine`] with handlers for RPC requests
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
+<a href="#353" id="353">353</a>
+<a href="#354" id="354">354</a>
+<a href="#355" id="355">355</a>
+<a href="#356" id="356">356</a>
+<a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
+<a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+<a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
+<a href="#391" id="391">391</a>
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a>
+<a href="#396" id="396">396</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! This module contains an impl block on [`DocsProtocol`] with handlers for RPC requests
 
 </span><span class="kw">use </span>anyhow::anyhow;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
-<span class="kw">use </span>iroh_base::rpc::RpcResult;
 <span class="kw">use </span>iroh_blobs::{store::Store <span class="kw">as </span>BaoStore, BlobFormat};
 <span class="kw">use </span>iroh_docs::{Author, DocTicket, NamespaceSecret};
 
+<span class="kw">use super</span>::{RpcError, RpcResult};
 <span class="kw">use crate</span>::{
     client::docs::ShareMode,
-    node::DocsEngine,
+    node::protocol::docs::DocsProtocol,
     rpc_protocol::{
         authors::{
             CreateRequest, CreateResponse, DeleteRequest, DeleteResponse, ExportRequest,
@@ -345,11 +431,14 @@
 </span><span class="kw">const </span>ITER_CHANNEL_CAP: usize = <span class="number">64</span>;
 
 <span class="attr">#[allow(missing_docs)]
-</span><span class="kw">impl </span>DocsEngine {
+</span><span class="kw">impl </span>DocsProtocol {
     <span class="kw">pub async fn </span>author_create(<span class="kw-2">&amp;</span><span class="self">self</span>, _req: CreateRequest) -&gt; RpcResult&lt;CreateResponse&gt; {
         <span class="comment">// TODO: pass rng
         </span><span class="kw">let </span>author = Author::new(<span class="kw-2">&amp;mut </span>rand::rngs::OsRng {});
-        <span class="self">self</span>.sync.import_author(author.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.sync
+            .import_author(author.clone())
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(CreateResponse {
             author_id: author.id(),
         })
@@ -364,7 +453,10 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         req: SetDefaultRequest,
     ) -&gt; RpcResult&lt;SetDefaultResponse&gt; {
-        <span class="self">self</span>.default_author.set(req.author_id, <span class="kw-2">&amp;</span><span class="self">self</span>.sync).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.default_author
+            .set(req.author_id, <span class="kw-2">&amp;</span><span class="self">self</span>.sync)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(SetDefaultResponse)
     }
 
@@ -384,41 +476,65 @@
         });
         rx.boxed().map(|r| {
             r.map(|author_id| AuthorListResponse { author_id })
-                .map_err(Into::into)
+                .map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))
         })
     }
 
     <span class="kw">pub async fn </span>author_import(<span class="kw-2">&amp;</span><span class="self">self</span>, req: ImportRequest) -&gt; RpcResult&lt;ImportResponse&gt; {
-        <span class="kw">let </span>author_id = <span class="self">self</span>.sync.import_author(req.author).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>author_id = <span class="self">self
+            </span>.sync
+            .import_author(req.author)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(ImportResponse { author_id })
     }
 
     <span class="kw">pub async fn </span>author_export(<span class="kw-2">&amp;</span><span class="self">self</span>, req: ExportRequest) -&gt; RpcResult&lt;ExportResponse&gt; {
-        <span class="kw">let </span>author = <span class="self">self</span>.sync.export_author(req.author).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>author = <span class="self">self
+            </span>.sync
+            .export_author(req.author)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(ExportResponse { author })
     }
 
     <span class="kw">pub async fn </span>author_delete(<span class="kw-2">&amp;</span><span class="self">self</span>, req: DeleteRequest) -&gt; RpcResult&lt;DeleteResponse&gt; {
         <span class="kw">if </span>req.author == <span class="self">self</span>.default_author.get() {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Deleting the default author is not supported"</span>).into());
+            <span class="kw">return </span><span class="prelude-val">Err</span>(RpcError::new(<span class="kw-2">&amp;*</span><span class="macro">anyhow!</span>(
+                <span class="string">"Deleting the default author is not supported"
+            </span>)));
         }
-        <span class="self">self</span>.sync.delete_author(req.author).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.sync
+            .delete_author(req.author)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(DeleteResponse)
     }
 
     <span class="kw">pub async fn </span>doc_create(<span class="kw-2">&amp;</span><span class="self">self</span>, _req: DocCreateRequest) -&gt; RpcResult&lt;DocCreateResponse&gt; {
         <span class="kw">let </span>namespace = NamespaceSecret::new(<span class="kw-2">&amp;mut </span>rand::rngs::OsRng {});
         <span class="kw">let </span>id = namespace.id();
-        <span class="self">self</span>.sync.import_namespace(namespace.into()).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="self">self</span>.sync.open(id, Default::default()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.sync
+            .import_namespace(namespace.into())
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
+        <span class="self">self</span>.sync
+            .open(id, Default::default())
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(DocCreateResponse { id })
     }
 
     <span class="kw">pub async fn </span>doc_drop(<span class="kw-2">&amp;</span><span class="self">self</span>, req: DropRequest) -&gt; RpcResult&lt;DropResponse&gt; {
         <span class="kw">let </span>DropRequest { doc_id } = req;
-        <span class="self">self</span>.leave(doc_id, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="self">self</span>.sync.drop_replica(doc_id).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.leave(doc_id, <span class="bool-val">true</span>)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
+        <span class="self">self</span>.sync
+            .drop_replica(doc_id)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(DropResponse {})
     }
 
@@ -438,22 +554,32 @@
         });
         rx.boxed().map(|r| {
             r.map(|(id, capability)| DocListResponse { id, capability })
-                .map_err(Into::into)
+                .map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))
         })
     }
 
     <span class="kw">pub async fn </span>doc_open(<span class="kw-2">&amp;</span><span class="self">self</span>, req: OpenRequest) -&gt; RpcResult&lt;OpenResponse&gt; {
-        <span class="self">self</span>.sync.open(req.doc_id, Default::default()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.sync
+            .open(req.doc_id, Default::default())
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(OpenResponse {})
     }
 
     <span class="kw">pub async fn </span>doc_close(<span class="kw-2">&amp;</span><span class="self">self</span>, req: CloseRequest) -&gt; RpcResult&lt;CloseResponse&gt; {
-        <span class="self">self</span>.sync.close(req.doc_id).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.sync
+            .close(req.doc_id)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(CloseResponse {})
     }
 
     <span class="kw">pub async fn </span>doc_status(<span class="kw-2">&amp;</span><span class="self">self</span>, req: StatusRequest) -&gt; RpcResult&lt;StatusResponse&gt; {
-        <span class="kw">let </span>status = <span class="self">self</span>.sync.get_state(req.doc_id).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>status = <span class="self">self
+            </span>.sync
+            .get_state(req.doc_id)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(StatusResponse { status })
     }
 
@@ -463,17 +589,27 @@
             mode,
             addr_options,
         } = req;
-        <span class="kw">let </span><span class="kw-2">mut </span>me = <span class="self">self</span>.endpoint.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>me = <span class="self">self
+            </span>.endpoint
+            .node_addr()
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         me.apply_options(addr_options);
 
         <span class="kw">let </span>capability = <span class="kw">match </span>mode {
             ShareMode::Read =&gt; iroh_docs::Capability::Read(doc_id),
             ShareMode::Write =&gt; {
-                <span class="kw">let </span>secret = <span class="self">self</span>.sync.export_secret_key(doc_id).<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="kw">let </span>secret = <span class="self">self
+                    </span>.sync
+                    .export_secret_key(doc_id)
+                    .<span class="kw">await
+                    </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
                 iroh_docs::Capability::Write(secret)
             }
         };
-        <span class="self">self</span>.start_sync(doc_id, <span class="macro">vec!</span>[]).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.start_sync(doc_id, <span class="macro">vec!</span>[])
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(ShareResponse(DocTicket {
             capability,
@@ -485,30 +621,44 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         req: DocSubscribeRequest,
     ) -&gt; RpcResult&lt;<span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;DocSubscribeResponse&gt;&gt;&gt; {
-        <span class="kw">let </span>stream = <span class="self">self</span>.subscribe(req.doc_id).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>stream = <span class="self">self
+            </span>.subscribe(req.doc_id)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(stream.map(|el| {
             el.map(|event| DocSubscribeResponse { event })
-                .map_err(Into::into)
+                .map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))
         }))
     }
 
     <span class="kw">pub async fn </span>doc_import(<span class="kw-2">&amp;</span><span class="self">self</span>, req: DocImportRequest) -&gt; RpcResult&lt;DocImportResponse&gt; {
         <span class="kw">let </span>DocImportRequest { capability } = req;
-        <span class="kw">let </span>doc_id = <span class="self">self</span>.sync.import_namespace(capability).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="self">self</span>.sync.open(doc_id, Default::default()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>doc_id = <span class="self">self
+            </span>.sync
+            .import_namespace(capability)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
+        <span class="self">self</span>.sync
+            .open(doc_id, Default::default())
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(DocImportResponse { doc_id })
     }
 
     <span class="kw">pub async fn </span>doc_start_sync(<span class="kw-2">&amp;</span><span class="self">self</span>, req: StartSyncRequest) -&gt; RpcResult&lt;StartSyncResponse&gt; {
         <span class="kw">let </span>StartSyncRequest { doc_id, peers } = req;
-        <span class="self">self</span>.start_sync(doc_id, peers).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.start_sync(doc_id, peers)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(StartSyncResponse {})
     }
 
     <span class="kw">pub async fn </span>doc_leave(<span class="kw-2">&amp;</span><span class="self">self</span>, req: LeaveRequest) -&gt; RpcResult&lt;LeaveResponse&gt; {
         <span class="kw">let </span>LeaveRequest { doc_id } = req;
-        <span class="self">self</span>.leave(doc_id, <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.leave(doc_id, <span class="bool-val">false</span>)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(LeaveResponse {})
     }
 
@@ -524,15 +674,20 @@
             value,
         } = req;
         <span class="kw">let </span>len = value.len();
-        <span class="kw">let </span>tag = bao_store.import_bytes(value, BlobFormat::Raw).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>tag = bao_store
+            .import_bytes(value, BlobFormat::Raw)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;</span>e))<span class="question-mark">?</span>;
         <span class="self">self</span>.sync
             .insert_local(doc_id, author_id, key.clone(), <span class="kw-2">*</span>tag.hash(), len <span class="kw">as </span>u64)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="kw">let </span>entry = <span class="self">self
             </span>.sync
             .get_exact(doc_id, author_id, key, <span class="bool-val">false</span>)
-            .<span class="kw">await</span><span class="question-mark">?
-            </span>.ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"failed to get entry after insertion"</span>))<span class="question-mark">?</span>;
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?
+            </span>.ok_or_else(|| RpcError::new(<span class="kw-2">&amp;*</span><span class="macro">anyhow!</span>(<span class="string">"failed to get entry after insertion"</span>)))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(SetResponse { entry })
     }
 
@@ -542,7 +697,11 @@
             author_id,
             prefix,
         } = req;
-        <span class="kw">let </span>removed = <span class="self">self</span>.sync.delete_prefix(doc_id, author_id, prefix).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>removed = <span class="self">self
+            </span>.sync
+            .delete_prefix(doc_id, author_id, prefix)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(DelResponse { removed })
     }
 
@@ -556,7 +715,8 @@
         } = req;
         <span class="self">self</span>.sync
             .insert_local(doc_id, author_id, key.clone(), hash, size)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(SetHashResponse {})
     }
 
@@ -575,8 +735,10 @@
                 tx2.send(<span class="prelude-val">Err</span>(err)).<span class="kw">await</span>.ok();
             }
         });
-        rx.boxed()
-            .map(|r| r.map(|entry| GetManyResponse { entry }).map_err(Into::into))
+        rx.boxed().map(|r| {
+            r.map(|entry| GetManyResponse { entry })
+                .map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))
+        })
     }
 
     <span class="kw">pub async fn </span>doc_get_exact(<span class="kw-2">&amp;</span><span class="self">self</span>, req: GetExactRequest) -&gt; RpcResult&lt;GetExactResponse&gt; {
@@ -589,7 +751,8 @@
         <span class="kw">let </span>entry = <span class="self">self
             </span>.sync
             .get_exact(doc_id, author, key, include_empty)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(GetExactResponse { entry })
     }
 
@@ -599,14 +762,19 @@
     ) -&gt; RpcResult&lt;SetDownloadPolicyResponse&gt; {
         <span class="self">self</span>.sync
             .set_download_policy(req.doc_id, req.policy)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(SetDownloadPolicyResponse {})
     }
     <span class="kw">pub async fn </span>doc_get_download_policy(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         req: GetDownloadPolicyRequest,
     ) -&gt; RpcResult&lt;GetDownloadPolicyResponse&gt; {
-        <span class="kw">let </span>policy = <span class="self">self</span>.sync.get_download_policy(req.doc_id).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>policy = <span class="self">self
+            </span>.sync
+            .get_download_policy(req.doc_id)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(GetDownloadPolicyResponse { policy })
     }
 
@@ -614,7 +782,11 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         req: GetSyncPeersRequest,
     ) -&gt; RpcResult&lt;GetSyncPeersResponse&gt; {
-        <span class="kw">let </span>peers = <span class="self">self</span>.sync.get_sync_peers(req.doc_id).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>peers = <span class="self">self
+            </span>.sync
+            .get_sync_peers(req.doc_id)
+            .<span class="kw">await
+            </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(GetSyncPeersResponse { peers })
     }
 }

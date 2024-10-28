@@ -886,7 +886,7 @@
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>derive_more::{Display, FromStr};
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
-<span class="kw">use </span>iroh_base::{key::PublicKey, node_addr::AddrInfoOptions, rpc::RpcError};
+<span class="kw">use </span>iroh_base::{key::PublicKey, node_addr::AddrInfoOptions};
 <span class="kw">use </span>iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 <span class="attr">#[doc(inline)]
 </span><span class="kw">pub use </span>iroh_docs::engine::{Origin, SyncEvent, SyncReason};
@@ -1398,7 +1398,7 @@
     <span class="doccomment">/// We got an error and need to abort.
     ///
     /// This will be the last message in the stream.
-    </span>Abort(RpcError),
+    </span>Abort(serde_error::Error),
 }
 
 <span class="doccomment">/// Intended capability for document share tickets
